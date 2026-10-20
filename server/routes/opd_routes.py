@@ -59,7 +59,8 @@ users.registration_number only. A consultation prints only once signed.
 
 VISIT-ADDRESSED ROUTES (opd-10) resolve the visit and answer 404 unless its
 clinic is the caller's department (an account with no department reads every
-clinic); writes are refused 409 once the patient has an active admission.
+clinic of its own facility once more than one facility is on record,
+multisite-8h1); writes are refused 409 once the patient has an active admission.
 Saves, signing, addenda and completion are audited INSIDE their transaction
 (clinical_record), so the change and its record land together.
 """
@@ -106,7 +107,7 @@ from services.opd_service import (
 from services.orders_service import OpdVisitOrderRefused, OrderManagedByLab
 
 from routes.opt_in_gates import feature_gate, require_opd_feature
-from services import orders_service, registration_service, terminology_service
+from services import facility_lanes, orders_service, registration_service, terminology_service
 
 router = APIRouter(
     prefix="/api/opd",
@@ -170,18 +171,24 @@ def opd_record(
 _MY_QUEUE_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
 
 
-@router.get("/my-queue")
+@router.get("/my-queue", response_model=None)
 def my_queue(
     request: Request,
     user: dict = _MY_QUEUE_USER_DEFAULT,
-):
+) -> dict:
     """Today's queue for the signed-in doctor: the patient in the room, the
     waiting line in seeing order (priority, then token), the skipped, and the
     clinic's unassigned patients to take. The clinic is the caller's
     department, never a parameter. A non-empty read is audited (phi_access).
-    No vitals, score or band."""
+    No vitals, score or band. With more than one facility on record the
+    unassigned line is the caller's own facility's clinics only
+    (multisite-8h1)."""
     dept = department_scope(user)
-    result = list_my_queue(doctor_id=user.get("id") or "", department=dept)
+    result = list_my_queue(
+        doctor_id=user.get("id") or "",
+        department=dept,
+        facilities=facility_lanes.scope_of(user),
+    )
     if result["total"]:
         log_phi_read(
             request=request,
@@ -256,16 +263,37 @@ class OpdCompleteIn(BaseModel):
     service_code: str | None = None
 
 
-def _visit_in_clinic(visit_id: str, dept: str | None) -> dict:
+def _visit_in_clinic(visit_id: str, dept: str | None, *, user: dict, request: Request) -> dict:
     """The visit, or 404 when there is none or it belongs to another clinic.
     404 rather than 403: a visit id implies a patient attended a named clinic.
     `dept` is permissions.department_scope(user), derived by the endpoint so
-    the derivation shows in the route (tests/test_nurse_write_scope.py)."""
+    the derivation shows in the route (tests/test_nurse_write_scope.py).
+
+    With more than one facility on record (multisite-8h1), a visit at a
+    facility outside the caller's scope is 404 too, and the attempt writes an
+    authorization patient_scope_denied row (scope_cause 'facility'): an
+    account with no department no longer reads every clinic of the group,
+    only its own facility's. With one facility nothing more is read."""
     visit = get_opd_visit(visit_id)
     if visit is None:
         raise HTTPException(status_code=404, detail="OPD visit not found")
     if dept is not None and (visit.get("department") or "") != dept:
         raise HTTPException(status_code=404, detail="OPD visit not found")
+    facilities = facility_lanes.scope_of(user)
+    if facilities is not None:
+        with db_session() as db:
+            at = facility_lanes.visit_facility_on(db, visit_id)
+        if facility_lanes.outside(at, facilities):
+            facility_lanes.audit_denial(
+                user=user,
+                patient_id=visit.get("patient_id"),
+                dept=dept,
+                facilities=facilities,
+                facility_id=at,
+                helper="opd_visit_in_clinic",
+                request_meta=_request_meta(request),
+            )
+            raise HTTPException(status_code=404, detail="OPD visit not found")
     return visit
 
 
@@ -333,18 +361,18 @@ def patient_consultations(
 _READ_CONSULTATION_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
 
 
-@router.get("/visits/{visit_id}/consultation")
+@router.get("/visits/{visit_id}/consultation", response_model=None)
 def read_consultation(
     visit_id: str,
     request: Request,
     user: dict = _READ_CONSULTATION_USER_DEFAULT,
-):
+) -> dict:
     """This visit's note (or null before it is started), its addenda, and
     whether it may be signed yet (the allergy review, ruling OPD-S7). The
     review is carried as status, label and time only (opd_service.
     visit_review_summary): a visit id of any date reaches this read, so it
     names no allergen, note, reason, clinic or clinician."""
-    visit = _visit_in_clinic(visit_id, department_scope(user))
+    visit = _visit_in_clinic(visit_id, department_scope(user), user=user, request=request)
     try:
         result = get_consultation(visit_id)
     except ConsultationError as err:
@@ -364,18 +392,18 @@ def read_consultation(
 _WRITE_CONSULTATION_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
 
 
-@router.put("/visits/{visit_id}/consultation")
+@router.put("/visits/{visit_id}/consultation", response_model=None)
 def write_consultation(
     visit_id: str,
     data: ConsultationIn,
     request: Request,
     user: dict = _WRITE_CONSULTATION_USER_DEFAULT,
-):
+) -> dict:
     """Start or update the draft note. Refused once signed (409), when the
     version read is stale (409 with current_version), when the patient is
     now admitted (409). A diagnosis with no code saves; an unknown code saves
     as unvalidated."""
-    _visit_in_clinic(visit_id, department_scope(user))
+    _visit_in_clinic(visit_id, department_scope(user), user=user, request=request)
     fields = {k: getattr(data, k) for k in data.model_fields_set if k != "row_version"}
     try:
         return save_consultation(
@@ -409,16 +437,16 @@ def write_consultation(
 _SIGN_VISIT_CONSULTATION_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
 
 
-@router.post("/visits/{visit_id}/consultation/sign")
+@router.post("/visits/{visit_id}/consultation/sign", response_model=None)
 def sign_visit_consultation(
     visit_id: str,
     data: SignIn,
     request: Request,
     user: dict = _SIGN_VISIT_CONSULTATION_USER_DEFAULT,
-):
+) -> dict:
     """Sign the draft; it never changes afterwards. Needs an allergy review
     (ruling OPD-S7): 409 allergy_review_required until one exists."""
-    _visit_in_clinic(visit_id, department_scope(user))
+    _visit_in_clinic(visit_id, department_scope(user), user=user, request=request)
     try:
         return sign_consultation(
             visit_id,
@@ -441,15 +469,15 @@ def sign_visit_consultation(
 _ADD_CONSULTATION_ADDENDUM_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
 
 
-@router.post("/visits/{visit_id}/consultation/addenda")
+@router.post("/visits/{visit_id}/consultation/addenda", response_model=None)
 def add_consultation_addendum(
     visit_id: str,
     data: AddendumIn,
     request: Request,
     user: dict = _ADD_CONSULTATION_ADDENDUM_USER_DEFAULT,
-):
+) -> dict:
     """Append an addendum to the signed note. Addenda are never edited."""
-    _visit_in_clinic(visit_id, department_scope(user))
+    _visit_in_clinic(visit_id, department_scope(user), user=user, request=request)
     try:
         return add_addendum(
             visit_id,
@@ -472,13 +500,13 @@ def add_consultation_addendum(
 _RECORD_VISIT_ALLERGY_REVIEW_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
 
 
-@router.post("/visits/{visit_id}/allergy-review")
+@router.post("/visits/{visit_id}/allergy-review", response_model=None)
 def record_visit_allergy_review(
     visit_id: str,
     data: AllergyReviewIn,
     request: Request,
     user: dict = _RECORD_VISIT_ALLERGY_REVIEW_USER_DEFAULT,
-):
+) -> dict:
     """The consulting doctor's allergy review (opd-10a, ruling OPD-S7): the
     allergies the patient has (charted now, the same writer the admission
     lane uses), no known allergies, or why they could not be asked. Written
@@ -489,7 +517,7 @@ def record_visit_allergy_review(
     id reads nothing. The answer carries the review as status, label and
     time only, never the allergy list: that is read from the record view.
     A review never changes how the allergy interlocks screen."""
-    _visit_in_clinic(visit_id, department_scope(user))
+    _visit_in_clinic(visit_id, department_scope(user), user=user, request=request)
 
     def _audit(db, result: dict, facts: dict) -> None:
         charted, again = facts.get("charted") or [], facts.get("reactivated") or []
@@ -659,15 +687,15 @@ def terminology_search(
 _VISIT_ORDERS_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
 
 
-@router.get("/visits/{visit_id}/orders")
+@router.get("/visits/{visit_id}/orders", response_model=None)
 def visit_orders(
     visit_id: str,
     request: Request,
     user: dict = _VISIT_ORDERS_USER_DEFAULT,
-):
+) -> dict:
     """The investigations ordered on this visit, with their results when
     back. Bounded by the visit's clinic, like the visit's note. Audited."""
-    visit = _visit_in_clinic(visit_id, department_scope(user))
+    visit = _visit_in_clinic(visit_id, department_scope(user), user=user, request=request)
     orders = orders_service.list_visit_orders(visit_id)
     _phi_read(
         request,
@@ -686,13 +714,13 @@ def visit_orders(
 _ORDER_INVESTIGATION_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
 
 
-@router.post("/visits/{visit_id}/orders", status_code=201)
+@router.post("/visits/{visit_id}/orders", status_code=201, response_model=None)
 def order_investigation(
     visit_id: str,
     data: OpdOrderIn,
     request: Request,
     user: dict = _ORDER_INVESTIGATION_USER_DEFAULT,
-):
+) -> dict:
     """Order a laboratory test or imaging for this outpatient visit, active at
     once (the patient goes to the laboratory from the clinic).
 
@@ -702,7 +730,7 @@ def order_investigation(
     laboratory test or imaging, a bedside test, or (laboratory module on) a
     test the laboratory does not offer (422). Order sets are not offered for
     outpatients. Written with its audit row in one transaction."""
-    visit = _visit_in_clinic(visit_id, department_scope(user))
+    visit = _visit_in_clinic(visit_id, department_scope(user), user=user, request=request)
     if visit.get("status") == "cancelled":
         raise _refuse(
             409, "visit_cancelled", "This visit was cancelled; nothing can be ordered on it."
@@ -778,19 +806,19 @@ def order_investigation(
 _CANCEL_INVESTIGATION_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
 
 
-@router.post("/visits/{visit_id}/orders/{order_id}/cancel")
+@router.post("/visits/{visit_id}/orders/{order_id}/cancel", response_model=None)
 def cancel_investigation(
     visit_id: str,
     order_id: str,
     data: OpdOrderCancelIn,
     request: Request,
     user: dict = _CANCEL_INVESTIGATION_USER_DEFAULT,
-):
+) -> dict:
     """Cancel an investigation ordered on this visit, with a reason. An order
     the laboratory has taken in is cancelled from the laboratory request
     instead (409). Refused once the patient is admitted, on a visit outside
     the OPD window, and for an order of another visit (404)."""
-    visit = _visit_in_clinic(visit_id, department_scope(user))
+    visit = _visit_in_clinic(visit_id, department_scope(user), user=user, request=request)
     _require_current_visit(visit)
     reason = (data.reason or "").strip()
     if len(reason) < 3:
@@ -864,13 +892,13 @@ _VISIT_PRINT_KIND_DEFAULT = Query("consultation")
 _VISIT_PRINT_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
 
 
-@router.get("/visits/{visit_id}/print")
+@router.get("/visits/{visit_id}/print", response_model=None)
 def visit_print(
     visit_id: str,
     request: Request,
     kind: Literal["consultation", "investigations"] = _VISIT_PRINT_KIND_DEFAULT,
     user: dict = _VISIT_PRINT_USER_DEFAULT,
-):
+) -> dict:
     """What the consultation print or the investigation slip carries, read as
     it is printed (audited as a print, fail-closed).
 
@@ -880,7 +908,7 @@ def visit_print(
     and the doctor's name and registration number. No date of birth, phone,
     address or allergy list (a visit-addressed answer never names allergens),
     and no text written for the print."""
-    visit = _visit_in_clinic(visit_id, department_scope(user))
+    visit = _visit_in_clinic(visit_id, department_scope(user), user=user, request=request)
     orders = [
         o for o in orders_service.list_visit_orders(visit_id) if o.get("status") != "cancelled"
     ]
@@ -1006,13 +1034,13 @@ def visit_print(
 _COMPLETE_WITH_DISPOSITION_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
 
 
-@router.post("/visits/{visit_id}/complete")
+@router.post("/visits/{visit_id}/complete", response_model=None)
 def complete_with_disposition(
     visit_id: str,
     data: OpdCompleteIn,
     request: Request,
     user: dict = _COMPLETE_WITH_DISPOSITION_USER_DEFAULT,
-):
+) -> dict:
     """Finish the visit with a disposition and raise the consultation charge
     (the front desk's charge logic, unchanged: one charge per visit, unpriced
     rather than free when the site has not set a rate).
@@ -1021,7 +1049,7 @@ def complete_with_disposition(
     paper). 'admitted' is not a disposition here: converting a patient to an
     inpatient is its own step (opd-17a).
     """
-    _visit_in_clinic(visit_id, department_scope(user))
+    _visit_in_clinic(visit_id, department_scope(user), user=user, request=request)
     disposition = (data.disposition or "").strip().lower()
     if disposition not in dict(COMPLETION_DISPOSITIONS):
         raise HTTPException(
@@ -1195,18 +1223,20 @@ def _line_key(request: Request, user: dict) -> str | None:
 _VISIT_PRESCRIPTIONS_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
 
 
-@router.get("/visits/{visit_id}/prescriptions", dependencies=_PRESCRIPTION_GATES)
+@router.get(
+    "/visits/{visit_id}/prescriptions", dependencies=_PRESCRIPTION_GATES, response_model=None
+)
 def visit_prescriptions(
     visit_id: str,
     request: Request,
     user: dict = _VISIT_PRESCRIPTIONS_USER_DEFAULT,
-):
+) -> dict:
     """The medicines prescribed on this visit, in every state (a cancelled
     line says why). Bounded by the visit's clinic, like the visit's note and
     investigations. Audited fail-closed (phi_access) with the line ids. The
     stored screen is not returned: a visit id of any date reaches this read,
     so it names no allergen."""
-    visit = _visit_in_clinic(visit_id, department_scope(user))
+    visit = _visit_in_clinic(visit_id, department_scope(user), user=user, request=request)
     try:
         result = outpatient.list_visit_prescriptions(visit_id)
     except outpatient.PrescriptionRefused as err:
@@ -1231,13 +1261,18 @@ _WRITE_VISIT_PRESCRIPTION_USER_DEFAULT = Depends(
 )
 
 
-@router.post("/visits/{visit_id}/prescriptions", status_code=201, dependencies=_PRESCRIPTION_GATES)
+@router.post(
+    "/visits/{visit_id}/prescriptions",
+    status_code=201,
+    dependencies=_PRESCRIPTION_GATES,
+    response_model=None,
+)
 def write_visit_prescription(
     visit_id: str,
     data: PrescriptionLineIn,
     request: Request,
     user: dict = _WRITE_VISIT_PRESCRIPTION_USER_DEFAULT,
-):
+) -> dict | JSONResponse:
     """Prescribe one medicine on this outpatient visit, signed by the caller
     as its prescriber (opd-12).
 
@@ -1252,7 +1287,7 @@ def write_visit_prescription(
     screen_stale). Written with its fail-closed audit row in one transaction.
     Never a medications row, never a Helix row. A repeated Idempotency-Key
     for the same line answers 200 with the line it wrote."""
-    _visit_in_clinic(visit_id, department_scope(user))
+    _visit_in_clinic(visit_id, department_scope(user), user=user, request=request)
     key = _line_key(request, user)
     fields = data.model_dump(exclude={"safety_ack"})
     try:
@@ -1281,20 +1316,24 @@ _CANCEL_VISIT_PRESCRIPTION_USER_DEFAULT = Depends(
 )
 
 
-@router.post("/visits/{visit_id}/prescriptions/{order_id}/cancel", dependencies=_PRESCRIPTION_GATES)
+@router.post(
+    "/visits/{visit_id}/prescriptions/{order_id}/cancel",
+    dependencies=_PRESCRIPTION_GATES,
+    response_model=None,
+)
 def cancel_visit_prescription(
     visit_id: str,
     order_id: str,
     data: PrescriptionCancelIn,
     request: Request,
     user: dict = _CANCEL_VISIT_PRESCRIPTION_USER_DEFAULT,
-):
+) -> dict:
     """Cancel one prescribed medicine on this open visit, with a reason (at
     least 3 characters). Refused once the visit is finished or cancelled, on
     a visit outside the OPD window, once the patient is admitted (409), and
     for a line of another visit (404). The answer says whether a print that
     listed the line was already made, so the clinic takes that copy back."""
-    _visit_in_clinic(visit_id, department_scope(user))
+    _visit_in_clinic(visit_id, department_scope(user), user=user, request=request)
     try:
         return outpatient.cancel_prescription(
             visit_id,
@@ -1316,12 +1355,14 @@ def cancel_visit_prescription(
 _VISIT_PRESCRIPTION_PRINT_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
 
 
-@router.get("/visits/{visit_id}/prescriptions/print", dependencies=_PRESCRIPTION_GATES)
+@router.get(
+    "/visits/{visit_id}/prescriptions/print", dependencies=_PRESCRIPTION_GATES, response_model=None
+)
 def visit_prescription_print(
     visit_id: str,
     request: Request,
     user: dict = _VISIT_PRESCRIPTION_PRINT_USER_DEFAULT,
-):
+) -> dict:
     """What the printed prescription carries, read as it is printed (audited
     as a print, fail-closed, naming the lines printed).
 
@@ -1331,7 +1372,7 @@ def visit_prescription_print(
     prescriber's name and registration number. No date of birth, phone,
     address, score or text written for the print. 409 no_prescriptions when
     no line is live."""
-    visit = _visit_in_clinic(visit_id, department_scope(user))
+    visit = _visit_in_clinic(visit_id, department_scope(user), user=user, request=request)
     try:
         data = outpatient.print_lines(visit_id)
     except outpatient.PrescriptionRefused as err:

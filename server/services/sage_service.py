@@ -14,17 +14,17 @@ import re
 import threading
 import time
 from collections import Counter
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterable
 from contextlib import aclosing
 from datetime import UTC, datetime
 from functools import lru_cache
-from typing import Any, Literal, NamedTuple
+from typing import Any, Literal, NamedTuple, Self
 
 from config import LLM_MODEL
 from database import db_session, get_db
-from permissions import department_scope
+from permissions import FACILITY_PATIENT_SQL, department_scope, facility_scope
 
-from services import order_wording
+from services import facility_service, order_wording
 from services.audit_service import log_audit_event
 from services.news2_text import INCOMPLETE as _NEWS2_INCOMPLETE
 from services.news2_text import news2_description
@@ -1347,25 +1347,37 @@ def _mask_small_cell(n: int) -> str:
     return f"<{AGGREGATE_SMALL_CELL}" if 0 < n < AGGREGATE_SMALL_CELL else str(n)
 
 
-def build_aggregate_context(query: str = "") -> str:
+def build_aggregate_context(query: str = "", *, facilities: frozenset[int] | None = None) -> str:
     """Compose a PHI-FREE aggregate briefing: census count, per-ward occupancy,
     risk-level distribution, and length-of-stay buckets — all via COUNT/GROUP BY
     so ZERO patient rows are produced. No name, bed, MRN, dx, or patient_id ever
     appears, so the briefing is PHI-free BY CONSTRUCTION. Kept self-contained
     (not coupled to any per-patient loader) so it cannot regress into emitting
-    rows."""
+    rows.
+
+    `facilities` is the caller's facility scope (multisite-10): a set counts
+    only the patients whose latest encounter is at one of those facilities,
+    so one facility's census is never handed to another's staff. None counts
+    the whole appliance, as before."""
     lines = [
         "HOSPITAL AGGREGATE STATISTICS (counts and distributions only, no patient identifiers):"
+        if facilities is None
+        else f"AGGREGATE STATISTICS FOR {_facility_words(facilities).upper()} "
+        "(counts and distributions only, no patient identifiers):"
     ]
+    fac_sql, fac_params = ("", ()) if facilities is None else _facility_predicate(facilities)
+    where = f" AND {fac_sql}" if fac_sql else ""
     db = get_db()
     try:
         total = db.execute(
-            "SELECT COUNT(*) AS n FROM patients WHERE status = 'admitted'"
+            f"SELECT COUNT(*) AS n FROM patients p WHERE status = 'admitted'{where}", fac_params
         ).fetchone()["n"]
         lines.append(f"Total admitted: {total}.")
 
         ward_rows = db.execute(
-            "SELECT ward, COUNT(*) AS n FROM patients WHERE status = 'admitted' GROUP BY ward ORDER BY n DESC"
+            f"SELECT ward, COUNT(*) AS n FROM patients p WHERE status = 'admitted'{where} "
+            "GROUP BY ward ORDER BY n DESC",
+            fac_params,
         ).fetchall()
         if ward_rows:
             # SMALL-CELL SUPPRESSION (k-anonymity) + COMPLEMENTARY SUPPRESSION.
@@ -1403,12 +1415,13 @@ def build_aggregate_context(query: str = "") -> str:
 
         risk_rows = (
             db.execute(
-                """SELECT p.id AS patient_id, r.level AS level, r.timestamp AS timestamp
+                f"""SELECT p.id AS patient_id, r.level AS level, r.timestamp AS timestamp
                FROM patients p
                INNER JOIN risk_scores r ON r.id = (
                    SELECT rs2.id FROM risk_scores rs2 WHERE rs2.patient_id = p.id
                    ORDER BY rs2.timestamp DESC, rs2.id DESC LIMIT 1)
-               WHERE p.status = 'admitted'"""
+               WHERE p.status = 'admitted'{where}""",
+                fac_params,
             ).fetchall()
             if _scoring_on()
             else []
@@ -1433,7 +1446,9 @@ def build_aggregate_context(query: str = "") -> str:
 
         # Length-of-stay distribution (buckets, not rows).
         los_rows = db.execute(
-            "SELECT admission_date FROM patients WHERE status = 'admitted' AND admission_date IS NOT NULL"
+            "SELECT admission_date FROM patients p WHERE status = 'admitted' "
+            f"AND admission_date IS NOT NULL{where}",
+            fac_params,
         ).fetchall()
     finally:
         db.close()
@@ -2290,7 +2305,36 @@ _DEPARTMENT_SCOPE_SQL = (
 )
 
 
-def _scope_sql(base_sql: str, dept: str | None, params: tuple = ()) -> tuple[str, tuple]:
+# ── The facility half of the same scope (multisite-10) ──────────────────────
+# Changed in lockstep with permissions.scope_patient_ids_sql and
+# permissions.patient_in_scope (multisite-5a): `facilities` is the caller's
+# permissions.facility_scope(user), a frozenset of facility ids or None for no
+# facility limit. None (every install with one facility on record, and a
+# group-wide account) leaves every statement exactly as it was. A set keeps
+# only the patients whose LATEST encounter is at one of those facilities,
+# read through permissions.FACILITY_PATIENT_SQL itself (imported, not copied:
+# it is the one facility derivation). An empty set (a department no facility
+# lists) matches no patient. The department rule above is unchanged, and
+# tests/test_sage_facility_locator.py holds the two modules to the same
+# answers on two-facility fixtures.
+
+
+def _facility_predicate(facilities: frozenset[int]) -> tuple[str, tuple]:
+    """(predicate, params): the patient aliased `p` has its latest encounter at
+    one of `facilities`. An empty set matches nothing."""
+    if not facilities:
+        return "0", ()
+    ids = tuple(sorted(int(f) for f in facilities))
+    return f"{FACILITY_PATIENT_SQL} IN ({', '.join('?' for _ in ids)})", ids
+
+
+def _scope_sql(
+    base_sql: str,
+    dept: str | None,
+    params: tuple = (),
+    *,
+    facilities: frozenset[int] | None = None,
+) -> tuple[str, tuple]:
     """Append the department predicate to a patients query. THE ONLY PLACE the
     predicate is attached, so a new patient query in this module is either
     routed through here or is visibly not scoped in review.
@@ -2298,28 +2342,69 @@ def _scope_sql(base_sql: str, dept: str | None, params: tuple = ()) -> tuple[str
     `base_sql` must already have a WHERE clause and must alias the patients
     table as `p`. `dept is None` returns the query untouched — the
     department_scope() convention for a user with no department on record.
+
+    `facilities` (multisite-10) appends the facility predicate as well; None
+    leaves the query exactly as it was without it.
     """
+    if facilities is None:
+        if dept is None:
+            return base_sql, params
+        return f"{base_sql} AND {_DEPARTMENT_SCOPE_SQL}", params + (dept,)
+    fac_sql, fac_params = _facility_predicate(facilities)
     if dept is None:
-        return base_sql, params
-    return f"{base_sql} AND {_DEPARTMENT_SCOPE_SQL}", params + (dept,)
+        return f"{base_sql} AND {fac_sql}", params + fac_params
+    return (
+        f"{base_sql} AND {_DEPARTMENT_SCOPE_SQL} AND {fac_sql}",
+        params + (dept,) + fac_params,
+    )
 
 
-def _patient_in_scope(db, patient_id: str, dept: str | None) -> bool:
+def _patient_in_scope(
+    db: Any,
+    patient_id: str,
+    dept: str | None,
+    *,
+    facilities: frozenset[int] | None = None,
+) -> bool:
     """Is this ONE patient inside the caller's department?
 
     Used to vet a patient_id that arrived from the REQUEST (the client's open
     chart / view_context), which is exactly the kind of caller-named scope the
     department_scope() docstring forbids trusting.
+
+    With `facilities` (multisite-10) the patient's latest encounter must also
+    be at one of them, and an id that matches no patient is not in scope, as
+    in permissions.patient_in_scope.
     """
-    if dept is None:
+    if dept is None and facilities is None:
         return True
     if not patient_id:
         return False
-    sql, params = _scope_sql("SELECT 1 FROM patients p WHERE p.id = ?", dept, (patient_id,))
+    sql, params = _scope_sql(
+        "SELECT 1 FROM patients p WHERE p.id = ?", dept, (patient_id,), facilities=facilities
+    )
     return db.execute(sql, params).fetchone() is not None
 
 
-def _out_of_scope_locators(db, dept: str | None, in_scope_ids: set) -> list:
+class _ScopedIds(frozenset[str]):
+    """The caller's in-scope patient ids, carrying the facility scope they were
+    read under (multisite-10).
+
+    _get_relevant_context hands this to _match_out_of_scope, which passes it
+    on to _out_of_scope_locators unchanged. That matcher takes no scope of its
+    own and belongs to the bed locator session (R026), so the facility scope
+    travels with the rows it is given instead of through a new argument.
+    """
+
+    facilities: frozenset[int] | None
+
+    def __new__(cls, ids: Iterable[str] = (), facilities: frozenset[int] | None = None) -> Self:
+        made = super().__new__(cls, ids)
+        made.facilities = facilities
+        return made
+
+
+def _out_of_scope_locators(db: Any, dept: str | None, in_scope_ids: set | _ScopedIds) -> list:
     """LOCATOR-ONLY roster of patients outside the caller's department.
 
     Returns id, name and bed and NOTHING else — no ward, no diagnosis, no
@@ -2335,16 +2420,29 @@ def _out_of_scope_locators(db, dept: str | None, in_scope_ids: set) -> list:
     empty set by definition. What keeps it safe is the projection (three
     locator columns) and the fact that the only thing computed from it is a
     boolean "does a patient by this name exist elsewhere".
+
+    ACROSS FACILITIES it is filtered (multisite-10, critique issue 4): the
+    complement is only of the caller's own facilities, read from the scope
+    `in_scope_ids` carries (_ScopedIds). Otherwise an F2 clinician could learn
+    by name whether someone is a patient at F1. A name found only at another
+    facility then gets the same no-matching-patient answer as a name found
+    nowhere (ruling MS-R13 (a)). While more than one facility is
+    on record, ids that carry no scope get no roster at all (fail closed).
     """
     if dept is None:
         return []
+    facilities = in_scope_ids.facilities if isinstance(in_scope_ids, _ScopedIds) else None
+    if not isinstance(in_scope_ids, _ScopedIds) and facility_service.multi_facility_data(db=db):
+        return []
+    fac_sql, fac_params = ("", ()) if facilities is None else _facility_predicate(facilities)
     # `bed` only for an admitted patient (R026): a discharged patient's bed
     # belongs to someone else now, and "outside your department" about it
     # would tell the clinician a real admission exists. Still three columns.
     rows = db.execute(
         "SELECT p.id, p.name, "
         "CASE WHEN p.status = 'admitted' THEN p.bed END AS bed FROM patients p "
-        "WHERE p.status IN ('admitted', 'discharged')"
+        "WHERE p.status IN ('admitted', 'discharged')" + (f" AND {fac_sql}" if fac_sql else ""),
+        fac_params,
     ).fetchall()
     return [r for r in rows if r["id"] not in in_scope_ids]
 
@@ -2376,6 +2474,78 @@ NO_MATCHING_PATIENT_NOTICE = (
     "EHR: Orb IS the record system. You MUST NOT invent or state any vitals, "
     "diagnosis, labs, medications, or clinical details for them."
 )
+
+# The facility half of both answers (ruling MS-R13 (a), multisite-10). While
+# more than one facility is on record, the census of a facility-bound account
+# with no department is its facility's, so "no matching patient" names that
+# facility. It is said the same way whether or not anyone by that name is on
+# record at another facility, so Sage never becomes a group-wide existence
+# lookup. A ward account's census is its department's, not the facility's: a
+# bed or name it cannot see may be held by another department of the same
+# facility, so it keeps the scope-neutral wording above. So do a group-wide
+# account (facilities None) and every install with one facility, unchanged.
+FACILITY_NO_MATCH_SUFFIX = (
+    " More than one facility of the hospital group is on record, and the census "
+    "available to you is {facility}'s. Tell the user there is no patient matching "
+    "that at {facility}. Do NOT say or suggest whether a patient matching that is "
+    "on record at any other facility of the group."
+)
+
+# Streamed verbatim, like OUT_OF_SCOPE_NOTICE, to a facility-bound account with
+# no department when the patient id it sent is outside its facilities. The same
+# words whether or not that id belongs to a patient somewhere else.
+FACILITY_OUT_OF_SCOPE_NOTICE = (
+    "**No patient matching that at {facility}.**\n\n"
+    "I can't show you anything from a chart outside {facility}, not vitals, "
+    "medications, diagnosis or location. If you need it clinically, ask an "
+    "administrator. This request has been recorded in the audit log."
+)
+
+
+def _facility_words(facilities: frozenset[int]) -> str:
+    """The name to say for a caller's facility scope: its one facility's
+    display name, else "this facility"."""
+    if len(facilities) == 1:
+        try:
+            ident = facility_service.facility_identity(next(iter(facilities)))
+        except Exception:
+            ident = None
+        name = (ident or {}).get("name")
+        if name:
+            return str(name)
+    return "this facility"
+
+
+def _no_matching_patient_notice(dept: str | None, facilities: frozenset[int] | None) -> str:
+    """NO_MATCHING_PATIENT_NOTICE, naming the caller's facility only when the
+    caller's census is that facility: a facility-bound account with no
+    department (MS-R13 (a)). A ward account gets the notice alone, because its
+    census is its department's. It always starts with the notice itself, which
+    the chat route keys on."""
+    if dept is not None or facilities is None:
+        return NO_MATCHING_PATIENT_NOTICE
+    return NO_MATCHING_PATIENT_NOTICE + FACILITY_NO_MATCH_SUFFIX.format(
+        facility=_facility_words(facilities)
+    )
+
+
+def _out_of_scope_notice(dept: str | None, facilities: frozenset[int] | None) -> str:
+    """The verbatim refusal for a patient id outside the caller's scope: the
+    department notice, or the facility words for a facility-bound account
+    with no department (MS-R13 (a))."""
+    if dept is None and facilities is not None:
+        return FACILITY_OUT_OF_SCOPE_NOTICE.format(facility=_facility_words(facilities))
+    return OUT_OF_SCOPE_NOTICE
+
+
+def _facility_audit_metadata(user: dict) -> dict:
+    """{"facility_scope": sorted ids, or None for group-wide} while more than
+    one facility is on record, as permissions.log_phi_read records it; {}
+    otherwise, so a single-facility row keeps its old shape."""
+    if not facility_service.multi_facility_data():
+        return {}
+    scope = facility_scope(user)
+    return {"facility_scope": None if scope is None else sorted(scope)}
 
 
 def _audit_out_of_scope(
@@ -2421,6 +2591,7 @@ def _audit_out_of_scope(
             "caller_department": dept,
             "matched_out_of_scope": len(target_patient_ids or []),
             "query_chars": len(query or ""),
+            **_facility_audit_metadata(user),
         },
     )
 
@@ -5312,11 +5483,12 @@ def _answer_label_for(db, patient_id) -> str | None:
 
 def answer_label_for_patient(patient_id: str, user: dict) -> str | None:
     """The same label for the voice lane's own chart fallback, inside the
-    caller's department only."""
+    caller's department (and facilities, multisite-10) only."""
     try:
         dept = department_scope(user)
+        facilities = facility_scope(user)
         with db_session() as db:
-            if not _patient_in_scope(db, patient_id, dept):
+            if not _patient_in_scope(db, patient_id, dept, facilities=facilities):
                 return None
             return _answer_label_for(db, patient_id)
     except Exception:
@@ -6641,7 +6813,9 @@ SIMULATED_RESULT_PREFIX = "[SIMULATED RESULT, not a real lab or image] "
 PREVIOUS_STAY_MISSING = "No observations charted this stay yet"
 
 
-def _assemble_patient_context(db, patient_id: str, dept: str | None) -> dict | None:
+def _assemble_patient_context(
+    db: Any, patient_id: str, dept: str | None, *, facilities: frozenset[int] | None = None
+) -> dict | None:
     """Assemble a structured patient context dictionary with completeness tracking.
 
     `dept` is REQUIRED and positional on purpose. Every query below is keyed on
@@ -6656,8 +6830,12 @@ def _assemble_patient_context(db, patient_id: str, dept: str | None) -> dict | N
 
     Returns None — never a partial dict — when the patient is outside `dept` or
     does not exist.
+
+    `facilities` is the caller's facility scope (multisite-10), applied by both
+    gates below; a person's turn always passes it. The system lanes that pass
+    dept None pass no facility scope either.
     """
-    if not _patient_in_scope(db, patient_id, dept):
+    if not _patient_in_scope(db, patient_id, dept, facilities=facilities):
         return None
     context: dict[str, Any] = {
         "patient_id": patient_id,
@@ -6694,7 +6872,9 @@ def _assemble_patient_context(db, patient_id: str, dept: str | None) -> dict | N
     # Scoped a SECOND time, in the query itself. The guard above is the gate;
     # this is the belt to its braces — if the gate is ever refactored away, the
     # chart still cannot start with a demographics line for another ward.
-    _sql, _params = _scope_sql("SELECT p.* FROM patients p WHERE p.id = ?", dept, (patient_id,))
+    _sql, _params = _scope_sql(
+        "SELECT p.* FROM patients p WHERE p.id = ?", dept, (patient_id,), facilities=facilities
+    )
     patient = db.execute(_sql, _params).fetchone()
     if not patient:
         # No such patient, or not this caller's. Either way: no partial chart.
@@ -7235,6 +7415,9 @@ def _get_relevant_context(
     # ONE derivation for the whole system (permissions.department_scope). Vigil's
     # patient board, the nurse shift board and Sage now all read the same line.
     dept = department_scope(user)
+    # And the facility half (multisite-10), from the same user row: None with
+    # one facility on record, so every statement below is then unchanged.
+    facilities = facility_scope(user)
     # Imported here rather than at module scope: sage_relay_context imports the
     # scope gate (_patient_in_scope / _scope_sql) FROM this module, deliberately,
     # so that the department predicate has exactly one definition. A top-level
@@ -7260,6 +7443,7 @@ def _get_relevant_context(
         *_scope_sql(
             "SELECT p.id, p.name, p.ward, p.bed, p.status FROM patients p WHERE p.status = 'admitted'",
             dept,
+            facilities=facilities,
         )
     ).fetchall()
     # Separate lookup for discharged patients (only used for explicit name
@@ -7268,6 +7452,7 @@ def _get_relevant_context(
         *_scope_sql(
             "SELECT p.id, p.name, p.ward, p.bed, p.status FROM patients p WHERE p.status = 'discharged'",
             dept,
+            facilities=facilities,
         )
     ).fetchall()
     doctors = db.execute("SELECT name FROM users WHERE role = 'doctor'").fetchall()
@@ -7293,7 +7478,9 @@ def _get_relevant_context(
         # re-identification. The moment this builder emits anything per-patient
         # it must take `dept` — the guard for that is
         # tests/test_aggregate_reasoning.py.
-        agg_context = build_aggregate_context(query)
+        # The FACILITY scope is applied (multisite-10): "the hospital" is the
+        # caller's facility, never another facility's census.
+        agg_context = build_aggregate_context(query, facilities=facilities)
         db.close()
         return (agg_context, "aggregate", [], "high", False, None, "AGGREGATE_STATS")
 
@@ -7361,7 +7548,10 @@ def _get_relevant_context(
             _oos_bed_keys = set(_oos_bed_keys) | {_chunks}
     _names_someone = _names_a_specific_patient(query, query_lower)
     if dept is not None and (_names_someone or _oos_bed_keys):
-        _in_scope_ids = {p["id"] for p in patients} | {p["id"] for p in discharged_patients}
+        # Carries the facility scope to _out_of_scope_locators (multisite-10).
+        _in_scope_ids = _ScopedIds(
+            {p["id"] for p in patients} | {p["id"] for p in discharged_patients}, facilities
+        )
         _named_in_scope_in_full = any(
             _full_name_match(str(p["name"]).lower(), query_lower)
             for p in list(patients) + list(discharged_patients)
@@ -7440,7 +7630,9 @@ def _get_relevant_context(
     # the out-of-department check above, so a name from another department
     # in it is still refused and audited (attempt 10 skipped that).
     if _located.capped:
-        _chart_open = patient_id is not None and _patient_in_scope(db, patient_id, dept)
+        _chart_open = patient_id is not None and _patient_in_scope(
+            db, patient_id, dept, facilities=facilities
+        )
         db.close()
         return (
             _which_patient_question([], _chart_open),
@@ -7453,7 +7645,15 @@ def _get_relevant_context(
         )
     if _located.unresolved:
         db.close()
-        return (NO_MATCHING_PATIENT_NOTICE, "simple", [], "high", False, None, "GENERAL_MEDICAL")
+        return (
+            _no_matching_patient_notice(dept, facilities),
+            "simple",
+            [],
+            "high",
+            False,
+            None,
+            "GENERAL_MEDICAL",
+        )
 
     # ── AFTER SAGE ASKED WHICH PATIENT ──
     # Any reply right after the which-patient question that names nobody
@@ -7471,7 +7671,9 @@ def _get_relevant_context(
     # negated with nobody else named ("give lasix, but not for this patient").
     _said_open, _negated_open = _open_chart_phrases(query_lower.translate(_LOCATOR_FOLD))
     if not matched_patients and not _located.ask and _negated_open and not _said_open:
-        _chart_open = patient_id is not None and _patient_in_scope(db, patient_id, dept)
+        _chart_open = patient_id is not None and _patient_in_scope(
+            db, patient_id, dept, facilities=facilities
+        )
         db.close()
         return (
             _which_patient_question([], _chart_open),
@@ -7512,7 +7714,9 @@ def _get_relevant_context(
         if _after_an_ask and not _located.ask and not _said_open:
             # Asked again WITH the same candidates, so "yes" can still settle
             # it (attempt 10 dropped them and "yes" was asked forever).
-            _chart_open = patient_id is not None and _patient_in_scope(db, patient_id, dept)
+            _chart_open = patient_id is not None and _patient_in_scope(
+                db, patient_id, dept, facilities=facilities
+            )
             db.close()
             return (
                 _which_patient_question(_offered or [], _chart_open),
@@ -7575,6 +7779,7 @@ def _get_relevant_context(
                     "SELECT p.id, p.name, p.age, p.sex, p.diagnosis, p.bed, p.ward "
                     "FROM patients p WHERE p.status = 'admitted'",
                     dept,
+                    facilities=facilities,
                 )
             ).fetchall()
         }
@@ -7593,6 +7798,7 @@ def _get_relevant_context(
             WHERE p.status = 'admitted' AND v.voided_at IS NULL
         """,
                 dept,
+                facilities=facilities,
             )
         ).fetchall():
             # MAX(timestamp) matches EVERY row at that time, so a same-timestamp
@@ -7619,6 +7825,7 @@ def _get_relevant_context(
             WHERE p.status = 'admitted'
         """,
                     dept,
+                    facilities=facilities,
                 )
             ).fetchall()
             if _scoring_on()
@@ -7653,6 +7860,11 @@ def _get_relevant_context(
             if dept
             else "HOSPITAL CENSUS (caller has no department on record)"
         )
+        if not dept and facilities is not None:
+            # A facility-bound account: its census is one facility's (multisite-10).
+            _census_label = (
+                f"{_facility_words(facilities).upper()} CENSUS (caller has no department on record)"
+            )
         context_parts = [f"{_census_label} ({len(all_demographics)} admitted):"]
 
         for pid, p in all_demographics.items():
@@ -7930,7 +8142,7 @@ def _get_relevant_context(
             # this function, so it is vetted against the user's own department
             # before it can key a chart: "what are his vitals?" plus a foreign
             # patient_id was a complete bypass of the name matcher above.
-            if not _patient_in_scope(db, patient_id, dept):
+            if not _patient_in_scope(db, patient_id, dept, facilities=facilities):
                 db.close()
                 _audit_out_of_scope(
                     user,
@@ -7939,7 +8151,15 @@ def _get_relevant_context(
                     reason="request_patient_id",
                     target_patient_ids=[patient_id],
                 )
-                return (OUT_OF_SCOPE_NOTICE, "simple", [], "high", False, None, "OUT_OF_SCOPE")
+                return (
+                    _out_of_scope_notice(dept, facilities),
+                    "simple",
+                    [],
+                    "high",
+                    False,
+                    None,
+                    "OUT_OF_SCOPE",
+                )
             matched_patient_id = patient_id
             # The conversation is about someone else: ask, offering them, and
             # "yes" settles this turn. Attempt 9 answered from the open chart
@@ -8055,7 +8275,7 @@ def _get_relevant_context(
         and not _names_a_specific_patient(query, query_lower)
     ):
         _anchor = None
-        if patient_id and _patient_in_scope(db, patient_id, dept):
+        if patient_id and _patient_in_scope(db, patient_id, dept, facilities=facilities):
             # Out-of-scope request patient_id is simply NOT anchored (no chart
             # is read, so nothing to deny). It is not audited as a reach either:
             # this turn asked for no patient — a stale view_context is not an
@@ -8118,7 +8338,9 @@ def _get_relevant_context(
         # generically, with invented citations. The chat route streams this
         # text verbatim and never calls the model; the voice lane reads it as
         # its candidate list.
-        _chart_open = patient_id is not None and _patient_in_scope(db, patient_id, dept)
+        _chart_open = patient_id is not None and _patient_in_scope(
+            db, patient_id, dept, facilities=facilities
+        )
         db.close()
         context_str = _which_patient_question(
             [dict(m["data"]) for m in matched_patients], _chart_open
@@ -8139,7 +8361,7 @@ def _get_relevant_context(
         # warms Cardiology's chart into a cache keyed only by patient_id. That
         # cache lookup is not a patients query, so no department predicate can
         # be attached to it; this is what stands in for one.
-        if not _patient_in_scope(db, matched_patient_id, dept):
+        if not _patient_in_scope(db, matched_patient_id, dept, facilities=facilities):
             db.close()
             _audit_out_of_scope(
                 user,
@@ -8148,7 +8370,15 @@ def _get_relevant_context(
                 reason="resolved_patient",
                 target_patient_ids=[matched_patient_id],
             )
-            return (OUT_OF_SCOPE_NOTICE, "simple", [], "high", False, None, "OUT_OF_SCOPE")
+            return (
+                _out_of_scope_notice(dept, facilities),
+                "simple",
+                [],
+                "high",
+                False,
+                None,
+                "OUT_OF_SCOPE",
+            )
 
         # Check cache
         import json
@@ -8230,9 +8460,13 @@ def _get_relevant_context(
                                 ]
             except Exception as parse_err:
                 logger.warning("Cache parsing error: %s", parse_err)
-                patient_context_dict = _assemble_patient_context(db, matched_patient_id, dept)
+                patient_context_dict = _assemble_patient_context(
+                    db, matched_patient_id, dept, facilities=facilities
+                )
         else:
-            patient_context_dict = _assemble_patient_context(db, matched_patient_id, dept)
+            patient_context_dict = _assemble_patient_context(
+                db, matched_patient_id, dept, facilities=facilities
+            )
         if patient_context_dict:
             # Tag with source provenance
             patient_context_dict["source_of_truth"] = patient_source_of_truth or "admitted"
@@ -8277,7 +8511,10 @@ def _get_relevant_context(
                 if _exchange and detect_mutation_intent(_exchange[0]):
                     _open = (
                         patient_id
-                        if (patient_id and _patient_in_scope(db, patient_id, dept))
+                        if (
+                            patient_id
+                            and _patient_in_scope(db, patient_id, dept, facilities=facilities)
+                        )
                         else None
                     )
                     if (
@@ -8410,8 +8647,10 @@ def _get_relevant_context(
         # Wording is scope-neutral ("the census available to you") because a
         # patient in another department is also absent from this caller's
         # census, and the refusal must not confirm or deny that they exist
-        # elsewhere in the building.
-        no_patient_warning = NO_MATCHING_PATIENT_NOTICE
+        # elsewhere in the building. Only a facility-bound caller with no
+        # department, whose census IS one facility, is told which facility
+        # (MS-R13 (a)), the same words either way.
+        no_patient_warning = _no_matching_patient_notice(dept, facilities)
 
     # Early exit for queries with no clinical or patient relevance.
     # `patient_context_dict` carries the STICKY ANCHOR: a bound follow-up

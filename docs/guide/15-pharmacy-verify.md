@@ -168,7 +168,7 @@ Module constant: `_UNVERIFIED_SOURCES = ("llm_extracted", "agentic")` (`server/s
 
 #### `_is_placeholder` / `_corrected` / `_actor_role` / `_with_dose_check`: `server/services/pharmacy_verification_service.py:52` / `:55` / `:92` / `:105`
 **Does:** The small helpers behind verify. `_is_placeholder` is true for a blank value or one containing "review" (the charting placeholders `REVIEW REQUIRED` and route `Review`). `_corrected(value, stored)` is the pharmacist's entry if non-blank, else the stored value. `_actor_role` reads the acting account's role from `users` (the route passes only the id). `_with_dose_check` runs the pharmacist's corrected dose through the shared dose guard (`medication_safety_gate.screen_order_dose`) and appends any findings to `alerts` as `type: "dose check"` rows (severe for a block, moderate otherwise, plus a moderate "could not run" row when the guard is unavailable), sets `blocking` on a block, and attaches a `dose_check` summary.
-**Why they exist:** verifying used to keep the stored value when the pharmacist left a field empty, so `REVIEW REQUIRED` became the verified dose of an active order (`:48-49`); and the corrected dose used to be stored unchecked (the comment at `:261-266`).
+**Why they exist:** verifying used to keep the stored value when the pharmacist left a field empty, so `REVIEW REQUIRED` became the verified dose of an active order (`:48-49`); and the corrected dose used to be stored unchecked (the comment at `:272-277`).
 
 ---
 
@@ -193,13 +193,13 @@ Module constant: `_UNVERIFIED_SOURCES = ("llm_extracted", "agentic")` (`server/s
 3. For each row: serialise it, call `_safety_alerts` with the row's own id, and attach `safety_alerts`, `max_severity`, `interaction_screened`, `coverage_note` and `screen_failed` (`:190-202`).
 **Why it exists:** This is the queue itself, the single source of "what needs a pharmacist right now." Running the safety screen per-row here means the queue shows the danger *before* the pharmacist acts, not only after.
 **Data in/out:** none → `list[PendingMedication-shaped dict]`, each with `safety_alerts: [...]`, `max_severity: 'none'|'mild'|'moderate'|'severe'|'unknown'` and the three coverage fields.
-**Talks to:** Calls `db_session`, `_serialize_med`, `_safety_alerts`. Called by the `GET /api/pharmacy/pending` route (`server/routes/pharmacy_routes.py:37`). Ultimately consumed by `getPendingVerifications` on the frontend.
+**Talks to:** Calls `db_session`, `_serialize_med`, `_safety_alerts`. Called by the `GET /api/pharmacy/pending` route (`server/routes/pharmacy_routes.py:53`). Ultimately consumed by `getPendingVerifications` on the frontend.
 **Change guide:** To show verified meds too (an audit view), relax the `verified_by IS NULL` clause. Watch out: dropping it would flood the queue with every historical AI med. To page the queue, add `LIMIT/OFFSET` here and thread params from the route.
 **Gotchas:** (1) The safety screen runs **once per row** on every list call, an N-row queue does N screens, each hitting the DB for allergies/interactions. A candidate for batching if the queue grows. (2) The `{placeholders}` format-string (`:184`) interpolates only the `?` marks (structure), never user data, this is safe. Do not "simplify" it into interpolating `_UNVERIFIED_SOURCES` values directly, which would reintroduce an injection vector. (3) The inner `JOIN` (not `LEFT JOIN`) on `patients` drops a med whose patient row is missing as well as a discharged one.
 
 ---
 
-#### `_fetch_med`: `server/services/pharmacy_verification_service.py:304`
+#### `_fetch_med`: `server/services/pharmacy_verification_service.py:315`
 **Signature:** `(db, med_id: int) -> Row | None`
 **Does:** Reads a single med by id (with `m.*` and the joined `patient_name`) on a caller-supplied connection.
 **How it works:** One parameterised SELECT `WHERE m.id = ?`, returns `fetchone()` (a row or `None`).
@@ -211,22 +211,22 @@ Module constant: `_UNVERIFIED_SOURCES = ("llm_extracted", "agentic")` (`server/s
 
 ---
 
-#### `verify_medication`: `server/services/pharmacy_verification_service.py:353`
+#### `verify_medication`: `server/services/pharmacy_verification_service.py:375`
 **Signature:** `(med_id: int, pharmacist_id: str, dosage: str|None=None, route: str|None=None, frequency: str|None=None, ack_reason: str|None=None) -> dict`
 **Does:** A pharmacist verifies an AI/agentic med, optionally correcting dose/route/frequency, and stamps who/when, **behind fail-closed safety gates**: the corrected dose goes through the dose guard, and a severe alert, or a screen that failed to run, blocks verification until the pharmacist supplies an `ack_reason`.
 **How it works:**
-1. Open a session, `_fetch_med`. **Five guards** (`:239-250`), each raising a `ValueError` whose message is written for the pharmacist (the route turns it into HTTP 400, except the last):
+1. Open a session, `_fetch_med`. **Five guards** (`:402-416`), each raising a `ValueError` whose message is written for the pharmacist (the route turns it into HTTP 400, except the last):
    - row is `None` → `NOT_ON_CHART_MESSAGE`, "This medication is no longer on the chart. Refresh the queue." (`:35`).
    - `source` not in `_UNVERIFIED_SOURCES` → `NOT_SAGE_CHARTED_MESSAGE`, it refuses to "verify" a clinician-entered med (`:36`).
    - `verified_by is not None` → `ALREADY_DECIDED_MESSAGE`, another pharmacist got there first (`:37`).
    - `status != 'active'` → `STOPPED_ON_CHART_MESSAGE` (`:32`): verifying never revives a drug a doctor stopped.
    - any of the effective dose/route/frequency (`_corrected`: the pharmacist's entry, else the stored value) is blank or a placeholder → `IncompleteOrderError` (`:40`), "Enter a dose, route and frequency before verifying", which the route answers with **422**.
-2. Re-run the screen *outside* the session and **before** verification (`_safety_alerts`, `:254`), then add the dose guard's verdict on the corrected dose (`_with_dose_check`, `:256-257`).
-3. **Dose gate** (`:259-290`), decided before the allergy branch so a refused dose never leaves an allergy-override audit row for a verification that did not happen: if the dose guard blocks, `_dose_ack_refusal` decides whether this actor may override. A pharmacist holds no `medication.prescribe`, so the way on is a corrected dose or a rejection; the refusal is audited as `pharmacy_verify_dose_block` / `denied` and raised as a `severe_ack_required:` `ValueError`.
-4. **Severity gate:** `needs_ack = max_severity == "severe" or screen_failed` (`:291`). With no `ack_reason`, it raises a `ValueError` whose message begins with the machine-readable prefix `severe_ack_required:` and whose `.safety` attribute carries the whole screen (`:295-301`). The route turns exactly that into **HTTP 428 Precondition Required** (`server/routes/pharmacy_routes.py:74-85`). With an `ack_reason`, the override is written to the tamper-evident audit chain as `pharmacy_verify_override` / `outcome="partial_success"`, carrying the severity, the alerts and the reason (`:302-321`), and the returned screen gains `override: {by, reason}` (`:322`). A dose override (only an actor holding `medication.prescribe`) is audited separately as `pharmacy_verify_dose_override` (`:324-344`).
+2. Re-run the screen *outside* the session and **before** verification (`_safety_alerts`, `:265`), then add the dose guard's verdict on the corrected dose (`_with_dose_check`, `:267-268`).
+3. **Dose gate** (`:270-301`), decided before the allergy branch so a refused dose never leaves an allergy-override audit row for a verification that did not happen: if the dose guard blocks, `_dose_ack_refusal` decides whether this actor may override. A pharmacist holds no `medication.prescribe`, so the way on is a corrected dose or a rejection; the refusal is audited as `pharmacy_verify_dose_block` / `denied` and raised as a `severe_ack_required:` `ValueError`.
+4. **Severity gate:** `needs_ack = max_severity == "severe" or screen_failed` (`:302`). With no `ack_reason`, it raises a `ValueError` whose message begins with the machine-readable prefix `severe_ack_required:` and whose `.safety` attribute carries the whole screen (`:306-312`). The route turns exactly that into **HTTP 428 Precondition Required** (`server/routes/pharmacy_routes.py:122-133`). With an `ack_reason`, the override is written to the tamper-evident audit chain as `pharmacy_verify_override` / `outcome="partial_success"`, carrying the severity, the alerts and the reason (`:302-321`), and the returned screen gains `override: {by, reason}` (`:322`). A dose override (only an actor holding `medication.prescribe`) is audited separately as `pharmacy_verify_dose_override` (`:324-344`).
 5. **Re-guard inside the write session** (`:346-362`): not on chart, already decided, stopped, and the placeholder check run again, because another pharmacist may have verified the med (or a doctor stopped it) while the screen or the acknowledgement round-trip was in flight.
-6. `UPDATE medications SET dosage, route, frequency, verified_by, verified_at WHERE id=? AND verified_by IS NULL AND status='active'` (`:364-370`). Status is **not** written: the med stays `active`. The trailing predicates are a **concurrency guard**, even if two requests both pass the read-time check, only the first UPDATE matches. When that UPDATE matched and the ward row is linked to a medication order (`medications.med_order_id`), `_mirror_into_order_store` (`server/services/pharmacy_verification_service.py:287`) moves the order in the same transaction through `chart_lane.mirror_legacy_decision_in_txn` (wave 5, W5-E), whatever the store switches say. A refusal from the store is raised as a `ValueError`, so the route answers 400 and the verification is undone with it. An unlinked row is untouched.
-7. Re-read with `_fetch_med`, serialise, log, and return (`:373-380`).
+6. `UPDATE medications SET dosage, route, frequency, verified_by, verified_at WHERE id=? AND verified_by IS NULL AND status='active'` (`:585-590`). Status is **not** written: the med stays `active`. The trailing predicates are a **concurrency guard**, even if two requests both pass the read-time check, only the first UPDATE matches. When that UPDATE matched and the ward row is linked to a medication order (`medications.med_order_id`), `_mirror_into_order_store` (`server/services/pharmacy_verification_service.py:298`) moves the order in the same transaction through `chart_lane.mirror_legacy_decision_in_txn` (wave 5, W5-E), whatever the store switches say. A refusal from the store is raised as a `ValueError`, so the route answers 400 and the verification is undone with it. An unlinked row is untouched.
+7. Re-read with `_fetch_med`, serialise, log, and return (`:395-402`).
 **Why it exists:** This is the promotion step, the moment an AI suggestion becomes a human-owned active order. Re-running the safety screen *at decision time* means the returned payload shows the pharmacist the allergy/interaction picture as it stands right now, even if the patient's allergies changed since the med was charted.
 **Data in/out:** in: med id, pharmacist id, optional corrections, optional acknowledgement. out:
 ```json
@@ -235,24 +235,24 @@ Module constant: `_UNVERIFIED_SOURCES = ("llm_extracted", "agentic")` (`server/s
   "safety": { "max_severity":"severe", "blocking":true, "safe":false, "override": {"by":"PH..","reason":"..."}, ... },
   "safety_alerts": [ { "type":"allergy", "severity":"severe", "message":"..." } ] }
 ```
-**Talks to:** Calls `db_session`, `_fetch_med`, `_now`, `_safety_alerts`, `_with_dose_check`, `_actor_role`, `medication_safety_gate._dose_ack_refusal`, `log_audit_event`. Called by the `POST /{med_id}/verify` route (`server/routes/pharmacy_routes.py:53`).
+**Talks to:** Calls `db_session`, `_fetch_med`, `_now`, `_safety_alerts`, `_with_dose_check`, `_actor_role`, `medication_safety_gate._dose_ack_refusal`, `log_audit_event`. Called by the `POST /{med_id}/verify` route (`server/routes/pharmacy_routes.py:101`).
 **Change guide (worked example):** *"I want verification blocked on a **moderate** alert too."* The gate is one boolean at `:291`; widen it to `safety["max_severity"] in ("moderate", "severe") or safety.get("screen_failed")`. Knock-on: the 428 path and the audited override already exist, so nothing else server-side changes, but the queue's acknowledgement panel opens on every 428 (`src/api/pharmacy.ts:126`), so it will start appearing far more often, and an interlock that fires constantly is one staff learn to click through. Do not instead raise a plain `ValueError`: that maps to 400 and gives the pharmacist no override path, which is a dead end.
-**Gotchas:** (1) A blank correction keeps the stored value, but if the stored value is the placeholder the verify is refused with 422, so a pharmacist cannot verify a `REVIEW REQUIRED` dose by leaving the field empty. (2) The 428 is raised by a `ValueError` whose **message prefix** is the contract (`severe_ack_required:`). Reword that string and the route silently degrades the 428 to a 400, taking the acknowledgement UI with it; it is a string-matched protocol between two files (`server/services/pharmacy_verification_service.py:297` and `server/routes/pharmacy_routes.py:75`). (3) A *failed* screen blocks just as hard as a severe alert, so an outage in the drug-safety service stops all verification until pharmacists start acknowledging, which is the intended trade, but worth knowing before the pager goes off.
+**Gotchas:** (1) A blank correction keeps the stored value, but if the stored value is the placeholder the verify is refused with 422, so a pharmacist cannot verify a `REVIEW REQUIRED` dose by leaving the field empty. (2) The 428 is raised by a `ValueError` whose **message prefix** is the contract (`severe_ack_required:`). Reword that string and the route silently degrades the 428 to a 400, taking the acknowledgement UI with it; it is a string-matched protocol between two files (`server/services/pharmacy_verification_service.py:308` and `server/routes/pharmacy_routes.py:123`). (3) A *failed* screen blocks just as hard as a severe alert, so an outage in the drug-safety service stops all verification until pharmacists start acknowledging, which is the intended trade, but worth knowing before the pager goes off.
 
 ---
 
-#### `reject_medication`: `server/services/pharmacy_verification_service.py:583`
+#### `reject_medication`: `server/services/pharmacy_verification_service.py:605`
 **Signature:** `(med_id: int, pharmacist_id: str, reason: str) -> dict`
 **Does:** A pharmacist rejects an AI/agentic med: discontinue it and record who rejected it and why.
 **How it works:**
-1. `reason = (reason or "").strip()`; if empty, raise `ValueError("Give a reason for rejecting this medication.")` **before** touching the DB (`:393-395`). A reason is mandatory for auditability.
-2. Open a session, `_fetch_med`, run the not-on-chart, not-Sage-charted and already-decided guards (`:397-404`). There is no `active` check: a pharmacist may still reject a med a doctor has since stopped.
-3. Build the rejection note with the pharmacist's **name**, read from `users` on the same session (`:411-412`), falling back to the id: `f"[REJECTED by {who_name} @ {stamp}] {reason}"`, appended to any prior `notes` with a newline (`:406-414`), history is preserved, not overwritten. The time stays UTC ISO in the stored note; every screen that prints it renders it in local clinical form.
-4. `UPDATE ... SET status='discontinued', verified_by, verified_at, notes WHERE id=? AND verified_by IS NULL` (`:416-421`). Note rejection also stamps `verified_by`/`verified_at`, "verified" here means "a pharmacist made the decision," not "approved." A linked ward row moves its medication order to rejected in the same transaction (`_mirror_into_order_store`, as in verify), and a store refusal undoes the rejection.
-5. Re-read, serialise, re-run safety (`:425`), log, return.
+1. `reason = (reason or "").strip()`; if empty, raise `ValueError("Give a reason for rejecting this medication.")` **before** touching the DB (`:415-417`). A reason is mandatory for auditability.
+2. Open a session, `_fetch_med`, run the not-on-chart, not-Sage-charted and already-decided guards (`:419-426`). There is no `active` check: a pharmacist may still reject a med a doctor has since stopped.
+3. Build the rejection note with the pharmacist's **name**, read from `users` on the same session (`:433-434`), falling back to the id: `f"[REJECTED by {who_name} @ {stamp}] {reason}"`, appended to any prior `notes` with a newline (`:428-436`), history is preserved, not overwritten. The time stays UTC ISO in the stored note; every screen that prints it renders it in local clinical form.
+4. `UPDATE ... SET status='discontinued', verified_by, verified_at, notes WHERE id=? AND verified_by IS NULL` (`:438-443`). Note rejection also stamps `verified_by`/`verified_at`, "verified" here means "a pharmacist made the decision," not "approved." A linked ward row moves its medication order to rejected in the same transaction (`_mirror_into_order_store`, as in verify), and a store refusal undoes the rejection.
+5. Re-read, serialise, re-run safety (`:447`), log, return.
 **Why it exists:** The negative half of the loop. A rejected AI med must leave the active chart (`discontinued`) *and* leave a paper trail (the reason in `notes` plus the audit event) so a later reviewer can see why the AI's suggestion was thrown out.
 **Data in/out:** in: med id, pharmacist id, non-empty reason. out: `{status:'rejected', medication:{status:'discontinued', ...}, reason, safety, safety_alerts}`.
-**Talks to:** Calls `db_session`, `_fetch_med`, `_now`, `_safety_alerts`. Called by `POST /{med_id}/reject` (`server/routes/pharmacy_routes.py:116`).
+**Talks to:** Calls `db_session`, `_fetch_med`, `_now`, `_safety_alerts`. Called by `POST /{med_id}/reject` (`server/routes/pharmacy_routes.py:165`).
 **Change guide (worked example):** *"I want rejected meds kept in a separate `rejected` status, not `discontinued`."* Change `'discontinued'` at `:418`. Watch out: the `medications.status` column has a CHECK constraint allowing only `('active','discontinued','prn')` (`server/database.py:240`), so you must first ALTER the constraint (a table rebuild in SQLite) or the UPDATE fails. This is a good example of why the doc's Rebuild notes call out the schema as a prerequisite.
 **Gotchas:** The rejection note stamps use the same `_now()` UTC ISO string embedded into free-text `notes`. Reusing `verified_by` for a rejection is a semantic overload, see Discrepancies.
 
@@ -260,9 +260,9 @@ Module constant: `_UNVERIFIED_SOURCES = ("llm_extracted", "agentic")` (`server/s
 
 ### `server/routes/pharmacy_routes.py`
 
-Router declared with `prefix="/api/pharmacy"` and tag `"Pharmacy Verification"` (`server/routes/pharmacy_routes.py:21`). Registered in `server/main.py` via `from routes.pharmacy_routes import router as pharmacy_router` (`server/main.py:74`) and `app.include_router(pharmacy_router)` (`server/main.py:1009`), no extra prefix at include time, so the full paths are exactly `/api/pharmacy/...`.
+Router declared with `prefix="/api/pharmacy"` and tag `"Pharmacy Verification"` (`server/routes/pharmacy_routes.py:37`). Registered in `server/main.py` via `from routes.pharmacy_routes import router as pharmacy_router` (`server/main.py:74`) and `app.include_router(pharmacy_router)` (`server/main.py:1009`), no extra prefix at include time, so the full paths are exactly `/api/pharmacy/...`.
 
-#### `VerifyRequest` / `RejectRequest`: `server/routes/pharmacy_routes.py:32`, `:33`
+#### `VerifyRequest` / `RejectRequest`: `server/routes/pharmacy_routes.py:48`, `:49`
 **Signature:** Pydantic models. `VerifyRequest{ dosage?: str, route?: str, frequency?: str, ack_reason?: str }`; `RejectRequest{ reason: str }`.
 **Does:** Declare and validate the JSON request bodies.
 **How it works:** FastAPI parses the request body into these models; all `VerifyRequest` fields are `Optional` (default `None`), so an empty `{}` is a valid verify body, and the service keeps each stored value it was not given (then refuses with 422 if any of them is still a placeholder). `ack_reason` is the pharmacist's reason for verifying across a severe or failed screen. `RejectRequest.reason` is required, a missing `reason` yields FastAPI's own 422 before the handler runs.
@@ -273,7 +273,7 @@ Router declared with `prefix="/api/pharmacy"` and tag `"Pharmacy Verification"` 
 
 ---
 
-#### `get_pending`: `server/routes/pharmacy_routes.py:49`
+#### `get_pending`: `server/routes/pharmacy_routes.py:96`
 **Signature:** `GET /api/pharmacy/pending`, dep `require_permission("helix.read")` → `{ "pending": [...] }`
 **Does:** Returns the verification queue.
 **How it works:** The `Depends(require_permission("helix.read"))` runs first: it resolves the JWT to a user, checks the user's role grants `helix.read`, and 403s otherwise (`server/permissions.py:851-859`). On success it returns the authenticated `user` dict, and the handler returns `{"pending": pharmacy.list_pending_verification()}`.
@@ -281,17 +281,17 @@ Router declared with `prefix="/api/pharmacy"` and tag `"Pharmacy Verification"` 
 **Data in/out:** none → `{"pending": PendingMedication[]}`.
 **Talks to:** Calls `list_pending_verification`. Called by `getPendingVerifications` (`src/api/pharmacy.ts:99`).
 **Change guide:** To let admins read the queue, they already have `HELIX_READ` (`server/permissions.py:306`) so no change needed server-side; the *UI* tab is what hides it from them, `pharmacy-verify` appears only in the pharmacist's tab list, not the admin's (`src/shellConfig.tsx:894`).
-**Gotchas:** Read-only route does **not** write an audit event (only verify/reject do). If you need "who looked at the queue" auditing, add a `log_audit_event` here. A sibling read, `GET /api/pharmacy/interaction-coverage` (`server/routes/pharmacy_routes.py:43`), returns which formulary items the interaction knowledge base can screen.
+**Gotchas:** Read-only route does **not** write an audit event (only verify/reject do). If you need "who looked at the queue" auditing, add a `log_audit_event` here. A sibling read, `GET /api/pharmacy/interaction-coverage` (`server/routes/pharmacy_routes.py:59`), returns which formulary items the interaction knowledge base can screen.
 
 ---
 
-#### `verify`: `server/routes/pharmacy_routes.py:103`
+#### `verify`: `server/routes/pharmacy_routes.py:151`
 **Signature:** `POST /api/pharmacy/{med_id}/verify`, body `VerifyRequest`, dep `require_permission("helix.write")` → `VerifyResult`
 **Does:** Verifies a med and audits the action.
 **How it works:**
-1. RBAC: `helix.write` required (`:55`).
-2. Call `pharmacy.verify_medication(med_id, pharmacist_id=user["id"], dosage=..., route=..., frequency=..., ack_reason=...)` inside a `try` (`:63-86`) that maps `IncompleteOrderError` → **422** (`:72-73`), a `ValueError` starting `severe_ack_required:` → **428** with `{error, message, safety}` (`:74-85`; the prefix is stripped so the queue can print `message` as it is), and any other `ValueError` → **400** (`:86`). This is how the service's "not on chart / not Sage-charted / already decided / stopped" guards become client-visible 400s.
-3. `log_audit_event(...)` with `event_category="clinical_record"`, `action_type="medication_verify"`, `outcome="success"`, the actor (from the JWT user), `target_type="medication"`, `patient_id`, `request_path`, `http_method`, and metadata carrying the final dose/route/frequency plus `max_severity`, `safety_alert_count`, `interaction_screened`, `screen_failed` and `acknowledged` (`:89-112`). A fresh `correlation_id` (a UUID grouping related audit rows) is minted per call.
+1. RBAC: `helix.write` required (`:103`).
+2. Call `pharmacy.verify_medication(med_id, pharmacist_id=user["id"], dosage=..., route=..., frequency=..., ack_reason=...)` inside a `try` (`:111-134`) that maps `IncompleteOrderError` → **422** (`:120-121`), a `ValueError` starting `severe_ack_required:` → **428** with `{error, message, safety}` (`:122-133`; the prefix is stripped so the queue can print `message` as it is), and any other `ValueError` → **400** (`:134`). This is how the service's "not on chart / not Sage-charted / already decided / stopped" guards become client-visible 400s.
+3. `log_audit_event(...)` with `event_category="clinical_record"`, `action_type="medication_verify"`, `outcome="success"`, the actor (from the JWT user), `target_type="medication"`, `patient_id`, `request_path`, `http_method`, and metadata carrying the final dose/route/frequency plus `max_severity`, `safety_alert_count`, `interaction_screened`, `screen_failed` and `acknowledged` (`:137-160`). A fresh `correlation_id` (a UUID grouping related audit rows) is minted per call.
 4. Return the service result verbatim.
 **Why it exists:** The HTTP verb + auth + audit wrapper around the service. Keeping audit *in the route* (not the service) means the service stays unit-testable without an audit dependency, and the audit captures request-level facts (path, method, actor role) the service doesn't see.
 **Data in/out:** in: `{dosage?, route?, frequency?, ack_reason?}` + `med_id` path param + Bearer JWT. out: `VerifyResult` (see `src/api/pharmacy.ts:75`), or the 428 payload the client types as `SevereAckRequired` (`src/api/pharmacy.ts:92`).
@@ -301,14 +301,14 @@ Router declared with `prefix="/api/pharmacy"` and tag `"Pharmacy Verification"` 
 
 ---
 
-#### `reject`: `server/routes/pharmacy_routes.py:173`
+#### `reject`: `server/routes/pharmacy_routes.py:222`
 **Signature:** `POST /api/pharmacy/{med_id}/reject`, body `RejectRequest`, dep `require_permission("helix.write")` → `RejectResult`
 **Does:** Rejects a med and audits it.
-**How it works:** Mirror of `verify`: RBAC `helix.write`, call `reject_medication(med_id, pharmacist_id, reason)` with `ValueError`→400, then `log_audit_event(action_type="medication_reject", ...)` whose metadata carries the `reason`, `max_severity`, `safety_alert_count` (`:130-148`).
+**How it works:** Mirror of `verify`: RBAC `helix.write`, call `reject_medication(med_id, pharmacist_id, reason)` with `ValueError`→400, then `log_audit_event(action_type="medication_reject", ...)` whose metadata carries the `reason`, `max_severity`, `safety_alert_count` (`:179-197`).
 **Why it exists:** The audited HTTP wrapper for the reject transition.
 **Data in/out:** in: `{reason}` + `med_id` + JWT. out: `RejectResult`.
 **Talks to:** `reject_medication`, `log_audit_event`. Called by `rejectMedication` (`src/api/pharmacy.ts:153`).
-**Gotchas:** A blank/whitespace reason produces a 400 from the service's guard (`server/services/pharmacy_verification_service.py:393-395`), *not* a 422 from Pydantic, because `reason` is a present-but-empty string, which satisfies the `str` type. The frontend also guards against this before calling (`src/components/helix/PharmacyVerifyQueue.tsx:286-287`).
+**Gotchas:** A blank/whitespace reason produces a 400 from the service's guard (`server/services/pharmacy_verification_service.py:415-417`), *not* a 422 from Pydantic, because `reason` is a present-but-empty string, which satisfies the `str` type. The frontend also guards against this before calling (`src/components/helix/PharmacyVerifyQueue.tsx:286-287`).
 
 ---
 
@@ -379,7 +379,7 @@ Interfaces:
 **Signature:** `() -> Promise<PendingMedication[]>`
 **Does:** GETs `/pharmacy/pending` and unwraps `.pending`.
 **Talks to:** `apiFetch`; called by `load`.
-**Gotchas:** Unwraps the `{pending: [...]}` envelope so callers get a bare array, keep the envelope key in sync with the route (`server/routes/pharmacy_routes.py:40`).
+**Gotchas:** Unwraps the `{pending: [...]}` envelope so callers get a bare array, keep the envelope key in sync with the route (`server/routes/pharmacy_routes.py:56`).
 
 #### `verifyMedication`: `src/api/pharmacy.ts:121`
 **Signature:** `(medId: number, corrections?: {dosage?,route?,frequency?}, ackReason?: string) -> Promise<VerifyResult | SevereAckRequired>`
@@ -500,9 +500,9 @@ One Playwright test, **"pharmacist opens the Verify Queue and it renders"** (`:1
 
 2. **The "pharmacist role gate" is really a `helix.write` permission gate, and `admin` also holds it.** `verify`/`reject` require `helix.write`, which `admin` is granted (`server/permissions.py:306`). So an admin's JWT can verify/reject meds via the API even though the UI never shows admins the `pharmacy-verify` tab (`src/shellConfig.tsx:894`). Not necessarily a bug, but "only pharmacists can verify" is enforced by UI convention, not by the API, for admins.
 
-3. **TOCTOU nuance in verify/reject.** The UPDATE carries `AND verified_by IS NULL` (`server/services/pharmacy_verification_service.py:368`, `:419`) to stop a double-write across concurrent requests, good, and verify re-runs its guards inside the write session first (`:346-362`). But neither function checks the UPDATE's affected-row count; each re-reads with `_fetch_med` and returns its status regardless. In a genuine race (two connections both pass the in-session guard before either commits), the loser's UPDATE matches 0 rows, yet the loser still returns a payload showing the *winner's* `verified_by`. Low-severity (SQLite serialises writers and the common path is the read-time guard at `:243`), but worth a rowcount check for correctness.
+3. **TOCTOU nuance in verify/reject.** The UPDATE carries `AND verified_by IS NULL` (`server/services/pharmacy_verification_service.py:390`, `:441`) to stop a double-write across concurrent requests, good, and verify re-runs its guards inside the write session first (`:368-384`). But neither function checks the UPDATE's affected-row count; each re-reads with `_fetch_med` and returns its status regardless. In a genuine race (two connections both pass the in-session guard before either commits), the loser's UPDATE matches 0 rows, yet the loser still returns a payload showing the *winner's* `verified_by`. Low-severity (SQLite serialises writers and the common path is the read-time guard at `:253`), but worth a rowcount check for correctness.
 
-4. **`verified_by` is semantically overloaded on rejection.** Rejecting a med stamps `verified_by` (`server/services/pharmacy_verification_service.py:418`) even though "verified" implies approval. The code comment acknowledges this ("the decision was made by this pharmacist"). It works because `verified_by IS NULL` is only ever the "still pending" predicate, but a reader scanning the DB would misread a discontinued+`verified_by` row as "approved then stopped."
+4. **`verified_by` is semantically overloaded on rejection.** Rejecting a med stamps `verified_by` (`server/services/pharmacy_verification_service.py:440`) even though "verified" implies approval. The code comment acknowledges this ("the decision was made by this pharmacist"). It works because `verified_by IS NULL` is only ever the "still pending" predicate, but a reader scanning the DB would misread a discontinued+`verified_by` row as "approved then stopped."
 
 5. **The placeholder test is a broad substring match.** `isPlaceholder` (`src/components/helix/PharmacyVerifyQueue.tsx:59`) treats any value whose uppercase contains `"REVIEW"` as blank, not just the exact `REVIEW REQUIRED` / `Review` placeholders, and the server's `_is_placeholder` (`server/services/pharmacy_verification_service.py:45`) applies the same rule and refuses the verify with 422. A legitimate field containing that word could not be verified. Contrived, and the two sides agree, but a sharper match would be safer.
 

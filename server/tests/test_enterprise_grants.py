@@ -349,7 +349,10 @@ def test_grant_and_revoke_write_security_rows_and_a_revoke_narrows_the_next_requ
     assert len(granted) == 1
     assert granted[0]["event_category"] == "security"
     assert granted[0]["actor_user_id"] == holder and granted[0]["target_id"] == fresh_admin
-    assert granted[0]["meta"] == {"grant_id": grant["id"], "reason": "Group CIO"}
+    # multisite-11: with two facilities on record each row names its facility,
+    # here the acting holder's (facility 1, no home row).
+    assert granted[0]["meta"] == {"grant_id": grant["id"], "reason": "Group CIO",
+                                  "facility_id": 1}
 
     # Group-wide on the next request: the new admin lists F2's staff too.
     ids = {u["id"] for u in client.get("/api/admin/users",
@@ -373,7 +376,8 @@ def test_grant_and_revoke_write_security_rows_and_a_revoke_narrows_the_next_requ
     assert resp.json()["live"] is False and resp.json()["revoked_by"] == holder
     revoked = _audits(mid, "enterprise_access_revoked")
     assert len(revoked) == 1 and revoked[0]["event_category"] == "security"
-    assert revoked[0]["meta"] == {"grant_id": grant["id"], "reason": "Left the group office"}
+    assert revoked[0]["meta"] == {"grant_id": grant["id"], "reason": "Left the group office",
+                                  "facility_id": 1}
 
     # The clock is frozen, so only the invalidation could have refreshed the
     # cached maps: the very next request is facility-bound again.

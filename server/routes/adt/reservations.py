@@ -46,6 +46,7 @@ from permissions import (
     ADT_READ,
     PATIENT_WRITE,
     department_scope,
+    facility_denial,
     patient_in_scope,
     require_any_permission,
     require_permission,
@@ -56,6 +57,7 @@ from services.adt import reservations as adt_res
 from services.audit_service import AuditWriteError, log_audit_event
 
 from routes.adt.end_stay import _meta, _scoped_admission
+from services import facility_lanes
 
 router = APIRouter()
 
@@ -132,11 +134,28 @@ def _denied(
 def _scoped_patient(patient_id: str, user: dict, request: Request, *, dept: str | None) -> None:
     """404 when the patient does not exist or is outside `dept`, the caller's
     department as the handler derived it from the authenticated user
-    (department_scope), the out-of-scope attempt audited first."""
+    (department_scope), the out-of-scope attempt audited first.
+
+    With more than one facility on record (multisite-8h1) a patient whose
+    latest encounter is at a facility outside the caller's scope is 404 too,
+    audited with scope_cause 'facility'."""
+    facilities = facility_lanes.scope_of(user)
     with db_session() as db:
         exists = db.execute("SELECT 1 FROM patients WHERE id = ?", (patient_id,)).fetchone()
+        denied, at = facility_denial(db, patient_id, facilities)
         in_scope = exists is not None and (dept is None or patient_in_scope(db, patient_id, dept))
     if exists is None:
+        raise _not_found()
+    if denied and facilities is not None:
+        facility_lanes.audit_denial(
+            user=user,
+            patient_id=patient_id,
+            dept=dept,
+            facilities=facilities,
+            facility_id=at,
+            helper="adt_reservation_patient",
+            request_meta=_meta(request),
+        )
         raise _not_found()
     if not in_scope:
         _denied(
@@ -231,19 +250,37 @@ def reserve_bed(
 _RELEASE_RESERVATION_USER_DEFAULT = Depends(require_any_permission(ADT_BED, PATIENT_WRITE))
 
 
-@router.post("/reservations/{reservation_id}/release")
+@router.post("/reservations/{reservation_id}/release", response_model=None)
 def release_reservation(
     reservation_id: str,
     body: ReleaseIn,
     request: Request,
     user: dict = _RELEASE_RESERVATION_USER_DEFAULT,
-):
+) -> dict:
     """Let a held bed go, with the reason. 409 reservation_not_active once it
     is fulfilled, released or expired."""
     facts = adt_res.reservation_facts(reservation_id)
     if facts is None:
         raise _not_found()
     dept = department_scope(user)
+    facilities = facility_lanes.scope_of(user)
+    if facilities is not None:
+        # multisite-8h1: a hold on a bed of another facility, or for a patient
+        # there, is not this caller's to release.
+        with db_session() as db:
+            denied, at = facility_denial(db, facts.get("patient_id"), facilities)
+            ward_at = facility_lanes.ward_facility_on(db, facts.get("ward_id"))
+        if denied or facility_lanes.outside(ward_at, facilities):
+            facility_lanes.audit_denial(
+                user=user,
+                patient_id=facts.get("patient_id"),
+                dept=dept,
+                facilities=facilities,
+                facility_id=at if denied else ward_at,
+                helper="adt_reservation_release",
+                request_meta=_meta(request),
+            )
+            raise _not_found()
     if facts.get("patient_id"):
         if dept is not None:
             with db_session() as db:

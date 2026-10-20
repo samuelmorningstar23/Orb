@@ -54,6 +54,8 @@ from services.adt.core import AdtError, http_detail
 from services.adt.live import notify_adt_changed
 from services.audit_service import AuditWriteError, log_audit_event
 
+from services import facility_lanes
+
 router = APIRouter()
 
 
@@ -116,14 +118,53 @@ def _meta(request: Request) -> dict:
     }
 
 
+def _outside_facility(
+    found: dict, admission_id: str, user: dict, request: Request, *, dept: str | None
+) -> bool:
+    """multisite-8h1: with more than one facility on record, is this
+    admission at a facility outside the caller's scope? An admission's own
+    facility decides (it never changes), and so does its patient's latest
+    encounter for a department-scoped caller (patient_in_scope with the
+    facilities). A refusal writes the authorization patient_scope_denied row
+    with scope_cause 'facility' before the caller answers 404. With one
+    facility nothing is read."""
+    facilities = facility_lanes.scope_of(user)
+    if facilities is None:
+        return False
+    with db_session() as db:
+        at = facility_lanes.admission_facility_on(db, admission_id)
+        outside = facility_lanes.outside(at, facilities) or (
+            dept is not None
+            and patient_in_scope(db, found["patient_id"], dept)
+            and not patient_in_scope(db, found["patient_id"], dept, facilities=facilities)
+        )
+    if outside:
+        facility_lanes.audit_denial(
+            user=user,
+            patient_id=found["patient_id"],
+            dept=dept,
+            facilities=facilities,
+            facility_id=at,
+            helper="adt_scoped_admission",
+            request_meta=_meta(request),
+        )
+    return outside
+
+
 def _scoped_admission(admission_id: str, user: dict, request: Request) -> dict:
     """The admission, or 404 when it does not exist or its patient is outside
     the caller's department. The out-of-scope attempt is audited before the
-    404, as require_patient_access does for a patient id on the path."""
+    404, as require_patient_access does for a patient id on the path.
+
+    With more than one facility on record (multisite-8h1) an admission at a
+    facility outside the caller's scope is 404 too, for a caller with or
+    without a department (_outside_facility)."""
     found = adt_end.patient_for_admission(admission_id)
     if found is None:
         raise HTTPException(status_code=404, detail="Admission not found")
     dept = department_scope(user)
+    if _outside_facility(found, admission_id, user, request, dept=dept):
+        raise HTTPException(status_code=404, detail="Admission not found")
     if dept is None:
         return found
     with db_session() as db:
@@ -203,11 +244,27 @@ def _scoped_ended_admission(admission_id: str, user: dict, request: Request) -> 
     not the caller's. Scope follows the ended admission (design adt-8b), not
     whichever stay is the patient's latest, so a doctor can reopen only a
     stay their department treated. The out-of-scope attempt is audited
-    before the 404."""
+    before the 404. With more than one facility on record (multisite-8h1) the
+    ended admission must also be at one of the caller's facilities."""
     found = adt_end.patient_for_admission(admission_id)
     if found is None:
         raise HTTPException(status_code=404, detail="Admission not found")
     dept = department_scope(user)
+    facilities = facility_lanes.scope_of(user)
+    if facilities is not None:
+        with db_session() as db:
+            at = facility_lanes.admission_facility_on(db, admission_id)
+        if facility_lanes.outside(at, facilities):
+            facility_lanes.audit_denial(
+                user=user,
+                patient_id=found["patient_id"],
+                dept=dept,
+                facilities=facilities,
+                facility_id=at,
+                helper="adt_scoped_ended_admission",
+                request_meta=_meta(request),
+            )
+            raise HTTPException(status_code=404, detail="Admission not found")
     if dept is None or (found.get("department") or "") == dept:
         return found
     log_audit_event(

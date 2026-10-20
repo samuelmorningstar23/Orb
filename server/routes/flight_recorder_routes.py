@@ -3,6 +3,12 @@
 Admin-only replay/forensics API over the tamper-evident audit log and the event
 bus. Same auth pattern as audit_routes: require_permission("audit.read"), which
 is granted to the admin role only (see permissions.ROLE_PERMISSIONS).
+
+Facilities (multisite-11): every route passes the reader's facility scope
+(services/audit_facility.reader_scope, None while one facility is on record),
+so an administrator bound to a facility replays only that facility's rows and
+an event outside it answers 404 like a missing one. Whether the chain holds is
+the same answer for every reader.
 """
 
 from database import db_session
@@ -14,6 +20,8 @@ from services.flight_recorder_service import (
     get_timeline,
     verify_chain,
 )
+
+from services import audit_facility
 
 router = APIRouter(prefix="/api/flight-recorder", tags=["flight-recorder"])
 
@@ -32,9 +40,15 @@ def timeline(
     until: str | None = _TIMELINE_UNTIL_DEFAULT,
     limit: int = _TIMELINE_LIMIT_DEFAULT,
     user: dict = _TIMELINE_USER_DEFAULT,
-):
+) -> dict:
     """Unified, time-ordered replay stream (audit + events + order transitions)."""
-    events = get_timeline(patient_id=patient_id, since=since, until=until, limit=limit)
+    events = get_timeline(
+        patient_id=patient_id,
+        since=since,
+        until=until,
+        limit=limit,
+        facilities=audit_facility.reader_scope(user),
+    )
     # Names read now, never stored in the chain. An event bus row's actor is a
     # source node, not a user, so it resolves to None.
     with db_session() as db:
@@ -50,9 +64,9 @@ _VERIFY_USER_DEFAULT = Depends(require_permission("audit.read"))
 def verify(
     patient_id: str | None = _VERIFY_PATIENT_ID_DEFAULT,
     user: dict = _VERIFY_USER_DEFAULT,
-):
+) -> dict:
     """Verify the audit hash chain; returns {ok, broken_at, count}."""
-    return verify_chain(patient_id=patient_id)
+    return verify_chain(patient_id=patient_id, facilities=audit_facility.reader_scope(user))
 
 
 _EVENT_DETAIL_USER_DEFAULT = Depends(require_permission("audit.read"))
@@ -63,11 +77,11 @@ def event_detail(
     source: str,
     event_id: str,
     user: dict = _EVENT_DETAIL_USER_DEFAULT,
-):
+) -> dict:
     """Full raw detail for a single timeline entry."""
     if source not in ("audit", "event", "order"):
         raise HTTPException(status_code=400, detail="source must be one of: audit, event, order")
-    detail = get_event_detail(event_id, source)
+    detail = get_event_detail(event_id, source, facilities=audit_facility.reader_scope(user))
     if detail is None:
         raise HTTPException(status_code=404, detail="event not found")
     event = detail.get("event")

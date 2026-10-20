@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from permissions import (
     department_scope,
     enforce_patient_scope,
+    facility_scope,
     require_patient_access,
     require_permission,
 )
@@ -45,9 +46,10 @@ _ACTIVE_BUNDLES_USER_DEFAULT = Depends(require_permission("vitals.read"))
 
 
 @router.get("/active")
-def active_bundles(user: dict = _ACTIVE_BUNDLES_USER_DEFAULT):
-    # Ward-scoped from the authenticated user row, like every patient list.
-    return {"bundles": get_active_bundles(department_scope(user))}
+def active_bundles(user: dict = _ACTIVE_BUNDLES_USER_DEFAULT) -> dict:
+    # Ward-scoped from the authenticated user row, like every patient list, and
+    # facility-scoped with more than one facility on record (multisite-8).
+    return {"bundles": get_active_bundles(department_scope(user), facilities=facility_scope(user))}
 
 
 _PATIENT_BUNDLES_USER_DEFAULT = Depends(

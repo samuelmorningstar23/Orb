@@ -2,6 +2,7 @@
 
 import json
 import logging
+from typing import Any
 
 from database import db_session
 from db_backend import DBIntegrityError
@@ -26,6 +27,10 @@ def get_channels_for_user(user_id: str, user_role: str) -> list:
                      branch comment), and discharged/orphaned rooms are dropped.
       * direct     — explicit rows in `channel_members` (migration 8). Nothing
                      is inferred, and there is no admin bypass.
+
+    With more than one facility on record an account with a facility limit
+    also keeps only the case and department rooms at its facilities
+    (_rooms_at_facilities, multisite-8); with one facility nothing changes.
     """
     # A ROLE WITHOUT relay.read GETS NO CHANNEL (W1-A for the five hospital-
     # system roles, 4 October 2026; widened to every role in wave 2). The REST
@@ -55,6 +60,14 @@ def get_channels_for_user(user_id: str, user_role: str) -> list:
         # Get user department
         user_row = db.execute("SELECT department FROM users WHERE id = ?", (user_id,)).fetchone()
         user_dept = user_row["department"] if (user_row and user_row["department"]) else ""
+        # Facility scope (multisite-8, W12-A): the same resolver as every other
+        # lane (permissions.facility_scope), read for this account. None with
+        # one facility on record, so nothing below changes then.
+        from services import facility_service
+
+        facilities = facility_service.facility_scope_for(
+            {"id": user_id, "role": user_role, "department": user_dept or None}, db=db
+        )
 
         sql = """
             SELECT c.*,
@@ -309,6 +322,9 @@ def get_channels_for_user(user_id: str, user_role: str) -> list:
                     r["type"],
                 )
 
+        if facilities is not None:
+            filtered = _rooms_at_facilities(db, filtered, facilities)
+
         return [
             {
                 "id": r["id"],
@@ -330,6 +346,50 @@ def get_channels_for_user(user_id: str, user_role: str) -> list:
             }
             for r in filtered
         ]
+
+
+def _rooms_at_facilities(db: Any, rows: list, facilities: frozenset[int]) -> list:
+    """The rooms of `rows` (already through the department rules above) that
+    sit at one of `facilities`, for an account with a facility limit
+    (multisite-8, W12-A; only while more than one facility is on record).
+
+      * case_room: the patient's latest encounter is at one of the facilities
+        (permissions.FACILITY_PATIENT_SQL, the rule require_patient_access
+        applies to the chart). A room with no patient has no facility and is
+        withheld.
+      * department: the room's name is a department the master places at one
+        of the facilities (ruling MS-R4 (a): a department belongs to one
+        facility). A room whose name the master does not list is withheld.
+      * direct: kept. Membership is explicit and is not a ward artefact.
+    """
+    from services import facility_service
+    from services.facility_filter import in_scope, patient_clause
+
+    patient_ids = sorted(
+        {r["patient_id"] for r in rows if r["type"] == "case_room" and r["patient_id"]}
+    )
+    at_facility: set[str] = set()
+    if patient_ids:
+        marks = ",".join("?" for _ in patient_ids)
+        clause, args = patient_clause(facilities)
+        at_facility = {
+            row["id"]
+            for row in db.execute(
+                f"SELECT p.id FROM patients p WHERE p.id IN ({marks}){clause}",
+                (*patient_ids, *args),
+            ).fetchall()
+        }
+    kept = []
+    for r in rows:
+        if r["type"] == "case_room":
+            if r["patient_id"] in at_facility:
+                kept.append(r)
+        elif r["type"] == "department":
+            if in_scope(facility_service.department_facility(r["name"], db=db), facilities):
+                kept.append(r)
+        else:
+            kept.append(r)
+    return kept
 
 
 # ══════════════════════════════════════════════════════════════════════════════

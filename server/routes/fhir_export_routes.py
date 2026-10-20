@@ -21,9 +21,8 @@ from auth import get_current_user
 from database import db_session
 from fastapi import APIRouter, Depends, HTTPException, Request
 from permissions import (
-    department_scope,
+    enforce_patient_scope,
     has_permission,
-    patient_in_scope,
     require_patient_access,
 )
 from services.audit_service import log_audit_event
@@ -36,17 +35,23 @@ router = APIRouter(prefix="/api/fhir", tags=["fhir-export"])
 def _authorize_patient_access(user: dict, patient_id: str) -> None:
     """Allow the export if the caller holds patient.read_all (clinician/admin)
     OR is the patient themselves exporting their OWN record (patient portal
-    "Download my record" — GDPR data-portability). Otherwise 403."""
+    "Download my record", GDPR data-portability). Otherwise 403.
+
+    FACILITY SCOPE (multisite-8, W12-A). The staff half is
+    permissions.enforce_patient_scope: the department check it always made
+    and, with more than one facility on record, the patient's facility first,
+    whatever the department says, with the patient_scope_denied row a probe
+    across a facility boundary always gets. A department-less account no longer
+    exports another facility's chart. With one facility nothing changes."""
     if has_permission(user["role"], "patient.read_all"):
         # Holding patient.read_all is not the same as covering this ward. A
         # departmented clinician exporting a whole chart out of the building is
         # the LAST place to skip the scope check.
-        dept = department_scope(user)
-        if dept is not None:
-            with db_session() as db:
-                if not patient_in_scope(db, patient_id, dept):
-                    # 404, not 403 — a 403 would confirm the patient exists.
-                    raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
+        try:
+            enforce_patient_scope(user, patient_id)
+        except HTTPException:
+            # 404, not 403: a 403 would confirm the patient exists.
+            raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found") from None
         return
     with db_session() as db:
         row = db.execute(

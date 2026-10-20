@@ -62,6 +62,52 @@ backups cannot be read, there is no upstream system holding a second copy.
 nothing else. There is no shared control plane, no telemetry service and no
 vendor account with access.
 
+*Several facilities of one group on one appliance: Partial, built and not yet
+in use (updated 20 October 2026).* One appliance belongs to one legal entity,
+which is one data fiduciary under the DPDP Act. If your group runs more than
+one facility (a main hospital and a satellite), they can share one appliance:
+every facility's records sit in the one encrypted database, with each stay,
+visit, bill and store stamped with its facility, and every facility must carry
+the same PAN, so two different companies can never be put on one appliance.
+Facilities are kept apart by the data, not by a switch. Once a second facility
+is on record, staff see only the patients whose latest encounter is at their
+own facility, and any screen not yet built to keep facilities apart is closed
+("not available yet") rather than shown with another facility's patients on
+it. Group-wide access is a named, audited grant, for administrators only. Once
+a patient is yours to see, you see the whole chart: allergies, active medicines
+and problems are never hidden by facility, because hiding them is how a known
+anaphylaxis gets missed at the second site. Today no second facility can be
+created through the product; that step stays locked until every screen keeps
+facilities apart.
+
+What one appliance for several facilities means for you:
+
+- Backups. A backup is the whole database, so restoring one rolls back every
+  facility on the appliance to the moment it was taken, not only the facility
+  that had the problem. There is no per-facility restore, and the Data and
+  Backups screen says so. Agree the restore window (5.4) with every facility's
+  lead, not just the one asking for the restore.
+- Downtime packs. Each facility's ward packs and nightly FHIR copies are
+  written to its own folder on the appliance, and its latest packs are copied
+  to that facility's own mirror, a folder on storage at that facility that
+  your operator names. Orb will not start if its site settings give two
+  facilities the same mirror, or put one facility's mirror inside another's.
+  Each time the packs are built, a mirror that is the same folder as, sits
+  inside or holds another facility's mirror or another facility's folder on
+  the appliance is not used, and when two facilities' mirrors clash neither
+  is used. That facility's latest packs then stay on the appliance only, and
+  Orb logs a warning on every build until your operator gives each facility
+  a folder of its own. So no facility's mirror receives another facility's
+  patients.
+- Exports. FHIR exports name the facility of every stay and visit, with the
+  facility's Health Facility Registry ID.
+- Leaving the group. If a facility leaves, an operator at the appliance writes
+  a FHIR extract of that facility's patients (5.8). Each patient's allergies,
+  problems and current medicines go with them whole; history that cannot be
+  told apart from another facility's is left out, and the extract says which
+  patients that applies to. Every patient included is recorded in the access
+  log.
+
 ---
 
 ## 2. Access control and identity
@@ -397,7 +443,9 @@ linkage. It never touches the live database and refuses if pointed at it.
 the last one: vitals, notes, orders. Nothing in Orb makes that loss visible to
 clinicians after the fact, so the ward must be told which window was lost. If 24
 hours is not acceptable for live patients, I add a midday run; that is your
-decision and I would like it made before go-live.
+decision and I would like it made before go-live. On an appliance that holds
+more than one facility of your group, a restore loses that window at every
+facility at once (1.5), so every facility's wards must be told.
 
 RTO: not measured. The restore procedure is written and the drill proves the
 backup is readable, which is most of the risk, but the full swap-and-boot path
@@ -458,7 +506,11 @@ marking Orb as the source and flagging anything AI-derived; an unverified
 AI-suggested medication is exported as a draft proposal, never as an active
 order, so it cannot silently become a live order in a receiving system. The
 database itself is a single SQLite file you own, on hardware you own. There is
-no lock-in and no vendor-held copy to request.
+no lock-in and no vendor-held copy to request. If one facility of a group
+leaves a shared appliance (1.5), `server/scripts/facility_extract.py`, run at
+the appliance, writes that facility's patients as FHIR R4 bundles to a local
+folder, with a manifest, and records every patient it includes in the access
+log.
 
 ---
 

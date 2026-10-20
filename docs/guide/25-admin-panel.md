@@ -51,8 +51,8 @@ Neighbors referenced throughout: **guide 03** (auth + RBAC, `require_permission`
 
 | File | Lines (approx) | Role |
 |---|---|---|
-| `server/routes/admin_routes.py` | 702 | Eight endpoints: the pre-aggregated 24h governance snapshot for the Overview tab (`:28`), patient erasure (`:265`), and the six history-import endpoints (`:517-676`, documented in guide 36). |
-| `server/routes/compliance_routes.py` | 511 | Twelve endpoints: the live compliance posture report (`:125`) plus the DPDP data-rights surface, subject export, retention, the erasure request/adjudicate/execute chain and the breach register (`:239-496`, documented in guide 35). |
+| `server/routes/admin_routes.py` | 702 | Eight endpoints: the pre-aggregated 24h governance snapshot for the Overview tab (`:372`), patient erasure (`:841`), and the six history-import endpoints (`:1035-1307`, documented in guide 36). |
+| `server/routes/compliance_routes.py` | 511 | Twelve endpoints: the live compliance posture report (`:146`) plus the DPDP data-rights surface, subject export, retention, the erasure request/adjudicate/execute chain and the breach register (`:240-662`, documented in guide 35). |
 | `server/routes/impact_routes.py` | 68 | Two endpoints: the ROI model (with query-param overrides) and the assumptions catalogue. |
 | `server/routes/model_governance_routes.py` | 43 | Three endpoints: full model registry, compact provenance chips, reseed. |
 | `server/routes/metrics_routes.py` | 51 | One endpoint: Prometheus `/metrics` (optional bearer-token gate). |
@@ -120,14 +120,14 @@ sequenceDiagram
 
 The Impact tab is the only tab that sends user input back to the server (as query params, not a body).
 
-1. On mount, `ImpactDashboard` GETs `/api/admin/impact/` with no params. The server computes the model with default assumptions and *echoes back* every assumption it used (value + unit + citation) (`server/services/impact_service.py:319`).
+1. On mount, `ImpactDashboard` GETs `/api/admin/impact/` with no params. The server computes the model with default assumptions and *echoes back* every assumption it used (value + unit + citation) (`server/services/impact_service.py:323`).
 2. The component copies those echoed values into a `draft` map of controlled `<input>` fields (`src/pages/panels/admin/ImpactDashboard.tsx:86`).
 3. The admin edits a field (say ICU-day cost). `dirty` (a `useMemo`) turns true because a draft value now differs from the model's value (`src/pages/panels/admin/ImpactDashboard.tsx:97`).
 4. "Apply & recompute" re-fetches `/api/admin/impact/?icu_day_cost_usd=…`. The route drops `None` params, passes the rest to `compute_impact`, which re-resolves assumptions (rejecting negatives/nonsense) and re-runs the counted-event × assumption arithmetic (`server/routes/impact_routes.py:52`, `server/services/impact_service.py:100`).
 
 ### Flow 3: the Trust Center posture report
 
-`compliance_report()` runs ten independent probes, each wrapped so a failure degrades to a safe default rather than crashing the report, then assembles them into a thirteen-control auditor checklist with a 0–100 weighted score (`server/services/compliance_service.py:453`). The Trust Center component renders the score as an SVG ring, the audit-chain result as a badge, and the checklist as colored rails. Detail below.
+`compliance_report()` runs ten independent probes, each wrapped so a failure degrades to a safe default rather than crashing the report, then assembles them into a thirteen-control auditor checklist with a 0–100 weighted score (`server/services/compliance_service.py:466`). The Trust Center component renders the score as an SVG ring, the audit-chain result as a badge, and the checklist as colored rails. Detail below.
 
 ---
 
@@ -289,13 +289,13 @@ The Impact tab is the only tab that sends user input back to the server (as quer
 **How it works:**
 1. Reads `config.MFA_REQUIRED_ROLES` (the roles for which MFA is mandated) (`:111`).
 2. `GROUP BY role`, counting total users and `SUM(totp_enabled=1)` enrolled per role (`:114`).
-3. Computes `required_gap` = mandated roles where enrolled < total (`:132`), and an org-wide `adoption_pct`.
+3. Computes `required_gap` = mandated roles where enrolled < total (`:145`), and an org-wide `adoption_pct`.
 **Why it exists:** Drives the MFA control (`pass` only when every mandated role is fully enrolled) and the Trust Center's per-role progress bars.
 **Data in/out:** Reads `users(role, totp_enabled)`.
 **Change guide:** To mandate MFA for admins, set `ORB_MFA_REQUIRED_ROLES=admin,doctor,nurse`; knock-on: the MFA control flips `pass→warn` until those users enroll, and `required_gap` lists the laggards. Gotcha: `adoption_pct` is org-wide (all roles) but the *control* only cares about mandated roles, a low org-wide pct with fully-enrolled mandated roles is still a `pass`.
 **Gotchas:** None noteworthy.
 
-#### _rbac_matrix: `server/services/compliance_service.py:148`
+#### _rbac_matrix: `server/services/compliance_service.py:161`
 **Signature:** `() -> {roles, permissions, matrix, role_count, permission_count}`
 **Does:** Builds the role × permission grid from the canonical `permissions.ROLE_PERMISSIONS`.
 **How it works:** Takes the sorted union of every permission any role holds, then for each role emits `{perm: bool}` for the full permission set (a dense grid, so absent = explicit `False`).
@@ -304,27 +304,27 @@ The Impact tab is the only tab that sends user input back to the server (as quer
 **Change guide:** Add a role or permission in `permissions.py` and it appears here automatically, no change needed. Gotcha: the matrix reflects the *code's* mapping, not any per-user overrides; if you ever add per-user grants, this becomes optimistic.
 **Gotchas:** None noteworthy.
 
-#### _model_posture: `server/services/compliance_service.py:169`
+#### _model_posture: `server/services/compliance_service.py:182`
 **Signature:** `() -> {validated, total, unvalidated}`
 **Does:** Validated-vs-unvalidated model counts for the honesty narrative.
 **How it works:** `list_models()` then counts `validated`.
 **Talks to:** `services.model_governance_service.list_models`.
 **Gotchas:** None noteworthy.
 
-#### _residency: `server/services/compliance_service.py:183`
+#### _residency: `server/services/compliance_service.py:196`
 **Signature:** `() -> {host, loopback_only, cors_origins, deployment_profile, on_prem}`
 **Does:** On-prem / data-residency attestation from the server bind host + CORS + profile.
 **How it works:** Reads `config.HOST`; `loopback_only` is true for `127.0.0.1`/`localhost`/`::1`. Reads `CORS_ORIGINS`, `DEPLOYMENT_PROFILE`.
-**Change guide:** Binding to `0.0.0.0` flips the `data_residency` control to `warn`. Gotcha: `on_prem` is **hard-coded `True`** here regardless of the bind (`:195`), see Discrepancies.
+**Change guide:** Binding to `0.0.0.0` flips the `data_residency` control to `warn`. Gotcha: `on_prem` is **hard-coded `True`** here regardless of the bind (`:208`), see Discrepancies.
 **Gotchas:** As above.
 
-#### _backup_present: `server/services/compliance_service.py:199`
+#### _backup_present: `server/services/compliance_service.py:212`
 **Signature:** `() -> bool`
 **Does:** Whether a backup script ships (evidence of a recovery plan).
 **How it works:** Checks three candidate paths (`scripts/backup.sh` at repo root or under `server/`, or `server/scripts/backup_db.py`) relative to `config.BASE_DIR`.
 **Gotchas:** Presence of a *script* is not proof backups *run*, the control's remediation says to schedule and restore-test.
 
-#### _dpdp_posture: `server/services/compliance_service.py:213`
+#### _dpdp_posture: `server/services/compliance_service.py:226`
 **Signature:** `() -> dict`
 **Does:** The DPDP Act 2023 probe, consent register, data-principal rights, retention, breaches.
 **How it works:** A one-line delegate: imports `dpdp_posture` from `services.consent_service` and returns it. The import is function-local so a broken consent service cannot break module import of the compliance service.
@@ -332,23 +332,23 @@ The Impact tab is the only tab that sends user input back to the server (as quer
 **Talks to:** `services.consent_service.dpdp_posture`; feeds the four `dpdp_*` controls in `_build_controls`.
 **Gotchas:** All-zeros is indistinguishable from "the probe failed" at the control layer, an empty consent register and a dead consent service both render as amber.
 
-#### _session_revocation_supported: `server/services/compliance_service.py:220`
+#### _session_revocation_supported: `server/services/compliance_service.py:233`
 **Signature:** `() -> bool`
 **Does:** True when `users.token_version` exists (enables logout-everywhere).
 **How it works:** `PRAGMA table_info(users)` and checks for the `token_version` column.
 **Talks to:** Reads the `users` schema (column added by migration, `database.py:1198`).
 **Gotchas:** None noteworthy.
 
-#### _build_controls: `server/services/compliance_service.py:233`
+#### _build_controls: `server/services/compliance_service.py:246`
 **Signature:** `(enc, audit, mfa, rbac, residency, backups, revocation, dpdp) -> list[dict]`
 **Does:** Turns the raw posture into the auditor control checklist, each control an `{id, name, status, evidence, remediation}`.
-**How it works:** A local `add()` appends controls (`:240`). It always enumerates **thirteen** controls: the original nine, `tls_in_transit` (always `warn`, the app terminates no TLS, `:251`), `enc_at_rest_db`, `enc_at_rest_uploads`, `mfa`, `audit_hash_chain`, `rbac`, `backups`, `session_revocation`, `data_residency`, plus four DPDP Act 2023 controls fed by the `dpdp` probe: `dpdp_consent` (`:374`), `dpdp_data_principal_rights` (`:390`, unconditional `pass`), `dpdp_retention` (`:400`), `dpdp_breach_register` (`:415`). Each branch picks `pass`/`warn`/`fail` from the probe and writes a concrete evidence string + a remediation hint. The MFA control has three branches (mandated+no-gap→pass, mandated+gap→warn, none-mandated→warn). Two controls can go `fail`: `audit_hash_chain` (broken chain, `:314`) and `dpdp_breach_register` (a recorded breach not yet notified to the Data Protection Board, `:415`).
+**How it works:** A local `add()` appends controls (`:253`). It always enumerates **thirteen** controls: the original nine, `tls_in_transit` (always `warn`, the app terminates no TLS, `:264`), `enc_at_rest_db`, `enc_at_rest_uploads`, `mfa`, `audit_hash_chain`, `rbac`, `backups`, `session_revocation`, `data_residency`, plus four DPDP Act 2023 controls fed by the `dpdp` probe: `dpdp_consent` (`:387`), `dpdp_data_principal_rights` (`:403`, unconditional `pass`), `dpdp_retention` (`:413`), `dpdp_breach_register` (`:428`). Each branch picks `pass`/`warn`/`fail` from the probe and writes a concrete evidence string + a remediation hint. The MFA control has three branches (mandated+no-gap→pass, mandated+gap→warn, none-mandated→warn). Two controls can go `fail`: `audit_hash_chain` (broken chain, `:327`) and `dpdp_breach_register` (a recorded breach not yet notified to the Data Protection Board, `:428`).
 **Why it exists:** An auditor wants a checklist with evidence, not a green wall. The honest amber/red is the point, `test_compliance_center` asserts the original nine ids are always a *subset* of what comes back (`_EXPECTED_CONTROL_IDS <= ids`, `server/tests/test_compliance_center.py:40`) even when several are `warn`, so adding a control cannot break the test but renaming one can.
 **Data in/out:** Out: list of thirteen control dicts.
 **Change guide:** To add a control (e.g. "penetration test on file"), add a probe, thread it into `compliance_report`'s call, and `add(...)` a branch here; knock-on: the score denominator grows so every existing control's weight shrinks slightly. Worked example: adding a `pass` control to a currently 6/9-passing report *raises* the score; adding a `warn` one *lowers* it. Footgun: the `_EXPECTED_CONTROL_IDS` test set fails if you rename an id, update the test.
 **Gotchas:** `tls_in_transit` is hard-`warn` by design (the app can't see the reverse proxy), so a perfect deployment behind nginx still shows amber here.
 
-#### _overall_score: `server/services/compliance_service.py:441`
+#### _overall_score: `server/services/compliance_service.py:454`
 **Signature:** `(controls) -> int`
 **Does:** 0–100 posture score as the weighted mean of control statuses.
 **How it works:** Weights are `pass=1.0, warn=0.5, unknown=0.5, fail=0.0` (`:32`); score = `round(mean × 100)`.
@@ -356,10 +356,10 @@ The Impact tab is the only tab that sends user input back to the server (as quer
 **Change guide:** To make warnings hurt more, lower the `warn` weight in `_STATUS_WEIGHT` at `:32`; knock-on: every deployment's score drops and the ring color band (`scoreColor` in the UI) may shift. Gotcha: because `tls_in_transit` is permanently `warn=0.5`, a flawless deployment caps below 100.
 **Gotchas:** None noteworthy.
 
-#### compliance_report: `server/services/compliance_service.py:453`
+#### compliance_report: `server/services/compliance_service.py:466`
 **Signature:** `() -> dict`
 **Does:** The public entrypoint: aggregates all probes into one report and never raises.
-**How it works:** Wraps each of the ten probes in `_safe` with an explicit default (the audit default carries `unknown: True`, `:466`; the `dpdp` default is an all-zeros dict, `:478`), builds controls, then post-processes: if the audit probe returned `unknown`, it overwrites the `audit_hash_chain` control to `status="unknown"` with honest evidence (`:489`). Returns `{generated_at, overall_score, controls, mfa, rbac_matrix, audit_chain, audit_coverage, encryption, residency, models, dpdp}`.
+**How it works:** Wraps each of the ten probes in `_safe` with an explicit default (the audit default carries `unknown: True`, `:479`; the `dpdp` default is an all-zeros dict, `:491`), builds controls, then post-processes: if the audit probe returned `unknown`, it overwrites the `audit_hash_chain` control to `status="unknown"` with honest evidence (`:502`). Returns `{generated_at, overall_score, controls, mfa, rbac_matrix, audit_chain, audit_coverage, encryption, residency, models, dpdp}`.
 **Data in/out:** Out: the report the Trust Center renders.
 **Talks to:** All probes + `_build_controls` + `_overall_score`; called by the compliance route.
 **Change guide:** To add a top-level block (e.g. `backups_detail`), compute it and add it to the return dict; the TypeScript `ComplianceReport` interface in `TrustCenter.tsx:39` must gain the field too or the UI ignores it. Footgun: the `unknown` audit remap only fixes the *control*; `audit_chain.verified` in the payload stays `False` with `unknown:True`, and the UI reads `audit_chain.unknown` to render the "Unknown" badge, keep both in sync.
@@ -397,7 +397,7 @@ The Impact tab is the only tab that sends user input back to the server (as quer
 #### _money: `server/services/impact_service.py:169`
 **Signature:** `(x: float) -> float`
 **Does:** Rounds to 2dp, clamped `>= 0`, `round(max(0.0, x), 2)`.
-**Why it exists:** Guarantees the "no metric ever produces a negative amount" invariant (`test_metrics_compute_with_data`). Note the unit is **not** dollars: every amount in the payload is denominated in `currency.code` (`CURRENCY_CODE`, emitted at `:331-334`), which for an India deployment is INR. There is no function named `_dollars`.
+**Why it exists:** Guarantees the "no metric ever produces a negative amount" invariant (`test_metrics_compute_with_data`). Note the unit is **not** dollars: every amount in the payload is denominated in `currency.code` (`CURRENCY_CODE`, emitted at `:335-338`), which for an India deployment is INR. There is no function named `_dollars`.
 **Gotchas:** None noteworthy.
 
 #### compute_impact: `server/services/impact_service.py:174`
@@ -408,7 +408,7 @@ The Impact tab is the only tab that sends user input back to the server (as quer
 2. **Metric 1, documentation time saved:** counts `scribe_notes` since cutoff; `minutes = notes × doc_minutes_saved_per_note`; `dollars = (minutes/60) × clinician_hourly_cost_usd` (`:177`).
 3. **Metric 2, deterioration caught early:** counts `risk_scores` at `level='critical'` + `care_bundles` triggered since cutoff; `icu_days_avoided = escalations × deterioration_icu_avoidance_rate`; `dollars = icu_days_avoided × icu_day_cost_usd` (`:199`).
 4. **Metric 3, medication safety:** counts `medications` with `source IN ('llm_extracted','agentic')` that a pharmacist actually verified, plus `medication_verify`/`medication_reject` audit rows; `ades_avoided = med_events × ade_avoidance_rate_per_alert`; `dollars = ades_avoided × ade_cost_usd` (`:231`).
-5. **Metric 4, throughput:** counts `discharge_summaries` since cutoff; also computes all-time `AVG(length_of_stay_days)` from `admission_history WHERE discharged=1`; `los_days_saved = discharge_recons × los_reduction_days_per_discharge`; `dollars = los_days_saved × ward_bed_day_cost_usd` (`:264`).
+5. **Metric 4, throughput:** counts `discharge_summaries` since cutoff; also computes all-time `AVG(length_of_stay_days)` from `admission_history WHERE discharged=1`; `los_days_saved = discharge_recons × los_reduction_days_per_discharge`; `dollars = los_days_saved × ward_bed_day_cost_usd` (`:268`).
 6. **Totals:** normalizes each period's dollars to a 30-day month (`monthly = sum(dollars) × 30/period_days`), `annual = monthly × 12`, and two separate harm figures: `icu_days_avoided` (the deterioration metric's `value`) and `ades_avoided` (the medication metric's `value`). They used to be summed into one `events_prevented` number, which added ICU days to adverse drug events; the two units are now reported apart.
 7. Echoes the resolved assumptions with unit+citation and sets `has_data = total_evidence > 0`.
 **Why it exists:** The investor "money slide," but audit-grade: each metric carries a human-readable `assumption` string (e.g. `"12 Scribe note(s) x 7 min saved/note x $120/clinician-hour"`).
@@ -675,10 +675,10 @@ Small presentational helpers shared by every tab. Each maps a string to a `{bg, 
 
 ### `src/pages/panels/admin/SecurityActivity.tsx`
 
-#### SecurityActivity: `src/pages/panels/admin/SecurityActivity.tsx:6`
+#### SecurityActivity: `src/pages/panels/admin/SecurityActivity.tsx:20`
 **Signature:** `() -> JSX`
 **Does:** The Security tab, server-paginated `auth`-category audit rows (logins, MFA, permission denials).
-**How it works:** Fetches `event_category: 'auth'` with real `limit`/`offset` pagination (`:17`), tracks `total` from the response, and renders a table (timestamp, action, outcome badge, actor, role, IP, path, summary) with prev/next controls. Failure rows get an `admin-tr--failure` class (`:71`).
+**How it works:** Fetches `event_category: 'auth'` with real `limit`/`offset` pagination (`:42-48`), tracks `total` from the response, and renders a table (timestamp, action, outcome badge, actor, role, IP, path, summary) with prev/next controls. Failure rows get an `admin-tr--failure` class (`:151`).
 **Data in/out:** Consumes `AuditLog[]` + `total` from `/api/audit/logs` (guide 05).
 **Talks to:** `getAuditLogs`; `OutcomeBadge`.
 **Change guide:** This is the correct pagination model to copy for Alerts (which paginates client-side). Footgun: `useCallback([page])` means changing page refetches; if you add a filter, add it to the dependency array or it goes stale.
@@ -782,9 +782,9 @@ None. This subsystem is pure request/response; there are no socket.io emissions 
 
 ## Discrepancies and open questions
 
-1. **`on_prem` is hard-coded `True`.** `_residency()` returns `"on_prem": True` unconditionally (`server/services/compliance_service.py:195`), even if the server binds a non-loopback address. The `data_residency` *control* honestly degrades to `warn` in that case, but the raw `residency.on_prem` field always claims on-prem, mildly at odds with the module's stated "never lies" principle. The UI only reads `residency.loopback_only`/`host`/`cors_origins`, so the stale field is currently invisible, but a future consumer of `on_prem` would be misled.
+1. **`on_prem` is hard-coded `True`.** `_residency()` returns `"on_prem": True` unconditionally (`server/services/compliance_service.py:208`), even if the server binds a non-loopback address. The `data_residency` *control* honestly degrades to `warn` in that case, but the raw `residency.on_prem` field always claims on-prem, mildly at odds with the module's stated "never lies" principle. The UI only reads `residency.loopback_only`/`host`/`cors_origins`, so the stale field is currently invisible, but a future consumer of `on_prem` would be misled.
 
-2. **Throughput metric's `value` is inconsistent with the other metrics.** For metrics 1–3, `value` is the estimated *saved/prevented* quantity (minutes, ICU-days, ADEs). For throughput, `value` is the *measured average length of stay* (`avg_los`, `server/services/impact_service.py:283`), a level, not a saving, and it is computed over *all* discharged admissions, not the reporting window, so it does not respond to `period_days`. The dollars/evidence for throughput are correctly period-scoped; only the displayed `value` is out of step. Not a correctness bug (throughput's `value` has no figure of its own in `totals`), but a reader comparing the four cards will find the fourth "value" means something different.
+2. **Throughput metric's `value` is inconsistent with the other metrics.** For metrics 1–3, `value` is the estimated *saved/prevented* quantity (minutes, ICU-days, ADEs). For throughput, `value` is the *measured average length of stay* (`avg_los`, `server/services/impact_service.py:287`), a level, not a saving, and it is computed over *all* discharged admissions, not the reporting window, so it does not respond to `period_days`. The dollars/evidence for throughput are correctly period-scoped; only the displayed `value` is out of step. Not a correctness bug (throughput's `value` has no figure of its own in `totals`), but a reader comparing the four cards will find the fourth "value" means something different.
 
 3. **Alerts tab category assumption vs. Overview.** `AlertOperations` fetches only `event_category: 'ingestion'` audit rows (`src/pages/panels/admin/AlertOperations.tsx:24`), while `admin_overview` counts the same `vigil_alert_generated`/`relay_alert_generated` action types with **no** category filter (`server/routes/admin_routes.py:68`). If those alerts are ever logged under a category other than `ingestion`, the Alerts tab will show nothing while the Overview "Alert Activity" count remains correct, the two surfaces would silently disagree. I did not read where these alert audit events are written (outside this scope), so whether they are in fact under `ingestion` is unverified here; worth confirming against the Vigil/Relay logging code.
 

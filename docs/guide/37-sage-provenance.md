@@ -25,7 +25,7 @@ By then every input is gone. The chart has moved on, new meds, new labs, a disch
 | Term | Meaning in Orb |
 |---|---|
 | **Turn** | One Sage question-and-answer exchange. One row in `sage_provenance_turns`, one `turn_id`. The same id is the shadow-mode `shadow_turn_id`, so a scorecard row and its replayable reconstruction join on one value (`sage_routes.py:1558-1562`). |
-| **Blob / cid** | One large component (question, chart snapshot, one guideline passage, answer, raw output), stored once, keyed by `cid` = the first 32 hex chars of its own sha256 (`sage_provenance_service.py:129-134`). |
+| **Blob / cid** | One large component (question, chart snapshot, one guideline passage, answer, raw output), stored once, keyed by `cid` = the first 32 hex chars of its own sha256 (`sage_provenance_service.py:130-135`). |
 | **Ref** | A `(turn_id, role, ord, cid)` edge. ~8 per turn. Exists so the retention GC is an exact reference count, not a reachability walk. |
 | **Role** | Which component this edge is, stored as a **single character**, `q`, `c`, `m`, `g`, `a`, `r` (`:144-149`). Readable names live in `ROLE_LABELS` (`:151`). |
 | **Manifest** | The metadata list for the retrieved passages: document id, title, source, trust tier, fusion score, and the `passage_cid` pointing at the body blob (`:570-580`). |
@@ -38,8 +38,8 @@ By then every input is gone. The chart has moved on, new meds, new labs, a disch
 ```mermaid
 graph TD
   CHAT[POST /api/sage/query<br/>sage_routes.py:1505] -->|after done:True| PR[_prov_record<br/>sage_routes.py:1466]
-  VOICE[POST /api/sage/voice<br/>sage_routes.py:2506] -->|after done:True| PR
-  PR -->|run_db, off the loop| RT[record_turn<br/>sage_provenance_service.py:441]
+  VOICE[POST /api/sage/voice<br/>sage_routes.py:2508] -->|after done:True| PR
+  PR -->|run_db, off the loop| RT[record_turn<br/>sage_provenance_service.py:442]
   RT -->|swallows everything| W[_write :538]
   W --> PUT[_put_blob :389<br/>sha256 → zlib → INSERT OR IGNORE]
   PUT --> BLOBS[(sage_provenance_blobs<br/>WITHOUT ROWID)]
@@ -64,7 +64,7 @@ graph TD
 | File | Lines | Role |
 |---|---:|---|
 | `server/services/sage_provenance_service.py` | 973 | Everything: config, self-owned schema, the blob store, `record_turn`, `replay`, `list_turns`, `prune`, `storage_stats`. |
-| `server/routes/sage_routes.py` | 2810 | The six capture call sites (`:1584`, `:1761`, `:1813`, `:2249`, `:2665`, `:2685`) and the three read endpoints (`:2391`, `:2406`, `:2441`), plus `_prov_record` (`:1466`), `_prov_no_model_route_info` (`:1479`), `_voice_model_name` (`:1494`). |
+| `server/routes/sage_routes.py` | 2810 | The six capture call sites (`:1584`, `:1761`, `:1813`, `:2249`, `:4286`, `:4313`) and the three read endpoints (`:3843`, `:3862`, `:3921`), plus `_prov_record` (`:2369`), `_prov_no_model_route_info` (`:2383`), `_voice_model_name` (`:2398`). |
 | `server/permissions.py` | 565 | `AUDIT_READ` (`:92`), admin's grant of it (`:156`), `department_scope` (`:192`), `scope_patient_ids_sql` (`:248`), `enforce_patient_scope` (`:292`), `log_phi_read` (`:319`), `require_permission` (`:376`). |
 | `server/services/thinking_mode.py` | 611 | `begin_turn` (`:322`), `current_thinking_flag` (`:339`), `stamp` (`:503`), the producer of every `thinking_*` / `safety_floor_*` key this store persists (`:517-527`). |
 | `server/services/sage_service.py` | 2974 | `query_ollama` fills `route_info` with `{lane, provider, model}` (`:1317`, `:1337-1340`), the `model_served` this store records. |
@@ -195,8 +195,8 @@ The `/storage` literal path is declared at `:2391`, **before** `/{turn_id}` at `
 #### `utc_now` / `new_turn_id`: `:355` / `:359`
 **Signature:** `() -> str` (ISO-8601, millisecond precision) / `() -> str` (16 hex chars)
 **Does:** Timestamp and id minting.
-**On screen:** `occurred_at` is the sort key of the listing and the `turn_occurred_at` in the replay's audit metadata (`sage_routes.py:2475`).
-**Gotchas:** the turn id is 16 hex chars = 64 bits, matching `shadow_turn_id` in the routes (`sage_routes.py:1562`, `:2549`) so the two stores join. In practice `new_turn_id` is almost never used, every live call site supplies the id from the route.
+**On screen:** `occurred_at` is the sort key of the listing and the `turn_occurred_at` in the replay's audit metadata (`sage_routes.py:2477`).
+**Gotchas:** the turn id is 16 hex chars = 64 bits, matching `shadow_turn_id` in the routes (`sage_routes.py:1562`, `:2551`) so the two stores join. In practice `new_turn_id` is almost never used, every live call site supplies the id from the route.
 **Breaks if you change it:** widening the id in one place and not the other silently breaks the join between the scorecard and the replay. Changing `occurred_at`'s format breaks `_list_turns`' `since` comparison and `_prune`'s cutoff, both of which are **string comparisons on ISO text** (`:818`, `:865`), not date arithmetic.
 
 #### `_canon`: `:363`
@@ -277,7 +277,7 @@ The `/storage` literal path is declared at `:2391`, **before** `/{turn_id}` at `
 **Signature:** `(turn_id, db=None) -> dict | None`
 **Does:** The metadata row only.
 **On screen:** nothing directly, but it is the reason `GET /provenance/{turn_id}` can be safe.
-**Why it exists, this is the security-relevant one:** the route calls it **before** reconstructing anything, so it can resolve `patient_id` and run `enforce_patient_scope` *before* a single blob is decompressed (`sage_routes.py:2455-2461`). The docstring says exactly that: "used by the route to resolve `patient_id` BEFORE it decides whether the caller may see anything at all" (`:650-651`).
+**Why it exists, this is the security-relevant one:** the route calls it **before** reconstructing anything, so it can resolve `patient_id` and run `enforce_patient_scope` *before* a single blob is decompressed (`sage_routes.py:2457-2463`). The docstring says exactly that: "used by the route to resolve `patient_id` BEFORE it decides whether the caller may see anything at all" (`:650-651`).
 **Breaks if you change it:** merge this into `replay()` for tidiness and the scope check necessarily runs *after* the chart has been assembled in memory. That is not an exploit on its own, but it inverts the ordering the whole PHI posture depends on, and the next refactor that returns early on an error path will leak.
 
 #### `replay` / `_replay`: `:665` / `:673`
@@ -293,7 +293,7 @@ The `/storage` literal path is declared at `:2391`, **before** `/{turn_id}` at `
 **Signature:** `(*, patient_ids_sql=None, patient_id=None, actor_user_id=None, since=None, limit=50, offset=0, db=None) -> list[dict]`
 **Does:** The metadata index. Returns 24 columns, **no question text, no chart, no answer** (`:822-826`).
 **On screen:** the JSON body of `GET /api/sage/provenance`. Nothing renders it.
-**Why it holds no content:** so an auditor scanning for "which turns did the safety floor fire on" does not incidentally read fifty charts (`sage_routes.py:2419-2421`). Reading a turn's content means naming it on `/{turn_id}`, which is the call that writes the per-patient audit row.
+**Why it holds no content:** so an auditor scanning for "which turns did the safety floor fire on" does not incidentally read fifty charts (`sage_routes.py:2421-2423`). Reading a turn's content means naming it on `/{turn_id}`, which is the call that writes the per-patient audit row.
 **How the scope filter works:** `patient_ids_sql` is a `(sql, params)` pair from `permissions.scope_patient_ids_sql`, embedded as `(patient_id IS NULL OR patient_id IN (<sql>))` (`:809`). The docstring is explicit that deriving it is the **caller's** job and that this function will not invent a scope (`:792-795`).
 **Breaks if you change it:** add a content column here and every listing call becomes a bulk PHI read that writes no `phi_access` row, the audit trail would show one read where fifty happened. `test_sage_provenance.py:562` asserts the listing never leaks question or chart text.
 **Gotchas, a real scope subtlety:** the `patient_id IS NULL OR …` clause means a department-scoped auditor sees **every patient-less turn in the hospital**, all general-knowledge questions, and all the cross-department refusals that were deliberately recorded with `patient_id=None` (`sage_routes.py:1815`). Those refusal rows carry no patient id but their *question* may well name a patient, and `enforce_patient_scope` returns immediately when `patient_id` is falsy (`permissions.py:322-323`), so a scoped auditor can also **replay** them in full. In practice `audit.read` is admin-only and admins are usually hospital-wide, so this is latent rather than live, but it is the one place the scope fence has a documented gap.
@@ -339,7 +339,7 @@ The section header states them in the order they matter, and every call site bel
 **On screen:** nothing.
 **Why the late, by-attribute binding:** so a test, or an ops kill-switch, that replaces `record_turn` on the module is honoured, **and** so this stays a sync callable handed to `run_db`, which refuses coroutine functions (`:1470-1473`, and `database.py:1225`).
 **Breaks if you change it:** `from services.sage_provenance_service import record_turn` at module scope would freeze the reference at import, so monkeypatching the module attribute would stop working, and `test_sage_provenance.py:733` and `:748`, which are the tests that prove rules 1 and 2, both work by replacing that attribute. The tests would pass against a function that is no longer the one running.
-**Gotchas:** this is the **second** layer of swallowing, `record_turn` already never raises (`sage_provenance_service.py:489`). The comment marks it `# pragma: no cover, defence in depth`. Both layers are deliberate: the inner one covers the write, the outer one covers the import and the executor hop.
+**Gotchas:** this is the **second** layer of swallowing, `record_turn` already never raises (`sage_provenance_service.py:490`). The comment marks it `# pragma: no cover, defence in depth`. Both layers are deliberate: the inner one covers the write, the outer one covers the import and the executor hop.
 
 #### `_prov_no_model_route_info`: `:1479`
 **Signature:** `() -> dict`, `{"thinking_requested": bool}` or `{}`
@@ -371,7 +371,7 @@ The section header states them in the order they matter, and every call site bel
 **Does:** Records `outcome="refused"`, `query_scope="OUT_OF_SCOPE"`, `refusal_class="out_of_scope_patient"`, the notice as the answer, and **`patient_id=None`**.
 **Why `patient_id=None`, the load-bearing reasoning:** retrieval refused to confirm this patient exists. Writing their id into a store an auditor can list would **re-disclose exactly what the 404-shaped refusal was protecting**. The question is kept, because it is the evidence of the attempted cross-department reach, and the security audit row that *does* name the patient was already written, fail-closed, by retrieval itself (`:1806-1812`).
 **Breaks if you change it:** pass `effective_patient_id` here "for completeness" and the provenance listing becomes a way to enumerate which patients exist outside your ward, a disclosure channel around the very check that just fired.
-**Gotchas:** because `patient_id` is NULL, this row is visible to **every** scoped auditor through the `patient_id IS NULL` clause in `_list_turns` (`sage_provenance_service.py:809`), and `enforce_patient_scope` no-ops on it. See the discrepancies section.
+**Gotchas:** because `patient_id` is NULL, this row is visible to **every** scoped auditor through the `patient_id IS NULL` clause in `_list_turns` (`sage_provenance_service.py:825`), and `enforce_patient_scope` no-ops on it. See the discrepancies section.
 
 #### The main chat capture: `:2249`, outcome at `:2246`
 **Signature:** the full keyword set, most values `locals()`-probed.
@@ -380,7 +380,7 @@ The section header states them in the order they matter, and every call site bel
 **How the outcome is decided:** `failed` if `sh_failure` or (no response and not cancelled), else `cancelled` if cancelled, else `answered` (`:2246-2248`). The accounting is made **here** rather than read from the shadow block below, and the comment says exactly why: `sh_failure` is not set to `"empty_response"` until `:2308`, *after* this call, so trusting it alone would file a zero-content turn as a delivered answer (`:2242-2245`).
 **Why `patient_context_dict` and not `context`:** `patient_context_dict` is the assembled chart; `context` is the rendered prompt block, which is the chart *plus* the passages. Only the first is stored, because keeping the second would duplicate, and defeat the dedup on, both. The prompt's sha256 goes with it as the integrity anchor tying the two together (`:2256-2260`).
 **Breaks if you change it:** store `context` instead and the module docstring's own arithmetic applies, adding the assembled prompt on top of the components *roughly doubles* the 7.6 KB/turn naive cost (`sage_provenance_service.py:35-37`), and the chart and passage blobs stop deduplicating because the concatenation is unique per turn. Move this call above the `run_db(_save_turn, …)` and it is still off the critical path, but move it above `done: True` and rule 3 is gone.
-**Gotchas:** almost every argument is `'name' in locals()`-guarded, because this sits in a generator `finally` reached from a dozen exits and most of those names may never have been bound. The comment at `:1724-1727` warns against pre-initialising them for tidiness: those probes mean "was this ever bound?", and pre-initialising would silently change what the record stores.
+**Gotchas:** almost every argument is `'name' in locals()`-guarded, because this sits in a generator `finally` reached from a dozen exits and most of those names may never have been bound. The comment at `:2690-2692` warns against pre-initialising them for tidiness: those probes mean "was this ever bound?", and pre-initialising would silently change what the record stores.
 
 #### The voice captures: `:2665` (happy path) and `:2685` (crash)
 **Does:** Records the spoken turn with `lane="voice"`, `query_scope="VOICE"`, `citation_basis="none"`, `route_info={"provider": "mlx", "model": _voice_model_name()}`, the sanitised answer and the raw output.
@@ -388,7 +388,7 @@ The section header states them in the order they matter, and every call site bel
 **Why it exists:** *"A guardrail measured on one surface only is how a hole ships in the other, and the same is true of the record: 'we can replay typed turns' is not an answer when the question is about a spoken one"* (`:2659-2661`).
 **Why the record is thinner, honestly:** the voice agent assembles its own context, so there is no chart snapshot and no retrieved passage list to store, and those fields are **absent rather than faked** (`:2662-2664`). The crash capture at `:2685` exists because the happy-path call is inside the `try`, and *"'it crashed' is a thing a reviewer needs to be able to read, not infer from a gap"* (`:2680-2682`).
 **Breaks if you change it:** fabricate an empty `sources=[]` or a synthesised chart here and a voice turn becomes indistinguishable from a chat turn where retrieval genuinely returned nothing, two very different findings.
-**Gotchas, the one to watch:** `route_info` here carries **no** thinking keys, so the stored row has `thinking=NULL` (correctly three-valued) but `safety_floor=0` (`sage_provenance_service.py:625`, a `NOT NULL DEFAULT 0` column). A reviewer reading `safety_floor: false` on a voice turn will read "the floor did not fire" when the truth is "this lane never evaluates the floor". `sage_query`'s own comment (`:1551-1552`) confirms thinking mode is deliberately not applied to `/sage/voice`. `test_sage_provenance.py:666` and `:698` cover the two voice paths.
+**Gotchas, the one to watch:** `route_info` here carries **no** thinking keys, so the stored row has `thinking=NULL` (correctly three-valued) but `safety_floor=0` (`sage_provenance_service.py:626`, a `NOT NULL DEFAULT 0` column). A reviewer reading `safety_floor: false` on a voice turn will read "the floor did not fire" when the truth is "this lane never evaluates the floor". `sage_query`'s own comment (`:2461-2462`) confirms thinking mode is deliberately not applied to `/sage/voice`. `test_sage_provenance.py:666` and `:698` cover the two voice paths.
 
 #### `GET /api/sage/provenance/storage`: `:2391` (`get_provenance_storage`)
 **Signature:** guard `require_permission("audit.read")`; query `turns_per_day: int = 200` → the `storage_stats` dict.
@@ -444,7 +444,7 @@ naive (same components, raw)   3,032,154 B  =  7,580 B / turn
 end-to-end saving                                    2.48x
 ```
 
-**At the pilot's ~200 Sage turns a day**, straight-line off the measured 3,062 B/turn, which is exactly what `storage_stats().projection` computes from live rows (`:967-972`):
+**At the pilot's ~200 Sage turns a day**, straight-line off the measured 3,062 B/turn, which is exactly what `storage_stats().projection` computes from live rows (`:1184-1189`):
 
 | | Deduplicated + compressed | Naive, for contrast |
 |---|---:|---:|
@@ -464,8 +464,8 @@ Two honest caveats the docstring itself raises (`:74-77`): the benchmark is **de
 
 | Contract | Producer | Consumer | Breaks how |
 |---|---|---|---|
-| `shadow_turn_id` == provenance `turn_id` | `sage_routes.py:1562`, `:2549` | `sage_provenance_turns.turn_id`; the shadow `sage.drafted` payload's `conversation_id` (`:2327`) | mint them separately and the scorecard row and its replayable reconstruction can no longer be joined |
-| `route_info` keys `thinking`, `thinking_requested`, `thinking_tier`, `thinking_model`, `thinking_reason`, `safety_floor`, `safety_floor_rules`, `safety_floor_unsatisfied` | `thinking_mode.stamp` (`thinking_mode.py:503-528`) | `_write` (`sage_provenance_service.py:619-627`) | rename one key and that column goes silently NULL (or, for `safety_floor`, silently **0**) on every future turn, no error anywhere |
+| `shadow_turn_id` == provenance `turn_id` | `sage_routes.py:1562`, `:2551` | `sage_provenance_turns.turn_id`; the shadow `sage.drafted` payload's `conversation_id` (`:2327`) | mint them separately and the scorecard row and its replayable reconstruction can no longer be joined |
+| `route_info` keys `thinking`, `thinking_requested`, `thinking_tier`, `thinking_model`, `thinking_reason`, `safety_floor`, `safety_floor_rules`, `safety_floor_unsatisfied` | `thinking_mode.stamp` (`thinking_mode.py:503-528`) | `_write` (`sage_provenance_service.py:620-628`) | rename one key and that column goes silently NULL (or, for `safety_floor`, silently **0**) on every future turn, no error anywhere |
 | `route_info` keys `lane`, `provider`, `model` | `query_ollama` (`sage_service.py:1345-1348`) | `model_served` / `provider` (`:619-620`) | a renamed key makes every turn's served model unknown |
 | `sources[]` item shape (`document_id`, `title`, `source`, `source_type`, `trust_tier`, `is_synthetic`, `category`, `fusion_score`, `content`/`passage`) | Sage retrieval (`get_relevant_context`) | the manifest builder (`:564-580`) | rename `content` and every passage body is stored as `""`, the manifest still looks complete, so the loss is invisible in the replay |
 | `department_scope(user) is None` ⇒ hospital-wide, never "unknown" | `permissions.py:193` | `_record_turn_inner` (`:512`), `hospital_wide` column (`:617`), `list_provenance` (`:2431-2433`) | reinterpret `None` as "unknown" anywhere and every governance account's turns either vanish from listings or become unscoped |
@@ -494,11 +494,11 @@ Two honest caveats the docstring itself raises (`:74-77`): the benchmark is **de
 
 ## Discrepancies and open questions
 
-1. **`prune()` has no caller, so retention is a capability rather than a behaviour.** `grep -rn "prune(" server/ scripts/` finds `services/loop_watchdog.py:638` (an unrelated log rotator), the definitions at `sage_provenance_service.py:847`/`:859`, and `tests/test_sage_provenance.py:416`/`:443`. There is no scheduler, no admin route, no CLI script. **The "settles at ~234 MB and STOPS GROWING" claim in the module docstring (`:71-72`) is therefore conditional on an operator action that nothing in the product prompts, schedules or performs.** Unpruned at 200 turns/day the store passes 234 MB at month 13 and keeps going, 213 MB every subsequent year. This is the single largest gap between what the module documents and what the appliance does.
+1. **`prune()` has no caller, so retention is a capability rather than a behaviour.** `grep -rn "prune(" server/ scripts/` finds `services/loop_watchdog.py:638` (an unrelated log rotator), the definitions at `sage_provenance_service.py:863`/`:875`, and `tests/test_sage_provenance.py:416`/`:443`. There is no scheduler, no admin route, no CLI script. **The "settles at ~234 MB and STOPS GROWING" claim in the module docstring (`:71-72`) is therefore conditional on an operator action that nothing in the product prompts, schedules or performs.** Unpruned at 200 turns/day the store passes 234 MB at month 13 and keeps going, 213 MB every subsequent year. This is the single largest gap between what the module documents and what the appliance does.
 
 2. **No frontend surface exists.** All three endpoints are unreferenced from `src/`. An incident review today is a `curl` with an admin token. The store is complete and the reader is not built.
 
-3. **`safety_floor` cannot distinguish "did not fire" from "never evaluated".** The column is `NOT NULL DEFAULT 0` and `_write` coerces a missing key to `0` (`:625`), so every voice turn (`sage_routes.py:2672`) and every pre-LLM refusal (`:1588`) records `safety_floor=0`. `thinking` is three-valued and does not have this problem (`:621`). A reviewer reading a replayed voice turn's `model.safety_floor: false` will draw a conclusion the data does not support. `safety_floor_unsatisfied` (`:627`) and `safety_floor_rules` (`:626`) have the same shape.
+3. **`safety_floor` cannot distinguish "did not fire" from "never evaluated".** The column is `NOT NULL DEFAULT 0` and `_write` coerces a missing key to `0` (`:625`), so every voice turn (`sage_routes.py:2679`) and every pre-LLM refusal (`:1588`) records `safety_floor=0`. `thinking` is three-valued and does not have this problem (`:621`). A reviewer reading a replayed voice turn's `model.safety_floor: false` will draw a conclusion the data does not support. `safety_floor_unsatisfied` (`:627`) and `safety_floor_rules` (`:626`) have the same shape.
 
 4. **Patient-less turns escape department scoping in both directions.** `_list_turns` includes `patient_id IS NULL` rows for every scoped caller (`:809`), and `enforce_patient_scope` returns immediately when `patient_id` is falsy (`permissions.py:322-323`). So a department-scoped auditor can list **and fully replay** every general-knowledge turn in the hospital and, more pointedly, every cross-department refusal, whose stored question may name a patient the caller has no access to (`sage_routes.py:1813-1820`). `audit.read` is admin-only (`permissions.py:157`) and admins are typically hospital-wide, so this is latent today, not live. It is still the one hole in an otherwise strict fence.
 
@@ -508,7 +508,7 @@ Two honest caveats the docstring itself raises (`:74-77`): the benchmark is **de
 
 7. **DPDP: export yes, erasure no, and both were inherited, not decided.** `sage_provenance_turns` carries a plain `patient_id`, so `consent_service._patient_tables` (`:437`) discovers it and a data-principal export includes its **metadata** rows (the blob tables are not patient-keyed, so no content). And `_ERASURE_EXECUTORS` (`consent_service.py:901`) has only `ai_interaction_transcript` and `patient_portal_account`; `_erase_ai_transcripts` (`:783`) deletes from `sage_observations`, `sage_room_memory`, `sage_decision_cache`, `sage_insights` and `insight_feedback`, **not** from this store. So an erasure decision does not reach it. Same posture as `audit_logs`, and defensible for the same reason, but the module docstring says it plainly (`:86-95`): *"it is a decision somebody should make explicitly rather than inherit"*, and *"it has not been reviewed by anyone who knows what a patient should be shown."*
 
-8. **Load-time and per-turn honesty differ for the voice lane.** The voice record has no chart snapshot and no passage list because the voice agent assembles its own context (`sage_routes.py:2662-2664`). That is the honest choice, but it means "we can replay every Sage turn" is true only in the sense that a voice turn's replay contains the question, the answer, the raw output and the model, and nothing about what the model was shown.
+8. **Load-time and per-turn honesty differ for the voice lane.** The voice record has no chart snapshot and no passage list because the voice agent assembles its own context (`sage_routes.py:2669-2671`). That is the honest choice, but it means "we can replay every Sage turn" is true only in the sense that a voice turn's replay contains the question, the answer, the raw output and the model, and nothing about what the model was shown.
 
 9. **Truncation is not surfaced structurally.** `_clip` appends `_TRUNCATION_MARKER` into the text (`:386`), which a human reading the replay will see. There is no boolean field and nothing in `integrity` says a component was clipped, so a programmatic consumer would have to string-match the marker.
 

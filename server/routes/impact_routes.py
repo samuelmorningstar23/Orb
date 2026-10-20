@@ -46,7 +46,7 @@ def get_impact(
     ward_bed_day_cost_inr: float | None = _GET_IMPACT_WARD_BED_DAY_COST_INR_DEFAULT,
     los_reduction_days_per_discharge: float
     | None = _GET_IMPACT_LOS_REDUCTION_DAYS_PER_DISCHARGE_DEFAULT,
-):
+) -> dict:
     """Return the ROI / outcomes model.
 
     Any assumption may be overridden via its query param; omitted params use the
@@ -65,7 +65,8 @@ def get_impact(
     }
     # Drop anything not supplied so the service falls back to its cited defaults.
     overrides = {k: v for k, v in overrides.items() if v is not None}
-    return compute_impact(overrides)
+    # The reader, so the audit trail figure counts their facilities' rows (multisite-11).
+    return compute_impact(overrides, user=user)
 
 
 _GET_ASSUMPTIONS_USER_DEFAULT = Depends(require_permission("admin.overview"))

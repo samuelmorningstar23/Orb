@@ -14,10 +14,8 @@ from permissions import (
     ORDER_READ,
     ORDER_WRITE,
     ROLE_PERMISSIONS,
-    department_scope,
     enforce_patient_scope,
     log_phi_read,
-    patient_in_scope,
     require_patient_access,
     require_permission,
 )
@@ -689,12 +687,24 @@ def _order_in_scope_or_404(order_id: str, user: dict) -> dict:
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     _refuse_medication_order(order)
-    dept = department_scope(user)
-    if dept is not None:
-        with db_session() as db:
-            if not patient_in_scope(db, order["patient_id"], dept):
-                raise HTTPException(status_code=404, detail="Order not found")
+    _refuse_order_out_of_scope(user, order["patient_id"])
     return order
+
+
+def _refuse_order_out_of_scope(user: dict, patient_id: str) -> None:
+    """404 "Order not found" unless the order's patient is in the caller's scope.
+
+    permissions.enforce_patient_scope answers the department half exactly as
+    the inline check here did (no row for a department-only refusal) and, with
+    more than one facility on record, checks the patient's facility first and
+    writes the patient_scope_denied row a probe across a facility boundary
+    always gets (multisite-8). Re-worded to this lane's own 404 so the refusal
+    never says that a patient is there.
+    """
+    try:
+        enforce_patient_scope(user, patient_id)
+    except HTTPException:
+        raise HTTPException(status_code=404, detail="Order not found") from None
 
 
 def _scope_by_order(order_id: str, user: dict) -> None:
@@ -717,12 +727,7 @@ def _scope_by_order(order_id: str, user: dict) -> None:
     if not existing:
         return
     _refuse_medication_order(existing)
-    dept = department_scope(user)
-    if dept is None:
-        return
-    with db_session() as db:
-        if not patient_in_scope(db, existing["patient_id"], dept):
-            raise HTTPException(status_code=404, detail="Order not found")
+    _refuse_order_out_of_scope(user, existing["patient_id"])
 
 
 def _lab_managed_conflict(err: Exception) -> HTTPException:

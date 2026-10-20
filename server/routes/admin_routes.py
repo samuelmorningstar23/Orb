@@ -370,7 +370,7 @@ _ADMIN_OVERVIEW_USER_DEFAULT = Depends(require_permission("admin.overview"))
 
 
 @router.get("/overview")
-def admin_overview(user: dict = _ADMIN_OVERVIEW_USER_DEFAULT):
+def admin_overview(user: dict = _ADMIN_OVERVIEW_USER_DEFAULT) -> dict:
     """Pre-aggregated governance snapshot for the Admin dashboard."""
 
     now = datetime.now(UTC)
@@ -381,12 +381,25 @@ def admin_overview(user: dict = _ADMIN_OVERVIEW_USER_DEFAULT):
     cutoff_24h_ms = (now - timedelta(hours=24)).isoformat(timespec="milliseconds")
 
     with db_session() as db:
+        # multisite-11: with more than one facility on record the four audit
+        # counts below count the reader's facilities' rows under the epoch
+        # rule (services/audit_facility). With one facility `vis` is empty and
+        # nothing else is read. The ingestion, alert and record figures are
+        # not audit rows and belong to the Command Center sweep (multisite-12).
+        from services import audit_facility
+
+        scope = audit_facility.reader_scope(user, db=db)
+        clause, vis_params = audit_facility.visible_sql(
+            scope, audit_facility.audit_epoch(db) if scope is not None else 0
+        )
+        vis = f" AND {clause}" if clause else ""
+
         # ── Audit counts (24h) by category ──
         audit_by_category = db.execute(
-            """SELECT event_category, COUNT(*) as cnt
-               FROM audit_logs WHERE timestamp >= ?
+            f"""SELECT event_category, COUNT(*) as cnt
+               FROM audit_logs WHERE timestamp >= ?{vis}
                GROUP BY event_category""",
-            (cutoff_24h,),
+            (cutoff_24h, *vis_params),
         ).fetchall()
 
         audit_total_24h = sum(r["cnt"] for r in audit_by_category)
@@ -394,10 +407,10 @@ def admin_overview(user: dict = _ADMIN_OVERVIEW_USER_DEFAULT):
 
         # ── Audit counts by outcome (24h) ──
         audit_by_outcome = db.execute(
-            """SELECT outcome, COUNT(*) as cnt
-               FROM audit_logs WHERE timestamp >= ?
+            f"""SELECT outcome, COUNT(*) as cnt
+               FROM audit_logs WHERE timestamp >= ?{vis}
                GROUP BY outcome""",
-            (cutoff_24h,),
+            (cutoff_24h, *vis_params),
         ).fetchall()
         audit_outcomes = {r["outcome"]: r["cnt"] for r in audit_by_outcome}
 
@@ -435,12 +448,12 @@ def admin_overview(user: dict = _ADMIN_OVERVIEW_USER_DEFAULT):
         # the HTTP ingest lane and nothing else. Useful to reconcile that lane
         # against the instrument; useless as a headline.
         alert_audit_rows = db.execute(
-            """SELECT action_type, COUNT(*) as cnt
+            f"""SELECT action_type, COUNT(*) as cnt
                FROM audit_logs
                WHERE timestamp >= ?
-                 AND action_type IN ('vigil_alert_generated', 'relay_alert_generated')
+                 AND action_type IN ('vigil_alert_generated', 'relay_alert_generated'){vis}
                GROUP BY action_type""",
-            (cutoff_24h,),
+            (cutoff_24h, *vis_params),
         ).fetchall()
         alert_audit = {r["action_type"]: r["cnt"] for r in alert_audit_rows}
 
@@ -457,12 +470,12 @@ def admin_overview(user: dict = _ADMIN_OVERVIEW_USER_DEFAULT):
         # 'authorization' (see routes/auth_routes.py, permissions.py) — the
         # previous 'auth' filter matched nothing, so this summary was always [].
         auth_summary = db.execute(
-            """SELECT action_type, outcome, COUNT(*) as cnt
+            f"""SELECT action_type, outcome, COUNT(*) as cnt
                FROM audit_logs
                WHERE timestamp >= ?
-                 AND event_category IN ('authentication', 'authorization')
+                 AND event_category IN ('authentication', 'authorization'){vis}
                GROUP BY action_type, outcome""",
-            (cutoff_24h,),
+            (cutoff_24h, *vis_params),
         ).fetchall()
         auth_events = [
             {"action": r["action_type"], "outcome": r["outcome"], "count": r["cnt"]}

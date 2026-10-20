@@ -82,12 +82,12 @@ The `detail` class is what distinguishes this from the board's `orb-panel`.
 ### 0.2 The single fetch that fills the chart
 Almost everything on this screen comes from **one** response. `loadPatientData`
 (`VigilPanel.tsx:621-637`) calls `getPatientDetail(patientId)` → `src/api/client.ts:618` →
-`GET /api/vigil/patients/{patient_id}` → `server/routes/vigil_routes.py:499` `get_patient` →
-`server/routes/vigil_routes.py:35` `_load_patient_bundle` (the raw SQL) plus
+`GET /api/vigil/patients/{patient_id}` → `server/routes/vigil_routes.py:512` `get_patient` →
+`server/routes/vigil_routes.py:37` `_load_patient_bundle` (the raw SQL) plus
 `server/services/vigil_service.py:407` `get_patient_risk` and
 `server/services/vigil_service.py:481` `get_vitals_trend`.
 
-The response object (`vigil_routes.py:519-556`) has exactly these keys, and the whole screen is
+The response object (`vigil_routes.py:532-569`) has exactly these keys, and the whole screen is
 built from them:
 
 | key | what it feeds on screen |
@@ -179,7 +179,7 @@ Styled `Vigil.css:136`.
 **Data from:** `patient` destructured at `VigilPanel.tsx:1112` from `data`, which is the chart
 snapshot.
 **API:** `GET /api/vigil/patients/{patient_id}`.
-**Server:** `vigil_routes.py:499` `get_patient` → `vigil_routes.py:37-44` (`SELECT p.*` on
+**Server:** `vigil_routes.py:512` `get_patient` → `vigil_routes.py:39-46` (`SELECT p.*` on
 `patients`). The column is `patients.name`.
 **Change this →** the header title changes, and so does everything downstream that reads
 `data?.patient?.name`: the Sage view-selection label (`:453`), the Discharge modal title
@@ -194,7 +194,7 @@ looks broken; there is no fallback here.
 `MRN: {patient.mrn} · {patient.age}Y · {sexLabel(patient.sex)}`. Styled `Vigil.css:137`.
 **Data from:** `patients.mrn`, `patients.age`, `patients.sex` in the same bundle.
 **API:** `GET /api/vigil/patients/{patient_id}`.
-**Server:** `vigil_routes.py:499` → `_load_patient_bundle` (`vigil_routes.py:35`).
+**Server:** `vigil_routes.py:512` → `_load_patient_bundle` (`vigil_routes.py:37`).
 **Change this →** the sex word is **not** the raw column. It runs through `sexLabel`
 (`src/lib/demographics.ts:36`), which normalises the eight dialects that column actually holds
 ('Male', 'male', 'M', 'F', 'Female', 'Other', '', NULL) into `MALE` / `FEMALE` / `OTHER`, and
@@ -214,15 +214,15 @@ handler at `VigilPanel.tsx:572-574`, and only when `data.patient_id === patientI
 `currentUser` is `getUser()` at `:489`.
 **API:** none, this is WebSocket, not REST. The client emits `enter_patient` on mount and on
 reconnect (`VigilPanel.tsx:571`:573:575) and `leave_patient` on unmount (`:579`).
-**Server:** `server/ws/realtime.py:473` `enter_patient` joins the room
-`patient-presence:{patient_id}` and calls `_broadcast_presence` (`realtime.py:464-470`), which
-emits `presence:update` with the deduped roster from `_roster` (`realtime.py:451`).
+**Server:** `server/ws/realtime.py:581` `enter_patient` joins the room
+`patient-presence:{patient_id}` and calls `_broadcast_presence` (`realtime.py:572-578`), which
+emits `presence:update` with the deduped roster from `_roster` (`realtime.py:559`).
 **Change this →** it renders **nothing** when you are the only viewer (`:2084-2085` filters out
 `selfId` and returns null on an empty list), deliberately silent in the common case. With one
 other viewer the text reads "*Priya Nair* also viewing"; with more it reads "*3* others viewing"
 (`:2101`). The hover title lists every name and role (`:2090`). Only the first four initials
 render (`:2093`, `.slice(0, 4)`); a fifth viewer is counted in the sentence but has no circle.
-Note the server gates room entry on `PATIENT_READ_ALL` (`realtime.py:484-489`), a pharmacist or
+Note the server gates room entry on `PATIENT_READ_ALL` (`realtime.py:592-597`), a pharmacist or
 patient socket silently never joins, so they never appear in anyone's roster.
 
 ### 2.5 Bed + risk badge
@@ -232,7 +232,7 @@ patient socket silently never joins, so they never appear in anyone's roster.
 :1184, the score text at :1185-1187.
 **Data from:** `patient.bed` and `risk` (destructured at `:1104`).
 **API:** `GET /api/vigil/patients/{patient_id}`.
-**Server:** `vigil_routes.py:499` → `vigil_service.py:407` `get_patient_risk`, which reads the
+**Server:** `vigil_routes.py:512` → `vigil_service.py:407` `get_patient_risk`, which reads the
 single latest vitals row (`vigil_service.py:417-427`, ordered `timestamp DESC, id DESC`, the
 `id DESC` tie-break exists because two obs sets can share an observation time and SQLite was
 returning the superseded benign one) and scores it with `compute_news2`
@@ -284,7 +284,7 @@ Styled `Vigil.css:156-162`.
 **API:** initial values via `GET /api/vigil/patients/{patient_id}`; updates via the
 `vitals:update` socket event.
 **Server:** `server/services/bot_service.py:358` emits `vitals:update` each simulator tick via
-`server/ws/realtime.py:546` `emit_patient_vitals`, which scopes the emit to the patient's
+`server/ws/realtime.py:698` `emit_patient_vitals`, which scopes the emit to the patient's
 department room plus `dept:__all__`, so a clinician on another ward never receives it. The
 payload shape is built by `bot_service.py:132` `_next_reading` (the emit dict at
 `bot_service.py:203-219`) and includes a full `risk` object from `compute_news2`
@@ -311,7 +311,7 @@ at :1207:1213:1219:1225:1231. Note the BP cell's tooltip is labelled **SYS BP** 
 `systolic_bp` only (`:1213`); diastolic is never plotted.
 **Data from:** the `vitals` array (`VigilPanel.tsx:742`), reversed to oldest-first and clipped to
 the last **40** points (`:1110`:1114).
-**API / Server:** the chart bundle's `vitals` (max 288 rows, `vigil_routes.py:47-51`) plus live
+**API / Server:** the chart bundle's `vitals` (max 288 rows, `vigil_routes.py:49-53`) plus live
 socket points.
 **Change this →**
 - It **returns null**, no tooltip at all, when there are no vitals (`:1109`) or fewer than two
@@ -353,9 +353,9 @@ render.
 chart.** There is no role gate, no permission check and no disabled state in this JSX. A nurse
 sees DISCHARGE; pressing it opens the modal and the refusal only arrives when the server rejects
 `POST /api/vigil/patients/{id}/discharge` (which requires `discharge.generate`,
-`vigil_routes.py:716`), and that refusal surfaces as a raw `alert('Discharge failed: …')`
-(`:656`). If you want a role-aware action bar, `PatientDetailView` currently has no `role` prop to
-work from; you would have to thread it in from `VigilPanel({ role })` at `:65`.
+`vigil_routes.py:735`), and that refusal surfaces as a raw `alert('Discharge failed: …')`
+(`:675`). If you want a role-aware action bar, `PatientDetailView` currently has no `role` prop to
+work from; you would have to thread it in from `VigilPanel({ role })` at `:67`.
 The two colour families are: `--diag` (accent wash, `Vigil.css:179`) for Diag. Reports only, and
 the shared surface style for everything else (`Vigil.css:183-186`). PRINT RECORD / PRINT MEDS /
 DISCHARGE additionally carry an inline `background: var(--accent-glow)` on two of the three
@@ -373,7 +373,7 @@ component is `src/components/vigil/CareBundleTimer.tsx:122`; its card style is i
 (`:129-145`) on mount and then **every 15 seconds** (`POLL_MS`, `:25`; interval at `:154`).
 **API:** `GET /api/bundles/patient/{patient_id}?active_only=true` via
 `src/api/bundles.ts:70` `getPatientBundles`.
-**Server:** `server/routes/bundle_routes.py:21` `patient_bundles` →
+**Server:** `server/routes/bundle_routes.py:22` `patient_bundles` →
 `server/services/sepsis_bundle_service.py:110` `get_bundles_for_patient` →
 `sepsis_bundle_service.py:129` `_decorate`, which computes `elements[].state`,
 `completed_count`, `total_count`, `completion_pct`, `compliance_pct` and `on_track`.
@@ -405,7 +405,7 @@ that misreading.
 **Rendered by:** `CareBundleTimer.tsx:293-305`, `Trigger: {bundle.trigger_reason}`.
 **Change this →** it **disappears** entirely when `trigger_reason` is empty (`:293`). A manually
 started bundle carries "Manual start (Sepsis Six)" (`:179`); an auto-started one carries the NEWS2
-reason written by `sepsis_bundle_service.py:174` `maybe_autostart` (aggregate ≥ 7).
+reason written by `sepsis_bundle_service.py:345` `maybe_autostart` (aggregate ≥ 7).
 
 ### 3.4 The six-element checklist
 **Where:** a grid that reflows into columns at ≥300px per column (`:309`).
@@ -420,7 +420,7 @@ and `state` from `sepsis_bundle_service.py:152-155`.
 (`sepsis_bundle_service.py:148-151`). A completed element gets a strike-through label at 0.75
 opacity (`:338-339`) and **loses its Mark done button** (`:362`). Clicking Mark done calls
 `POST /api/bundles/{bundle_id}/complete/{element}`
-(`src/api/bundles.ts:106` → `bundle_routes.py:49`) then refetches, so the row flips to "On time"
+(`src/api/bundles.ts:106` → `bundle_routes.py:104`) then refetches, so the row flips to "On time"
 or "Late" without a page change.
 
 ### 3.5 Card footer: percent complete and Cancel bundle
@@ -430,7 +430,7 @@ or "Late" without a page change.
 error string replaces it in red (`:387-388`). `completion_pct` is elements-done-regardless-of-
 timing, deliberately distinct from `compliance_pct` (`sepsis_bundle_service.py:163-168`), the
 card never claims 100% compliance for a bundle that breached the hour. Cancel pops a native
-`window.confirm` (`:183`) then `POST /api/bundles/{id}/cancel` (`bundle_routes.py:67`); on success
+`window.confirm` (`:183`) then `POST /api/bundles/{id}/cancel` (`bundle_routes.py:69`); on success
 the whole card collapses to the empty state below.
 
 ### 3.6 Card states: loading, error, empty
@@ -440,7 +440,7 @@ bundle `:200-214` (red message + **Retry**); empty `:217-238` ("No active care b
 **Start Sepsis Six** button).
 **Change this →** the empty state is the common one, most patients have no bundle. Pressing
 Start calls `POST /api/bundles/patient/{id}/start` (`src/api/bundles.ts:88` →
-`bundle_routes.py:30` → `sepsis_bundle_service.py:42`) and the card becomes the full timer.
+`bundle_routes.py:31` → `sepsis_bundle_service.py:42`) and the card becomes the full timer.
 While any action is in flight the button reads "Starting…" and is disabled (`:229-231`).
 
 ---
@@ -455,8 +455,8 @@ The component is `src/components/ClinicalCourseTimeline.tsx:26`. Styled `Vigil.c
 `loadProjection` (`VigilPanel.tsx:552-558`).
 **API:** `GET /api/vigil/patients/{patient_id}/timeline-projection` via
 `src/api/client.ts:623`.
-**Server:** `vigil_routes.py:925` `get_patient_timeline_projection` → reads the patient's latest
-risk level (`_load_latest_risk`, `vigil_routes.py:92`) → `server/services/timeline_service.py:350`
+**Server:** `vigil_routes.py:944` `get_patient_timeline_projection` → reads the patient's latest
+risk level (`_load_latest_risk`, `vigil_routes.py:94`) → `server/services/timeline_service.py:350`
 `get_timeline_projection`.
 
 ### 4.1 "Clinical Course" heading + expected stay + provenance chip
@@ -603,7 +603,7 @@ onNarrativeReady={setAiNarrative} />`. The component is `VigilPanel.tsx:2211-234
 `:2220-2225`.
 **API:** `GET /api/vigil/patients/{patient_id}/analysis`, Server-Sent Events, via
 `src/api/client.ts:1532` `getPatientAnalysis`.
-**Server:** `vigil_routes.py:623` `get_patient_analysis` →
+**Server:** `vigil_routes.py:642` `get_patient_analysis` →
 `server/services/vigil_service.py:570` `generate_patient_analysis`.
 
 What that service actually does is worth knowing, because the code comment misleads. It first
@@ -637,9 +637,9 @@ assembles a deterministic English brief from the record, identity sentence
   the discharge preview (`:1416-1417`), the discharge print view (`:2033-2034`) and the handoff
   print view (`:2025`). Break the stream and all three print blank.
 - **Server-side dedup.** Two tabs on the same patient do not fire two LLM calls: an in-flight lock
-  (`vigil_routes.py:662-665`) makes the second request wait and replay the cached text word by word
-  (`vigil_routes.py:667-676`). The 5-minute cache read is currently commented out
-  (`vigil_routes.py:641-658`), so every *first* open does regenerate.
+  (`vigil_routes.py:681-684`) makes the second request wait and replay the cached text word by word
+  (`vigil_routes.py:686-695`). The 5-minute cache read is currently commented out
+  (`vigil_routes.py:660-677`), so every *first* open does regenerate.
 
 ### 5.7 The Glass Window (full-screen AI assessment)
 **Where:** a centred dialog over a dimmed page, up to 768px wide and 85vh tall.
@@ -767,7 +767,7 @@ scrim dimmed only part of the chrome (`:338-342`).
 filters `data.lens_analyses` to entries whose `image_type` contains one of
 `xray, x-ray, ct, mri, ultrasound, ecg, echo` (`IMAGING_TYPES`, `:783`), newest first.
 **API / Server:** already loaded, `lens_analyses` in the chart bundle
-(`vigil_routes.py:73-77`).
+(`vigil_routes.py:75-79`).
 **Change this →** the title carries a live count "**N total**" (`:1623`) from
 `allDiagnosticReports.length`, note that is the *unfiltered* count, so it does not move as you
 type. The search box (`:1628-1635`) autofocuses and matches analysis text, image type, clinical
@@ -802,8 +802,8 @@ a structured flag, a report that merely mentions the word is flagged.
 **API:** medications arrive with the chart; administrations come from
 `GET /api/emar/patients/{patient_id}/administrations` via `src/api/client.ts:1449`
 `getAdministrations`, called by `loadAdministrations` (`VigilPanel.tsx:641-650`).
-**Server:** meds, `vigil_routes.py:79-84` plus the `unverified` decoration at
-`vigil_routes.py:547-556`. Administrations, `server/routes/emar_routes.py:116`
+**Server:** meds, `vigil_routes.py:81-86` plus the `unverified` decoration at
+`vigil_routes.py:560-569`. Administrations, `server/routes/emar_routes.py:138`
 `get_patient_administrations` → `server/services/emar_service.py:1030` `list_administrations`.
 **Change this →**
 - **Header count.** "**N total**" from `medications?.length || 0` (`:1785`), plus a `+` button
@@ -824,7 +824,7 @@ a structured flag, a report that merely mentions the word is flagged.
   showed UTC misread as local wall-clock.
 - **Administer button.** Rendered only for `status === 'active'` meds (`:1839`). **Disabled when
   `m.unverified`** (`:1842`), with the title "Pharmacist verification required" (`:1843`).
-  `unverified` is computed server-side at `vigil_routes.py:551-556`: source is `llm_extracted` or
+  `unverified` is computed server-side at `vigil_routes.py:564-569`: source is `llm_extracted` or
   `agentic` **and** nobody has verified it. The inline style deliberately carries **no opacity**
   the comment at `:1844-1850` records that `opacity: 0.5` composited the label to 2.07:1 in dark
   and 1.65:1 in light, so a nurse could not read the button that was being withheld from her. The
@@ -835,7 +835,7 @@ a structured flag, a report that merely mentions the word is flagged.
 **Rendered by:** `VigilPanel.tsx:1530-1575`.
 **Data from:** `filteredHistoryNotes` (`:743-752`), `data.notes` and `data.scribe_notes`
 concatenated and sorted newest-first, then filtered by content, formatted date, or doc type.
-**API / Server:** both arrays come with the chart bundle (`vigil_routes.py:53-64`).
+**API / Server:** both arrays come with the chart bundle (`vigil_routes.py:55-66`).
 **Change this →** each row is a `<button className="detail__note">` (`:1546-1557`) with a type
 badge, a date/time, and the note body (`structured_note || raw_transcript || content`, `:1556`).
 Scribe notes show `scribe · <format>` in the badge (`:1553`). **Empty state:** "No clinical notes
@@ -851,7 +851,7 @@ which reads as "this patient has no imaging".
 **Data from:** its own fetch, `getPatientStoryFeed(patientId)` (`PatientStory.tsx:102`), refreshed
 live on the `patient:timeline_updated` socket event (`PatientStory.tsx:112`).
 **API:** `GET /api/vigil/patients/{patient_id}/story`.
-**Server:** `vigil_routes.py:466` `get_patient_story_route` →
+**Server:** `vigil_routes.py:479` `get_patient_story_route` →
 `server/services/patient_story_service.py`.
 **Change this →** it merges fifteen event types into one filterable chronological feed, each with
 its own chip label and colour from `TYPE_META` (`PatientStory.tsx:51-68`), and **this is the only
@@ -865,11 +865,11 @@ board. A `StoryType` missing from `TYPE_META` is a crash, not a missing chip
 **Rendered by:** `VigilPanel.tsx:1392-1468`, two distinct bodies.
 **Data from:** `dischargeModal` / `discharging` / `dischargeSummary` (`:467-469`).
 **API:** `POST /api/vigil/patients/{patient_id}/discharge` via `src/api/client.ts:1577`.
-**Server:** `vigil_routes.py:713` `discharge_patient_route`. It requires the permission
+**Server:** `vigil_routes.py:732` `discharge_patient_route`. It requires the permission
 `discharge.generate` (`:716`), checks the patient is `admitted` (`:733-734`), builds the timeline
 (`server/services/discharge_service.py:23` `build_patient_timeline`), generates the summary
 (`discharge_service.py:183` `generate_discharge_summary`, with a hardcoded plain-text fallback at
-`vigil_routes.py:742-763` if the LLM is unavailable) and commits via
+`vigil_routes.py:761-782` if the LLM is unavailable) and commits via
 `discharge_service.py:806` `discharge_patient`.
 **Change this →**
 - **Before confirming** you see the title "Discharge <name>" (`:1387`), an explanatory paragraph
@@ -887,7 +887,7 @@ board. A `StoryType` missing from `TYPE_META` is a crash, not a missing chip
   `getDischargeQrObjectUrl` (`src/api/client.ts:1593`) fetches it as a blob and the effect at
   `VigilPanel.tsx:665-682` hands back an object URL, revoking it on cleanup. While that is in
   flight the slot shows a faint "Loading QR…" box (`:1446`). Server:
-  `vigil_routes.py:831` `get_qr_code`, which is gated on `discharge.read`, it previously had **no
+  `vigil_routes.py:850` `get_qr_code`, which is gated on `discharge.read`, it previously had **no
   auth dependency at all**, making the discharge bearer secret publicly recoverable from a patient
   id.
 - **Failure.** A rejected discharge surfaces as a browser `alert('Discharge failed: …')`
@@ -917,8 +917,8 @@ via `addNoteModalOpen` (`:475`) which no visible control on the current chart se
 **Rendered by:** `VigilPanel.tsx:1754-1783`.
 **API:** `POST /api/vigil/patients/{patient_id}/notes` via `src/api/client.ts:1319`
 `addClinicalNote`.
-**Server:** `vigil_routes.py:598` `add_patient_note` (requires `patient.write` **and** ward scope)
-→ `vigil_routes.py:127` `_insert_patient_note`, idempotent on the `Idempotency-Key` header.
+**Server:** `vigil_routes.py:617` `add_patient_note` (requires `patient.write` **and** ward scope)
+→ `vigil_routes.py:129` `_insert_patient_note`, idempotent on the `Idempotency-Key` header.
 **Change this →** it shows the patient name, the current local date/time (`:1753`), a textarea, and
 the signing clinician's name from `getUser()` with the fallback string "Current Clinician"
 (`:1764`). Save is disabled while submitting or while the textarea is blank (`:1769`).
@@ -932,9 +932,9 @@ author has read it back on screen.
 **Rendered by:** `VigilPanel.tsx:1942-1996`.
 **API:** `POST /api/vigil/patients/{patient_id}/medications` via `src/api/client.ts:1332`
 `addMedication`.
-**Server:** `vigil_routes.py:790` `add_patient_medication`, requires `medication.write` plus ward
+**Server:** `vigil_routes.py:809` `add_patient_medication`, requires `medication.write` plus ward
 scope, and runs `enforce_medication_safety`
-(`server/services/medication_safety_gate.py`) **before any DB write** (`vigil_routes.py:816-822`).
+(`server/services/medication_safety_gate.py`) **before any DB write** (`vigil_routes.py:835-841`).
 **Change this →** fields are Drug Name (`:1946`), Dose and Route side by side (`:1948-1963`, route
 is a fixed six-option select: Oral, IV, IV Infusion, IM, SC, Nebulizer), Frequency and Status
 (`:1965-1978`, status is Active/PRN/Discontinued). A red `role="alert"` box appears above the
@@ -1058,15 +1058,15 @@ surfaces each failure differently:
 - **Care bundle actions without `alert.read`** → the red error line in the bundle card footer
   (`CareBundleTimer.tsx:388`).
 - **Presence** silently never joins for a role without `PATIENT_READ_ALL`
-  (`server/ws/realtime.py:484-489`), so the chips just never appear.
+  (`server/ws/realtime.py:592-597`), so the chips just never appear.
 
 ### 9.6 What gets audited when you open this chart
 Opening the chart writes a `phi_access` row via the `audit_action` on the route dependency:
-`patient_chart_viewed` (`vigil_routes.py:503`). The AI assessment writes
-`patient_analysis_viewed` (`:627`), the story `patient_timeline_viewed` (`:930` for the
-projection), care bundles `care_bundles_viewed` (`bundle_routes.py:25`) and the eMAR history
-`emar_administrations_viewed` (`emar_routes.py:121`). The **vitals** endpoint deliberately
-carries no audit action (`vigil_routes.py:564-567`), one fail-closed encrypted-SQLite write per
+`patient_chart_viewed` (`vigil_routes.py:516`). The AI assessment writes
+`patient_analysis_viewed` (`:646`), the story `patient_timeline_viewed` (`:949` for the
+projection), care bundles `care_bundles_viewed` (`bundle_routes.py:26`) and the eMAR history
+`emar_administrations_viewed` (`emar_routes.py:143`). The **vitals** endpoint deliberately
+carries no audit action (`vigil_routes.py:577-580`), one fail-closed encrypted-SQLite write per
 poll is the shape blamed for the 2026-07-30 loop stalls; the scope check is the control there.
 
 ---
@@ -1095,7 +1095,7 @@ handler, the offline guard and the endpoint all work.
 
 ### 10.4 `risk_history` arrives and is discarded
 The chart response carries up to 50 historical risk scores with drivers
-(`vigil_routes.py:537-545`), and nothing on this screen reads them. There is no NEWS2-over-time
+(`vigil_routes.py:550-558`), and nothing on this screen reads them. There is no NEWS2-over-time
 graph on the chart.
 
 ---

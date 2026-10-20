@@ -75,7 +75,7 @@ sequenceDiagram
 ### Flow 2: session lifecycle (login → socket → logout)
 
 1. `login()` POSTs credentials to `/auth/login`, then persists `token` → `orb_token` and `user` → `orb_user` (`src/api/client.ts:278-288`).
-2. It calls `authenticateSocket()` (`src/api/client.ts:592`, defined at `:57`), which re-points the socket.io handshake auth at the fresh token and forces a disconnect/reconnect (`src/api/client.ts:57-64`). The socket itself is a module-level singleton created on first import with `auth` as a *callback* that re-reads the token on every connection attempt (`src/api/client.ts:42-49`), but with `autoConnect: false` (`:43`), so it opens only once a token or session cookie exists (`:54`); the server's `connect` handler verifies the handshake before accepting (`server/ws/realtime.py:358`, guide 06-realtime).
+2. It calls `authenticateSocket()` (`src/api/client.ts:592`, defined at `:57`), which re-points the socket.io handshake auth at the fresh token and forces a disconnect/reconnect (`src/api/client.ts:57-64`). The socket itself is a module-level singleton created on first import with `auth` as a *callback* that re-reads the token on every connection attempt (`src/api/client.ts:42-49`), but with `autoConnect: false` (`:43`), so it opens only once a token or session cookie exists (`:54`); the server's `connect` handler verifies the handshake before accepting (`server/ws/realtime.py:391`, guide 06-realtime).
 3. On logout, `AppRoot.tsx:90` calls `deauthenticateSocket()` (`src/api/client.ts:60-65`) and clears storage via `clearToken()` (`src/api/client.ts:73-76`), so neither REST nor realtime keeps the old identity.
 4. Any 401 from any endpoint at any time repeats the logout effect automatically (Flow 1, step 5).
 
@@ -111,7 +111,7 @@ graph TD
 
 ### Flow 5: idempotency
 
-**Idempotency** means an operation applied more than once has the same effect as applying it once. Retries (offline replays, double-clicks, lost responses) make duplicates inevitable, so safety-critical writes need duplicate detection. Orb's mechanism is the **idempotency key**: a unique client-chosen string sent with the request; the server records it, and if the same key arrives again it returns the recorded outcome instead of re-executing. In this codebase the fully wired example is the Helix pharmacy order transition: `transitionHelixOrder` accepts an optional `idempotency_key` (`src/api/client.ts:1174-1185`), the route forwards it (`server/routes/helix_routes.py:133`, `:156`), and `transition_order_status` checks it against the `UNIQUE` column `helix_transitions.idempotency_key` (`server/services/helix_service.py:162-175`, `server/services/helix_db.py:76`), returning `already_applied: true` on a duplicate. The offline queue generates a UUID per queued request (`src/api/client.ts:219`) but, as its own comment admits (`src/api/client.ts:250-253`), never transmits it, so queued note/medication replays are *not* actually protected today (see Discrepancies).
+**Idempotency** means an operation applied more than once has the same effect as applying it once. Retries (offline replays, double-clicks, lost responses) make duplicates inevitable, so safety-critical writes need duplicate detection. Orb's mechanism is the **idempotency key**: a unique client-chosen string sent with the request; the server records it, and if the same key arrives again it returns the recorded outcome instead of re-executing. In this codebase the fully wired example is the Helix pharmacy order transition: `transitionHelixOrder` accepts an optional `idempotency_key` (`src/api/client.ts:1174-1185`), the route forwards it (`server/routes/helix_routes.py:180`, `:203`), and `transition_order_status` checks it against the `UNIQUE` column `helix_transitions.idempotency_key` (`server/services/helix_service.py:162-175`, `server/services/helix_db.py:76`), returning `already_applied: true` on a duplicate. The offline queue generates a UUID per queued request (`src/api/client.ts:219`) but, as its own comment admits (`src/api/client.ts:250-253`), never transmits it, so queued note/medication replays are *not* actually protected today (see Discrepancies).
 
 ## Function-by-function
 
@@ -140,7 +140,7 @@ graph TD
 #### socket: `src/api/client.ts:42`
 **Signature:** module constant → socket.io `Socket`
 **Does:** Creates the app-wide realtime WebSocket connection at module load, presenting the JWT in the handshake.
-**How it works:** 1. `io(API_HOST, { autoConnect: true, auth: (cb) => cb({ token: getToken() }) })` (`:43-46`). 2. Because `auth` is a callback, the *current* localStorage token is read on every (re)connection attempt. 3. A **WebSocket** is a persistent two-way TCP connection the server can push on; **socket.io** is a library layered on it adding rooms, reconnection, and a **handshake**, the initial exchange where this `auth` payload is delivered. 4. The server's `connect(sid, environ, auth)` handler verifies the token and refuses unauthenticated clients (`server/ws/realtime.py:168`; rationale comment `:29-138`).
+**How it works:** 1. `io(API_HOST, { autoConnect: true, auth: (cb) => cb({ token: getToken() }) })` (`:43-46`). 2. Because `auth` is a callback, the *current* localStorage token is read on every (re)connection attempt. 3. A **WebSocket** is a persistent two-way TCP connection the server can push on; **socket.io** is a library layered on it adding rooms, reconnection, and a **handshake**, the initial exchange where this `auth` payload is delivered. 4. The server's `connect(sid, environ, auth)` handler verifies the token and refuses unauthenticated clients (`server/ws/realtime.py:181`; rationale comment `:29-141`).
 **Why it exists:** One shared authenticated socket for the whole app; sending the JWT in the handshake makes realtime enforce the same identity as REST, otherwise any client could join any patient room (`:33-35`).
 **Data in/out:** handshake `auth = { token: string | null }` → connected socket (or a refused connection before login).
 **Talks to:** imported by VigilPanel, RelayPanel, SurgicalSuitePanel, SageAmbientSidebar, SageInsightsFeed, `useStreamingTranscription`, and others (they register `socket.on(...)` handlers, event catalog in guide 06-realtime).
@@ -310,7 +310,7 @@ graph TD
 An **MRN** (medical record number) is the hospital's permanent identifier for a patient; `risk_score`/`risk_level` come from the server's NEWS2-based deterioration scoring (NEWS2 = National Early Warning Score 2, a standard vitals-derived deterioration score).
 **Why it exists:** The census list and detail view are Vigil's two core reads; keeping the `Patient` type here gives every consumer one shared shape.
 **Talks to:** `getPatients`, VigilPanel and SagePanel; `getPatientDetail`, VigilPanel; `getPatientsList` re-uses `getPatients` (`:1685-1688`). `getPatientVitals` has **no in-repo caller** (dead export).
-**Change guide:** To add a census field, extend `Patient` (`:291`) and the server's list query (`server/routes/vigil_routes.py:37`); watch out, `getPatientDetail` returns `any`, so new consumers get no type help.
+**Change guide:** To add a census field, extend `Patient` (`:291`) and the server's list query (`server/routes/vigil_routes.py:39`); watch out, `getPatientDetail` returns `any`, so new consumers get no type help.
 **Gotchas:** none beyond the `any` typing.
 
 #### getPatientForecast: `src/api/client.ts:638`
@@ -566,7 +566,7 @@ The `Message` type carries provenance flags `is_bot`/`source` so automated posts
 #### createPatient: `src/api/client.ts:1771`
 **Signature:** `(data: any) → Promise<any>`
 **Does:** `POST /vigil/patients`, creates a patient record (used when Scribe dictation references an unknown patient).
-**Talks to:** ScribePanel. Server route verified (`server/routes/vigil_routes.py:519`).
+**Talks to:** ScribePanel. Server route verified (`server/routes/vigil_routes.py:532`).
 **How / Why / Data / Change guide / Gotchas:** trivial wrapper; untyped.
 
 #### triggerDeterioration / getEscalationStatus: `src/api/client.ts:1779` / `:1786`
@@ -588,7 +588,7 @@ The `Message` type carries provenance flags `is_bot`/`source` so automated posts
 #### getAuditLogs (+ AuditFilters, AuditLog, AuditLogsResponse): `src/api/client.ts:1837` / `:1791` / `:1803` / `:1822`
 **Signature:** `(filters: AuditFilters = {}) → Promise<AuditLogsResponse>`
 **Does:** Queries the governance audit trail with optional filters and pagination.
-**How it works:** 1. Builds a `URLSearchParams` **query string** (the `?key=value&...` URL suffix) from the nine optional filter fields, only setting keys that are present (`:1117-1126`). 2. GETs `/audit/logs[?qs]` (`:1128`; server `server/routes/audit_routes.py` prefix `/api/audit`, `:8`).
+**How it works:** 1. Builds a `URLSearchParams` **query string** (the `?key=value&...` URL suffix) from the nine optional filter fields, only setting keys that are present (`:1117-1126`). 2. GETs `/audit/logs[?qs]` (`:1128`; server `server/routes/audit_routes.py` prefix `/api/audit`, `:12`).
 **Why it exists:** Four different admin views (AuditLogTable, CorrelationTrace, AlertOperations, SecurityActivity) share this one query function with different filters, e.g. CorrelationTrace passes `correlation_id` to reconstruct one clinical action end-to-end.
 **Data in/out:** `AuditFilters` (`:1070-1080`) → `{logs: AuditLog[], total, limit, offset}`; `AuditLog` (`:1082-1099`) mirrors the audit table row (correlation_id, event_category, action_type, outcome, actor, patient, request_path, ip_address, ...).
 **Talks to:** the four admin components above.
@@ -746,7 +746,7 @@ Purpose (header `:1-8`): the closed loop for AI-charted medications, list meds w
 #### getPendingVerifications: `src/api/pharmacy.ts:99`
 **Signature:** `() → Promise<PendingMedication[]>`
 **Does:** Lists all AI/agentic medications awaiting pharmacist verification, unwrapping `{pending}` (`:67-68`).
-**How it works:** GET `/pharmacy/pending`; server `server/routes/pharmacy_routes.py` (prefix `/api/pharmacy`, `:20`).
+**How it works:** GET `/pharmacy/pending`; server `server/routes/pharmacy_routes.py` (prefix `/api/pharmacy`, `:41`).
 **Why it exists:** The safety principle that no AI-charted medication becomes an active order without a human pharmacist's sign-off; this is the queue view.
 **Data in/out:** none → pending rows each pre-decorated with safety alerts so the pharmacist sees allergy/interaction warnings inline.
 **Talks to:** PharmacyVerifyQueue (`src/components/helix/PharmacyVerifyQueue.tsx:14-16`, call at `:125`).
@@ -813,7 +813,7 @@ Purpose (header `:1-8`): the closed loop for AI-charted medications, list meds w
 | `orb_user` | JSON `StoredUser` | `setUser` (`:90`) | `getUser` (`:95`), App session restore |
 | `orb_offline_queue` | JSON `OfflineRequest[]` | `queueRequest`/`processOfflineQueue` (`:216`, `:257`) | replay loop (`:229`) and ClinicianShell's badge (`ClinicianShell.tsx:304-313`) |
 
-**Socket contract:** handshake `auth: {token: <JWT or null>}` (`client.ts:43-46`); the server must verify it in `connect(sid, environ, auth)` and refuse unauthenticated clients (`server/ws/realtime.py:168`; full event catalog in guide 06-realtime).
+**Socket contract:** handshake `auth: {token: <JWT or null>}` (`client.ts:43-46`); the server must verify it in `connect(sid, environ, auth)` and refuse unauthenticated clients (`server/ws/realtime.py:181`; full event catalog in guide 06-realtime).
 
 **REST endpoints consumed**, grouped by server router (all prefixes verified in `server/routes/*.py`; routers mounted in `server/main.py:297-329`). Every path below is called with `Authorization: Bearer <clinician JWT>` except where noted.
 

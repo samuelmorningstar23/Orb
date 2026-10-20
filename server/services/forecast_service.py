@@ -919,16 +919,33 @@ def get_bed_capacity_forecast() -> dict:
     return out
 
 
-def get_discharge_board() -> list:
+def get_discharge_board(
+    department: str | None = None, *, facilities: frozenset[int] | None = None
+) -> list:
     """
     Get patients sorted by discharge likelihood (next 72 hours).
     For the Discharge Readiness Board.
+
+    `department` and `facilities` are permissions.department_scope(user) and
+    permissions.facility_scope(user), never request values (multisite-8). With
+    either set the patients are kept, in the query, to
+    permissions.scope_patient_ids_sql(department, facilities=...), the same
+    patients require_patient_access lets the caller open; with both None the
+    statement is exactly what it was (every admitted patient).
     """
+    scope_sql = ""
+    scope_params: tuple = ()
+    if department is not None or facilities is not None:
+        from permissions import scope_patient_ids_sql
+
+        ids_sql, scope_params = scope_patient_ids_sql(department, facilities=facilities)
+        scope_sql = f" AND p.id IN ({ids_sql})"
     with db_session() as db:
         patients = db.execute(
-            """SELECT p.id, p.name, p.ward, p.bed, p.diagnosis, p.age, p.sex,
+            f"""SELECT p.id, p.name, p.ward, p.bed, p.diagnosis, p.age, p.sex,
                       p.admission_date
-               FROM patients p WHERE p.status = 'admitted'"""
+               FROM patients p WHERE p.status = 'admitted'{scope_sql}""",
+            scope_params,
         ).fetchall()
 
     board = []
@@ -1170,8 +1187,18 @@ def _get_cached_or_predict(patient_id: str) -> dict:
 # ══════════════════════════════════════════════════════════════════════
 
 
-def get_appointments(days_ahead: int = 7, department: str | None = None) -> list:
+def get_appointments(
+    days_ahead: int = 7,
+    department: str | None = None,
+    *,
+    facilities: frozenset[int] | None = None,
+) -> list:
     """Booked appointments for the next `days_ahead` hospital-local days.
+
+    `facilities` is permissions.facility_scope(user) (multisite-8): with more
+    than one facility on record only bookings at those facilities
+    (appointments.facility_id, the booking's own facility, as the Appointments
+    screen reads them) are listed; None changes nothing.
 
     ONLY rows from the `appointments` table. This used to synthesise three to
     five "appointments" a day by sampling admitted patients with a date-seeded
@@ -1217,6 +1244,11 @@ def get_appointments(days_ahead: int = 7, department: str | None = None) -> list
                          AND LOWER(TRIM(COALESCE(ap.department, ''))) = LOWER(?)))"""
         params.extend(scope_params)
         params.append(department.strip())
+    from services.facility_filter import column_clause
+
+    facility_sql, facility_args = column_clause("ap.facility_id", facilities)
+    sql += facility_sql
+    params.extend(facility_args)
     sql += " ORDER BY ap.scheduled_date, ap.scheduled_time, p.name"
 
     # The badge is the NEWS2 of the patient's latest vitals row, scored by the

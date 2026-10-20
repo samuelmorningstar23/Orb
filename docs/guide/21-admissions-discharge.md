@@ -88,10 +88,10 @@ sequenceDiagram
 
 ### Flow B: Discharge (generate + freeze)
 
-1. A clinician hits DISCHARGE in Vigil → `POST /api/vigil/patients/{id}/discharge` (`vigil_routes.py:742`, permission `discharge.generate`), or an ambient agent runs the `discharge` action in Relay (`relay_routes.py:977`).
+1. A clinician hits DISCHARGE in Vigil → `POST /api/vigil/patients/{id}/discharge` (`vigil_routes.py:761`, permission `discharge.generate`), or an ambient agent runs the `discharge` action in Relay (`relay_routes.py:977`).
 2. `build_patient_timeline()` assembles a chronological event list (admission, notes, scribe notes, imaging, critical alerts).
 3. `build_medication_reconciliation()` splits the **real charted medications** into continue / stopped / unverified, deterministically, never from the LLM.
-4. `generate_discharge_summary()` builds an LLM prompt that embeds that reconciliation *verbatim* and asks the model for prose. If the LLM call raises, the **caller** substitutes a static fallback template (`vigil_routes.py:768-790`; Relay's equivalent is `relay_routes.py:1077-1079` composing its fallback in phase C).
+4. `generate_discharge_summary()` builds an LLM prompt that embeds that reconciliation *verbatim* and asks the model for prose. If the LLM call raises, the **caller** substitutes a static fallback template (`vigil_routes.py:787-809`; Relay's equivalent is `relay_routes.py:1077-1079` composing its fallback in phase C).
 5. `discharge_patient()` **atomically** flips `status → 'discharged'` (bailing if already discharged), saves the summary + timeline, and mints a secure access token + QR code.
 
 ### Flow C: Patient reads their summary later
@@ -176,7 +176,7 @@ Structured allergies and a problem list are the *coded* clinical core. The free-
 **How it works:** Opens a raw connection with `get_db()`; appends an admission event from `patients` (`:29-36`); appends each `clinical_documents` note (content truncated to 200 chars) (`:39-49`); appends each `scribe_notes` entry (`:52-62`); appends each `lens_analyses` imaging interpretation (`:65-75`); appends **critical-only** `risk_scores` alerts with their drivers (`:78-89`); closes the connection (`:91`); sorts by `timestamp` with a null-safe key (`:94`).
 **Why it exists:** A discharge summary and the patient portal both need a single ordered story of the stay, drawn from tables that never share a schema.
 **Data in/out:** Out: `list[{timestamp, type, title, detail}]`, `type ∈ {admission, note, scribe, imaging, alert}`.
-**Talks to:** `get_db`. Callers: `discharge_patient_route` (`vigil_routes.py:766`), Relay discharge action (`relay_routes.py:1075`, off-loop via `run_db`).
+**Talks to:** `get_db`. Callers: `discharge_patient_route` (`vigil_routes.py:785`), Relay discharge action (`relay_routes.py:1075`, off-loop via `run_db`).
 **Gotchas:** Manual `get_db()`/`db.close()` with no `try/finally`, an exception between open and close leaks the connection. Risk drivers are `json.loads`-ed and re-joined, so malformed JSON in `risk_scores.drivers` would raise here.
 
 #### build_medication_reconciliation: `server/services/discharge_service.py:100`
@@ -190,7 +190,7 @@ Structured allergies and a problem list are the *coded* clinical core. The free-
 5. Returns `{continued, stopped, unverified, counts}` (`:146-155`).
 **Why it exists:** Medication reconciliation is the single highest-value discharge intervention; making it deterministic and pharmacist-aware means the LLM can *describe* the meds but can never *invent* them.
 **Data in/out:** Out: three lists of entry dicts + a counts object.
-**Talks to:** `get_db`. Callers: `generate_discharge_summary` (`:224`) and the previewable route `GET /api/vigil/patients/{id}/medication-reconciliation` (`vigil_routes.py:720`, guarded by `require_patient_access("discharge.generate")` at `:700`). Exercised by `test_audit_fixes.py:190` and `test_tier1_small_closes.py:77`.
+**Talks to:** `get_db`. Callers: `generate_discharge_summary` (`:224`) and the previewable route `GET /api/vigil/patients/{id}/medication-reconciliation` (`vigil_routes.py:739`, guarded by `require_patient_access("discharge.generate")` at `:719`). Exercised by `test_audit_fixes.py:190` and `test_tier1_small_closes.py:77`.
 **Change guide:** *To add a "held" medication bucket*, add an `elif status == "held"` branch at `:136-145` and a corresponding line in `_render_med_rec_text`. Knock-on: the patient-portal meds list (`discharge_access_service.py:253-256`) does **not** use this function, so held meds would show there as active unless you also change that query.
 
 #### _render_med_rec_text: `server/services/discharge_service.py:158`
@@ -230,7 +230,7 @@ Structured allergies and a problem list are the *coded* clinical core. The free-
 7. Returns `{"status":"success", "summary_url", "qr_path"}` (`:1002`).
 **Why it exists:** Discharge must be exactly-once (double-clicking DISCHARGE must not mint two links) and must leave a durable, later-readable artifact.
 **Data in/out:** In: patient id, author id, the generated summary, the timeline list. Out: status + URL + QR path.
-**Talks to:** `generate_qr_code`, `log_audit_event`, config TTL / `PUBLIC_APP_BASE_URL`. Callers: `vigil_routes.py:792`, `relay_routes.py:987`.
+**Talks to:** `generate_qr_code`, `log_audit_event`, config TTL / `PUBLIC_APP_BASE_URL`. Callers: `vigil_routes.py:811`, `relay_routes.py:987`.
 **Change guide:** *To lengthen link validity*, set `ORB_DISCHARGE_ACCESS_TTL_DAYS` (config `:409`), no code change. Footgun: because the audit `correlation_id` is the hash, you cannot recover a lost patient link from the audit trail, reissue instead.
 **Gotchas:** The secret is the `raw_token` in the URL and it is **never** written to disk; `discharge_access_service.get_token_record` (`:68`) hashes whatever it is given and matches on `token_hash`. Legacy rows that stored plaintext in `token_id` are scrubbed by an `init_db()` migration (`server/database.py:1882-1884`) that sets `token_id := token_hash`. The status flip happens first precisely so summary/token inserts can't race a second discharge.
 
@@ -399,8 +399,8 @@ End-to-end via `TestClient`. Fixtures seed a patient with `date_of_birth='1990-0
 
 | Method | Full path | Delegates to |
 |---|---|---|
-| POST | `/api/vigil/patients/{patient_id}/discharge` | `build_patient_timeline` → `generate_discharge_summary` → `discharge_patient` (`vigil_routes.py:386`) |
-| GET | `/api/vigil/patients/{patient_id}/medication-reconciliation` | `build_medication_reconciliation` (`vigil_routes.py:370`) |
+| POST | `/api/vigil/patients/{patient_id}/discharge` | `build_patient_timeline` → `generate_discharge_summary` → `discharge_patient` (`vigil_routes.py:388`) |
+| GET | `/api/vigil/patients/{patient_id}/medication-reconciliation` | `build_medication_reconciliation` (`vigil_routes.py:372`) |
 
 **Exported service functions other subsystems import:** `admit_patient`; `add_allergy`/`list_allergies` (read by `drug_safety_service`); `build_patient_timeline`, `build_medication_reconciliation`, `generate_discharge_summary`, `discharge_patient` (Vigil + Relay); `verify_discharge_access`, `get_verified_discharge_summary` (public routes).
 
@@ -434,5 +434,5 @@ End-to-end via `TestClient`. Fixtures seed a patient with `date_of_birth='1990-0
 3. **The patient-facing summary mislabels the MRN and skips reconciliation.** `get_verified_discharge_summary` selects `p.id AS mrn` (`discharge_access_service.py:232`), so the "MRN" shown to the patient is the internal `PAT-…` id; and its meds query (`:237-241`) is a plain `status='active'` select, not `build_medication_reconciliation`, so PRN/unverified safety handling is absent on the patient's copy.
 4. **`DischargePrintView` prints fabricated clinical defaults.** Hard-coded negatives "No H/o Diabetes Mellitus / Hypertension / CAD / TB / Asthma" (`DischargePrintView.tsx:90-94`), default doctor "Dr. Vikram Rathore" (`:74`; the MANAGEMENT line at `:82` defaults to "the clinical team"), literal "FOR 5 DAYS" per med (`:139`), and fixed normal exam findings (`:106-119`) render even with no real data, a summary for a diabetic can print "No H/o Diabetes Mellitus". Clinically misleading.
 5. **The `token_hash` column is dead.** `discharge_patient` stores `sha256(token_id)` (`discharge_service.py:880`, schema `database.py:188`), but lookup uses the raw `token_id` (`discharge_access_service.py:60-63`). The comment in `test_discharge_access.py:44-50` calls hashing "the intended hardened lookup," so this is a known, unfinished hardening. Not directly exploitable (the `token_id` is a 32-byte urlsafe secret), but the hash column adds no protection as used, and the raw secret also lands in the audit `correlation_id` (`discharge_service.py:973-981`).
-6. **`generate_discharge_summary` can return `""` without triggering the fallback.** On empty LLM output it returns `""` (`discharge_service.py:719-723`) rather than raising, so the caller's `try/except` template fallback (`vigil_routes.py:410-436`) does not fire and an empty summary can be persisted.
+6. **`generate_discharge_summary` can return `""` without triggering the fallback.** On empty LLM output it returns `""` (`discharge_service.py:719-723`) rather than raising, so the caller's `try/except` template fallback (`vigil_routes.py:417-443`) does not fire and an empty summary can be persisted.
 7. **Minor:** `admission_service` imports `sio` but never uses it (`server/services/admission_service.py:7`); `process_admission` injects an unused `background_tasks` (`server/routes/admission_routes.py:62`) and leaks raw exception text in its 500 `detail` (`:70`); `build_patient_timeline` (`server/services/discharge_service.py:23`) manages the connection without a `try/finally`, leaking it on error; the `window.print()` call in `VigilPanel` (`src/pages/panels/VigilPanel.tsx:534`) runs on a `setTimeout`, a mount race that could print before the portal exists on a slow render.

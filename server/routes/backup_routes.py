@@ -121,11 +121,60 @@ def _describe(path: Path) -> dict:
 _MAX_BACKUPS_SHOWN = 50
 
 
+# What a restore rolls back (ruling MS-R12 (a), multisite-15). One appliance
+# can hold several facilities of a hospital group in one database (MS-R1 (a)),
+# and a backup is that whole database, so a restore puts every facility back
+# together; there is no per-facility restore. The Data and Backups screen and
+# CIO questionnaire 1.5 say so in these words.
+RESTORE_STATEMENT_ONE = (
+    "A backup holds this appliance's whole database. Restoring one puts every "
+    "record back to the moment the backup was taken: anything recorded after "
+    "that moment is lost and must be entered again."
+)
+RESTORE_STATEMENT_MANY = (
+    "This appliance holds {count} facilities in one database, and a backup holds "
+    "all of them. Restoring one puts every facility back to the moment it was "
+    "taken, not just one: anything recorded at any facility after that moment "
+    "is lost and must be entered again. One facility cannot be restored on its own."
+)
+
+
+def _restore_scope() -> dict:
+    """{whole_appliance, facilities_on_record, statement, facilities?}: what
+    restoring a backup rolls back. Facilities are listed (id, code, name)
+    only while more than one is on record; nothing here names a patient."""
+    from services import facility_service
+
+    try:
+        rows = facility_service.list_facilities()
+    except Exception:  # the posture page must still answer
+        logger.warning("Could not read the facilities table for the restore statement")
+        rows = []
+    count = max(len(rows), 1)
+    scope: dict = {
+        "whole_appliance": True,
+        "facilities_on_record": count,
+        "statement": (
+            RESTORE_STATEMENT_MANY.format(count=count) if count > 1 else RESTORE_STATEMENT_ONE
+        ),
+    }
+    if count > 1:
+        scope["facilities"] = [
+            {
+                "id": int(r["id"]),
+                "code": r.get("code"),
+                "name": facility_service.display_name(int(r["id"]), facility=r),
+            }
+            for r in rows
+        ]
+    return scope
+
+
 _LIST_BACKUPS_USER_DEFAULT = Depends(require_permission("admin.overview"))
 
 
 @router.get("")
-def list_backups(user: dict = _LIST_BACKUPS_USER_DEFAULT):
+def list_backups(user: dict = _LIST_BACKUPS_USER_DEFAULT) -> dict:
     """Database posture (size, journal mode, encryption, row counts) and the
     list of existing backup snapshots (newest first)."""
     from database import db_session, encryption_at_rest_status
@@ -183,6 +232,7 @@ def list_backups(user: dict = _LIST_BACKUPS_USER_DEFAULT):
         "backups_shown": len(backups),
         "retention_days": _RETAIN_DAYS,
         "directory": str(out_dir),
+        "restore_scope": _restore_scope(),
     }
 
 

@@ -31,6 +31,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from permissions import (
     VITALS_WRITE,
     department_scope,
+    facility_scope,
     has_permission,
     patient_in_scope_blocking,
     require_any_permission,
@@ -40,9 +41,19 @@ from permissions import (
 from pydantic import BaseModel
 from services.audit_service import log_audit_event
 
-from services import nurse_shift_service
+from services import facility_service, nurse_shift_service
 
 router = APIRouter(prefix="/api/nurse", tags=["nurse"])
+
+
+def _with_facility_scope(metadata: dict, facilities: frozenset[int] | None) -> dict:
+    """The board audit rows' metadata plus the reader's facility scope, the
+    key permissions.log_phi_read adds: only while more than one facility is on
+    record (a list, or None for a group-wide account), so with one facility
+    the row is exactly as before (multisite-8)."""
+    if facility_service.multi_facility_data():
+        metadata["facility_scope"] = None if facilities is None else sorted(facilities)
+    return metadata
 
 
 class ObservationRequest(BaseModel):
@@ -77,7 +88,7 @@ _GET_BOARD_USER_DEFAULT = Depends(require_permission("patient.read_all", "vitals
 def get_board(
     request: Request,
     user: dict = _GET_BOARD_USER_DEFAULT,
-):
+) -> dict:
     """The shift board: every admitted patient the nurse covers, task-shaped.
 
     SCOPE IS NOT NEGOTIABLE FROM THE CLIENT. The ward comes from the
@@ -101,6 +112,10 @@ def get_board(
     category, so if the audit row cannot be persisted no board is returned.
     """
     department = department_scope(user)
+    # Facility scope (multisite-8): with more than one facility on record the
+    # board keeps to the caller's facilities; None (one facility) changes
+    # nothing.
+    facilities = facility_scope(user)
 
     log_audit_event(
         correlation_id=str(uuid.uuid4()),
@@ -119,17 +134,20 @@ def get_board(
         http_method=request.method,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
-        metadata={
-            "department": department,
-            # True only for a user with no department on record — an admin-set
-            # property of the account, never a request parameter. Recorded so a
-            # hospital-wide read is visibly hospital-wide in the trail.
-            "hospital_wide": department is None,
-            "scope_source": "authenticated_user",
-        },
+        metadata=_with_facility_scope(
+            {
+                "department": department,
+                # True only for a user with no department on record: an
+                # admin-set property of the account, never a request parameter.
+                # Recorded so a hospital-wide read is visibly hospital-wide.
+                "hospital_wide": department is None,
+                "scope_source": "authenticated_user",
+            },
+            facilities,
+        ),
     )
 
-    return nurse_shift_service.build_board(department)
+    return nurse_shift_service.build_board(department, facilities=facilities)
 
 
 _LIST_TRANSCRIBE_PATIENTS_USER_DEFAULT = Depends(require_permission("vitals.transcribe"))
@@ -143,7 +161,7 @@ def list_transcribe_patients(
     # Her Observations screen used to read the bed board, which needs the beds
     # module (ORB_ADT) switched on; this list works without it.
     user: dict = _LIST_TRANSCRIBE_PATIENTS_USER_DEFAULT,
-):
+) -> dict:
     """The admitted patients of the clerk's own department: name, hospital
     number, ward, bed and when the stay began. Nothing clinical.
 
@@ -153,6 +171,7 @@ def list_transcribe_patients(
     board is: it names every patient on the ward.
     """
     department = department_scope(user)
+    facilities = facility_scope(user)
     log_audit_event(
         correlation_id=str(uuid.uuid4()),
         event_category="phi_access",  # fail-closed
@@ -170,15 +189,18 @@ def list_transcribe_patients(
         http_method=request.method,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
-        metadata={
-            "department": department,
-            "hospital_wide": department is None,
-            "scope_source": "authenticated_user",
-        },
+        metadata=_with_facility_scope(
+            {
+                "department": department,
+                "hospital_wide": department is None,
+                "scope_source": "authenticated_user",
+            },
+            facilities,
+        ),
     )
     return {
         "department": department,
-        "patients": nurse_shift_service.transcribe_patients(department),
+        "patients": nurse_shift_service.transcribe_patients(department, facilities=facilities),
     }
 
 
@@ -352,7 +374,7 @@ def void_observation(
     # account keyed (nurse_shift_service.void_observation own_copy_only), so a
     # wrong copy never needs a nurse to correct it. Anything else is a 403.
     user: dict = _VOID_OBSERVATION_USER_DEFAULT,
-):
+) -> dict:
     """Mark a recorded observation set as entered in error, with a reason.
 
     PATIENT SCOPE THROUGH THE ROW. The path names a vitals id, not a patient,
@@ -367,13 +389,26 @@ def void_observation(
     if patient_id is None:
         raise not_found
     dept = department_scope(user)
-    if not patient_in_scope_blocking(patient_id, dept):
+    # Facility first (multisite-8), as require_patient_access checks it: with
+    # one facility on record facilities is None and this reads nothing.
+    facilities = facility_scope(user)
+    outside_facility = not patient_in_scope_blocking(patient_id, None, facilities=facilities)
+    if outside_facility or not patient_in_scope_blocking(patient_id, dept):
+        metadata: dict = {
+            "department": dept,
+            "scope_source": "authenticated_user",
+            "vitals_id": vitals_id,
+        }
+        summary = f"Patient {patient_id} is outside the caller's department ({dept})"
+        if outside_facility and facilities is not None:
+            metadata.update(scope_cause="facility", facility_scope=sorted(facilities))
+            summary = f"Patient {patient_id} is outside the caller's facility scope"
         log_audit_event(
             correlation_id=str(uuid.uuid4()),
             event_category="authorization",
             action_type="patient_scope_denied",
             outcome="denied",
-            summary_message=(f"Patient {patient_id} is outside the caller's department ({dept})"),
+            summary_message=summary,
             actor_user_id=user.get("id"),
             actor_role=user.get("role"),
             patient_id=patient_id,
@@ -381,11 +416,7 @@ def void_observation(
             http_method=request.method,
             ip_address=request.client.host if request.client else None,
             user_agent=request.headers.get("user-agent"),
-            metadata={
-                "department": dept,
-                "scope_source": "authenticated_user",
-                "vitals_id": vitals_id,
-            },
+            metadata=metadata,
         )
         raise not_found
     own_copy_only = not has_permission(user.get("role", ""), VITALS_WRITE)

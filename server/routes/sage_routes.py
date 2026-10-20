@@ -2410,8 +2410,10 @@ def _voice_model_name() -> str | None:
 _SAGE_QUERY_USER_DEFAULT = Depends(require_permission("sage.query"))
 
 
-@router.post("/query")
-async def sage_query(request: Request, user: dict = _SAGE_QUERY_USER_DEFAULT):
+@router.post("/query", response_model=None)
+async def sage_query(
+    request: Request, user: dict = _SAGE_QUERY_USER_DEFAULT
+) -> StreamingResponse | dict[str, str]:
     """Query Sage with streaming response."""
     body = await request.json()
     query = body.get("query", "")
@@ -2540,7 +2542,7 @@ async def sage_query(request: Request, user: dict = _SAGE_QUERY_USER_DEFAULT):
     # ("Searching guidelines…" → "Generating…").
     t_start = time.perf_counter()
 
-    def _prepare_context():
+    def _prepare_context() -> tuple[Any, ...]:
         # `user` is passed FIRST-CLASS, not derived from anything in the body.
         # get_relevant_context requires it: retrieval scopes every patient query
         # to permissions.department_scope(user), and `effective_patient_id` —
@@ -2578,11 +2580,16 @@ async def sage_query(request: Request, user: dict = _SAGE_QUERY_USER_DEFAULT):
         _view_patient_in_scope = True
         if effective_patient_id:
             from permissions import department_scope as _dept_scope
+            from permissions import facility_scope as _facility_scope
             from services.sage_service import _patient_in_scope
 
             with db_session() as _db:
+                # With its facility half (multisite-10).
                 _view_patient_in_scope = _patient_in_scope(
-                    _db, effective_patient_id, _dept_scope(user)
+                    _db,
+                    effective_patient_id,
+                    _dept_scope(user),
+                    facilities=_facility_scope(user),
                 )
         # Not on a no-such-patient turn (R026): the clinician asked about a
         # bed or name nobody here holds, no chart was attached, and the open
@@ -3861,7 +3868,7 @@ def list_provenance(
     limit: int = 50,
     offset: int = 0,
     user: dict = _LIST_PROVENANCE_USER_DEFAULT,
-):
+) -> dict:
     """Metadata index of recorded turns. NO question text, NO chart, NO answer.
 
     Reading a turn's CONTENT means naming it on /provenance/{turn_id}, which is
@@ -3871,19 +3878,29 @@ def list_provenance(
 
     `patient_id` is a caller-supplied id and is therefore vetted, not trusted —
     enforce_patient_scope 404s an out-of-ward patient rather than returning an
-    empty list, which would itself confirm the ward."""
-    from permissions import enforce_patient_scope, scope_patient_ids_sql
+    empty list, which would itself confirm the ward.
+
+    With more than one facility on record (multisite-10) the id set keeps to
+    the reader's facilities too, and a facility-bound reader with no
+    department lists no patient-less turn: the turn records a department, not
+    a facility, so whose it was cannot be told."""
+    from permissions import enforce_patient_scope, facility_scope, scope_patient_ids_sql
 
     from services import sage_provenance_service as prov
 
     if patient_id:
         enforce_patient_scope(user, patient_id)
     dept = department_scope(user)
+    facilities = facility_scope(user)
     # `scope_department` travels WITH the id set: patient-less turns cannot be
     # scoped through a patient's admission (there is no patient), so they are
     # scoped by the department recorded on the turn at write time instead.
     turns = prov.list_turns(
-        patient_ids_sql=(None if dept is None else scope_patient_ids_sql(dept)),
+        patient_ids_sql=(
+            None
+            if dept is None and facilities is None
+            else scope_patient_ids_sql(dept, facilities=facilities)
+        ),
         scope_department=dept,
         patient_id=patient_id,
         actor_user_id=actor_user_id,
@@ -3894,7 +3911,7 @@ def list_provenance(
     return {
         "turns": turns,
         "count": len(turns),
-        "scope": {"department": dept, "hospital_wide": dept is None},
+        "scope": {"department": dept, "hospital_wide": dept is None and facilities is None},
     }
 
 
@@ -3906,13 +3923,13 @@ def replay_provenance(
     turn_id: str,
     request: Request,
     user: dict = _REPLAY_PROVENANCE_USER_DEFAULT,
-):
+) -> dict:
     """Reconstruct one Sage turn from what was stored AT THE TIME.
 
     The chart in this response is a snapshot, not a live read: it is what the
     model was shown, which is the only thing that can answer "why did it say
     that?" months later."""
-    from permissions import enforce_patient_scope, log_phi_read
+    from permissions import enforce_patient_scope, facility_scope, log_phi_read
 
     from services import sage_provenance_service as prov
 
@@ -3931,6 +3948,10 @@ def replay_provenance(
     else:
         dept = department_scope(user)
         if dept is not None and row.get("department") != dept:
+            raise HTTPException(status_code=404, detail="Provenance turn not found")
+        # A facility-bound reader with no department replays no patient-less
+        # turn, exactly as the listing shows none (multisite-10).
+        if dept is None and facility_scope(user) is not None:
             raise HTTPException(status_code=404, detail="Provenance turn not found")
 
     record = prov.replay(turn_id)

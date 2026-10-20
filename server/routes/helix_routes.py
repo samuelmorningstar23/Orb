@@ -1,18 +1,30 @@
-"""Orb Hospital OS — Helix API Routes"""
+"""Orb Hospital OS: Helix API Routes
+
+FACILITY SCOPE (multisite-9a, W12-E; ruling MS-R9 (a): pharmacy work is per
+facility). With more than one facility on record the order lists keep the
+orders of patients at the caller's facilities, and an order outside them is a
+404 with an authorization row on every route that names one (the routes that
+already called enforce_patient_scope get it from there). With one facility on
+record the caller's facility scope is None and nothing here changes.
+"""
 
 from typing import Any
 
+from database import db_session
 from fastapi import APIRouter, Depends, HTTPException, Request
 from permissions import (
     MEDICATION_VERIFY,
     ROLE_PERMISSIONS,
     enforce_patient_scope,
+    facility_denial,
+    facility_scope,
     log_phi_read,
     require_permission,
 )
 from pydantic import BaseModel
 from services.drug_chart import require_drug_chart
 from services.drug_safety_service import check_medication_safety
+from services.facility_documents import audit_document_denial, request_meta
 from services.medication_safety_gate import enforce_medication_safety
 from services.medorders import core as medorder_store
 from services.medorders import supply as medorder_supply
@@ -54,18 +66,20 @@ _GET_PENDING_ORDERS_USER_DEFAULT = Depends(require_permission("helix.read"))
 
 
 @router.get("/orders/pending")
-def get_pending_orders(user=_GET_PENDING_ORDERS_USER_DEFAULT):
-    """Get pending medication orders for pharmacy verification."""
-    return {"orders": helix_service.get_pending_orders()}
+def get_pending_orders(user: dict = _GET_PENDING_ORDERS_USER_DEFAULT) -> dict:
+    """Get pending medication orders for pharmacy verification (the caller's
+    facilities only, once more than one is on record)."""
+    return {"orders": helix_service.get_pending_orders(facilities=facility_scope(user))}
 
 
 _GET_ALL_ORDERS_USER_DEFAULT = Depends(require_permission("helix.read"))
 
 
 @router.get("/orders")
-def get_all_orders(user=_GET_ALL_ORDERS_USER_DEFAULT):
-    """Get all medication orders across all statuses."""
-    return {"orders": helix_service.get_all_orders()}
+def get_all_orders(user: dict = _GET_ALL_ORDERS_USER_DEFAULT) -> dict:
+    """Get all medication orders across all statuses (the caller's facilities
+    only, once more than one is on record)."""
+    return {"orders": helix_service.get_all_orders(facilities=facility_scope(user))}
 
 
 _GET_STOCK_MOVEMENTS_USER_DEFAULT = Depends(require_permission("helix.read"))
@@ -80,9 +94,42 @@ def get_stock_movements(user=_GET_STOCK_MOVEMENTS_USER_DEFAULT):
 _GET_ORDER_TRANSITIONS_USER_DEFAULT = Depends(require_permission("helix.read"))
 
 
+def _order_facility_gate(user: dict, order_id: str, request: Request) -> None:
+    """404, after an authorization 'facility_document_denied' row, when the
+    order's patient is outside the caller's facility scope (multisite-9a),
+    for a route that read no patient scope before. Nothing is read with one
+    facility on record, and an order no row holds passes (the route answers
+    as it always did)."""
+    facilities = facility_scope(user)
+    if facilities is None:
+        return
+    patient_id = helix_service.order_patient_id(order_id)
+    if not patient_id:
+        return
+    with db_session() as db:
+        denied, patient_facility = facility_denial(db, patient_id, facilities)
+    if not denied:
+        return
+    audit_document_denial(
+        user=user,
+        lane="helix_orders",
+        target_type="helix_order",
+        target_id=order_id,
+        document_facility_id=patient_facility,
+        facilities=facilities,
+        patient_id=patient_id,
+        meta=request_meta(request),
+    )
+    raise HTTPException(status_code=404, detail="Order not found")
+
+
 @router.get("/orders/{order_id}/transitions")
-def get_order_transitions(order_id: str, user=_GET_ORDER_TRANSITIONS_USER_DEFAULT):
-    """Get transition history for a specific order."""
+def get_order_transitions(
+    order_id: str, request: Request, user: dict = _GET_ORDER_TRANSITIONS_USER_DEFAULT
+) -> dict:
+    """Get transition history for a specific order (404 for an order of a
+    patient outside the caller's facilities)."""
+    _order_facility_gate(user, order_id, request)
     return {"transitions": helix_service.get_order_transitions(order_id)}
 
 
@@ -195,15 +242,22 @@ def _require_order_fields(req: OrderApproveRequest) -> None:
         )
 
 
-def _resolve_approve_patient(req: OrderApproveRequest) -> str:
+def _resolve_approve_patient(
+    req: OrderApproveRequest, facilities: frozenset[int] | None = None
+) -> str:
     """Resolve the target patient for an approve request.
 
     An explicit patient_id wins (404 if unknown). A bare name must match
     EXACTLY ONE patient by case-insensitive equality — zero or several matches
     fail 422 with the candidate count. Never a LIKE scan, never an 'UNKNOWN'
     fallback: a medication order must not be chartable to the wrong patient.
+
+    `facilities` is the caller's facility scope (multisite-9a): a name is
+    matched only among patients whose latest encounter is at one of them, so
+    the candidate count says nothing about another facility's patients. None
+    (one facility on record) matches across the hospital as before.
     """
-    from database import db_session
+    from services.facility_documents import patient_facility_clause
 
     if req.patient_id:
         with db_session() as conn:
@@ -223,9 +277,11 @@ def _resolve_approve_patient(req: OrderApproveRequest) -> str:
             },
         )
 
+    facility_sql, facility_params = patient_facility_clause("id", facilities)
     with db_session() as conn:
         rows = conn.execute(
-            "SELECT id FROM patients WHERE LOWER(name) = LOWER(?)", (name,)
+            "SELECT id FROM patients WHERE LOWER(name) = LOWER(?)" + facility_sql,
+            (name, *facility_params),
         ).fetchall()
     if len(rows) != 1:
         raise HTTPException(
@@ -246,10 +302,12 @@ _APPROVE_HELIX_ORDER_USER_DEFAULT = Depends(require_permission("helix.write"))
 
 
 @router.post("/orders/approve")
-def approve_helix_order(req: OrderApproveRequest, user=_APPROVE_HELIX_ORDER_USER_DEFAULT):
+def approve_helix_order(
+    req: OrderApproveRequest, user: dict = _APPROVE_HELIX_ORDER_USER_DEFAULT
+) -> dict:
     """Approve a drafted medication request from Sage and create a Helix order."""
     _require_order_fields(req)
-    patient_id = _resolve_approve_patient(req)
+    patient_id = _resolve_approve_patient(req, facility_scope(user))
 
     # SCOPING LAW — the patient is named in the BODY (2026-08-14).
     # This route creates a real medication order against whatever patient the
@@ -589,7 +647,7 @@ _ORDERS_AWAITING_RECEIPT_USER_DEFAULT = Depends(require_permission("helix.receiv
 
 
 @router.get("/orders/awaiting-receipt")
-def orders_awaiting_receipt(user=_ORDERS_AWAITING_RECEIPT_USER_DEFAULT):
+def orders_awaiting_receipt(user: dict = _ORDERS_AWAITING_RECEIPT_USER_DEFAULT) -> dict:
     """Drugs in transit to this caller's ward, waiting to be signed for.
 
     Ward-scoped from the AUTHENTICATED user row, never from the request — the
@@ -599,11 +657,16 @@ def orders_awaiting_receipt(user=_ORDERS_AWAITING_RECEIPT_USER_DEFAULT):
 
     Gated on `helix.receive` alone. A nurse holds no other pharmacy permission,
     and this returns no inventory, no formulary and no order that is not already
-    on her ward.
+    on her ward. Once more than one facility is on record, also only the
+    caller's facilities (multisite-9a).
     """
     from permissions import department_scope
 
-    return {"orders": helix_service.orders_awaiting_receipt(department_scope(user))}
+    return {
+        "orders": helix_service.orders_awaiting_receipt(
+            department_scope(user), facilities=facility_scope(user)
+        )
+    }
 
 
 _RECEIVE_ORDER_USER_DEFAULT = Depends(require_permission("helix.receive"))

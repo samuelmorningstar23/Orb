@@ -96,12 +96,14 @@ import logging
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from database import db_session
 from db_backend import DBIntegrityError
-from permissions import PATIENT_DEPARTMENT_SQL
+from permissions import PATIENT_DEPARTMENT_SQL, scope_patient_ids_sql
 
 from services.audit_service import log_audit_event
+from services.facility_filter import patient_clause
 from services.news2_text import news2_description
 from services.vigil_service import compute_news2
 
@@ -358,15 +360,44 @@ def _patient_context(db, patient_id: str) -> dict:
     }
 
 
-def _user_with_role(db, user_id: str | None, roles: tuple[str, ...]) -> str | None:
+def _user_with_role(
+    db: Any, user_id: str | None, roles: tuple[str, ...], patient_id: str | None = None
+) -> str | None:
+    """`user_id` when that account holds one of `roles`, else None.
+
+    With more than one facility on record and `patient_id` given, an account
+    whose facility scope does not hold the patient is not paged either
+    (multisite-8): a named attending or the nurse who charted the set may be
+    an account at another facility, and paging someone who cannot open the
+    chart stalls the ladder. The tier then falls through to the department's
+    roster, as it does for an unknown account. With one facility nothing more
+    is read."""
     if not user_id:
         return None
     marks = ",".join("?" * len(roles))
     row = db.execute(
-        f"SELECT id FROM users WHERE id = ? AND role IN ({marks})",
+        f"SELECT id, role, department FROM users WHERE id = ? AND role IN ({marks})",
         (user_id, *roles),
     ).fetchone()
-    return row["id"] if row else None
+    if row is None:
+        return None
+    if patient_id and _outside_patient_facility(db, row, patient_id):
+        return None
+    return row["id"]
+
+
+def _outside_patient_facility(db: Any, account: Any, patient_id: str) -> bool:
+    """True when more than one facility is on record and `account` (a users
+    row with id, role and department) may not see `patient_id`'s facility."""
+    from permissions import facility_denial
+
+    from services import facility_service
+
+    if not facility_service.multi_facility_data(db=db):
+        return False
+    scope = facility_service.facility_scope_for(account, db=db)
+    denied, _ = facility_denial(db, patient_id, scope)
+    return denied
 
 
 def _first_in_department(
@@ -394,16 +425,22 @@ def _first_in_department(
 
 
 def _derive_target(
-    db, ctx: dict, role: str, label: str, charting_actor_id: str | None
+    db: Any, ctx: dict, role: str, label: str, charting_actor_id: str | None
 ) -> tuple[str | None, str]:
     """(target_user_id, human description) for one tier.
 
     THE SINGLE FUNCTION A REAL DUTY MODEL WOULD REPLACE. Everything it can do is
     an approximation over ``users`` + the attending; see the module docstring for
     the exhaustive list of what Orb does not know.
+
+    Every person paged is inside the patient's department (the roster picks)
+    or a named account that can open the patient's chart: with more than one
+    facility on record a named attending or charting nurse at another
+    facility is passed over (multisite-8, _user_with_role).
     """
     dept = ctx.get("department")
     attending = ctx.get("attending")
+    patient_id = ctx.get("id")
     role_key = (role or "").strip().lower()
     where = f" on {dept}" if dept else " (patient has no department on record)"
 
@@ -413,7 +450,7 @@ def _derive_target(
         # a monitor feed does not record a human, and `vitals` has no author
         # column at all (the audit trail has it, keyed by vitals_id — reaching
         # into the hash chain to page someone would be worse than this).
-        target = _user_with_role(db, charting_actor_id, ("nurse",))
+        target = _user_with_role(db, charting_actor_id, ("nurse",), patient_id)
         if target:
             return target, f"{label} (recorded this observation){where}"
         target = _first_in_department(db, ("nurse",), dept)
@@ -422,7 +459,7 @@ def _derive_target(
         return None, f"Any nurse{where}, no named nurse on the roster for this ward"
 
     if role_key == "consultant":
-        target = _user_with_role(db, attending, _DOCTOR_ROLES)
+        target = _user_with_role(db, attending, _DOCTOR_ROLES, patient_id)
         if target:
             return target, f"{label}, named attending{where}"
         target = _first_in_department(db, _DOCTOR_ROLES, dept)
@@ -439,7 +476,7 @@ def _derive_target(
                 target,
                 f"{label}{where} (no grade in the roster, ward doctor who is not the attending)",
             )
-        target = _user_with_role(db, attending, _DOCTOR_ROLES)
+        target = _user_with_role(db, attending, _DOCTOR_ROLES, patient_id)
         if target:
             return target, f"{label}{where}, only the attending is on this ward"
         return None, f"Any doctor{where}, no doctor on the roster for this ward"
@@ -1983,6 +2020,7 @@ def list_escalations(
     include_resolved: bool = False,
     limit: int = 200,
     now: datetime | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> list[dict]:
     """Escalations inside one department's ward boundary.
 
@@ -1992,6 +2030,12 @@ def list_escalations(
     ``PATIENT_DEPARTMENT_SQL`` (admissions.department), never from the
     ``raised_in_department`` snapshot on the row, so a patient who transfers ward
     mid-admission moves with their escalation.
+
+    ``facilities`` is ``permissions.facility_scope(user)`` (multisite-8): None
+    leaves the statement as it was; otherwise the boundary is
+    ``permissions.scope_patient_ids_sql(department, facilities=...)``, the
+    department AND the facility of the patient's latest encounter, the same
+    patients require_patient_access lets the caller open.
 
     Default view is UNRESOLVED ONLY, worst first — the board answers "what has
     not been answered yet".
@@ -2004,7 +2048,11 @@ def list_escalations(
     if patient_id:
         where.append("e.patient_id = ?")
         params.append(patient_id)
-    if department is not None:
+    if facilities is not None:
+        scope_sql, scope_params = scope_patient_ids_sql(department, facilities=facilities)
+        where.append(f"e.patient_id IN ({scope_sql})")
+        params.extend(scope_params)
+    elif department is not None:
         where.append(
             f"e.patient_id IN (SELECT p.id FROM patients p WHERE {PATIENT_DEPARTMENT_SQL} = ?)"
         )
@@ -2114,9 +2162,18 @@ def _scan_max_rows() -> int:
 
 
 def scan_new_observations(
-    *, department: str | None = None, now: datetime | None = None
+    *,
+    department: str | None = None,
+    now: datetime | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> list[dict]:
     """Raise chains for qualifying observations that NOTHING dispatched.
+
+    `facilities` is the caller's permissions.facility_scope() (multisite-8):
+    None (one facility on record, a group-wide account, the background sweep)
+    leaves the scan exactly as it was; otherwise only patients whose latest
+    encounter is at one of those facilities are scanned, so an account at one
+    facility never raises chains for another facility's patients.
 
     WHY THIS EXISTS RATHER THAN JUST TRUSTING THE WRITE PATHS. Orb has three
     vitals lanes — the simulator, the HL7/FHIR/JSON ingestion feed, and manual
@@ -2227,6 +2284,9 @@ def scan_new_observations(
         if department is not None:
             dept_sql = f" AND {PATIENT_DEPARTMENT_SQL} = ?"
             params.append(department)
+        facility_sql, facility_args = patient_clause(facilities)
+        dept_sql += facility_sql
+        params.extend(facility_args)
         params.append(_scan_max_rows())
         rows = db.execute(
             f"""SELECT v.*, p.on_scale_2 AS patient_on_scale_2
@@ -2312,14 +2372,23 @@ def scan_new_observations(
     return raised
 
 
-def sweep(*, department: str | None = None, now: datetime | None = None) -> dict:
+def sweep(
+    *,
+    department: str | None = None,
+    now: datetime | None = None,
+    facilities: frozenset[int] | None = None,
+) -> dict:
     """One tick of the whole mechanism: advance overdue tiers, then catch any
     observation nothing dispatched. Returns COUNTS ONLY — no PHI — so it is safe
     to expose to an ops caller and to log.
+
+    `facilities` keeps the scan to the caller's facilities (multisite-8); the
+    tier advance stays house-wide, as it always was: it raises no chain and
+    discloses nothing.
     """
     ts = _now(now)
     advanced = advance_due(now=ts)
-    found = scan_new_observations(department=department, now=ts)
+    found = scan_new_observations(department=department, now=ts, facilities=facilities)
     if advanced or found:
         logger.warning(
             "escalation sweep: %d tier advance(s), %d new chain(s)", len(advanced), len(found)

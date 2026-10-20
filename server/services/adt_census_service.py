@@ -374,10 +374,26 @@ class _Wards:
         return found["id"] if found else None
 
 
-def _load_stays(db, *, since: datetime, until: datetime, wards: _Wards) -> tuple[list, int]:
+def _load_stays(
+    db: Any,
+    *,
+    since: datetime,
+    until: datetime,
+    wards: _Wards,
+    facilities: frozenset[int] | None = None,
+) -> tuple[list, int]:
     """Every stay that overlaps [since, until), with the places it lay in.
-    Returns (stays, ended stays that carried no end time)."""
+    Returns (stays, ended stays that carried no end time).
+
+    `facilities` (multisite-8h1): with a facility scope, only the stays of
+    admissions at those facilities (admissions.facility_id never changes)."""
     native = "a.import_run_id IS NULL" if "import_run_id" in _columns(db, "admissions") else "1 = 1"
+    at_params: tuple = ()
+    if facilities is not None:
+        from services.facility_lanes import facility_marks
+
+        marks, at_params = facility_marks(facilities)
+        native = f"{native} AND a.facility_id IN ({marks})"
     rows = [
         dict(r)
         for r in db.execute(
@@ -387,7 +403,7 @@ def _load_stays(db, *, since: datetime, until: datetime, wards: _Wards) -> tuple
                   FROM admissions a WHERE {native}) s
              WHERE julianday(s.stay_start) < julianday(?)
                AND (s.stay_end IS NULL OR julianday(s.stay_end) >= julianday(?))""",
-            (until.isoformat(), since.isoformat()),
+            (*at_params, until.isoformat(), since.isoformat()),
         ).fetchall()
     ]
     if not rows:
@@ -634,7 +650,7 @@ def _empty_counts() -> dict:
 
 
 def census_on(
-    db,
+    db: Any,
     *,
     first_day: date,
     last_day: date,
@@ -643,18 +659,25 @@ def census_on(
     hospital: bool,
     tz: tzinfo,
     now: datetime,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """The census for `wards` (the caller may see them) over [first_day,
     last_day], hospital-local, and the hospital totals when `hospital`.
     `all_wards` is every ward of bed setup: a move to a ward the caller does
     not see still counts as a transfer out, and the hospital is complete for a
-    day only when every ward that existed that day is."""
+    day only when every ward that existed that day is.
+
+    `facilities` (multisite-8h1) limits the stays counted to admissions at
+    those facilities; the caller passes that facility's wards as `all_wards`,
+    so the hospital totals are the facility's."""
     days = [first_day + timedelta(days=i) for i in range((last_day - first_day).days + 1)]
     bounds = {d: _day_bounds(d, tz) for d in days}
     window_start, window_end = bounds[days[0]][0], bounds[days[-1]][1]
     horizon = min(now, window_end + RETURN_WINDOW)
     lookup = _Wards(all_wards)
-    stays, no_end_time = _load_stays(db, since=window_start, until=horizon, wards=lookup)
+    stays, no_end_time = _load_stays(
+        db, since=window_start, until=horizon, wards=lookup, facilities=facilities
+    )
     icu = {w["id"] for w in all_wards if (w.get("ward_type") or "") in ICU_WARD_TYPES}
 
     # ward id (None: not on a ward in bed setup) -> day -> counts.
@@ -944,9 +967,12 @@ def census(
     """GET /api/adt/census. The caller's wards (all of them for an account
     with no department, else its department's), or one of them; hospital
     totals for an account with no department and no ward chosen. A ward the
-    caller may not see is 404."""
+    caller may not see is 404. With more than one facility on record
+    (multisite-8h1) everything is the caller's facility's: its wards, the
+    stays of its admissions, and its own totals as the hospital's."""
     from permissions import department_scope
 
+    from services import facility_lanes
     from services import housekeeping_service as hk
     from services.hospital_time import hospital_timezone
 
@@ -954,6 +980,7 @@ def census(
     now = now or datetime.now(UTC)
     first, last = parse_window(from_day, to_day, today=now.astimezone(tz).date())
     dept = department_scope(actor)
+    facilities = facility_lanes.scope_of(actor)
     hk.ensure_housekeeping_schema()
     with db_session() as db:
         if not _table_exists(db, "wards"):
@@ -962,6 +989,7 @@ def census(
             all_wards = [
                 dict(r) for r in db.execute("SELECT * FROM wards ORDER BY LOWER(code)").fetchall()
             ]
+        all_wards = facility_lanes.wards_in_scope(all_wards, facilities)
         visible = (
             all_wards
             if dept is None
@@ -984,6 +1012,7 @@ def census(
             hospital=dept is None and not ward_id,
             tz=tz,
             now=now,
+            facilities=facilities,
         )
     out["department"] = dept
     out["ward_id"] = ward_id

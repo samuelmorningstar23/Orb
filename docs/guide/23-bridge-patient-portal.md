@@ -327,7 +327,7 @@ One default-exported component plus one module helper. It imports `useAuth` from
 
 ### `src/pages/panels/AppointmentsPanel.tsx`
 
-> Important: **this is a clinician panel, not part of Bridge.** It is lazy-loaded and rendered inside `ClinicianShell` (`src/pages/ClinicianShell.tsx:236,533`), and it reads `GET /api/forecast/appointments` guarded by `require_permission("forecast.read")` (`server/routes/forecast_routes.py:84-91`), a permission a *patient* does not hold. It shares the word "appointments" with Bridge's mock scheduler but is a completely separate data path (the forecast service, guide 13). It is included here only because it was in scope.
+> Important: **this is a clinician panel, not part of Bridge.** It is lazy-loaded and rendered inside `ClinicianShell` (`src/pages/ClinicianShell.tsx:236,533`), and it reads `GET /api/forecast/appointments` guarded by `require_permission("forecast.read")` (`server/routes/forecast_routes.py:83-90`), a permission a *patient* does not hold. It shares the word "appointments" with Bridge's mock scheduler but is a completely separate data path (the forecast service, guide 13). It is included here only because it was in scope.
 
 #### getToken / apiFetch (local): `AppointmentsPanel.tsx:5` and `:9`
 **Does:** this file has its *own* `getToken` (reads `localStorage.orb_token`) and `apiFetch` (bare `fetch` with a Bearer header) instead of importing the shared api client.

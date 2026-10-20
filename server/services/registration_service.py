@@ -467,6 +467,145 @@ def _department(user: dict | None) -> str | None:
     return department_scope(user or {})
 
 
+# ── Facility scope (multisite-8h1, W12-F) ────────────────────────────────────
+# With more than one facility on record the desk works inside its own
+# facility (ruling MS-R5 (a)): the index search, the duplicate candidates the
+# desk is shown, the worklist and the sweep name only patients whose latest
+# encounter is at the caller's facilities (permissions.FACILITY_PATIENT_SQL),
+# and a new patient is registered at the registrar's facility. A record that
+# may be the same person at another facility is never shown here: the
+# duplicate check counts it the way it counts a record a cut scan left out (a
+# hard match refuses, a probable or possible one blocks or needs a reviewed
+# reason, in the words below), so a satellite desk is never told it found
+# nothing (one group MRN, ruling MS-R11 (a)); the group identity match
+# (multisite-17) is where the desk finds that patient. With one facility none
+# of this reads anything.
+
+#: The words of a hard match (an exact UHID or an active ABHA) on a record the
+#: desk cannot see.
+HARD_MATCH_ELSEWHERE_WORDS = (
+    "A patient with this UHID or ABHA is already registered at another facility of the "
+    "group. Find them with the group identity search instead of registering them again. "
+    "Nothing was saved."
+)
+
+#: The words of a probable duplicate on a record the desk cannot see, where
+#: the site does not register past one (DUPLICATE_MODE 'block').
+PROBABLE_ELSEWHERE_WORDS = (
+    "This looks like a patient who is already registered at another facility of the "
+    "group. This site does not register past a probable duplicate. Find them with the "
+    "group identity search. Nothing was saved."
+)
+
+#: The words of a possible duplicate on a record the desk cannot see.
+REVIEW_ELSEWHERE_WORDS = (
+    "A record that may be this patient is registered at another facility of the group, "
+    "so it is not listed here. Find them with the group identity search. To register a "
+    "new patient anyway, give a reason."
+)
+
+#: The words for a registrar whose facility cannot be told.
+NO_REGISTRATION_FACILITY_WORDS = (
+    "Orb cannot tell which facility your account works at, because your department is "
+    "not on any facility's list. Nothing was saved. Ask an administrator to add the "
+    "department to its facility."
+)
+
+_BAND_RANK = {"hard": 3, "probable": 2, "possible": 1}
+
+
+def _facilities(user: dict | None) -> frozenset[int] | None:
+    """The caller's facility scope (permissions.facility_scope), or None for
+    no facility limit. BLOCKING on a cache miss: call it before any
+    immediate session."""
+    from services import facility_lanes
+
+    return facility_lanes.scope_of(user or {})
+
+
+def _in_facilities_on(db: Any, ids: Any, facilities: frozenset[int] | None) -> set[str]:
+    """The ids among `ids` whose latest encounter is at one of `facilities`
+    (every id for None, none for the empty set)."""
+    wanted = [str(i) for i in dict.fromkeys(ids) if i]
+    if facilities is None:
+        return set(wanted)
+    if not wanted or not facilities:
+        return set()
+    from permissions import FACILITY_PATIENT_SQL
+
+    from services.facility_lanes import facility_marks
+
+    marks = ",".join("?" for _ in wanted)
+    fmarks, fids = facility_marks(facilities)
+    rows = db.execute(
+        f"SELECT p.id FROM patients p WHERE p.id IN ({marks}) "
+        f"AND {FACILITY_PATIENT_SQL} IN ({fmarks})",
+        (*wanted, *fids),
+    ).fetchall()
+    return {r[0] for r in rows}
+
+
+def _split_candidates(
+    db: Any, candidates: list[dict], facilities: frozenset[int] | None
+) -> tuple[list[dict], list[dict]]:
+    """(the candidates the caller may be shown, those at another facility)."""
+    if facilities is None:
+        return list(candidates), []
+    shown = _in_facilities_on(db, [c["patient_id"] for c in candidates], facilities)
+    return (
+        [c for c in candidates if c["patient_id"] in shown],
+        [c for c in candidates if c["patient_id"] not in shown],
+    )
+
+
+def _strongest_band(*bands: str | None) -> str | None:
+    """The strongest of the bands given ('hard', 'probable', 'possible')."""
+    known = [b for b in bands if b in _BAND_RANK]
+    return max(known, key=_BAND_RANK.__getitem__) if known else None
+
+
+def _registration_facility(user: dict) -> int | None:
+    """The facility a patient registered by `user` is registered at: the
+    department's facility, else the account's home facility (facility_service.
+    user_facility_id). 1 while one facility is on record; None when the
+    account's department is on no facility's list. BLOCKING on a cache miss."""
+    from services import facility_service
+
+    return facility_service.user_facility_id(user)
+
+
+def _stamp_facility_or_refuse(user: dict, request_meta: dict | None) -> int | None:
+    """The facility to stamp on a new patient's registered_facility_id, or
+    None while one facility is on record (the column's default, 1, stands
+    and nothing is read). With more than one, a registrar whose facility
+    cannot be told is refused (403 facility_scope) before anything is
+    written, with an authorization row. BLOCKING: call it before the
+    registration's immediate session."""
+    from services import facility_lanes
+
+    if not facility_lanes.multi_facility():
+        return None
+    at = _registration_facility(user)
+    if at is not None:
+        return at
+    meta = dict(request_meta or {})
+    log_audit_event(
+        correlation_id=str(uuid.uuid4()),
+        event_category="authorization",
+        action_type="registration_facility_unknown",
+        outcome="denied",
+        summary_message="Registration refused: the registrar's facility cannot be told",
+        actor_user_id=user.get("id"),
+        actor_role=user.get("role"),
+        request_path=meta.get("request_path"),
+        http_method=meta.get("http_method"),
+        ip_address=meta.get("ip_address"),
+        user_agent=meta.get("user_agent"),
+        metadata={"department": _department(user), "lane": "registration"},
+    )
+    raise RegistrationForbidden("facility_scope", NO_REGISTRATION_FACILITY_WORDS)
+
+
 # ── Configuration and the UHID ───────────────────────────────────────────────
 
 
@@ -673,12 +812,21 @@ def _like_escape(text: str) -> str:
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def search_index(query: str | None, *, today: date | None = None) -> dict:
+def search_index(
+    query: str | None,
+    *,
+    today: date | None = None,
+    facilities: frozenset[int] | None = None,
+) -> dict:
     """Find patients by UHID, phone or name across the whole hospital.
 
     Returns {"results": [card], "truncated": bool, "kinds": [...]} where
     each card holds INDEX_CARD_FIELDS only. The route audits the matched ids
     before anything is returned.
+
+    `facilities` is the caller's permissions.facility_scope (multisite-8h1):
+    None searches exactly as before; a set finds only patients whose latest
+    encounter is at those facilities (ruling MS-R5 (a)), the empty set none.
     """
     q = (query or "").strip()
     if len(q) < SEARCH_MIN_CHARS:
@@ -698,10 +846,22 @@ def search_index(query: str | None, *, today: date | None = None) -> dict:
                 kinds.append(kind)
             ordered.extend(new)
 
+    # multisite-8h1: with a facility limit every key is searched inside it, so
+    # a cut at the result limit never hides the caller's own patients.
+    scope_sql, scope_params = "", ()
+    if facilities is not None:
+        from permissions import scope_patient_ids_sql
+
+        inner, scope_params = scope_patient_ids_sql(None, facilities=facilities)
+        scope_sql = f" AND p.id IN ({inner})"
     with db_session() as db:
         pm.sync_keys(db)
         # UHID: exact, then ignoring case and separators.
-        add(_uhid_in_use_on(db, q), "uhid")
+        uhid_ids = _uhid_in_use_on(db, q)
+        if facilities is not None:
+            allowed = _in_facilities_on(db, uhid_ids, facilities)
+            uhid_ids = [i for i in uhid_ids if i in allowed]
+        add(uhid_ids, "uhid")
         # Phone: the whole number only. A partial number is not a search key.
         digits_only = re.fullmatch(r"[\d\s()+\-.]+", q) is not None
         phone = pm.phone_key(q) if digits_only else None
@@ -711,8 +871,8 @@ def search_index(query: str | None, *, today: date | None = None) -> dict:
                     r[0]
                     for r in db.execute(
                         "SELECT k.patient_id FROM patient_match_keys k JOIN patients p ON p.id = k.patient_id "
-                        "WHERE k.phone_key = ? ORDER BY p.name LIMIT ?",
-                        (phone, limit + 1),
+                        f"WHERE k.phone_key = ?{scope_sql} ORDER BY p.name LIMIT ?",
+                        (phone, *scope_params, limit + 1),
                     ).fetchall()
                 ],
                 "phone",
@@ -727,9 +887,9 @@ def search_index(query: str | None, *, today: date | None = None) -> dict:
             rows = db.execute(
                 "SELECT k.patient_id, k.name_key, p.name FROM patient_match_keys k "
                 "JOIN patients p ON p.id = k.patient_id "
-                f"WHERE ({clauses}) OR p.name LIKE ? ESCAPE '\\' "
+                f"WHERE (({clauses}) OR p.name LIKE ? ESCAPE '\\'){scope_sql} "
                 "ORDER BY (k.name_key = ?) DESC, p.name, k.patient_id LIMIT ?",
-                (*params, f"%{_like_escape(q)}%", key, limit + 1),
+                (*params, f"%{_like_escape(q)}%", *scope_params, key, limit + 1),
             ).fetchall()
             add([r["patient_id"] for r in rows], "name")
         truncated = len(ordered) > limit
@@ -1167,7 +1327,9 @@ def _probe(clean: dict, *, today=None) -> dict:
     )
 
 
-def _dob_visible_to(db, department: str | None):
+def _dob_visible_to(
+    db: Any, department: str | None, facilities: frozenset[int] | None = None
+) -> Any:
     """The matcher's dob_visible predicate for a caller scoped to `department`.
 
     None (compare every date of birth) for an account with no department, which
@@ -1176,12 +1338,17 @@ def _dob_visible_to(db, department: str | None):
     visit shows that clinic no date of birth (OPD_ARM_HIDDEN_FIELDS), so the
     visit opens nothing here either. Without this, a typed date of birth scored
     against a record the caller may not read would tell a right guess from a
-    wrong one (patient_matching's module docstring)."""
-    if department is None:
+    wrong one (patient_matching's module docstring).
+
+    `facilities` (multisite-8h1) is the caller's facility scope: with one,
+    an account with no department compares a date of birth only with the
+    records of its own facilities, and a department account only with its
+    own patients there."""
+    if department is None and facilities is None:
         return None
     from permissions import patient_in_scope
 
-    return lambda patient_id: patient_in_scope(db, patient_id, department)
+    return lambda patient_id: patient_in_scope(db, patient_id, department, facilities=facilities)
 
 
 def _review_needs(candidates: list[dict], *, unseen_band: str | None = None) -> dict:
@@ -1234,6 +1401,13 @@ def find_matches(data: dict, *, user: dict, today: date | None = None) -> dict:
     typed date of birth is never compared with the record of a patient outside
     that department (_dob_visible_to), exactly as register_patient scores it,
     so this preview and the registration agree.
+
+    With more than one facility on record (multisite-8h1) a candidate whose
+    latest encounter is at another facility is never listed. It still counts:
+    as a block for a hard match, and otherwise as the strongest candidate the
+    check could not show (check_incomplete), exactly as register_patient
+    counts it. The answer then carries held_elsewhere True (the key is
+    present only while more than one facility is on record).
     """
     data = dict(data or {})
     probe_fields = {
@@ -1257,23 +1431,32 @@ def find_matches(data: dict, *, user: dict, today: date | None = None) -> dict:
         raise RegistrationError(
             "nothing_to_match", "Type a name, phone, date of birth, UHID or ABHA to check."
         )
+    facilities = _facilities(user)
     with db_session() as db:
         found = pm.find_candidates_on(
             db,
             _probe(probe_fields, today=today),
             today=today,
-            dob_visible=_dob_visible_to(db, _department(user)),
+            dob_visible=_dob_visible_to(db, _department(user), facilities),
         )
-        candidates = _decorate_candidates(db, found["candidates"], today=today)
-    needs = _review_needs(candidates, unseen_band=found.get("unseen_band"))
-    return {
+        shown, elsewhere = _split_candidates(db, found["candidates"], facilities)
+        candidates = _decorate_candidates(db, shown, today=today)
+    held = _strongest_band(*(c["band"] for c in elsewhere))
+    needs = _review_needs(
+        candidates,
+        unseen_band=_strongest_band(found.get("unseen_band"), held if held != "hard" else None),
+    )
+    out = {
         "candidates": candidates,
         "truncated": found["truncated"],
         "check_incomplete": needs["check_incomplete"],
         "mode": needs["mode"],
-        "blocked": needs["blocked"],
-        "review_required": needs["review_required"],
+        "blocked": needs["blocked"] or held == "hard",
+        "review_required": needs["review_required"] and held != "hard",
     }
+    if facilities is not None:
+        out["held_elsewhere"] = bool(elsewhere)
+    return out
 
 
 # ── Registering a patient ────────────────────────────────────────────────────
@@ -1332,9 +1515,23 @@ def _refuse_with_candidates(
     *,
     action: str = "registration_refused",
     scan: dict | None = None,
+    elsewhere: list[dict] | None = None,
 ) -> _Refusal:
     ids = [c["patient_id"] for c in candidates]
     scan = scan or {"truncated": False, "check_incomplete": False, "unseen_band": None}
+    metadata = {
+        "reason_code": code,
+        "mode": mode,
+        "matched_patient_ids": ids,
+        "bands": [c["band"] for c in candidates],
+        **scan,
+    }
+    if elsewhere:
+        # multisite-8h1: candidates at another facility, never shown to the
+        # desk, recorded for whoever reviews the refusal.
+        metadata["held_elsewhere_patient_ids"] = [c["patient_id"] for c in elsewhere]
+        metadata["held_elsewhere_bands"] = [c["band"] for c in elsewhere]
+    extra = {"held_elsewhere": True} if elsewhere else {}
     return _Refusal(
         RegistrationConflict(
             code,
@@ -1342,15 +1539,10 @@ def _refuse_with_candidates(
             candidates=candidates,
             mode=mode,
             check_incomplete=scan["check_incomplete"],
+            **extra,
         ),
         action=action,
-        metadata={
-            "reason_code": code,
-            "mode": mode,
-            "matched_patient_ids": ids,
-            "bands": [c["band"] for c in candidates],
-            **scan,
-        },
+        metadata=metadata,
         patient_ids=ids,
     )
 
@@ -1422,6 +1614,10 @@ def register_patient(
     pid = _patient_id_for(user["id"], key)
     dept = _department(user)
     now = utc_iso_now()
+    # multisite-8h1: read before the immediate session (each may open a
+    # session of its own). With one facility both are None and nothing is read.
+    facilities = _facilities(user)
+    stamp_facility = _stamp_facility_or_refuse(user, request_meta)
     try:
         with db_session(immediate=True) as db:
             # 1. A replay of a request that already registered someone. It
@@ -1501,13 +1697,25 @@ def register_patient(
             # for a candidate the phone or name finds (the same age scores the
             # full +30); the administrator's sweep pairs the rest.
             found = pm.find_candidates_on(
-                db, _probe(clean, today=today), today=today, dob_visible=_dob_visible_to(db, dept)
+                db,
+                _probe(clean, today=today),
+                today=today,
+                dob_visible=_dob_visible_to(db, dept, facilities),
             )
-            candidates = _decorate_candidates(db, found["candidates"], today=today)
+            # multisite-8h1: a candidate at another facility is never shown;
+            # it counts as a candidate the check could not show (below).
+            shown, elsewhere = _split_candidates(db, found["candidates"], facilities)
+            held = _strongest_band(*(c["band"] for c in elsewhere))
+            candidates = _decorate_candidates(db, shown, today=today)
             # A cut scan never reads as "no duplicate": records it left out
             # count as the strongest candidates they could have been
             # (_review_needs), so the desk is refused or asked for a review.
-            needs = _review_needs(candidates, unseen_band=found.get("unseen_band"))
+            needs = _review_needs(
+                candidates,
+                unseen_band=_strongest_band(
+                    found.get("unseen_band"), held if held != "hard" else None
+                ),
+            )
             scan = _scan_facts(found, needs)
             mode = needs["mode"]
             if needs["hard"]:
@@ -1526,6 +1734,16 @@ def register_patient(
                     needs["hard"],
                     mode,
                     scan=scan,
+                    elsewhere=elsewhere,
+                )
+            if held == "hard":
+                raise _refuse_with_candidates(
+                    "existing_record",
+                    HARD_MATCH_ELSEWHERE_WORDS,
+                    [],
+                    mode,
+                    scan=scan,
+                    elsewhere=elsewhere,
                 )
             if needs["blocked"] and needs["probable"]:
                 raise _refuse_with_candidates(
@@ -1535,6 +1753,18 @@ def register_patient(
                     needs["probable"] + needs["possible"],
                     mode,
                     scan=scan,
+                    elsewhere=elsewhere,
+                )
+            if needs["blocked"] and held == "probable":
+                # 'block', and the probable duplicate is a record at another
+                # facility the desk may not be shown (multisite-8h1).
+                raise _refuse_with_candidates(
+                    "duplicate_check_incomplete",
+                    PROBABLE_ELSEWHERE_WORDS,
+                    needs["possible"],
+                    mode,
+                    scan=scan,
+                    elsewhere=elsewhere,
                 )
             if needs["blocked"]:
                 # 'block', and a record the cut left out could be a probable
@@ -1549,6 +1779,7 @@ def register_patient(
                     needs["possible"],
                     mode,
                     scan=scan,
+                    elsewhere=elsewhere,
                 )
             reviewed: list[dict] = []
             review_used = False
@@ -1556,7 +1787,16 @@ def register_patient(
             if needs["review_required"]:
                 listed = needs["probable"] + needs["possible"]
                 if review is None:
-                    if needs["check_incomplete"] and not listed:
+                    if held is not None:
+                        # multisite-8h1: a record at another facility may be
+                        # this patient, and it is not listed here.
+                        message = (
+                            "This may be a patient who is already registered. Check each "
+                            "record below. " + REVIEW_ELSEWHERE_WORDS
+                            if listed
+                            else REVIEW_ELSEWHERE_WORDS
+                        )
+                    elif needs["check_incomplete"] and not listed:
                         message = (
                             "Too many registered records share this phone number, name or date "
                             "of birth for the duplicate check to compare them all, so this may "
@@ -1576,7 +1816,12 @@ def register_patient(
                             "record below. To register a new patient anyway, give a reason."
                         )
                     raise _refuse_with_candidates(
-                        "duplicate_review_required", message, listed, mode, scan=scan
+                        "duplicate_review_required",
+                        message,
+                        listed,
+                        mode,
+                        scan=scan,
+                        elsewhere=elsewhere,
                     )
                 missing = [c for c in listed if c["patient_id"] not in review["candidate_ids"]]
                 if missing:
@@ -1643,6 +1888,13 @@ def register_patient(
                 raise RegistrationConflict(
                     "uhid_in_use", "That hospital number is already in use."
                 ) from exc
+            if stamp_facility is not None:
+                # multisite-8h1: the patient is registered at the registrar's
+                # facility (the column defaults to 1).
+                db.execute(
+                    "UPDATE patients SET registered_facility_id = ? WHERE id = ?",
+                    (stamp_facility, pid),
+                )
             db.execute(
                 """INSERT INTO patient_demographics (patient_id, registered_at, registered_by,
                        registration_source, uhid_source, age_recorded_on, guardian_relation,
@@ -1694,7 +1946,10 @@ def register_patient(
                 except AbdmError as exc:
                     raise RegistrationError("bad_abha", str(exc)) from exc
                 abha_recorded = True
-            for c in reviewed:
+            # A reviewed override opens a worklist row for every candidate,
+            # those held at another facility included (multisite-8h1): the
+            # pair is resolved by someone whose scope holds both records.
+            for c in [*reviewed, *(elsewhere if review_used else [])]:
                 a, b = sorted((pid, c["patient_id"]))
                 db.execute(
                     """INSERT INTO patient_duplicate_candidates (patient_id, candidate_patient_id,
@@ -1804,6 +2059,11 @@ def register_patient(
                     "candidate_scan_truncated": scan["truncated"],
                     "check_incomplete": scan["check_incomplete"],
                     **(
+                        {"registered_facility_id": stamp_facility}
+                        if stamp_facility is not None
+                        else {}
+                    ),
+                    **(
                         {
                             "payer_code": payer_recorded["payer_code"],
                             "payer_type": payer_recorded["payer_type"],
@@ -1842,6 +2102,11 @@ def register_patient(
                         "scores": [c["score"] for c in reviewed],
                         "bands": [c["band"] for c in reviewed],
                         **scan,
+                        **(
+                            {"held_elsewhere_patient_ids": [c["patient_id"] for c in elsewhere]}
+                            if elsewhere
+                            else {}
+                        ),
                     },
                     request_meta=request_meta,
                     correlation_id=correlation,
@@ -2513,17 +2778,27 @@ def check_identity(
     caller; derived from `user` when not passed) may check any patient in its
     own scope or with no ACTIVE admission. Another ward's inpatient answers 404
     exactly like an unknown id, and the attempt is audited.
+
+    With more than one facility on record (multisite-8h1) the same rule
+    holds across facilities: an inpatient whose admission is at a facility
+    outside the caller's scope answers 404 like an unknown id, whatever the
+    caller's department, and the attempt is audited with scope_cause
+    'facility'. A patient with no active admission may still be checked from
+    another facility (the group identity search finds them there, and the
+    check answers only match or no match).
     """
     said = _stated(stated)
     pid = _clean(patient_id, limit=80)
     if not pid:
         raise RegistrationError("patient_required", "Choose the patient to check.")
     dept = _department(user) if department is _NOT_DECIDED else department
+    facilities = _facilities(user)
     limited = out_of_scope = False
+    facility_caused = False
     with db_session(immediate=True) as db:
         if db.execute("SELECT 1 FROM patients WHERE id = ?", (pid,)).fetchone() is None:
             raise RegistrationNotFound("patient_not_found", "Patient not found")
-        if dept is not None:
+        if dept is not None or facilities is not None:
             from permissions import patient_in_scope
 
             admitted = (
@@ -2533,7 +2808,12 @@ def check_identity(
                 ).fetchone()
                 is not None
             )
-            out_of_scope = admitted and not patient_in_scope(db, pid, dept)
+            out_of_scope = admitted and not patient_in_scope(db, pid, dept, facilities=facilities)
+            facility_caused = (
+                out_of_scope
+                and facilities is not None
+                and (dept is None or patient_in_scope(db, pid, dept))
+            )
         failures = _recent_failures_on(db, user["id"], pid) if not out_of_scope else 0
         if out_of_scope:
             pass
@@ -2558,14 +2838,21 @@ def check_identity(
                 request_meta=request_meta,
             )
     if out_of_scope:
+        denial_meta: dict = {
+            "department": dept,
+            "scope_source": "authenticated_user",
+            "identity_check": True,
+        }
+        summary = f"Identity check: patient {pid} is another department's inpatient ({dept})"
+        if facility_caused and facilities is not None:
+            denial_meta.update(scope_cause="facility", facility_scope=sorted(facilities))
+            summary = f"Identity check: patient {pid} is an inpatient at another facility"
         log_audit_event(
             correlation_id=str(uuid.uuid4()),
             event_category="authorization",
             action_type="patient_scope_denied",
             outcome="denied",
-            summary_message=(
-                f"Identity check: patient {pid} is another department's inpatient ({dept})"
-            ),
+            summary_message=summary,
             actor_user_id=user.get("id"),
             actor_role=user.get("role"),
             patient_id=pid,
@@ -2573,11 +2860,7 @@ def check_identity(
             http_method=(request_meta or {}).get("http_method"),
             ip_address=(request_meta or {}).get("ip_address"),
             user_agent=(request_meta or {}).get("user_agent"),
-            metadata={
-                "department": dept,
-                "scope_source": "authenticated_user",
-                "identity_check": True,
-            },
+            metadata=denial_meta,
         )
         raise RegistrationNotFound("patient_not_found", "Patient not found")
     if limited:
@@ -2604,13 +2887,44 @@ def check_identity(
 # ── The duplicate worklist ───────────────────────────────────────────────────
 
 
-def list_duplicates(*, status: str = "open", limit: int = 50, today: date | None = None) -> dict:
+def _pair_scope(facilities: frozenset[int] | None) -> tuple[str, tuple]:
+    """('', ()) with no facility limit; otherwise a condition keeping only
+    worklist pairs whose two records are both inside `facilities`."""
+    if facilities is None:
+        return "", ()
+    from permissions import scope_patient_ids_sql
+
+    inner, params = scope_patient_ids_sql(None, facilities=facilities)
+    return (
+        f"patient_id IN ({inner}) AND candidate_patient_id IN ({inner})",
+        (*params, *params),
+    )
+
+
+def list_duplicates(
+    *,
+    status: str = "open",
+    limit: int = 50,
+    today: date | None = None,
+    facilities: frozenset[int] | None = None,
+) -> dict:
+    """The worklist. `facilities` (multisite-8h1) is the caller's facility
+    scope: None lists every pair as before; a set lists, and counts, only the
+    pairs whose two records both have their latest encounter at those
+    facilities. A pair that spans two facilities is for an account whose
+    scope holds both (ruling MS-R5 (a))."""
     statuses = ("open", "not_duplicate", "confirmed_duplicate", "merged", "all")
     if status not in statuses:
         raise RegistrationError("bad_status", "Choose open, resolved or all.")
     limit = max(1, min(int(limit or 50), DUPLICATE_LIST_MAX))
+    pair_sql, pair_params = _pair_scope(facilities)
     with db_session() as db:
-        where, params = ("", []) if status == "all" else ("WHERE status = ?", [status])
+        conds = [] if status == "all" else ["status = ?"]
+        params: list[Any] = [] if status == "all" else [status]
+        if pair_sql:
+            conds.append(pair_sql)
+            params.extend(pair_params)
+        where = ("WHERE " + " AND ".join(conds)) if conds else ""
         rows = [
             dict(r)
             for r in db.execute(
@@ -2627,7 +2941,10 @@ def list_duplicates(*, status: str = "open", limit: int = 50, today: date | None
         counts = {
             r["status"]: r["n"]
             for r in db.execute(
-                "SELECT status, COUNT(*) AS n FROM patient_duplicate_candidates GROUP BY status"
+                "SELECT status, COUNT(*) AS n FROM patient_duplicate_candidates "
+                + (f"WHERE {pair_sql} " if pair_sql else "")
+                + "GROUP BY status",
+                pair_params,
             )
         }
     items = []
@@ -2658,11 +2975,21 @@ def list_duplicates(*, status: str = "open", limit: int = 50, today: date | None
 
 
 def resolve_duplicate(
-    candidate_id: Any, *, resolution: str, reason: Any, user: dict, request_meta: dict | None = None
+    candidate_id: Any,
+    *,
+    resolution: str,
+    reason: Any,
+    user: dict,
+    request_meta: dict | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Mark a worklist pair as not the same person, or as the same person.
     Records are never merged here (merging is a later, separate executor). The
-    person who registered past the warning may not resolve it."""
+    person who registered past the warning may not resolve it.
+
+    `facilities` (multisite-8h1) is the caller's facility scope: a pair with
+    a record outside it answers 404 like an item that does not exist, before
+    anything is read about it."""
     if resolution not in DUPLICATE_RESOLUTIONS:
         raise RegistrationError(
             "bad_resolution", "Choose 'not the same person' or 'the same person'."
@@ -2680,6 +3007,10 @@ def resolve_duplicate(
             "SELECT * FROM patient_duplicate_candidates WHERE id = ?", (cid,)
         ).fetchone()
         if row is None:
+            raise RegistrationNotFound("duplicate_not_found", "That worklist item does not exist.")
+        if facilities is not None and len(
+            _in_facilities_on(db, [row["patient_id"], row["candidate_patient_id"]], facilities)
+        ) < len({row["patient_id"], row["candidate_patient_id"]}):
             raise RegistrationNotFound("duplicate_not_found", "That worklist item does not exist.")
         if row["status"] != "open":
             raise RegistrationConflict(
@@ -2752,6 +3083,11 @@ def sweep_duplicates(
     query per group. Opens at most `max_pairs` new rows (ceiling
     SWEEP_PAIRS_CEILING) and skips, and counts, any group of more than
     SWEEP_MAX_GROUP records sharing one key.
+
+    With more than one facility on record (multisite-8h1) an account bound
+    to a facility sweeps only the records whose latest encounter is at its
+    facilities; a pair across facilities is found by a sweep run from an
+    account whose scope holds both (a group-wide administrator).
     """
     from itertools import groupby
 
@@ -2770,11 +3106,33 @@ def sweep_duplicates(
         "FROM patients p JOIN patient_match_keys k ON k.patient_id = p.id "
         "LEFT JOIN patient_demographics d ON d.patient_id = p.id"
     )
+    facilities = _facilities(user)
+    in_scope, scope_params = "", ()
+    if facilities is not None:
+        from permissions import scope_patient_ids_sql
+
+        inner, scope_params = scope_patient_ids_sql(None, facilities=facilities)
+        in_scope = f"p.id IN ({inner})"
+
+    def _where(cond: str | None) -> str:
+        parts = [c for c in (cond, in_scope) if c]
+        return (" WHERE " + " AND ".join(parts)) if parts else ""
+
     scans = (
-        ("uhid", f"SELECT {pm.UHID_KEY_SQL.format(col='p.mrn')} AS g, {facts_sql} ORDER BY g"),
-        ("phone", f"SELECT k.phone_key AS g, {facts_sql} WHERE k.phone_key IS NOT NULL ORDER BY g"),
-        ("name", f"SELECT k.name_key AS g, {facts_sql} WHERE k.name_key IS NOT NULL ORDER BY g"),
-        ("dob", f"SELECT k.dob AS g, {facts_sql} WHERE k.dob IS NOT NULL ORDER BY g"),
+        (
+            "uhid",
+            f"SELECT {pm.UHID_KEY_SQL.format(col='p.mrn')} AS g, {facts_sql}{_where(None)} "
+            "ORDER BY g",
+        ),
+        (
+            "phone",
+            f"SELECT k.phone_key AS g, {facts_sql}{_where('k.phone_key IS NOT NULL')} ORDER BY g",
+        ),
+        (
+            "name",
+            f"SELECT k.name_key AS g, {facts_sql}{_where('k.name_key IS NOT NULL')} ORDER BY g",
+        ),
+        ("dob", f"SELECT k.dob AS g, {facts_sql}{_where('k.dob IS NOT NULL')} ORDER BY g"),
     )
     with db_session(immediate=True) as db:
         synced = pm.sync_keys(db, remove_orphans=True)
@@ -2787,7 +3145,7 @@ def sweep_duplicates(
         for kind, sql in scans:
             if truncated:
                 break
-            rows = db.execute(sql).fetchall()
+            rows = db.execute(sql, scope_params).fetchall()
             for g, member_iter in groupby(rows, key=lambda r: r["g"]):
                 if g is None:
                     continue

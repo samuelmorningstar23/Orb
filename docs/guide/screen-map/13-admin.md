@@ -305,7 +305,7 @@ message slot, not a blank page.
 `src/api/scorecard.ts` (the whole contract) + `src/pages/panels/admin/Scorecard.css`.
 Fetch: `getScorecard({days, ward})` (`src/api/scorecard.ts:541-561`) →
 `GET /api/admin/shadow/scorecard?days=N` →
-`server/routes/shadow_routes.py:304-356` (`get_scorecard`) →
+`server/routes/shadow_routes.py:327-379` (`get_scorecard`) →
 `server/services/shadow_scorecard_service.py:1743` (`scorecard`) →
 `_scorecard` (`:1757-1846`). `ward` is hard-wired to `null` in the view today
 (`Scorecard.tsx:564`).
@@ -325,7 +325,7 @@ selected one gets `is-active` and `aria-pressed`.
 **Data from:** `days` state (`:559`, default **14**). Changing it re-runs the
 effect at `:578-580`.
 **API:** the `days` query param; clamped server-side to 1–365 at
-`shadow_routes.py:306` and again by `_days()` (`:191-192`).
+`shadow_routes.py:329` and again by `_days()` (`:214-215`).
 **Change this →** Every figure, every date range under every figure, the scope
 line, the ledger and the export links all recompute. A metric that was
 "Reported" at 90 days can drop to "Insufficient data" at 7, that is the design,
@@ -376,7 +376,7 @@ reported").
 **Data from:** `card.instrument`, normalised at
 `src/api/scorecard.ts:430-444`; produced by `_instrument()`
 (`shadow_scorecard_service.py:1456`) and topped up by `instrument_health()`
-(`:1569`) plus `_attach_stats()` (`shadow_routes.py:359-384`).
+(`:1569`) plus `_attach_stats()` (`shadow_routes.py:382-407`).
 **Change this →** If the append-only trigger is dropped, **Record** flips to
 "NOT append-only" and the "Shadow event log present and append-only"
 prerequisite below turns to a ✗. `append_only` defaults to *true* in the client
@@ -405,7 +405,7 @@ detail string.
 reaches `ORB_SCORECARD_COVERAGE_THRESHOLD` (default 0.9,
 `shadow_scorecard_service.py:280-281`). `no_dropped_events` goes ✗ the instant
 any shadow write is dropped in this process, and the same condition adds a
-`health_warning` string to the instrument block (`shadow_routes.py:380-384`).
+`health_warning` string to the instrument block (`shadow_routes.py:403-407`).
 
 ### Metric band: eyebrow "Metric N of 4" and the Proxy chip
 **Where:** the left column of each of the four metric bands.
@@ -515,7 +515,7 @@ how a system starts reporting only its successes.
 (`sc-deid__treatment--<treatment>`), and an optional note.
 **Data from:** `card.export`. The route **overwrites** whatever the aggregation
 layer claimed with what the export code actually does
-(`shadow_routes.py:323-340`): `formats` from `exporter.FORMATS`
+(`shadow_routes.py:346-363`): `formats` from `exporter.FORMATS`
 (`server/services/shadow_export_service.py:86`), `deidentification` from
 `exporter.deidentification_manifest()` (`:262`), and a default note quoting the
 small-cell threshold `exporter.small_cell_k()` (`:109`).
@@ -527,7 +527,7 @@ de-identification manifest has been declared, so no export is offered."
 `export.available` and a non-empty manifest (`:461`).
 **Data from:** href built by `scorecardExportUrl()`
 (`src/api/scorecard.ts:567-569`) → `/api/admin/shadow/export/scorecard?days=…&format=…`.
-**Server:** `server/routes/shadow_routes.py:973-980` (`export_scorecard`),
+**Server:** `server/routes/shadow_routes.py:1029-1036` (`export_scorecard`),
 admin-gated, and audited **before** the body is returned, an unaudited
 disclosure never leaves the process (`:981-992`).
 **Change this →** One `<a download>` per format (JSON and CSV today). When not
@@ -545,80 +545,80 @@ not a controlled comparison.
 
 `src/pages/panels/admin/AuditLogTable.tsx`. Fetch: `getAuditLogs(filters)`
 (`src/api/client.ts:1837-1850`) → `GET /api/audit/logs?…` →
-`server/routes/audit_routes.py:11-79` (`get_audit_logs`, permission
+`server/routes/audit_routes.py:50-153` (`get_audit_logs`, permission
 `audit.read`). There is no service layer, the handler builds SQL directly
-against `audit_logs` (`:26-72`).
+against `audit_logs` (`:79-128`).
 
 ### "Correlation ID..." search box
 **Where:** first control in the filter bar across the top.
-**Rendered by:** `AuditLogTable.tsx:71-77`.
-**Data from:** local `searchCorrelation` state (`:34`), folded into the request
-at `:41`. **Enter** triggers `fetchLogs()` (`:76`); typing alone does not.
-**Server:** exact match, `audit_routes.py:32-34`.
+**Rendered by:** `AuditLogTable.tsx:99-105`.
+**Data from:** local `searchCorrelation` state (`:36`), folded into the request
+at `:43`. **Enter** triggers `fetchLogs()` (`:104`); typing alone does not.
+**Server:** exact match, `audit_routes.py:85-87`.
 
 ### "Patient ID..." search box
-**Rendered by:** `AuditLogTable.tsx:78-84`; state at `:35`; server match at
-`audit_routes.py:29-31`.
+**Rendered by:** `AuditLogTable.tsx:106-112`; state at `:37`; server match at
+`audit_routes.py:69-71`.
 **Change this →** Both boxes are exact-match, not prefix or fuzzy. A partial id
 returns the empty state, which looks identical to "no such events".
 
 ### "All actions" dropdown
-**Rendered by:** `AuditLogTable.tsx:85-88`; options from `ACTION_TYPES`
-(`:11-18`) with underscores displayed as spaces.
+**Rendered by:** `AuditLogTable.tsx:113-116`; options from `ACTION_TYPES`
+(`:13-20`) with underscores displayed as spaces.
 **Change this →** This is a **hand-maintained list**. Any `action_type` the
 server writes that is not in that array cannot be selected here, it will still
 appear in the table, just not in the filter. Changing it resets `offset` to 0
-(`:52`) so you jump back to page 1.
+(`:54`) so you jump back to page 1.
 
 ### "All categories" dropdown
-**Rendered by:** `AuditLogTable.tsx:89-92`; options from `CATEGORIES` (`:20-25`).
-**Server:** `audit_routes.py:38-52` accepts a **comma-separated list** and
+**Rendered by:** `AuditLogTable.tsx:117-120`; options from `CATEGORIES` (`:22-27`).
+**Server:** `audit_routes.py:79-93` accepts a **comma-separated list** and
 switches between `=` and `IN (...)`. This dropdown only ever sends one value;
 the multi-value path is what the Security tab uses.
 
 ### "All outcomes" dropdown
-**Rendered by:** `AuditLogTable.tsx:93-96`; `OUTCOMES` at `:26`, success,
+**Rendered by:** `AuditLogTable.tsx:121-124`; `OUTCOMES` at `:28`, success,
 failure, partial_success, denied.
 
 ### Magnifier / apply-filters button
-**Rendered by:** `AuditLogTable.tsx:97-99`, `title="Apply filters"`.
+**Rendered by:** `AuditLogTable.tsx:125-127`, `title="Apply filters"`.
 **Change this →** Selecting from any dropdown already refetches (state change →
-`useEffect` at `:49`); this button exists for the two text boxes, which do not.
+`useEffect` at `:51`); this button exists for the two text boxes, which do not.
 
 ### "N events" count and pager
 **Where:** second row of the filter bar.
-**Rendered by:** `AuditLogTable.tsx:101-110`. Count at `:102`
+**Rendered by:** `AuditLogTable.tsx:129-138`. Count at `:130`
 (locale-formatted, singular/plural). The `‹ page/total ›` pager renders **only
-when `totalPages > 1`** (`:103`).
-**Data from:** `total` from the response; `limit` fixed at 25 (`:33`).
+when `totalPages > 1`** (`:131`).
+**Data from:** `total` from the response; `limit` fixed at 25 (`:35`).
 **Server:** the total is a rewritten COUNT of the same WHERE clause,
-`audit_routes.py:70-72`.
+`audit_routes.py:111-113`.
 **Change this →** `limit` is capped at 1000 server-side
-(`audit_routes.py:20`). Raise the client's 25 and the pager disappears sooner.
+(`audit_routes.py:60`). Raise the client's 25 and the pager disappears sooner.
 
 ### Audit table columns
 **Where:** the main table.
-**Rendered by:** `AuditLogTable.tsx:128-137`. Eight columns in this order:
+**Rendered by:** `AuditLogTable.tsx:156-165`. Eight columns in this order:
 **Timestamp · Correlation · Category · Action · Outcome · Actor · Patient ·
 Summary**.
 **Data from:** one `AuditLog` per row (`src/api/client.ts:1803-1820`).
 Timestamp is `toLocaleString()` in mono (`:142`); Actor and Patient print ", "
 when null (`:167-168`); Summary is truncated with `admin-td--truncate` (`:169`).
 **Server:** `SELECT * FROM audit_logs … ORDER BY timestamp DESC LIMIT ? OFFSET ?`
-(`audit_routes.py:26-64`).
+(`audit_routes.py:66-105`).
 
 ### Correlation cell: trace link + copy button
-**Rendered by:** `AuditLogTable.tsx:143-159`. The link shows the first 10
-characters plus "…" (`:150`) and is a real `<button>` titled "View full trace".
+**Rendered by:** `AuditLogTable.tsx:171-194`. The link shows the first 10
+characters plus "…" (`:178`) and is a real `<button>` titled "View full trace".
 Next to it, a clipboard icon button titled "Copy correlation ID" calls
-`copyCorrelation` (`:62-64`).
+`copyCorrelation` (`:84-86`).
 **Change this →** Clicking the link calls `onTraceClick` → `handleTraceClick` in
 `src/pages/panels/AdminPanel.tsx:120-123`, which stores the id **and switches the
 active tab to Trace**. You leave this tab. The copy button gives no visual
 confirmation, a failed clipboard write is swallowed (`:63`).
 
 ### Category chip
-**Rendered by:** `AuditLogTable.tsx:164`, `humaniseEnum(log.event_category)`
+**Rendered by:** `AuditLogTable.tsx:199`, `humaniseEnum(log.event_category)`
 from `src/lib/humanise.ts`.
 **Change this →** This is the reason the table reads "PHI access" and "API
 mutation" rather than `Phi_access` / `Api_mutation`. The acronym table is
@@ -626,18 +626,18 @@ mutation" rather than `Phi_access` / `Api_mutation`. The acronym table is
 screen that uses the helper re-cases at once. The wire format is untouched.
 
 ### Outcome badge
-**Rendered by:** `AuditLogTable.tsx:166` → `OutcomeBadge`
+**Rendered by:** `AuditLogTable.tsx:201` → `OutcomeBadge`
 (`src/pages/panels/admin/AdminBadges.tsx:11-18`). Colours at `:4-9`: success
 green, failure red, partial_success amber, denied grey; **an unknown outcome
 falls back to the grey "denied" style** while still printing its own text
 (`:12`).
 
 ### Audit empty state
-**Rendered by:** `AuditLogTable.tsx:119-123`, a document icon, "No audit events
+**Rendered by:** `AuditLogTable.tsx:147-151`, a document icon, "No audit events
 found", "Try adjusting your filters or wait for new events".
 
 ### Audit loading / error states
-**Rendered by:** `AuditLogTable.tsx:115` ("Loading audit logs...") and `:117`
+**Rendered by:** `AuditLogTable.tsx:143` ("Loading audit logs...") and `:145`
 (`AdminErrorState` with a working **Retry**).
 
 ---
@@ -676,15 +676,15 @@ called, ordering is purely chronological today.
 
 `src/pages/panels/admin/SecurityActivity.tsx`. Same audit endpoint, but with
 `event_category: 'authentication,authorization,security'`, `limit` 25, page
-offset (`:21-25`).
+offset (`:42-48`).
 
 ### "N security events" bar and pager
-**Rendered by:** `SecurityActivity.tsx:50-61`; pager only when `totalPages > 1`.
+**Rendered by:** `SecurityActivity.tsx:60-71`; pager only when `totalPages > 1`.
 
 ### Security table columns
-**Rendered by:** `SecurityActivity.tsx:65-76`. Eight columns:
+**Rendered by:** `SecurityActivity.tsx:75-86`. Eight columns:
 **Timestamp · Action · Outcome · Actor · Role · IP Address · Path · Summary**.
-Cells at `:80-87`; Role, IP and Path each print ", " when null.
+Cells at `:90-104`; Role, IP and Path each print ", " when null.
 **Change this →** This is the only table on the screen showing `actor_role`,
 `ip_address` and `request_path`. Those three come straight from the audit row
 (`src/api/client.ts:1811,1818-1819`) and are written by
@@ -693,16 +693,16 @@ Cells at `:80-87`; Role, IP and Path each print ", " when null.
 `server/routes/admin_users_routes.py:134-149`.
 
 ### Failed-row tint
-**Rendered by:** `SecurityActivity.tsx:79`, `admin-tr--failure` when
+**Rendered by:** `SecurityActivity.tsx:89`, `admin-tr--failure` when
 `outcome === 'failure'`, a 6 % red wash across the row
 (`Admin.css:268-270`).
 **Change this →** A burst of failed sign-ins reads as a block of red rows
 without needing to scan the Outcome column.
 
 ### Security empty state
-**Rendered by:** `SecurityActivity.tsx:38-46`: padlock icon, "No security
+**Rendered by:** `SecurityActivity.tsx:121-132`: padlock icon, "No security
 events", "No authentication or permission events recorded yet".
-**Change this →** The comment at `SecurityActivity.tsx:17-20` is the scar: this
+**Change this →** The comment at `SecurityActivity.tsx:14-17` is the scar: this
 tab used to ask for the single category `'auth'`, which matches none of the
 three real categories, so it showed this empty state while the Overview tab on
 the same screen counted 39 + 3 events. If it goes empty again, compare against
@@ -714,11 +714,11 @@ There is **no lockout or unlock control on this screen.** Nothing in
 exist are:
 - **Session revocation**, which happens implicitly: Deactivate and both password
   resets bump `token_version` (`server/routes/admin_users_routes.py:919-925`,
-  `:970-976`, `:1402-1408`), killing every outstanding JWT immediately.
+  `:983-989`, `:1415-1421`), killing every outstanding JWT immediately.
 - **Signing-PIN lockout state**, cleared server-side when a new PIN is
   provisioned, `pin_security.clear_pin_failures(user_id)`
-  (`server/routes/admin_users_routes.py:1035`). The `POST
-  /api/admin/users/{id}/pin` endpoint (`:988-1056`) has **no UI on this screen**.
+  (`server/routes/admin_users_routes.py:1048`). The `POST
+  /api/admin/users/{id}/pin` endpoint (`:1001-1069`) has **no UI on this screen**.
 - **Failed-login counts per user**, computed by the list endpoint as
   `failed_logins_24h` (`server/routes/admin_users_routes.py:205-216`), sent to
   the browser and then **not rendered**; see the Users table note below.
@@ -820,7 +820,7 @@ password input, a **Generate** button and a **Copy** button.
 **Data from:** `generatePassword()` (`:182-187`), 16 characters from a
 confusables-free alphabet via `crypto.getRandomValues`.
 **API:** `POST /api/admin/users/{id}/reset-password` (`:202-205`) →
-`server/routes/admin_users_routes.py:957-982`.
+`server/routes/admin_users_routes.py:970-995`.
 **Change this →** **Copy** is disabled until there is a password, and its label
 flips to **"Copied"** on success (`:471-472`); typing or re-generating resets it to
 "Copy" (`:467`, `:469`). Submit turns the button into "Saving…". Server-side the
@@ -831,7 +831,7 @@ their next request.
 **Rendered by:** `UsersPanel.tsx:490-545`. Two fields: **Role** (select,
 autofocused, same five roles) and **Department** (free text).
 **API:** `PATCH /api/admin/users/{id}` (`:509-512`) →
-`server/routes/admin_users_routes.py:1062-1143` (`patch_user`).
+`server/routes/admin_users_routes.py:1075-1156` (`patch_user`).
 **Change this →** This is the only role-editing surface in the product. On save,
 the toast reads "User updated", the table refetches and the row's Role chip
 changes colour. The department is trimmed and an empty string becomes NULL
@@ -846,7 +846,7 @@ consequence, for deactivation, "…will be blocked from logging in and all their
 active sessions will be revoked." (`:873`). The confirm button is red for
 deactivation (`:320`) and reads "Working…" while busy (`:324`).
 **API:** `POST /api/admin/users/{id}/deactivate|activate`, built at
-`UsersPanel.tsx:470` → `server/routes/admin_users_routes.py:900-951`.
+`UsersPanel.tsx:470` → `server/routes/admin_users_routes.py:1125-1187`.
 **Change this →** Deactivating **yourself** is refused server-side with a 400,
 "You cannot deactivate your own account"
 (`server/routes/admin_users_routes.py:910-911`), the UI does not hide the
@@ -1139,21 +1139,21 @@ and subtitle "Replay the audit + event stream and verify chain integrity."
 (`:137-138`).
 **API:** three endpoints, `/flight-recorder/timeline`, `/flight-recorder/verify`
 and `/flight-recorder/event/{source}/{id}` (`:68-69`, `:89`) →
-`server/routes/flight_recorder_routes.py:21-46`.
+`server/routes/flight_recorder_routes.py:29-60`.
 
 ### Tab: Data & Backups
 **Rendered by:** `src/pages/panels/admin/DataPanel.tsx`. Two cards.
-**Database Backups** (`:201-244`): a "N backup(s)" count, a **Create backup**
+**Database Backups** (`:464-519`): a "N backup(s)" count, a **Create backup**
 button with a download icon, a table of **Filename · Size · Created**
-(`:222-226`), and the standing note "Restores are intentionally not available
+(`:484-491`), and the standing note "Restores are intentionally not available
 here, they must be performed out-of-band by an operator with the server
-stopped." (`:241-244`). **Data Erasure** (`:246-301`): the sub-label "GDPR right
+stopped." (`:505-508`). **Data Erasure** (`:521-611`): the sub-label "GDPR right
 to be forgotten", an explanatory paragraph, a Patient ID input and a red
-**Erase patient** button, disabled until the field is non-empty (`:273`).
-**API:** `GET /api/admin/backups` (`:153`) and `POST /api/admin/backups`
-(`:164`) → `server/routes/backup_routes.py:113-114` and `:158-159`;
+**Erase patient** button, disabled until the field is non-empty (`:555-562`).
+**API:** `GET /api/admin/backups` (`:375`) and `POST /api/admin/backups`
+(`:396`) → `server/routes/backup_routes.py:113-114` and `:207-208`;
 `POST /api/admin/patients/{id}/erase` with an `Idempotency-Key` header
-(`:183-186`) → `server/routes/admin_routes.py:265-266` (`erase_patient`), whose
+(`:232-236`) → `server/routes/admin_routes.py:265-266` (`erase_patient`), whose
 deletion plan is derived from the live schema by `_build_erase_plan`
 (`server/routes/admin_routes.py:171`).
 **Change this →** Both destructive actions go through their own confirm dialogs

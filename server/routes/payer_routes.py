@@ -23,22 +23,44 @@ THREE THINGS THIS FILE IS CAREFUL ABOUT
 3. THE MODULE FLAG IS A 404, NOT A 403. A site that turns the payer desk off
    (ORB_PAYER=0) does not have an insurance desk; a 403 would say "you are not
    allowed", which is a different and wrong statement.
+
+FACILITY SCOPE (multisite-9a, W12-E; ruling MS-R5 (a), document-keyed). Once
+more than one facility is on record, the claim lists, the work queue, the
+denial log and the desk summary keep the claims whose own facility is one of
+the caller's, and the policy list the policies of patients whose latest
+encounter is there. Every route that names a claim or a policy refuses one of
+another facility with a 404 and an authorization 'facility_document_denied'
+row before anything is read or written. With one facility on record nothing
+here changes.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from typing import Any
 
 import config
-from fastapi import APIRouter, Depends, HTTPException, Query
+from database import db_session
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from permissions import (
     PAYER_READ,
     PAYER_WRITE,
     enforce_patient_scope,
+    facility_scope,
     require_permission,
 )
 from pydantic import BaseModel, Field
 from services.audit_service import log_audit_event
+from services.facility_documents import (
+    admission_ref,
+    admission_row_facility,
+    claim_facility,
+    deny_if_outside,
+    policy_facility,
+    request_meta,
+)
+from services.facility_stamp import invoice_facility
 from services.payer_service import (
     AGING_BUCKETS,
     CLAIM_STATUSES,
@@ -192,6 +214,83 @@ def _wrap(payload: dict) -> dict:
     payload.setdefault("notice_short", NO_TRANSMISSION_SHORT)
     payload.setdefault("transmits_to_payer", False)
     return payload
+
+
+# ── Facility scope (multisite-9a) ────────────────────────────────────────────
+
+
+def _require_own_document(
+    user: dict,
+    request: Request | None,
+    *,
+    lookup: Callable[[Any, Any], int | None],
+    doc_id: Any,
+    target_type: str,
+    detail: str,
+) -> None:
+    """404, after an authorization 'facility_document_denied' row, when the
+    document `lookup` reads is outside the caller's facility scope. Nothing is
+    read with one facility on record; a document no row holds passes, and the
+    service refuses it in its own words as before."""
+    if doc_id is None:
+        return
+    facilities = facility_scope(user)
+    if facilities is None:
+        return
+    with db_session() as db:
+        facility_id = lookup(db, doc_id)
+    if deny_if_outside(
+        user,
+        document_facility_id=facility_id,
+        lane="payer",
+        target_type=target_type,
+        target_id=doc_id,
+        meta=request_meta(request),
+        facilities=facilities,
+    ):
+        raise HTTPException(status_code=404, detail=detail)
+
+
+_CLAIM_IN_SCOPE_USER_DEFAULT = Depends(_DESK_READ)
+
+
+def _claim_in_scope(
+    claim_id: int, request: Request, user: dict = _CLAIM_IN_SCOPE_USER_DEFAULT
+) -> None:
+    """Route dependency on every /claims/{claim_id} route: a claim of another
+    facility is a 404 before the handler reads or writes anything."""
+    _require_own_document(
+        user,
+        request,
+        lookup=claim_facility,
+        doc_id=claim_id,
+        target_type="claim",
+        detail="Claim not found",
+    )
+
+
+_CLAIM_SCOPE = Depends(_claim_in_scope)
+
+
+_POLICY_IN_SCOPE_USER_DEFAULT = Depends(_DESK_READ)
+
+
+def _policy_in_scope(
+    policy_id: int, request: Request, user: dict = _POLICY_IN_SCOPE_USER_DEFAULT
+) -> None:
+    """Route dependency on every /policies/{policy_id} route: a policy of a
+    patient at another facility is a 404 before anything is changed."""
+    _require_own_document(
+        user,
+        request,
+        lookup=policy_facility,
+        doc_id=policy_id,
+        target_type="payer_policy",
+        detail="Policy not found",
+    )
+
+
+_POLICY_SCOPE = Depends(_policy_in_scope)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -361,7 +460,7 @@ _SUMMARY_M_DEFAULT = Depends(require_module)
 
 @router.get("/summary")
 def summary(user: dict = _SUMMARY_USER_DEFAULT, _m: None = _SUMMARY_M_DEFAULT) -> dict:
-    return _wrap(desk_summary())
+    return _wrap(desk_summary(facilities=facility_scope(user)))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -439,7 +538,12 @@ def policies(
     # disclosure as a chart read. 404, never 403: a 403 confirms the patient
     # exists. Plain `def` route, so FastAPI threadpools this blocking check.
     enforce_patient_scope(user, patient_id)
-    rows = list_policies(patient_id=patient_id, admission_id=admission_id, active_only=active_only)
+    rows = list_policies(
+        patient_id=patient_id,
+        admission_id=admission_id,
+        active_only=active_only,
+        facilities=facility_scope(user),
+    )
     if patient_id:
         # Fail-closed: a named patient's insurance file is PHI, and a read that
         # cannot be audited is a read that does not happen.
@@ -461,6 +565,7 @@ _SAVE_POLICY_M_DEFAULT = Depends(require_module)
 @router.post("/policies")
 def save_policy(
     body: PolicyIn,
+    request: Request,
     user: dict = _SAVE_POLICY_USER_DEFAULT,
     _m: None = _SAVE_POLICY_M_DEFAULT,
 ) -> dict:
@@ -476,6 +581,16 @@ def save_policy(
     # ward's patient is the same boundary breach as reading their chart, and it
     # leaves a durable row behind. 404, never 403 — a 403 confirms they exist.
     enforce_patient_scope(user, body.patient_id)
+    # The admission by its own row, whichever patient it belongs to: the
+    # policy's facility is read from it (multisite-9a).
+    _require_own_document(
+        user,
+        request,
+        lookup=admission_row_facility,
+        doc_id=admission_ref(body.admission_id),
+        target_type="admission",
+        detail="Admission not found",
+    )
     row = _handle(capture_policy, created_by=user.get("id"), **body.model_dump())
     _audit(
         user,
@@ -499,7 +614,7 @@ _DO_VERIFY_POLICY_USER_DEFAULT = Depends(_DESK_WRITE)
 _DO_VERIFY_POLICY_M_DEFAULT = Depends(require_module)
 
 
-@router.post("/policies/{policy_id}/verify")
+@router.post("/policies/{policy_id}/verify", dependencies=[_POLICY_SCOPE])
 def do_verify_policy(
     policy_id: int,
     user: dict = _DO_VERIFY_POLICY_USER_DEFAULT,
@@ -520,7 +635,7 @@ _DO_POLICY_STATUS_USER_DEFAULT = Depends(_DESK_WRITE)
 _DO_POLICY_STATUS_M_DEFAULT = Depends(require_module)
 
 
-@router.post("/policies/{policy_id}/status")
+@router.post("/policies/{policy_id}/status", dependencies=[_POLICY_SCOPE])
 def do_policy_status(
     policy_id: int,
     body: PolicyStatusIn,
@@ -576,6 +691,7 @@ def claims(
         open_only=open_only,
         search=search,
         limit=limit,
+        facilities=facility_scope(user),
     )
     return _wrap({"claims": rows, "total": len(rows)})
 
@@ -584,7 +700,7 @@ _CLAIM_DETAIL_USER_DEFAULT = Depends(_DESK_READ)
 _CLAIM_DETAIL_M_DEFAULT = Depends(require_module)
 
 
-@router.get("/claims/{claim_id}")
+@router.get("/claims/{claim_id}", dependencies=[_CLAIM_SCOPE])
 def claim_detail(
     claim_id: int,
     user: dict = _CLAIM_DETAIL_USER_DEFAULT,
@@ -609,6 +725,7 @@ _NEW_CLAIM_M_DEFAULT = Depends(require_module)
 @router.post("/claims")
 def new_claim(
     body: ClaimIn,
+    request: Request,
     user: dict = _NEW_CLAIM_USER_DEFAULT,
     _m: None = _NEW_CLAIM_M_DEFAULT,
 ) -> dict:
@@ -617,6 +734,33 @@ def new_claim(
     # ward's patient is the same boundary breach as reading their chart, and it
     # leaves a durable row behind. 404, never 403 — a 403 confirms they exist.
     enforce_patient_scope(user, body.patient_id)
+    # multisite-9a: the bill, the admission and the policy a claim names must
+    # be the caller's facility's. The admission is read by its own row,
+    # whichever patient it belongs to, because the claim is stamped with it.
+    _require_own_document(
+        user,
+        request,
+        lookup=invoice_facility,
+        doc_id=body.invoice_id,
+        target_type="invoice",
+        detail="Invoice not found",
+    )
+    _require_own_document(
+        user,
+        request,
+        lookup=admission_row_facility,
+        doc_id=admission_ref(body.admission_id),
+        target_type="admission",
+        detail="Admission not found",
+    )
+    _require_own_document(
+        user,
+        request,
+        lookup=policy_facility,
+        doc_id=body.policy_id,
+        target_type="payer_policy",
+        detail="Policy not found",
+    )
     claim = _handle(create_claim, created_by=user.get("id"), **body.model_dump())
     replayed = bool(claim.get("replayed"))
     _audit(
@@ -644,7 +788,7 @@ _SET_AMOUNT_USER_DEFAULT = Depends(_DESK_WRITE)
 _SET_AMOUNT_M_DEFAULT = Depends(require_module)
 
 
-@router.post("/claims/{claim_id}/amount")
+@router.post("/claims/{claim_id}/amount", dependencies=[_CLAIM_SCOPE])
 def set_amount(
     claim_id: int,
     body: ClaimedAmountIn,
@@ -673,7 +817,7 @@ _PREAUTH_USER_DEFAULT = Depends(_DESK_WRITE)
 _PREAUTH_M_DEFAULT = Depends(require_module)
 
 
-@router.post("/claims/{claim_id}/preauth")
+@router.post("/claims/{claim_id}/preauth", dependencies=[_CLAIM_SCOPE])
 def preauth(
     claim_id: int,
     body: PreauthIn,
@@ -707,7 +851,7 @@ _PREAUTH_DECISION_USER_DEFAULT = Depends(_DESK_WRITE)
 _PREAUTH_DECISION_M_DEFAULT = Depends(require_module)
 
 
-@router.post("/claims/{claim_id}/preauth/decision")
+@router.post("/claims/{claim_id}/preauth/decision", dependencies=[_CLAIM_SCOPE])
 def preauth_decision(
     claim_id: int,
     body: PreauthDecisionIn,
@@ -736,7 +880,7 @@ _SUBMISSION_USER_DEFAULT = Depends(_DESK_WRITE)
 _SUBMISSION_M_DEFAULT = Depends(require_module)
 
 
-@router.post("/claims/{claim_id}/submission")
+@router.post("/claims/{claim_id}/submission", dependencies=[_CLAIM_SCOPE])
 def submission(
     claim_id: int,
     body: SubmissionIn,
@@ -768,7 +912,7 @@ _QUERY_USER_DEFAULT = Depends(_DESK_WRITE)
 _QUERY_M_DEFAULT = Depends(require_module)
 
 
-@router.post("/claims/{claim_id}/query")
+@router.post("/claims/{claim_id}/query", dependencies=[_CLAIM_SCOPE])
 def query(
     claim_id: int,
     body: QueryIn,
@@ -797,7 +941,7 @@ _DECISION_USER_DEFAULT = Depends(_DESK_WRITE)
 _DECISION_M_DEFAULT = Depends(require_module)
 
 
-@router.post("/claims/{claim_id}/decision")
+@router.post("/claims/{claim_id}/decision", dependencies=[_CLAIM_SCOPE])
 def decision(
     claim_id: int,
     body: DecisionIn,
@@ -830,7 +974,7 @@ _SETTLEMENT_USER_DEFAULT = Depends(_DESK_WRITE)
 _SETTLEMENT_M_DEFAULT = Depends(require_module)
 
 
-@router.post("/claims/{claim_id}/settlement")
+@router.post("/claims/{claim_id}/settlement", dependencies=[_CLAIM_SCOPE])
 def settlement(
     claim_id: int,
     body: SettlementIn,
@@ -869,7 +1013,7 @@ _APPEAL_USER_DEFAULT = Depends(_DESK_WRITE)
 _APPEAL_M_DEFAULT = Depends(require_module)
 
 
-@router.post("/claims/{claim_id}/appeal")
+@router.post("/claims/{claim_id}/appeal", dependencies=[_CLAIM_SCOPE])
 def appeal(
     claim_id: int,
     body: AppealIn,
@@ -896,7 +1040,7 @@ _CLOSE_USER_DEFAULT = Depends(_DESK_WRITE)
 _CLOSE_M_DEFAULT = Depends(require_module)
 
 
-@router.post("/claims/{claim_id}/close")
+@router.post("/claims/{claim_id}/close", dependencies=[_CLAIM_SCOPE])
 def close(
     claim_id: int,
     body: ReasonIn,
@@ -918,7 +1062,7 @@ _CANCEL_USER_DEFAULT = Depends(_DESK_WRITE)
 _CANCEL_M_DEFAULT = Depends(require_module)
 
 
-@router.post("/claims/{claim_id}/cancel")
+@router.post("/claims/{claim_id}/cancel", dependencies=[_CLAIM_SCOPE])
 def cancel(
     claim_id: int,
     body: ReasonIn,
@@ -943,7 +1087,7 @@ _NOTE_USER_DEFAULT = Depends(_DESK_WRITE)
 _NOTE_M_DEFAULT = Depends(require_module)
 
 
-@router.post("/claims/{claim_id}/note")
+@router.post("/claims/{claim_id}/note", dependencies=[_CLAIM_SCOPE])
 def note(
     claim_id: int,
     body: NoteIn,
@@ -972,7 +1116,11 @@ def queue(
     user: dict = _QUEUE_USER_DEFAULT,
     _m: None = _QUEUE_M_DEFAULT,
 ) -> dict:
-    return _wrap(work_queue(payer_code=payer_code, bucket=bucket, limit=limit))
+    return _wrap(
+        work_queue(
+            payer_code=payer_code, bucket=bucket, limit=limit, facilities=facility_scope(user)
+        )
+    )
 
 
 _DENIALS_LIMIT_DEFAULT = Query(200, ge=1, le=1000)
@@ -987,4 +1135,4 @@ def denials(
     user: dict = _DENIALS_USER_DEFAULT,
     _m: None = _DENIALS_M_DEFAULT,
 ) -> dict:
-    return _wrap(denial_log(payer_code=payer_code, limit=limit))
+    return _wrap(denial_log(payer_code=payer_code, limit=limit, facilities=facility_scope(user)))

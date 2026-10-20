@@ -64,7 +64,7 @@ exactly that: **present, unproven.**
 
 ```mermaid
 graph TD
-  TOML[server/site_config/site.toml] -->|startup, FIRST| LOAD[load_site_config<br/>site_config_service.py:598]
+  TOML[server/site_config/site.toml] -->|startup, FIRST| LOAD[load_site_config<br/>site_config_service.py:611]
   LOAD -->|any problem| BOOM[SiteConfigError → printed, exit 2<br/>main.py:36-40]
   LOAD -->|ok| ENV[_to_env :519 → ORB_* variables]
   ENV --> ESC[escalation_service]
@@ -135,7 +135,7 @@ tiers `_probe_models` asks about).
    load-bearing and the comment at `:23-34` says why: this loader translates the file into `ORB_*`
    environment variables, and `config.py` binds several of them **at import time**. Load it any
    later and you apply half of a hospital's settings and silently drop the rest.
-2. `load_site_config()` (`site_config_service.py:598`) looks for `ORB_SITE_CONFIG_FILE`, else
+2. `load_site_config()` (`site_config_service.py:611`) looks for `ORB_SITE_CONFIG_FILE`, else
    `server/site_config/site.toml`.
 3. **No file → not an error.** You get an empty `SiteConfig` with `present=False` and Orb runs on
    shipped defaults (`:576-578`). Making the file mandatory would turn a lever into ceremony, and

@@ -795,8 +795,14 @@ def list_op_patients(
     day: str | None = None,
     scope_department: str | None = None,
     limit: int = OP_PATIENTS_LIMIT,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Outpatients with something still to bill on one hospital-local day (opd-14).
+
+    `facilities` (multisite-9a, document-keyed) is the caller's
+    permissions.facility_scope: a set keeps the lines, and the visits shown
+    beside them, whose own facility is one of them. None (one facility on
+    record) changes nothing.
 
     A patient is listed when they have at least one PENDING outpatient line
     (encounter_type 'op', no admission) whose service day, read in the
@@ -831,10 +837,16 @@ def list_op_patients(
     hi = (when + timedelta(days=2)).isoformat()
     cap = max(1, min(int(limit), OP_PATIENTS_LIMIT))
 
+    from services.facility_documents import facility_clause
+
     scope_clause, scope_params = "", ()
     if scope_department is not None:
         scope_sql, scope_params = scope_patient_ids_sql(scope_department)
         scope_clause = f" AND ec.patient_id IN ({scope_sql})"
+    facility_sql, facility_params = facility_clause("ec.facility_id", facilities)
+    scope_clause += facility_sql
+    scope_params = (*scope_params, *facility_params)
+    visit_facility_sql, visit_facility_params = facility_clause("facility_id", facilities)
     with db_session() as db:
         rows = db.execute(
             f"""SELECT ec.id, ec.patient_id, ec.total_paise, ec.rate_is_configured,
@@ -894,8 +906,9 @@ def list_op_patients(
                 for v in (
                     db.execute(
                         "SELECT department, doctor_name, token_number, status FROM opd_visits "
-                        "WHERE patient_id = ? AND visit_date = ? ORDER BY registered_at, id",
-                        (entry["id"], target),
+                        f"WHERE patient_id = ? AND visit_date = ?{visit_facility_sql} "
+                        "ORDER BY registered_at, id",
+                        (entry["id"], target, *visit_facility_params),
                     ).fetchall()
                     if has_visits
                     else []
@@ -2152,6 +2165,7 @@ def create_invoice(
     admission_id: str | None = None,
     invoice_type: str = "final",
     charge_ids: Sequence[int] | None = None,
+    facilities: frozenset[int] | None = None,
     encounter_type: str | None = None,
     place_of_supply: str | None = None,
     interstate: bool = False,
@@ -2176,6 +2190,12 @@ def create_invoice(
     writes the invoice, guarded by ``WHERE status='pending'``, so two clerks
     invoicing the same admission at the same instant cannot both bill the same
     line — the loser's transaction rolls back whole.
+
+    ``facilities`` (multisite-9a) is the caller's permissions.facility_scope:
+    a set limits that sweep to the lines stamped at one of those facilities,
+    so another facility's pending lines stay pending for its own counter and
+    never land on this facility's bill. Named charges are checked by the route
+    first. None (one facility on record) changes nothing.
 
     AN UNPRICED CHARGE STOPS THE BILL, whether it was named explicitly or swept
     in: ``charge_not_priced``, with the offending charges in ``detail``. See the
@@ -2266,23 +2286,28 @@ def create_invoice(
                         detail={"charge_ids": not_outpatient},
                     )
         else:
+            from services.facility_documents import facility_clause
+
+            # Only the caller's facilities' lines (multisite-9a); '' with no limit.
+            facility_sql, facility_params = facility_clause("facility_id", facilities)
             if admission_id:
                 rows = db.execute(
-                    "SELECT * FROM encounter_charges WHERE admission_id = ? AND status = ? "
-                    "ORDER BY id",
-                    (admission_id, _CHARGE_BILLABLE),
+                    "SELECT * FROM encounter_charges WHERE admission_id = ? AND status = ?"
+                    f"{facility_sql} ORDER BY id",
+                    (admission_id, _CHARGE_BILLABLE, *facility_params),
                 ).fetchall()
             elif op_bill:
                 rows = db.execute(
                     "SELECT * FROM encounter_charges WHERE patient_id = ? AND status = ? "
-                    "AND admission_id IS NULL AND encounter_type = 'op' ORDER BY id",
-                    (patient_id, _CHARGE_BILLABLE),
+                    f"AND admission_id IS NULL AND encounter_type = 'op'{facility_sql} "
+                    "ORDER BY id",
+                    (patient_id, _CHARGE_BILLABLE, *facility_params),
                 ).fetchall()
             else:
                 rows = db.execute(
                     "SELECT * FROM encounter_charges WHERE patient_id = ? AND status = ? "
-                    "AND admission_id IS NULL ORDER BY id",
-                    (patient_id, _CHARGE_BILLABLE),
+                    f"AND admission_id IS NULL{facility_sql} ORDER BY id",
+                    (patient_id, _CHARGE_BILLABLE, *facility_params),
                 ).fetchall()
 
         if not rows:
@@ -3071,7 +3096,14 @@ def list_invoices(
     status: str | None = None,
     invoice_type: str | None = None,
     limit: int = 200,
+    facilities: frozenset[int] | None = None,
 ) -> list[dict]:
+    """Invoices, newest first. `facilities` (multisite-9a, document-keyed) is
+    the caller's permissions.facility_scope: a set keeps the invoices whose
+    own facility is one of them, in the statement, so the LIMIT never hides
+    one; None (one facility on record) changes nothing."""
+    from services.facility_documents import facility_clause
+
     sql = (
         "SELECT i.*, p.name AS patient_name, p.mrn AS patient_mrn "
         "FROM invoices i LEFT JOIN patients p ON p.id = i.patient_id WHERE 1=1"
@@ -3089,6 +3121,9 @@ def list_invoices(
     if invoice_type:
         sql += " AND i.invoice_type = ?"
         params.append(invoice_type)
+    facility_sql, facility_params = facility_clause("i.facility_id", facilities)
+    sql += facility_sql
+    params.extend(facility_params)
     sql += " ORDER BY i.id DESC LIMIT ?"
     params.append(int(limit))
     with db_session() as db:

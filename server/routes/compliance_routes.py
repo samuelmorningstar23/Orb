@@ -144,9 +144,10 @@ _GET_COMPLIANCE_REPORT_USER_DEFAULT = Depends(require_permission("admin.overview
 
 
 @router.get("/")
-def get_compliance_report(user: dict = _GET_COMPLIANCE_REPORT_USER_DEFAULT):
-    """Return the aggregated, live compliance posture report."""
-    return compliance_report()
+def get_compliance_report(user: dict = _GET_COMPLIANCE_REPORT_USER_DEFAULT) -> dict:
+    """Return the aggregated, live compliance posture report. The audit
+    coverage counts the reader's facilities' rows (multisite-11)."""
+    return compliance_report(user=user)
 
 
 # ════════════════════════════════════════════════════════════════

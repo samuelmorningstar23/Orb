@@ -42,14 +42,30 @@ change) are separate verbs, and the `cashier` role (permissions.py) holds
 read/record/close_counter and deliberately NOT approve. `admin` holds all four,
 so nothing about who can reach these routes today changes — what changed is
 what a counter account has to be handed.
+
+FACILITY SCOPE (multisite-9a, W12-E; ruling MS-R5 (a), document-keyed). Once
+more than one facility is on record, every list here keeps the documents
+whose own facility (migration 75) is one of the caller's, and every route that
+names a receipt, bill, refund, discount request or counter session, and every
+money write that names a charge line or an admission, refuses one of another
+facility with a 404 and an authorization 'facility_document_denied' row,
+before anything is read or written. An admission is checked by its own row,
+whichever patient it belongs to, because the service stamps a receipt or
+refund with it. The patient-keyed reads (deposits, the money summary) stay
+whole-record once the patient is in scope. The patient checks above stay as they
+were, so a patient named in the request must also be in the caller's scope.
+With one facility on record the caller's facility scope is None and every
+route here runs exactly as before.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from typing import Any
 
 import config
-from database import run_db
+from database import db_session, run_db
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from permissions import (
     PAYMENTS_APPROVE,
@@ -58,11 +74,23 @@ from permissions import (
     PAYMENTS_RECORD,
     department_scope,
     enforce_patient_scope,
+    facility_scope_async,
     log_phi_read,
     require_patient_access,
     require_permission,
 )
 from pydantic import BaseModel, ConfigDict
+from services.facility_documents import (
+    admission_ref,
+    admission_row_facility,
+    charge_facility,
+    counter_facility,
+    deny_if_outside,
+    discount_facility,
+    refund_facility,
+    request_meta,
+)
+from services.facility_stamp import invoice_facility, payment_facility
 from services.money import MoneyError
 
 from services import payments_service as payments
@@ -70,6 +98,62 @@ from services import payments_service as payments
 logger = logging.getLogger("orb.routes.payments")
 
 router = APIRouter(prefix="/api/payments", tags=["payments"])
+
+
+async def _require_own_document(
+    user: dict,
+    request: Request | None,
+    *,
+    lookup: Callable[[Any, Any], int | None],
+    doc_id: int | str | None,
+    target_type: str,
+    detail: str,
+) -> None:
+    """404, after an authorization 'facility_document_denied' row, when the
+    document `lookup` reads (its own facility_id) is outside the caller's
+    facility scope (multisite-9a). With one facility on record the scope is
+    None and nothing is read; a document no row holds passes, and the service
+    refuses it in its own words as before. `doc_id` is an integer id, or the
+    text id of an admission (admission_ref)."""
+    if doc_id is None:
+        return
+    facilities = await facility_scope_async(user)
+    if facilities is None:
+        return
+    meta = request_meta(request)
+
+    def _check() -> bool:
+        with db_session() as db:
+            facility_id = lookup(db, doc_id)
+        return deny_if_outside(
+            user,
+            document_facility_id=facility_id,
+            lane="payments",
+            target_type=target_type,
+            target_id=doc_id,
+            meta=meta,
+            facilities=facilities,
+        )
+
+    if await run_db(_check):
+        raise HTTPException(status_code=404, detail=detail)
+
+
+async def _require_own_admission(user: dict, request: Request | None, data: dict) -> None:
+    """_require_own_document for the admission a money body names. The
+    service stamps a receipt or refund that names no counter, bill or receipt
+    with that admission's facility, whichever patient it belongs to, so an
+    admission at another facility is a 404 after the audit row (a counter
+    never works on another facility's money, ruling MS-R5 (a))."""
+    await _require_own_document(
+        user,
+        request,
+        lookup=admission_row_facility,
+        doc_id=admission_ref(data.get("admission_id")),
+        target_type="admission",
+        detail="Admission not found",
+    )
+
 
 # ── Who can reach the counter ────────────────────────────────────────────────
 # Four permissions, tiered by what each handler DOES (2026-08-18; the payer
@@ -356,9 +440,10 @@ _CREATE_RECEIPT_USER_DEFAULT = Depends(_COUNTER_RECORD)
 
 @router.post("/receipts", dependencies=[Depends(require_module)])
 async def create_receipt(
+    request: Request,
     body: PatientMoneyBody = _CREATE_RECEIPT_BODY_DEFAULT,
     user: dict = _CREATE_RECEIPT_USER_DEFAULT,
-):
+) -> dict:
     """Take money. Over-payment becomes an advance and says so in the response."""
     # PHI SCOPE (2026-08-14). Same rule the GET beside it has carried since
     # 2026-08-12, on the mutation that was never given it. A receipt names its
@@ -368,6 +453,25 @@ async def create_receipt(
     # Blocking, so it goes through run_db from this async def.
     await run_db(enforce_patient_scope, user, body.patient_id)
     data = body.raw()
+    # multisite-9a: the bill, the counter and the admission must be the
+    # caller's facility's (a counter never takes money for another facility).
+    await _require_own_document(
+        user,
+        request,
+        lookup=invoice_facility,
+        doc_id=_int_or_none(data, "invoice_id"),
+        target_type="invoice",
+        detail="Invoice not found",
+    )
+    await _require_own_document(
+        user,
+        request,
+        lookup=counter_facility,
+        doc_id=_int_or_none(data, "counter_session_id"),
+        target_type="counter_session",
+        detail="Counter session not found",
+    )
+    await _require_own_admission(user, request, data)
     return await _run(
         payments.record_payment,
         patient_id=body.patient_id,
@@ -405,7 +509,7 @@ async def list_receipts(
     direction: str | None = _LIST_RECEIPTS_DIRECTION_DEFAULT,
     limit: int = _LIST_RECEIPTS_LIMIT_DEFAULT,
     user: dict = _LIST_RECEIPTS_USER_DEFAULT,
-):
+) -> dict:
     # PHI SCOPE (2026-08-12). patient_id arrives on the QUERY STRING, so
     # require_patient_access — which resolves it from the PATH — cannot guard this
     # route, and the path-param drift test greps straight past it. A financial
@@ -421,6 +525,7 @@ async def list_receipts(
         status=status,
         direction=direction,
         limit=limit,
+        facilities=await facility_scope_async(user),
     )
     return {"receipts": await _with_names(receipts, user, "received_by", "cancelled_by")}
 
@@ -431,8 +536,17 @@ _READ_RECEIPT_USER_DEFAULT = Depends(_COUNTER_READ)
 @router.get("/receipts/{payment_id}", dependencies=[Depends(require_module)])
 async def read_receipt(
     payment_id: int,
+    request: Request,
     user: dict = _READ_RECEIPT_USER_DEFAULT,
-):
+) -> dict:
+    await _require_own_document(
+        user,
+        request,
+        lookup=payment_facility,
+        doc_id=payment_id,
+        target_type="payment",
+        detail="Receipt not found",
+    )
     receipt = await _run(payments.get_payment, payment_id)
     if receipt is None:
         raise HTTPException(status_code=404, detail="Receipt not found")
@@ -447,7 +561,7 @@ async def print_receipt(
     payment_id: int,
     request: Request,
     user: dict = _PRINT_RECEIPT_USER_DEFAULT,
-):
+) -> dict:
     """The printable receipt (multisite-2): the receipt, the supplier block it
     was issued with (never re-read from today's hospital details), the
     placeholder-series notice and the amount in words. A receipt names its
@@ -455,7 +569,16 @@ async def print_receipt(
 
     A print is a disclosure (its notes carry a refund's reason), so it is
     audited like billing_routes.print_invoice: one phi_access row, which is
-    fail-closed, so the receipt is not returned if the row cannot be written."""
+    fail-closed, so the receipt is not returned if the row cannot be written.
+    A receipt of another facility is a 404 too (multisite-9a)."""
+    await _require_own_document(
+        user,
+        request,
+        lookup=payment_facility,
+        doc_id=payment_id,
+        target_type="payment",
+        detail="Receipt not found",
+    )
     view = await _run(payments.receipt_print_view, payment_id)
     if view is None:
         raise HTTPException(status_code=404, detail="Receipt not found")
@@ -502,6 +625,7 @@ _REVERSE_RECEIPT_USER_DEFAULT = Depends(_COUNTER_APPROVE)
 @router.post("/receipts/{payment_id}/reverse", dependencies=[Depends(require_module)])
 async def reverse_receipt(
     payment_id: int,
+    request: Request,
     body: dict = _REVERSE_RECEIPT_BODY_DEFAULT,
     # APPROVE: a reversal voids recorded money. The permission alone did not
     # stop an admin (who holds record AND approve) voiding their own receipt,
@@ -510,7 +634,15 @@ async def reverse_receipt(
     # (422), as it refuses a refund decided by its requester. The reverser is
     # the session user (_actor), never a name from the body.
     user: dict = _REVERSE_RECEIPT_USER_DEFAULT,
-):
+) -> dict:
+    await _require_own_document(
+        user,
+        request,
+        lookup=payment_facility,
+        doc_id=payment_id,
+        target_type="payment",
+        detail="Receipt not found",
+    )
     return await _run(
         payments.reverse_payment,
         payment_id,
@@ -562,14 +694,24 @@ _APPLY_DEPOSIT_USER_DEFAULT = Depends(_COUNTER_RECORD)
 
 @router.post("/deposits/apply", dependencies=[Depends(require_module)])
 async def apply_deposit(
+    request: Request,
     body: PatientMoneyBody = _APPLY_DEPOSIT_BODY_DEFAULT,
     user: dict = _APPLY_DEPOSIT_USER_DEFAULT,
-):
+) -> dict:
     # PHI SCOPE (2026-08-14). `GET /deposits/{patient_id}` right above wears
     # require_patient_access; this one spends the same patient's advance
     # balance and wore nothing. 404, never 403.
     await run_db(enforce_patient_scope, user, body.patient_id)
     data = body.raw()
+    await _require_own_document(
+        user,
+        request,
+        lookup=invoice_facility,
+        doc_id=_int_or_none(data, "invoice_id"),
+        target_type="invoice",
+        detail="Invoice not found",
+    )
+    await _require_own_admission(user, request, data)
     return await _run(
         payments.apply_deposit_to_invoice,
         patient_id=body.patient_id,
@@ -592,11 +734,12 @@ _REFUND_LIMITS_USER_DEFAULT = Depends(_COUNTER_READ)
 
 @router.get("/refunds/limits", dependencies=[Depends(require_module)])
 async def refund_limits(
+    request: Request,
     patient_id: str = _REFUND_LIMITS_PATIENT_ID_DEFAULT,
     payment_id: int | None = _REFUND_LIMITS_PAYMENT_ID_DEFAULT,
     invoice_id: int | None = _REFUND_LIMITS_INVOICE_ID_DEFAULT,
     user: dict = _REFUND_LIMITS_USER_DEFAULT,
-):
+) -> dict:
     """What is refundable, before anyone types an amount."""
     # PHI SCOPE (2026-08-12). patient_id arrives on the QUERY STRING, so
     # require_patient_access — which resolves it from the PATH — cannot guard this
@@ -605,6 +748,22 @@ async def refund_limits(
     # chart read. enforce_patient_scope 404s (never 403 — a 403 confirms the
     # patient exists); it is blocking, so it goes through run_db from async def.
     await run_db(enforce_patient_scope, user, patient_id)
+    await _require_own_document(
+        user,
+        request,
+        lookup=payment_facility,
+        doc_id=payment_id,
+        target_type="payment",
+        detail="Receipt not found",
+    )
+    await _require_own_document(
+        user,
+        request,
+        lookup=invoice_facility,
+        doc_id=invoice_id,
+        target_type="invoice",
+        detail="Invoice not found",
+    )
     return await _run(
         payments.refundable_paise, patient_id, payment_id=payment_id, invoice_id=invoice_id
     )
@@ -616,9 +775,10 @@ _CREATE_REFUND_USER_DEFAULT = Depends(_COUNTER_RECORD)
 
 @router.post("/refunds", dependencies=[Depends(require_module)])
 async def create_refund(
+    request: Request,
     body: PatientMoneyBody = _CREATE_REFUND_BODY_DEFAULT,
     user: dict = _CREATE_REFUND_USER_DEFAULT,
-):
+) -> dict:
     # PHI SCOPE (2026-08-14). THE SHARPEST OF THE FOUR, because its own two
     # siblings already do it: `GET /refunds/limits?patient_id=` and
     # `GET /refunds?patient_id=` both call enforce_patient_scope, so a caller
@@ -628,6 +788,23 @@ async def create_refund(
     # the guard that enumerates this surface. 404, never 403.
     await run_db(enforce_patient_scope, user, body.patient_id)
     data = body.raw()
+    await _require_own_document(
+        user,
+        request,
+        lookup=payment_facility,
+        doc_id=_int_or_none(data, "payment_id"),
+        target_type="payment",
+        detail="Receipt not found",
+    )
+    await _require_own_document(
+        user,
+        request,
+        lookup=invoice_facility,
+        doc_id=_int_or_none(data, "invoice_id"),
+        target_type="invoice",
+        detail="Invoice not found",
+    )
+    await _require_own_admission(user, request, data)
     return await _run(
         payments.request_refund,
         patient_id=body.patient_id,
@@ -654,7 +831,7 @@ async def list_refunds(
     status: str | None = _LIST_REFUNDS_STATUS_DEFAULT,
     limit: int = _LIST_REFUNDS_LIMIT_DEFAULT,
     user: dict = _LIST_REFUNDS_USER_DEFAULT,
-):
+) -> dict:
     # PHI SCOPE (2026-08-12). patient_id arrives on the QUERY STRING, so
     # require_patient_access — which resolves it from the PATH — cannot guard this
     # route, and the path-param drift test greps straight past it. A financial
@@ -662,7 +839,13 @@ async def list_refunds(
     # chart read. enforce_patient_scope 404s (never 403 — a 403 confirms the
     # patient exists); it is blocking, so it goes through run_db from async def.
     await run_db(enforce_patient_scope, user, patient_id)
-    refunds = await _run(payments.list_refunds, patient_id=patient_id, status=status, limit=limit)
+    refunds = await _run(
+        payments.list_refunds,
+        patient_id=patient_id,
+        status=status,
+        limit=limit,
+        facilities=await facility_scope_async(user),
+    )
     return {
         "refunds": await _with_names(
             refunds,
@@ -681,13 +864,22 @@ _DECIDE_REFUND_USER_DEFAULT = Depends(_COUNTER_APPROVE)
 @router.post("/refunds/{refund_id}/decision", dependencies=[Depends(require_module)])
 async def decide_refund(
     refund_id: int,
+    request: Request,
     body: dict = _DECIDE_REFUND_BODY_DEFAULT,
     # APPROVE — and the permission is IN ADDITION to the service's four-eyes
     # rule (an approver who is the requester is refused with 422), never
     # instead of it.
     user: dict = _DECIDE_REFUND_USER_DEFAULT,
-):
+) -> dict:
     """Approve or reject. The service refuses if the approver is the requester."""
+    await _require_own_document(
+        user,
+        request,
+        lookup=refund_facility,
+        doc_id=refund_id,
+        target_type="refund",
+        detail="Refund not found",
+    )
     approve = body.get("approve")
     if not isinstance(approve, bool):
         raise HTTPException(
@@ -713,6 +905,7 @@ _PAY_REFUND_USER_DEFAULT = Depends(_COUNTER_RECORD)
 @router.post("/refunds/{refund_id}/pay", dependencies=[Depends(require_module)])
 async def pay_refund(
     refund_id: int,
+    request: Request,
     body: dict = _PAY_REFUND_BODY_DEFAULT,
     # RECORD, not APPROVE: the authorisation already happened — the service
     # refuses to pay a refund that is not `approved` — and handing the cash
@@ -720,7 +913,23 @@ async def pay_refund(
     # designed lifecycle is request (record) → decide (approve, second person)
     # → pay out (record).
     user: dict = _PAY_REFUND_USER_DEFAULT,
-):
+) -> dict:
+    await _require_own_document(
+        user,
+        request,
+        lookup=refund_facility,
+        doc_id=refund_id,
+        target_type="refund",
+        detail="Refund not found",
+    )
+    await _require_own_document(
+        user,
+        request,
+        lookup=counter_facility,
+        doc_id=_int_or_none(body, "counter_session_id"),
+        target_type="counter_session",
+        detail="Counter session not found",
+    )
     return await _run(
         payments.pay_refund,
         refund_id,
@@ -740,13 +949,31 @@ _CREATE_DISCOUNT_USER_DEFAULT = Depends(_COUNTER_RECORD)
 
 @router.post("/discounts", dependencies=[Depends(require_module)])
 async def create_discount(
+    request: Request,
     body: PatientMoneyBody = _CREATE_DISCOUNT_BODY_DEFAULT,
     user: dict = _CREATE_DISCOUNT_USER_DEFAULT,
-):
+) -> dict:
     # PHI SCOPE (2026-08-14). `GET /discounts?patient_id=` is scoped; the
     # request that creates one was not. 404, never 403.
     await run_db(enforce_patient_scope, user, body.patient_id)
     data = body.raw()
+    await _require_own_document(
+        user,
+        request,
+        lookup=invoice_facility,
+        doc_id=_int_or_none(data, "invoice_id"),
+        target_type="invoice",
+        detail="Invoice not found",
+    )
+    await _require_own_document(
+        user,
+        request,
+        lookup=charge_facility,
+        doc_id=_int_or_none(data, "encounter_charge_id"),
+        target_type="encounter_charge",
+        detail="Charge not found",
+    )
+    await _require_own_admission(user, request, data)
     requested = data.get("requested_paise")
     return await _run(
         payments.request_discount,
@@ -782,7 +1009,7 @@ async def list_discounts(
     patient_id: str | None = _LIST_DISCOUNTS_PATIENT_ID_DEFAULT,
     limit: int = _LIST_DISCOUNTS_LIMIT_DEFAULT,
     user: dict = _LIST_DISCOUNTS_USER_DEFAULT,
-):
+) -> dict:
     # PHI SCOPE (2026-08-12). patient_id arrives on the QUERY STRING, so
     # require_patient_access — which resolves it from the PATH — cannot guard this
     # route, and the path-param drift test greps straight past it. A financial
@@ -796,6 +1023,7 @@ async def list_discounts(
         invoice_id=invoice_id,
         patient_id=patient_id,
         limit=limit,
+        facilities=await facility_scope_async(user),
     )
     return {"discounts": await _with_names(discounts, user, "requested_by", "decided_by")}
 
@@ -807,13 +1035,22 @@ _DECIDE_DISCOUNT_USER_DEFAULT = Depends(_COUNTER_APPROVE)
 @router.post("/discounts/{discount_id}/decision", dependencies=[Depends(require_module)])
 async def decide_discount(
     discount_id: int,
+    request: Request,
     body: dict = _DECIDE_DISCOUNT_BODY_DEFAULT,
     # APPROVE — in addition to the service's own requester-may-not-decide rule.
     user: dict = _DECIDE_DISCOUNT_USER_DEFAULT,
-):
+) -> dict:
     """The approver's identity comes from the SESSION, never the body. A discount
     is a person's decision; a body-supplied approver name is a signature anybody
     can forge."""
+    await _require_own_document(
+        user,
+        request,
+        lookup=discount_facility,
+        doc_id=discount_id,
+        target_type="discount_approval",
+        detail="Discount request not found",
+    )
     approve = body.get("approve")
     if not isinstance(approve, bool):
         raise HTTPException(
@@ -872,9 +1109,13 @@ async def list_counters(
     status: str | None = _LIST_COUNTERS_STATUS_DEFAULT,
     limit: int = _LIST_COUNTERS_LIMIT_DEFAULT,
     user: dict = _LIST_COUNTERS_USER_DEFAULT,
-):
+) -> dict:
     sessions = await _run(
-        payments.list_counter_sessions, counter_code=counter_code, status=status, limit=limit
+        payments.list_counter_sessions,
+        counter_code=counter_code,
+        status=status,
+        limit=limit,
+        facilities=await facility_scope_async(user),
     )
     return {
         "sessions": await _with_names(
@@ -893,9 +1134,18 @@ _COUNTER_EXPECTED_USER_DEFAULT = Depends(_COUNTER_READ)
 @router.get("/counters/{session_id}/expected", dependencies=[Depends(require_module)])
 async def counter_expected(
     session_id: int,
+    request: Request,
     user: dict = _COUNTER_EXPECTED_USER_DEFAULT,
-):
+) -> dict:
     """What the drawer should hold, and the breakdown it is the sum of."""
+    await _require_own_document(
+        user,
+        request,
+        lookup=counter_facility,
+        doc_id=session_id,
+        target_type="counter_session",
+        detail="Counter session not found",
+    )
     return await _run(payments.counter_session_expected, session_id)
 
 
@@ -906,9 +1156,18 @@ _CLOSE_COUNTER_USER_DEFAULT = Depends(_COUNTER_CLOSE)
 @router.post("/counters/{session_id}/close", dependencies=[Depends(require_module)])
 async def close_counter(
     session_id: int,
+    request: Request,
     body: dict = _CLOSE_COUNTER_BODY_DEFAULT,
     user: dict = _CLOSE_COUNTER_USER_DEFAULT,
-):
+) -> dict:
+    await _require_own_document(
+        user,
+        request,
+        lookup=counter_facility,
+        doc_id=session_id,
+        target_type="counter_session",
+        detail="Counter session not found",
+    )
     return await _run(
         payments.close_counter_session,
         session_id,
@@ -925,11 +1184,20 @@ _RECONCILE_COUNTER_USER_DEFAULT = Depends(_COUNTER_CLOSE)
 @router.post("/counters/{session_id}/reconcile", dependencies=[Depends(require_module)])
 async def reconcile_counter(
     session_id: int,
+    request: Request,
     body: dict = _RECONCILE_COUNTER_BODY_DEFAULT,
     # CLOSE_COUNTER — in addition to the service's second-pair-of-eyes rule
     # (the reconciler may not be the person who closed the till).
     user: dict = _RECONCILE_COUNTER_USER_DEFAULT,
-):
+) -> dict:
+    await _require_own_document(
+        user,
+        request,
+        lookup=counter_facility,
+        doc_id=session_id,
+        target_type="counter_session",
+        detail="Counter session not found",
+    )
     return await _run(
         payments.reconcile_counter_session,
         session_id,
@@ -948,8 +1216,15 @@ async def day_end(
     day: str | None = _DAY_END_DAY_DEFAULT,
     counter_code: str | None = _DAY_END_COUNTER_CODE_DEFAULT,
     user: dict = _DAY_END_USER_DEFAULT,
-):
-    return await _run(payments.day_end_summary, day=day, counter_code=counter_code)
+) -> dict:
+    """The day's takings: the caller's facilities only once more than one
+    facility is on record (multisite-9a)."""
+    return await _run(
+        payments.day_end_summary,
+        day=day,
+        counter_code=counter_code,
+        facilities=await facility_scope_async(user),
+    )
 
 
 _SEARCH_COUNTER_PATIENTS_Q_DEFAULT = Query(default="")
@@ -963,7 +1238,7 @@ async def search_counter_patients(
     q: str = _SEARCH_COUNTER_PATIENTS_Q_DEFAULT,
     limit: int = _SEARCH_COUNTER_PATIENTS_LIMIT_DEFAULT,
     user: dict = _SEARCH_COUNTER_PATIENTS_USER_DEFAULT,
-):
+) -> dict:
     """Find the patient at the counter by name, MRN, bed or ID.
 
     The counter used to take a typed Patient ID, and receipts were issued to
@@ -973,7 +1248,13 @@ async def search_counter_patients(
     one, and is audited whenever it names anyone, as /api/search/patients is.
     """
     dept = department_scope(user)
-    results = await _run(payments.search_patients, q, dept=dept, limit=limit)
+    results = await _run(
+        payments.search_patients,
+        q,
+        dept=dept,
+        limit=limit,
+        facilities=await facility_scope_async(user),
+    )
     if results:
         await run_db(
             log_phi_read,
@@ -1000,10 +1281,17 @@ _OPEN_INVOICES_USER_DEFAULT = Depends(
 async def open_invoices(
     patient_id: str,
     user: dict = _OPEN_INVOICES_USER_DEFAULT,
-):
+) -> dict:
     """This patient's bills that still owe money, for the counter to offer as
-    a choice. Ward-guarded on the path, like the invoice check below."""
-    return {"invoices": await _run(payments.open_invoices_for_payment, patient_id)}
+    a choice. Ward-guarded on the path, like the invoice check below; the
+    caller's facility's bills only (multisite-9a)."""
+    return {
+        "invoices": await _run(
+            payments.open_invoices_for_payment,
+            patient_id,
+            facilities=await facility_scope_async(user),
+        )
+    }
 
 
 _INVOICE_FOR_PAYMENT_USER_DEFAULT = Depends(
@@ -1015,11 +1303,21 @@ _INVOICE_FOR_PAYMENT_USER_DEFAULT = Depends(
 async def invoice_for_payment(
     patient_id: str,
     invoice_id: int,
+    request: Request,
     user: dict = _INVOICE_FOR_PAYMENT_USER_DEFAULT,
-):
+) -> dict:
     """The invoice a payment is about to be applied to, checked against the
     patient first. The counter shows its owner and balance before Take payment
-    is enabled; another patient's invoice is a 422 that names no one."""
+    is enabled; another patient's invoice is a 422 that names no one, and
+    another facility's a 404 (multisite-9a)."""
+    await _require_own_document(
+        user,
+        request,
+        lookup=invoice_facility,
+        doc_id=invoice_id,
+        target_type="invoice",
+        detail="Invoice not found",
+    )
     return await _run(payments.invoice_for_payment, patient_id, invoice_id)
 
 

@@ -189,6 +189,19 @@ class SiteConfig:
                 return f["code"]
         return None
 
+    def downtime_mirror_for(self, code: str | None) -> str | None:
+        """The folder the [[facilities]] block for this facility code names
+        as downtime_mirror_dir (multisite-15), or None when no block names
+        one. Codes compare in capitals, as the file stores them."""
+        needle = (code or "").strip().upper()
+        if not needle:
+            return None
+        for f in self.facilities:
+            if f["code"] == needle:
+                mirror = f.get("downtime_mirror_dir")
+                return str(mirror) if mirror else None
+        return None
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  Schema
@@ -694,16 +707,39 @@ def _validate(path: Path, raw_text: str, doc: dict) -> SiteConfig:
     return cfg
 
 
+def _mirror_key(folder: str) -> str:
+    """A downtime mirror folder as compared for clashes: normalised, without
+    a trailing slash, ignoring case."""
+    return os.path.normpath(folder).rstrip("/").casefold() or "/"
+
+
+def _mirror_clash(folder: str, seen: dict[str, str]) -> str | None:
+    """The code of an earlier facility whose mirror is this folder, sits
+    inside it or holds it; None when the folder is its own."""
+    key = _mirror_key(folder)
+    for other, code in seen.items():
+        if key == other or key.startswith(other.rstrip("/") + "/"):
+            return code
+        if other.startswith(key.rstrip("/") + "/"):
+            return code
+    return None
+
+
 def _validate_facilities(path: Path, idx: _LineIndex, raw: Any) -> list[dict]:
     """[[facilities]] (multisite-3 and multisite-16), validated like every
     other table (an unknown key or a blank value is refused with its line),
-    plus three rules of its own:
+    plus four rules of its own:
 
       * the code is a facility code as the Facilities screen stores it
         (2 to 12 capital letters and digits; written in any case, kept in
         capitals), and each code has one block;
       * downtime_mirror_dir is an absolute folder path, so where the packs
         land never depends on the folder Orb happened to start in;
+      * no two facilities share a downtime_mirror_dir, and none sits inside
+        another's (multisite-15): a facility's mirror holds only its own
+        patients' packs, so one facility's copy never lands where another
+        facility's staff read theirs. Compared ignoring case and a trailing
+        slash, because the disk they land on may ignore case;
       * an ingestion source is listed under one facility only, once. A feed
         claimed by two facilities has no answer to whose patients its
         readings are for, and Orb will not pick one."""
@@ -720,6 +756,7 @@ def _validate_facilities(path: Path, idx: _LineIndex, raw: Any) -> list[dict]:
     out: list[dict] = []
     seen_codes: dict[str, int] = {}
     seen_sources: dict[str, str] = {}
+    seen_mirrors: dict[str, str] = {}
     for i, entry in enumerate(raw):
         fac = _check_table(path, idx, "facilities", entry, occurrence=i)
         code = fac["code"].upper()
@@ -761,6 +798,26 @@ def _validate_facilities(path: Path, idx: _LineIndex, raw: Any) -> list[dict]:
                     'downtime_mirror_dir = "/Volumes/WardPacks/MAIN".'
                 ),
             )
+        if mirror is not None:
+            clash = _mirror_clash(str(mirror), seen_mirrors)
+            if clash is not None:
+                raise _fail(
+                    path,
+                    idx,
+                    "facilities",
+                    "downtime_mirror_dir",
+                    occurrence=i,
+                    problem=(
+                        f"downtime_mirror_dir '{mirror}' overlaps the mirror of facility "
+                        f"'{clash}' (the same folder, or one inside the other)."
+                    ),
+                    hint=(
+                        "Give each facility a folder of its own, e.g. "
+                        '"/Volumes/WardPacks/MAIN" and "/Volumes/WardPacks/SAT1". A shared '
+                        "folder would put one facility's patients where the other's staff read."
+                    ),
+                )
+            seen_mirrors[_mirror_key(str(mirror))] = code
         sources: list[str] = []
         for source in fac.get("ingestion_sources", []):
             folded = source.casefold()
@@ -1091,3 +1148,10 @@ def facility_for_ingestion_source(source_name: str | None) -> str | None:
     """The facility code the loaded file binds this ingestion source to, or
     None (multisite-16). Reads only what this process loaded at startup."""
     return _loaded.facility_for_source(source_name)
+
+
+def facility_downtime_mirror(code: str | None) -> str | None:
+    """The downtime_mirror_dir the loaded file names for this facility code,
+    or None (multisite-15: where a facility's own copy of its ward packs
+    goes). Reads only what this process loaded at startup."""
+    return _loaded.downtime_mirror_for(code)

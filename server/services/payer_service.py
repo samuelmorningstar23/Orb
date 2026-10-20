@@ -1208,11 +1208,19 @@ def list_policies(
     admission_id: str | None = None,
     policy_id: int | None = None,
     active_only: bool = False,
+    facilities: frozenset[int] | None = None,
 ) -> list[dict]:
     """Policies on file, newest first, with the payer and the patient resolved.
 
     The patient's name and MRN ride along, as they do on every claim
-    (_CLAIM_SELECT): the cover list printed bare ids the desk cannot read."""
+    (_CLAIM_SELECT): the cover list printed bare ids the desk cannot read.
+
+    `facilities` (multisite-9a) is the caller's permissions.facility_scope: a
+    policy has no facility of its own, so a set keeps the policies of patients
+    whose latest encounter is at one of them. None (one facility on record)
+    changes nothing."""
+    from services.facility_documents import patient_facility_clause
+
     sql = """SELECT pp.*, p.code AS payer_code, p.name AS payer_name,
                     p.payer_type AS payer_type, p.claim_submission_mode,
                     pt.name AS patient_name, pt.mrn AS patient_mrn
@@ -1232,6 +1240,9 @@ def list_policies(
         params.append(admission_id)
     if active_only:
         sql += " AND pp.status = 'active'"
+    facility_sql, facility_params = patient_facility_clause("pp.patient_id", facilities)
+    sql += facility_sql
+    params.extend(facility_params)
     sql += " ORDER BY pp.is_primary DESC, pp.id DESC"
 
     with db_session() as db:
@@ -1723,7 +1734,14 @@ def list_claims(
     open_only: bool = False,
     search: str | None = None,
     limit: int = 200,
+    facilities: frozenset[int] | None = None,
 ) -> list[dict]:
+    """Claims, newest first. `facilities` (multisite-9a, document-keyed) is the
+    caller's permissions.facility_scope: a set keeps the claims whose own
+    facility is one of them, in the statement; None (one facility on record)
+    changes nothing."""
+    from services.facility_documents import facility_clause
+
     sql = _CLAIM_SELECT + " WHERE 1=1"
     params: list[Any] = []
     if status:
@@ -1752,6 +1770,9 @@ def list_claims(
             " OR c.external_ref LIKE ? OR c.preauth_number LIKE ?)"
         )
         params.extend([like, like, like, like, like])
+    facility_sql, facility_params = facility_clause("c.facility_id", facilities)
+    sql += facility_sql
+    params.extend(facility_params)
     sql += " ORDER BY c.id DESC LIMIT ?"
     params.append(max(1, min(int(limit), 1000)))
 
@@ -2326,6 +2347,7 @@ def work_queue(
     payer_code: str | None = None,
     bucket: str | None = None,
     limit: int = 300,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Everything still owed to (or by) somebody, oldest first, in aging buckets.
 
@@ -2335,8 +2357,10 @@ def work_queue(
     escalates, and split by whose move it is — because "the payer has had this
     for 40 days" and "we have not answered their query for 40 days" are the same
     number and completely different mornings.
+
+    `facilities` as in list_claims (multisite-9a).
     """
-    claims = list_claims(open_only=True, payer_code=payer_code, limit=limit)
+    claims = list_claims(open_only=True, payer_code=payer_code, limit=limit, facilities=facilities)
 
     # Oldest first, unknown ages last (they need attention but cannot be ranked).
     claims.sort(key=lambda c: (c["age_days"] is None, -(c["age_days"] or 0)))
@@ -2398,14 +2422,24 @@ def work_queue(
     }
 
 
-def denial_log(*, limit: int = 200, payer_code: str | None = None) -> dict:
+def denial_log(
+    *,
+    limit: int = 200,
+    payer_code: str | None = None,
+    facilities: frozenset[int] | None = None,
+) -> dict:
     """Every denial and every disallowance, with the payer's own reason.
 
     Rolled up by reason code as well as listed, because a denial log's value is
     not the individual line — it is noticing that eleven claims this quarter died
     on DOCUMENT_DEFICIENCY, which is a fixable process problem inside the
     hospital and not the payer being difficult.
+
+    `facilities` (multisite-9a) keeps the events of claims whose own facility
+    is one of them; None (one facility on record) changes nothing.
     """
+    from services.facility_documents import facility_clause
+
     sql = """SELECT e.*, c.claim_number, c.patient_id, c.status AS claim_status,
                     c.claimed_paise, c.approved_paise, c.claim_type,
                     p.code AS payer_code, p.name AS payer_name,
@@ -2419,6 +2453,9 @@ def denial_log(*, limit: int = 200, payer_code: str | None = None) -> dict:
     if payer_code:
         sql += " AND p.code = ?"
         params.append(payer_code.upper())
+    facility_sql, facility_params = facility_clause("c.facility_id", facilities)
+    sql += facility_sql
+    params.extend(facility_params)
     sql += " ORDER BY e.id DESC LIMIT ?"
     params.append(max(1, min(int(limit), 1000)))
 
@@ -2468,11 +2505,12 @@ def denial_log(*, limit: int = 200, payer_code: str | None = None) -> dict:
     }
 
 
-def desk_summary() -> dict:
+def desk_summary(*, facilities: frozenset[int] | None = None) -> dict:
     """The numbers a TPA desk head asks for: open claims, what is at risk, and
-    what was short-paid. All computed, none stored."""
-    claims = list_claims(open_only=True, limit=1000)
-    settled = list_claims(status="settled", limit=1000)
+    what was short-paid. All computed, none stored. `facilities` as in
+    list_claims (multisite-9a)."""
+    claims = list_claims(open_only=True, limit=1000, facilities=facilities)
+    settled = list_claims(status="settled", limit=1000, facilities=facilities)
 
     short_settled = [c for c in settled if c["settlement"]["is_short_settled"]]
     short_total = sum(int(c["settlement"]["short_settled_paise"] or 0) for c in short_settled)

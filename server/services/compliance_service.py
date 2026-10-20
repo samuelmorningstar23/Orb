@@ -113,17 +113,30 @@ def _audit_chain() -> dict:
     }
 
 
-def _audit_coverage() -> dict:
+def _audit_coverage(user: dict | None = None) -> dict:
     """Distribution of audit events by event_category — shows which PHI/route
-    categories are actually represented in the immutable log."""
+    categories are actually represented in the immutable log.
+
+    multisite-11: given the reader, and with more than one facility on
+    record, only the rows of the reader's facilities are counted (the epoch
+    rule, services/audit_facility). Without a reader (a console caller) every
+    row is counted, as before."""
     from database import db_session
+
+    from services import audit_facility
 
     dist: dict[str, int] = {}
     total = 0
     with db_session() as db:
+        scope = None if user is None else audit_facility.reader_scope(user, db=db)
+        clause, params = audit_facility.visible_sql(
+            scope, audit_facility.audit_epoch(db) if scope is not None else 0
+        )
         rows = db.execute(
             "SELECT event_category, COUNT(*) AS c FROM audit_logs "
-            "GROUP BY event_category ORDER BY c DESC"
+            + (f"WHERE {clause} " if clause else "")
+            + "GROUP BY event_category ORDER BY c DESC",
+            params,
         ).fetchall()
     for r in rows:
         cat = r["event_category"] if r["event_category"] is not None else "uncategorized"
@@ -1416,7 +1429,7 @@ def _overall_score(controls: list[dict]) -> int:
 # ════════════════════════════════════════════════════════════════
 
 
-def compliance_report() -> dict:
+def compliance_report(*, user: dict | None = None) -> dict:
     """Aggregate the live compliance posture into a single report dict.
 
     Shape:
@@ -1425,12 +1438,17 @@ def compliance_report() -> dict:
          encryption:{...}, residency:{...}, models:{validated,total,unvalidated}}
 
     Never raises: each probe degrades to a safe default on failure.
+
+    `user` is the reader: the audit coverage then counts only their
+    facilities' rows (multisite-11). The audit chain stays appliance-level.
     """
     enc = _safe(_encryption_posture, {"db_at_rest": False, "uploads_at_rest": False})
     # Default carries unknown=True so a probe FAILURE (e.g. missing audit_logs
     # table) is reported as 'unknown', never as a false 'fail' (alleged tampering).
     audit = _safe(_audit_chain, {"verified": False, "broken_at": None, "count": 0, "unknown": True})
-    coverage = _safe(_audit_coverage, {"total_events": 0, "by_category": {}, "categories": 0})
+    coverage = _safe(
+        lambda: _audit_coverage(user), {"total_events": 0, "by_category": {}, "categories": 0}
+    )
     mfa = _safe(
         _mfa_adoption,
         {

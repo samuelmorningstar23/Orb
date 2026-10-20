@@ -334,21 +334,106 @@ def _refresh_capacity() -> None:
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-def _department_lists() -> tuple[list[str], list[str]]:
+def _department_lists(
+    facilities: frozenset[int] | None = None,
+) -> tuple[list[str], list[str]]:
     """(covering, declared). Covering: departments an active doctor or nurse
     account holds, the anti-orphaning list (frontdesk_service). Declared: the
     site configuration's departments. Each opens its own session or none, so
-    this is called BEFORE any write session."""
+    this is called BEFORE any write session.
+
+    `facilities` (multisite-8h1) is the actor's facility scope: with one,
+    both lists keep only the departments of those facilities, so the setup
+    screen never offers a department a save would refuse."""
     from services.frontdesk_service import list_covering_departments
     from services.site_config_service import current_site_config
 
-    covering = list_covering_departments()
+    covering = list_covering_departments(facilities=facilities)
     declared: list[str] = []
     for dept in current_site_config().departments:
         name = " ".join(str(dept.get("name") or "").split())
         if name and name not in declared:
             declared.append(name)
+    if facilities is not None:
+        from services import facility_lanes, facility_service
+
+        declared = [
+            d
+            for d in declared
+            if not facility_lanes.outside(facility_service.department_facility(d), facilities)
+        ]
     return covering, declared
+
+
+# ── Facility scope (multisite-8h1, W12-F) ────────────────────────────────────
+# A ward belongs to the facility of its department (ruling MS-R4 (a)), and
+# wards.facility_id (migration 74) records it. With more than one facility on
+# record: a ward is stamped with its department's facility when it is set up
+# and when its department changes; a department no facility lists is refused;
+# a ward never moves to another facility once anything refers to it (MS-R3
+# (c)); and an account bound to a facility sets up, sees and counts only its
+# own facility's wards, rooms and beds (another facility's ward, room or bed
+# answers 404 exactly like one that does not exist). With one facility none
+# of this reads anything and every ward stays at facility 1.
+
+DEPARTMENT_NOT_LISTED_WORDS = (
+    "That department is not on any facility's departments list, so Orb cannot tell which "
+    "facility the ward belongs to. Nothing was saved. Add the department to its facility "
+    "first."
+)
+DEPARTMENT_OTHER_FACILITY_WORDS = (
+    "That department belongs to another facility of the group. Set up wards only for your "
+    "own facility's departments. Nothing was saved."
+)
+WARD_FACILITY_FIXED_WORDS = (
+    "This ward is already in use, and the department chosen belongs to another facility of "
+    "the group. A ward in use never moves between facilities. Set up a new ward for that "
+    "department instead. Nothing was changed."
+)
+
+
+def _actor_facilities(actor: dict | None) -> frozenset[int] | None:
+    """The actor's facility scope, or None for no facility limit. BLOCKING
+    on a cache miss: call it before any immediate session."""
+    from services import facility_lanes
+
+    return facility_lanes.scope_of(actor or {})
+
+
+def _outside_scope(db: Any, ward_id: Any, facilities: frozenset[int] | None) -> bool:
+    """Is the ward with this id at a facility outside `facilities`?"""
+    if facilities is None:
+        return False
+    from services import facility_lanes
+
+    return facility_lanes.outside(facility_lanes.ward_facility_on(db, ward_id), facilities)
+
+
+def _ward_facility_for(
+    db: Any, department: str, facilities: frozenset[int] | None
+) -> tuple[int, str] | None:
+    """(facility id, facility code) for a ward of `department`, read on this
+    connection; None while one facility is on record (nothing is read and
+    the ward stays at facility 1). Refused in words for a department no
+    active master row lists, and for one at a facility outside the actor's
+    scope."""
+    from services import facility_lanes, facility_service
+
+    if not facility_lanes.multi_facility(db):
+        return None
+    from services.frontdesk_service import department_facility_on
+
+    at = department_facility_on(db, department)
+    if at is None:
+        raise BedMasterError(
+            DEPARTMENT_NOT_LISTED_WORDS, code="department_not_listed", field="department"
+        )
+    if facility_lanes.outside(at, facilities):
+        raise BedMasterError(
+            DEPARTMENT_OTHER_FACILITY_WORDS, code="department_other_facility", field="department"
+        )
+    ident = facility_service.facility_identity(at, db=db) or {}
+    return at, str(ident.get("code") or FACILITY_CODE)
 
 
 def _resolve_department(name: Any, covering: list[str], declared: list[str]) -> str:
@@ -568,12 +653,17 @@ def _clash_ward_code(db, code: str, *, exclude_id: str | None = None) -> None:
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-def list_master(*, ward_id: str | None = None) -> dict:
+def list_master(*, ward_id: str | None = None, actor: dict | None = None) -> dict:
     """The whole master for the Bed setup screen: wards (with cover), rooms,
     beds, bed classes, the department choices, and beds still only in the
-    housekeeping register (candidates to adopt). No patient data."""
+    housekeeping register (candidates to adopt). No patient data.
+
+    `actor` (multisite-8h1): with more than one facility on record, an
+    account bound to a facility sees its own facility's wards, rooms, beds,
+    departments and housekeeping beds only; bed classes are the group's."""
     hk.ensure_housekeeping_schema()
-    covering, declared = _department_lists()
+    facilities = _actor_facilities(actor) if actor is not None else None
+    covering, declared = _department_lists(facilities)
     ward_filter = " WHERE id = ?" if ward_id else ""
     by_ward = " AND ward_id = ?" if ward_id else ""
     params: tuple = (ward_id,) if ward_id else ()
@@ -628,6 +718,25 @@ def list_master(*, ward_id: str | None = None) -> dict:
                 ORDER BY ward, unit_code"""
             ).fetchall()
         ]
+        if facilities is not None:
+            # multisite-8h1: this facility's setup only (housekeeping units
+            # carry their own facility since migration 75).
+            from services.facility_lanes import facility_marks, wards_in_scope
+
+            keep = {w["id"] for w in wards_in_scope(wards, facilities)}
+            wards = [w for w in wards if w["id"] in keep]
+            rooms = [r for r in rooms if r["ward_id"] in keep]
+            beds = [b for b in beds if b["ward_id"] in keep]
+            marks, fids = facility_marks(facilities)
+            at_home = {
+                r[0]
+                for r in db.execute(
+                    f"SELECT id FROM housekeeping_units WHERE ward_id IS NULL "
+                    f"AND facility_id IN ({marks})",
+                    fids,
+                ).fetchall()
+            }
+            legacy = [u for u in legacy if u["id"] in at_home]
 
     for bc in bed_classes:
         if not bc.get("bed_day_service_code"):
@@ -691,7 +800,8 @@ def save_ward(
     data = dict(data or {})
     reason = data.pop("reason", None)
     hk.ensure_housekeeping_schema()
-    covering, declared = _department_lists()
+    facilities = _actor_facilities(actor)
+    covering, declared = _department_lists(facilities)
     department = (
         _resolve_department(data["department"], covering, declared)
         if "department" in data
@@ -711,6 +821,7 @@ def save_ward(
             with db_session(immediate=True) as db:
                 _clash_ward_code(db, code)
                 bed_class = _bed_class_code(db, data.get("default_bed_class"))
+                placed = _ward_facility_for(db, department, facilities)
                 new_id = _new_id("WRD")
                 db.execute(
                     """INSERT INTO wards
@@ -732,6 +843,12 @@ def save_ward(
                         now,
                     ),
                 )
+                if placed is not None:
+                    # multisite-8h1: the ward is at its department's facility.
+                    db.execute(
+                        "UPDATE wards SET facility_id = ?, facility_code = ? WHERE id = ?",
+                        (placed[0], placed[1], new_id),
+                    )
                 detail: dict[str, Any] = {
                     "code": code,
                     "name": name,
@@ -740,6 +857,8 @@ def save_ward(
                     "default_bed_class": bed_class,
                     "cleaning_tracked": tracked,
                 }
+                if placed is not None:
+                    detail["facility_id"] = placed[0]
                 _event(db, "ward", new_id, "created", detail, actor, now, reason)
                 _audit(
                     db,
@@ -765,7 +884,18 @@ def save_ward(
     try:
         with db_session(immediate=True) as db:
             ward = _ward_row(db, ward_id)
+            if _outside_scope(db, ward_id, facilities):
+                raise BedMasterNotFound("No ward with that id is set up", code="ward_not_found")
             new: dict[str, Any] = {}
+            if department is not None and department != ward.get("department"):
+                placed = _ward_facility_for(db, department, facilities)
+                if placed is not None and placed[0] != int(ward.get("facility_id") or 1):
+                    if _ward_references(db, ward):
+                        raise BedMasterConflict(
+                            WARD_FACILITY_FIXED_WORDS, code="ward_facility_fixed"
+                        )
+                    new["facility_id"] = placed[0]
+                    new["facility_code"] = placed[1]
             if "code" in data and data["code"] is not None:
                 code = _norm_code(data["code"], "Ward code")
                 if code != ward["code"]:
@@ -863,11 +993,14 @@ def save_room(
     data = dict(data or {})
     reason = data.pop("reason", None)
     hk.ensure_housekeeping_schema()
+    facilities = _actor_facilities(actor)
     now = utc_iso_now()
     try:
         with db_session(immediate=True) as db:
             if room_id is None:
                 ward = _ward_row(db, str(data.get("ward_id") or ""))
+                if _outside_scope(db, ward["id"], facilities):
+                    raise BedMasterNotFound("No ward with that id is set up", code="ward_not_found")
                 if not ward["is_active"]:
                     raise BedMasterConflict(
                         f"Ward {ward['code']} is switched off", code="ward_inactive"
@@ -908,6 +1041,8 @@ def save_room(
                 room_id = new_id
             else:
                 room = _room_row(db, room_id)
+                if _outside_scope(db, room["ward_id"], facilities):
+                    raise BedMasterNotFound("No room with that id is set up", code="room_not_found")
                 if data.get("ward_id") not in (None, room["ward_id"]):
                     raise BedMasterError(
                         "A room cannot move to another ward. Set up a room on that ward instead.",
@@ -1117,9 +1252,12 @@ def register_beds(data: dict, *, actor: dict, request_meta: dict | None = None) 
 
     registered: list[dict] = []
     adopted: list[dict] = []
+    facilities = _actor_facilities(actor)
     try:
         with db_session(immediate=True) as db:
             ward = _ward_row(db, str(data.get("ward_id") or ""))
+            if _outside_scope(db, ward["id"], facilities):
+                raise BedMasterNotFound("No ward with that id is set up", code="ward_not_found")
             if not ward["is_active"]:
                 raise BedMasterConflict(
                     f"Ward {ward['code']} is switched off", code="ward_inactive"
@@ -1334,13 +1472,14 @@ def update_bed(bed_id: str, data: dict, *, actor: dict, request_meta: dict | Non
     data = dict(data or {})
     reason = data.pop("reason", None)
     hk.ensure_housekeeping_schema()
+    facilities = _actor_facilities(actor)
     now = utc_iso_now()
     try:
         with db_session(immediate=True) as db:
             row = db.execute(
                 "SELECT * FROM housekeeping_units WHERE id = ? AND ward_id IS NOT NULL", (bed_id,)
             ).fetchone()
-            if row is None:
+            if row is None or _outside_scope(db, row["ward_id"], facilities):
                 raise BedMasterNotFound("No bed with that id is set up", code="bed_not_found")
             unit = dict(row)
             if unit.get("retired_at"):
@@ -1652,11 +1791,26 @@ def import_site_config_wards(*, actor: dict, request_meta: dict | None = None) -
     from services.site_config_service import current_site_config
 
     cfg = current_site_config()
-    covering, declared = _department_lists()
+    facilities = _actor_facilities(actor)
+    covering, declared = _department_lists(facilities)
     plan: list[tuple[str, str]] = []
     skipped: list[dict] = []
     for dept in cfg.departments:
         dept_name = " ".join(str(dept.get("name") or "").split())
+        if facilities is not None:
+            # multisite-8h1: another facility's wards are set up from there.
+            from services import facility_lanes, facility_service
+
+            if facility_lanes.outside(facility_service.department_facility(dept_name), facilities):
+                skipped.extend(
+                    {
+                        "code": str(prefix),
+                        "department": dept_name,
+                        "reason": DEPARTMENT_OTHER_FACILITY_WORDS,
+                    }
+                    for prefix in dept.get("wards") or []
+                )
+                continue
         for prefix in dept.get("wards") or []:
             try:
                 plan.append((_norm_code(prefix, "Ward code"), dept_name))
@@ -1695,6 +1849,7 @@ def import_site_config_wards(*, actor: dict, request_meta: dict | None = None) -
                             }
                         )
                     continue
+                placed = _ward_facility_for(db, department, facilities)
                 new_id = _new_id("WRD")
                 db.execute(
                     """INSERT INTO wards
@@ -1712,6 +1867,12 @@ def import_site_config_wards(*, actor: dict, request_meta: dict | None = None) -
                         now,
                     ),
                 )
+                if placed is not None:
+                    # multisite-8h1: the ward is at its department's facility.
+                    db.execute(
+                        "UPDATE wards SET facility_id = ?, facility_code = ? WHERE id = ?",
+                        (placed[0], placed[1], new_id),
+                    )
                 _event(
                     db,
                     "ward",
@@ -1801,12 +1962,13 @@ def retire_bed(
     data = dict(data or {})
     reason = data.pop("reason", None)
     hk.ensure_housekeeping_schema()
+    facilities = _actor_facilities(actor)
     now = utc_iso_now()
     with db_session(immediate=True) as db:
         row = db.execute(
             "SELECT * FROM housekeeping_units WHERE id = ? AND ward_id IS NOT NULL", (bed_id,)
         ).fetchone()
-        if row is None:
+        if row is None or _outside_scope(db, row["ward_id"], facilities):
             raise BedMasterNotFound("No bed with that id is set up", code="bed_not_found")
         unit = dict(row)
         if unit.get("retired_at"):
@@ -1888,15 +2050,27 @@ def _entry(
     }
 
 
-def _reconcile_on(db, *, ward_id: str | None, dept: str | None) -> dict:
+def _reconcile_on(
+    db: Any,
+    *,
+    ward_id: str | None,
+    dept: str | None,
+    facilities: frozenset[int] | None = None,
+) -> dict:
     """Sort every active admission (inside `dept`, and on `ward_id` when
-    given) against the master. Pure read on the caller's connection."""
+    given) against the master. Pure read on the caller's connection.
+
+    `facilities` (multisite-8h1) is the caller's facility scope: with one,
+    only admissions of patients at those facilities are sorted, and a ward
+    of another facility is 404 like one that does not exist."""
     from permissions import scope_patient_ids_sql
 
     from services.adt.core import match_location_on
 
     ward_filter = _ward_row(db, ward_id) if ward_id else None
-    scope_sql, scope_params = scope_patient_ids_sql(dept)
+    if ward_filter is not None and _outside_scope(db, ward_filter["id"], facilities):
+        raise BedMasterNotFound("No ward with that id is set up", code="ward_not_found")
+    scope_sql, scope_params = scope_patient_ids_sql(dept, facilities=facilities)
     rows = [
         dict(r)
         for r in db.execute(
@@ -2011,9 +2185,10 @@ def reconciliation_report(
     from permissions import department_scope
 
     dept = department_scope(actor)
+    facilities = _actor_facilities(actor)
     hk.ensure_housekeeping_schema()
     with db_session() as db:
-        report = _reconcile_on(db, ward_id=ward_id, dept=dept)
+        report = _reconcile_on(db, ward_id=ward_id, dept=dept, facilities=facilities)
         patient_ids = _patient_ids(report)
         if patient_ids:
             meta = request_meta or {}
@@ -2059,8 +2234,14 @@ def link_admissions(data: dict, *, actor: dict, request_meta: dict | None = None
     link back."""
     from permissions import department_scope
 
-    from services.adt.core import AdtError, locate_admission_on
+    from services.adt.core import (
+        AdtCrossFacility,
+        AdtError,
+        audit_facility_refusal,
+        locate_admission_on,
+    )
 
+    crossings: list[AdtCrossFacility] = []
     data = dict(data or {})
     reason = _clean(data.get("reason"), _MAX_NOTE) or _LINK_REASON
     wanted = data.get("admission_ids")
@@ -2068,11 +2249,12 @@ def link_admissions(data: dict, *, actor: dict, request_meta: dict | None = None
         raise BedMasterError("admission_ids must be a list", code="bad_admission_ids")
     wanted_set = {str(x) for x in wanted} if wanted else None
     dept = department_scope(actor)
+    facilities = _actor_facilities(actor)
     hk.ensure_housekeeping_schema()
     linked: list[dict] = []
     skipped: list[dict] = []
     with db_session(immediate=True) as db:
-        report = _reconcile_on(db, ward_id=data.get("ward_id"), dept=dept)
+        report = _reconcile_on(db, ward_id=data.get("ward_id"), dept=dept, facilities=facilities)
         targets = [
             e for e in report["matched"] if wanted_set is None or e["admission_id"] in wanted_set
         ]
@@ -2119,6 +2301,8 @@ def link_admissions(data: dict, *, actor: dict, request_meta: dict | None = None
                     request_meta=request_meta,
                 )
             except AdtError as exc:
+                if isinstance(exc, AdtCrossFacility):
+                    crossings.append(exc)
                 skipped.append(
                     {"admission_id": e["admission_id"], "code": exc.code, "message": str(exc)}
                 )
@@ -2135,6 +2319,12 @@ def link_admissions(data: dict, *, actor: dict, request_meta: dict | None = None
                     "boarder": placed["boarder"],
                 }
             )
+    # multisite-8h1: a link refused because the bed is at another facility is
+    # recorded once the links have committed.
+    for crossing in crossings:
+        audit_facility_refusal(
+            crossing, lane="bed_reconciliation_link", actor=actor, request_meta=request_meta
+        )
     return {"linked": linked, "skipped": skipped, "count": len(linked)}
 
 
@@ -2154,9 +2344,12 @@ def mark_register_complete(
     reason = data.pop("reason", None)
     hk.ensure_housekeeping_schema()
     covering, _declared = _department_lists()
+    facilities = _actor_facilities(actor)
     now = utc_iso_now()
     with db_session(immediate=True) as db:
         ward = _ward_row(db, ward_id)
+        if _outside_scope(db, ward_id, facilities):
+            raise BedMasterNotFound("No ward with that id is set up", code="ward_not_found")
         if ward.get("register_complete"):
             return _ward_out(ward, covering)
         report = _reconcile_on(db, ward_id=ward_id, dept=None)
@@ -2336,14 +2529,24 @@ def _in(values: Iterable[Any]) -> tuple[str, tuple]:
     return ", ".join("?" for _ in vals) or "NULL", vals
 
 
-def _visible_wards(db, dept: str | None) -> list[dict]:
-    """Every ward this caller's board may show (see WHICH WARDS above)."""
+def _visible_wards(
+    db: Any, dept: str | None, facilities: frozenset[int] | None = None
+) -> list[dict]:
+    """Every ward this caller's board may show (see WHICH WARDS above).
+
+    `facilities` (multisite-8h1) is the caller's facility scope: with one,
+    only the wards of those facilities, and the boarders counted only among
+    the caller's patients there."""
     wards = [dict(r) for r in db.execute("SELECT * FROM wards ORDER BY LOWER(code)").fetchall()]
+    if facilities is not None:
+        from services.facility_lanes import wards_in_scope
+
+        wards = wards_in_scope(wards, facilities)
     if dept is None:
         return wards
     from permissions import scope_patient_ids_sql
 
-    scope_sql, scope_params = scope_patient_ids_sql(dept)
+    scope_sql, scope_params = scope_patient_ids_sql(dept, facilities=facilities)
     holding = {
         r["ward_id"]
         for r in db.execute(
@@ -2547,11 +2750,32 @@ def _derive_status(
     return "needs_cleaning", markers, state_jd
 
 
-def _scope_filter(db, patient_ids: Iterable[str], dept: str | None) -> set[str]:
-    """The ids among `patient_ids` inside `dept` (all of them for None)."""
+def _scope_filter(
+    db: Any,
+    patient_ids: Iterable[str],
+    dept: str | None,
+    facilities: frozenset[int] | None = None,
+) -> set[str]:
+    """The ids among `patient_ids` inside `dept` (all of them for None).
+
+    `facilities` (multisite-8h1) is the caller's facility scope: with one,
+    an id is kept only when the patient's latest encounter is at one of
+    those facilities as well (permissions.scope_patient_ids_sql)."""
     ids = tuple({p for p in patient_ids if p})
     if not ids:
         return set()
+    if facilities is not None:
+        from permissions import scope_patient_ids_sql
+
+        scope_sql, scope_params = scope_patient_ids_sql(dept, facilities=facilities)
+        marks, params = _in(ids)
+        return {
+            r[0]
+            for r in db.execute(
+                f"SELECT p.id FROM patients p WHERE p.id IN ({marks}) AND p.id IN ({scope_sql})",
+                params + tuple(scope_params),
+            ).fetchall()
+        }
     if dept is None:
         return set(ids)
     from permissions import PATIENT_DEPARTMENT_SQL
@@ -2567,10 +2791,18 @@ def _scope_filter(db, patient_ids: Iterable[str], dept: str | None) -> set[str]:
 
 
 def _board_on(
-    db, *, wards: list[dict], dept: str | None, identity: bool, reservations: bool = True
+    db: Any,
+    *,
+    wards: list[dict],
+    dept: str | None,
+    identity: bool,
+    reservations: bool = True,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Tiles for `wards` on the caller's connection. With identity False no
     patient field is ever read or returned (the available-beds read).
+    `facilities` (multisite-8h1) is the caller's facility scope: an occupant
+    is named only inside it as well as inside `dept` (_scope_filter).
 
     With reservations False a bed a reservation holds reads the status under
     the hold (services/adt/core.bed_readiness_on uses it so the patient a bed
@@ -2615,6 +2847,7 @@ def _board_on(
             [a["patient_id"] for who in occupants.values() for a in who]
             + [r["patient_id"] for r in held.values() if r.get("patient_id")],
             dept,
+            facilities,
         )
         absconded_at = absconded_at_on(
             db,
@@ -2857,13 +3090,16 @@ def bed_board(*, actor: dict, ward_id: str | None = None, request_meta: dict | N
     """The bed board: every bed on the caller's wards (or on one of them) with
     its derived status, minutes in that status, isolation and temporary
     markers, the bed class, and the occupant when the caller may see them.
-    Counts per ward. A ward the caller may not see is 404."""
+    Counts per ward. A ward the caller may not see is 404. With more than one
+    facility on record (multisite-8h1) the caller's facility's wards only,
+    and an occupant named only inside the caller's facility scope."""
     from permissions import department_scope
 
     dept = department_scope(actor)
+    facilities = _actor_facilities(actor)
     hk.ensure_housekeeping_schema()
     with db_session() as db:
-        visible = _visible_wards(db, dept)
+        visible = _visible_wards(db, dept, facilities)
         if ward_id:
             chosen = [w for w in visible if w["id"] == ward_id]
             if not chosen:
@@ -2872,7 +3108,7 @@ def bed_board(*, actor: dict, ward_id: str | None = None, request_meta: dict | N
                 )
         else:
             chosen = [w for w in visible if w.get("is_active")]
-        board = _board_on(db, wards=chosen, dept=dept, identity=True)
+        board = _board_on(db, wards=chosen, dept=dept, identity=True, facilities=facilities)
         # A switched-off ward with nobody in it has nothing to show.
         if not ward_id:
             board["wards"] = [
@@ -2904,8 +3140,13 @@ def available_beds(*, actor: dict, ward_id: str | None = None) -> dict:
     """Beds a patient could be placed in now, for a picker: status available,
     or vacant on a ward whose cleaning is not tracked. Beds waiting for or
     under a clean are listed apart, with whether the clean is a terminal one,
-    so a picker can say why. No patient data: nothing here is audited."""
+    so a picker can say why. No patient data: nothing here is audited. With
+    more than one facility on record (multisite-8h1) the caller's facility's
+    wards only."""
+    from services.facility_lanes import wards_in_scope
+
     hk.ensure_housekeeping_schema()
+    facilities = _actor_facilities(actor)
     with db_session() as db:
         wards = [
             dict(r)
@@ -2916,6 +3157,7 @@ def available_beds(*, actor: dict, ward_id: str | None = None) -> dict:
                 (ward_id,) if ward_id else (),
             ).fetchall()
         ]
+        wards = wards_in_scope(wards, facilities)
         if ward_id and not wards:
             raise BedMasterNotFound("No ward with that id is set up", code="ward_not_found")
         board = _board_on(db, wards=wards, dept=None, identity=False)
@@ -2980,13 +3222,15 @@ def awaiting_bed(
                 admission, or 'matches' a bed a bed manager can link).
 
     Names and MRNs are shown, so a read that lists anybody writes one
-    fail-closed phi_access audit with the patient ids."""
+    fail-closed phi_access audit with the patient ids. With more than one
+    facility on record (multisite-8h1) the caller's facility's only."""
     from permissions import department_scope
 
     dept = department_scope(actor)
+    facilities = _actor_facilities(actor)
     hk.ensure_housekeeping_schema()
     with db_session() as db:
-        report = _reconcile_on(db, ward_id=ward_id, dept=dept)
+        report = _reconcile_on(db, ward_id=ward_id, dept=dept, facilities=facilities)
         unlinked = [dict(e) for e in report["unlinked"]]
         unlinked += [dict(e, reason="matches_bed") for e in report["matched"]]
         for doubled in report["doubled"]:

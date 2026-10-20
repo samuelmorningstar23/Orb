@@ -144,14 +144,14 @@ with 6px gaps.
 **API:** `GET /api/relay/alerts`, `getAlerts()` at `src/api/client.ts:782-784`.
 **Server:** `list_alerts` at `server/routes/relay_routes.py:84-87`
 (`Depends(require_permission("relay.read"))`) → `get_user_alerts(user["id"], user["role"])` at
-`server/services/relay_service.py:510-581`.
+`server/services/relay_service.py:570-641`.
 **Change this →** The row is tinted red rather than neutral:
 `border: 1px solid color-mix(... --status-danger 28% ...)` and
 `background: color-mix(... --status-danger 10% ...)`, both `!important` to beat the base
 `.relay-channel-item` hover (`src/components/relay/RelayComponents.css:8-15`); hover deepens to
 45% / 16%. To make a row **disappear**: resolve or escalate the alert (the service skips
-`status in ["resolved","escalated"]`, `relay_service.py:551-552`), let it age past 48 hours
-(`relay_service.py:537`), or stop being one of its targets. To make one **appear**: post a
+`status in ["resolved","escalated"]`, `relay_service.py:611-612`), let it age past 48 hours
+(`relay_service.py:597`), or stop being one of its targets. To make one **appear**: post a
 message with `message_type='alert'` whose JSON content sets `is_structured: true` and targets
 you.
 
@@ -176,14 +176,14 @@ shrinks it back to 6px but keeps the pulse; removing both classes removes the do
 `title = isStructured ? payload.title : 'Alert'` (`AlertsSection.tsx:83`).
 **Data from:** `JSON.parse(alert.content).title` (`AlertsSection.tsx:77`).
 **API:** `GET /api/relay/alerts`.
-**Server:** `relay_service.py:566-575` returns the raw `content` column verbatim; the title is
+**Server:** `relay_service.py:626-635` returns the raw `content` column verbatim; the title is
 whatever the alert's author put in the JSON. For surgical alerts that author is
 `server/routes/surgery_routes.py` (the payload also carries `surgery_id`, `patient_id`,
 `action_required`).
 **Change this →** Renders 0.95rem, weight 700, `var(--text-primary)`
 (`src/components/relay/RelayComponents.css:30-34`). The literal fallback string `'Alert'` is
 effectively **dead**: `get_user_alerts` already skips any payload without `is_structured`
-(`relay_service.py:549-550`), so a non-structured alert never reaches this component. If a row
+(`relay_service.py:609-610`), so a non-structured alert never reaches this component. If a row
 ever does show the bare word "Alert", the server filter has been changed.
 
 ### The alert description line
@@ -366,16 +366,16 @@ box (case rooms) and under the "DEPARTMENT" heading (department channels).
 **API:** `GET /api/relay/channels`, `getChannels()` at `src/api/client.ts:778-780`.
 **Server:** `list_channels` at `server/routes/relay_routes.py:78-81` →
 `get_channels_for_user(user["id"], user["role"])` at
-`server/services/relay_service.py:11-211`.
+`server/services/relay_service.py:12-224`.
 **Change this →** The row is a flex bar, `padding: 14px 16px`, name-block left and unread badge
 right (`src/pages/Relay.css:44-55`), on the `glass-card` surface, flat
 `var(--bg-surface)` with a hairline `var(--border-subtle)` and `--radius-lg`
 (`src/index.css:379-386`). Hover changes the **fill only** (`var(--bg-glass-hover)`,
 `Relay.css:58-60`) and the border (`index.css:390-392`); nothing lifts or glows, that is the
 "Quiet Clinical" rule. Clicking swaps the whole screen for the thread. A row disappears when
-the server stops returning it: patient discharged (`relay_service.py:96-97`), case room with no
-patient and no messages (`relay_service.py:92-93`), a department that no longer matches yours
-(`relay_service.py:98-106`), or a DM you were removed from (`relay_service.py:176-177`).
+the server stops returning it: patient discharged (`relay_service.py:109-110`), case room with no
+patient and no messages (`relay_service.py:105-106`), a department that no longer matches yours
+(`relay_service.py:111-119`), or a DM you were removed from (`relay_service.py:189-190`).
 
 ### The red pulsing dot on a channel row
 
@@ -384,24 +384,24 @@ patient and no messages (`relay_service.py:92-93`), a department that no longer 
 `{ch.has_alert && <span className="relay-channel-item__alert-dot" />}`.
 **Data from:** `ch.has_alert` (`Channel` interface, `src/api/client.ts:670`).
 **API:** `GET /api/relay/channels`.
-**Server:** `server/services/relay_service.py:208`, `"has_alert": (r["alert_count"] or 0) > 0`,
-where `alert_count` is the subquery at `relay_service.py:57-60`: messages in this channel with
+**Server:** `server/services/relay_service.py:221`, `"has_alert": (r["alert_count"] or 0) > 0`,
+where `alert_count` is the subquery at `relay_service.py:62-73`: messages in this channel with
 `message_type = 'alert'` and `timestamp > datetime('now', '-24 hours')`.
 **Change this →** A 6×6 `var(--status-danger)` circle that **pulses on a 2s loop**
 (`src/pages/Relay.css:69-75`). Its presence shifts the name 10px right (the info row's `gap`,
 `Relay.css:62-66`). It **disappears 24 hours after the last alert message**, whether or not
 anyone acted on the alert, resolving an alert does not clear this dot, because resolution
 rewrites the message content, not its `message_type`. Widening the `-24 hours` window in
-`relay_service.py:59` makes dots persist longer on the list.
+`relay_service.py:72` makes dots persist longer on the list.
 
 ### The channel name
 
 **Where:** The main line of the row, after the alert dot.
 **Rendered by:** `src/components/relay/CaseList.tsx:42`, 
 `<span className="relay-channel-item__name">{ch.name}</span>`.
-**Data from:** `ch.name` → `relay_service.py:195`, the `channels.name` column.
+**Data from:** `ch.name` → `relay_service.py:208`, the `channels.name` column.
 **API:** `GET /api/relay/channels`.
-**Server:** `get_channels_for_user`, `server/services/relay_service.py:11-211`.
+**Server:** `get_channels_for_user`, `server/services/relay_service.py:12-224`.
 **Change this →** 1rem, weight **400** (`src/pages/Relay.css:77-80`), deliberately not bold;
 the row's emphasis comes from the badge and the risk chip, not the name. There is no truncation
 rule on it, so a very long room name wraps and makes the row taller. It is also the string the
@@ -415,8 +415,8 @@ search box matches first (`RelayPanel.tsx:422`).
 **Data from:** `ch.risk_level` (`src/api/client.ts:665`, typed
 `'critical' | 'elevated' | 'stable'`).
 **API:** `GET /api/relay/channels`.
-**Server:** `relay_service.py:201` reads `rs.level` from the LEFT JOIN at
-`relay_service.py:75-79`, the **latest** `risk_scores` row per patient
+**Server:** `relay_service.py:214` reads `rs.level` from the LEFT JOIN at
+`relay_service.py:88-92`, the **latest** `risk_scores` row per patient
 (`WHERE id IN (SELECT MAX(id) FROM risk_scores GROUP BY patient_id)`).
 **Change this →** Three outcomes, and they are colour-coded by token:
 `critical` → `var(--status-danger)`, `elevated` → `var(--status-warn)`, **anything else
@@ -436,13 +436,13 @@ sent, the server sends `'stable'` lowercase and the component uppercases it as a
 **Data from:** `(ch as any).ward` and `(ch as any).bed`. These *are* declared on the `Channel`
 interface (`src/api/client.ts:662-663`), the `as any` casts are unnecessary but harmless.
 **API:** `GET /api/relay/channels`.
-**Server:** `relay_service.py:200-201` ← `p.ward`, `p.bed` from the
-`LEFT JOIN patients p ON c.patient_id = p.id` (`relay_service.py:74`).
+**Server:** `relay_service.py:213-214` ← `p.ward`, `p.bed` from the
+`LEFT JOIN patients p ON c.patient_id = p.id` (`relay_service.py:87`).
 **Change this →** 0.7rem `var(--text-muted)`. It renders as e.g. `GM-1 / 4`. It **disappears**
 when `ward` is falsy, including for every department channel, which has no patient join. Do
 not confuse `ward` with department: `ward` is a bed prefix like "GM-1" while department is a
 name like "General Medicine", and that difference is exactly what broke case-room scoping once
-(see the comment at `relay_service.py:149-154`).
+(see the comment at `relay_service.py:162-167`).
 
 ### The diagnosis line
 
@@ -450,7 +450,7 @@ name like "General Medicine", and that difference is exactly what broke case-roo
 **Rendered by:** `src/components/relay/CaseList.tsx:58-63`.
 **Data from:** `ch.diagnosis` (`src/api/client.ts:661`).
 **API:** `GET /api/relay/channels`.
-**Server:** `relay_service.py:199` ← `p.diagnosis` from the patients join.
+**Server:** `relay_service.py:212` ← `p.diagnosis` from the patients join.
 **Change this →** This one **is** clamped: `maxWidth: 160`, `overflow: hidden`,
 `textOverflow: 'ellipsis'`, `whiteSpace: 'nowrap'` (`CaseList.tsx:61`), a long diagnosis
 truncates with "…" at 160px rather than wrapping. Raising `maxWidth` lets more text through and
@@ -464,10 +464,10 @@ disappears when `diagnosis` is null. It is also searchable (`RelayPanel.tsx:425`
 **Data from:** `ch.unread_count` (`src/api/client.ts:666`).
 **API:** `GET /api/relay/channels`; cleared by `POST /api/relay/channels/{id}/read`
 (`markChannelRead`, `src/api/client.ts:798-800`).
-**Server:** The count is the correlated subquery at `server/services/relay_service.py:50-53`:
+**Server:** The count is the correlated subquery at `server/services/relay_service.py:55-58`:
 messages in this channel where `m.sender_id != <me>` **and** `read_by NOT LIKE '%<me>%'`.
 Clearing is `mark_read` at `server/routes/relay_routes.py:101-110` →
-`mark_channel_read(channel_id, user_id)` at `server/services/relay_service.py:688-729`, which
+`mark_channel_read(channel_id, user_id)` at `server/services/relay_service.py:748-789`, which
 appends the user id to each message's `read_by` JSON array.
 **Change this →** `font-size: 0.7rem`, weight 600, `padding: 2px 8px`, filled
 `var(--accent-deep)` with `var(--btn-primary-text)` text and a full radius
@@ -478,7 +478,7 @@ optimistically rewrites that channel's `unread_count` to 0 in local state
 (`RelayPanel.tsx:244`) before the server call, then persists it fire-and-forget
 (`RelayPanel.tsx:245`), so if `markChannelRead` fails, the badge is gone until the next
 30-second poll brings it back. Your own posts never count (the `sender_id != ?` clause); that
-clause is what stopped rooms displaying 5,000+ unread (comment at `relay_service.py:43-49`).
+clause is what stopped rooms displaying 5,000+ unread (comment at `relay_service.py:48-54`).
 Because the badge also feeds the Urgency sort (`RelayPanel.tsx:436-437`), clearing it can make
 the row drop down the list while you are looking at it.
 
@@ -534,14 +534,14 @@ instance does, `RelayPanel.tsx:496`) removes it.
 **Where:** Under the DEPARTMENT heading.
 **Rendered by:** `src/components/relay/CaseList.tsx:26-27` with `emptyMessage` supplied at
 `RelayPanel.tsx:505`.
-**Server:** Department visibility is decided at `server/services/relay_service.py:98-106`, the
+**Server:** Department visibility is decided at `server/services/relay_service.py:111-119`, the
 channel name is matched against `users.department`, case-insensitively, by substring in either
 direction, plus two explicit special cases: `surgery` sees `Surgery`, and `anesthesiology` also
 sees `Surgery`. `admin` skips the branch and sees them all.
 **Change this →** A clinician whose `users.department` is empty sees this box and **no
-department channels at all**, the `elif` chain at `relay_service.py:100-106` has no fallback
+department channels at all**, the `elif` chain at `relay_service.py:113-119` has no fallback
 branch. (Contrast with case rooms, where an empty department means *unscoped* and shows
-everything, `relay_service.py:130-134`.)
+everything, `relay_service.py:143-147`.)
 
 ---
 
@@ -587,7 +587,7 @@ then emits `message:update` into the channel room (`relay_routes.py:1220`).
 `✓ Confirmed by <name>` or `✓ Escalated by <name>` (`RelayPanel.tsx:654-657`), because
 `payload.status` is now set. Everyone else in the room sees the same swap live, via the
 `message:update` socket event handled at `RelayPanel.tsx:135-137`. The alert also leaves the
-Action Required rail (server-side filter, `relay_service.py:551-552`), but only after the rail
+Action Required rail (server-side filter, `relay_service.py:611-612`), but only after the rail
 refetches, which for a resolve performed inside the thread means when you press Back.
 
 ### Alert failure line
@@ -607,35 +607,35 @@ rather than watching a dead button.
 ## Which channels a user sees at all: the access-control boundary
 
 **The single function that decides:**
-`get_channels_for_user(user_id, user_role)`, `server/services/relay_service.py:11-211`.
+`get_channels_for_user(user_id, user_role)`, `server/services/relay_service.py:12-224`.
 
-This is not a sidebar query. Its own docstring says so (`relay_service.py:14-19`): every read
+This is not a sidebar query. Its own docstring says so (`relay_service.py:15-20`): every read
 of Relay message content authorises by asking whether the channel appears in this list.
 
 - **REST, per-channel:** `can_access_channel(user_id, user_role, channel_id)` at
-  `server/services/relay_service.py:244-254` is defined *in terms of* the list, it is the
+  `server/services/relay_service.py:257-267` is defined *in terms of* the list, it is the
   named single-channel form, deliberately not a second SELECT. Used at
   `relay_routes.py:96-97` (messages), `:107-108` (mark read), `:1125-1126` (alert resolve).
-- **Websocket:** `_user_can_access_channel` at `server/ws/realtime.py:526-540` calls the same
+- **Websocket:** `_user_can_access_channel` at `server/ws/realtime.py:678-692` calls the same
   function through `run_db`, so socket room membership matches HTTP visibility
-  (`realtime.py:552-557` denies `join_channel`).
-- **The second door:** `get_user_alerts` at `server/services/relay_service.py:510-581` is a
+  (`realtime.py:704-709` denies `join_channel`).
+- **The second door:** `get_user_alerts` at `server/services/relay_service.py:570-641` is a
   message-read path that does **not** go through the list, it scans every alert row in the
-  hospital. It re-applies the DM membership rule itself (`relay_service.py:538-540`) so a
+  hospital. It re-applies the DM membership rule itself (`relay_service.py:598-600`) so a
   private conversation cannot be read out through the alerts rail.
 
-**The rule per channel type** (`relay_service.py:21-27`, enforced at `:98-190`):
+**The rule per channel type** (`relay_service.py:22-28`, enforced at `:111-203`):
 
 | Type | Rule | Line |
 |---|---|---|
-| `department` | Channel name matched against `users.department`, substring either direction, case-insensitive; `surgery`/`anesthesiology` both see `Surgery`; `admin` sees all | `relay_service.py:98-106` |
-| `case_room` | `admissions.department` (active admission) must equal the user's department; a room whose department is **not derivable** stays visible; empty user department or `admin` = unscoped | `relay_service.py:125-157` |
-| `direct` | Explicit rows in `channel_members` only. **No admin bypass**, an administrator must be added to the thread on the record | `relay_service.py:159-177` |
-| anything else | **Withheld**, with a warning log, fail closed | `relay_service.py:179-190` |
+| `department` | Channel name matched against `users.department`, substring either direction, case-insensitive; `surgery`/`anesthesiology` both see `Surgery`; `admin` sees all | `relay_service.py:111-119` |
+| `case_room` | `admissions.department` (active admission) must equal the user's department; a room whose department is **not derivable** stays visible; empty user department or `admin` = unscoped | `relay_service.py:138-170` |
+| `direct` | Explicit rows in `channel_members` only. **No admin bypass**, an administrator must be added to the thread on the record | `relay_service.py:172-190` |
+| anything else | **Withheld**, with a warning log, fail closed | `relay_service.py:192-203` |
 
 Case rooms are additionally dropped when the patient is `discharged`
-(`relay_service.py:96-97`) or when the room has neither a patient nor any messages
-(`relay_service.py:92-93`).
+(`relay_service.py:109-110`) or when the room has neither a patient nor any messages
+(`relay_service.py:105-106`).
 
 **Who can open the screen at all.** Both list endpoints require `relay.read`
 (`relay_routes.py:79`, `:85`); resolving an alert requires `relay.send`
@@ -670,7 +670,7 @@ note pressing Back from a thread calls `loadChannels()` immediately
 ### What the server orders by (and why you rarely see it)
 
 `get_channels_for_user` returns rows ordered `critical → elevated → everything else`, then
-`last_activity DESC NULLS LAST`, then `c.name` (`server/services/relay_service.py:82-87`). The
+`last_activity DESC NULLS LAST`, then `c.name` (`server/services/relay_service.py:95-100`). The
 client then re-sorts both lists (`RelayPanel.tsx:429-441`, `:456-460`), so this ordering is
 **only ever visible in the Department list while "Urgency" is selected**, the one branch that
 returns the array untouched (`RelayPanel.tsx:461`).
@@ -681,20 +681,20 @@ returns the array untouched (`RelayPanel.tsx:461`).
 
 Worth knowing before you go looking for them:
 
-- **`last_message`**, computed at `relay_service.py:54-56` (the newest message's content) and
+- **`last_message`**, computed at `relay_service.py:59-61` (the newest message's content) and
   typed at `src/api/client.ts:667`, but **no component renders it**. There is no message
   preview under a channel name on this screen. It is used server-side only, to decide whether
-  an orphaned case room should be dropped (`relay_service.py:92-93`).
-- **`last_activity`**, `relay_service.py:61-62`, typed at `client.ts:668`. Used only as the
+  an orphaned case room should be dropped (`relay_service.py:105-106`).
+- **`last_activity`**, `relay_service.py:74-75`, typed at `client.ts:668`. Used only as the
   **sort key** (`RelayPanel.tsx:431`, `:439`, `:458`). **No timestamp is displayed on a channel
   row**, timestamps appear only inside a thread (`formatTime`, `RelayPanel.tsx:23-25`).
-- **`alert_count`**, `relay_service.py:57-60`, typed at `client.ts:669`. Never printed as a
+- **`alert_count`**, `relay_service.py:62-73`, typed at `client.ts:669`. Never printed as a
   number. It contributes to the Urgency sort (`RelayPanel.tsx:436-437`) and to the `alertsKey`
   remount trigger (`RelayPanel.tsx:449-452`); its only visual expression is the boolean
   `has_alert` dot.
-- **`risk_score`** (the numeric score, `relay_service.py:200`, `client.ts:664`), only the
+- **`risk_score`** (the numeric score, `relay_service.py:213`, `client.ts:664`), only the
   `risk_level` band is shown, never the number.
-- **`patient_id`** and **`mrn`** (`relay_service.py:197-198`), not displayed on a row; `mrn`
+- **`patient_id`** and **`mrn`** (`relay_service.py:210-211`), not displayed on a row; `mrn`
   and `patient_id` are searched (`RelayPanel.tsx:423-424`), and `patient_id` decides whether
   the Sage sidebar appears in the thread (`RelayPanel.tsx:740-742`).
 

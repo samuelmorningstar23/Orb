@@ -936,14 +936,14 @@ responses are discarded via a sequence ref (`:91`, `:98`).
 Risk dot colour: `riskColor()` (`:29-33`), `critical` → `--status-danger`,
 `elevated` → `--status-warn`, anything else → a 75% mix of `--status-ok`.
 **API:** `GET /api/search/patients?q=…` (`:95-97`).
-**Server:** `server/routes/search_routes.py:26-124` `search_patients`, 
+**Server:** `server/routes/search_routes.py:27-136` `search_patients`, 
 `require_permission("patient.read_all")`, **and** scoped to the caller's
-department via `department_scope(user)` (`search_routes.py:46`, defined at
+department via `department_scope(user)` (`search_routes.py:53`, defined at
 `server/permissions.py:192-219`). It returns at most 12 admitted patients, ranks
-exact id > MRN > name (`search_routes.py:80-85`), escapes SQL-LIKE wildcards
+exact id > MRN > name (`search_routes.py:92-97`), escapes SQL-LIKE wildcards
 (`:50`), and audits the read with `log_phi_read`
 (`server/permissions.py:328`) **only when there was at least one match**
-(`search_routes.py:107-122`).
+(`search_routes.py:119-134`).
 **Change this →** Enter opens the highlighted patient by dispatching
 `orb:goto-tab {tab:'vigil'}` then `orb:open-patient` (`:120-132`), so you visibly
 land on the Patients tab with that chart open. Arrow keys move the highlight

@@ -251,12 +251,16 @@ def _count_by_reading_source(
     return tuple(int(x or 0) for x in row[:3])  # type: ignore[return-value]
 
 
-def compute_impact(assumptions: dict | None = None) -> dict:
+def compute_impact(assumptions: dict | None = None, *, user: dict | None = None) -> dict:
     """Compute the ROI / outcomes model over the reporting window.
 
     Args:
         assumptions: optional {key: value} overrides for any key in
             ``DEFAULT_ASSUMPTIONS``. Anything omitted uses the cited default.
+        user: the reader. With more than one facility on record the one
+            figure read from the audit trail (drug-safety reviews) counts only
+            the reader's facilities' rows (multisite-11, the epoch rule); the
+            other figures are not audit rows and stay with their own sweeps.
 
     Returns a structured dict:
         {generated_at, period, metrics:[...], totals:{...}, assumptions:{...},
@@ -371,12 +375,19 @@ def compute_impact(assumptions: dict | None = None) -> dict:
             (cutoff,),
         )
         # Drug-safety reviews that fired at order/verify time (interaction + allergy gate).
+        # multisite-11: the reader's facilities' rows only (empty `vis` with one facility).
+        from services import audit_facility
+
+        scope = None if user is None else audit_facility.reader_scope(user, db=db)
+        clause, vis_params = audit_facility.visible_sql(
+            scope, audit_facility.audit_epoch(db) if scope is not None else 0
+        )
         safety_reviews = _count(
             db,
             "SELECT COUNT(*) FROM audit_logs "
             "WHERE action_type IN ('medication_verify', 'medication_reject') "
-            "AND julianday(timestamp) >= julianday(?)",
-            (cutoff,),
+            "AND julianday(timestamp) >= julianday(?)" + (f" AND {clause}" if clause else ""),
+            (cutoff, *vis_params),
         )
         med_events = ai_med_verifications + safety_reviews
         ades_avoided = med_events * a["ade_avoidance_rate_per_alert"]

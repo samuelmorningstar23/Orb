@@ -9,7 +9,7 @@ Relay is Orb's clinical chat: a Slack-like messaging system where every admitted
 **Jargon, defined once (terms defined in earlier guides get a one-liner + a pointer):**
 
 - **Channel**, a named message stream in the `channels` table. Relay has three declared types (`case_room`, `department`, `direct`, `server/database.py:124`), and all three are now created.
-- **Case room**, a `case_room` channel linked to one patient via `channels.patient_id`. Created automatically when a patient is admitted (`server/routes/vigil_routes.py:930`, guide 07-vigil).
+- **Case room**, a `case_room` channel linked to one patient via `channels.patient_id`. Created automatically when a patient is admitted (`server/routes/vigil_routes.py:949`, guide 07-vigil).
 - **Socket room**, a server-side label on a socket.io connection; `sio.emit(event, data, room=X)` reaches only connections that joined room `X`. Relay reuses the channel id as the room name, plus per-user rooms `user:<id>`. Full definition in guide 06-realtime.
 - **JWT / RBAC**, the signed login token and the role→permission map that gate every route. Relay uses three permissions: `relay.read`, `relay.send`, `relay.execute_action` (`server/permissions.py:59-61`). See guide 03-auth-rbac.
 - **Dependency injection (FastAPI `Depends`)**, FastAPI's mechanism where a route handler declares `user: dict = Depends(require_permission("relay.read"))` and the framework runs that function first, passing its return value in. It centralizes auth so handler bodies can assume an authorized user.
@@ -57,15 +57,15 @@ Neighbors: guide 02-api-client owns the typed fetch wrappers and the socket sing
 
 ### The messaging model
 
-There are **channels** and **messages**, no threads. All three declared channel types are now real: `case_room`, `department`, and `direct` (one-to-one and small-group DMs, opened by `POST /api/relay/channels/direct` → `create_direct_channel`, `relay_service.py:420`), with explicit membership held in `channel_members` (migration 8) rather than inferred from who has posted. A channel row is just `(id, name, type, patient_id, created_at)` (`server/database.py:121-127`). A message row carries denormalized sender identity (`sender_id`, `sender_name`, `sender_role`), a `content` string, a `message_type` in `{text, alert, system, ambient_action, surgical_alert}`, a `read_by` JSON array of user ids, and provenance columns `source`/`is_bot` added by migration (`server/database.py:130-140`; `source`/`is_bot` added at `:1865`, `:1867`). The trick that keeps the schema tiny: **structured features are JSON stored in `content`**. An "alert" is a `text`-typed column holding `{"is_structured": true, "target_users": [...], "status": ...}`; acknowledging it means rewriting that JSON. This avoids new tables at the cost of unqueryable payloads (every alert scan is a Python-side `json.loads` loop, `server/services/relay_service.py:548`).
+There are **channels** and **messages**, no threads. All three declared channel types are now real: `case_room`, `department`, and `direct` (one-to-one and small-group DMs, opened by `POST /api/relay/channels/direct` → `create_direct_channel`, `relay_service.py:480`), with explicit membership held in `channel_members` (migration 8) rather than inferred from who has posted. A channel row is just `(id, name, type, patient_id, created_at)` (`server/database.py:121-127`). A message row carries denormalized sender identity (`sender_id`, `sender_name`, `sender_role`), a `content` string, a `message_type` in `{text, alert, system, ambient_action, surgical_alert}`, a `read_by` JSON array of user ids, and provenance columns `source`/`is_bot` added by migration (`server/database.py:130-140`; `source`/`is_bot` added at `:1865`, `:1867`). The trick that keeps the schema tiny: **structured features are JSON stored in `content`**. An "alert" is a `text`-typed column holding `{"is_structured": true, "target_users": [...], "status": ...}`; acknowledging it means rewriting that JSON. This avoids new tables at the cost of unqueryable payloads (every alert scan is a Python-side `json.loads` loop, `server/services/relay_service.py:608`).
 
-Channel ids double as socket room names. Department channels are seeded with fixed ids like `dept-surgery` (`server/scripts/seed_clinical_data.py:293-307`); case rooms get random ids `CH-XXXXXX` at admission (`server/routes/vigil_routes.py:555`), though seeds and tests also use the `case-<patient_id>` convention, which `surgery_service` relies on (`server/services/surgery_service.py:312`).
+Channel ids double as socket room names. Department channels are seeded with fixed ids like `dept-surgery` (`server/scripts/seed_clinical_data.py:293-307`); case rooms get random ids `CH-XXXXXX` at admission (`server/routes/vigil_routes.py:568`), though seeds and tests also use the `case-<patient_id>` convention, which `surgery_service` relies on (`server/services/surgery_service.py:312`).
 
 ### Flow 1: opening Relay (channel list)
 
 1. `ClinicianShell` lazy-loads `RelayPanel` into the shell (`src/pages/ClinicianShell.tsx:231`, `478`; guide 01-app-shell).
 2. On mount, `loadChannels()` calls `GET /api/relay/channels` (`RelayPanel.tsx:61`, `147-149` → `src/api/client.ts:429-431`).
-3. The route (`relay_routes.py:21-24`) requires `relay.read` and delegates to `get_channels_for_user`, which runs one SQL query enriching each channel with patient info, latest risk score, unread count, last message, 24-hour alert count, and last activity (`relay_service.py:16-51`), then filters out orphaned/discharged case rooms and non-matching department channels in Python (`relay_service.py:53-72`).
+3. The route (`relay_routes.py:21-24`) requires `relay.read` and delegates to `get_channels_for_user`, which runs one SQL query enriching each channel with patient info, latest risk score, unread count, last message, 24-hour alert count, and last activity (`relay_service.py:17-56`), then filters out orphaned/discharged case rooms and non-matching department channels in Python (`relay_service.py:58-85`).
 4. The panel splits the result into `caseRooms` and `deptChannels` memos, applies the search filter and the Recency/Urgency sort (`RelayPanel.tsx:213-250`), and renders `AlertsSection`, `RelaySearch`, and two `CaseList`s (`RelayPanel.tsx:277-295`).
 
 ### Flow 2: sending a message (the main flow)
@@ -80,7 +80,7 @@ sequenceDiagram
     A->>A: optimistic append, temp id = Date.now() (RelayPanel.tsx:173-184)
     A->>S: POST /api/relay/channels/{id}/messages {content, message_type:'text'} (client.ts:871)
     S->>S: Depends(require_permission("relay.send")) (relay_routes.py:209)
-    S->>DB: INSERT INTO messages ... (relay_service.py:222-227)
+    S->>DB: INSERT INTO messages ... (relay_service.py:235-240)
     S->>IO: sio.emit("message:new", msg, room=channel_id) (relay_routes.py:223)
     IO-->>B: message:new → handleNewMsg appends + resorts (RelayPanel.tsx:67-74)
     IO-->>A: message:new (sender is in the room too)
@@ -88,12 +88,12 @@ sequenceDiagram
     S->>S: BackgroundTasks: sage_ambient_observe(channel_id, msg_id) (relay_routes.py:226-227, guide 10)
 ```
 
-Persistence happens **before** the broadcast, so the socket event is a notification about durable state, never the source of truth. Both browsers are in socket room `channel_id` because opening a channel emits `join_channel` (`RelayPanel.tsx:79`), which the server authorizes against the same visibility function the REST layer uses before calling `enter_room` (`server/ws/realtime.py:210-226`). There is also a **pure-WebSocket send path**, the `new_message` socket event (`ws/realtime.py:365-407`) authenticates, checks `relay.send` and channel membership, calls the same `send_message`, and broadcasts, but the shipped UI never uses it; RelayPanel sends over REST only.
+Persistence happens **before** the broadcast, so the socket event is a notification about durable state, never the source of truth. Both browsers are in socket room `channel_id` because opening a channel emits `join_channel` (`RelayPanel.tsx:79`), which the server authorizes against the same visibility function the REST layer uses before calling `enter_room` (`server/ws/realtime.py:950-963`). There is also a **pure-WebSocket send path**, the `new_message` socket event (`ws/realtime.py:995-1058`) authenticates, checks `relay.send` and channel membership, calls the same `send_message`, and broadcasts, but the shipped UI never uses it; RelayPanel sends over REST only.
 
 ### Flow 3: alert lifecycle (create → target → acknowledge)
 
 1. **Create.** A producer builds a structured JSON payload and posts it as a `message_type='alert'` message. The canonical producer is `trigger_surgery_prep` (`server/services/surgery_service.py:272-384`): payload includes `is_structured: true`, `surgery_id`, patient identifiers, `target_users` (the assigned surgical team), fallback `target_roles`/`target_departments`, `title`, and `action_required` (`surgery_service.py:314-334`). It is posted to both `dept-surgery` and the patient's case room, with a 4-hour dedupe check (`surgery_service.py:336-350`).
-2. **Target.** `GET /api/relay/alerts` → `get_user_alerts` scans the last 48 hours of alert messages, parses each `content`, skips unstructured or already `resolved`/`escalated` ones, and keeps an alert if (a) the caller's id is in `target_users`, or (b) the caller's role is in `target_roles` **and** their department is in `target_departments`, or (c) the caller is `admin` (`relay_service.py:102-139`).
+2. **Target.** `GET /api/relay/alerts` → `get_user_alerts` scans the last 48 hours of alert messages, parses each `content`, skips unstructured or already `resolved`/`escalated` ones, and keeps an alert if (a) the caller's id is in `target_users`, or (b) the caller's role is in `target_roles` **and** their department is in `target_departments`, or (c) the caller is `admin` (`relay_service.py:115-152`).
 3. **Display.** `AlertsSection` renders these as red "Action Required" cards above the channel list, deduped by `surgery_id`, each deep-linking to the patient's case room (`src/components/relay/AlertsSection.tsx:33-85`). Inside the chat, the same message renders as a structured card with patient/procedure/OR details and Confirm/Escalate buttons (`RelayPanel.tsx:398-429`).
 4. **Acknowledge.** Clicking Confirm/Escalate calls `POST /api/relay/alerts/{message_id}/resolve` with `{action: 'confirm'|'escalate'}` (`client.ts:437-442`). The route rewrites the JSON: `status = 'resolved'` or `'escalated'`, `resolved_by = user.name`, updates the row, and broadcasts `message:update` to the channel room (`relay_routes.py:447-497`). Every client's `handleUpdateMsg` swaps the message in place (`RelayPanel.tsx:76-78`), so the card flips to "✓ Confirmed by …" everywhere at once, and the alert drops out of future `get_user_alerts` results (step 2's status filter).
 
@@ -101,7 +101,7 @@ Persistence happens **before** the broadcast, so the socket event is a notificat
 
 ### Flow 4: unread tracking
 
-`messages.read_by` is a JSON array of user ids. The channel query counts messages whose `read_by` does not `LIKE '%<user_id>%'` as unread (`relay_service.py:25-27`, parameter at `:51`). Opening a channel optimistically zeroes the local badge and fires `POST /api/relay/channels/{id}/read` (`RelayPanel.tsx:159-161`), whose service loops over every message in the channel appending the user id if absent (`relay_service.py:181-209`). The docstring records the history: the badge existed before anything ever wrote to `read_by`, so it never cleared until `mark_channel_read` was added (`relay_service.py:183-189`).
+`messages.read_by` is a JSON array of user ids. The channel query counts messages whose `read_by` does not `LIKE '%<user_id>%'` as unread (`relay_service.py:26-28`, parameter at `:56`). Opening a channel optimistically zeroes the local badge and fires `POST /api/relay/channels/{id}/read` (`RelayPanel.tsx:159-161`), whose service loops over every message in the channel appending the user id if absent (`relay_service.py:194-222`). The docstring records the history: the badge existed before anything ever wrote to `read_by`, so it never cleared until `mark_channel_read` was added (`relay_service.py:196-202`).
 
 ### Flow 5: search and sort
 
@@ -111,63 +111,63 @@ Search is **entirely client-side** over the already-fetched channel list, there 
 
 ### `server/services/relay_service.py`
 
-### get_channels_for_user: `server/services/relay_service.py:11`
+### get_channels_for_user: `server/services/relay_service.py:12`
 **Signature:** `(user_id: str, user_role: str) → list[dict]`
 **Does:** Returns every channel this user may see, enriched with patient, risk, unread, and activity metadata, Relay's single source of truth for channel visibility.
 **How it works:**
-1. Looks up the user's `department` from `users` (`:13-14`); empty string if absent.
-2. Runs one query joining `channels` to `patients` and to the *latest* `risk_scores` row per patient (the `MAX(id) GROUP BY patient_id` subquery, `:39-43`), with four correlated subqueries per channel: unread count via `read_by NOT LIKE '%user_id%'` (`:25-27`), last message content (`:28-30`), alert count in the last 24 h (`:31-34`), and `MAX(timestamp)` as `last_activity` (`:35-36`).
-3. Orders critical risk first, then elevated, then by `last_activity DESC NULLS LAST`, then name (`:46-51`).
-4. Python-filters: drops `case_room`s with no patient *and* no messages (orphans, `:56-57`); drops case rooms of discharged patients (`:60-61`); for non-admin users, keeps a `department` channel only if the user's department fuzzily matches the channel name, with hardcoded carve-outs mapping Surgery and Anesthesiology staff into the "surgery" channel (`:62-70`). Admins and all `case_room`s pass through (`:71-72`).
-5. Maps rows into plain dicts, defaulting `unread_count`/`alert_count` to 0 and deriving `has_alert` (`:74-93`).
-**Why it exists:** Centralizing "what can this user see" in one function lets REST routes, the WS `join_channel` authorizer (`server/ws/realtime.py:203`), and the message-post guards all enforce identical visibility, so a user can never receive live events for a channel they could not list.
+1. Looks up the user's `department` from `users` (`:14-15`); empty string if absent.
+2. Runs one query joining `channels` to `patients` and to the *latest* `risk_scores` row per patient (the `MAX(id) GROUP BY patient_id` subquery, `:44-48`), with four correlated subqueries per channel: unread count via `read_by NOT LIKE '%user_id%'` (`:26-28`), last message content (`:29-35`), alert count in the last 24 h (`:36-39`), and `MAX(timestamp)` as `last_activity` (`:40-41`).
+3. Orders critical risk first, then elevated, then by `last_activity DESC NULLS LAST`, then name (`:51-56`).
+4. Python-filters: drops `case_room`s with no patient *and* no messages (orphans, `:61-62`); drops case rooms of discharged patients (`:73-74`); for non-admin users, keeps a `department` channel only if the user's department fuzzily matches the channel name, with hardcoded carve-outs mapping Surgery and Anesthesiology staff into the "surgery" channel (`:75-83`). Admins and all `case_room`s pass through (`:84-85`).
+5. Maps rows into plain dicts, defaulting `unread_count`/`alert_count` to 0 and deriving `has_alert` (`:87-106`).
+**Why it exists:** Centralizing "what can this user see" in one function lets REST routes, the WS `join_channel` authorizer (`server/ws/realtime.py:216`), and the message-post guards all enforce identical visibility, so a user can never receive live events for a channel they could not list.
 **Data in/out:** in: user id + role strings. Out: list of `Channel` dicts matching the frontend interface (`src/api/client.ts:344-360`): `{id, name, type, patient_id, mrn, diagnosis, ward, bed, risk_score, risk_level, unread_count, last_message, last_activity, alert_count, has_alert}`.
-**Talks to:** reads `users`, `channels`, `patients`, `risk_scores`, `messages`. Called by every relay route as an authorization primitive (`relay_routes.py:24,39,50,63,97,143,268,471,515,580`) and by `ws/realtime._user_can_access_channel` (`ws/realtime.py:203`).
-**Change guide:** To let a nurse see a second department's channel, change the matching block at `relay_service.py:62-70` (e.g. add another carve-out or switch to a proper membership table); knock-on effects: WS join authorization and all IDOR guards change automatically because they call this function; watch out for the substring match `u_dept in ch_name or ch_name in u_dept` (`:69`), which already produces surprising matches (e.g. department "Neuro" matches channel "Neurology").
+**Talks to:** reads `users`, `channels`, `patients`, `risk_scores`, `messages`. Called by every relay route as an authorization primitive (`relay_routes.py:24,39,50,63,97,143,268,471,515,580`) and by `ws/realtime._user_can_access_channel` (`ws/realtime.py:216`).
+**Change guide:** To let a nurse see a second department's channel, change the matching block at `relay_service.py:75-83` (e.g. add another carve-out or switch to a proper membership table); knock-on effects: WS join authorization and all IDOR guards change automatically because they call this function; watch out for the substring match `u_dept in ch_name or ch_name in u_dept` (`:82`), which already produces surprising matches (e.g. department "Neuro" matches channel "Neurology").
 **Gotchas:** `LIKE '%user_id%'` on `read_by` is substring matching, not JSON matching, if one user id is a prefix of another (`u1` vs `u12`), `u12`'s read marks make messages look read for `u1`. The four correlated subqueries run per channel per call, and this function is invoked as a *guard* on almost every request, it is the subsystem's hot spot. `NULLS LAST` requires SQLite ≥ 3.30.
 
-### get_user_alerts: `server/services/relay_service.py:510`
+### get_user_alerts: `server/services/relay_service.py:570`
 **Signature:** `(user_id: str, user_role: str) → list[dict]`
 **Does:** Returns unresolved structured alerts from the last 48 hours that target this specific user.
 **How it works:**
-1. Fetches the user's department (`:98-99`).
-2. Selects all `message_type='alert'` rows newer than 48 h, newest first (`:102-107`).
-3. For each row, `json.loads(content)`; skips rows that are not `is_structured` or whose `status` is `resolved`/`escalated` (`:112-116`).
-4. Targeting: match if `user_id ∈ target_users`, else if `role ∈ target_roles` **and** `department ∈ target_departments`, else if role is `admin` (`:121-127`).
-5. Appends matching rows as message dicts (`:130-139`); malformed JSON rows are skipped with a debug log rather than crashing the endpoint (`:140-143`).
+1. Fetches the user's department (`:111-112`).
+2. Selects all `message_type='alert'` rows newer than 48 h, newest first (`:115-120`).
+3. For each row, `json.loads(content)`; skips rows that are not `is_structured` or whose `status` is `resolved`/`escalated` (`:125-129`).
+4. Targeting: match if `user_id ∈ target_users`, else if `role ∈ target_roles` **and** `department ∈ target_departments`, else if role is `admin` (`:134-140`).
+5. Appends matching rows as message dicts (`:143-152`); malformed JSON rows are skipped with a debug log rather than crashing the endpoint (`:153-156`).
 **Why it exists:** Alerts live in the same `messages` table as chat (no separate alerts table), so a targeted inbox requires filtering by the JSON payload; doing it here keeps the "who should act on this" policy server-side.
 **Data in/out:** out: list of raw `Message` dicts (`content` still the JSON string, the client re-parses it).
 **Talks to:** reads `users`, `messages`. Called only by `GET /api/relay/alerts` (`relay_routes.py:85`). Payloads are produced by `surgery_service.trigger_surgery_prep` (`surgery_service.py:314-334`).
 **Change guide:** To add a new alert producer (e.g. a critical-lab alert), write a `send_message(..., message_type='alert', content=json.dumps({...}))` with `is_structured: true`, `target_users`/`target_roles`+`target_departments`, `title`, `action_required`, and no `status` key; it will appear in `AlertsSection` automatically; watch out, the role fallback requires department to match too (`:124`), so role-only targeting silently matches nobody outside the listed departments.
 **Gotchas:** Every admin sees every active alert (`:126-127`). The 48-hour window means an unacknowledged alert silently ages out rather than escalating.
 
-### get_channel_messages: `server/services/relay_service.py:584`
+### get_channel_messages: `server/services/relay_service.py:644`
 **Signature:** `(channel_id: str, limit: int = 500, offset: int = 0) → list[dict]`
 **Does:** Returns a page of a channel's messages in chronological order.
-**How it works:** A nested query takes the newest `limit` rows starting at `offset` (`ORDER BY timestamp DESC LIMIT ? OFFSET ?`), then the outer query re-sorts them ascending (`:151-159`), i.e. "the latest N, oldest first," which is what a chat view wants. Each row is mapped to a dict, with `is_bot`/`source` read defensively via `"is_bot" in r.keys()` so pre-migration databases don't crash (`:174-175`).
+**How it works:** A nested query takes the newest `limit` rows starting at `offset` (`ORDER BY timestamp DESC LIMIT ? OFFSET ?`), then the outer query re-sorts them ascending (`:164-172`), i.e. "the latest N, oldest first," which is what a chat view wants. Each row is mapped to a dict, with `is_bot`/`source` read defensively via `"is_bot" in r.keys()` so pre-migration databases don't crash (`:187-188`).
 **Why it exists:** Fetching newest-first then flipping is the standard trick for "last page of chat" without knowing the total count.
 **Data in/out:** out: `Message[]` (`client.ts:362-376`).
 **Talks to:** reads `messages`. Called by `GET /channels/{id}/messages` (`relay_routes.py:41`).
 **Change guide (worked example, raise the visible history):** The *route* defaults `limit=50` (`relay_routes.py:35`) and the client never passes a limit (`client.ts:444-446`), so users only ever see the latest 50 messages. To show 200, either change the route default at `relay_routes.py:35` or add `?limit=200` in `getMessages`; knock-on effects: the initial render and the post-send refetch both grow; watch out for the unused service default of 500 (`:148`), changing it does nothing for REST callers.
 **Gotchas:** Timestamps are SQLite `CURRENT_TIMESTAMP` strings with no timezone, the client must (and does) parse them as UTC via `parseUTC` (`RelayPanel.tsx:20-26`). No pagination UI exists; `offset` is dead weight today.
 
-### mark_channel_read: `server/services/relay_service.py:688`
+### mark_channel_read: `server/services/relay_service.py:748`
 **Signature:** `(channel_id: str, user_id: str) → int` (count updated)
 **Does:** Appends the user's id to `read_by` on every message in the channel that doesn't already contain it, clearing the unread badge.
-**How it works:** Reads every `(id, read_by)` in the channel (`:192-195`); per row, parses the JSON array (tolerating null/garbage, `:197-199`), skips if the user is present, otherwise appends and issues an `UPDATE` (`:203-208`); returns how many rows changed.
-**Why it exists:** The docstring is explicit: the unread counter existed but nothing ever wrote `read_by`, so badges never cleared (`:183-189`). This is the write half that made the read half meaningful.
+**How it works:** Reads every `(id, read_by)` in the channel (`:205-208`); per row, parses the JSON array (tolerating null/garbage, `:210-212`), skips if the user is present, otherwise appends and issues an `UPDATE` (`:216-221`); returns how many rows changed.
+**Why it exists:** The docstring is explicit: the unread counter existed but nothing ever wrote `read_by`, so badges never cleared (`:196-202`). This is the write half that made the read half meaningful.
 **Data in/out:** out: integer count, surfaced as `{status:"ok", marked_read: n}` by the route.
 **Talks to:** reads/writes `messages`. Called by `POST /channels/{id}/read` (`relay_routes.py:52`), which the client fires on every channel open (`RelayPanel.tsx:161`).
 **Change guide:** To make this one statement instead of N, replace the loop with SQLite's `json_insert`/`json_each` (`UPDATE messages SET read_by = json_insert(read_by,'$[#]',?) WHERE channel_id = ? AND ...`); knock-on effects: none, callers only see the count; watch out for legacy rows where `read_by` is NULL (the CREATE TABLE default is `'[]'` but the code defends against NULL, `:198`).
 **Gotchas:** Read-modify-write per message (an N+1 pattern, one query becoming N) on every channel open; harmless at demo scale, a real system would track read state per (user, channel) with a watermark timestamp instead of per message.
 
-### send_message: `server/services/relay_service.py:778`
+### send_message: `server/services/relay_service.py:838`
 **Signature:** `(channel_id, sender_id, sender_name, sender_role, content, message_type='text', is_bot=False, source='clinician') → dict`
 **Does:** Inserts one message row and returns it fully hydrated (with DB-assigned id and timestamp), the single write path for *every* message in Orb.
-**How it works:** One parameterized `INSERT` including the provenance columns (`:222-227`), then a `SELECT` of the inserted row by `lastrowid` (`:228-231`) so the caller gets the DB's `CURRENT_TIMESTAMP` rather than guessing, mapped to a dict with defensive `is_bot`/`source` fallbacks (`:242-243`).
-**Why it exists:** Denormalizing sender name/role into the row makes history immutable (a renamed user doesn't rewrite old chat) and makes reads join-free. The `is_bot`/`source` flags let the UI badge automated posts ("AUTO") so bot chatter is never mistaken for a clinician (`:216-220`; badge at `RelayPanel.tsx:388-394`).
+**How it works:** One parameterized `INSERT` including the provenance columns (`:235-240`), then a `SELECT` of the inserted row by `lastrowid` (`:241-244`) so the caller gets the DB's `CURRENT_TIMESTAMP` rather than guessing, mapped to a dict with defensive `is_bot`/`source` fallbacks (`:255-256`).
+**Why it exists:** Denormalizing sender name/role into the row makes history immutable (a renamed user doesn't rewrite old chat) and makes reads join-free. The `is_bot`/`source` flags let the UI badge automated posts ("AUTO") so bot chatter is never mistaken for a clinician (`:229-233`; badge at `RelayPanel.tsx:388-394`).
 **Data in/out:** out: a complete `Message` dict, ready to be emitted as the `message:new` payload verbatim.
-**Talks to:** writes `messages`. Callers: REST `post_message` (`relay_routes.py:453`), WS `new_message` (`ws/realtime.py:678`), Lens filing imaging reviews as `system` messages (`server/routes/lens_routes.py:249,263`), surgery prep alerts (`services/surgery_service.py:353,372`), the imaging/lab bots (`server/services/bot_service.py:791,1015`, note the shift-report bot at `:397` writes `messages` directly with its own INSERT rather than going through here), and tests.
+**Talks to:** writes `messages`. Callers: REST `post_message` (`relay_routes.py:453`), WS `new_message` (`ws/realtime.py:836`), Lens filing imaging reviews as `system` messages (`server/routes/lens_routes.py:250,264`), surgery prep alerts (`services/surgery_service.py:353,372`), the imaging/lab bots (`server/services/bot_service.py:791,1015`, note the shift-report bot at `:397` writes `messages` directly with its own INSERT rather than going through here), and tests.
 **Change guide (worked example, add a `handover` message type):** (1) extend the CHECK constraint in the schema and the messages-rebuild migration (`server/database.py:134`, `:961`); (2) note it in `MessageCreate`'s comment (`server/models/message.py:12`); (3) add a render branch in the message map (`RelayPanel.tsx:308-434`), unknown types currently fall through to the plain-text renderer; knock-on effects: the DB CHECK rejects the new type on un-migrated databases, so the schema change must ship first; watch out for the migration's canonical column list (`database.py:947-948`) if you also add columns.
 **Gotchas:** No validation that `channel_id` exists beyond the foreign key; a bad id raises from SQLite. It does not emit any socket event, broadcasting is the caller's job, which is why every caller pairs it with `sio.emit("message:new", ...)`.
 
@@ -273,7 +273,7 @@ All routes live under prefix `/api/relay` (`relay_routes.py:18`), mounted in `se
 **Data in/out:** in: `{content: string, message_type?: string}` (`models/message.py:9-13`), plus the `Idempotency-Key` header; out: full `Message`, optionally carrying `room_fit`.
 **Talks to:** `get_channels_for_user`, `send_message`, `sio`, `sage_ambient_observe`, `_run_room_fit`; called by `sendMessage()` (`client.ts:871`), which routes through `offlineMutate` so an offline send is queued and replayed under the same `Idempotency-Key` (`:877-879`).
 **Change guide:** The membership guard costs one `get_channels_for_user` query on the chat hot path; if that ever matters, cache it per request rather than removing it, the wrong-room detector consumes the same list, so dropping the query breaks two features, not one.
-**Gotchas:** The membership hole earlier editions of this chapter flagged is **closed**, the route now refuses channels the sender cannot see, matching its WS twin `new_message` (`ws/realtime.py:665-671`). What remains is that `msg.message_type` is still passed through unvalidated beyond the DB CHECK, so a member of a channel can post `message_type='alert'` with a forged structured payload targeting arbitrary users. See Discrepancies.
+**Gotchas:** The membership hole earlier editions of this chapter flagged is **closed**, the route now refuses channels the sender cannot see, matching its WS twin `new_message` (`ws/realtime.py:823-829`). What remains is that `msg.message_type` is still passed through unvalidated beyond the DB CHECK, so a member of a channel can post `message_type='alert'` with a forged structured payload targeting arbitrary users. See Discrepancies.
 
 ### execute_ambient_action: removed 2026-10-03
 `POST /api/relay/actions/{message_id}/execute` no longer exists (the note at `server/routes/relay_routes.py:997-1002`). It executed legacy `ambient_action` cards (add, stop or replace a medication, discharge, surgery prep) from a message row. No screen had called it since the cards were retired, nothing writes new cards, and clients can no longer post a message of that type, so it was only an unused door onto the chart. Legacy rows stay in the `messages` table and the readers keep skipping them. Confirmed Sage actions reach the chart through the transition endpoint above and `sage_handoff_service` (guide 22), or through `confirm_agentic` below.
@@ -486,7 +486,7 @@ otherwise the space becomes `T` and a `Z` is appended (`:20`).
 **Why it exists:** Both the case-room and department sections need identical cards; keeping it presentational (no fetching, no sorting) makes it reusable and trivially testable.
 **Data in/out:** in: enriched `Channel[]`; out: `onSelectChannel(id)`.
 **Talks to:** parent `RelayPanel` only. Risk data ultimately comes from Vigil's `risk_scores` (guide 07) via `get_channels_for_user`.
-**Change guide:** To surface `last_message` previews, add a line reading `ch.last_message`, the field is already in every `Channel` (`relay_service.py:87`); watch out for alert JSON blobs appearing as raw text if the last message is a structured alert.
+**Change guide:** To surface `last_message` previews, add a line reading `ch.last_message`, the field is already in every `Channel` (`relay_service.py:100`); watch out for alert JSON blobs appearing as raw text if the last message is a structured alert.
 **Gotchas:** `ward`/`bed` are accessed via `(ch as any)` (`:53-55`) even though the `Channel` interface declares them (`client.ts:351-352`), a harmless type-laziness smell.
 
 ### `src/components/relay/RelaySearch.tsx`
@@ -566,11 +566,11 @@ Role grants (`ROLE_PERMISSIONS`, `permissions.py:105`): doctor has all three rel
 
 | Event | Direction | Payload | Emitted / consumed at |
 |---|---|---|---|
-| `join_channel` | client→server | `{channel_id}` | `RelayPanel.tsx:152` (and again on reconnect, `:177`) → authorized `enter_room` (`ws/realtime.py:596-611`) |
-| `leave_channel` | client→server | `{channel_id}` | `RelayPanel.tsx:196` → `ws/realtime.py:615-620` |
-| `typing` | client→server, then server→room | in `{channel_id}`; out `{channel_id, sender_id, sender_name}` | emitted by the composer's `onChange` via `emitTyping` (`RelayPanel.tsx:265-270`, `:728`) → `ws/realtime.py:623`, which re-derives identity from the session and re-emits with `skip_sid` (`:520`) → consumed `RelayPanel.tsx:159-171`, `:181` |
-| `new_message` | client→server | `{channel_id, content, message_type?}` | server-only twin of REST send (`ws/realtime.py:643`), with `relay.send` at `:541` and membership at `:546`; unused by the shipped UI, which posts over REST |
-| `message:new` | server→room | full `Message` dict | relay (`relay_routes.py:482`, room-fit redirect `:780`), WS (`ws/realtime.py:689`), lens (`lens_routes.py:271`), surgery (`surgery_routes.py:398`, also to `user:<id>` `:400`), bots (`bot_service.py:665`, `:807`, `:1030`), nervous-system triggers (`nervous_system_triggers.py:790`), ingestion (`ingestion_service.py:1352`), handoffs (`sage_handoff_service.py:584`, `:626`) → consumed `RelayPanel.tsx:153` |
+| `join_channel` | client→server | `{channel_id}` | `RelayPanel.tsx:152` (and again on reconnect, `:177`) → authorized `enter_room` (`ws/realtime.py:754-769`) |
+| `leave_channel` | client→server | `{channel_id}` | `RelayPanel.tsx:196` → `ws/realtime.py:773-778` |
+| `typing` | client→server, then server→room | in `{channel_id}`; out `{channel_id, sender_id, sender_name}` | emitted by the composer's `onChange` via `emitTyping` (`RelayPanel.tsx:265-270`, `:728`) → `ws/realtime.py:781`, which re-derives identity from the session and re-emits with `skip_sid` (`:628`) → consumed `RelayPanel.tsx:159-171`, `:181` |
+| `new_message` | client→server | `{channel_id, content, message_type?}` | server-only twin of REST send (`ws/realtime.py:801`), with `relay.send` at `:693` and membership at `:698`; unused by the shipped UI, which posts over REST |
+| `message:new` | server→room | full `Message` dict | relay (`relay_routes.py:482`, room-fit redirect `:780`), WS (`ws/realtime.py:847`), lens (`lens_routes.py:272`), surgery (`surgery_routes.py:398`, also to `user:<id>` `:400`), bots (`bot_service.py:665`, `:807`, `:1030`), nervous-system triggers (`nervous_system_triggers.py:790`), ingestion (`ingestion_service.py:1352`), handoffs (`sage_handoff_service.py:584`, `:626`) → consumed `RelayPanel.tsx:153` |
 | `message:update` | server→room | full `Message` dict (mutated `content`) | `relay_routes.py:1135`, `:1220` → consumed `RelayPanel.tsx:154` |
 | `relay:room_fit` / `relay:room_fit_resolved` | server→room | `RoomFitFlag` | wrong-room detection (`relay_routes.py`, `_room_fit_publish:517`) → consumed `RelayPanel.tsx:143-150`, `:155-156` |
 | `sage:action_update` | server→room | `{channel_id}` | `relay_routes.py:385`, `:1737`; also `sage_proactive_routes.py:134` and `sage_ambient_service.py:1952` → consumed by `SageAmbientSidebar` (guide 10) |
@@ -578,12 +578,12 @@ Role grants (`ROLE_PERMISSIONS`, `permissions.py:105`): doctor has all three rel
 
 ### DB tables
 
-Owned reads/writes: `channels` (read; created by Vigil admission `vigil_routes.py:930` and seeds), `messages` (read/write, the core table, `database.py:130-140`). Reads for enrichment/auth: `users`, `patients`, `risk_scores`. Sage surface: `sage_room_memory` (read), `sage_actions` (read/write), `sage_action_events` (write), `sage_handoffs` (read). Action execution writes: `medications`, `clinical_documents`, `audit_logs`.
+Owned reads/writes: `channels` (read; created by Vigil admission `vigil_routes.py:949` and seeds), `messages` (read/write, the core table, `database.py:130-140`). Reads for enrichment/auth: `users`, `patients`, `risk_scores`. Sage surface: `sage_room_memory` (read), `sage_actions` (read/write), `sage_action_events` (write), `sage_handoffs` (read). Action execution writes: `medications`, `clinical_documents`, `audit_logs`.
 
 ### Exported functions others rely on
 
 - `relay_service.send_message`, the universal message writer, imported by lens routes, surgery service, bots, ingestion, and the WS handler (citations in its unit above). Contract: persists and returns the full message dict; **callers must emit `message:new` themselves**.
-- `relay_service.get_channels_for_user`, the visibility oracle, imported by `ws/realtime.py:30` and wrapped in `_user_can_access_channel` (`:668`) for socket-room authorization.
+- `relay_service.get_channels_for_user`, the visibility oracle, imported by `ws/realtime.py:31` and wrapped in `_user_can_access_channel` (`:826`) for socket-room authorization.
 
 ## Rebuild notes
 
@@ -600,14 +600,14 @@ Owned reads/writes: `channels` (read; created by Vigil admission `vigil_routes.p
 
 ## Discrepancies and open questions
 
-1. **Forgeable structured alerts.** `MessageCreate.message_type` is an unconstrained string (`models/message.py:13`), so a client can POST `message_type='alert'` with hand-written `{"is_structured": true, "target_users": [...]}` JSON that `get_user_alerts` will faithfully deliver as an "Action Required" card to the targeted users (`relay_service.py:549`, `:557`). The membership guard on `post_message` narrows this to channels the sender can already see; it does not close it.
+1. **Forgeable structured alerts.** `MessageCreate.message_type` is an unconstrained string (`models/message.py:13`), so a client can POST `message_type='alert'` with hand-written `{"is_structured": true, "target_users": [...]}` JSON that `get_user_alerts` will faithfully deliver as an "Action Required" card to the targeted users (`relay_service.py:609`, `:617`). The membership guard on `post_message` narrows this to channels the sender can already see; it does not close it.
 2. ~~**Legacy execute endpoint is live but unreachable from the UI.**~~ Removed 2026-10-03. `POST /api/relay/actions/{id}/execute` no longer exists; the note at `server/routes/relay_routes.py:997-1002` records why: no screen called it, nothing writes new `ambient_action` cards, and clients can no longer post a message of that type. Legacy rows stay in the `messages` table and the readers keep skipping them.
-3. **Unread counting is substring-based.** The badge subquery uses `read_by NOT LIKE ?` (`relay_service.py:53`) bound to `f'%{user_id}%'` (`:86`), so a user id that is a substring of another (`u1` vs `u12`) is counted as having read. The *other* half of this bug is fixed: `m.sender_id != ?` (`:52`) stops a clinician's own posts counting against them, the defect that put 5,428 unread on the first Relay screen.
+3. **Unread counting is substring-based.** The badge subquery uses `read_by NOT LIKE ?` (`relay_service.py:58`) bound to `f'%{user_id}%'` (`:99`), so a user id that is a substring of another (`u1` vs `u12`) is counted as having read. The *other* half of this bug is fixed: `m.sender_id != ?` (`:57`) stops a clinician's own posts counting against them, the defect that put 5,428 unread on the first Relay screen.
 4. **Escalate notifies nobody.** `resolve_alert` maps any non-`confirm` action to `status='escalated'` (`relay_routes.py:1176`) with no notification or re-targeting, and the UI shows it with a green check reading "✓ Escalated by …" (`RelayPanel.tsx:656`). It is no longer *pure* bookkeeping, the disposition now emits `alert.acknowledged` plus an `outcome.candidate` shadow event (`relay_routes.py:1232-1241`), but that is an evidence trail for ground-truth capture, deliberately not a metric and deliberately not a page to a human.
 5. **Dead code:** `relay_routes.py:7` imports `get_current_user` and `require_role` and uses neither.
 6. **AlertsSection refreshes only when the channel list changes.** It fetches on mount (`AlertsSection.tsx:15-23`) and is remounted via `key={alertsKey}` (`RelayPanel.tsx:490`), whose memo (`:449`) derives from the polled channel list. An alert resolved elsewhere therefore clears within one 30 s channel poll rather than instantly; a socket-driven refetch is still the right fix.
-7. **History is capped at 50 with no pagination UI.** Route default `limit=50` (`relay_routes.py:92`) vs the service's own default of 500 (`relay_service.py:584`); the client never passes `limit`/`offset` (`client.ts:793-795`).
-8. **Performance:** `get_channels_for_user` (`relay_service.py:11`) runs several correlated subqueries per channel and doubles as the authorization guard on nearly every request, including, now, the send path; and `mark_channel_read` issues one UPDATE per unread message (`:706-719`). Both fine for a demo, both hot spots for a rebuild.
+7. **History is capped at 50 with no pagination UI.** Route default `limit=50` (`relay_routes.py:92`) vs the service's own default of 500 (`relay_service.py:644`); the client never passes `limit`/`offset` (`client.ts:793-795`).
+8. **Performance:** `get_channels_for_user` (`relay_service.py:12`) runs several correlated subqueries per channel and doubles as the authorization guard on nearly every request, including, now, the send path; and `mark_channel_read` issues one UPDATE per unread message (`:766-779`). Both fine for a demo, both hot spots for a rebuild.
 
 **Closed since the previous edition of this chapter**, kept here because they were prominent claims and a reader may remember them:
 
@@ -616,5 +616,5 @@ Owned reads/writes: `channels` (read; created by Vigil admission `vigil_routes.p
 - ~~`confirm_agentic_action` has no optimistic lock and doesn't verify the co-signer.~~ It now serialises on a refcounted per-action `asyncio.Lock` (`_confirm_lock`, `relay_routes.py:1251`), writes under a compare-and-swap predicate `WHERE id = ? AND state NOT IN ('confirmed','dismissed')` that raises 409 on a lost race (`:1307-1318`), and requires the co-signer to prove possession of their own PIN, with lockout (`:1482-1528`).
 - ~~A 409 from `confirm_agentic` leaves the Helix order in place.~~ Fixed 2026-10-03. The order used to be committed by `helix_service.create_order` in its own session before the conditional state write, so a confirm that lost to a dismissal, or to a confirm on a second worker, left a `pending` order in the pharmacist's queue with no `agentic_med_confirm` audit row (two orders for one action in the second case). `_persist_confirmation` now claims the action, inserts the order through `helix_service.insert_order` on the same connection and writes the audit row in one transaction (`relay_routes.py:1273`), and the claim bumps `version` so a racing dismissal cannot overwrite it afterwards. Regression tests: `server/tests/test_agentic_confirm_race.py`.
 - ~~No room rejoin on reconnect.~~ A `connect` handler declared inside the channel effect re-emits `join_channel` (`RelayPanel.tsx:176-178`, `:182`).
-- ~~`direct` channel type is declared but unbuilt.~~ DMs exist: `POST /api/relay/channels/direct` (`relay_routes.py:129-130`) → `create_direct_channel` (`relay_service.py:420`), with membership listing and invite routes beside it (`:146`, `:157`). Re-opening an existing conversation returns it rather than forking a second thread.
+- ~~`direct` channel type is declared but unbuilt.~~ DMs exist: `POST /api/relay/channels/direct` (`relay_routes.py:129-130`) → `create_direct_channel` (`relay_service.py:480`), with membership listing and invite routes beside it (`:159`, `:170`). Re-opening an existing conversation returns it rather than forking a second thread.
 - ~~Dead code: `refreshMessages`, unused `querySage` import, `BaseModel` imported twice.~~ All three are gone; `BaseModel` is imported once (`relay_routes.py:10`).

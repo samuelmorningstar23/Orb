@@ -72,9 +72,7 @@ FACILITY_BLIND_SURFACES = (
     "/api/bundles",
     "/api/capacity-sim",
     "/api/chart",
-    "/api/coding",
     "/api/command-center",
-    "/api/consent",
     "/api/dietary",
     "/api/discharge-access",
     "/api/downtime",
@@ -88,7 +86,6 @@ FACILITY_BLIND_SURFACES = (
     "/api/ingest",
     "/api/ipass",
     "/api/lab",
-    "/api/lens",
     "/api/medorders",
     "/api/nabh",
     "/api/nurse",
@@ -105,18 +102,23 @@ FACILITY_BLIND_SURFACES = (
     "/api/sage",
     "/api/schedule",
     "/api/scribe",
-    "/api/search",
     "/api/surgery",
     "/api/vigil",
     "/api/ward-record",
     "/api/workforce",
     "/socket.io",
-    "/uploads",
 )
 
 #: Route prefixes the registry has cleared: swept (each facility's patients
 #: kept apart) or carrying no patient data. Generated like the blind list.
-FACILITY_CLEARED_SURFACES = ("/api/pulse",)
+FACILITY_CLEARED_SURFACES = (
+    "/api/coding",
+    "/api/consent",
+    "/api/lens",
+    "/api/pulse",
+    "/api/search",
+    "/uploads",
+)
 
 #: Of the cleared prefixes, those that carry no patient data at all.
 NO_PATIENT_DATA_SURFACES = ("/api/pulse",)

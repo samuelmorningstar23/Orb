@@ -82,18 +82,21 @@ from services.adt.core import (
     _UNSET,
     TERMINAL_CLEAN_AUTHORISER_ROLES,
     AdtConflict,
+    AdtCrossFacility,
     AdtError,
     AdtNotFound,
     _actor_id,
     _bed_by_label,
     _row,
     _text,
+    audit_facility_refusal,
     audit_on,
     bed_choices_on,
     boarder_words,
     carried_isolation,
     check_event_time,
     confirm_terminal_authoriser,
+    cross_facility_refusal_on,
     current_admission_on,
     current_location,
     locate_admission_on,
@@ -607,33 +610,39 @@ def transfer(
         bed_id=bed_id,
         request_meta=request_meta,
     )
-    with db_session(immediate=True) as db:
-        result = transfer_on(
-            db,
-            actor=actor,
-            to_department=canonical,
-            reason=reason,
-            admission_id=admission_id,
-            patient_id=patient_id,
-            ward_id=ward_id,
-            bed_id=bed_id,
-            ward_text=ward_text,
-            bed_text=bed_text,
-            awaiting_bed=awaiting_bed,
-            keep_location=keep_location,
-            extra_bed=extra_bed,
-            expected_bed_id=expected_bed_id,
-            moved_at=moved_at,
-            out_of_service_reason=out_of_service_reason,
-            boarder_acknowledged=boarder_acknowledged,
-            not_clean_reason=not_clean_reason,
-            terminal_clean_authorised_by=terminal_clean_authorised_by,
-            terminal_clean_reason=terminal_clean_reason,
-            terminal_clean_confirmed=confirmed,
-            notes=notes,
-            idempotency_key=key,
-            request_meta=request_meta,
-        )
+    try:
+        with db_session(immediate=True) as db:
+            result = transfer_on(
+                db,
+                actor=actor,
+                to_department=canonical,
+                reason=reason,
+                admission_id=admission_id,
+                patient_id=patient_id,
+                ward_id=ward_id,
+                bed_id=bed_id,
+                ward_text=ward_text,
+                bed_text=bed_text,
+                awaiting_bed=awaiting_bed,
+                keep_location=keep_location,
+                extra_bed=extra_bed,
+                expected_bed_id=expected_bed_id,
+                moved_at=moved_at,
+                out_of_service_reason=out_of_service_reason,
+                boarder_acknowledged=boarder_acknowledged,
+                not_clean_reason=not_clean_reason,
+                terminal_clean_authorised_by=terminal_clean_authorised_by,
+                terminal_clean_reason=terminal_clean_reason,
+                terminal_clean_confirmed=confirmed,
+                notes=notes,
+                idempotency_key=key,
+                request_meta=request_meta,
+            )
+    except AdtCrossFacility as err:
+        # multisite-8h1: the move rolled back; its refusal is recorded now,
+        # for every lane that transfers through here (the front desk's too).
+        audit_facility_refusal(err, lane="adt_transfer", actor=actor, request_meta=request_meta)
+        raise
     if not result.get("replayed"):
         sync_housekeeping_after_commit()
     return result
@@ -1017,21 +1026,25 @@ def move_choices(user: dict | None) -> dict:
     the same lists the admission form's bed picker reads), who may authorise
     a bed awaiting a terminal clean (the caller when their role allows; the
     others only with a signing PIN set), the back-time window, and the
-    departments a transfer may go to (those with clinical cover, rule C)."""
+    departments a transfer may go to (those with clinical cover, rule C).
+    With more than one facility on record (multisite-8h1) the wards and the
+    departments are the caller's facility's only."""
     import config
 
+    from services import facility_lanes
     from services import frontdesk_service as fd
     from services import housekeeping_service as hk
 
-    # Each opens a session of its own, so both run before the read below.
+    # Each opens a session of its own, so they run before the read below.
     hk.ensure_housekeeping_schema()
-    departments = fd.list_covering_departments()
+    facilities = facility_lanes.scope_of(user or {})
+    departments = fd.list_covering_departments(facilities=facilities)
     me = str((user or {}).get("id") or "")
     service_ids = sorted(SERVICE_ACCOUNT_IDS)
     role_marks = ",".join("?" for _ in TERMINAL_CLEAN_AUTHORISER_ROLES)
     service_marks = ",".join("?" for _ in service_ids)
     with db_session() as db:
-        wards = bed_choices_on(db)
+        wards = bed_choices_on(db, facilities=facilities)
         authorisers = [
             {
                 "id": r["id"],
@@ -1293,7 +1306,7 @@ def _swap_replayed_on(
 
 
 def swap_beds_on(
-    db,
+    db: Any,
     *,
     first_admission_id: str,
     second_admission_id: str,
@@ -1356,6 +1369,12 @@ def swap_beds_on(
         db, bed_id=first["bed_id"], out_of_service_reason=out_of_service_reason
     )
     legs = ((first, to_first, second), (second, to_second, first))
+    for adm, target, _leaving in legs:
+        # multisite-8h1: neither patient moves onto another facility's ward
+        # (an account that sees both facilities could otherwise swap across).
+        crossing = cross_facility_refusal_on(db, admission_id=adm["id"], ward=target.get("ward"))
+        if crossing is not None:
+            raise crossing
     for _adm, target, _leaving in legs:
         if _bed_reserved_on(db, target["bed_id"]):
             raise AdtConflict(

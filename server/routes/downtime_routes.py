@@ -12,7 +12,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
-from permissions import require_patient_access, require_permission
+from permissions import facility_scope, require_patient_access, require_permission
 from services.audit_service import log_audit_event
 from services.downtime_service import (
     capture_all_admitted,
@@ -66,9 +66,13 @@ _CAPTURE_ALL_USER_DEFAULT = Depends(require_permission("admin.overview"))
 
 
 @router.post("/capture-all")
-def capture_all(user: dict = _CAPTURE_ALL_USER_DEFAULT):
-    """Snapshot every admitted patient (pre-downtime drill / scheduled job)."""
-    result = capture_all_admitted(created_by=user.get("id", "auto"))
+def capture_all(user: dict = _CAPTURE_ALL_USER_DEFAULT) -> dict:
+    """Snapshot every admitted patient (pre-downtime drill / scheduled job).
+    With more than one facility on record, only the patients at the caller's
+    facilities (multisite-15); a group-wide account captures every one."""
+    result = capture_all_admitted(
+        created_by=user.get("id", "auto"), facilities=facility_scope(user)
+    )
     log_audit_event(
         correlation_id=f"downtime-capture-all-{uuid.uuid4()}",
         event_category="clinical_access",

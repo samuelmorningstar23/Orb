@@ -11,7 +11,7 @@ Built 2026-08-07.
 | | Column | Set by | Used for |
 |---|---|---|---|
 | **Tablet PIN** | `users.device_pin_hash` | `POST /api/auth/device-pin` (self) · `POST /api/auth/device-pin/{user_id}` (admin) | Signing in to a ward tablet. This chapter. |
-| **Signing PIN** | `users.pin_hash` | `POST /api/admin/users/{user_id}/pin` (`server/routes/admin_users_routes.py:988`) | Co-signing an agentic medication order. Guide 08-relay / guide 14-helix. |
+| **Signing PIN** | `users.pin_hash` | `POST /api/admin/users/{user_id}/pin` (`server/routes/admin_users_routes.py:1001`) | Co-signing an agentic medication order. Guide 08-relay / guide 14-helix. |
 
 They are deliberately separate. If unlocking the tablet used the same secret, anyone who shoulder-surfs an unlock typed thirty times a shift on a shared screen could also countersign a medication order in that nurse's name, two independent controls collapsed into one. Migration 12's docstring says exactly this at `server/migrations.py:743-751`.
 
@@ -532,7 +532,7 @@ This file predates the tablet feature and is used by it only for hashing. Everyt
 
 2. **There is no "set my tablet PIN" screen.** `setOwnDevicePin` exists at `src/api/deviceAuth.ts:80` and no component imports it; `POST /api/auth/device-pin/{user_id}` (admin provisioning) has no caller either. So in practice a nurse cannot get a tablet PIN through the UI at all, the whole feature is currently reachable only through the API.
 
-3. **The audit's mapping of `/api/admin/users/{id}/pin` to this feature is wrong.** That endpoint (`server/routes/admin_users_routes.py:988`) sets `users.pin_hash`, the *signing* PIN for agentic medication orders. It is a different credential with a different threat model. Documented here only so nobody wires it to the tablet.
+3. **The audit's mapping of `/api/admin/users/{id}/pin` to this feature is wrong.** That endpoint (`server/routes/admin_users_routes.py:1001`) sets `users.pin_hash`, the *signing* PIN for agentic medication orders. It is a different credential with a different threat model. Documented here only so nobody wires it to the tablet.
 
 4. **`enrolled_devices.last_seen_at` is only stamped on a *successful* PIN login.** It is written inside `_clear_pin_failures` (`auth_routes.py:265`), which runs on the success path of `pin_login` and nowhere else. So the column tracks "last successful PIN sign-in", not "last contact", a tablet used all day by someone who signs in once shows a timestamp from that morning, and a tablet whose users only ever fail shows nothing at all. `_device_public` reports it at `auth_routes.py:992`.
 

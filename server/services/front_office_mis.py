@@ -166,10 +166,20 @@ def _converted(visit: dict) -> bool:
     return (visit.get("disposition") or "") == "admitted" or bool(visit.get("admission_id"))
 
 
-def _visits_on(db, day: str, department: str | None) -> list[dict]:
+def _visits_on(
+    db: Any, day: str, department: str | None, facilities: frozenset[int] | None = None
+) -> list[dict]:
+    """The day's visits of the caller's clinic; `facilities` (multisite-9a)
+    keeps the visits whose own facility is one of them (None changes
+    nothing)."""
+    from services.facility_documents import facility_clause
+
     if not _table_exists(db, "opd_visits"):
         return []
     have = _columns(db, "opd_visits")
+    if facilities is not None and "facility_id" not in have:
+        return []
+    facility_sql, facility_params = facility_clause("facility_id", facilities)
     wanted = [
         "id",
         "patient_id",
@@ -190,6 +200,8 @@ def _visits_on(db, day: str, department: str | None) -> list[dict]:
     if department is not None:
         sql += " AND department = ?"
         params.append(department)
+    sql += facility_sql
+    params.extend(facility_params)
     sql += " ORDER BY department, COALESCE(doctor_name, ''), id"
     return [dict(r) for r in db.execute(sql, params).fetchall()]
 
@@ -224,11 +236,14 @@ def _registration_split(db, day: date, patient_ids: list[str]) -> dict:
     return {"new": new, "returning": returning, "not_known": unknown, "patients": len(patient_ids)}
 
 
-def _no_shows(db, day: date, department: str | None) -> dict:
+def _no_shows(
+    db: Any, day: date, department: str | None, facilities: frozenset[int] | None = None
+) -> dict:
     """Appointments of the day nobody checked in: recorded by the desk, or
     computed on read once their clinic session ended (the Appointments day
     view's rule, appointments_routes._effective_status). Available once the
-    appointments table has the slot shape (migration 68)."""
+    appointments table has the slot shape (migration 68). `facilities`
+    (multisite-9a) keeps the bookings whose own facility is one of them."""
     empty = {"available": False, "recorded": 0, "computed": 0, "total": 0}
     if not _table_exists(db, "appointments"):
         return empty
@@ -237,10 +252,17 @@ def _no_shows(db, day: date, department: str | None) -> dict:
         return empty
     from routes.appointments_routes import _effective_status
 
+    from services.facility_documents import facility_clause
     from services.hospital_time import hospital_now
 
-    sql = "SELECT * FROM appointments WHERE scheduled_date = ? AND status IN ('booked', 'no_show')"
-    params: list[Any] = [day.isoformat()]
+    if facilities is not None and "facility_id" not in cols:
+        return empty
+    facility_sql, facility_params = facility_clause("facility_id", facilities)
+    sql = (
+        "SELECT * FROM appointments WHERE scheduled_date = ? AND status IN ('booked', 'no_show')"
+        + facility_sql
+    )
+    params: list[Any] = [day.isoformat(), *facility_params]
     rows = db.execute(sql, params).fetchall()
     if department is not None:
         clinic = department.strip().casefold()
@@ -268,17 +290,24 @@ def _no_shows(db, day: date, department: str | None) -> dict:
     }
 
 
-def daily_summary(day: str | None = None, *, department: str | None = None) -> dict:
+def daily_summary(
+    day: str | None = None,
+    *,
+    department: str | None = None,
+    facilities: frozenset[int] | None = None,
+) -> dict:
     """The day summary for `day` (hospital-local, today when None) and the
     caller's clinic. `department` is permissions.department_scope(user): None
-    reads every clinic, never a value the request named."""
+    reads every clinic, never a value the request named. `facilities` is
+    permissions.facility_scope(user) (multisite-9a): a set counts only the
+    visits and bookings of those facilities; None changes nothing."""
     when = resolve_day(day)
     key = when.isoformat()
     with db_session() as db:
-        visits = _visits_on(db, key, department)
+        visits = _visits_on(db, key, department, facilities)
         patient_ids = sorted({str(v["patient_id"]) for v in visits if v.get("patient_id")})
         registrations = _registration_split(db, when, patient_ids)
-        no_shows = _no_shows(db, when, department)
+        no_shows = _no_shows(db, when, department, facilities)
 
     by_type = {code: 0 for code, _ in VISIT_TYPES}
     for v in visits:

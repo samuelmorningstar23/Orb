@@ -75,6 +75,7 @@ from permissions import (
     REGISTRATION_WRITE,
     department_scope,
     enforce_patient_scope,
+    facility_scope,
     has_permission,
     log_phi_read,
     patient_in_scope,
@@ -91,6 +92,7 @@ from services.appointment_types import (
 )
 from services.audit_service import AuditWriteError, log_audit_event
 from services.clinical_time import utc_iso_now
+from services.facility_filter import in_scope
 
 from routes.opt_in_gates import require_opd_feature
 from services import hospital_time
@@ -457,7 +459,9 @@ def _has_admission(db, patient_id: str, *, active_only: bool) -> bool:
     return db.execute(sql + " LIMIT 1", (patient_id,)).fetchone() is not None
 
 
-def _appointment_visible(db, row, dept: str | None) -> bool:
+def _appointment_visible(
+    db: Any, row: Any, dept: str | None, facilities: frozenset[int] | None = None
+) -> bool:
     """May a caller scoped to `dept` (permissions.department_scope) see and act
     on this appointment? The rule the Appointments list reads by
     (services.forecast_service.get_appointments):
@@ -467,7 +471,14 @@ def _appointment_visible(db, row, dept: str | None) -> bool:
         patient: no admission at all, or, in OPD mode, no ACTIVE admission
         (frontdesk_service.opd_registration_allowed draws the same line).
     Cancel and complete went by none of this before opd-16: a ward doctor
-    could cancel another ward's patient's appointment by its id."""
+    could cancel another ward's patient's appointment by its id.
+
+    `facilities` is permissions.facility_scope(user) (multisite-8): with more
+    than one facility on record a booking is seen only at its own facility
+    (appointments.facility_id, migration 74; the document's facility under
+    ruling MS-R5 (a)), before the department rule. None changes nothing."""
+    if facilities is not None and not in_scope(_row_get(row, "facility_id"), facilities):
+        return False
     if dept is None:
         return True
     patient_id = row["patient_id"]
@@ -479,11 +490,14 @@ def _appointment_visible(db, row, dept: str | None) -> bool:
     return not _has_admission(db, patient_id, active_only=_opd_mode())
 
 
-def _appointment_or_404(db, appointment_id: str, dept: str | None):
+def _appointment_or_404(
+    db: Any, appointment_id: str, dept: str | None, facilities: frozenset[int] | None = None
+) -> Any:
     """The row, or 404 for no such appointment AND for one outside the
-    caller's scope (404, never 403: an id confirms a booking exists)."""
+    caller's scope (404, never 403: an id confirms a booking exists).
+    `facilities` as in _appointment_visible (multisite-8)."""
     row = db.execute("SELECT * FROM appointments WHERE id = ?", (appointment_id,)).fetchone()
-    if row is None or not _appointment_visible(db, row, dept):
+    if row is None or not _appointment_visible(db, row, dept, facilities):
         raise HTTPException(status_code=404, detail="Appointment not found")
     return row
 
@@ -1269,7 +1283,7 @@ def appointments_day(
     date_: str | None = _APPOINTMENTS_DAY_DATE_DEFAULT,
     doctor_id: str | None = _APPOINTMENTS_DAY_DOCTOR_ID_DEFAULT,
     user: dict = _APPOINTMENTS_DAY_USER_DEFAULT,
-):
+) -> dict:
     """One hospital day of appointments for the caller's clinic, with each
     clinic session's slots and how many are taken.
 
@@ -1278,10 +1292,12 @@ def appointments_day(
     scope by the list rule (_appointment_visible). A booking still open after
     its session ended reads effective_status 'no_show' (computed, not
     written). Audited as a PHI read with the appointment ids when anything is
-    listed."""
+    listed. With more than one facility on record only bookings at the
+    caller's facilities are listed (multisite-8)."""
     from services import clinic_schedule_service as schedule
 
     dept = department_scope(user)
+    facilities = facility_scope(user)
     now = hospital_time.hospital_now()
     try:
         day = date.fromisoformat(date_) if date_ else now.date()
@@ -1296,7 +1312,11 @@ def appointments_day(
     sql += " ORDER BY scheduled_time, COALESCE(doctor_id, ''), slot_position, created_at, id"
     cache: dict = {}
     with db_session() as db:
-        rows = [r for r in db.execute(sql, params).fetchall() if _appointment_visible(db, r, dept)]
+        rows = [
+            r
+            for r in db.execute(sql, params).fetchall()
+            if _appointment_visible(db, r, dept, facilities)
+        ]
         listed = _staff_view(db, rows)
         for data, row in zip(listed, rows, strict=False):
             data["effective_status"], data["no_show_computed"] = _effective_status(
@@ -1435,7 +1455,7 @@ def cancel_appointment(
     request: Request,
     reason: str | None = _CANCEL_APPOINTMENT_REASON_DEFAULT,
     user: dict = _CANCEL_APPOINTMENT_USER_DEFAULT,
-):
+) -> dict:
     """Cancel an appointment (soft: status -> 'cancelled', row is kept).
 
     Permitted for the booking patient (their own appointment) or any clinician
@@ -1448,6 +1468,7 @@ def cancel_appointment(
     role = user.get("role", "")
     own_patient_id = _resolve_own_patient_id(user["id"]) if role == "patient" else None
     dept = department_scope(user)
+    facilities = facility_scope(user)
     note = (reason or "").strip()[:_MAX_CANCEL_REASON_LEN] or None
 
     with db_session(immediate=True) as db:
@@ -1469,7 +1490,7 @@ def cancel_appointment(
                     "message": "Not permitted to cancel appointments",
                 },
             )
-        elif not _appointment_visible(db, row, dept):
+        elif not _appointment_visible(db, row, dept, facilities):
             raise HTTPException(status_code=404, detail="Appointment not found")
 
         if row["status"] == "cancelled":
@@ -1536,7 +1557,7 @@ def complete_appointment(
     appointment_id: str,
     request: Request,
     user: dict = _COMPLETE_APPOINTMENT_USER_DEFAULT,
-):
+) -> dict:
     """Mark an appointment as attended (status -> 'completed'). Clinician-only.
 
     The schema has always allowed 'completed' but nothing could ever set it, so
@@ -1550,9 +1571,10 @@ def complete_appointment(
     ward. A no-show cannot be marked attended (book again or reschedule).
     """
     dept = department_scope(user)
+    facilities = facility_scope(user)
     with db_session(immediate=True) as db:
         row = db.execute("SELECT * FROM appointments WHERE id = ?", (appointment_id,)).fetchone()
-        if not row or not _appointment_visible(db, row, dept):
+        if not row or not _appointment_visible(db, row, dept, facilities):
             raise HTTPException(status_code=404, detail="Appointment not found")
         if row["status"] == "completed":
             return _serialize(row)
@@ -1643,7 +1665,7 @@ def check_in_appointment(
     request: Request,
     data: CheckInRequest | None = None,
     user: dict = _CHECK_IN_APPOINTMENT_USER_DEFAULT,
-):
+) -> dict:
     """The patient has arrived: open their OPD visit with a token.
 
     Exactly the front desk's visit registration (POST /api/frontdesk/opd/
@@ -1667,8 +1689,9 @@ def check_in_appointment(
 
     body = data or CheckInRequest()
     dept = department_scope(user)
+    facilities = facility_scope(user)
     with db_session() as db:
-        row = _appointment_or_404(db, appointment_id, dept)
+        row = _appointment_or_404(db, appointment_id, dept, facilities)
     status = row["status"]
     if status not in ("booked", "checked_in"):
         raise _not_open(status)
@@ -1795,15 +1818,16 @@ def mark_no_show(
     appointment_id: str,
     request: Request,
     user: dict = _MARK_NO_SHOW_USER_DEFAULT,
-):
+) -> dict:
     """The patient did not come: marked by the desk once the appointment time
     has started (409 not_yet_due before it). Only an open booking; a repeat
     answers the row unchanged. The caller's scope, as every route here."""
     _require_booking_staff(request, user)
     dept = department_scope(user)
+    facilities = facility_scope(user)
     now = hospital_time.hospital_now()
     with db_session(immediate=True) as db:
-        row = _appointment_or_404(db, appointment_id, dept)
+        row = _appointment_or_404(db, appointment_id, dept, facilities)
         if row["status"] == "no_show":
             return _staff_view(db, [row])[0]
         if row["status"] != "booked":
@@ -1885,13 +1909,14 @@ def reschedule_appointment(
     the caller's scope and clinic, all in one transaction."""
     _require_booking_staff(request, user)
     dept = department_scope(user)
+    facilities = facility_scope(user)
     scheduled_date = data.scheduled_date.strip()
     scheduled_time = data.scheduled_time.strip()
     note = (data.reason or "").strip()[:_MAX_CANCEL_REASON_LEN] or None
     idem = idempotency_key.strip() if idempotency_key else None
 
     with db_session() as db:
-        old = _appointment_or_404(db, appointment_id, dept)
+        old = _appointment_or_404(db, appointment_id, dept, facilities)
         # A retry of a move that already happened answers that move, before
         # anything about the old row's state (now cancelled) is checked.
         replay = _reschedule_replay(db, idem, appointment_id, old)
@@ -1913,7 +1938,7 @@ def reschedule_appointment(
         raise _conflict("department_scope", f"You can only book appointments in {dept}", status=403)
 
     with db_session(immediate=True) as db:
-        old = _appointment_or_404(db, appointment_id, dept)
+        old = _appointment_or_404(db, appointment_id, dept, facilities)
         replay = _reschedule_replay(db, idem, appointment_id, old)
         if replay is not None:
             return replay

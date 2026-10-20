@@ -120,6 +120,7 @@ import threading
 import uuid
 import zlib
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from database import db_session
 
@@ -663,7 +664,22 @@ def _record_turn_inner(
         return _write(conn, ns)
 
 
-def _write(db, ns: dict) -> str:
+def _facility_bound(user: dict) -> bool:
+    """Is the asking account held to some facilities (multisite-10)? Its turn
+    is then not hospital-wide even with no department. False with one facility
+    on record and for a turn with no signed-in account. A scope that cannot be
+    read counts as bound, so no turn is labelled hospital-wide by a guess."""
+    if not (user or {}).get("id"):
+        return False
+    try:
+        from permissions import facility_scope
+
+        return facility_scope(user) is not None
+    except Exception:
+        return True
+
+
+def _write(db: Any, ns: dict) -> str:
     """The transactional body."""
     ensure_schema(db)
 
@@ -759,7 +775,7 @@ def _write(db, ns: dict) -> str:
             (ns["user"] or {}).get("id"),
             (ns["user"] or {}).get("role"),
             ns["dept"],
-            1 if ns["dept"] is None else 0,
+            1 if ns["dept"] is None and not _facility_bound(ns["user"]) else 0,
             ns["patient_id"],
             1 if ns["patient_context"] is not None else 0,
             ns["query_scope"],

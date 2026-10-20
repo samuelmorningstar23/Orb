@@ -1182,6 +1182,7 @@ import os as _os
 
 from config import UPLOAD_DIR
 from fastapi import HTTPException
+from fastapi.responses import Response
 
 if not UPLOAD_DIR.exists():
     UPLOAD_DIR.mkdir(parents=True)
@@ -1211,11 +1212,29 @@ def _resolve_media_patient(filename: str):
     return None, None
 
 
+def _media_author(filename: str, kind: str) -> str | None:
+    """Who made the media record a filename belongs to (the Lens read's or the
+    Scribe note's author), for an unfiled record that has no patient yet."""
+    from database import db_session
+
+    like = f"%{_os.path.basename(filename)}"
+    with db_session() as db:
+        if kind == "lens":
+            row = db.execute(
+                "SELECT author_id FROM lens_analyses WHERE image_path LIKE ? LIMIT 1", (like,)
+            ).fetchone()
+        else:
+            row = db.execute(
+                "SELECT author_id FROM scribe_notes WHERE audio_path LIKE ? LIMIT 1", (like,)
+            ).fetchone()
+    return row["author_id"] if row else None
+
+
 _SERVE_UPLOAD_USER_DEFAULT = Depends(get_current_user)
 
 
 @app.get("/uploads/{filename:path}")
-def serve_upload(filename: str, user: dict = _SERVE_UPLOAD_USER_DEFAULT):
+def serve_upload(filename: str, user: dict = _SERVE_UPLOAD_USER_DEFAULT) -> Response:
     """Authenticated, patient-scoped, audited access to uploaded PHI media.
 
     Requires a valid staff JWT, refuses path traversal, and now:
@@ -1268,12 +1287,22 @@ def serve_upload(filename: str, user: dict = _SERVE_UPLOAD_USER_DEFAULT):
     # received. The refusal is re-worded to this route's uniform "Not found" so
     # an out-of-scope caller cannot even learn that the filename maps to a
     # registered clinical record.
-    from permissions import enforce_patient_scope
+    from permissions import enforce_patient_scope, facility_scope
 
     try:
         enforce_patient_scope(user, patient_id)
     except HTTPException:
         raise HTTPException(status_code=404, detail="Not found") from None
+    # Facility scope (multisite-8, W12-A). enforce_patient_scope checks a filed
+    # record's patient facility first. An UNFILED record (a Lens read or a
+    # Scribe draft not yet filed to a patient) has no patient and so no
+    # facility: with more than one facility on record an account with a
+    # facility limit is served one only when it made it, the rule the Lens list
+    # and the Scribe note reader apply to unfiled rows. With one facility
+    # facility_scope is None and nothing changes.
+    if patient_id is None and facility_scope(user) is not None:
+        if _media_author(filename, kind or "") != user.get("id"):
+            raise HTTPException(status_code=404, detail="Not found")
 
     # Audit the PHI media access (resolved to the owning patient). phi_access is
     # a FAIL-CLOSED audit category: if the access cannot be durably recorded we
@@ -1305,7 +1334,6 @@ def serve_upload(filename: str, user: dict = _SERVE_UPLOAD_USER_DEFAULT):
     # PHI media is encrypted at rest (crypto_service); decrypt transparently for
     # the authorized caller. read_decrypted passes plaintext files through
     # unchanged, so this is safe for legacy (pre-encryption) uploads too.
-    from fastapi.responses import Response
     from services.crypto_service import read_decrypted
 
     try:

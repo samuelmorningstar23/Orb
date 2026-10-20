@@ -74,13 +74,15 @@ CONVENTIONS
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
 import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import config
@@ -599,7 +601,7 @@ def _refuse_cross_facility_transfer(patient_id: str, department: str, actor_id: 
     raise CrossFacilityMoveRefused(CROSS_FACILITY_TRANSFER_WORDS)
 
 
-def list_transfer_destinations() -> list[dict]:
+def list_transfer_destinations(*, facilities: frozenset[int] | None = None) -> list[dict]:
     """Where a patient may be transferred TO, with the wards/beds in use there.
 
     The department list is the covering list (above) — it is the set of legal
@@ -608,17 +610,25 @@ def list_transfer_destinations() -> list[dict]:
     it is free text and is NOT validated on transfer (a genuinely new bay in a
     covered department is legitimate). The DEPARTMENT is what is validated,
     because the department is what carries the access boundary.
+
+    `facilities` is the caller's permissions.facility_scope (multisite-9a): a
+    set keeps the departments those facilities own and counts only their
+    admissions; None (one facility on record) changes nothing.
     """
+    from services.facility_documents import facility_clause
+
     ensure_frontdesk_schema()
-    departments = list_covering_departments()
+    departments = list_covering_departments(facilities=facilities)
     if not departments:
         return []
+    facility_sql, facility_params = facility_clause("a.facility_id", facilities)
     with db_session() as db:
         rows = db.execute(
-            """SELECT a.department AS department, a.ward AS ward, COUNT(*) AS occupied
+            f"""SELECT a.department AS department, a.ward AS ward, COUNT(*) AS occupied
                  FROM admissions a
-                WHERE a.status = 'active' AND a.ward IS NOT NULL AND TRIM(a.ward) != ''
+                WHERE a.status = 'active' AND a.ward IS NOT NULL AND TRIM(a.ward) != ''{facility_sql}
                 GROUP BY a.department, a.ward""",
+            facility_params,
         ).fetchall()
         staff = db.execute(
             f"""SELECT TRIM(department) AS department, COUNT(*) AS staff_count
@@ -654,7 +664,9 @@ def list_transfer_destinations() -> list[dict]:
 _CONSULTING_ROLES = ("doctor", "clinician")
 
 
-def list_consulting_doctors(department: str | None = None) -> list[dict]:
+def list_consulting_doctors(
+    department: str | None = None, *, facilities: frozenset[int] | None = None
+) -> list[dict]:
     """The doctors a front desk may book an OPD visit with.
 
     WHY THIS EXISTS. The panel used to derive its doctor list from
@@ -673,8 +685,22 @@ def list_consulting_doctors(department: str | None = None) -> list[dict]:
     Inactive accounts are excluded — a doctor who has left must not be bookable
     — and so are accounts with no department, matching the convention in
     `list_covering_departments`.
+
+    `facilities` is the caller's permissions.facility_scope (multisite-9a): a
+    set keeps the doctors of the clinics those facilities own (the departments
+    master), so a satellite desk is never offered the main hospital's roster.
+    None (one facility on record) changes nothing.
     """
     ensure_frontdesk_schema()
+    if facilities is not None:
+        clinics = {
+            name.strip().casefold() for name in list_covering_departments(facilities=facilities)
+        }
+        return [
+            d
+            for d in list_consulting_doctors(department)
+            if (d["department"] or "").strip().casefold() in clinics
+        ]
     marks = ",".join("?" for _ in _CONSULTING_ROLES)
     sql = f"""SELECT id, name, TRIM(department) AS department
                 FROM users
@@ -835,7 +861,7 @@ def _next_token(db, *, visit_date: str, department: str, doctor_id: str | None) 
 
 
 def _raise_consultation_charge(
-    db,
+    db: Any,
     *,
     visit_id: str,
     patient_id: str,
@@ -846,6 +872,7 @@ def _raise_consultation_charge(
     service_day: str,
     charged_at: str,
     interstate: bool = False,
+    facility_id: int | None = None,
 ) -> ConsultationCharge:
     """Write the consultation charge line into the billing spine's table.
 
@@ -880,6 +907,9 @@ def _raise_consultation_charge(
     visit's idempotency key: whichever runs first raises the line and the
     other finds it. A line found already raised is answered as STORED (its
     code, description and amount), never re-priced.
+
+    `facility_id` is the visit's own facility (multisite-9a): the line is
+    stamped there, so the facility's counter finds it.
     """
     from services.opd_charges_service import raise_op_line_on
 
@@ -897,6 +927,7 @@ def _raise_consultation_charge(
         description_fallback=f"{department} consultation",
         unpriced_note="Rate not configured at time of consultation",
         interstate=interstate,
+        facility_id=facility_id,
     )
     return ConsultationCharge(
         charge_id=line.charge_id,
@@ -1188,6 +1219,7 @@ def list_opd_queue(
     visit_date: str | None = None,
     doctor_id: str | None = None,
     statuses: tuple[str, ...] | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """The queue, grouped by consulting doctor, ordered by token.
 
@@ -1195,7 +1227,14 @@ def list_opd_queue(
     `permissions.department_scope` — None means an unscoped governance account
     and returns every clinic. It is never a department the request named; the
     route enforces that.
+
+    `facilities` is the caller's permissions.facility_scope (multisite-9a): a
+    queue is document-keyed, so a set keeps the visits whose own facility
+    (migration 74) is one of them. None (one facility on record) changes
+    nothing.
     """
+    from services.facility_documents import facility_condition
+
     ensure_frontdesk_schema()
     day = _hospital_day(visit_date)
     wanted = tuple(statuses or ("waiting", "in_consultation"))
@@ -1213,6 +1252,10 @@ def list_opd_queue(
         params.append(doctor_id)
     clauses.append(f"v.status IN ({','.join('?' for _ in wanted)})")
     params.extend(wanted)
+    facility_sql, facility_params = facility_condition("v.facility_id", facilities)
+    if facility_sql is not None:
+        clauses.append(facility_sql)
+        params.extend(facility_params)
 
     now = datetime.now(UTC)
     with db_session() as db:
@@ -1307,6 +1350,17 @@ def get_opd_visit(visit_id: str) -> dict | None:
         if row is None:
             return None
         return _serialize_visit(db, row)
+
+
+def opd_visit_facility_id(visit_id: str) -> int | None:
+    """The facility one outpatient visit belongs to (migration 74), or None
+    when no visit has that id. The front desk routes check it against the
+    caller's facility scope before showing or changing the visit
+    (multisite-9a); the visit API itself leaves the column out."""
+    ensure_frontdesk_schema()
+    with db_session() as db:
+        row = db.execute("SELECT facility_id FROM opd_visits WHERE id = ?", (visit_id,)).fetchone()
+    return None if row is None or row[0] is None else int(row[0])
 
 
 def start_opd_consultation(
@@ -1452,6 +1506,7 @@ def complete_opd_visit(
                 charged_by=completed_by,
                 service_day=_hospital_day(now),
                 charged_at=now,
+                facility_id=row["facility_id"],
             )
             charge_facts = choice.as_facts()
             if charge.service_code != choice.service_code:
@@ -1475,6 +1530,7 @@ def complete_opd_visit(
                 # The bill's DATE is the ward's day; the posting TIME is UTC.
                 service_day=_hospital_day(now),
                 charged_at=now,
+                facility_id=row["facility_id"],
             )
             db.execute(
                 "UPDATE opd_visits SET consultation_charge_id = ? WHERE id = ?",
@@ -1811,3 +1867,411 @@ def list_patient_movements(patient_id: str, *, limit: int = 50) -> list[dict]:
             (patient_id, limit),
         ).fetchall()
     return [_movement_api_dict(r) for r in rows]
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Group identity match at registration (multisite-17, W12-E)
+# ═════════════════════════════════════════════════════════════════════════════
+# A satellite desk sees only its own facility's patients, so a patient whose
+# record sits at another facility of the group would be registered a second
+# time, and their allergy list split in two (ruling MS-R11 (a): one group
+# record per person). This lane finds that patient across the whole group by
+# four things the patient states (name, age or date of birth, sex and phone)
+# and answers who they are and nothing clinical: the record id, name, age,
+# sex, group record number (UHID) and the code of the facility the record was
+# registered at.
+#
+# Built strict (multisite-17; match quality, merge and encounter attribution
+# belong to the OPD/MPI epic):
+#   * all four must match: the phone's ten digits exactly, the sex exactly,
+#     every word of the name the patient says is a word of the record's name
+#     (patient_matching.stated_name_matches, the identity check's own rule),
+#     and the date of birth exactly, or the age within AGE_CLOSE_YEARS;
+#   * every search is audited phi_access (fail-closed, inside the search's own
+#     transaction) with the desk's reason and the ids it showed, a search that
+#     finds nobody included; nothing is answered if the row cannot be written;
+#   * GROUP_MATCH_LIMIT searches per account per GROUP_MATCH_WINDOW, counted
+#     from those rows, so a restart does not reset the count;
+#   * each match carries a ticket bound to the searching account and that one
+#     patient for GROUP_MATCH_TICKET_SECONDS. Registering a visit with it is
+#     the one way a desk registers a patient whose latest encounter is at
+#     another facility; the visit then brings the chart into this facility's
+#     scope (ruling MS-R5 (a)), and that is audited clinical_access in the
+#     visit's own transaction.
+# The lane is offered only with ORB_MULTI_SITE on and more than one facility
+# on record (the route's gates); with one facility every patient is already
+# in the desk's own list.
+
+GROUP_MATCH_ACTION = "group_identity_match_searched"
+GROUP_MATCH_LIMITED_ACTION = "group_identity_match_rate_limited"
+GROUP_MATCH_VISIT_ACTION = "group_match_visit_registered"
+GROUP_MATCH_LIMIT = 20
+GROUP_MATCH_WINDOW = timedelta(hours=1)
+GROUP_MATCH_MAX_RESULTS = 10
+GROUP_MATCH_SCAN_CAP = 500
+GROUP_MATCH_TICKET_SECONDS = 15 * 60
+GROUP_MATCH_REASON_MIN = 8
+GROUP_MATCH_REASON_MAX = 500
+GROUP_MATCH_AGE_MAX = 130
+
+#: The refusal for a matched patient who is admitted at another facility now.
+GROUP_MATCH_INPATIENT_WORDS = (
+    "This patient is admitted at another facility of the group right now, so a visit "
+    "cannot be registered here. Nothing was saved. Ask that facility to discharge or "
+    "transfer them first."
+)
+
+
+class GroupMatchError(FrontDeskError):
+    """A group identity search that cannot run: missing or unusable facts (422),
+    no reason (422), or too many searches (429). `detail()` is the route's
+    answer; it never carries a stated or stored value."""
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        status: int = 422,
+        fields: list[str] | None = None,
+        retry_after_seconds: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status = status
+        self.fields = list(fields or [])
+        self.retry_after_seconds = retry_after_seconds
+
+    def detail(self) -> dict:
+        out: dict[str, Any] = {"error": self.code, "message": self.message}
+        if self.fields:
+            out["fields"] = self.fields
+        if self.retry_after_seconds is not None:
+            out["retry_after_seconds"] = self.retry_after_seconds
+        return out
+
+
+def _ticket_key() -> bytes:
+    """The ticket key, derived from the session secret for this one purpose
+    (never the session secret itself)."""
+    secret = str(getattr(config, "JWT_SECRET", "") or "").encode("utf-8")
+    return hmac.new(secret, b"orb-group-identity-match-ticket-v1", hashlib.sha256).digest()
+
+
+def _ticket_mac(user_id: str, patient_id: str, expires: int) -> str:
+    message = f"{user_id}|{patient_id}|{expires}".encode()
+    return hmac.new(_ticket_key(), message, hashlib.sha256).hexdigest()
+
+
+def group_match_ticket(user_id: str, patient_id: str, *, now: float | None = None) -> str:
+    """A ticket for registering a visit for `patient_id`, valid for
+    GROUP_MATCH_TICKET_SECONDS and only for the account `user_id`."""
+    import time
+
+    expires = int((time.time() if now is None else now) + GROUP_MATCH_TICKET_SECONDS)
+    return f"{expires}.{_ticket_mac(str(user_id), str(patient_id), expires)}"
+
+
+def group_match_ticket_valid(
+    ticket: str | None, *, user_id: str | None, patient_id: str | None, now: float | None = None
+) -> bool:
+    """Was this ticket issued by a group search of THIS account for THIS
+    patient, and is it still in date? Never raises."""
+    import time
+
+    if not ticket or not user_id or not patient_id:
+        return False
+    try:
+        expires_text, mac = str(ticket).split(".", 1)
+        expires = int(expires_text)
+    except (TypeError, ValueError):
+        return False
+    current = time.time() if now is None else now
+    if expires < current or expires > current + GROUP_MATCH_TICKET_SECONDS + 5:
+        return False
+    return hmac.compare_digest(_ticket_mac(str(user_id), str(patient_id), expires), mac)
+
+
+def _stated_group_facts(stated: dict) -> dict:
+    """The four stated facts in their compared form, or GroupMatchError
+    naming every field that is missing or unusable (never echoing a value)."""
+    from services import patient_matching as pm
+
+    missing: list[str] = []
+    name = str(stated.get("name") or "").strip()
+    if not pm.name_key(name) or len(name) < 2:
+        missing.append("name")
+    sex = pm.sex_key(stated.get("sex"))
+    if sex is None:
+        missing.append("sex")
+    phone = pm.phone_key(stated.get("phone"))
+    if phone is None:
+        missing.append("phone")
+    dob = None
+    raw_dob = stated.get("date_of_birth")
+    if raw_dob not in (None, ""):
+        dob = pm.dob_key(raw_dob)
+        if dob is None:
+            missing.append("date_of_birth")
+    age = None
+    raw_age = stated.get("age_years")
+    if raw_age not in (None, ""):
+        try:
+            age = int(raw_age)
+        except (TypeError, ValueError):
+            age = None
+        if age is None or isinstance(raw_age, bool) or not 0 <= age <= GROUP_MATCH_AGE_MAX:
+            missing.append("age_years")
+            age = None
+    if dob is None and age is None and not {"date_of_birth", "age_years"} & set(missing):
+        missing.append("age_or_date_of_birth")
+    if missing:
+        raise GroupMatchError(
+            "group_match_incomplete",
+            "Ask the patient for their full name, their age or date of birth, their sex and "
+            "their own 10-digit phone number. All four are needed to search the group.",
+            fields=missing,
+        )
+    return {"name": name, "sex": sex, "phone": phone, "dob": dob, "age": age}
+
+
+def _clean_reason(reason: str | None) -> str:
+    text = " ".join(str(reason or "").split())
+    if len(text) < GROUP_MATCH_REASON_MIN:
+        raise GroupMatchError(
+            "reason_required",
+            "Say why you are searching the whole group, for example "
+            "'Patient says they were treated at the main hospital'.",
+            fields=["reason"],
+        )
+    return text[:GROUP_MATCH_REASON_MAX]
+
+
+def group_match_searches_since(db: Any, user_id: str | None, since: str) -> int:
+    """How many group searches this account has made since `since` (a UTC ISO
+    instant), counted from the audit trail. Names no patient."""
+    return int(
+        db.execute(
+            "SELECT COUNT(*) FROM audit_logs WHERE actor_user_id = ? AND action_type = ? "
+            "AND timestamp >= ?",
+            (user_id, GROUP_MATCH_ACTION, since),
+        ).fetchone()[0]
+    )
+
+
+def _age_fits(facts: dict, row: Any, today: date) -> bool:
+    """The stated date of birth or age against the record's."""
+    from services import patient_matching as pm
+
+    stored_dob = pm.dob_key(row["date_of_birth"])
+    if facts["dob"] is not None and stored_dob is not None:
+        return bool(facts["dob"] == stored_dob)
+    stated_age = facts["age"]
+    if stated_age is None:
+        born = date.fromisoformat(facts["dob"])
+        stated_age = pm.full_years(born, today)
+    stored_age, _stated = pm.current_age(
+        date_of_birth=row["date_of_birth"],
+        stated_age=row["age"],
+        age_recorded_on=None,
+        created_at=row["created_at"],
+        today=today,
+    )
+    return stored_age is not None and abs(stored_age - stated_age) <= pm.AGE_CLOSE_YEARS
+
+
+def find_group_matches_on(db: Any, facts: dict, *, today: date | None = None) -> tuple:
+    """(matches, truncated) for the stated facts, across every facility. Each
+    match is {id, name, age, sex, group_mrn, registered_facility_id}; nothing
+    clinical is read. Candidates are found by the phone's last four digits
+    and checked here on all four facts."""
+    from services import patient_matching as pm
+
+    today = today or hospital_today()
+    rows = db.execute(
+        "SELECT id, name, mrn, age, date_of_birth, sex, phone, created_at, "
+        "registered_facility_id FROM patients WHERE phone LIKE ? ORDER BY id LIMIT ?",
+        (f"%{facts['phone'][-4:]}", GROUP_MATCH_SCAN_CAP),
+    ).fetchall()
+    scanned_all = len(rows) < GROUP_MATCH_SCAN_CAP
+    matches = []
+    for row in rows:
+        if pm.phone_key(row["phone"]) != facts["phone"]:
+            continue
+        if pm.sex_key(row["sex"]) != facts["sex"]:
+            continue
+        if not pm.stated_name_matches(facts["name"], row["name"]):
+            continue
+        if not _age_fits(facts, row, today):
+            continue
+        age, _stated = pm.current_age(
+            date_of_birth=row["date_of_birth"],
+            stated_age=row["age"],
+            age_recorded_on=None,
+            created_at=row["created_at"],
+            today=today,
+        )
+        matches.append(
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "age": age,
+                "sex": pm.sex_key(row["sex"]),
+                "group_mrn": row["mrn"],
+                "registered_facility_id": int(row["registered_facility_id"] or 1),
+            }
+        )
+    matches.sort(key=lambda m: ((m["name"] or "").casefold(), m["id"]))
+    truncated = (not scanned_all) or len(matches) > GROUP_MATCH_MAX_RESULTS
+    return matches[:GROUP_MATCH_MAX_RESULTS], truncated
+
+
+def group_identity_match(
+    stated: dict,
+    *,
+    user: dict,
+    reason: str | None,
+    request_meta: dict | None = None,
+    today: date | None = None,
+) -> dict:
+    """Search the whole group for the patient the desk is talking to.
+
+    Returns {matches: [{id, name, age, sex, group_mrn, registered_facility,
+    ticket}], truncated, searched_at, searches_left, ticket_seconds}.
+    Raises GroupMatchError (422 incomplete or no reason, 429 too many
+    searches) and AuditWriteError (the route's 503) when the phi_access row
+    cannot be written, in which case nothing is answered."""
+    from services import facility_service
+    from services.audit_service import log_audit_event
+    from services.clinical_time import utc_iso_now
+
+    facts = _stated_group_facts(stated)
+    why = _clean_reason(reason)
+    meta = dict(request_meta or {})
+    user_id = user.get("id")
+    since = (datetime.now(UTC) - GROUP_MATCH_WINDOW).isoformat()
+    criteria = ["name", "date_of_birth" if facts["dob"] else "age_years", "sex", "phone"]
+    limited = False
+    used = 0
+    matches: list[dict] = []
+    truncated = False
+    with db_session(immediate=True) as db:
+        used = group_match_searches_since(db, user_id, since)
+        if used >= GROUP_MATCH_LIMIT:
+            limited = True
+        else:
+            matches, truncated = find_group_matches_on(db, facts, today=today)
+            log_audit_event(
+                correlation_id=str(uuid.uuid4()),
+                event_category="phi_access",
+                action_type=GROUP_MATCH_ACTION,
+                outcome="success",
+                db=db,
+                summary_message=(
+                    f"Group identity search at the front desk: {len(matches)} match(es)"
+                ),
+                actor_user_id=user_id,
+                actor_role=user.get("role"),
+                target_type="patient_list",
+                target_id="group-identity-match",
+                request_path=meta.get("request_path"),
+                http_method=meta.get("http_method"),
+                ip_address=meta.get("ip_address"),
+                user_agent=meta.get("user_agent"),
+                metadata={
+                    "reason": why,
+                    "criteria": criteria,
+                    "matched_patient_ids": [m["id"] for m in matches],
+                    "result_count": len(matches),
+                    "truncated": truncated,
+                    "searches_in_window": used + 1,
+                    "window_seconds": int(GROUP_MATCH_WINDOW.total_seconds()),
+                },
+            )
+    if limited:
+        log_audit_event(
+            correlation_id=str(uuid.uuid4()),
+            event_category="authorization",
+            action_type=GROUP_MATCH_LIMITED_ACTION,
+            outcome="denied",
+            summary_message="Group identity search refused: too many searches in the last hour",
+            actor_user_id=user_id,
+            actor_role=user.get("role"),
+            request_path=meta.get("request_path"),
+            http_method=meta.get("http_method"),
+            ip_address=meta.get("ip_address"),
+            user_agent=meta.get("user_agent"),
+            metadata={"searches_in_window": used, "limit": GROUP_MATCH_LIMIT, "reason": why},
+        )
+        raise GroupMatchError(
+            "group_match_rate_limited",
+            f"You have searched the whole group {GROUP_MATCH_LIMIT} times in the last hour. "
+            "Ask a colleague, or try again later.",
+            status=429,
+            retry_after_seconds=int(GROUP_MATCH_WINDOW.total_seconds()),
+        )
+    out = []
+    for m in matches:
+        ident = facility_service.facility_identity(m["registered_facility_id"]) or {}
+        out.append(
+            {
+                "id": m["id"],
+                "name": m["name"],
+                "age": m["age"],
+                "sex": m["sex"],
+                "group_mrn": m["group_mrn"],
+                "registered_facility": {"id": ident.get("id"), "code": ident.get("code")},
+                "ticket": group_match_ticket(str(user_id), m["id"]),
+            }
+        )
+    return {
+        "matches": out,
+        "truncated": truncated,
+        "searched_at": utc_iso_now(),
+        "searches_left": max(0, GROUP_MATCH_LIMIT - used - 1),
+        "ticket_seconds": GROUP_MATCH_TICKET_SECONDS,
+    }
+
+
+def audit_group_match_visit_on(
+    db: Any,
+    *,
+    user: dict,
+    visit: dict,
+    from_facility_id: int | None,
+    to_facility_id: int | None,
+    request_meta: dict | None = None,
+) -> None:
+    """The clinical_access row (fail-closed) for a visit registered through a
+    group match: the chart of a patient whose latest encounter was at another
+    facility now belongs to this facility's scope. Inside the visit's own
+    transaction, so the visit and its record land together or not at all."""
+    from services.audit_service import log_audit_event
+
+    meta = dict(request_meta or {})
+    log_audit_event(
+        correlation_id=f"group-match-visit-{visit.get('id')}",
+        event_category="clinical_access",
+        action_type=GROUP_MATCH_VISIT_ACTION,
+        outcome="success",
+        db=db,
+        summary_message=(
+            f"OPD visit {visit.get('id')} registered for {visit.get('patient_id')} through a "
+            "group identity match; the record now opens at this facility"
+        ),
+        actor_user_id=user.get("id"),
+        actor_role=user.get("role"),
+        patient_id=visit.get("patient_id"),
+        target_type="opd_visit",
+        target_id=str(visit.get("id")),
+        request_path=meta.get("request_path"),
+        http_method=meta.get("http_method"),
+        ip_address=meta.get("ip_address"),
+        user_agent=meta.get("user_agent"),
+        metadata={
+            "department": visit.get("department"),
+            "from_facility_id": from_facility_id,
+            "to_facility_id": to_facility_id,
+        },
+    )

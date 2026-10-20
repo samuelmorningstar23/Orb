@@ -87,16 +87,16 @@ department is `ShiftBoard.department` (`src/api/nurse.ts:94`); the time is forma
 minute.
 **API:** `GET /api/nurse/board`, `getShiftBoard()` at `src/api/nurse.ts:142-144`. It takes **no
 arguments and sends no query string**, deliberately (`:134-141`).
-**Server:** `server/routes/nurse_routes.py:51-109` `get_board`. The department is
+**Server:** `server/routes/nurse_routes.py:62-124` `get_board`. The department is
 `department_scope(user)` at `:80` → `server/permissions.py:192-219`, which reads
 `user["department"]` off the **authenticated user row** and returns `None` for a blank one.
-`generated_at` is `_iso(now)` in `server/services/nurse_shift_service.py:606`.
+`generated_at` is `_iso(now)` in `server/services/nurse_shift_service.py:618`.
 **Change this →** the ward name a nurse sees, and how stale the board *claims* to be. Reading
 **"All departments"** does not mean the nurse chose a wide scope, there is no such control on
 this screen (`NursePanel.tsx:224-227` explains why). It means the signed-in user has **no
 department on record**, and that account is genuinely reading every admitted patient in the
 hospital; the same condition is recorded as `hospital_wide: true` in the audit row at
-`nurse_routes.py:104`. The fix is to set a department on the user, not to touch this screen.
+`nurse_routes.py:119`. The fix is to set a department on the user, not to touch this screen.
 The "updated" time is the *server's* clock at build time, so if it lags your watch by minutes the
 board is stale, but the offline banner (§4.1), not this line, is what says so loudly.
 
@@ -129,14 +129,14 @@ the digits do not jitter between refreshes).
 no pills at all.
 
 Every one of these five numbers is computed **server-side** in
-`server/services/nurse_shift_service.py:609-616` and shipped in `ShiftBoard.totals`
+`server/services/nurse_shift_service.py:621-628` and shipped in `ShiftBoard.totals`
 (`src/api/nurse.ts:96-102`). Nothing on the client recounts them.
 
 ### "N patients"
 **Where:** first pill.
 **Rendered by:** `NursePanel.tsx:242-244`.
 **Data from:** `board.totals.patients`.
-**Server:** `nurse_shift_service.py:611`, `len(cards)`, one card per row returned by the patient
+**Server:** `nurse_shift_service.py:623`, `len(cards)`, one card per row returned by the patient
 query at `:247-257`: `patients p JOIN admissions a ON a.patient_id = p.id AND a.status='active'`
 where `p.status = 'admitted'`, plus `AND a.department = ?` when the user is ward-scoped
 (`:250-252`).
@@ -152,13 +152,13 @@ this whole screen.
 `` `nurse-total ${board.totals.critical ? 'nurse-total--danger' : ''}` ``, the tint is applied
 **only when the number is non-zero**.
 **Data from:** `board.totals.critical`.
-**Server:** `nurse_shift_service.py:612`, cards whose `news2.level == 'critical'`. The level
+**Server:** `nurse_shift_service.py:624`, cards whose `news2.level == 'critical'`. The level
 comes from `compute_news2` (`server/services/vigil_service.py:234`), banded at `:334-339`:
 `score >= 7 → critical`.
 **Change this →** a zero reads as a plain grey pill; the moment it becomes 1 the pill takes a 12%
 red wash with a 40% red border and the digit turns `--status-danger-text`
 (`NursePanel.css:78-82`). The score behind it is recomputed from the patient's **latest stored
-vitals row** on every board build (`nurse_shift_service.py:525`, `:370-383`), it is not a stored
+vitals row** on every board build (`nurse_shift_service.py:537`, `:382-395`), it is not a stored
 verdict, so fixing a bad vitals row changes this pill on the next refresh.
 
 ### "N elevated"
@@ -166,7 +166,7 @@ verdict, so fixing a bad vitals row changes this pill on the next refresh.
 **Rendered by:** `NursePanel.tsx:248-250`, tinted amber when non-zero
 (`nurse-total--warn`, `NursePanel.css:84-88`).
 **Data from:** `board.totals.elevated`.
-**Server:** `nurse_shift_service.py:613`, level `'elevated'`, `vigil_service.py:336`:
+**Server:** `nurse_shift_service.py:625`, level `'elevated'`, `vigil_service.py:336`:
 `score >= 5 or any_param_3`.
 **Change this →** amber pill. The `or any_param_3` half is the one people miss: a patient whose
 aggregate is 3 but who has **one** parameter scoring 3 lands here, not in "stable", and gets the
@@ -176,7 +176,7 @@ small red "3" flag on their badge (§6.1).
 **Where:** fourth pill.
 **Rendered by:** `NursePanel.tsx:251-253`, **red** when non-zero.
 **Data from:** `board.totals.obs_overdue`.
-**Server:** `nurse_shift_service.py:614`, cards with `obs_overdue` true. That flag is set at
+**Server:** `nurse_shift_service.py:626`, cards with `obs_overdue` true. That flag is set at
 `:536`: `obs_minutes_until_due is None or obs_minutes_until_due < 0`. There is **no grace period**
 on observations, unlike medications.
 **Change this →** red pill. It counts *patients*, not readings. Note the `is None` half: an
@@ -189,7 +189,7 @@ number go up immediately, and their task row reads "Not recorded" rather than a 
 **Rendered by:** `NursePanel.tsx:254-256`, **amber** when non-zero (`nurse-total--warn`), a
 deliberate step down from the red used for obs.
 **Data from:** `board.totals.meds_overdue`.
-**Server:** `nurse_shift_service.py:614` sums each card's `meds_overdue` (`:549`), which counts
+**Server:** `nurse_shift_service.py:626` sums each card's `meds_overdue` (`:561`), which counts
 med tasks with `overdue` true. That flag is at `:463`:
 `overdue = minutes_until is not None and minutes_until < -15`.
 **Change this →** amber pill counting *doses across all patients*, not patients. The **15-minute
@@ -364,7 +364,7 @@ the heading stays `--text-primary`.
 **Data from:** `soonTasks.length`.
 **Change this →** disappears entirely at zero (`:298`). The "30 minutes" in the label is a
 hard-coded string; the actual window is server-side and is **not symmetric between the two task
-kinds**: obs are `0 <= minutes <= 30` (`nurse_shift_service.py:537`) but meds are
+kinds**: obs are `0 <= minutes <= 30` (`nurse_shift_service.py:549`) but meds are
 `-15 <= minutes <= 30` (`:464`). So a dose 10 minutes late lands *here*, under a heading that says
 "due within 30 minutes", showing "10m late" in amber. Change `:463-464` and both the heading's
 truthfulness and the Overdue section's population move together.
@@ -433,7 +433,7 @@ once you are past the badge. They are filled chips, so the text token must stay 
 **Rendered by:** `NursePanel.tsx:199`, `{task.title}`.
 **Data from:** `Task.title`, the literal `'Observations'` for obs tasks (`:68`), or
 `m.drug_name` for med tasks (`:89`).
-**Server:** `drug_name` is selected at `nurse_shift_service.py:284` and returned at `:472`.
+**Server:** `drug_name` is selected at `nurse_shift_service.py:284` and returned at `:484`.
 **Change this →** the drug name a nurse reads before walking to a bedside. It is passed straight
 through with no normalisation on this screen.
 
@@ -461,13 +461,13 @@ this line **and** when obs go overdue at all, because `obs_due_at` is `last_obs_
 **Data from:** `relativeMinutes` (`src/pages/panels/nurse/time.ts:12-20`): returns `''` for
 null/undefined, `'now'` under a minute, otherwise `"{h}h {m}m late"` or `"in {h}h {m}m"`. The
 empty string falls through the `||` to the literal **"Not recorded"**.
-**Server:** `obs_minutes_until_due` at `nurse_shift_service.py:532-534`, `minutes_until_due` for
+**Server:** `obs_minutes_until_due` at `nurse_shift_service.py:544-546`, `minutes_until_due` for
 meds at `:459`, both `round((due_at - now)/60)` against the **server's** clock at build time.
 **Change this →** colour tracks the row modifier: `--status-danger-text` on an overdue row,
 `--status-warn-text` on a due-soon row, `--text-secondary` otherwise
 (`NursePanel.css:424-432`). **"Not recorded" appears only on an obs task for a patient with no
 vitals row at all**, that is the `minutesUntilDue === null` case, and per
-`nurse_shift_service.py:536` such a patient is unconditionally overdue, so this reads as a red
+`nurse_shift_service.py:548` such a patient is unconditionally overdue, so this reads as a red
 "Not recorded" in the Overdue section. A med task can never show it, because a med with a null
 due time fails the `:80` filter and never becomes a task. Also note this number ages only on
 refresh, the clock is the server's, computed once per board build, which is precisely why the
@@ -479,7 +479,7 @@ refresh, the clock is the server's, computed once per board build, which is prec
 `{task.med?.missed_slots ? <span className="task-row__missed">{task.med.missed_slots} not charted</span> : null}`.
 Style `NursePanel.css:434-438` (`--status-warn-text`).
 **Data from:** `MedTask.missed_slots` (`src/api/nurse.ts:57`).
-**Server:** `nurse_shift_service.py:444-450`. When the derived due time is already in the past the
+**Server:** `nurse_shift_service.py:456-462`. When the derived due time is already in the past the
 service **rolls it forward to the current dosing slot** and records how many slots it skipped:
 `skipped = int((now - due_at) / interval)`. The comment at `:445-448` says why, anchoring on an
 order started three days ago would otherwise report the next dose as three days late and paint the
@@ -509,7 +509,7 @@ the tasks tab is selected.
 below the phone breakpoint (`NursePanel.css:441-446`, `:1102`).
 **Rendered by:** `NursePanel.tsx:825-937`.
 **Data from:** `board.patients` in **server order**, the client does not re-sort this list. The
-order is set by `_priority` at `nurse_shift_service.py:589-601` and applied at `:603`:
+order is set by `_priority` at `nurse_shift_service.py:601-613` and applied at `:615`:
 sickest level first, then obs-overdue first, then most meds overdue, then soonest obs due (a
 patient with no obs at all is forced to `-10_000` so they sort with the most overdue, `:599`),
 then bed label.
@@ -580,7 +580,7 @@ sex initial.
 
 ### 6.5 Diagnosis line
 **Rendered by:** `NursePanel.tsx:350`, `{p.diagnosis && <p className="patient-card__dx">{p.diagnosis}</p>}`.
-**Server:** `p.diagnosis`, `nurse_shift_service.py:248` → `:567`.
+**Server:** `p.diagnosis`, `nurse_shift_service.py:248` → `:579`.
 **Change this →** the whole line disappears when the patient has no diagnosis recorded; the card
 simply gets shorter (the grid tracks are `1fr`, so neighbouring cards do not change height).
 
@@ -602,7 +602,7 @@ severity split only appears once you open the med round (§9.3). Marking an alle
 **Rendered by:** `NursePanel.tsx:358-360`, shown only when
 `p.news2 && p.news2.level !== 'stable'`.
 **Data from:** `p.obs_response`.
-**Server:** `nurse_shift_service.py:576` ← `obs_schedule(news2)["response"]` (`:117-153`), the
+**Server:** `nurse_shift_service.py:588` ← `obs_schedule(news2)["response"]` (`:117-153`), the
 literal RCP "clinical response to the NEWS trigger" wording, e.g. "Urgent review by a clinician
 competent in acute illness. Escalate now." (`:107`) or "Continuous monitoring. Emergency
 assessment by a critical-care-competent team." (`:104-105`).
@@ -621,7 +621,7 @@ strings: `"No observations recorded"` (no `lastObsAt`), `"Last 14:30"` (no due t
 `"Last 14:30 · next obs in 1h 20m"` / `"Last 14:30 · obs 40m late"`, note the wording switches
 between "next obs " and "obs " on the sign of the number (`time.ts:59`).
 **Server:** `last_obs_at` is the timestamp of the newest `vitals` row
-(`nurse_shift_service.py:265-280`, then `:528`), `obs_minutes_until_due` at `:532-534`.
+(`nurse_shift_service.py:265-280`, then `:540`), `obs_minutes_until_due` at `:544-546`.
 **Change this →** when `obs_overdue` is true the line goes bold and `--status-danger-text`
 (`NursePanel.css:515-518`). The tie-break at `nurse_shift_service.py:276-280` matters here: two
 vitals rows at the identical timestamp resolve to the higher `id` (the later write), so a
@@ -859,7 +859,7 @@ Its parts:
 never look late, the four non-scheduled kinds say so in words instead of borrowing the overdue
 vocabulary. `due_basis` (`src/api/nurse.ts:55`) tells you which anchor produced the time, 
 `last_given` vs `order_start` vs `stat_pending`/`stat_given`
-(`nurse_shift_service.py:435-457`), but **`due_basis` is never rendered anywhere**, so a due
+(`nurse_shift_service.py:447-469`), but **`due_basis` is never rendered anywhere**, so a due
 time anchored on an order start (no dose ever charted) is visually identical to one anchored on a
 real last dose.
 
@@ -867,7 +867,7 @@ real last dose.
 **Rendered by:** `MedRoundSheet.tsx:192-201`, with `disabled={med.unverified}` at `:183` and the
 native tooltip "Blocked: awaiting pharmacist verification" at `:184`.
 **Data from:** `MedTask.unverified` (`src/api/nurse.ts:62`).
-**Server:** `nurse_shift_service.py:466-468`, 
+**Server:** `nurse_shift_service.py:478-480`, 
 `med.source in ('llm_extracted','agentic') and not med.verified_by`.
 **Change this →** opens `AdministerModal` (`:208-226` → `src/components/vigil/AdministerModal.tsx:109-126`,
 titled "Administer medication"), which owns the five-rights summary and the type-the-drug-name
@@ -904,7 +904,7 @@ Its identity line is `:325-330`, title **"Record observations"** and
 **API:** `POST /api/nurse/patients/{id}/news2-preview` on every debounced keystroke
 (`src/api/nurse.ts:156-173`) and `POST /api/nurse/patients/{id}/observations` on save
 (`:186-195`).
-**Server:** `server/routes/nurse_routes.py:112-144` and `:147-200`; both hang
+**Server:** `server/routes/nurse_routes.py:127-162` and `:165-222`; both hang
 `require_patient_access` off the path id (`:134`, `:177`), so the patient is not a scope the
 caller can name.
 **Change this → (as it affects this board):**
@@ -915,7 +915,7 @@ caller can name.
   patient's badge, colour bar, obs fact line, task lateness, "obs overdue" pill and even the
   card's **position in the grid** all change at once, the score feeds `obs_schedule`, which sets
   the next due time, which sets `obs_overdue`, which feeds `_priority`
-  (`nurse_shift_service.py:589-601`).
+  (`nurse_shift_service.py:601-613`).
 * Recording obs can also make a **task disappear**: a fresh reading pushes `obs_due_at` forward,
   so the patient's obs task leaves both rendered sections until it comes round again.
 * The sheet is passed `offline={offline}` (`:382`), the same board snapshot, so a nurse learns
@@ -927,12 +927,12 @@ caller can name.
 
 Worth knowing, because a search for these strings in the UI finds nothing:
 
-* **`allergy` on every med task**, `nurse_shift_service.py:497` attaches a full interlock verdict
+* **`allergy` on every med task**, `nurse_shift_service.py:509` attaches a full interlock verdict
   (`allow`/`warn`/`block`, plus any carried override) to each med, computed by the same code the
-  bedside write runs (`_preview_allergy`, `:386-411`). **No element on this board or in the med
+  bedside write runs (`_preview_allergy`, `:398-423`). **No element on this board or in the med
   round renders it**, and `MedTask` in `src/api/nurse.ts:43-63` does not even declare the field.
   A nurse still meets the block, but only at the AdministerModal.
-* **`totals.meds_allergy_blocked`**, computed at `nurse_shift_service.py:615` and absent from the
+* **`totals.meds_allergy_blocked`**, computed at `nurse_shift_service.py:627` and absent from the
   `ShiftBoard.totals` type at `src/api/nurse.ts:96-102`. There is no sixth pill.
 * **`ward`, `department`, `attending_doctor_name`, `on_scale_2`, `obs_due_at`, `obs_band` (on the
   card), `news2.breakdown`, `news2.drivers`, `news2.score`**, all present in the payload; none

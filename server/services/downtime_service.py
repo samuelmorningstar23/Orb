@@ -28,6 +28,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from database import db_session
 
@@ -385,14 +386,27 @@ def capture_snapshot(patient_id: str, created_by: str = "auto") -> dict:
     }
 
 
-def capture_all_admitted(created_by: str = "auto") -> dict:
+def capture_all_admitted(
+    created_by: str = "auto", *, facilities: frozenset[int] | None = None
+) -> dict:
     """Snapshot every admitted patient. This is what a scheduled pre-downtime
     drill / nightly job calls so the ward always has a fresh local copy to fall
-    back to. Returns a summary with the count captured and any failures."""
+    back to. Returns a summary with the count captured and any failures.
+
+    facilities (the caller's facility scope, permissions.facility_scope)
+    limits the drill to the patients at those facilities once more than one
+    facility is on record (multisite-15); an empty set captures nobody. None,
+    the hourly sweep or a group-wide account, is every facility. With one
+    facility on record it changes nothing."""
     with db_session() as db:
+        limited = facilities is not None and _multi_facility(db)
+        facility_col = f", {_facility_sql()} AS facility_id" if limited else ""
         rows = db.execute(
-            "SELECT id FROM patients WHERE status = 'admitted' ORDER BY id"
+            f"SELECT p.id{facility_col} FROM patients p WHERE p.status = 'admitted' ORDER BY p.id"
         ).fetchall()
+    if limited:
+        wanted = {int(f) for f in facilities or ()}
+        rows = [r for r in rows if int(r["facility_id"] or _MAIN_FACILITY_ID) in wanted]
     patient_ids = [r["id"] for r in rows]
 
     captured = 0
@@ -444,6 +458,93 @@ def fhir_self_export_dir() -> str | os.PathLike:
     except OSError:
         pass
     return d
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  One folder and one mirror per facility (multisite-15, W12-D)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# One appliance can hold several facilities of a hospital group (ruling MS-R1
+# (a)). Once more than one facility is on record, each facility's ward packs
+# and FHIR bundles are written to a folder of its own and its latest packs are
+# copied to a mirror of its own, so no facility's copy holds another
+# facility's patients and a satellite keeps its packs on its own storage:
+#
+#   * facility 1 keeps the export folder every pack and bundle has always gone
+#     to, so scripts/backup.sh, the drill and the file a nurse opens with the
+#     app down are where they were;
+#   * every other facility writes to <export folder>/facilities/<CODE>/;
+#   * a facility's latest packs are copied to the downtime_mirror_dir its
+#     [[facilities]] block in site.toml names. ORB_WARD_PACK_MIRROR_DIR, the
+#     appliance's mirror from before a second facility existed, is facility
+#     1's, and never receives another facility's packs;
+#   * a mirror that is the same folder as, sits inside or holds a folder that
+#     carries another facility's packs (that facility's mirror, the export
+#     folder, the satellites' folders) is not used, for either facility of the
+#     pair, and the build reports it (_mirror_plan).
+#
+# A patient belongs to the facility of their latest encounter
+# (permissions.FACILITY_PATIENT_SQL), the rule that decides who may see them.
+# With one facility on record (every install today) nothing here reads
+# anything new and every file lands exactly where it did.
+
+FACILITY_FOLDER = "facilities"
+
+_MAIN_FACILITY_ID = 1
+
+
+def _facility_sql() -> str:
+    from permissions import FACILITY_PATIENT_SQL
+
+    return FACILITY_PATIENT_SQL
+
+
+def _multi_facility(db: Any = None) -> bool:
+    from services import facility_service
+
+    return bool(facility_service.multi_facility_data(db=db))
+
+
+def _facility_ids_on_record() -> list[int]:
+    from services import facility_service
+
+    ids = [int(f["id"]) for f in facility_service.list_facilities()]
+    return ids or [_MAIN_FACILITY_ID]
+
+
+def facility_folder_name(facility_id: int) -> str:
+    """A facility's code as a folder name: MAIN for facility 1 (its code is
+    fixed, so no lookup), the facilities row's code for any other (letters
+    and digits only), and ID<n> for an id no row holds."""
+    from services import facility_service
+
+    fid = int(facility_id)
+    if fid == _MAIN_FACILITY_ID:
+        return facility_service.MAIN_FACILITY_CODE
+    ident = facility_service.facility_identity(fid) or {}
+    code = "".join(c for c in str(ident.get("code") or "").upper() if c.isascii() and c.isalnum())
+    return code or f"ID{fid}"
+
+
+def facility_export_dir(facility_id: int | None = None, root: Any = None) -> str:
+    """The folder one facility's ward packs and FHIR bundles are written to.
+
+    The export folder itself (root, else fhir_self_export_dir()) for facility
+    1, for None and for every facility while one is on record; once there are
+    more, <export folder>/facilities/<CODE> for any other facility, created
+    0o700 like the export folder."""
+    base = str(root) if root is not None else str(fhir_self_export_dir())
+    if facility_id is None or int(facility_id) == _MAIN_FACILITY_ID or not _multi_facility():
+        return base
+    parent = os.path.join(base, FACILITY_FOLDER)
+    folder = os.path.join(parent, facility_folder_name(int(facility_id)))
+    for d in (parent, folder):
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        try:
+            os.chmod(d, 0o700)
+        except OSError:
+            pass
+    return folder
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -766,10 +867,23 @@ def run_nightly_fhir_self_export(
                 )
 
         with db_session() as db:
+            # multisite-15: with more than one facility on record each
+            # patient's bundle goes to their facility's own folder.
+            multi = _multi_facility(db)
+            facility_col = f", {_facility_sql()} AS facility_id" if multi else ""
             rows = db.execute(
-                "SELECT id FROM patients WHERE status = 'admitted' ORDER BY id"
+                f"SELECT p.id{facility_col} FROM patients p "
+                "WHERE p.status = 'admitted' ORDER BY p.id"
             ).fetchall()
         patient_ids = [r["id"] for r in rows]
+        folder_of = {
+            r["id"]: (
+                facility_export_dir(int(r["facility_id"] or _MAIN_FACILITY_ID), root=out_dir)
+                if multi
+                else str(out_dir)
+            )
+            for r in rows
+        }
 
         exported = 0
         total_bytes = 0
@@ -777,7 +891,7 @@ def run_nightly_fhir_self_export(
         t0 = time.perf_counter()
         for i, pid in enumerate(patient_ids):
             try:
-                n = _export_one_patient(pid, out_dir, cb, cs, since)
+                n = _export_one_patient(pid, folder_of[pid], cb, cs, since)
                 if n:
                     exported += 1
                     total_bytes += n
@@ -792,6 +906,22 @@ def run_nightly_fhir_self_export(
         duration = time.perf_counter() - t0
 
         pruned = prune_fhir_self_exports(out_dir)
+        facility_folders: list[dict] = []
+        if multi:
+            # Every facility's folder ages out the same way, whether or not
+            # it holds an admitted patient tonight.
+            for fid in _facility_ids_on_record():
+                folder = facility_export_dir(fid, root=out_dir)
+                if folder != str(out_dir):
+                    prune_fhir_self_exports(folder)
+                facility_folders.append(
+                    {
+                        "facility_id": fid,
+                        "code": facility_folder_name(fid),
+                        "directory": folder,
+                        "patients": sum(1 for p in patient_ids if folder_of[p] == folder),
+                    }
+                )
         _touch_marker(out_dir)
 
         logger.info(
@@ -802,7 +932,7 @@ def run_nightly_fhir_self_export(
             duration,
             out_dir,
         )
-        return {
+        result = {
             "count": exported,
             "total_admitted": len(patient_ids),
             "failed": failed,
@@ -812,6 +942,9 @@ def run_nightly_fhir_self_export(
             "pruned": pruned,
             "exported_at": _now_iso(),
         }
+        if multi:
+            result["facilities"] = facility_folders
+        return result
     finally:
         _EXPORT_LOCK.release()
 
@@ -989,6 +1122,114 @@ def ward_pack_mirror_dir() -> str | None:
     """
     value = os.getenv("ORB_WARD_PACK_MIRROR_DIR", "").strip()
     return value or None
+
+
+def ward_pack_mirror_dirs(facility_id: int = _MAIN_FACILITY_ID, root: Any = None) -> list[str]:
+    """Every folder off the appliance that one facility's latest packs are
+    copied to (multisite-15): the downtime_mirror_dir its [[facilities]]
+    block in site.toml names, and ORB_WARD_PACK_MIRROR_DIR as well for
+    facility 1 (or for every facility while one is on record). A facility
+    other than 1 that names no mirror of its own gets none, and is reported
+    so: the appliance-wide mirror never receives another facility's
+    patients. With more than one facility on record a mirror that overlaps
+    another facility's folders is left out too (_mirror_plan); root is the
+    export folder the packs are written under, fhir_self_export_dir() when
+    not given."""
+    return _mirror_plan(facility_id, root)[0]
+
+
+def _configured_mirrors(facility_id: int, multi: bool) -> list[str]:
+    """The mirrors configured for one facility, none refused yet:
+    ORB_WARD_PACK_MIRROR_DIR for facility 1 (for every facility while one is
+    on record), then the downtime_mirror_dir its site.toml block names."""
+    from services.site_config_service import facility_downtime_mirror
+
+    fid = int(facility_id)
+    out: list[str] = []
+    if fid == _MAIN_FACILITY_ID or not multi:
+        shared = ward_pack_mirror_dir()
+        if shared:
+            out.append(shared)
+    own = facility_downtime_mirror(facility_folder_name(fid))
+    if own and all(os.path.realpath(own) != os.path.realpath(o) for o in out):
+        out.append(own)
+    return out
+
+
+def _folder_key(folder: Any) -> str:
+    """A folder as compared for overlaps: absolute, symlinks resolved, and
+    ignoring case, because the share a mirror sits on may ignore it."""
+    return os.path.realpath(str(folder)).casefold()
+
+
+def _folders_overlap(a: Any, b: Any) -> bool:
+    """True when two folders are the same folder or one sits inside the other."""
+    ka, kb = _folder_key(a), _folder_key(b)
+    return (
+        ka == kb
+        or ka.startswith(kb.rstrip(os.sep) + os.sep)
+        or kb.startswith(ka.rstrip(os.sep) + os.sep)
+    )
+
+
+def _mirror_plan(facility_id: int, root: Any = None) -> tuple[list[str], list[dict]]:
+    """(mirrors used, mirrors refused) for one facility's latest packs.
+
+    With one facility on record every configured mirror is used, as before.
+    With more (multisite-15) a mirror is refused when it is the same folder
+    as, sits inside or holds a folder that carries another facility's packs,
+    because whoever reads that folder would then read the other facility's
+    patients, and one facility's latest pack would overwrite the other's
+    file of the same ward name:
+
+      * a satellite's mirror (any facility but 1) against facility 1's
+        mirrors (ORB_WARD_PACK_MIRROR_DIR and facility 1's own site.toml
+        folder), the export folder (facility 1's folder, which also holds
+        every satellite's folder) and every other satellite's mirror;
+      * facility 1's mirror against the folder the satellites' packs are
+        written under (<export folder>/facilities) and every satellite's
+        mirror.
+
+    The check runs from both sides, so both mirrors of a clashing pair are
+    refused, not only the satellite's. A refused mirror is logged and the
+    facility is reported mirror_missing when nothing is left; its packs are
+    still written to its folder on the appliance."""
+    fid = int(facility_id)
+    multi = _multi_facility()
+    configured = _configured_mirrors(fid, multi)
+    if not multi or not configured:
+        return configured, []
+
+    roots: list[str] = []
+    for r in (root, fhir_self_export_dir()):
+        if r is not None and str(r) not in roots:
+            roots.append(str(r))
+    others = [f for f in _facility_ids_on_record() if f != fid]
+    guarded: list[tuple[str, str]] = []
+    if fid == _MAIN_FACILITY_ID:
+        guarded += [(os.path.join(r, FACILITY_FOLDER), "the satellites' folders") for r in roots]
+    else:
+        guarded += [(r, "the export folder") for r in roots]
+    for other in others:
+        name = "facility 1" if other == _MAIN_FACILITY_ID else facility_folder_name(other)
+        guarded += [(m, f"the mirror of {name}") for m in _configured_mirrors(other, multi)]
+
+    used: list[str] = []
+    refused: list[dict] = []
+    for mirror in configured:
+        clash = next((what for folder, what in guarded if _folders_overlap(mirror, folder)), None)
+        if clash is None:
+            used.append(mirror)
+            continue
+        refused.append({"directory": mirror, "overlaps": clash})
+        logger.warning(
+            "[Downtime] ward pack mirror %s of facility %s is not used: it overlaps %s "
+            "(the same folder, or one inside the other). Give each facility a mirror of its own.",
+            mirror,
+            facility_folder_name(fid),
+            clash,
+        )
+    return used, refused
 
 
 def _ward_pack_path(out_dir, ward: str, stamp: str) -> str:
@@ -1595,7 +1836,7 @@ def prune_ward_packs(out_dir=None, retention_days: float | None = None) -> dict:
 
 
 def build_ward_print_packs(
-    created_by: str = "auto", out_dir=None, retention_days: float | None = None
+    created_by: str = "auto", out_dir: Any = None, retention_days: float | None = None
 ) -> dict:
     """Render one printable HTML pack per ward to durable local disk.
 
@@ -1605,39 +1846,85 @@ def build_ward_print_packs(
     they still get a page — an explicit SNAPSHOT UNAVAILABLE one, because an
     admitted patient silently missing from a downtime pack is the most dangerous
     failure this artifact can have. Never raises for a single bad patient.
+
+    With more than one facility on record (multisite-15) each facility's wards
+    are packed apart, into the facility's own folder and its own mirror
+    (facility_export_dir, ward_pack_mirror_dirs): a ward name two facilities
+    both use gives two packs, one in each folder, never one that mixes them.
+    A mirror that overlaps another facility's folders is not used and is
+    listed under the facility's mirrors_refused (_mirror_plan).
     """
     out_dir = out_dir if out_dir is not None else fhir_self_export_dir()
     mirror = ward_pack_mirror_dir()
     generated_at = _now_iso()
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    multi = _multi_facility()
+    facility_ids = _facility_ids_on_record() if multi else [_MAIN_FACILITY_ID]
 
     files: list[str] = []
     mirrored: list[str] = []
     patients = 0
+    wards = 0
+    per_facility: list[dict] = []
+    mirrors_by_facility: dict[int, list[str]] = {}
     with _WARD_PACK_LOCK:
         rows, escalations = _admitted_for_packs()
-        by_ward, _captured = _pack_items(rows, escalations, created_by)
-        for ward, items in by_ward.items():
-            try:
-                written, copied = _write_ward_pack(
-                    out_dir, ward, items, generated_at, stamp, mirror
+        grouped = _rows_by_facility(rows)
+        for fid in facility_ids + [f for f in grouped if f not in facility_ids]:
+            fac_rows = grouped.get(fid, [])
+            folder = facility_export_dir(fid, root=out_dir)
+            mirrors, refused = _mirror_plan(fid, out_dir)
+            mirrors_by_facility[fid] = mirrors
+            by_ward, _captured = _pack_items(fac_rows, escalations, created_by)
+            fac_patients = 0
+            for ward, items in by_ward.items():
+                try:
+                    written, copied = _write_ward_pack(
+                        folder, ward, items, generated_at, stamp, mirrors
+                    )
+                    files.extend(written)
+                    mirrored.extend(copied)
+                    patients += len(items)
+                    fac_patients += len(items)
+                except Exception as e:  # never let one bad ward abort the rest
+                    logger.warning("[Downtime] ward pack build failed for ward %r: %s", ward, e)
+            wards += len(by_ward)
+            if multi:
+                per_facility.append(
+                    {
+                        "facility_id": fid,
+                        "code": facility_folder_name(fid),
+                        "directory": folder,
+                        "mirror_directories": mirrors,
+                        "mirror_missing": not mirrors,
+                        "mirrors_refused": refused,
+                        "wards": len(by_ward),
+                        "patients": fac_patients,
+                    }
                 )
-                files.extend(written)
-                mirrored.extend(copied)
-                patients += len(items)
-            except Exception as e:  # never let one bad ward abort the rest
-                logger.warning("[Downtime] ward pack build failed for ward %r: %s", ward, e)
+                if not mirrors and by_ward:
+                    logger.info(
+                        "[Downtime] ward packs of facility %s have no mirror of their own "
+                        "(site.toml [[facilities]] downtime_mirror_dir)",
+                        facility_folder_name(fid),
+                    )
 
     pruned = prune_ward_packs(out_dir, retention_days)
-    if mirror:
-        # Same retention in the mirror, so a ward that has emptied ages out
-        # there too instead of leaving its last census on a share forever.
-        prune_ward_packs(mirror, retention_days)
-    logger.info(
-        "[Downtime] ward packs: %s ward(s), %s patient(s) -> %s", len(by_ward), patients, out_dir
-    )
-    return {
-        "wards": len(by_ward),
+    # Same retention in every facility folder and every mirror, so a ward
+    # that has emptied ages out there too instead of leaving its last census
+    # on a share forever.
+    pruned_mirrors: set[str] = set()
+    for fid in facility_ids:
+        folder = facility_export_dir(fid, root=out_dir)
+        if folder != str(out_dir):
+            prune_ward_packs(folder, retention_days)
+        for target in mirrors_by_facility.get(fid, []):
+            if os.path.realpath(target) not in pruned_mirrors:
+                pruned_mirrors.add(os.path.realpath(target))
+                prune_ward_packs(target, retention_days)
+    logger.info("[Downtime] ward packs: %s ward(s), %s patient(s) -> %s", wards, patients, out_dir)
+    result = {
+        "wards": wards,
         "patients": patients,
         "files": files,
         "directory": str(out_dir),
@@ -1646,15 +1933,38 @@ def build_ward_print_packs(
         "generated_at": generated_at,
         "pruned": pruned,
     }
+    if multi:
+        result["facilities"] = per_facility
+    return result
 
 
-def _admitted_for_packs(ward: str | None = None) -> tuple[list[dict], dict]:
+def _rows_by_facility(rows: list[dict]) -> dict[int, list[dict]]:
+    """Admitted rows grouped by the facility each patient belongs to, in the
+    order they came. A row without a facility (one facility on record) is
+    facility 1's."""
+    grouped: dict[int, list[dict]] = {}
+    for r in rows:
+        grouped.setdefault(int(r.get("facility_id") or _MAIN_FACILITY_ID), []).append(r)
+    return grouped
+
+
+def _admitted_for_packs(
+    ward: str | None = None, *, facility_id: int | None = None
+) -> tuple[list[dict], dict]:
     """Admitted patients (every ward, or one) with their active admission's
-    code status, plus the open escalation chain per patient."""
-    sql = """SELECT p.id, p.name, p.mrn, p.bed, p.ward,
+    code status, plus the open escalation chain per patient.
+
+    With more than one facility on record (multisite-15) every row also
+    carries facility_id, the facility of the patient's latest encounter, and
+    facility_id= keeps only that facility's patients: a ward name two
+    facilities both use is two wards. With one facility on record the rows
+    are exactly as before and facility_id= changes nothing."""
+    multi = _multi_facility()
+    facility_col = f", {_facility_sql()} AS facility_id" if multi else ""
+    sql = f"""SELECT p.id, p.name, p.mrn, p.bed, p.ward,
                     (SELECT a.code_status FROM admissions a
                       WHERE a.patient_id = p.id AND a.status = 'active'
-                      ORDER BY a.created_at DESC, a.rowid DESC LIMIT 1) AS code_status
+                      ORDER BY a.created_at DESC, a.rowid DESC LIMIT 1) AS code_status{facility_col}
              FROM patients p WHERE p.status = 'admitted'"""
     params: tuple = ()
     if ward is not None:
@@ -1664,6 +1974,11 @@ def _admitted_for_packs(ward: str | None = None) -> tuple[list[dict], dict]:
     sql += " ORDER BY p.ward, p.bed, p.id"
     with db_session() as db:
         rows = [_row_to_dict(r) for r in db.execute(sql, params).fetchall()]
+        if multi:
+            for r in rows:
+                r["facility_id"] = int(r.get("facility_id") or _MAIN_FACILITY_ID)
+            if facility_id is not None:
+                rows = [r for r in rows if r["facility_id"] == int(facility_id)]
         # adt-11 (ruling ADT-S4 (a)): a patient recorded on leave or absconded
         # keeps their page and is marked NOT ON WARD on it and in the census.
         # Only while ORB_ADT is on: with it off no row gains the key and the
@@ -1732,17 +2047,22 @@ def _pack_items(
 
 
 def _write_ward_pack(
-    out_dir, ward: str, items: list[dict], generated_at: str, stamp: str, mirror: str | None
+    out_dir: Any,
+    ward: str,
+    items: list[dict],
+    generated_at: str,
+    stamp: str,
+    mirrors: list[str] | None,
 ) -> tuple[list[str], list[str]]:
     """Render one ward's pack and write it (timestamped + latest), then copy
-    the latest to the mirror. Returns (files written, mirror copies)."""
+    the latest to each mirror. Returns (files written, mirror copies)."""
     doc = _render_ward_pack(ward, items, generated_at)
     timestamped = _ward_pack_path(out_dir, ward, stamp)
     _write_private(timestamped, doc)
     latest = _ward_pack_path(out_dir, ward, "latest")
     _write_private(latest, doc)
     copied: list[str] = []
-    if mirror:
+    for mirror in mirrors or []:
         try:
             if os.path.realpath(mirror) != os.path.realpath(str(out_dir)):
                 os.makedirs(mirror, mode=0o700, exist_ok=True)
@@ -1759,31 +2079,43 @@ def _write_ward_pack(
 def rebuild_ward_pack(
     ward: str,
     created_by: str = "auto",
-    out_dir=None,
+    out_dir: Any = None,
     refresh_older_than_s: float | None = None,
     lock_wait_s: float = _WARD_PACK_LOCK_WAIT_S,
+    *,
+    facility_id: int | None = None,
 ) -> dict | None:
     """Rebuild one ward's pack now, from snapshots no older than
     refresh_older_than_s (older ones are re-captured; pure SQLite, no model).
+
+    With more than one facility on record the ward is facility_id's (facility
+    1's when it is not given, the folder the export root holds), and only that
+    facility's patients go into its pack, its folder and its mirrors.
 
     Returns None when another build held the lock past lock_wait_s; the caller
     then serves the file on disk as it stands.
     """
     out_dir = out_dir if out_dir is not None else fhir_self_export_dir()
+    fid = _MAIN_FACILITY_ID if facility_id is None else int(facility_id)
     if not _WARD_PACK_LOCK.acquire(timeout=lock_wait_s):
         logger.warning("[Downtime] ward pack rebuild for %r skipped: a build is running", ward)
         return None
     try:
         generated_at = _now_iso()
         stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-        rows, escalations = _admitted_for_packs(ward)
+        rows, escalations = _admitted_for_packs(ward, facility_id=fid)
         by_ward, captured = _pack_items(rows, escalations, created_by, refresh_older_than_s)
         items = by_ward.get(ward) or []
         files: list[str] = []
         mirrored: list[str] = []
         if items:
             files, mirrored = _write_ward_pack(
-                out_dir, ward, items, generated_at, stamp, ward_pack_mirror_dir()
+                facility_export_dir(fid, root=out_dir),
+                ward,
+                items,
+                generated_at,
+                stamp,
+                ward_pack_mirror_dirs(fid, out_dir),
             )
         return {
             "ward": ward,
@@ -1797,22 +2129,44 @@ def rebuild_ward_pack(
         _WARD_PACK_LOCK.release()
 
 
-def read_latest_ward_pack(patient_id: str) -> tuple[str, str | None]:
-    """(ward, pack html) for the ward this patient occupies, exactly as it is
-    on disk; html is None when no pack exists yet. Raises ValueError for an
-    unknown patient id: the route maps that to the same 404 the scope
-    refusal produces."""
+def _ward_and_facility(patient_id: str) -> tuple[str, int] | None:
+    """(ward as the packs group it, facility) of one patient, or None for an
+    id no patient holds. The facility is the patient's latest encounter's
+    once more than one facility is on record, and 1 otherwise."""
     with db_session() as db:
-        row = db.execute("SELECT ward FROM patients WHERE id = ?", (patient_id,)).fetchone()
+        multi = _multi_facility(db)
+        facility_col = f", {_facility_sql()} AS facility_id" if multi else ""
+        row = db.execute(
+            f"SELECT p.ward{facility_col} FROM patients p WHERE p.id = ?", (patient_id,)
+        ).fetchone()
     if row is None:
-        raise ValueError(f"Patient not found: {patient_id}")
-    ward = row["ward"] or _UNASSIGNED_WARD
-    path = _ward_pack_path(fhir_self_export_dir(), ward, "latest")
+        return None
+    fid = int(row["facility_id"] or _MAIN_FACILITY_ID) if multi else _MAIN_FACILITY_ID
+    return row["ward"] or _UNASSIGNED_WARD, fid
+
+
+def _latest_pack_path(ward: str, facility_id: int) -> str:
+    return _ward_pack_path(facility_export_dir(facility_id), ward, "latest")
+
+
+def _read_pack(path: str) -> str | None:
     try:
         with open(path, encoding="utf-8") as f:
-            return ward, f.read()
+            return f.read()
     except OSError:
-        return ward, None
+        return None
+
+
+def read_latest_ward_pack(patient_id: str) -> tuple[str, str | None]:
+    """(ward, pack html) for the ward this patient occupies, exactly as it is
+    on disk in the folder of the patient's facility; html is None when no pack
+    exists yet. Raises ValueError for an unknown patient id: the route maps
+    that to the same 404 the scope refusal produces."""
+    anchor = _ward_and_facility(patient_id)
+    if anchor is None:
+        raise ValueError(f"Patient not found: {patient_id}")
+    ward, fid = anchor
+    return ward, _read_pack(_latest_pack_path(ward, fid))
 
 
 def serve_ward_pack(
@@ -1832,18 +2186,21 @@ def serve_ward_pack(
 
     Returns {"ward", "html" (None when there is no pack at all), "rebuilt",
     "captured", "missing"}. Raises ValueError for an unknown patient id.
+
+    With more than one facility on record the pack is the ward of this
+    patient's facility only (multisite-15): a group-wide account asking for a
+    ward name two facilities share sees the one this patient is on.
     """
     if user is not None:
         from fastapi import HTTPException
         from permissions import enforce_patient_scope
 
         enforce_patient_scope(user, patient_id)
-        with db_session() as db:
-            anchor = db.execute("SELECT ward FROM patients WHERE id = ?", (patient_id,)).fetchone()
-        if anchor is None:
+        found = _ward_and_facility(patient_id)
+        if found is None:
             raise ValueError("Patient not found")
-        ward = anchor["ward"] or _UNASSIGNED_WARD
-        rows, escalations = _admitted_for_packs(ward)
+        ward, fid = found
+        rows, escalations = _admitted_for_packs(ward, facility_id=fid)
         allowed = []
         for row in rows:
             try:
@@ -1871,9 +2228,13 @@ def serve_ward_pack(
             "missing": [],
         }
     max_age = _WARD_PACK_MAX_AGE_S if max_age_s is None else max_age_s
-    ward, doc = read_latest_ward_pack(patient_id)
-    path = _ward_pack_path(fhir_self_export_dir(), ward, "latest")
-    admitted, _ = _admitted_for_packs(ward)
+    found = _ward_and_facility(patient_id)
+    if found is None:
+        raise ValueError(f"Patient not found: {patient_id}")
+    ward, fid = found
+    path = _latest_pack_path(ward, fid)
+    doc = _read_pack(path)
+    admitted, _ = _admitted_for_packs(ward, facility_id=fid)
 
     try:
         age = time.time() - os.path.getmtime(path)
@@ -1887,15 +2248,17 @@ def serve_ward_pack(
     captured = 0
     if needs_rebuild:
         try:
-            result = rebuild_ward_pack(ward, created_by=created_by, refresh_older_than_s=max_age)
+            result = rebuild_ward_pack(
+                ward, created_by=created_by, refresh_older_than_s=max_age, facility_id=fid
+            )
         except Exception as e:  # the file on disk is still worth serving
             logger.warning("[Downtime] ward pack rebuild failed for %r: %s", ward, e)
             result = None
         if result and result["files"]:
             rebuilt = True
             captured = result["captured"]
-            _, doc = read_latest_ward_pack(patient_id)
-            admitted, _ = _admitted_for_packs(ward)
+            doc = _read_pack(path)
+            admitted, _ = _admitted_for_packs(ward, facility_id=fid)
 
     if doc is None:
         return {"ward": ward, "html": None, "rebuilt": rebuilt, "captured": captured, "missing": []}

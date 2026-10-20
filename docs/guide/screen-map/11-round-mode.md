@@ -115,7 +115,7 @@ warning paragraph and a Retry button.
 `:173-179`, `boardRes.status === 'rejected' && vigilRes.status === 'rejected'`. One roster failing
 does *not* produce this card; it produces a degraded strip (§3).
 **API:** `GET /api/nurse/board` **and** `GET /api/vigil/patients`, both rejected.
-**Server:** `server/routes/nurse_routes.py:51-109` and `server/routes/vigil_routes.py:262-389`.
+**Server:** `server/routes/nurse_routes.py:62-124` and `server/routes/vigil_routes.py:264-395`.
 **Change this →** the words, or the threshold that triggers it. The most important thing on the
 card is the fixed sentence at `RoundStates.tsx:90-93`, *"This is a display failure, not an
 all-clear. Do not read the missing information as normal, check the chart directly."* It is
@@ -144,9 +144,9 @@ admitted patients in your scope right now."* (`RoundPanel.tsx:419-423`).
 (`src/components/round/roundQueue.ts:136-191`), the union of both rosters, so this shows only when
 **both** came back empty. `department` (`:97`) is set from the board payload at `:149`.
 **API:** `GET /api/nurse/board` (for `department`), `GET /api/vigil/patients`.
-**Server:** `nurse_routes.py:80` derives the ward with `department_scope(user)`
-(`server/permissions.py:192-219`) and echoes it back at `nurse_shift_service.py:607`.
-`vigil_routes.py:289` uses the same function.
+**Server:** `nurse_routes.py:114` derives the ward with `department_scope(user)`
+(`server/permissions.py:192-219`) and echoes it back at `nurse_shift_service.py:619`.
+`vigil_routes.py:291` uses the same function.
 **Change this →** the third line is the load-bearing one: `RoundStates.tsx:38` supplies the default
 `reassurance`, *"Nothing failed to load, there is genuinely nothing recorded here."*, and it
 renders at `:60`. Remove it and an empty ward becomes indistinguishable from a broken one. Style:
@@ -182,10 +182,10 @@ minute: '2-digit' })}` ``.
 `:149-150` (`boardRes.value.department`, `boardRes.value.generated_at`).
 **API:** `GET /api/nurse/board` → `ShiftBoard.department` / `.generated_at`
 (`src/api/nurse.ts:92-103`, call at `:142-144`).
-**Server:** `server/routes/nurse_routes.py:54-109`; `department` comes from
+**Server:** `server/routes/nurse_routes.py:65-124`; `department` comes from
 `permissions.department_scope(user)` at `:80`, **never from the request** (the docstring at
 `:60-72` records that `?department=` and `?all_departments=true` were removed). `generated_at` is
-stamped in `server/services/nurse_shift_service.py:606` (`_iso(now)`).
+stamped in `server/services/nurse_shift_service.py:618` (`_iso(now)`).
 **Change this →** if the ward board request fails, `department` stays `null` and this line reads
 **"Your ward"** with no timestamp (the degraded strip in §3 appears alongside). The time is
 rendered in the tablet's local timezone. Style `Round.css:55-59`.
@@ -197,7 +197,7 @@ rendered in the tablet's local timezone. Style `Round.css:55-59`.
 **API:** re-issues all three: `getShiftBoard()`, `getPatients()`, `getSageInsights()`
 (`:138-142`), plus a re-fetch of the current and next patient stories once the cursor effect at
 `:246-251` re-runs against the emptied `stories` map.
-**Server:** `nurse_routes.py:51`, `vigil_routes.py:262`, `sage_proactive_routes.py:14`.
+**Server:** `nurse_routes.py:62`, `vigil_routes.py:264`, `sage_proactive_routes.py:14`.
 **Change this →** three visible things move at once: the "as of HH:MM" time, every NEWS2 /
 medication / allergy value in the summary, and the "Since 20:00 yesterday" column (because `now` is
 re-read at `:328`, the overnight window boundary is recomputed by
@@ -257,7 +257,7 @@ info-circle icon and a Retry chip at the right.
 **Data from:** `boardFailed` (`RoundPanel.tsx:94`), set at `:154` to the rejected promise's message
 or `'Ward board request failed'`; cleared to `null` at `:151` on success.
 **API:** `GET /api/nurse/board` rejected.
-**Server:** `nurse_routes.py:51-109`. A 403 from `require_permission("patient.read_all",
+**Server:** `nurse_routes.py:62-124`. A 403 from `require_permission("patient.read_all",
 "vitals.read")` (`:56`) surfaces here as the RBAC message lifted in `src/api/client.ts:210-224`; a
 401 dispatches `orb:session-expired` (`client.ts:204-206, 122-124`) and the message reads "Session
 expired".
@@ -272,7 +272,7 @@ patient" warning (`roundSummary.ts:139-149`). The strip persists until a retry s
 **Rendered by:** `RoundPanel.tsx:483-488`, message: *"Patient board unavailable (…). Admission day
 and risk level are missing from this round."*
 **Data from:** `vigilFailed` (`:95`), set at `:162`, cleared at `:159`.
-**API:** `GET /api/vigil/patients` rejected. **Server:** `vigil_routes.py:262-389`.
+**API:** `GET /api/vigil/patients` rejected. **Server:** `vigil_routes.py:264-395`.
 **Change this →** the claim is exact: `mergeRoster` only takes `admission_date`, `risk_score`,
 `risk_level`, `risk_drivers` from the Vigil roster (`roundQueue.ts:165-168`). With it gone,
 `admissionDay()` returns `null` (`roundSummary.ts:292`) and the **"Day N"** fragment vanishes from
@@ -352,7 +352,7 @@ any "unsaved plan" block. Tapping a row **navigates only**, it never marks anyth
 **Rendered by:** `RoundQueueRail.tsx:95`, `<span className="round-rail__bed">{p.bed || ', '}</span>`.
 **Data from:** `RoundPatient.bed` (`roundQueue.ts:37`), taken from the ward board card
 (`c.bed ?? ''`, `:146`) and back-filled from the Vigil row only if still blank (`:169`).
-**Server:** `p.bed` column, `nurse_shift_service.py:563` / `vigil_routes.py:349`.
+**Server:** `p.bed` column, `nurse_shift_service.py:575` / `vigil_routes.py:351`.
 **Change this →** an em dash appears when no bed is recorded; that patient also sinks to the bottom
 of the list. Style `Round.css:290-297` (min-width 56px, mono, so beds line up as a column).
 
@@ -418,7 +418,7 @@ it owns its own overflow so the dictation block below can never paint over it (t
 **Data from:** `currentPatient` = `queue.find(p => p.id === cursor)` (`RoundPanel.tsx:378-381`),
 name from `mergeRoster`.
 **Server:** `patients.name`, selected in `nurse_shift_service._load_board_rows` (`:248`) and
-`vigil_routes.py:347`.
+`vigil_routes.py:349`.
 **Change this →** the same string is also the dictation hint (`RoundPanel.tsx:539`, see §7) and
 appears in the unsaved-plan warning (`:553`).
 
@@ -433,7 +433,7 @@ midnight, not at the 24-hour mark; returns `null` when there is no admission dat
 future.
 **API:** the admission date arrives **only** from `GET /api/vigil/patients`
 (`roundQueue.ts:165`, `Patient.admission_date` at `src/api/client.ts:603`).
-**Server:** `vigil_routes.py:352` selects `p.admission_date`.
+**Server:** `vigil_routes.py:354` selects `p.admission_date`.
 **Change this →** with the Vigil roster down, "Day N" silently disappears and only age and sex
 remain, which is exactly what the degraded strip in §3 warns about. Any missing field just drops
 out of the join, so a patient with no sex recorded reads "68 · Day 4".
@@ -442,7 +442,7 @@ out of the join, so a patient with no sex recorded reads "68 · Day 4".
 **Where:** end of the meta line, monospaced.
 **Rendered by:** `RoundSummaryView.tsx:113`, rendered only when `patient.mrn` is non-empty.
 **Data from:** `mergeRoster` (`roundQueue.ts:148` / `:177`).
-**Server:** `patients.mrn` (`nurse_shift_service.py:562`, `vigil_routes.py:348`).
+**Server:** `patients.mrn` (`nurse_shift_service.py:574`, `vigil_routes.py:350`).
 **Change this →** style `Round.css:396-400`. Absent entirely when blank, no placeholder.
 
 ### The diagnosis line
@@ -450,7 +450,7 @@ out of the join, so a patient with no sex recorded reads "68 · Day 4".
 **Rendered by:** `RoundSummaryView.tsx:116`, `{patient.diagnosis || 'No diagnosis recorded'}`.
 **Data from:** ward-board `diagnosis` wins; the Vigil one only fills a blank
 (`roundQueue.ts:151`, `:170`).
-**Server:** `nurse_shift_service.py:567`, `vigil_routes.py:353`.
+**Server:** `nurse_shift_service.py:579`, `vigil_routes.py:355`.
 **Change this →** it never renders empty. It is also half of the dictation hint string
 (`RoundPanel.tsx:539`), so changing it changes what the local Whisper pass is primed with.
 
@@ -514,7 +514,7 @@ and sorted newest-first. `story` is `stories[cursor].events` (`RoundPanel.tsx:51
 loaded by `loadStory` at `:183-204`).
 **API:** `GET /api/vigil/patients/{id}/story` → `getPatientStory` (`src/api/client.ts:1487-1490`),
 which unwraps `getPatientStoryFeed` (`:1495-1506`) and returns just `events`.
-**Server:** `server/routes/vigil_routes.py:466-496`; the handler calls
+**Server:** `server/routes/vigil_routes.py:479-509`; the handler calls
 `services.patient_story_service.get_patient_story` (`:494`), which is an adapter
 (`patient_story_service.py:62-95`) over
 `services.patient_timeline_service.build_chart_timeline(patient_id, user_id=None, limit=500)`
@@ -523,7 +523,7 @@ on whose session it is. Event kinds come from the `SOURCES` table at
 `patient_timeline_service.py:348-500`, admission, note, scribe, imaging, alert, medication,
 administration, order, order_event, observation, bundle, problem, allergy, discharge.
 **Access control:** `require_patient_access("patient.read_all",
-audit_action="patient_story_viewed")` (`vigil_routes.py:470-472`), off-ward patients get **404,
+audit_action="patient_story_viewed")` (`vigil_routes.py:483-485`), off-ward patients get **404,
 not 403** (`permissions.py:462-464`), and each successful read writes a fail-closed `phi_access`
 audit row.
 **Change this →** a plan you save in this panel comes back into *this very list* as a note titled
@@ -619,7 +619,7 @@ position, because the list is sorted `critical → warning → info` at `roundSu
 `card.news2` is null. Detail: *"This patient has no scored observation set. That is missing data,
 not a normal result, it does not mean the patient is stable."*
 **Data from:** `card.news2 === null`, which `build_board` produces whenever there is no latest
-vitals row (`_score_from_vitals` returns `None`, `nurse_shift_service.py:371-372`).
+vitals row (`_score_from_vitals` returns `None`, `nurse_shift_service.py:383-384`).
 **Change this →** this is rule 2 of the module (`roundSummary.ts:17-21`) made visible: absence of
 data is a finding. Delete it and a never-observed patient shows an empty issues column.
 
@@ -785,7 +785,7 @@ the draft is empty.
 **Data from:** `SageAiPosture.local_asr_available`.
 **API:** `GET /api/sage/ai-posture` (`src/api/client.ts:992-994`), fetched once by the provider
 (`SageRuntimeProvider.tsx:10-16`).
-**Server:** `server/routes/sage_routes.py:2782-2788` → `services/ai_governance.ai_posture`
+**Server:** `server/routes/sage_routes.py:2789-2795` → `services/ai_governance.ai_posture`
 (`:342-364`), whose `local_asr_available()` reports **configuration**: the voice daemon flag
 must be on and the Whisper weights (`config.json` + `weights.npz`) must be installed under
 `server/mlx_models/<model>/`, where the daemon and worker load them from. Nothing downloads
@@ -862,7 +862,7 @@ type at `RoundDictation.tsx:32`). `onSave` → `savePlan(currentPatient.id)` (`R
 **API:** `POST /api/vigil/patients/{id}/notes` via `addClinicalNote(patientId, text, 'Ward Round')`
 (`RoundPanel.tsx:302`; `ROUND_DOC_TYPE` at `:75`; client at `src/api/client.ts:1319-1330`, which
 sends `{content, doc_type, title: 'Manual Entry'}`).
-**Server:** `server/routes/vigil_routes.py:598-620`, guarded by
+**Server:** `server/routes/vigil_routes.py:617-639`, guarded by
 `require_patient_access("patient.write")` (`:605`), charting on another ward's patient returns 404.
 The insert is `_insert_patient_note` (`:127-161`): the Idempotency-Key lookup and the INSERT sit in
 one hop so a replay cannot duplicate a note (`:129-132`), with a `DBIntegrityError` fallback at

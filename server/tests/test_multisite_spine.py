@@ -499,7 +499,9 @@ def test_the_status_page_reports_one_facility_in_words(clean_facilities_status_d
     assert check["summary"].startswith("One facility is on record (")
     assert "code MAIN" in check["summary"]
     assert check["detail"]["facility_fence"]["holding"] is False
-    assert check["detail"]["facility_fence"]["every_patient_screen"] is True
+    # Patient route groups are cleared since multisite-8 (W12-A, 20 October
+    # 2026), so the fence no longer holds every patient screen.
+    assert check["detail"]["facility_fence"]["every_patient_screen"] is False
 
 
 def test_the_status_page_reports_an_admissions_variant():

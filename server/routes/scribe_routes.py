@@ -662,7 +662,15 @@ def _note_in_scope_or_404(note_id: int, user: dict) -> dict:
     A missing note and an out-of-ward note both 404, deliberately: a distinct
     status for "exists but not yours" confirms the note and, with it, the
     patient.
+
+    With more than one facility on record (multisite-8) an account with a
+    facility limit reads an unfiled draft only when it wrote it, as a ward
+    account does: the draft has no patient and so no facility to check. A
+    filed note is checked through its patient, facility first
+    (enforce_patient_scope). With one facility nothing changes.
     """
+    from permissions import facility_scope
+
     note = get_scribe_note_by_id(note_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
@@ -671,7 +679,9 @@ def _note_in_scope_or_404(note_id: int, user: dict) -> dict:
     pid = note.get("patient_id")
     if pid:
         enforce_patient_scope(user, pid)
-    elif note.get("author_id") != user.get("id") and department_scope(user) is not None:
+    elif note.get("author_id") != user.get("id") and (
+        department_scope(user) is not None or facility_scope(user) is not None
+    ):
         raise HTTPException(status_code=404, detail="Note not found")
     return note
 

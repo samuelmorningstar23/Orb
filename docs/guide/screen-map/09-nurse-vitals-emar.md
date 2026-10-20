@@ -126,8 +126,8 @@ It is the dialog's accessible name via `aria-labelledby="obs-sheet-title"` (`:32
 **Data from:** the `patient` prop, a `NursePatientCard` handed down from `NursePanel` state
 (`NursePanel.tsx:400-401`), which came from the shift board.
 **API:** `GET /api/nurse/board` (`src/api/nurse.ts:142-144`).
-**Server:** `server/routes/nurse_routes.py:51-109` `get_board` → `nurse_shift_service.build_board`
-(`server/services/nurse_shift_service.py:501-617`); the three fields are set at `:560-562`.
+**Server:** `server/routes/nurse_routes.py:62-124` `get_board` → `nurse_shift_service.build_board`
+(`server/services/nurse_shift_service.py:513-629`); the three fields are set at `:572-574`.
 **Change this →** a patient with no bed loses the " · Bed N" segment entirely (no empty separator);
 same for MRN. Both come from the board payload, so renaming a bed in admissions changes this line
 on the next board refresh.
@@ -184,7 +184,7 @@ listing `severeAllergies.map(a => a.substance).join(', ')`.
 **Data from:** `severeAllergies = patient.allergies.filter(a => a.severity === 'severe')` (`:314`).
 **API:** `GET /api/nurse/board`.
 **Server:** allergies are loaded set-based in `nurse_shift_service._load_board_rows`
-(`server/services/nurse_shift_service.py:234-367`) and attached to the card at `:571`.
+(`server/services/nurse_shift_service.py:234-379`) and attached to the card at `:583`.
 **Change this →** with no `severity === 'severe'` allergy on file this note is **absent entirely**
 (moderate and mild allergies do not raise it here, they do show on the round sheet, §B.2). It is
 informational on this screen: nothing about an allergy blocks an observation.
@@ -193,7 +193,7 @@ informational on this screen: nothing about an allergy blocks an observation.
 **Where:** an amber note in the banner stack.
 **Rendered by:** `ObsEntrySheet.tsx:367-371`, `.nurse-note.nurse-note--warn`, `role="note"`.
 **Data from:** `patient.on_scale_2`.
-**Server:** `patients.on_scale_2`, read into the card at `nurse_shift_service.py:570`, and read
+**Server:** `patients.on_scale_2`, read into the card at `nurse_shift_service.py:582`, and read
 again per-request by `_on_scale_2` (`:657-661`) so the preview and the recorded score use the same
 scale.
 **Change this →** flipping the patient off Scale 2 removes this note **and** re-bands the SpO₂
@@ -211,10 +211,10 @@ which has a visible side effect described in §A.3.
    saved. Reconnect and enter it again."*, `assertOnlineForWrite('record these observations')`
    (`:281`) → `offlineRefusalMessage` (`src/lib/offline/writeGuard.ts`).
 2. Server validation (422): the service's own words, e.g. *"heart_rate must be between 10 and 300
-   bpm"* (`nurse_shift_service._clean_obs`, `server/services/nurse_shift_service.py:640-641`) or
+   bpm"* (`nurse_shift_service._clean_obs`, `server/services/nurse_shift_service.py:652-653`) or
    *"an observation set must contain at least one reading"* (`:652`), raised into an HTTPException at
-   `server/routes/nurse_routes.py:200`.
-3. Out-of-ward patient (404): `require_patient_access("vitals.write")` (`nurse_routes.py:177`)
+   `server/routes/nurse_routes.py:222`.
+3. Out-of-ward patient (404): `require_patient_access("vitals.write")` (`nurse_routes.py:273`)
    404s rather than 403s so the route never confirms the patient exists; the message surfaces here
    verbatim.
 The line **disappears** on the next tap of Record observations (`setError('')`, `:272`).
@@ -267,7 +267,7 @@ fill with on-fill text**, `--danger` a **solid red fill**. `title` is `Contribut
 **Data from:** `pointsFor(f.scoreParams)` (`:308-312`), which looks the field's `scoreParams` up in
 `shownPreview.news2.breakdown` by exact `parameter` string (SpO2 lists both scale names).
 **API:** `POST /api/nurse/patients/{id}/news2-preview` (`src/api/nurse.ts:156-173`).
-**Server:** `server/routes/nurse_routes.py:112-144` `preview_news2` →
+**Server:** `server/routes/nurse_routes.py:127-162` `preview_news2` →
 `nurse_shift_service.score_observation` (`:664-683`) → `vigil_service.compute_news2` (`:234`). The
 `breakdown` array is built by the inner `add()` at `server/services/vigil_service.py:256-269`.
 **Change this →** three ways to make a chip vanish. (1) Clear the field, a parameter that is `None`
@@ -395,7 +395,7 @@ keyed off the `_OBS_ESCALATION` table at `:101-109`:
 | any + single-3 | `<band> (single parameter 3)` | "A single parameter scoring 3 requires urgent review, escalate." | 60 min |
 
 **Change this →** the same `interval_minutes` is what later decides whether this patient's
-observations read as **overdue** on the shift board (`nurse_shift_service.py:529-537`), so a change
+observations read as **overdue** on the shift board (`nurse_shift_service.py:541-549`), so a change
 here changes the colour of a task row hours later.
 
 ### The driver pills
@@ -432,8 +432,8 @@ so a slow response can never overwrite a fresher score, gated on `scoreable = ha
 `shownPreview` is *derived* (`:226`), not stored, so there is no render in which a stale score sits
 above edited values. The request carries every field including the nulls (`buildPayload`, `:193-200`).
 Server-side this route **persists nothing** but is still ward-scoped by
-`require_patient_access("vitals.read")` (`server/routes/nurse_routes.py:134`), and deliberately
-audits nothing (`nurse_routes.py:130-133`) because one encrypted-SQLite write per keystroke is the
+`require_patient_access("vitals.read")` (`server/routes/nurse_routes.py:152`), and deliberately
+audits nothing (`nurse_routes.py:148-151`) because one encrypted-SQLite write per keystroke is the
 shape blamed for the July loop stalls.
 
 ## A.6 The footer buttons
@@ -453,8 +453,8 @@ with a range error (`:509`).
 **API:** `POST /api/nurse/patients/{id}/observations` with an `Idempotency-Key` header
 (`src/api/nurse.ts:186-195`), routed through `apiFetch`, **not** through `offlineMutate`, so it can
 never be optimistically queued.
-**Server:** `server/routes/nurse_routes.py:147-200` `record_observations` →
-`nurse_shift_service.record_observation` (`server/services/nurse_shift_service.py:1418-1445`).
+**Server:** `server/routes/nurse_routes.py:165-222` `record_observations` →
+`nurse_shift_service.record_observation` (`server/services/nurse_shift_service.py:1434-1461`).
 **Change this →** on success the sheet **closes immediately** (`onRecorded`, `:292` →
 `NursePanel.tsx:404-411`) and a green flash appears on the board underneath reading
 *"Observations recorded for Asha Rao, NEWS2 7 (critical). Continuous monitoring. Emergency
@@ -467,17 +467,17 @@ error line appears (§A.1) and the button becomes tappable again (`:295-296`).
 Worth knowing because it changes **other** screens:
 
 - One `vitals` row with `source='nurse_manual'` plus one `risk_scores` row, in a single transaction
-  with a fail-closed audit entry (`nurse_shift_service.py:961-1011`). The `risk_scores` row is what
+  with a fail-closed audit entry (`nurse_shift_service.py:977-1027`). The `risk_scores` row is what
   repaints the Vigil board's risk dot.
 - **A Vigil alert into the patient's Relay case room** whenever the level is not `stable`
-  (`dispatch_observation_alert`, `nurse_shift_service.py:710-824`), a message beginning
+  (`dispatch_observation_alert`, `nurse_shift_service.py:722-840`), a message beginning
   `⚠️ VIGIL ALERT [NURSE OBS]: `. Stable sets dispatch nothing.
-- A sepsis bundle may auto-start at NEWS2 ≥7 (`:967-971`).
+- A sepsis bundle may auto-start at NEWS2 ≥7 (`:983-987`).
 - **Double-tap protection:** `taken_at` is stamped once per sheet in a ref (`:261`, `:273`) and the
   server dedupes on (patient, source, taken_at) **plus identical values** (`_same_reading`,
-  `:686-707`). A second tap with the same numbers returns the existing reading; the same timestamp
+  `:698-719`). A second tap with the same numbers returns the existing reading; the same timestamp
   with *different* numbers is charted as a correction and the superseded row id is returned
-  (`:1567-1576`, `:1810-1811`). The in-flight latch is also a ref (`:265`) because two taps 6 ms apart
+  (`:1583-1592`, `:1826-1827`). The in-flight latch is also a ref (`:265`) because two taps 6 ms apart
   both read the same render's `saving === false`.
 
 ## A.8 The "Discard these observations?" confirmation
@@ -557,7 +557,7 @@ allergy is severe: `nurse-note--danger` + `role="alert"` when `severeAllergies.l
 **Data from:** `patient.allergies` (`NurseAllergy[]`, `src/api/nurse.ts:35-39`);
 `severeAllergies` at `:166`.
 **Server:** `nurse_shift_service._load_board_rows` → card field at
-`server/services/nurse_shift_service.py:571`.
+`server/services/nurse_shift_service.py:583`.
 **Change this →** red-and-alert vs amber-and-note is decided **only** by the recorded `severity`
 column being exactly `'severe'`. The server's own interlock uses a smarter rule
 (`allergy_interlock.effective_severity`, `server/services/allergy_interlock.py:211-232`, which
@@ -603,13 +603,13 @@ edge** (`:918`).
 ### The drug name
 **Rendered by:** `MedRoundSheet.tsx:167`, `<span className="med-row__name">{med.drug_name}</span>`.
 **Server:** `medications.drug_name`, copied into the task at
-`server/services/nurse_shift_service.py:472`.
+`server/services/nurse_shift_service.py:484`.
 **Change this →** this exact string is what the nurse must retype in the confirmation modal (§C.3), 
 they are the same value, `med.drug_name`, handed across at `MedRoundSheet.tsx:225`.
 
 ### The dose · route · frequency line
 **Rendered by:** `MedRoundSheet.tsx:168-170`, `[med.dosage, med.route, med.frequency].filter(Boolean).join(' · ')`.
-**Server:** `nurse_shift_service.py:473-475`.
+**Server:** `nurse_shift_service.py:485-487`.
 **Change this →** a med with no route charted simply loses that segment; there is no ", " placeholder
 here (unlike the modal's Dose/Route rows, which do show a dash).
 
@@ -624,7 +624,7 @@ here (unlike the modal's Dose/Route rows, which do show a dash).
 3. `· 2 earlier doses not charted` when `med.missed_slots > 0` (`:258-260`), in amber
    (`.med-row__missed`, `NursePanel.css:434-439`), correctly singular/plural.
 **Server:** all three derive from `_build_med_task`
-(`server/services/nurse_shift_service.py:414-498`): `due_at` is rolled forward to the *current*
+(`server/services/nurse_shift_service.py:426-510`): `due_at` is rolled forward to the *current*
 dosing slot (`:446-450`) so an old order does not read as three days late, `missed_slots` is the
 number of slots skipped in doing so, `overdue` requires being **more than 15 minutes** late
 (`:463`), and `due_soon` is the −15…+30 minute window (`:464`).
@@ -638,7 +638,7 @@ more aggressive turns "No fixed schedule" rows into red overdue rows across the 
 **Where:** an amber inline strip inside the row, under the timing line.
 **Rendered by:** `MedRoundSheet.tsx:180-184`, `.med-row__blocked` (`NursePanel.css:926-934`).
 **Data from:** `med.unverified`.
-**Server:** `_build_med_task` sets it at `server/services/nurse_shift_service.py:466-468`, 
+**Server:** `_build_med_task` sets it at `server/services/nurse_shift_service.py:478-480`, 
 `source in ('llm_extracted','agentic') AND verified_by IS NULL`.
 **Change this →** this is the **one block a nurse sees before touching anything** (see §C.7). It also
 disables the row's Administer button (`:183`) and gives it the tooltip *"Blocked: awaiting pharmacist
@@ -692,8 +692,8 @@ update on return.
 ### What is *not* on this screen (verified absence)
 The board payload carries a **per-medication allergy screen**, `MedTask.allergy` with
 `decision: allow | warn | block`, the matched alerts, and any carried-forward override, computed by
-`_preview_allergy` (`server/services/nurse_shift_service.py:386-411`) and attached at `:497`, plus a
-`meds_allergy_blocked` count per patient (`:553-557`) and in the board totals (`:615`). **None of
+`_preview_allergy` (`server/services/nurse_shift_service.py:398-423`) and attached at `:509`, plus a
+`meds_allergy_blocked` count per patient (`:565-569`) and in the board totals (`:627`). **None of
 this is consumed by the frontend.** The TypeScript `MedTask` interface (`src/api/nurse.ts:43-63`)
 has no `allergy` field and `ShiftBoard.totals` (`:96-102`) has no `meds_allergy_blocked`;
 `MedRoundSheet` renders neither. So a dose the server already knows it will block shows an ordinary,
@@ -811,7 +811,7 @@ sheet with nothing charted.
 `src/api/client.ts:1411-1446` `administerMedication`, which routes through `offlineMutate`
 (`:1422-1445`) with a **stable idempotency key minted once per (modal, action)**
 (`AdministerModal.tsx:68-70`), so a retry after a lost response cannot chart a second dose.
-**Server:** `server/routes/emar_routes.py:51-113` `administer_medication` →
+**Server:** `server/routes/emar_routes.py:156-291` `administer_medication` →
 `emar_service.record_administration` (`server/services/emar_service.py:496-…`).
 **Change this →** on success the modal closes, the row's chip flips to green **Given**, and the board
 flash reads *"Amoxicillin charted as given."* Note `assertOnlineForWrite('chart this dose')` at
@@ -875,7 +875,7 @@ sequence a nurse actually experiences:
    allergy, the patient is re-admitted).
 
 **The override path that exists server-side but has no UI.** `AdministerRequest` accepts
-`allergy_override_reason` and `dose_override_reason` (`server/routes/emar_routes.py:44-48`). A
+`allergy_override_reason` and `dose_override_reason` (`server/routes/emar_routes.py:46-50`). A
 re-submission carrying one is validated against reflex clear-through, minimum **10 characters**, not
 one of the junk list ("ok", "per doctor", "as prescribed", "urgent"…), not a single repeated
 character (`allergy_interlock.validate_override_reason:424-446`;
@@ -889,7 +889,7 @@ another 428 with the validator's own sentence, e.g. *"an allergy override requir
 from the nurse round today.
 **Both guards can be armed at once.** The allergy interlock runs first and owns the 428
 (`emar_service.py:630-665`); the nurse would clear it and then see a **second** 428 for the dose
-guard, two prompts, in severity order (`emar_routes.py:72-75`).
+guard, two prompts, in severity order (`emar_routes.py:74-77`).
 
 **A carried-forward override is invisible and silent.** If an earlier dose of the *same order*
 against the *same allergy picture* was already justified, `find_carried_override`
@@ -927,7 +927,7 @@ green "Given" chip and nothing else.**
 | **Invalid** | red field border + "2–80 /min" + "Fix the highlighted readings to see the NEWS2." | n/a | Given disabled until the name matches; Record not given disabled until a reason is chosen |
 | **Request failed** | red note above the fields (§A.1); the button re-enables | n/a (read-only surface) | red strip at the top of the modal (§C.6); buttons re-enable |
 | **Offline** | OfflineBanner at the top **and** a hard refusal on save (`:281`) | OfflineBanner reading "Showing the drug chart saved at …" | hard refusal before the queue is reachable (`:85`) |
-| **No permission** | nurse and doctor hold `vitals.write` (`server/permissions.py:106`, `:121`); an admin does **not** (`:142`) → 403 from `require_patient_access`, surfaced in the red note | board itself needs `patient.read_all` + `vitals.read` (`nurse_routes.py:56`) | needs `medication.write` (`emar_routes.py:55`), nurse and doctor hold it, pharmacist and admin do not |
+| **No permission** | nurse and doctor hold `vitals.write` (`server/permissions.py:106`, `:121`); an admin does **not** (`:142`) → 403 from `require_patient_access`, surfaced in the red note | board itself needs `patient.read_all` + `vitals.read` (`nurse_routes.py:67`) | needs `medication.write` (`emar_routes.py:57`), nurse and doctor hold it, pharmacist and admin do not |
 | **Wrong ward** | 404 (never 403, a 403 would confirm the patient exists), `require_patient_access` (`server/permissions.py:462`) | n/a, the board never returns out-of-ward patients | n/a |
 
 **Visible elements documented: 62.**

@@ -221,10 +221,12 @@ def test_the_named_house_wide_lanes_are_blind(rows, routes):
         assert rows[key].kind == R.BLIND, key
 
 
-def test_helpers_given_the_department_and_house_wide_routes_are_blind(rows):
-    """The two shapes a department_scope-keyed ratchet could not see."""
-    assert rows[("services/vigil_service.py", "scored_admitted_patients")].kind == R.BLIND
-    assert rows[("routes/search_routes.py", "search_patients")].kind == R.BLIND
+def test_helpers_given_the_department_and_house_wide_routes_are_classed(rows):
+    """The two shapes a department_scope-keyed ratchet could not see. The board
+    helper and the search were swept in multisite-8 (W12-A, 20 October 2026):
+    both keep their rows to the caller's facilities, so they are facility rows."""
+    assert rows[("services/vigil_service.py", "scored_admitted_patients")].kind == R.FACILITY
+    assert rows[("routes/search_routes.py", "search_patients")].kind == R.FACILITY
     assert rows[("services/sage_service.py", "_out_of_scope_locators")].kind == R.BLIND
     assert rows[("services/sage_service.py", "_out_of_scope_locators")].owner == "multisite-10"
 
@@ -343,7 +345,9 @@ def test_the_open_routes_reach_only_safe_statements(graph, routes, found, rows):
     ("/api/vigil/patients", True),
     ("/api/pharmacy/pending", True),
     ("/api/pharmacy-store/stock", True),
-    ("/uploads/scan.png", True),
+    # Cleared by multisite-8 (W12-A): the media route and the patient search.
+    ("/uploads/scan.png", False),
+    ("/api/search/patients", False),
     ("/socket.io/", True),
     ("/api/pulse/season", False),
     ("/api/pulse", False),
@@ -386,9 +390,12 @@ def test_an_empty_blind_list_holds_nothing_shut(monkeypatch):
 
 def test_the_operations_page_describes_the_list():
     d = F.describe()
-    assert d["every_patient_screen"] is True     # only /api/pulse is cleared, and it has no patient
+    # Patient groups are cleared since multisite-8 (W12-A), so the fence no
+    # longer holds every patient screen.
+    assert d["every_patient_screen"] is False
     assert d["blind_surfaces"] == sorted(F.FACILITY_BLIND_SURFACES)
-    assert d["cleared_surfaces"] == ["/api/pulse"]
+    assert d["cleared_surfaces"] == sorted(F.FACILITY_CLEARED_SURFACES)
+    assert {"/api/pulse", "/api/search", "/uploads"} <= set(d["cleared_surfaces"])
     assert d["unlisted_surfaces_fenced"] is True
     assert d["always_open"] == list(F.OPEN_SURFACES)
 

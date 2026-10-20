@@ -90,7 +90,19 @@ import os
 
 from database import db_session
 from fastapi import HTTPException, Request
-from permissions import department_scope, log_phi_read, scope_patient_ids_sql
+from permissions import department_scope, facility_scope, log_phi_read, scope_patient_ids_sql
+
+from services.facility_filter import column_clause
+
+# ── FACILITY SCOPE (multisite-8, W12-A, 20 October 2026) ──
+# With more than one facility on record every clause above is also kept to the
+# caller's facilities (permissions.facility_scope): a case is read by the
+# facility it is at (surgeries.facility_id, migration 74, the document's own
+# facility under ruling MS-R5 (a)), so (A) and (B) become "the whole theatre
+# list of my facility", (C) also needs the patient's latest encounter at one
+# of those facilities, and (D) a named case team member at another facility
+# does not see the case. With one facility facility_scope answers None and
+# every fragment below is exactly what it was.
 
 # ── Scope verdicts. These strings land in the audit trail; do not rename. ──
 SCOPE_HOSPITAL_WIDE = "hospital_wide"  # (A) no department on the user row
@@ -153,8 +165,12 @@ def surgical_scope(user: dict) -> tuple[str, str | None]:
 
 
 def reads_whole_theatre(user: dict) -> bool:
-    """True when clauses (A)/(B) apply — no row-level filter is needed."""
-    return surgical_scope(user)[0] in (SCOPE_HOSPITAL_WIDE, SCOPE_PERIOPERATIVE)
+    """True when clauses (A)/(B) apply and no facility limit does: no row-level
+    filter is needed. With more than one facility on record a (A)/(B) reader
+    still gets the facility filter (surgical_list_filter), so this is False."""
+    if surgical_scope(user)[0] not in (SCOPE_HOSPITAL_WIDE, SCOPE_PERIOPERATIVE):
+        return False
+    return facility_scope(user) is None
 
 
 def surgical_list_filter(user: dict, alias: str = "s") -> tuple[str, tuple]:
@@ -170,11 +186,18 @@ def surgical_list_filter(user: dict, alias: str = "s") -> tuple[str, tuple]:
     ONE derivation. It re-uses the alias ``p``; when the outer query also aliases
     patients as ``p`` the inner FROM shadows it, and because the subquery is
     self-contained (not correlated) that is correct, not a coincidence.
+
+    With more than one facility on record (multisite-8) the fragment also keeps
+    the case's own facility (``<alias>.facility_id``) to the caller's
+    facilities, for a whole-theatre reader too, and the patient-id subquery
+    carries the facilities; the empty set reads no case.
     """
     scope, dept = surgical_scope(user)
+    facilities = facility_scope(user)
+    facility_sql, facility_params = column_clause(f"{alias}.facility_id", facilities)
     if scope in (SCOPE_HOSPITAL_WIDE, SCOPE_PERIOPERATIVE):
-        return "", ()
-    ids_sql, ids_params = scope_patient_ids_sql(dept)
+        return facility_sql, facility_params
+    ids_sql, ids_params = scope_patient_ids_sql(dept, facilities=facilities)
     uid = (user or {}).get("id") or ""
     frag = (
         f" AND ({alias}.patient_id IN ({ids_sql})"
@@ -182,7 +205,7 @@ def surgical_list_filter(user: dict, alias: str = "s") -> tuple[str, tuple]:
         f" OR EXISTS (SELECT 1 FROM surgery_team_assignments sta"
         f"            WHERE sta.surgery_id = {alias}.id AND sta.user_id = ?))"
     )
-    return frag, tuple(ids_params) + (uid, uid)
+    return frag + facility_sql, tuple(ids_params) + (uid, uid) + facility_params
 
 
 def surgery_in_scope(db, user: dict, surgery_id: str | None) -> bool:

@@ -18,7 +18,8 @@ PHI read.
 
 from database import db_session
 from fastapi import APIRouter, Depends, Request
-from permissions import department_scope, log_phi_read, require_permission
+from permissions import department_scope, facility_scope, log_phi_read, require_permission
+from services.facility_filter import column_clause
 
 router = APIRouter(prefix="/api/search", tags=["search"])
 
@@ -33,12 +34,18 @@ def search_patients(
     request: Request,
     q: str = "",
     user: dict = _SEARCH_PATIENTS_USER_DEFAULT,
-):
+) -> list[dict]:
     """Search ADMITTED patients by name / MRN / bed / diagnosis (or exact id).
 
     Returns up to 12 lightweight matches for the jump-to-patient palette, from
     the caller's department only. An empty or single-character query
     short-circuits to ``[]`` so we never scan the table for a trivial input.
+
+    FACILITY SCOPE (multisite-8, W12-A). With more than one facility on record
+    the matches are kept, in the query, to patients whose active admission is
+    at the caller's facilities (permissions.facility_scope), so a
+    department-less account at one facility cannot find another facility's
+    patients. With one facility nothing is added.
     """
     query = (q or "").strip()
     if len(query) < 2:
@@ -57,7 +64,12 @@ def search_patients(
     # applied after `LIMIT 12` would silently drop in-scope patients whenever
     # out-of-scope ones sorted higher.
     dept_clause = "AND a.department = ?" if dept else ""
-    dept_param = (dept,) if dept else ()
+    dept_param: tuple = (dept,) if dept else ()
+    # The facility predicate goes in the QUERY too, on the active admission the
+    # match joins, for the same reason (multisite-8).
+    facility_sql, facility_args = column_clause("a.facility_id", facility_scope(user))
+    dept_clause += facility_sql
+    dept_param += facility_args
 
     from services.vigil_service import scoring_enabled
 

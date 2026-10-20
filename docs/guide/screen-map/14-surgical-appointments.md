@@ -826,7 +826,7 @@ hospital-local days, in the caller's department. Until 2026-10-03 the server pad
 three to five "appointments" a day drawn from admitted patients by a date-seeded random generator
 (random type, reason and clock time); the panel rendered them as bookings and counted them in every
 tile. That synthesis is gone: `get_appointments` returns rows from the `appointments` table only
-(`server/services/forecast_service.py:914`, docstring at `:915-932`), and the panel keeps only rows
+(`server/services/forecast_service.py:1190`, docstring at `:1196-1219`), and the panel keeps only rows
 tagged `source === 'booked'` (`src/pages/panels/AppointmentsPanel.tsx:85`), so a stale cached response cannot slip a
 generated row back in.
 
@@ -853,10 +853,10 @@ className="orb-panel-loading">Loading appointments...</div>`.
 same literal string, "Failed to load appointments. Please check connection." (`:89`); the real
 error is only `console.error`d (`:88`). The Retry button re-runs `fetchAppointments` (`:106`).
 **API:** `GET /api/forecast/appointments`.
-**Server:** `server/routes/forecast_routes.py:142-176`, `require_permission("forecast.read")`
-(`:146`), `days` defaults to 7 and is clamped to 1..14 (`:157`), the scope is the caller's
-department (`department_scope`, `:155`), any exception is re-raised as a 500, and a non-empty result
-is audited as a PHI read, `appointments_schedule_viewed`, with the patient ids (`:161-175`).
+**Server:** `server/routes/forecast_routes.py:153-192`, `require_permission("forecast.read")`
+(`:150`), `days` defaults to 7 and is clamped to 1..14 (`:171`), the scope is the caller's
+department (`department_scope`, `:168`), any exception is re-raised as a 500, and a non-empty result
+is audited as a PHI read, `appointments_schedule_viewed`, with the patient ids (`:176-191`).
 **Change this →** a 403 (a role without `forecast.read`) and a dropped Wi-Fi connection produce the
 identical sentence; the message does not distinguish "you can't see this" from "the server is
 down".
@@ -875,7 +875,7 @@ down".
 **Data from:** `appointments.filter(a => a.date === today).length` (`:136`), where
 `today = localDateKey()` (`:117`), the **local** calendar date (`src/lib/datetime.ts:210`).
 **Server:** each row's `date` is the booking's `scheduled_date`, and the window starts at
-`hospital_today()` (`server/services/forecast_service.py:936`), the hospital-local date, so the
+`hospital_today()` (`server/services/forecast_service.py:953`), the hospital-local date, so the
 client and server now compare like with like. (The board used to mark Friday as TODAY while the
 header said Saturday, because the server's date was UTC; `localDateKey`'s docstring records it.)
 **Change this →** the number is `var(--accent-text)` at 1.8 rem.
@@ -892,7 +892,7 @@ caller passes `days`, but this panel never does.
 patients, not rows, so one critical patient booked on three days counts once.
 **Server:** `acuity` is the NEWS2 band of the patient's latest vitals row, read `ORDER BY timestamp
 DESC, id DESC` per patient and scored by `vigil_service.score_vitals_row` on the patient's own SpO2
-scale (`server/services/forecast_service.py:966-989`), or `None` when the patient has no vitals (it
+scale (`server/services/forecast_service.py:983-1006`), or `None` when the patient has no vitals (it
 is never defaulted to `stable`). It came off `risk_scores` on 6 October 2026.
 **Change this →** rendered in `var(--status-danger-text)`.
 
@@ -900,7 +900,7 @@ is never defaulted to `stable`). It came off `risk_scores` on 6 October 2026.
 **Rendered by:** `:152-157`; subtitle "Time still to confirm".
 **Data from:** rows whose `origin` is `patient` (`:123`), bookings a patient asked for through the
 portal rather than ones staff made.
-**Server:** `appointments.origin`, defaulting to `staff` (`server/services/forecast_service.py:1011`).
+**Server:** `appointments.origin`, defaulting to `staff` (`server/services/forecast_service.py:1028`).
 
 ### Empty state: "No appointments booked for the next 7 days."
 **Where:** In place of the board, under the four zeroed cards.
@@ -915,7 +915,7 @@ blank space.
 **Data from:** `grouped`, built at `:111-115` by reducing `appointments` on `a.date`, keyed in
 first-seen order, which is date order, because the service sorts before returning: by date, then
 within a day the highest NEWS2 first with patients not scored last, then time and name
-(`server/services/forecast_service.py:1016-1023`).
+(`server/services/forecast_service.py:1033-1040`).
 **Change this →** columns **wrap** instead of scrolling sideways (the comment at `:167-169`: six
 fixed 240px columns overflowed a laptop screen behind a scrollbar that never showed, so later days
 were simply missing). A day with no bookings has no column; there is no Sunday skip any more.
@@ -965,11 +965,11 @@ stored 24-hour `HH:MM` into the clinical 12-hour form and returns anything it ca
 chip is small text) and a 12 % tint from `ACUITY_TINT` (`:54-58`). A patient with no vitals reads
 "Not scored" in muted text (`:207-209`, `:228`), never a green "Stable".
 **Server:** the NEWS2 band of the patient's latest vitals row, or `None`
-(`server/services/forecast_service.py:966-989`, `:1014`).
+(`server/services/forecast_service.py:983-1006`, `:1031`).
 
 ### Patient name
 **Rendered by:** `:235-237`, `nowrap` with ellipsis and the full name in `title`.
-**Data from:** `patients.name`, joined to the booking (`server/services/forecast_service.py:940-945`).
+**Data from:** `patients.name`, joined to the booking (`server/services/forecast_service.py:957-962`).
 
 ### Age + sex: "58M"
 **Rendered by:** `:238-240`, `{appt.age ?? ''}{sexShort(appt.sex, '')}`.
@@ -979,12 +979,12 @@ the explicit `''` fallback means an unrecorded sex prints the age alone.
 ### Appointment type: the bold line
 **Rendered by:** `:242-244`.
 **Data from:** `appointments.appointment_type`, defaulting to "Follow-up"
-(`server/services/forecast_service.py:1005`).
+(`server/services/forecast_service.py:1022`).
 
 ### Reason line
 **Rendered by:** `:245-249`, only when the booking has a reason; the smallest, faintest line on the
 row.
-**Data from:** `appointments.reason` (`server/services/forecast_service.py:1010`).
+**Data from:** `appointments.reason` (`server/services/forecast_service.py:1027`).
 
 ### Fields fetched but never shown
 `ward`, `bed`, `diagnosis` and `department` are on the `Appointment` interface

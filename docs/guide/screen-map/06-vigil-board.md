@@ -84,7 +84,7 @@ state set from the `X-Total-Count` response header in `loadPatients` (`:149`) an
 (`:178`); the fallback to `patients.length` covers a server that omitted the header (see
 `fetchPatientsPage`, `:53-54`, which substitutes `items.length` when the header will not parse).
 **API:** `GET /api/vigil/patients?limit=100&offset=0`, built at `VigilPanel.tsx:47`.
-**Server:** `server/routes/vigil_routes.py:262-389` `list_patients`. The count itself is the
+**Server:** `server/routes/vigil_routes.py:264-395` `list_patients`. The count itself is the
 `SELECT COUNT(*)` at `:292-299` (department-scoped) or `:319-324` (unscoped), written to the
 header at `:343`.
 **Change this →** this is the **server-side match count for your department**, not the number of
@@ -116,7 +116,7 @@ label.
 **Data from:** `const elevated = patients.filter(p => p.risk_level === 'elevated').length`
 (`VigilPanel.tsx:236`), a tally over the **loaded rows only**, not over the ward.
 **API:** the same `GET /api/vigil/patients` page. `risk_level` is the `rs.level` column selected
-at `vigil_routes.py:302` / `:327` and mapped into the response at `:357`.
+at `vigil_routes.py:304` / `:329` and mapped into the response at `:359`.
 **Server:** `server/services/vigil_service.py:334-339` decides the word `elevated`, see §7.
 **Change this →** the number is amber (`--status-warn-text`: `#deb467` dark /`#964507` light /
 `#ffc043` night, `src/index.css:79`, `:603`, `:693`) via `ClinicianShell.css:588-590`. Because
@@ -226,7 +226,7 @@ two `<line>` elements) and the text `Stability`. Its `title` is `"Sort by Risk S
 **API:** none. The sort runs client-side over already-fetched rows.
 **Server:** `vigil_service.board_order` (`vigil_service.py:808`) sorts every patient in scope with
 the SAME key inside `scored_admitted_patients` (`:823`, sort at `:878`), and `list_patients` pages
-only after that (`vigil_routes.py:361`), so page one is exactly the top of this sort.
+only after that (`vigil_routes.py:363`), so page one is exactly the top of this sort.
 **Change this →** clicking it re-runs the `useMemo` at `VigilPanel.tsx:555` and the rows
 reorder in place. The comparator is `boardOrder` (`VigilPanel.tsx:847`), the client twin of
 `vigil_service.board_order`: critical first, then NEWS2 high to low, then at an equal NEWS2 'elevated' (a
@@ -245,7 +245,7 @@ stops matching the order of the numbers shown (pinned on both sides:
 **Rendered by:** `VigilPanel.tsx:282-289`, same button shape, a clock SVG at `:285` (a
 `<circle>` plus a `<polyline>` hand), text `Recent`, `title="Sort by Recently Added"` (`:283`).
 **Data from:** the same `sortBy` state; `onClick` at `:282`.
-**API / Server:** the field it sorts on, `admission_date`, comes from `vigil_routes.py:352`.
+**API / Server:** the field it sorts on, `admission_date`, comes from `vigil_routes.py:354`.
 **Change this →** the comparator at `VigilPanel.tsx:197-199` sorts by
 `new Date(b.admission_date || 0)` descending, newest admission first. A patient with a missing
 or unparseable `admission_date` falls back to epoch 0 and sinks to the bottom.
@@ -328,8 +328,8 @@ name and the score stays pinned right.
 **Rendered by:** `VigilPanel.tsx:383-387`, it is a real `<button>`, not a div, with
 `style={{ width: '100%', textAlign: 'left', cursor: 'pointer' }}` at `:384`.
 **Data from:** one `Patient` object (type at `src/api/client.ts:597-612`).
-**API:** `GET /api/vigil/patients` → the row dict built at `server/routes/vigil_routes.py:344-362`.
-**Server:** `list_patients`, `vigil_routes.py:262-389`.
+**API:** `GET /api/vigil/patients` → the row dict built at `server/routes/vigil_routes.py:346-364`.
+**Server:** `list_patients`, `vigil_routes.py:264-395`.
 **Change this →** clicking (or pressing Enter/Space, because it is a button) calls
 `onSelect(p.id)` at `:383` → `handleSelectPatient` (`:92-95`) → `setSelectedPatientId`, and the
 **entire board is replaced by the patient chart**, `VigilPanel.tsx:215-231` returns early, so
@@ -346,7 +346,7 @@ does not lighten under the cursor.
 `isEmergencySurgery = isEmergency(p)` (`:378`) and `isEmergency` is
 `p.risk_level === 'critical'` (`VigilPanel.tsx:366`).
 **Data from:** `risk_level` on the patient row.
-**API / Server:** `rs.level` → `vigil_routes.py:357`; computed at
+**API / Server:** `rs.level` → `vigil_routes.py:359`; computed at
 `server/services/vigil_service.py:334-339`.
 **Change this →** the whole card fills with `color-mix(in srgb, var(--status-danger) 75%, #000)`
 and takes a `--status-danger` border (`Vigil.css:704-707`, both `!important`). Every text field
@@ -363,7 +363,7 @@ at `:204-205`.
 **Rendered by:** `VigilPanel.tsx:388`, 
 `` <div className={`patient-row__risk patient-row__risk--${p.risk_level}`} /> ``.
 **Data from:** `p.risk_level`, a raw string interpolated into the class name.
-**API:** `GET /api/vigil/patients`, field `risk_level` (`vigil_routes.py:403`), which is
+**API:** `GET /api/vigil/patients`, field `risk_level` (`vigil_routes.py:410`), which is
 `news2.level` for the same scored moment as the badge.
 **Server:** `compute_news2` assigns the word; `score_vitals_row` may escalate it (CfC overlay).
 **Change this →** three colours, from `Vigil.css:44-54`:
@@ -379,8 +379,8 @@ distinguish from "not yet painted".
 **Where:** the large text in the second column, top line.
 **Rendered by:** `VigilPanel.tsx:390-391`, `<span className="patient-row__name">{p.name}</span>`.
 **Data from:** `p.name`.
-**API:** `vigil_routes.py:347`.
-**Server:** the `patients.name` column, `SELECT p.*` at `vigil_routes.py:301` / `:326`.
+**API:** `vigil_routes.py:349`.
+**Server:** the `patients.name` column, `SELECT p.*` at `vigil_routes.py:303` / `:328`.
 **Change this →** 1.15rem / weight 600 / `--text-primary` with `-0.01em` tracking
 (`Vigil.css:63-68`), dropping to 1rem on phones (`Vigil.css:843-845`). It is not truncated by any
 rule of its own; the 220px column and the parent `min-width: 0` (`Vigil.css:60`) let a long name
@@ -408,7 +408,7 @@ key, this string is **not** in the i18n bundle.
 (`:108-110`), called on mount (`:111`) and again every time a chart is closed, the effect at
 `:112` fires when `selectedPatientId` goes back to `null`.
 **API:** `getUnseenCounts()` → `src/api/client.ts:1527-1530` → `GET /api/chart/unseen`.
-**Server:** `server/routes/patient_timeline_routes.py:99-135` `unseen_counts` →
+**Server:** `server/routes/patient_timeline_routes.py:102-165` `unseen_counts` →
 `server/services/patient_timeline_service.py:743-…` `unseen_counts_for_scope`.
 **Change this →** amber fill (`--status-warn`) with the on-fill label token
 (`--status-on-fill`), `Vigil.css:741-752`. That pairing is load-bearing: an opaque fill plus the
@@ -419,7 +419,7 @@ it reviewed, the count resets and, because closing the chart re-runs `loadUnseen
 badge is gone by the time you are back on the board; (2) the endpoint fails, the `.catch` at
 `:109` sets `{}` and **no badge draws anywhere**, which is the intended degraded state, not an
 error; (3) you have never opened that chart on this account, such patients are *absent* from the
-server's map entirely, not zero (`patient_timeline_routes.py:107-108`), because a badge on every
+server's map entirely, not zero (`patient_timeline_routes.py:126-127`), because a badge on every
 bed on day one is a badge nobody reads by day two. Note the counts are deliberately **not** on
 the 30-second vitals poll (`VigilPanel.tsx:101-108`): the endpoint writes an audited PHI-read row
 per call, and a per-tick encrypted-SQLite write is the exact shape behind the July loop stalls.
@@ -428,7 +428,7 @@ per call, and a per-tick encrypted-SQLite write is the exact shape behind the Ju
 **Where:** the small grey line directly under the patient name.
 **Rendered by:** `VigilPanel.tsx:402`, `<span className="patient-row__bed">{p.bed}</span>`.
 **Data from:** `p.bed`.
-**API:** `vigil_routes.py:349`.
+**API:** `vigil_routes.py:351`.
 **Server:** the `patients.bed` column.
 **Change this →** 0.75rem, `--text-muted` (`Vigil.css:70-73`); white on emergency rows
 (`Vigil.css:717`). It renders the bed string raw, no "Bed " prefix, no fallback. A patient with
@@ -440,7 +440,7 @@ a null bed renders an **empty line** that still occupies its 2px-gap slot in the
 **Rendered by:** `VigilPanel.tsx:404-406`, 
 `<div className="patient-row__meta"><span className="patient-row__diagnosis">{p.diagnosis}</span></div>`.
 **Data from:** `p.diagnosis`.
-**API:** `vigil_routes.py:353`.
+**API:** `vigil_routes.py:355`.
 **Server:** the `patients.diagnosis` column.
 **Change this →** 0.9rem `--text-secondary`, and critically `white-space: nowrap; overflow:
 hidden; text-overflow: ellipsis` (`Vigil.css:81-87`). A long diagnosis is **truncated with an
@@ -454,7 +454,7 @@ different heights. On phones it moves to its own grid row under the name (`Vigil
 the same shared badge the nurse board and the doctor home use (`src/components/News2Badge.tsx`,
 styles in `ClinicianShell.css` under `.news2`).
 **Data from:** `p.news2`, the NEWS2 of the patient's latest vitals row.
-**API:** `vigil_routes.py:378`, field `news2` (plus `news2_at`, that row's timestamp).
+**API:** `vigil_routes.py:380`, field `news2` (plus `news2_at`, that row's timestamp).
 **Server:** `list_patients` calls `vigil_service.scored_admitted_patients` (`vigil_service.py:823`),
 which picks each patient's latest vitals row (`ORDER BY timestamp DESC, id DESC`, `:863`) and
 scores it through `vigil_service.score_vitals_row` (`:874`), on the patient's SpO2 scale and with
@@ -510,7 +510,7 @@ containing three children:
 **Data from:** `boardUnavailable` (`:238`), `loadError` set **and** zero rows.
 **API:** the failed `GET /api/vigil/patients`. `fetchPatientsPage` throws
 `Failed to load patients: <status>` at `VigilPanel.tsx:52`.
-**Server:** `vigil_routes.py:262`. Note the `phi_access` write at `:369-387` is fail-closed, if
+**Server:** `vigil_routes.py:264`. Note the `phi_access` write at `:369-387` is fail-closed, if
 the audit row cannot be persisted, **no board is returned**, and this is the state you see.
 **Change this →** it appears together with the four em-dashes in the tiles (§1, same
 `boardUnavailable` flag), so the screen reads "unknown" in every place at once. Pressing Retry
@@ -529,7 +529,7 @@ that line and an expired session would instead surface as the generic failure bl
 
 ### 403: no permission
 **Where:** would surface as the failure block above.
-**Server:** `require_permission("patient.read_all")` at `vigil_routes.py:270`; the dependency is
+**Server:** `require_permission("patient.read_all")` at `vigil_routes.py:272`; the dependency is
 `server/permissions.py:385-…`, which audits a `permission_denied` event **off the event loop**
 (`:406`) and only then raises 403. Roles holding `PATIENT_READ_ALL` are `doctor`
 (`permissions.py:106`), `nurse` (`:121`) and `admin` (`:142`); `pharmacist` (`:135`) and
@@ -558,7 +558,7 @@ ${total})\``.
 **API:** `GET /api/vigil/patients?limit=100&offset=<patients.length>`, `loadMore` at
 `VigilPanel.tsx:175-190`, request built at `:177`.
 **Server:** the same `list_patients`; `limit` is capped at 500 and `offset` floored at 0 by the
-`Query` validators at `vigil_routes.py:268-269`.
+`Query` validators at `vigil_routes.py:270-271`.
 **Change this →** the button **does not exist** when everything is loaded, `patients.length <
 total` goes false and the node disappears, so there is no disabled-looking leftover. While a page
 is in flight the label becomes `Loading…` and the button goes `disabled` (`:325`), which under
@@ -605,16 +605,16 @@ only bails because `onSelect` is a stable `useCallback`.
 **The function is `compute_news2`, `server/services/vigil_service.py:234-399`.** It is the single
 implementation of the RCP NEWS2 table in the product; `escalation_service.py:34-37` states that a
 second scorer is how two screens come to disagree about the same patient, and
-`nurse_shift_service.py:669` says the same. It is called by `bot_service.py:200`,
-`ingestion_service.py` (via `_persist_risk_score`, `:264-272`), `nurse_shift_service.py:374`,
-`downtime_service.py:186`, `escalation_service.py:1655`, `command_center_service.py:177` and
-`sage_service.py:1696`, so a threshold edit lands on the board, the nurse shift board, the
+`nurse_shift_service.py:681` says the same. It is called by `bot_service.py:200`,
+`ingestion_service.py` (via `_persist_risk_score`, `:264-272`), `nurse_shift_service.py:386`,
+`downtime_service.py:187`, `escalation_service.py:1692`, `command_center_service.py:177` and
+`sage_service.py:1711`, so a threshold edit lands on the board, the nurse shift board, the
 downtime pack, escalation and Sage's answers simultaneously.
 
 **The board scores on read.** Since 2026-10-03 `list_patients` does not read `risk_scores` at
 all: it scores each patient's latest vitals row through `score_vitals_row` on every request
 (`vigil_service.scored_admitted_patients`, `vigil_service.py:823-879`, called at
-`vigil_routes.py:361`). **So a threshold change shows on the next poll (within 30 s)**,
+`vigil_routes.py:363`). **So a threshold change shows on the next poll (within 30 s)**,
 for every patient, without waiting for a new observation. The live tick still carries the score
 its writer computed, so between polls a row can show the old threshold's result.
 
@@ -677,11 +677,11 @@ Recording these so nobody hunts for the code that renders them. All were checked
 `PatientRow` (`VigilPanel.tsx:372-414`) top to bottom.
 
 - **Age and sex.** `age` and `sex` are on the `Patient` type (`src/api/client.ts:605-606`) and
-  the route returns them (`vigil_routes.py:354-355`), but no board cell reads them. `sexLabel`
+  the route returns them (`vigil_routes.py:356-357`), but no board cell reads them. `sexLabel`
   is imported at `VigilPanel.tsx:9` for the chart, not the board.
-- **Ward.** Same, typed at `client.ts:602`, returned at `vigil_routes.py:350`, unrendered. The
+- **Ward.** Same, typed at `client.ts:602`, returned at `vigil_routes.py:352`, unrendered. The
   bed string is the only location shown.
-- **MRN.** Returned at `vigil_routes.py:348`, unrendered. (It is still a PHI disclosure, which is
+- **MRN.** Returned at `vigil_routes.py:350`, unrendered. (It is still a PHI disclosure, which is
   why the read is audited at `:369-387`.)
 - **The NEWS2 breakdown and drivers.** The route returns them inside `news2`, but the row shows
   only the aggregate, its band and its markers. The breakdown lives in the chart.
@@ -691,8 +691,8 @@ Recording these so nobody hunts for the code that renders them. All were checked
 - **Alert / escalation indicators.** No bell, no count, no colour beyond the risk band.
   `escalation_service` fires into Relay, not onto this row.
 - **Risk drivers.** `risk_drivers` is typed (`client.ts:609`) and returned as a parsed list
-  (`vigil_routes.py:358`), but never rendered here.
-- **Attending doctor.** Returned at `vigil_routes.py:359`, unrendered.
+  (`vigil_routes.py:360`), but never rendered here.
+- **Attending doctor.** Returned at `vigil_routes.py:361`, unrendered.
 - **A "what changed" timeline badge.** The only change indicator is the **"N NEW"** pill (§5),
   and it counts chart events since *you* marked the chart reviewed, not clinical change.
 - **A search or filter box.** `.search-input` exists in `Vigil.css:696` but belongs to the chart's

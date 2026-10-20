@@ -59,7 +59,84 @@ WATCHLIST_LIMIT = 8
 # Snapshot keys that never leave the server (see _build_ward_snapshot).
 _WATCHLIST_ALL = "_watchlist_all"
 _RISK_BY_DEPT = "_risk_by_department"
-_PRIVATE_KEYS = (_WATCHLIST_ALL, _RISK_BY_DEPT)
+# Each scored patient's facility (their active admission's) and the census and
+# risk mix per facility, so get_brief can keep a reader to their facilities
+# (multisite-8, W12-A). Server-side only, like the two above.
+_FACILITY_OF = "_facility_of"
+_RISK_BY_FACILITY = "_risk_by_facility"
+_CENSUS_BY_FACILITY = "_census_by_facility"
+_PRIVATE_KEYS = (
+    _WATCHLIST_ALL,
+    _RISK_BY_DEPT,
+    _FACILITY_OF,
+    _RISK_BY_FACILITY,
+    _CENSUS_BY_FACILITY,
+)
+
+
+class _FacilityScopeUnknown:
+    """get_brief's default: the caller did not say which facilities it may see."""
+
+
+#: Passed by a caller that has not been given the reader's facility scope. With
+#: one facility on record it means no limit; with more than one, a reader with
+#: no department gets no brief at all (strict: the shared snapshot spans every
+#: facility), and a ward reader is kept to their department's facility.
+FACILITY_SCOPE_UNKNOWN = _FacilityScopeUnknown()
+
+_NO_RISK = {"critical": 0, "elevated": 0, "moderate": 0, "stable": 0}
+
+
+def _facility_limit(
+    department: str | None, facilities: frozenset[int] | None | _FacilityScopeUnknown
+) -> tuple[bool, frozenset[int] | None]:
+    """(withhold the whole brief, the facility limit) for get_brief.
+
+    An explicit scope is used as given. FACILITY_SCOPE_UNKNOWN is no limit
+    while one facility is on record; with more than one it is the department's
+    facility for a ward reader (the empty set for a department the master does
+    not list, which sees no patient anywhere else either) and the whole brief
+    withheld for a reader with no department."""
+    if not isinstance(facilities, _FacilityScopeUnknown):
+        return False, facilities
+    from services import facility_service
+
+    if not facility_service.multi_facility_data():
+        return False, None
+    if department is None:
+        return True, None
+    fid = facility_service.department_facility(department)
+    return False, frozenset() if fid is None else frozenset({fid})
+
+
+def _department_in_limit(department: str, limit: frozenset[int] | None) -> bool:
+    """Is a ward reader's department at one of the limit's facilities?"""
+    if limit is None:
+        return True
+    from services import facility_service
+
+    return facility_service.department_facility(department) in limit
+
+
+def _facility_risk(snapshot: dict, limit: frozenset[int]) -> dict[str, int]:
+    """The risk mix of the patients at the limit's facilities, from the scan."""
+    out = dict(_NO_RISK)
+    for fid, dist in (snapshot.get(_RISK_BY_FACILITY) or {}).items():
+        if fid in limit:
+            for level, n in dist.items():
+                out[level] = out.get(level, 0) + n
+    return out
+
+
+def _facility_words(limit: frozenset[int] | None) -> str | None:
+    """The brief's scope line for a reader with no department: the names of
+    the facilities it is kept to (the card shows "<scope> only")."""
+    if not limit:
+        return None
+    from services import facility_service
+
+    return ", ".join(facility_service.display_name(fid) for fid in sorted(limit))
+
 
 # EVERY blocking call in this module goes through database.run_db(): never on
 # the event loop, and never on asyncio's DEFAULT executor.
@@ -138,8 +215,17 @@ class WardNarrator:
         risk_dist = {"critical": 0, "elevated": 0, "moderate": 0, "stable": 0}
         risk_by_dept: dict[str, dict[str, int]] | None
         risk_by_dept = {}
+        # Per facility, for get_brief's facility limit (multisite-8). A patient
+        # row without the key (a hand-built triple) counts at no facility.
+        facility_of: dict[str, int | None] = {}
+        census_by_facility: dict[int | None, int] = {}
+        risk_by_facility: dict[int | None, dict[str, int]] | None
+        risk_by_facility = {}
         watchlist = []
         for p, vitals, news2 in scored:
+            fid = p.get("admission_facility_id")
+            facility_of[p["id"]] = fid
+            census_by_facility[fid] = census_by_facility.get(fid, 0) + 1
             if news2 is None:
                 # Nothing recorded. The board shows "not recorded" and counts
                 # the patient in no tile; a band with no observation behind it
@@ -152,6 +238,10 @@ class WardNarrator:
                 {"critical": 0, "elevated": 0, "moderate": 0, "stable": 0},
             )
             dept_dist[lvl] = dept_dist.get(lvl, 0) + 1
+            facility_dist = risk_by_facility.setdefault(
+                fid, {"critical": 0, "elevated": 0, "moderate": 0, "stable": 0}
+            )
+            facility_dist[lvl] = facility_dist.get(lvl, 0) + 1
             if lvl in ("critical", "elevated"):
                 watchlist.append(
                     {
@@ -215,6 +305,7 @@ class WardNarrator:
         scoring = scoring_enabled()
         if not scoring:
             risk_dist, risk_by_dept, watchlist = None, None, []
+            risk_by_facility = None
         return {
             "census": census,
             "scoring_enabled": scoring,
@@ -229,6 +320,9 @@ class WardNarrator:
             # patients sat elsewhere. Scoping filters this full list first.
             _WATCHLIST_ALL: watchlist,
             _RISK_BY_DEPT: risk_by_dept,
+            _FACILITY_OF: facility_of,
+            _RISK_BY_FACILITY: risk_by_facility,
+            _CENSUS_BY_FACILITY: census_by_facility,
         }
 
     # ── Local LLM narrative (optional layer) ──
@@ -429,7 +523,11 @@ class WardNarrator:
         except Exception as e:
             logger.debug("ward_brief emit failed: %s", e)
 
-    def get_brief(self, department: str | None = None) -> dict:
+    def get_brief(
+        self,
+        department: str | None = None,
+        facilities: frozenset[int] | None | _FacilityScopeUnknown = FACILITY_SCOPE_UNKNOWN,
+    ) -> dict:
         """Current brief; builds the deterministic floor on first request.
 
         SYNCHRONOUS ON PURPOSE, and its only caller — GET /api/sage/ward-brief —
@@ -449,6 +547,18 @@ class WardNarrator:
         function's contract, None means a genuinely unscoped account (an admin
         seeded without a department) — NOT "scope unknown, show everything".
         Callers must pass the derived value rather than omitting the argument.
+
+        FACILITY SCOPE (multisite-8, W12-A, 20 October 2026). `facilities` is
+        permissions.facility_scope(user): None is no facility limit (one
+        facility on record, or a group-wide account); a set keeps the
+        watchlist and the risk mix to patients whose active admission is at
+        those facilities and withholds the house-wide count, events, alert count
+        and narrative, as a department scope does. A caller that passes nothing
+        (FACILITY_SCOPE_UNKNOWN) gets no limit while one facility is on record;
+        with more than one, a ward reader is kept to their department's
+        facility and a reader with no department gets no brief at all
+        (snapshot None, which the card shows as nothing rather than as an
+        empty watchlist that would read as an all clear).
         """
         if self._state["snapshot"] is None:
             try:
@@ -463,10 +573,22 @@ class WardNarrator:
         if not snap:
             return state
 
+        withhold, limit = _facility_limit(department, facilities)
+        if withhold:
+            state["snapshot"] = None
+            state["narrative"] = None
+            state["narrative_engine"] = None
+            return state
+
         public = {k: v for k, v in snap.items() if k not in _PRIVATE_KEYS}
-        if department is None:
+        if department is None and limit is None:
             state["snapshot"] = public
             return state
+
+        facility_of = snap.get(_FACILITY_OF) or {}
+
+        def in_limit(w: dict) -> bool:
+            return limit is None or facility_of.get(w.get("patient_id")) in limit
 
         # Filter the FULL list, then cut to the display limit. Cutting first is
         # what dropped a critical patient ranked ninth hospital-wide from their
@@ -474,7 +596,7 @@ class WardNarrator:
         scoped_watchlist = [
             w
             for w in snap.get(_WATCHLIST_ALL) or snap.get("watchlist") or []
-            if (w.get("department") or "") == department
+            if (department is None or (w.get("department") or "") == department) and in_limit(w)
         ][:WATCHLIST_LIMIT]
         scoped = dict(public)
         scoped["watchlist"] = scoped_watchlist
@@ -483,11 +605,17 @@ class WardNarrator:
         # Older snapshots without the breakdown fall back to the watchlist.
         if public.get("scoring_enabled") is False:
             scoped["risk_distribution"] = None
-        elif _RISK_BY_DEPT in snap:
+        elif department is None:
+            assert limit is not None
+            scoped["risk_distribution"] = _facility_risk(snap, limit)
+        elif _RISK_BY_DEPT in snap and _department_in_limit(department, limit):
             scoped["risk_distribution"] = dict(
                 (snap.get(_RISK_BY_DEPT) or {}).get(department)
                 or {"critical": 0, "elevated": 0, "moderate": 0, "stable": 0}
             )
+        elif _RISK_BY_DEPT in snap:
+            # The department sits at no facility the reader is kept to.
+            scoped["risk_distribution"] = dict(_NO_RISK)
         else:
             scoped["risk_distribution"] = {
                 lvl: sum(1 for w in scoped_watchlist if w["level"] == lvl)
@@ -496,7 +624,7 @@ class WardNarrator:
         # The census is a hospital-wide count of wards this caller cannot see;
         # `scope` tells the client the numbers are partial.
         scoped["census"] = None
-        scoped["scope"] = department
+        scoped["scope"] = department if department is not None else _facility_words(limit)
         # Recent events and alert counts are hospital-wide aggregates carrying
         # patient_ids from other wards — withheld rather than filtered, because
         # filtering them correctly needs the admission department per event and

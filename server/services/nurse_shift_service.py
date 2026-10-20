@@ -331,18 +331,30 @@ def parse_frequency(frequency: str | None) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # Shift board
 # ─────────────────────────────────────────────────────────────────────────────
-def _load_board_rows(department: str | None):
+def _load_board_rows(
+    department: str | None, facilities: frozenset[int] | None = None
+) -> tuple[list, dict, dict, dict]:
     """Every table read the board needs, in four set-based queries.
 
     Deliberately NOT per-patient: a 60-bed ward would otherwise cost 240 round
     trips through the DB pool on every board refresh.
+
+    `facilities` is the caller's permissions.facility_scope() (multisite-8):
+    None leaves the patient query as it was; otherwise only patients whose
+    active admission is at one of those facilities are on the board, and
+    every later read is keyed on those patients.
     """
+    from services.facility_filter import column_clause
+
     with db_session() as db:
         params: tuple = ()
         dept_clause = ""
         if department:
             dept_clause = " AND a.department = ?"
             params = (department,)
+        facility_sql, facility_args = column_clause("a.facility_id", facilities)
+        dept_clause += facility_sql
+        params += facility_args
 
         patients = db.execute(
             f"""SELECT p.id, p.name, p.mrn, p.bed, p.ward, p.age, p.sex, p.diagnosis,
@@ -732,7 +744,7 @@ def _build_med_task(
     }
 
 
-def build_board(department: str | None) -> dict:
+def build_board(department: str | None, *, facilities: frozenset[int] | None = None) -> dict:
     """The nurse's shift board: one task-shaped card per patient.
 
     ``department`` is REQUIRED — no default. Passing None means "every admitted
@@ -741,12 +753,16 @@ def build_board(department: str | None) -> dict:
     they mean, and the HTTP caller must derive it from the authenticated user
     (``permissions.department_scope``), never from the request.
 
+    ``facilities`` is ``permissions.facility_scope(user)`` (multisite-8): None
+    (one facility on record, or a group-wide account) changes nothing; a set
+    keeps the board to patients whose active admission is at those facilities.
+
     Ordering is clinical, not alphabetical — the sickest and the latest-running
     tasks float up, because the first thing a nurse needs off this screen is
     "who do I go to first".
     """
     now = _now()
-    patients, latest_vitals, meds_by_patient, extra = _load_board_rows(department)
+    patients, latest_vitals, meds_by_patient, extra = _load_board_rows(department, facilities)
     # The Orb Ward Record has no medication round: no task, no count and no
     # allergy block line is built from the charted drugs. Each card's count is
     # None, not 0, the way a band count is None while scoring is off.
@@ -2117,19 +2133,29 @@ def _admission_time_cols(db) -> str:
     return "a.admitted_at" if "admitted_at" in cols else "NULL AS admitted_at"
 
 
-def transcribe_patients(department: str | None) -> list[dict]:
+def transcribe_patients(
+    department: str | None, *, facilities: frozenset[int] | None = None
+) -> list[dict]:
     """The admitted patients the ward clerk may copy rounds for, in her
     department (permissions.department_scope; None is unscoped, as everywhere).
 
     Her own read, so her Observations screen works with the beds module
     (ORB_ADT) switched off: name, hospital number, ward and bed, and when the
-    stay began. Nothing clinical: no reading, no score, no diagnosis."""
+    stay began. Nothing clinical: no reading, no score, no diagnosis.
+
+    `facilities` (permissions.facility_scope, multisite-8) keeps the list to
+    active admissions at those facilities; None changes nothing."""
+    from services.facility_filter import column_clause
+
     with db_session() as db:
         params: tuple = ()
         dept_clause = ""
         if department:
             dept_clause = " AND a.department = ?"
             params = (department,)
+        facility_sql, facility_args = column_clause("a.facility_id", facilities)
+        dept_clause += facility_sql
+        params += facility_args
         rows = db.execute(
             f"""SELECT p.id, p.name, p.mrn, p.ward, p.bed, p.admission_date,
                        {_admission_time_cols(db)}, a.created_at

@@ -1,11 +1,15 @@
 import { useState, useEffect, useCallback } from 'react'
-import { apiFetch, getAuditLogs, type AuditLog } from '../../../api/client'
+import { apiFetch } from '../../../api/client'
 import { actorLabel } from '../../../lib/actorLabel'
 import { OutcomeBadge } from './AdminBadges'
 import { AdminLoadingState, AdminErrorState, AdminEmptyState } from './AdminEmptyState'
-import { AuditSummaryCell, FAILURES_AND_DENIALS, type AuditFacets } from './AuditLogTable'
+import {
+  AuditSummaryCell, FAILURES_AND_DENIALS, FacilityFilter, type AuditFacets,
+} from './AuditLogTable'
+import { facilityLabel, fetchAuditPage, type AuditFacility, type AuditLogRow } from './auditFacility'
 import { humaniseEnum } from '../../../lib/humanise'
 import { formatClinicalDateTime } from '../../../lib/datetime'
+import { usePlatformFlags } from '../../../shellConfig'
 
 // THREE categories, not one. Sign-ins are audited as 'authentication',
 // permission denials as 'authorization', lockouts/posture changes as
@@ -14,7 +18,7 @@ import { formatClinicalDateTime } from '../../../lib/datetime'
 const SECURITY_CATEGORIES = 'authentication,authorization,security'
 
 export default function SecurityActivity() {
-  const [logs, setLogs] = useState<AuditLog[]>([])
+  const [logs, setLogs] = useState<AuditLogRow[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -24,22 +28,28 @@ export default function SecurityActivity() {
   const [outcome, setOutcome] = useState(FAILURES_AND_DENIALS)
   const [action, setAction] = useState('')
   const [actions, setActions] = useState<string[]>([])
+  // multisite-11: a facility column and filter while more than one facility
+  // is on record (see AuditLogTable).
+  const { multiFacilityData } = usePlatformFlags()
+  const [facility, setFacility] = useState<number | undefined>(undefined)
+  const [facilities, setFacilities] = useState<AuditFacility[]>([])
+  const showFacility = multiFacilityData || facilities.length > 0
   const limit = 25
 
   const fetchData = useCallback(() => {
     setLoading(true)
     setError(null)
-    getAuditLogs({
+    fetchAuditPage({
       event_category: SECURITY_CATEGORIES,
       outcome: outcome || undefined,
       action_type: action || undefined,
       limit,
       offset: page * limit,
-    })
-      .then((res) => { setLogs(res.logs); setTotal(res.total) })
+    }, facility)
+      .then((res) => { setLogs(res.logs); setTotal(res.total); setFacilities(res.facilities ?? []) })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
-  }, [page, outcome, action])
+  }, [page, outcome, action, facility])
 
   // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch/subscribe trigger: the setState is the loader's own loading flag, not state derived from props or state.
   useEffect(() => { fetchData() }, [fetchData])
@@ -55,7 +65,7 @@ export default function SecurityActivity() {
   }, [])
 
   const totalPages = Math.ceil(total / limit)
-  const filtered = Boolean(outcome || action)
+  const filtered = Boolean(outcome || action || facility !== undefined)
 
   return (
     <div className="admin-security">
@@ -82,6 +92,13 @@ export default function SecurityActivity() {
             <option value="">All actions</option>
             {actions.map(a => <option key={a} value={a}>{humaniseEnum(a)}</option>)}
           </select>
+          {showFacility && (
+            <FacilityFilter
+              facilities={facilities}
+              value={facility}
+              onChange={(next) => { setFacility(next); setPage(0) }}
+            />
+          )}
         </div>
         <div className="admin-filter-meta" style={{ width: '100%', justifyContent: 'space-between' }}>
           <span>
@@ -125,6 +142,7 @@ export default function SecurityActivity() {
                 <th>Role</th>
                 <th>IP Address</th>
                 <th>Path</th>
+                {showFacility && <th>Facility</th>}
                 <th>Summary</th>
               </tr>
             </thead>
@@ -138,6 +156,7 @@ export default function SecurityActivity() {
                   <td className="admin-td--small">{humaniseEnum(log.actor_role)}</td>
                   <td className="admin-td--mono admin-td--small">{log.ip_address || '—'}</td>
                   <td className="admin-td--small">{log.request_path || '—'}</td>
+                  {showFacility && <td className="admin-td--small">{facilityLabel(log.facility)}</td>}
                   <AuditSummaryCell text={log.summary_message} />
                 </tr>
               ))}

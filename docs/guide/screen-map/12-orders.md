@@ -222,7 +222,7 @@ server-side at `server/services/orders_service.py:89-90`.
 `CODELESS` at `:65`, makes `needsCode` false (`:428`) and **the entire Code System + Code row
 disappears** (`:506`), and `canSubmit` (`:445-449`) stops requiring a validated code. (2) Choosing
 **medication** is what arms the drug-safety gate: the route only passes `pre_persist_gate` when
-`req.order_type == "medication"` (`server/routes/orders_routes.py:265`), so only a medication order
+`req.order_type == "medication"` (`server/routes/orders_routes.py:263`), so only a medication order
 can raise the safety modal. (3) The select also resets `valid` to `'idle'` (`:493`), wiping any
 green ✓ next to the code field.
 
@@ -257,7 +257,7 @@ to its right on the same baseline (`styles.validateRow`, `Orders.module.css:315-
 field fires `validateCode` (`:525`), as does the button.
 **API:** `GET /api/orders/terminology/validate?code_system=…&code=…`
 (`OrdersPanel.tsx:434-436`).
-**Server:** `server/routes/orders_routes.py:211-224` (`validate_terminology`, guarded by
+**Server:** `server/routes/orders_routes.py:209-222` (`validate_terminology`, guarded by
 `require_permission(ORDER_READ)`), which calls
 `server/services/terminology_service.py:55-64` (`validate_code`) and, when valid,
 `:67-76` (`get_display`). Both are single indexed lookups against `terminology` with
@@ -275,7 +275,7 @@ stays disabled for every order type except nursing/other (`:445-449`).
 **Rendered by:** `OrdersPanel.tsx:545-550`.
 **Data from:** `description` state (`:415`), which the code validator may fill for you (`:439`).
 **API:** sent as `description`; **also used as the drug name** for medication orders, 
-`orders_routes.py:249` passes `req.description` straight into `enforce_medication_safety` as
+`orders_routes.py:247` passes `req.description` straight into `enforce_medication_safety` as
 `drug_name`.
 **Server:** required and stripped at `orders_service.py:103-104`.
 **Change this →** an empty description keeps **Create Order** disabled (`:446`). For a medication,
@@ -309,13 +309,13 @@ closes.
 **Data from:** `canSubmit` (`:445-449`) and `submitting` (`:422`); label is
 `{submitting ? 'Creating…' : 'Create Order'}`.
 **API:** `createOrder(...)` → `POST /api/orders` (`client.ts:1365-1374`).
-**Server:** `orders_routes.py:231-273` (`create_order`, guarded by
+**Server:** `orders_routes.py:229-271` (`create_order`, guarded by
 `require_permission(ORDER_WRITE)`) → `orders_service.create_order`
 (`server/services/orders_service.py:69-143`), which validates the order type, the priority, the
 initial status, the description and the code, runs the caller's `pre_persist_gate` **after all
 validation and immediately before the write** (`:124-125`), inserts into `orders` with
 `status='draft'`, and writes the first `order_events` row via `_record_event` (`:141`,
-`:57-62`). After the write, `_shadow_clinical_action` (`orders_routes.py:293-344`) records a
+`:57-62`). After the write, `_shadow_clinical_action` (`orders_routes.py:291-342`) records a
 `clinical.action` shadow event, but **only if a shadow episode is already open** (`:307-309`);
 a routine order on a quiet patient records nothing.
 **Change this →** the disabled state is a **colour swap, never opacity** (`Orders.module.css:351-358`
@@ -415,7 +415,7 @@ acknowledged re-submit (`!safetyAck` in the same condition; the comment at `:464
 clinician has just reviewed those alerts).
 **Server:** the sub-severe path, `enforce_medication_safety` audits a `drug_safety_screen`
 success and returns (`medication_safety_gate.py:174-176`); the route attaches it to the response as
-`safety` (`orders_routes.py:269-270`).
+`safety` (`orders_routes.py:267-268`).
 **Change this →** **the order already exists** by the time this appears. Closing it therefore
 *finishes* the create flow, `onClose` calls `onCreated()` because `wasInfo` is true
 (`OrdersPanel.tsx:571-575`), so the form closes and the list reloads. That is the opposite of
@@ -424,7 +424,7 @@ between the two modes.
 
 > **What is NOT on this path:** the **dose guard never fires on an individual CPOE order.** This
 > form has no dose, route or frequency field, and `orders_routes.create_order` runs only
-> `enforce_medication_safety` (`orders_routes.py:244-252`), the allergy + interaction screen.
+> `enforce_medication_safety` (`orders_routes.py:242-250`), the allergy + interaction screen.
 > `_dose_screen` (`order_sets_service.py:642-691`) is reached only from the order-set path (§C) and
 > from the bedside eMAR. A 10x digoxin dose typed into the Description here is refused by nothing.
 
@@ -435,7 +435,7 @@ between the two modes.
 **Rendered by:** `OrdersPanel.tsx:264-265`.
 **Data from:** `loading` state (`:107`), set true at `:129` and false in the `finally` at `:138`.
 **API:** `GET /api/orders/patient/{patientId}` (`:131`).
-**Server:** `orders_routes.py:347-356` (`list_patient_orders`), guarded by
+**Server:** `orders_routes.py:345-354` (`list_patient_orders`), guarded by
 `require_patient_access(ORDER_READ, audit_action="patient_orders_viewed")`, which is
 permission check + ward-scope check + a fail-closed `phi_access` audit row
 (`permissions.py:454-525`), calling `orders_service.list_orders`
@@ -524,7 +524,7 @@ metadata row (`Orders.module.css:248-249`).
 **Where:** last item of the metadata line, usually absent.
 **Rendered by:** `OrdersPanel.tsx:318`, `{order.source !== 'clinician' && <span>{order.source}</span>}`.
 **Data from:** `order.source`.
-**Server:** defaults to `"clinician"` (`orders_routes.py:33`, `orders_service.py:78`); an order
+**Server:** defaults to `"clinician"` (`orders_routes.py:31`, `orders_service.py:78`); an order
 written by an applied protocol is stored with `source="order_set"`
 (`order_sets_service.py:937`).
 **Change this →** this one word is how a clinician tells a hand-typed order from a protocol-placed
@@ -558,7 +558,7 @@ the `|| ''` fallback at `:325`.
 **Data from:** `nextStatus(order)` at `:89-96`, `draft → active`, `active → in_progress`,
 `in_progress → completed`, and **null for everything else**.
 **API:** `POST /api/orders/{id}/transition` with `{ to_status }` (`:146-149`).
-**Server:** `orders_routes.py:374-386` (`transition_order`, `require_permission(ORDER_WRITE)`) →
+**Server:** `orders_routes.py:372-384` (`transition_order`, `require_permission(ORDER_WRITE)`) →
 `orders_service.transition_order` (`orders_service.py:150-191`), which rejects an unknown target
 (`:157-158`), treats a same-status move as an idempotent no-op with no event
 (`:167-169`), rejects an illegal edge (`:171-176`), refuses `resulted` for a non-lab/imaging type
@@ -575,7 +575,7 @@ in_progress. Allowed from 'completed': []".
 **Data from:** `canResult` at `:302-303`, `RESULTABLE.has(order_type)` **and** status is `active`
 or `in_progress`.
 **API:** `POST /api/orders/{id}/result` with `{ result_text }` (`:173-176`).
-**Server:** `orders_routes.py:389-400` (`add_result`) → `orders_service.add_result`
+**Server:** `orders_routes.py:387-398` (`add_result`) → `orders_service.add_result`
 (`orders_service.py:198-230`): rejects blank text (`:200-201`), rejects a non-resultable order type
 (`:208-212`), rejects an illegal source status (`:215-219`), then writes text + timestamp +
 `status='resulted'` and records the transition event only if the status actually moved
@@ -707,10 +707,10 @@ the "No patient selected" placeholder, a regression test asserts exactly that
 **Data from:** `configNote` state, built at `:103-106` as
 `` `Protocols v${res.config.config_version} · editable by ${res.config.editable_by}` ``.
 **API:** `GET /api/orders/sets` (`src/api/orderSets.ts:83-88`).
-**Server:** `orders_routes.py:94-106` (`list_order_sets`, `require_permission(ORDER_READ)`),
+**Server:** `orders_routes.py:92-104` (`list_order_sets`, `require_permission(ORDER_READ)`),
 which reads `order_sets_service.get_config()` (`order_sets_service.py:494-497`) and hard-codes
 `editable_by` to **"an engineer, in the site configuration file, not through this API"**
-(`orders_routes.py:104`). `config_version` comes from the site file and must equal 1
+(`orders_routes.py:102`). `config_version` comes from the site file and must equal 1
 (`order_sets_service.py:442-446`).
 **Change this →** the rendered line reads **"Protocols v1 · editable by an engineer, in the site
 configuration file, not through this API"**. The comment at `OrderSetsPanel.tsx:99-102` says why
@@ -815,7 +815,7 @@ every protocol**. Fill the field with a consultant's name in the site file and i
 **Rendered by:** `OrderSetsPanel.tsx:274`.
 **Data from:** `previewing` (`:81`), set at `:146` and cleared at `:154`.
 **API:** `POST /api/orders/sets/{setId}/preview` with `{ patient_id }` (`orderSets.ts:94-103`).
-**Server:** `orders_routes.py:119-148` (`preview_order_set`, `require_permission(ORDER_WRITE)`).
+**Server:** `orders_routes.py:117-146` (`preview_order_set`, `require_permission(ORDER_WRITE)`).
 It calls `enforce_patient_scope(user, req.patient_id)` at `:134`, the body-shaped equivalent of
 the path guard, 404 not 403 (`permissions.py:301-326`), then
 `order_sets_service.preview_set` (`:800-826`), then writes an `order_set_previewed` PHI-read audit
@@ -838,7 +838,7 @@ this is deliberate follow-up."** (`order_sets_service.py:634-638`, via
 **"Insufficient permissions"** for a role with `ORDER_READ` but not `ORDER_WRITE` (an admin, if
 they could reach this screen).
 **Change this →** the route maps `OrderSetError` to 404 for "not found"/"Unknown order set" and 400
-for everything else (`orders_routes.py:83-91`), deliberately 404 for the patient case so the
+for everything else (`orders_routes.py:81-89`), deliberately 404 for the patient case so the
 response cannot confirm a patient exists.
 
 ### "N code(s) in this protocol are not loaded in this deployment's terminology table: …"
@@ -932,8 +932,8 @@ screen (`--status-danger` background, `--status-on-fill` text, `:248-251`), the 
 `{applying ? 'Applying…' : `Apply ${preview.items.length} order(s)`}`.
 **Data from:** `disabled={applying || previewing || !preview.would_apply}` at `:329`.
 **API:** `POST /api/orders/sets/{setId}/apply` with `{ patient_id }` (`orderSets.ts:105-114`).
-**Server:** `orders_routes.py:151-193` (`apply_order_set`, `require_permission(ORDER_WRITE)` plus
-`enforce_patient_scope` at `:165`) → `order_sets_service.apply_set` (`:829-983`). Its documented
+**Server:** `orders_routes.py:194-238` (`apply_order_set`, `require_permission(ORDER_WRITE)` plus
+`enforce_patient_scope` at `:208`) → `order_sets_service.apply_set` (`:829-983`). Its documented
 order of operations (`:839-853`): resolve items and check the patient is orderable; check
 terminology for the **whole** set; screen **every** item so the clinician gets one complete list
 rather than a fix-one-restart loop; **if anything is blocked, raise and write nothing**; write the
@@ -942,7 +942,7 @@ a readable account; create each order individually through `orders_service.creat
 `status="draft"` and `source="order_set"` (`:929-940`); back-fill the ledger and stamp
 `orders.order_set_application_id` (`:959-968`); then write one `order_set_applied` audit event
 naming the set and every order id (`:971-974`, `_audit_set` at `:986-1054`). The route then emits a
-shadow `clinical.action` per created order (`orders_routes.py:191-192`).
+shadow `clinical.action` per created order (`orders_routes.py:189-190`).
 **Change this →** the disabled look is called out in `OrderSets.css:283-297` as "THE most important
 disabled state in the product": the rule used to be `cursor: not-allowed` and nothing else, so a
 **blocked Sepsis Six rendered an Apply button in full accent clay, indistinguishable from a live
@@ -982,7 +982,7 @@ the server's message at `:353-354`, then a `<ul>` of `<strong>{description}</str
 **API:** the 428 or 422 from apply. `apiFetch` keeps the **structured** body on the error
 (`client.ts:258-262`), the comment there records that flattening it to a sentence threw away the
 per-item verdicts, which are the entire clinical value of the response.
-**Server:** `orders_routes.py:172-185` builds the detail: `error: "order_set_blocked"`, the fixed
+**Server:** `orders_routes.py:170-183` builds the detail: `error: "order_set_blocked"`, the fixed
 message **"This order set was NOT applied, no orders were created. A safety check stopped at least
 one item, and a set is applied whole or not at all."**, plus `blocked` and `items`. The status is
 chosen by `OrderSetBlocked.status_code` (`order_sets_service.py:124-133`): **428 when every block
@@ -1013,7 +1013,7 @@ heading at `:375`, list at `:376-385`.
 **Data from:** `applications` (`:89`), loaded by `loadApplications` (`:112-118`) on every patient
 change (`:120`) and after each successful apply (`:183`).
 **API:** `GET /api/orders/sets/applications/{patientId}` (`orderSets.ts:116-120`).
-**Server:** `orders_routes.py:196-204`, guarded by
+**Server:** `orders_routes.py:194-202`, guarded by
 `require_patient_access(ORDER_READ, audit_action="order_set_applications_viewed")` →
 `order_sets_service.list_applications` (`:1057-1075`), newest-id-first, capped at 50 (clamped
 1–200), which parses `order_ids_json` into `order_ids` and **drops `safety_json` from the payload**

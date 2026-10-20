@@ -148,7 +148,7 @@ at line 110.
 **Data from:** `hospitalData.current_occupancy` over `total_capacity`, sub-line
 `current_occupancy_pct`.
 **API:** `GET /api/forecast/hospital` (`ForecastPanel.tsx:137`).
-**Server:** `forecast_routes.hospital_forecast` (`server/routes/forecast_routes.py:34`) →
+**Server:** `forecast_routes.hospital_forecast` (`server/routes/forecast_routes.py:33`) →
 `forecast_service.predict_hospital_flow` (`server/services/forecast_service.py:452`).
 The number is `len(patients)` for `status = 'admitted'` (line 470/496); capacity is
 `TOTAL_CAPACITY = sum(WARD_CAPACITY.values())` (`forecast_service.py:75`).
@@ -225,7 +225,7 @@ and `--status-danger` above 90% (line 423).
 **Rendered by:** `ForecastPanel.tsx:437-513`; the per-ward `.map` at line 440.
 **Data from:** `capacity.current[ward]` and `capacity.projected_48h[ward]`.
 **API:** `GET /api/forecast/capacity` (`ForecastPanel.tsx:139`).
-**Server:** `forecast_routes.capacity_forecast` (`forecast_routes.py:61`) →
+**Server:** `forecast_routes.capacity_forecast` (`forecast_routes.py:60`) →
 `forecast_service.get_bed_capacity_forecast` (`forecast_service.py:600`). Current occupancy is
 a per-ward count of admitted patients (line 610); the 48h projection subtracts every patient
 whose predicted LoS is `<= 2.0` days (line 628).
@@ -268,10 +268,10 @@ Utilization Rate.
 lines 562–588.
 **Data from:** `dischargeBoard` state.
 **API:** `GET /api/forecast/discharge-board` (`ForecastPanel.tsx:138`).
-**Server:** `forecast_routes.discharge_board` (`forecast_routes.py:72`) →
+**Server:** `forecast_routes.discharge_board` (`forecast_routes.py:71`) →
 `forecast_service.get_discharge_board` (`forecast_service.py:652`), sorted by
 `discharge_probability` descending (line 697). **The route then filters the service's output
-to the caller's own department** (`forecast_routes.py:98-103`) and writes a PHI-read audit
+to the caller's own department** (`forecast_routes.py:97-102`) and writes a PHI-read audit
 entry naming every patient id returned (`log_phi_read`, lines 106–118).
 **Change this →** a nurse on W2 sees only W2 patients; an account with no department on record
 sees everyone (and the audit line says so explicitly). The **top five rows** get the
@@ -288,7 +288,7 @@ blank space with "0 patients" in the subtitle.
 **Rendered by:** `ForecastPanel.tsx:598-602`, "30-Day Admissions", "Avg Length of Stay",
 "Discharge Rate".
 **API:** `GET /api/forecast/admission-patterns` (`ForecastPanel.tsx:140`).
-**Server:** `forecast_routes.admission_patterns` (`forecast_routes.py:124`) →
+**Server:** `forecast_routes.admission_patterns` (`forecast_routes.py:117`) →
 `forecast_service.get_admission_patterns` (`forecast_service.py:702`). `total_30d` is
 literally `len(history)` over the whole `admission_history` table (line 773), `avg_daily`
 divides that by a hard-coded 30 (line 774), `discharge_rate` is the percentage of history rows
@@ -562,7 +562,7 @@ at line 175.
 **Data from:** client-side status filters over `orders` (`HelixDashboard.tsx:25-34`).
 "Pending Review" is the sum of `pending + reviewing + substitute_suggested` (line 41).
 **API:** `GET /api/helix/orders` (`HelixPanel.tsx:28`).
-**Server:** `helix_routes.get_all_orders` (`server/routes/helix_routes.py:31`) →
+**Server:** `helix_routes.get_all_orders` (`server/routes/helix_routes.py:43`) →
 `helix_service.get_all_orders` (`server/services/helix_service.py:65`), every order joined to
 the medication master, the patient, the prescriber and (if set) the substitute drug.
 **Change this →** the **Rejected** tile only exists when at least one order is rejected
@@ -613,7 +613,7 @@ patient's *name*, so two patients with identical names would merge into one row.
 `Medication | Formulation | Available Stock | Active Lots | Status` at lines 49–53.
 **Data from:** `catalog` joined to `inventory` by `medication_id` (line 24).
 **API:** `GET /api/helix/catalog` and `GET /api/helix/inventory` (`HelixPanel.tsx:28-29`).
-**Server:** `helix_routes.get_catalog` / `get_inventory` (`helix_routes.py:16` and `:21`) →
+**Server:** `helix_routes.get_catalog` / `get_inventory` (`helix_routes.py:28` and `:33`) →
 `helix_service.get_medication_catalog` (`helix_service.py:34`) and `get_inventory`
 (`helix_service.py:40`).
 **Change this →** the Status pill is red "Out of Stock" at 0, amber "Low Stock" under **30**
@@ -644,10 +644,10 @@ other. The Active Lots cell lists lot numbers comma-separated, or the literal "N
   cannot close their own dispatch). Any other status shows no buttons at all.
 **API:** `POST /api/helix/orders/{id}/transition` via `transitionHelixOrder`
 (`src/api/client.ts:1895`).
-**Server:** `helix_routes.transition_order` (`helix_routes.py:143`) →
+**Server:** `helix_routes.transition_order` (`helix_routes.py:190`) →
 `helix_service.transition_order_status` (`helix_service.py:129`), which enforces the legal
 transition table (`_is_legal_transition`, line 26) and, on `scheduled → dispensed`, decrements
-inventory atomically via `_atomic_dispense` (`helix_service.py:264`).
+inventory atomically via `_atomic_dispense` (`helix_service.py:280`).
 **Change this →** while a transition is in flight every action button's label becomes
 "Processing..." and all are disabled (line 229). "Suggest Substitute" stays disabled until a
 substitute is picked (line 227). A rejected transition surfaces its message as red text above
@@ -675,7 +675,7 @@ medications awaiting pharmacist review before they become active orders."
 **Rendered by:** `PharmacyVerifyQueue.tsx:339-480`; columns
 `Patient | Drug | Dose | Route | Frequency | Source | Safety alerts | Actions` at lines 343–350.
 **API:** `GET /api/pharmacy/pending` (`src/api/pharmacy.ts:93`).
-**Server:** `pharmacy_routes.get_pending` (`server/routes/pharmacy_routes.py:37`) →
+**Server:** `pharmacy_routes.get_pending` (`server/routes/pharmacy_routes.py:53`) →
 `pharmacy_verification_service.list_pending_verification`
 (`server/services/pharmacy_verification_service.py:78`).
 **Change this →** Dose / Route / Frequency are **editable inputs**, not text. On load, any
@@ -696,10 +696,10 @@ list (`SafetyAlerts`, line 100) coloured severe-red / moderate-amber / muted. A 
 at 412–474.
 **API:** `POST /api/pharmacy/{id}/verify` and `POST /api/pharmacy/{id}/reject`
 (`src/api/pharmacy.ts:111` and `:147`).
-**Server:** `pharmacy_routes.verify` (`pharmacy_routes.py:43`) and `reject`
-(`pharmacy_routes.py:101`) → `pharmacy_verification_service.verify_medication`
+**Server:** `pharmacy_routes.verify` (`pharmacy_routes.py:59`) and `reject`
+(`pharmacy_routes.py:149`) → `pharmacy_verification_service.verify_medication`
 (`pharmacy_verification_service.py:126`) / `reject_medication` (line 224). Both write an
-audit event (`pharmacy_routes.py:73` and `:114`).
+audit event (`pharmacy_routes.py:121` and `:162`).
 **Change this →** a severe (or failed) safety re-screen comes back **428** and, instead of an
 error, the row expands into a red-bordered acknowledgement block: a heading that distinguishes
 "screening unavailable" from "severe safety alerts" (line 426), the server's message, the
@@ -846,17 +846,17 @@ make changes, create a revision."
 **Rendered by:** `ScribePanel.tsx:808-817`.
 **APIs & servers:**
 - **Edit → Save**: `PATCH /api/scribe/notes/{id}` → `scribe_routes.edit_note`
-  (`scribe_routes.py:673`) → `scribe_service.update_scribe_note_content`; drafts only, 409
+  (`scribe_routes.py:681`) → `scribe_service.update_scribe_note_content`; drafts only, 409
   otherwise.
 - **Sign & Finalize**: `POST /api/scribe/notes/{id}/sign` → `scribe_routes.sign_note`
-  (`scribe_routes.py:735`). This carries the **sign gate**: if the persisted verification
-  verdict is blocking (`_verification_verdict`, `scribe_routes.py:707`), the server returns
+  (`scribe_routes.py:745`). This carries the **sign gate**: if the persisted verification
+  verdict is blocking (`_verification_verdict`, `scribe_routes.py:717`), the server returns
   **428** and the note cannot be one-click signed without an explicit
   `acknowledge_unverified`. A note with no verification at all is treated as blocking.
 - **Reject**: `POST /api/scribe/notes/{id}/reject` → `scribe_routes.reject_note`
-  (`scribe_routes.py:821`); a reason is mandatory (400 without one).
+  (`scribe_routes.py:831`); a reason is mandatory (400 without one).
 - **Create Revision**: `POST /api/scribe/notes/{id}/revise` → `scribe_routes.revise_note`
-  (`scribe_routes.py:862`) → `scribe_service.create_revision_from_signed`.
+  (`scribe_routes.py:872`) → `scribe_service.create_revision_from_signed`.
 **Change this →** **Sign and Reject are hidden entirely for nurses**, `canSignNote`
 (`ScribePanel.tsx:665`) allows only `doctor` and `clinician`, mirroring the backend's
 `scribe.sign` / `scribe.reject` permissions, so the buttons are absent rather than failing
@@ -928,7 +928,7 @@ analysis id (lines 157–160), returning the panel to the dropzone.
 Photo, Other (lines 167–172).
 **API:** `POST /api/lens/analyze`, multipart, streamed as SSE
 (`analyzeLensImage`, `src/api/client.ts:1613`).
-**Server:** `lens_routes.analyze_image` (`server/routes/lens_routes.py:87`) →
+**Server:** `lens_routes.analyze_image` (`server/routes/lens_routes.py:88`) →
 `lens_service.analyze_image_stream` (`server/services/lens_service.py:63`). The route
 validates the upload three ways, extension allowlist (415), magic-byte signature check (415)
 and a 25 MB cap (413), then writes the file **encrypted at rest**
@@ -937,7 +937,7 @@ and a 25 MB cap (413), then writes the file **encrypted at rest**
 `analysis_id` as a final JSON event before `[DONE]` (lines 161–173).
 **Change this →** the button's label becomes "Analyzing…" and disables while streaming
 (line 177). **If `ORB_LENS_ENABLED` is false the server returns 403** with an explanatory
-message (`lens_routes.py:100-106`), which surfaces on screen as the analysis text
+message (`lens_routes.py:101-107`), which surfaces on screen as the analysis text
 "Analysis failed: …" (`LensPanel.tsx:79`), because the panel has no dedicated error region.
 
 ### AI Reference Read card
@@ -965,8 +965,8 @@ checkbox** (lines 266–269); and **Confirm & File to Record** / **Skip** (lines
 Filtering is client-side on name or bed (line 108).
 **API:** `PATCH /api/lens/analyses/{id}/assign` (`assignLensToPatient`,
 `src/api/client.ts:1669`).
-**Server:** `lens_routes.assign_to_patient` (`lens_routes.py:237`) → `_assign_analysis`
-(`lens_routes.py:28`), which verifies the patient, reassigns the row and reads back the Relay
+**Server:** `lens_routes.assign_to_patient` (`lens_routes.py:238`) → `_assign_analysis`
+(`lens_routes.py:29`), which verifies the patient, reassigns the row and reads back the Relay
 case-room channel in **one** DB session. It then posts a system message into that channel
 (lines 248–271) whose header changes based on whether reviewed text was supplied:
 "🩻 Clinician-reviewed AI imaging reference" versus "🩻 AI imaging reference (investigational
@@ -1074,7 +1074,7 @@ straight away." always renders.
 **API:** `GET /api/appointments/mine` on mount (`PatientShell.tsx:168`), `POST /api/appointments`
 with an `Idempotency-Key` header (line 181), `DELETE /api/appointments/{id}` (line 203).
 **Server:** `appointments_routes.my_appointments`
-(`server/routes/appointments_routes.py:237`), booked, not-past, own patient only;
+(`server/routes/appointments_routes.py:239`), booked, not-past, own patient only;
 `appointments_routes.book_appointment` (line 115), which resolves the patient from the login
 and **ignores any patient_id in the body** for a patient caller (line 130), dedupes on the
 idempotency key (line 169) **and** on an identical patient/date/time slot (line 183) returning
@@ -1149,7 +1149,7 @@ ask your nurse or doctor directly." (line 287).
 ## Cross-screen notes worth knowing
 
 - **Permission gate.** Forecast, Command Center and Pulse all sit behind the *same*
-  `forecast.read` permission (`forecast_routes.py:36`, `command_center_routes.py:29`,
+  `forecast.read` permission (`forecast_routes.py:35`, `command_center_routes.py:29`,
   `pulse_routes.py::pulse_season`). That permission is held by nurses, which is why the two
   identity-bearing surfaces, the Forecast discharge board and the Command Center
   deterioration list, carry their own department filter and PHI-read audit at the **route**

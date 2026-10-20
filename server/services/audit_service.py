@@ -26,6 +26,8 @@ from typing import Any
 from config import AUDIT_SIMULATION_EVENTS
 from db_backend import DBIntegrityError
 
+from services.audit_facility import facility_metadata, stub_facility_keys
+
 logger = logging.getLogger("orb.audit")
 
 # Categories where an audit write is a control we must not silently lose. A failed
@@ -228,10 +230,12 @@ def bound_audit_fields(row: dict[str, Any]) -> dict[str, Any]:
         # row silently changes what the trail says happened) and lose only the
         # oversized blob, saying so explicitly rather than storing a truncated
         # fragment that would not parse as JSON.
-        row["metadata_json"] = json.dumps(
-            {"_truncated": True, "original_bytes": len(meta.encode("utf-8"))},
-            separators=(",", ":"),
-        )
+        stub: dict[str, Any] = {"_truncated": True, "original_bytes": len(meta.encode("utf-8"))}
+        # multisite-11: the facility keys survive the stub (merged after the
+        # bound, before the hash), so an oversized row still says which
+        # facility it belongs to. A blob without them gives the old stub.
+        stub.update(stub_facility_keys(meta))
+        row["metadata_json"] = json.dumps(stub, separators=(",", ":"))
     return row
 
 
@@ -300,11 +304,19 @@ def log_audit_event(
     user_agent: str | None = None,
     session_id: str | None = None,
     metadata: dict[str, Any] | None = None,
-):
+    *,
+    facility_id: int | None = None,
+) -> None:
     """Log an append-only, tamper-evident audit event.
 
     Persists the event with a SHA-256 hash chain (prev_hash/row_hash) so any later
     tampering is detectable via database.verify_audit_chain().
+
+    Facility (multisite-11): with more than one facility on record the row's
+    metadata names the facility it belongs to (`facility_id` when given, else
+    the patient's, else the actor's; facility_unresolved when none can be
+    told, the row still written). With one facility the metadata is stored
+    exactly as given. See services/audit_facility.py.
 
     Failure handling:
       - For fail-closed categories (security, clinical_access, phi_access,
@@ -385,7 +397,31 @@ def log_audit_event(
             "metadata_json",
         )
 
-        def _do_insert(conn):
+        attributed: list[bool] = []
+
+        def _attribute(conn: Any) -> None:
+            # multisite-11: the row's facility, settled ONCE per call (a retry
+            # after a prev_hash collision reuses it) and before the hash, on
+            # the connection that writes the row: a second session here could
+            # commit a pooled caller's open transaction. With one facility on
+            # record the metadata object comes back as it was and nothing
+            # changes. facility_metadata never raises.
+            if attributed:
+                return
+            attributed.append(True)
+            stored = facility_metadata(
+                conn,
+                metadata,
+                facility_id=facility_id,
+                patient_id=row["patient_id"],
+                actor_user_id=row["actor_user_id"],
+            )
+            if stored is not metadata:
+                row["metadata_json"] = json.dumps(stored)
+                bound_audit_fields(row)
+
+        def _do_insert(conn: Any) -> None:
+            _attribute(conn)
             # Link to the previous row's hash to form the chain. Read the most
             # recent hashed row under the same connection/transaction.
             prev = conn.execute(

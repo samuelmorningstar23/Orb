@@ -440,10 +440,19 @@ def reserve_bed(
     department), so one team cannot hold another team's beds with no patient
     to show for it (404 ward_not_found otherwise). The Idempotency-Key is
     required; the same person's retry for the same bed answers the first
-    reservation and writes nothing. Answers {replayed, reservation}."""
+    reservation and writes nothing. Answers {replayed, reservation}.
+
+    With more than one facility on record (multisite-8h1) the bed must be on
+    a ward of the caller's facilities (404 ward_not_found otherwise), and the
+    patient the row names must be inside the caller's facility scope as well
+    as its department (ReservationOutOfScope): no bed is held at one facility
+    for a patient of another (ruling MS-R3 (c))."""
     from permissions import department_scope, patient_in_scope
 
+    from services import facility_lanes
+
     caller_department = department_scope(actor)
+    facilities = facility_lanes.scope_of(actor)
     data = dict(data or {})
     key = _text(idempotency_key)
     if not key:
@@ -504,6 +513,8 @@ def reserve_bed(
             raise AdtNotFound("No bed with that id is set up in Bed setup", code="bed_not_found")
         ward = _row(db.execute("SELECT * FROM wards WHERE id = ?", (bed["ward_id"],)).fetchone())
         where = f"Bed {bed.get('bed_label')} on {(ward or {}).get('code') or bed.get('ward')}"
+        if ward is not None and facility_lanes.outside(ward.get("facility_id", 1), facilities):
+            raise AdtNotFound("No bed with that id is set up in Bed setup", code="bed_not_found")
         if ward is None or not ward.get("is_active"):
             raise AdtConflict(
                 f"{where}: the ward is switched off in Bed setup.", code="ward_inactive"
@@ -579,8 +590,8 @@ def reserve_bed(
         # to another department in between must not let the hold through.
         if (
             patient_id
-            and caller_department is not None
-            and not patient_in_scope(db, patient_id, caller_department)
+            and (caller_department is not None or facilities is not None)
+            and not patient_in_scope(db, patient_id, caller_department, facilities=facilities)
         ):
             raise ReservationOutOfScope(patient_id)
         if patient_id or admission_id:
@@ -644,13 +655,14 @@ def reserve_bed(
 def reservation_facts(reservation_id: str) -> dict | None:
     """What a route needs to check scope before a release, or None when there
     is no such reservation: {patient_id, admission_id, reserved_by,
-    ward_department, status}. No patient name."""
+    ward_department, ward_id, status}. No patient name. ward_id (multisite-8h1)
+    is how the route tells the facility of the held bed."""
     with db_session() as db:
         if not table_ready(db):
             return None
         row = _row(
             db.execute(
-                "SELECT r.id, r.patient_id, r.admission_id, r.reserved_by, r.status, "
+                "SELECT r.id, r.patient_id, r.admission_id, r.reserved_by, r.status, r.ward_id, "
                 "w.department AS ward_department FROM bed_reservations r "
                 "LEFT JOIN wards w ON w.id = r.ward_id WHERE r.id = ?",
                 (reservation_id,),
@@ -739,14 +751,18 @@ def list_reservations(
     a read that names anybody writes one fail-closed phi_access row. The
     free-text note goes with the name: none for a patient outside scope, and
     for a hold naming nobody only to those who may release it. A ward the
-    caller may not see is 404."""
+    caller may not see is 404. With more than one facility on record
+    (multisite-8h1) the wards and the patients are the caller's facility's
+    only."""
     from permissions import department_scope
 
     from services import bed_master_service as bm
+    from services import facility_lanes
 
     dept = department_scope(actor)
+    facilities = facility_lanes.scope_of(actor)
     with db_session() as db:
-        visible = {w["id"]: w for w in bm._visible_wards(db, dept)}
+        visible = {w["id"]: w for w in bm._visible_wards(db, dept, facilities)}
         if ward_id and ward_id not in visible:
             raise AdtNotFound("No ward with that id on your bed board", code="ward_not_found")
         if not table_ready(db):
@@ -760,7 +776,7 @@ def list_reservations(
         ]
         rows = [r for r in rows if _is_live(r, now)]
         in_scope = bm._scope_filter(
-            db, (r["patient_id"] for r in rows if r.get("patient_id")), dept
+            db, (r["patient_id"] for r in rows if r.get("patient_id")), dept, facilities
         )
         keep = []
         for r in rows:

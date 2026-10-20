@@ -395,22 +395,22 @@ System prompts casting the model as "Sage": concise (spoken aloud), always cite 
 **Why it exists:** This is Sage's edge over any cloud ASR/LLM: it has the live local chart. Grounding the answer in real patient data is what makes it clinically usable.
 **Gotchas:** Two bug-fix comments preserved in code: `get_db()` returns `sqlite3.Row` which has no `.get()`, every row is converted to `dict` first; and the meds column is `dosage`, not `dose` (an earlier `OperationalError`). Instructive examples of the raw-SQL footguns in this codebase.
 
-#### VoiceStreamCleaner: `server/services/voice_agent_service.py:148` (method `feed` `:156`)
+#### VoiceStreamCleaner: `server/services/voice_agent_service.py:175` (method `feed` `:183`)
 **Does:** A streaming text sanitiser. As tokens arrive it (1) strips leading scaffolding/headers the model emits (`Thought:`, `Answer:`, `<concise_answer>`, …), (2) removes XML-ish tags, (3) detects runaway repetition loops (many commas/dots, or a repeated 3-4 word phrase) and *terminates* the stream early, (4) yields only the newly-cleaned delta.
 **Why it exists:** Small local models leak their prompt scaffolding and get stuck in loops; this makes the spoken output clean without post-hoc reprocessing.
 **Gotchas:** Heuristic and stateful, it holds `raw_buffer`, `yielded_len`, `terminated`. Edge cases (a legitimately comma-heavy list) could trip the loop detector.
 
-#### VoiceAgent: `server/services/voice_agent_service.py:266`
-- **`__init__` `:243`**, resolves model path (`models/medgemma-1.5-4b-it`), auto-detects QLoRA adapters in `adapters/` (fine-tuned on MTSamples + Indian clinical vocab). **QLoRA** = a memory-efficient fine-tuning method that adds small trainable "adapter" weights on top of a quantised base model.
-- **`load` `:263`**, loads MedGemma (+ adapters) into Unified Memory via `mlx_lm.load`; idempotent (`_loaded` guard).
-- **`_build_system_prompt` `:294`**, asks `sage_service.get_relevant_context` for scoped context and branches: `DISAMBIGUATE` (multiple patients match, ask which), `BROAD` (department census), or the normal single-patient prompt; adds a time-of-day greeting on the first turn and a "be terse" modifier on follow-ups. Cross-reference guide 09-sage.
-- **`generate` `:358`**, sync one-shot generation under `vram_guard`, cleaned via `VoiceStreamCleaner`.
-- **`generate_stream` `:398`**, the production path: acquires the GPU lock at `PRIORITY_SAGE` (1, highest, preempts background scoring), runs `mlx_lm.stream_generate` in a producer thread → queue → event loop, cleaning each token, logging time-to-first-token, and stopping early if the cleaner terminates. Injects up to the last 10 conversation exchanges for follow-up context.
+#### VoiceAgent: `server/services/voice_agent_service.py:293`
+- **`__init__` `:270`**, resolves model path (`models/medgemma-1.5-4b-it`), auto-detects QLoRA adapters in `adapters/` (fine-tuned on MTSamples + Indian clinical vocab). **QLoRA** = a memory-efficient fine-tuning method that adds small trainable "adapter" weights on top of a quantised base model.
+- **`load` `:290`**, loads MedGemma (+ adapters) into Unified Memory via `mlx_lm.load`; idempotent (`_loaded` guard).
+- **`_build_system_prompt` `:321`**, asks `sage_service.get_relevant_context` for scoped context and branches: `DISAMBIGUATE` (multiple patients match, ask which), `BROAD` (department census), or the normal single-patient prompt; adds a time-of-day greeting on the first turn and a "be terse" modifier on follow-ups. Cross-reference guide 09-sage.
+- **`generate` `:385`**, sync one-shot generation under `vram_guard`, cleaned via `VoiceStreamCleaner`.
+- **`generate_stream` `:425`**, the production path: acquires the GPU lock at `PRIORITY_SAGE` (1, highest, preempts background scoring), runs `mlx_lm.stream_generate` in a producer thread → queue → event loop, cleaning each token, logging time-to-first-token, and stopping early if the cleaner terminates. Injects up to the last 10 conversation exchanges for follow-up context.
 
 **Talks to:** `sage_routes.py:416` (the `/api/sage` streaming route, guide 09), `nervous_system_triggers.py`, `main.py:219` (warmup), and `scribe_providers.MLXProvider`.
 **Gotchas:** `get_relevant_context` returns a 7-tuple, a brittle positional contract with `sage_service`.
 
-#### get_voice_agent: `server/services/voice_agent_service.py:578`
+#### get_voice_agent: `server/services/voice_agent_service.py:617`
 **Does:** Lazy singleton accessor for the one shared `VoiceAgent`. This is what makes "Sage's model" a process-wide shared resource that `MLXProvider` and the warmup task all reference.
 
 ---
@@ -422,7 +422,7 @@ Socket.IO is a real-time bidirectional messaging layer over WebSocket. Scribe's 
 #### _require_authenticated: `server/ws/scribe_stream.py:34`
 **Signature:** `async (sid) -> bool`
 **Does:** Returns `True` iff the Socket.IO session for this `sid` has a `user_id`, i.e. the client passed the authenticated handshake in `ws/realtime.py:connect`.
-**Why it exists:** Scribe streams carry patient audio (PHI); an unauthenticated socket must be rejected. `connect` (`realtime.py:358`) already refuses unauthenticated clients and stores the user, so an empty session ⇒ no valid JWT.
+**Why it exists:** Scribe streams carry patient audio (PHI); an unauthenticated socket must be rejected. `connect` (`realtime.py:391`) already refuses unauthenticated clients and stores the user, so an empty session ⇒ no valid JWT.
 **Gotchas:** Only `handle_start_session` calls this, the per-chunk handlers rely on the session dict existing (which only start_session creates), so an unauthenticated client never gets a session and its chunks are dropped.
 
 #### _create_session / _get_session / _destroy_session: `server/ws/scribe_stream.py:53` / `:48` / `:68`
@@ -452,7 +452,7 @@ Per-`sid` state in a module-global `_sessions` dict: `{patient_id, hints, langua
 | `handle_scribe_disconnect` | `disconnect` | `:233` | Clean up the session on socket drop. |
 
 **Change guide:** To send interim (mid-utterance) transcripts, you'd transcribe partial buffers on a timer inside `handle_audio_chunk` and emit `is_final:false`; knock-on: far more ASR load and the client must reconcile interim/final; watch out for the REP daemon being single-threaded.
-**Gotchas:** `handle_scribe_disconnect` registers a **second** `disconnect` handler on the same default namespace (the first is `realtime.py:192`). See Discrepancies for the shadowing question.
+**Gotchas:** `handle_scribe_disconnect` registers a **second** `disconnect` handler on the same default namespace (the first is `realtime.py:205`). See Discrepancies for the shadowing question.
 
 ---
 
@@ -513,29 +513,29 @@ Router is `APIRouter(prefix="/api/scribe")` (`:29`) and is mounted by `app.inclu
 | `GET /api/scribe/notes/{note_id}/verification` | `:533` | perm `scribe.read_all` | Lightweight poll: returns `{note_id, verification, pipeline}`. Polled by the panel every 3 s. |
 | `POST /api/scribe/notes/{note_id}/verify` | `:555` | role doctor/nurse/admin | Manually retry a `failed` verification; 400 if disabled/missing content, 409 if already complete/pending/in-flight. |
 
-#### edit_note: `PATCH /api/scribe/notes/{note_id}`: `server/routes/scribe_routes.py:673`
+#### edit_note: `PATCH /api/scribe/notes/{note_id}`: `server/routes/scribe_routes.py:681`
 **Auth:** perm `scribe.edit_draft` (doctor + nurse; not admin).
 **Does:** Edits a draft's `structured_note`; 409 if not a draft; audits `scribe_draft_edited`.
 
-#### _verification_verdict: `server/routes/scribe_routes.py:707`
+#### _verification_verdict: `server/routes/scribe_routes.py:717`
 **Signature:** `(note: dict) -> {blocking, status, reasons}`
 **Does:** Derives the sign-gate verdict. **Blocking = True** when the automated check did *not* pass: `verified` isn't `True`, or status is `unverifiable`, or any high/critical-severity warning/omission exists. **A note with no verification dict is treated as blocking (fail-closed).**
 **Why it exists:** Encapsulates "is this note safe to one-click sign?" for `sign_note`. Fail-closed means an unchecked AI note also requires acknowledgement.
 **Gotchas:** Because verification is *disabled by default*, a normally-produced note carries `{status:"not_requested"}` → `verified` is absent → **blocking=True**. This is intentional (see the sign-gate) but has a frontend interaction bug, see Discrepancies.
 
-#### sign_note: `POST /api/scribe/notes/{note_id}/sign`: `server/routes/scribe_routes.py:735`
+#### sign_note: `POST /api/scribe/notes/{note_id}/sign`: `server/routes/scribe_routes.py:745`
 **Auth:** perm `scribe.sign` (doctor-only).
 **Does:** Signs a draft, **but** if `_verification_verdict` is blocking and the body doesn't include `{"acknowledge_unverified": true}`, returns **HTTP 428 (Precondition Required)** with the reasons instead of signing. On success, `sign_scribe_note` + rich audit (including `signed_over_unverified` / `acknowledged_unverified`), plus a supersede-audit if it replaced another note.
-**Why it exists:** The clinical governance climax: a clinician cannot *silently* finalise an AI note that failed (or skipped) hallucination verification, they must explicitly acknowledge. `scribe_service.sign_scribe_note`'s comment (`:692`) points here as the enforcement point.
+**Why it exists:** The clinical governance climax: a clinician cannot *silently* finalise an AI note that failed (or skipped) hallucination verification, they must explicitly acknowledge. `scribe_service.sign_scribe_note`'s comment (`:702`) points here as the enforcement point.
 **Data in/out:** optional `{acknowledge_unverified}` → `{ok, note_id, status:"signed", superseded_note_id}` or 428.
 **Talks to:** `_verification_verdict`, `sign_scribe_note`, `audit_service`. Called by `client.signScribeNote` (`client.ts:1209`).
 **Change guide:** To require acknowledgement *only* on hard failures (not on `not_requested`), tighten `_verification_verdict` to not treat missing verification as blocking; knock-on: unverified notes become one-click signable, a governance loosening; watch out, the whole point is fail-closed.
 
-#### reject_note / revise_note: `server/routes/scribe_routes.py:821` / `:862`
+#### reject_note / revise_note: `server/routes/scribe_routes.py:831` / `:872`
 - **reject**, perm `scribe.reject` (doctor-only); requires a non-empty `reason`; audits.
 - **revise**, perm `scribe.edit_draft`; `create_revision_from_signed`; returns `{new_note_id, version, status:"draft"}`.
 
-#### get_scribe_config / daemon_status: `server/routes/scribe_routes.py:904` / `:935`
+#### get_scribe_config / daemon_status: `server/routes/scribe_routes.py:914` / `:945`
 - **config**, perm `admin.overview`; returns non-secret model/provider/enabled info per stage.
 - **daemon/status**, role doctor/nurse/admin; pings the Whisper daemon over ZMQ (1 s timeout) and reports `running`/`not_running`/`disabled`/`error`.
 
@@ -709,11 +709,11 @@ A **React hook** is a reusable function that plugs state/effects into a componen
 
 ## Discrepancies and open questions
 
-1. **Sign-gate blocks the default (unverified) note, and the 428 is now visible rather than swallowed.** Verification is disabled by default (`SCRIBE.verify.enabled=False`, pinned by `test_verify_disabled_by_default` `:68`), so a normally-structured note is saved with `verification_json={"status":"not_requested"}`. `_verification_verdict` (`scribe_routes.py:707`) treats any note without `verified===True` as **blocking**, so `POST /notes/{id}/sign` returns **HTTP 428** unless the body carries `{"acknowledge_unverified": true}`, and `client.signScribeNote` (`client.ts:1209`) still sends **no body**, so on a default deployment "Sign & Finalize" always 428s. The swallowing half of this defect is fixed: the panel's `onSign` handler now throws when the server does not confirm (`ScribePanel.tsx:410-414`) and `runAction` catches it into a visible error banner instead of `catch {}` (`ScribePanel.tsx:639-650`). Net effect on a default deployment: the clinician sees "Request failed" rather than a silent no-op, but the note still cannot be signed. The fail-closed/UX collision stands, either the frontend must send `acknowledge_unverified` (with a confirm dialog) or the gate must stop treating `not_requested` as blocking. CONFIRMED from the code paths read.
+1. **Sign-gate blocks the default (unverified) note, and the 428 is now visible rather than swallowed.** Verification is disabled by default (`SCRIBE.verify.enabled=False`, pinned by `test_verify_disabled_by_default` `:68`), so a normally-structured note is saved with `verification_json={"status":"not_requested"}`. `_verification_verdict` (`scribe_routes.py:717`) treats any note without `verified===True` as **blocking**, so `POST /notes/{id}/sign` returns **HTTP 428** unless the body carries `{"acknowledge_unverified": true}`, and `client.signScribeNote` (`client.ts:1209`) still sends **no body**, so on a default deployment "Sign & Finalize" always 428s. The swallowing half of this defect is fixed: the panel's `onSign` handler now throws when the server does not confirm (`ScribePanel.tsx:410-414`) and `runAction` catches it into a visible error banner instead of `catch {}` (`ScribePanel.tsx:639-650`). Net effect on a default deployment: the clinician sees "Request failed" rather than a silent no-op, but the note still cannot be signed. The fail-closed/UX collision stands, either the frontend must send `acknowledge_unverified` (with a confirm dialog) or the gate must stop treating `not_requested` as blocking. CONFIRMED from the code paths read.
 
 2. **`test_verify_note_returns_none_on_empty_input` relies on verify being disabled.** `verify_note` (`scribe_service.py:540`) checks `enabled` *before* the empty-input check, and the empty-input branch returns `_unverified_report(...)` (a dict), not `None`. The test at `:166` asserts `None` for empty input, it only passes because the default config disables verify and short-circuits at the first check. If verification were enabled, that test would fail (empty input returns a dict). The test's *name* implies a contract the code doesn't hold when enabled. Not a runtime bug, but a misleading test.
 
-3. **Two `disconnect` handlers on the same namespace.** `realtime.py:192` (`@sio.event async def disconnect`) and `scribe_stream.py:233` (`@sio.on("disconnect")`) both register a `disconnect` handler on the default namespace, and `scribe_stream` is imported at the *bottom* of `realtime.py` (`:204`). Depending on python-socketio's handler-registration semantics (last registration wins vs. both invoked), the Scribe cleanup handler may shadow the realtime one (or vice-versa). Worth verifying that the realtime disconnect logging still fires; if not, session cleanup for non-scribe features could be affected. Open question, not verified against the socketio version in this session.
+3. **Two `disconnect` handlers on the same namespace.** `realtime.py:205` (`@sio.event async def disconnect`) and `scribe_stream.py:233` (`@sio.on("disconnect")`) both register a `disconnect` handler on the default namespace, and `scribe_stream` is imported at the *bottom* of `realtime.py` (`:204`). Depending on python-socketio's handler-registration semantics (last registration wins vs. both invoked), the Scribe cleanup handler may shadow the realtime one (or vice-versa). Worth verifying that the realtime disconnect logging still fires; if not, session cleanup for non-scribe features could be affected. Open question, not verified against the socketio version in this session.
 
 4. **Daemon vs. worker config drift.** `whisper_daemon.load_model` (`:63`) and `whisper_daemon.transcribe` (`:82`) hard-code `batch_size=12, quant=None`, whereas the subprocess worker takes `batch_size`/`quant` from `config.SCRIBE.asr` (argv). Changing `ORB_SCRIBE_ASR_BATCH_SIZE` affects only the cold path; the warm daemon ignores it. Minor, but a surprising inconsistency when tuning.
 

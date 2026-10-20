@@ -895,7 +895,7 @@ _LIST_USERS_USER_DEFAULT = Depends(require_permission("admin.overview"))
 
 
 @router.get("")
-def list_users(include_patients: bool = False, user: dict = _LIST_USERS_USER_DEFAULT):
+def list_users(include_patients: bool = False, user: dict = _LIST_USERS_USER_DEFAULT) -> dict:
     """List staff accounts with recent auth activity.
 
     Service identities are never listed (they are not logins and cannot be
@@ -924,16 +924,29 @@ def list_users(include_patients: bool = False, user: dict = _LIST_USERS_USER_DEF
         # multisite-6: None (and nothing read) with one facility and the switch off.
         facility_view = _staff_facility_view(db, user, rows)
 
+        # multisite-11: with more than one facility on record the two sign-in
+        # columns read only the administrator's facilities' audit rows (the
+        # epoch rule, services/audit_facility); a sign-in row belongs to the
+        # account it names. With one facility `vis` is empty.
+        from services import audit_facility
+
+        scope = audit_facility.reader_scope(user, db=db)
+        clause, vis_params = audit_facility.visible_sql(
+            scope, audit_facility.audit_epoch(db) if scope is not None else 0
+        )
+        vis = f" AND {clause}" if clause else ""
+
         # auth events use event_category='authentication' with
         # action_type='login_success'/'login_failure' (routes/auth_routes.py)
         last_logins = {
             r["actor_user_id"]: r["last_login"]
             for r in db.execute(
-                """SELECT actor_user_id, MAX(timestamp) AS last_login
+                f"""SELECT actor_user_id, MAX(timestamp) AS last_login
                    FROM audit_logs
                    WHERE event_category = 'authentication'
-                     AND action_type = 'login_success'
-                   GROUP BY actor_user_id"""
+                     AND action_type = 'login_success'{vis}
+                   GROUP BY actor_user_id""",
+                vis_params,
             ).fetchall()
         }
         # login_failure rows carry NO actor_user_id (the account may not exist);
@@ -944,13 +957,13 @@ def list_users(include_patients: bool = False, user: dict = _LIST_USERS_USER_DEF
         failed_24h = {
             r["attempted_id"]: r["cnt"]
             for r in db.execute(
-                """SELECT json_extract(metadata_json, '$.attempted_id') AS attempted_id,
+                f"""SELECT json_extract(metadata_json, '$.attempted_id') AS attempted_id,
                           COUNT(*) AS cnt
                    FROM audit_logs
                    WHERE event_category = 'authentication'
-                     AND action_type = 'login_failure' AND timestamp >= ?
+                     AND action_type = 'login_failure' AND timestamp >= ?{vis}
                    GROUP BY attempted_id""",
-                (cutoff_24h,),
+                (cutoff_24h, *vis_params),
             ).fetchall()
         }
 

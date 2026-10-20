@@ -109,14 +109,14 @@ className="sage-new-chat-btn">` containing a plus-cross SVG (two `<line>` elemen
 **Data from:** the `onNewChat` prop, supplied inline at `src/pages/panels/SagePanel.tsx:827-838`.
 **API:** it calls `getSageHistory()` via `refreshHistory` (`SagePanel.tsx:837` → `:315-323`) →
 `GET /api/sage/history`.
-**Server:** `server/routes/sage_routes.py:2480-2488` `get_history` →
-`server/services/sage_service.py:2944-2968` `list_conversation_turns`.
+**Server:** `server/routes/sage_routes.py:2482-2490` `get_history` →
+`server/services/sage_service.py:3115-3139` `list_conversation_turns`.
 **Change this →** clicking it does four visible things in order
 (`SagePanel.tsx:831-837`): (1) any in-flight answer stops mid-word, the abort at line 831 kills
 the stream and the partial text stays where it is until (3) wipes it; (2) the thread id is
 re-minted (`conversationIdRef.current = newConversationId()`, line 835, generator at
 `SagePanel.tsx:24-30`), so the *server* also forgets, see `get_conversation_history`
-(`sage_service.py:2902-2941`), which returns `[]` for an unknown thread id; (3) the message area
+(`sage_service.py:3073-3112`), which returns `[]` for an unknown thread id; (3) the message area
 is replaced by the greeting/quick-action empty state and the composer text clears; (4) the
 Recent Conversations list re-reads from the server, so the question you just asked appears there.
 It does **not** delete anything, the comment at `SagePanel.tsx:828-830` says so and the handler
@@ -144,7 +144,7 @@ five questions you typed, newest first**, not five conversations.
 `historyList` is set by `refreshHistory` at `SagePanel.tsx:315-323`, which runs on mount
 (`:327`) and again in `submitQuery`'s `finally` (`:546`).
 **API:** `GET /api/sage/history` (`src/api/client.ts:1023-1025`).
-**Server:** `server/routes/sage_routes.py:2480-2488` → `server/services/sage_service.py:2944-2968`
+**Server:** `server/routes/sage_routes.py:2482-2490` → `server/services/sage_service.py:3115-3139`
 `list_conversation_turns`, `SELECT role, content, conversation_id, timestamp FROM
 sage_conversations WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?` with `limit=20`.
 **Change this →** ask a question and this list gains a row as soon as the stream closes (the
@@ -158,11 +158,11 @@ can show fewer than five rows even on a busy day.
 **Rendered by:** `src/components/sage/SageHistorySidebar.tsx:60-62`, 
 `{chat.metadata?.patient_name ? \`Patient: ${chat.metadata.patient_name}\` : "General Medical"}`.
 **Data from:** `chat.metadata`, which `list_conversation_turns` **never returns**, its row
-projection at `server/services/sage_service.py:2960-2967` emits `role`, `content`,
+projection at `server/services/sage_service.py:3131-3138` emits `role`, `content`,
 `conversation_id`, `timestamp` and nothing else.
 **Change this →** today this line always reads **"General Medical"**, for every row, including
 rows about a named patient. To make the patient name appear you would add `metadata` (or a
-`patient_name`) to the projection at `sage_service.py:2960-2967`; the client-side branch already
+`patient_name`) to the projection at `sage_service.py:3131-3138`; the client-side branch already
 exists and needs no change. Documented here because it looks like a bug and reads like one.
 
 ### Sidebar empty state
@@ -226,7 +226,7 @@ nothing on screen.)*
 **Change this →** the label you see is `action.label`, but the text that reaches the model is
 `action.query`, they are different strings and editing one does not touch the other. Because
 these queries all say "all active patients", they land on the broad/aggregate retrieval lane
-(`server/services/sage_service.py:2196-2198`), which means the answer arrives as plain prose with
+(`server/services/sage_service.py:2211-2213`), which means the answer arrives as plain prose with
 **no source chips**, see the `sources if scope == "quick" else []` at
 `sage_routes.py:1875`. Add a fifth entry to the array and a fifth card appears with no other
 change.
@@ -311,7 +311,7 @@ same column edges.
 **API:** `POST /api/sage/query` (`src/api/client.ts:900-973`).
 **Server:** `server/routes/sage_routes.py:1505` `sage_query`; the text itself is emitted at
 `sage_routes.py:1853` (incremental), `:1869` (whole-answer fallback for prose scopes) and `:2186`
-(buffered turns). Generation is `server/services/sage_service.py:1285-1360` `query_ollama`.
+(buffered turns). Generation is `server/services/sage_service.py:1285-1370` `query_ollama`.
 **Change this →** **the visible text can change once, after the stream finishes.** While tokens
 arrive you are reading `sanitizeAssistantContent(message.content)`; when the
 `structured_response` event lands (`sage_routes.py:2191`), `structured.concise_answer` takes over
@@ -357,7 +357,7 @@ and `:1823` yields `{'stage': 'generating', 'retrieval_ms': …}` after it. Retr
 alpha (`Sage.css:298-313`), deliberately, so it stays legible at the quiet end of the cycle. It
 disappears the moment `streaming` goes false (`SagePanel.tsx:536`). The *voice* lane never shows
 it: `querySageVoice` has no `onStage` parameter (`src/api/client.ts:1032-1039`) and the voice
-route emits no `stage` events (`sage_routes.py:2565-2604`).
+route emits no `stage` events (`sage_routes.py:2567-2611`).
 
 ### Scroll behaviour: following the stream
 **Where:** not an element; the behaviour of `.sage-messages`.
@@ -421,12 +421,12 @@ panel open, because `has_escalation` is one of the four `should_expand` conditio
 action card is showing, so a drafted order does not carry two competing warnings.
 **Server:** `final_confidence` at `server/routes/sage_routes.py:2115-2118`. It starts as the
 retrieval confidence from `_get_guideline_context`
-(`server/services/sage_service.py:2764-2790`, which calls
+(`server/services/sage_service.py:2935-2961`, which calls
 `retrieval_calibration.classify_confidence` on the fused signals) and is **downgraded to "low"**
 whenever the model cited something that was not retrieved (`sage_routes.py:2116-2118`). An empty
 result set or a "none" calibration also returns `"low"`
-(`sage_service.py:2775-2776`, `:2796-2797`), and any retrieval exception returns `"low"`
-(`sage_service.py:2881-2883`).
+(`sage_service.py:2946-2947`, `:2967-2968`), and any retrieval exception returns `"low"`
+(`sage_service.py:3052-3054`).
 **Change this →** this is the closest thing Sage has to a confidence display; there is **no
 numeric score anywhere on this screen**. Make retrieval return nothing relevant and this appears
 and the details panel auto-opens (`final_confidence == "low"` is a `should_expand` condition,
@@ -439,7 +439,7 @@ and the details panel auto-opens (`final_confidence == "low"` is a `should_expan
 **Data from:** `metadata.data_completeness.missing.length > 0 && metadata.patient_context_used &&
 !actionState`.
 **Server:** `sage_routes.py:2168`, `patient_context_dict["completeness"]`, assembled by
-`server/services/sage_service.py:1758` `_assemble_patient_context`.
+`server/services/sage_service.py:1773` `_assemble_patient_context`.
 **Change this →** it names the missing chart channels inline, comma-separated, so the pill grows
 with the number of gaps. It requires a patient to be in scope, on a general question
 `patient_context_used` is false (`sage_routes.py:2164`) and the banner cannot appear. It also
@@ -561,9 +561,9 @@ clinician approval before sending to Helix."), `:2007` ("Medication not found in
 **Data from:** `handleApprove` (`SageMessage.tsx:186-203`) builds the payload from
 `actionState.target_patient` and `requested_payload.{medication,dose,route,frequency}`.
 **API:** `approveHelixOrder`, `src/api/client.ts:1884-1889` → `POST /api/helix/orders/approve`.
-**Server:** `server/routes/helix_routes.py:107-132` `approve_helix_order`, behind
+**Server:** `server/routes/helix_routes.py:154-179` `approve_helix_order`, behind
 `require_permission("helix.write")`. It runs the drug-safety gate first
-(`helix_routes.py:113-119` `enforce_medication_safety`) and then
+(`helix_routes.py:160-166` `enforce_medication_safety`) and then
 `helix_service.create_order(...)` (`:122-129`).
 **Change this →** on success the badge flips to green **"Sent to Pharmacy"** and the button
 disappears (the `localStatus === 'request_drafted'` guard stops matching). On any thrown error
@@ -674,7 +674,7 @@ it means model text can emit those tags.
 retrieved document, each carrying `document_id`, `title`, `source`, `source_type`, `trust_tier`,
 `is_synthetic`, `category`, `fusion_score` and a boolean `cited`.
 **Server:** the documents come from `_get_guideline_context`
-(`server/services/sage_service.py:2764-2880`) via `clinical_knowledge.search_guidelines`
+(`server/services/sage_service.py:2935-3051`) via `clinical_knowledge.search_guidelines`
 (`:2769-2774`, `limit` from `ORB_SAGE_GUIDELINES`, default 3). Fabricated citations are stripped
 before the wire at `sage_routes.py:2112` (`parsed_json["cited_sources"] = list(valid_cited_sources)`)
 the comment at `:2094-2111` records the measurement: of 4 citations the model produced, 3 were
@@ -857,7 +857,7 @@ markdown, so `**That patient is outside your department.**` renders as a bold fi
 **API:** `POST /api/sage/query`.
 **Server:** `server/routes/sage_routes.py:1797-1821`. The model is **never invoked**, the text is
 streamed verbatim from `OUT_OF_SCOPE_NOTICE`
-(`server/services/sage_service.py:1463-1472`), whose full wording is:
+(`server/services/sage_service.py:1478-1487`), whose full wording is:
 
 > **That patient is outside your department.**
 > There is a patient on record matching that, but they are not under your department's care, so I
@@ -866,10 +866,10 @@ streamed verbatim from `OUT_OF_SCOPE_NOTICE`
 > you need it clinically, contact the team caring for them, or ask an administrator to widen your
 > department access. This request has been recorded in the audit log.
 
-The decision is made in `get_relevant_context` at `sage_service.py:2161-2193`, which returns
-`(OUT_OF_SCOPE_NOTICE, "simple", [], "high", False, None, "OUT_OF_SCOPE")` at `:2193` after
-writing a **fail-closed** security audit row (`_audit_out_of_scope`, `sage_service.py:1475-1515`,
-deliberately not wrapped in try/except, see `:2184-2187`).
+The decision is made in `get_relevant_context` at `sage_service.py:2176-2208`, which returns
+`(OUT_OF_SCOPE_NOTICE, "simple", [], "high", False, None, "OUT_OF_SCOPE")` at `:2208` after
+writing a **fail-closed** security audit row (`_audit_out_of_scope`, `sage_service.py:1490-1530`,
+deliberately not wrapped in try/except, see `:2199-2202`).
 **Change this →** the accompanying metadata (`sage_routes.py:1799`) sets
 `confidence: 'high'`, `escalation: false`, `sources: []`, `patient_context_used: false`, so this
 answer shows **no banners, no source chips and no details expander**. It is bare prose, on
@@ -893,13 +893,13 @@ the model runs. The two texts, verbatim from `:34-39`:
 
 **Change this →** the metadata at `sage_routes.py:1575` carries `'escalation': True`, so **the red
 "High-Risk Query, Verify with attending" banner appears above a refusal**. There are no sources
-and no details expander. The same gate runs on the voice lane (`sage_routes.py:2534-2546`).
+and no details expander. The same gate runs on the voice lane (`sage_routes.py:2536-2548`).
 
 ### "Order placed" and other fabricated confirmations: what you never see
 **Server:** `FORBIDDEN_PHRASE_PATTERNS` at `server/routes/sage_routes.py:59-107` is stripped from
 the answer unconditionally (`:2068-2069`), from the streamed segments
 (`_strip_forbidden_streaming`, applied through `SentenceStreamSanitizer` at `:1732`, `:1739`) and
-from the voice lane (`:2580`).
+from the voice lane (`:2582`).
 **Change this →** if the model writes "I have added Paracetamol. Order placed. Done." you see the
 sentence with all three removed. On a mutation turn the whole answer is replaced by
 `safe_user_message` instead (`:2032`). This is the invisible half of the screen, nothing renders

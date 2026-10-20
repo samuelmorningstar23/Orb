@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
-import { apiFetch, getAuditLogs, type AuditFilters, type AuditLog } from '../../../api/client'
+import { apiFetch, type AuditFilters } from '../../../api/client'
+import { facilityLabel, fetchAuditPage, type AuditFacility, type AuditLogRow } from './auditFacility'
 import { OutcomeBadge } from './AdminBadges'
 import { AdminLoadingState, AdminErrorState, AdminEmptyState } from './AdminEmptyState'
 import { humaniseEnum } from '../../../lib/humanise'
 import { formatClinicalDateTime } from '../../../lib/datetime'
 import { actorLabel } from '../../../lib/actorLabel'
+import { usePlatformFlags } from '../../../shellConfig'
 import './AuditViews.css'
 
 interface Props {
@@ -51,8 +53,28 @@ function facetOptions(values: string[], current: string | undefined): string[] {
   return current && !values.includes(current) ? [current, ...values] : values
 }
 
+/** The facility filter (multisite-11), shown only while more than one
+ *  facility is on record. */
+export function FacilityFilter({ facilities, value, onChange }: {
+  facilities: AuditFacility[]
+  value: number | undefined
+  onChange: (facility: number | undefined) => void
+}) {
+  return (
+    <select
+      className="admin-filter-select"
+      aria-label="Facility"
+      value={value === undefined ? '' : String(value)}
+      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : undefined)}
+    >
+      <option value="">All facilities</option>
+      {facilities.map(f => <option key={f.id} value={String(f.id)}>{facilityLabel(f)}</option>)}
+    </select>
+  )
+}
+
 export default function AuditLogTable({ onTraceClick }: Props) {
-  const [logs, setLogs] = useState<AuditLog[]>([])
+  const [logs, setLogs] = useState<AuditLogRow[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -62,15 +84,21 @@ export default function AuditLogTable({ onTraceClick }: Props) {
   const [searchCorrelation, setSearchCorrelation] = useState('')
   const [searchPatient, setSearchPatient] = useState('')
   const [facets, setFacets] = useState<AuditFacets>({ categories: [], actions: [], outcomes: [] })
+  // multisite-11: a facility column and filter while more than one facility
+  // is on record; the server lists the facilities this reader may filter by.
+  const { multiFacilityData } = usePlatformFlags()
+  const [facility, setFacility] = useState<number | undefined>(undefined)
+  const [facilities, setFacilities] = useState<AuditFacility[]>([])
+  const showFacility = multiFacilityData || facilities.length > 0
 
   const fetchLogs = useCallback(() => {
     setLoading(true)
     setError(null)
-    getAuditLogs(filters)
-      .then((res) => { setLogs(res.logs); setTotal(res.total) })
+    fetchAuditPage(filters, facility)
+      .then((res) => { setLogs(res.logs); setTotal(res.total); setFacilities(res.facilities ?? []) })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
-  }, [filters])
+  }, [filters, facility])
 
   // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch/subscribe trigger: the setState is the loader's own loading flag, not state derived from props or state.
   useEffect(() => { fetchLogs() }, [fetchLogs])
@@ -151,6 +179,13 @@ export default function AuditLogTable({ onTraceClick }: Props) {
             <option value={FAILURES_AND_DENIALS}>Failures and denials</option>
             {facets.outcomes.map(o => <option key={o} value={o}>{humaniseEnum(o)}</option>)}
           </select>
+          {showFacility && (
+            <FacilityFilter
+              facilities={facilities}
+              value={facility}
+              onChange={(next) => { setFacility(next); setFilters(prev => ({ ...prev, offset: 0 })) }}
+            />
+          )}
           <button className="admin-filter-btn" onClick={applySearch} title="Search" aria-label="Search">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           </button>
@@ -190,6 +225,7 @@ export default function AuditLogTable({ onTraceClick }: Props) {
                 <th>Outcome</th>
                 <th>Actor</th>
                 <th>Patient</th>
+                {showFacility && <th>Facility</th>}
                 <th>Summary</th>
               </tr>
             </thead>
@@ -223,6 +259,7 @@ export default function AuditLogTable({ onTraceClick }: Props) {
                   <td><OutcomeBadge outcome={log.outcome} /></td>
                   <td className="admin-td--small">{actorLabel(log.actor_name, log.actor_user_id) || 'Not recorded'}</td>
                   <td className="admin-td--mono admin-td--small">{log.patient_id || '—'}</td>
+                  {showFacility && <td className="admin-td--small">{facilityLabel(log.facility)}</td>}
                   <AuditSummaryCell text={log.summary_message} />
                 </tr>
               ))}

@@ -105,6 +105,23 @@ VOICE_SYSTEM_PROMPT_NO_CONTEXT = """You are Sage, a clinical AI assistant. You r
 No specific patient is currently selected. Answer general clinical questions concisely. Your response will be spoken aloud via TTS. Keep answers under 3 sentences unless asked for detail. Always add safety qualifiers for drug dosing and critical decisions."""
 
 
+def _facility_refusal_words(user: dict | None) -> str | None:
+    """The facility a refusal names for a facility-bound account with no
+    department (MS-R13 (a), multisite-10), or None when the department words
+    apply (every install with one facility on record). Never raises."""
+    try:
+        from permissions import department_scope, facility_scope
+
+        from services.sage_service import _facility_words
+
+        facilities = facility_scope(user or {})
+        if department_scope(user or {}) is None and facilities is not None:
+            return _facility_words(facilities)
+    except Exception:
+        return None
+    return None
+
+
 def build_patient_context(patient_id: str | None, user: dict) -> str:
     """Pull patient context from local SQLite for system prompt injection.
 
@@ -121,15 +138,25 @@ def build_patient_context(patient_id: str | None, user: dict) -> str:
 
     try:
         from database import get_db
-        from permissions import department_scope
+        from permissions import department_scope, facility_scope
 
-        from services.sage_service import _patient_in_scope
+        from services.sage_service import _facility_words, _patient_in_scope
 
         db = get_db()
 
-        # ONE derivation, same as every other patient surface.
-        if not _patient_in_scope(db, patient_id, department_scope(user or {})):
+        # ONE derivation, same as every other patient surface, with its
+        # facility half (multisite-10).
+        dept = department_scope(user or {})
+        facilities = facility_scope(user or {})
+        if not _patient_in_scope(db, patient_id, dept, facilities=facilities):
             db.close()
+            if dept is None and facilities is not None:
+                # The same words whether or not the id is a patient elsewhere
+                # (MS-R13 (a)).
+                return (
+                    f"No patient matching that at {_facility_words(facilities)}; "
+                    "no chart data is available to you."
+                )
             return "That patient is not in your department; no chart data is available to you."
 
         parts = []
@@ -484,6 +511,18 @@ class VoiceAgent:
                 # row. Return IMMEDIATELY — falling through to the
                 # build_patient_context fallback below would rebuild the very
                 # chart that was just denied.
+                _facility = _facility_refusal_words(user)
+                if _facility is not None:
+                    # A facility-bound account with no department (MS-R13 (a)).
+                    return (
+                        f"You are Sage, a clinical AI assistant at {self.hospital_name}.\n"
+                        f"The clinician asked about a patient who is not in the census of "
+                        f"{_facility}. You have NO information about that patient and must not "
+                        "guess, infer or invent any.\n\n"
+                        "Say, briefly and in your own words, that there is no patient matching "
+                        f"that at {_facility}. Do NOT say or suggest whether such a patient is on "
+                        "record anywhere else. One sentence. Add nothing else."
+                    )
                 return (
                     f"You are Sage, a clinical AI assistant at {self.hospital_name}.\n"
                     "The clinician asked about a patient who is NOT in their department. "

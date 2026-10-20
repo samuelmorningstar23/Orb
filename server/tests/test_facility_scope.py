@@ -460,7 +460,9 @@ def test_a_department_caused_denial_in_enforce_patient_scope_still_writes_no_row
     assert _chart(world, "nurse_f1", "p_f1_surg").status_code == 404
     rows = _rows(mark, "patient_scope_denied", world["nurse_f1"], world["p_f1_surg"])
     assert len(rows) == 1
-    assert rows[0]["meta"] == {"department": DEPT_GM, "scope_source": "authenticated_user"}
+    # multisite-11 adds only the row's facility (the patient's: facility 1).
+    assert rows[0]["meta"] == {"department": DEPT_GM, "scope_source": "authenticated_user",
+                               "facility_id": 1}
 
 
 def test_the_ward_nurse_still_reads_their_own_ward(world, fence_open):

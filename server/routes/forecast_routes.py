@@ -9,14 +9,13 @@ Endpoints:
   GET /api/forecast/appointments      Booked appointments, caller's department only
 """
 
-from database import db_session
 from fastapi import APIRouter, Depends, HTTPException, Request
 from permissions import (
     department_scope,
+    facility_scope,
     log_phi_read,
     require_patient_access,
     require_permission,
-    scope_patient_ids_sql,
 )
 from services.forecast_service import (
     get_admission_patterns,
@@ -90,7 +89,7 @@ _DISCHARGE_BOARD_USER_DEFAULT = Depends(require_permission("forecast.read"))
 def discharge_board(
     request: Request,
     user: dict = _DISCHARGE_BOARD_USER_DEFAULT,
-):
+) -> list:
     """Patients sorted by discharge likelihood — the caller's department only.
 
     This route bound `user` and then never referenced it: get_discharge_board()
@@ -101,24 +100,18 @@ def discharge_board(
     hospital (audit 2026-08-05). Nobody thought of it as a PHI query because it
     is a dashboard rather than a search.
 
-    The department filter is applied HERE, over the service's output, rather
-    than pushed into forecast_service.get_discharge_board: that function belongs
-    to another surface area. The scope must nonetheless arrive from the
-    authenticated user and never be re-derived inside the service or read off
-    the request — when the signature is next touched, `department` should become
-    an explicit argument and this filter should move into the query.
+    The scope arrives from the authenticated user and is never re-derived
+    inside the service or read off the request. Since multisite-8 (W12-A) the
+    department AND the caller's facilities (permissions.facility_scope) are
+    explicit arguments of forecast_service.get_discharge_board and the filter
+    is in its query, so a department-less account at one facility no longer
+    reads another facility's admitted patients.
     """
+    dept = department_scope(user)
     try:
-        board = get_discharge_board()
+        board = get_discharge_board(dept, facilities=facility_scope(user))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Board error: {str(e)}") from e
-
-    dept = department_scope(user)
-    if dept is not None:
-        sql, params = scope_patient_ids_sql(dept)
-        with db_session() as db:
-            in_scope = {r["id"] for r in db.execute(sql, params).fetchall()}
-        board = [row for row in board if row.get("patient_id") in in_scope]
 
     if board:
         log_phi_read(
@@ -162,17 +155,21 @@ def appointments_schedule(
     request: Request,
     days: int = 7,
     user: dict = _APPOINTMENTS_SCHEDULE_USER_DEFAULT,
-):
+) -> list:
     """Booked appointments for the next N days, the caller's department only.
 
     Every row names a patient, so this is a PHI list read: it was unscoped and
     unaudited, and any forecast.read holder (a ward nurse has it) saw every
     booking in the hospital. The scope comes from the authenticated user and is
-    passed into the query, never read off the request.
+    passed into the query, never read off the request. With more than one
+    facility on record only bookings at the caller's facilities are listed
+    (multisite-8).
     """
     dept = department_scope(user)
     try:
-        rows = get_appointments(days_ahead=max(1, min(days, 14)), department=dept)
+        rows = get_appointments(
+            days_ahead=max(1, min(days, 14)), department=dept, facilities=facility_scope(user)
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Appointments error: {str(e)}") from e
 

@@ -237,26 +237,42 @@ def _with_linked_orders(conn, rows: list[dict]) -> list[dict]:
     return rows
 
 
-def get_pending_orders():
-    """Retrieve pending patient medication orders."""
+def get_pending_orders(*, facilities: frozenset[int] | None = None) -> list[dict]:
+    """Retrieve pending patient medication orders.
+
+    `facilities` is the caller's permissions.facility_scope (multisite-9a): None,
+    which is every install with one facility on record, lists every pending
+    order as before; a set keeps the orders of patients whose latest encounter
+    is at one of those facilities (a supply order has no facility of its own)."""
+    from services.facility_documents import patient_facility_clause
+
+    facility_sql, facility_params = patient_facility_clause("o.patient_id", facilities)
     with db_session() as conn:
-        rows = conn.execute("""
+        rows = conn.execute(
+            f"""
             SELECT o.*, m.name as medication_name, p.name as patient_name,
                    u.name as prescribed_by_name, p.ward, p.bed
             FROM helix_patient_med_orders o
             JOIN helix_medication_master m ON o.medication_id = m.id
             JOIN patients p ON o.patient_id = p.id
             LEFT JOIN users u ON o.prescribed_by = u.id
-            WHERE o.status = 'pending'
+            WHERE o.status = 'pending'{facility_sql}
             ORDER BY o.created_at DESC
-        """).fetchall()
+        """,
+            facility_params,
+        ).fetchall()
         return _with_linked_orders(conn, [dict(row) for row in rows])
 
 
-def get_all_orders():
-    """Retrieve all orders across all statuses."""
+def get_all_orders(*, facilities: frozenset[int] | None = None) -> list[dict]:
+    """Retrieve all orders across all statuses; `facilities` as in
+    get_pending_orders (multisite-9a)."""
+    from services.facility_documents import patient_facility_clause
+
+    facility_sql, facility_params = patient_facility_clause("o.patient_id", facilities)
     with db_session() as conn:
-        rows = conn.execute("""
+        rows = conn.execute(
+            f"""
             SELECT o.*, m.name as medication_name, p.name as patient_name,
                    u.name as prescribed_by_name, p.ward, p.bed,
                    sm.name as substitute_name
@@ -265,8 +281,11 @@ def get_all_orders():
             JOIN patients p ON o.patient_id = p.id
             LEFT JOIN users u ON o.prescribed_by = u.id
             LEFT JOIN helix_medication_master sm ON o.substitute_medication_id = sm.id
+            WHERE 1 = 1{facility_sql}
             ORDER BY o.created_at DESC
-        """).fetchall()
+        """,
+            facility_params,
+        ).fetchall()
         return _with_linked_orders(conn, [dict(row) for row in rows])
 
 
@@ -919,7 +938,9 @@ def order_patient_id(order_id: str) -> str | None:
         return row["patient_id"] if row else None
 
 
-def orders_awaiting_receipt(department: str | None) -> list[dict]:
+def orders_awaiting_receipt(
+    department: str | None, *, facilities: frozenset[int] | None = None
+) -> list[dict]:
     """Orders that left the pharmacy and nobody on the ward has signed for yet.
 
     Scoped by ADMISSION DEPARTMENT, the same way the nurse shift board is
@@ -942,13 +963,22 @@ def orders_awaiting_receipt(department: str | None) -> list[dict]:
     it), so the ward can see which order the tray belongs to and whether it is
     still live (medorders-10, W9-D). An unlinked row, and every row on a
     database that never used the order store, is returned exactly as before.
+
+    `facilities` is the caller's permissions.facility_scope (multisite-9a):
+    None (one facility on record) changes nothing; a set keeps the orders
+    whose patient's active admission is at one of those facilities.
     """
+    from services.facility_documents import facility_clause
+
     with db_session() as conn:
         params: list = []
         dept_clause = ""
         if department:
             dept_clause = " AND a.department = ?"
             params.append(department)
+        facility_sql, facility_params = facility_clause("a.facility_id", facilities)
+        dept_clause += facility_sql
+        params.extend(facility_params)
 
         rows = conn.execute(
             f"""SELECT o.id, o.patient_id, o.dosage, o.route, o.frequency,

@@ -481,10 +481,22 @@ def reset_queue_read_audit() -> None:
 # ── Queue actions ────────────────────────────────────────────────────────────
 
 
-def _load(db, visit_id: str):
+def _load(db: Any, visit_id: str, *, actor_id: str | None) -> Any:
+    """The visit row, or FrontDeskError when there is none. With more than
+    one facility on record (multisite-8h1) a visit at a facility outside the
+    acting account's scope reads exactly like an unknown one, whatever the
+    route checked before: the queue never acts on another facility's
+    patient. With one facility nothing more is read."""
+    from services import facility_lanes
+
     row = db.execute("SELECT * FROM opd_visits WHERE id = ?", (visit_id,)).fetchone()
     if row is None:
         raise FrontDeskError(f"No such OPD visit: {visit_id}")
+    facilities = facility_lanes.account_scope_on(db, actor_id)
+    if facilities is not None:
+        at = row["facility_id"] if "facility_id" in row.keys() else 1
+        if facility_lanes.outside(at, facilities):
+            raise FrontDeskError(f"No such OPD visit: {visit_id}")
     return row
 
 
@@ -516,7 +528,7 @@ def skip_visit(
     """
     ensure_frontdesk_schema()
     with db_session(immediate=True) as db:
-        row = _load(db, visit_id)
+        row = _load(db, visit_id, actor_id=actor_id)
         status = row["status"]
         if status not in ("waiting", "in_consultation"):
             raise QueueConflict(
@@ -546,7 +558,7 @@ def recall_visit(
     """
     ensure_frontdesk_schema()
     with db_session(immediate=True) as db:
-        row = _load(db, visit_id)
+        row = _load(db, visit_id, actor_id=actor_id)
         if row["status"] != "waiting":
             raise QueueConflict(
                 "not_waiting", f"Visit {visit_id} is {row['status']} and cannot be recalled"
@@ -594,7 +606,7 @@ def assign_visit(
     if not doctor:
         raise FrontDeskError("A doctor is required")
     with db_session(immediate=True) as db:
-        row = _load(db, visit_id)
+        row = _load(db, visit_id, actor_id=doctor)
         if row["status"] != "waiting":
             raise QueueConflict(
                 "not_waiting", f"Visit {visit_id} is {row['status']} and cannot be reassigned"
@@ -675,7 +687,7 @@ def update_queue_fields(
     """
     ensure_frontdesk_schema()
     with db_session(immediate=True) as db:
-        row = _load(db, visit_id)
+        row = _load(db, visit_id, actor_id=actor_id)
         if row["status"] not in ("waiting", "in_consultation"):
             raise QueueConflict(
                 "visit_closed", f"Visit {visit_id} is {row['status']} and cannot be changed"
@@ -725,6 +737,7 @@ def list_my_queue(
     doctor_id: str,
     department: str | None,
     visit_date: str | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Today's queue for one doctor, plus the clinic's unassigned patients.
 
@@ -734,6 +747,11 @@ def list_my_queue(
     queue needs (name, UHID, age, sex, token, complaint, priority, room, wait)
     and whether its consultation note is a draft or signed. Never vitals, a
     score or a band.
+
+    `facilities` is the caller's permissions.facility_scope (multisite-8h1):
+    None leaves the read exactly as it was; a set keeps only visits at those
+    facilities (the empty set keeps none), so a doctor with no department
+    sees the unassigned line of their own facility's clinics only.
     """
     ensure_frontdesk_schema()
     day = _hospital_day(visit_date)
@@ -749,6 +767,12 @@ def list_my_queue(
     if department is not None:
         clauses.append("v.department = ?")
         params.append(department)
+    if facilities is not None:
+        from services.facility_lanes import facility_marks
+
+        marks, ids = facility_marks(facilities)
+        clauses.append(f"v.facility_id IN ({marks})")
+        params.extend(ids)
     with db_session() as db:
         join = ""
         note_col = "NULL AS consultation_status"
@@ -954,12 +978,15 @@ def _board_audit(
     )
 
 
-def _board_departments(scope_department: str | None) -> list[str]:
+def _board_departments(
+    scope_department: str | None, facilities: frozenset[int] | None = None
+) -> list[str]:
     """The clinics a board may be made for: the departments with clinical
-    cover, narrowed to the caller's own when the caller has one."""
+    cover, narrowed to the caller's own when the caller has one, and to the
+    caller's facilities when it has a facility scope (multisite-8h1)."""
     from services.frontdesk_service import list_covering_departments
 
-    departments = list_covering_departments()
+    departments = list_covering_departments(facilities=facilities)
     if scope_department is not None:
         return [d for d in departments if d == scope_department]
     return departments
@@ -996,15 +1023,19 @@ def create_display_board(
 ) -> dict:
     """A new board for one clinic. Returns {board, key}: the key is in this
     answer only, and only its hash is stored. The clinic must have clinical
-    cover and, for a caller with a department, be the caller's own."""
+    cover and, for a caller with a department, be the caller's own. With more
+    than one facility on record it must be a clinic of the caller's own
+    facility (multisite-8h1)."""
     import uuid as _uuid
+
+    from services import facility_lanes
 
     ensure_frontdesk_schema()
     wanted = _clean(department, 200)
     clinic = next(
         (
             d
-            for d in _board_departments(scope_department)
+            for d in _board_departments(scope_department, facility_lanes.scope_of(actor or {}))
             if wanted and d.casefold() == wanted.casefold()
         ),
         None,
@@ -1047,12 +1078,23 @@ def revoke_display_board(
 ) -> dict:
     """Switch a board's key off for good: the screen stops showing tokens at
     its next read. A board of another clinic, for a caller with a department,
-    is 404 like an unknown one."""
+    is 404 like an unknown one, and so is a board of another facility's
+    clinic once more than one facility is on record (multisite-8h1)."""
+    from services import facility_lanes, facility_service
+
     ensure_frontdesk_schema()
     bid = _clean(board_id, 80) or ""
+    facilities = facility_lanes.scope_of(actor or {})
     with db_session(immediate=True) as db:
         row = db.execute("SELECT * FROM opd_display_boards WHERE id = ?", (bid,)).fetchone()
         if row is None or (scope_department is not None and row["department"] != scope_department):
+            raise BoardError("board_not_found", "Display board not found.", status=404)
+        if facility_lanes.outside(
+            facility_service.department_facility(row["department"], db=db)
+            if facilities is not None
+            else None,
+            facilities,
+        ):
             raise BoardError("board_not_found", "Display board not found.", status=404)
         if row["revoked_at"] is not None:
             raise BoardError(

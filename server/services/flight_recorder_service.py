@@ -19,6 +19,15 @@ row links to the immediately preceding audit row by id, regardless of patient),
 so integrity is always verified over the full chain — a tampered row anywhere
 invalidates provenance for everyone. The patient_id argument scopes the reported
 row count/timeline, not the correctness of the chain walk.
+
+Facilities (multisite-11): the timeline, the event detail and verify_chain's
+per-patient count take `facilities`, the reader's facility scope (None for no
+limit, which every caller gets while one facility is on record and which
+changes nothing). Audit rows follow the epoch rule (services/audit_facility);
+event bus and order rows follow their patient's facility, the patient scope's
+rule, so a row with no patient is shown only to a reader with no limit. The
+chain walk itself stays appliance-level: whether the chain holds, and where
+it first breaks, is the same answer for every reader.
 """
 
 from __future__ import annotations
@@ -31,6 +40,8 @@ from typing import Any
 
 from config import DB_PATH
 from database import db_session
+
+from services import audit_facility
 
 # Reuse the EXACT sealing algorithm — do not reinvent it, or verification would
 # silently diverge from how rows were written.
@@ -191,7 +202,9 @@ def _broken_audit_ids(conn, *, max_age_s: float | None = None) -> tuple[list[int
     return state["broken"], state["checked"]
 
 
-def verify_chain(patient_id: str | None = None) -> dict[str, Any]:
+def verify_chain(
+    patient_id: str | None = None, *, facilities: frozenset[int] | None = None
+) -> dict[str, Any]:
     """Verify the audit hash chain for tamper-evidence.
 
     Returns {ok, broken_at, count} where broken_at is the id of the FIRST row
@@ -199,6 +212,8 @@ def verify_chain(patient_id: str | None = None) -> dict[str, Any]:
     The chain is always walked globally (see module docstring); `count` reports
     the number of hashed rows checked — scoped to `patient_id` when supplied so
     the UI can show "N of this patient's events sit under a verified chain".
+    With `facilities` set, that per-patient count counts only the rows the
+    reader may see; ok, broken_at and the global count stay appliance-level.
 
     Always a FULL walk (max_age_s=0): this is the tamper-evidence claim itself,
     so it never answers from the cache. The walk it does refreshes the cache the
@@ -207,10 +222,14 @@ def verify_chain(patient_id: str | None = None) -> dict[str, Any]:
     with db_session() as conn:
         broken, checked = _broken_audit_ids(conn, max_age_s=0)
         if patient_id:
+            clause, extra = audit_facility.visible_sql(
+                facilities, audit_facility.audit_epoch(conn) if facilities is not None else 0
+            )
             count = conn.execute(
                 "SELECT COUNT(id) AS c FROM audit_logs "
-                "WHERE patient_id = ? AND row_hash IS NOT NULL",
-                (patient_id,),
+                "WHERE patient_id = ? AND row_hash IS NOT NULL"
+                + (f" AND {clause}" if clause else ""),
+                (patient_id, *extra),
             ).fetchone()["c"]
         else:
             count = checked
@@ -233,11 +252,24 @@ def _table_exists(conn, name: str) -> bool:
     return row is not None
 
 
+def _patient_filter(column: str, facilities: frozenset[int] | None) -> tuple[str, tuple]:
+    """' AND <column> IN (the reader's facilities' patients)', or nothing for
+    no facility limit. A row with no patient matches no facility."""
+    if facilities is None:
+        return "", ()
+    from permissions import scope_patient_ids_sql
+
+    sql, params = scope_patient_ids_sql(None, facilities=facilities)
+    return f" AND {column} IN ({sql})", tuple(params)
+
+
 def get_timeline(
     patient_id: str | None = None,
     since: str | None = None,
     until: str | None = None,
     limit: int = 500,
+    *,
+    facilities: frozenset[int] | None = None,
 ) -> list[dict[str, Any]]:
     """Return a time-ordered, unified stream of everything that happened.
 
@@ -252,13 +284,16 @@ def get_timeline(
     Ascending by timestamp. When more than `limit` rows match, the most recent
     `limit` are returned (still ascending) so the scrubber shows the latest
     window. `since`/`until` are ISO-8601 bounds compared against each source's
-    native timestamp column.
+    native timestamp column. `facilities` is the reader's facility scope (see
+    the module docstring); None leaves every query as it was.
     """
     limit = max(1, min(int(limit), 5000))
     events: list[dict[str, Any]] = []
 
     with db_session() as conn:
         broken_ids = set(_broken_audit_ids(conn)[0])
+        epoch = audit_facility.audit_epoch(conn) if facilities is not None else 0
+        visible, visible_params = audit_facility.visible_sql(facilities, epoch)
 
         # ── audit_logs ──
         q = f"SELECT {_AUDIT_SELECT} FROM audit_logs WHERE 1=1"
@@ -272,6 +307,9 @@ def get_timeline(
         if until:
             q += " AND timestamp <= ?"
             params.append(until)
+        if visible:
+            q += " AND " + visible
+            params.extend(visible_params)
         q += " ORDER BY timestamp DESC, id DESC LIMIT ?"
         params.append(limit)
         for r in conn.execute(q, params).fetchall():
@@ -311,6 +349,9 @@ def get_timeline(
         if until:
             q += " AND timestamp <= ?"
             params.append(until)
+        scoped, scoped_params = _patient_filter("patient_id", facilities)
+        q += scoped
+        params.extend(scoped_params)
         q += " ORDER BY timestamp DESC LIMIT ?"
         params.append(limit)
         for r in conn.execute(q, params).fetchall():
@@ -355,6 +396,9 @@ def get_timeline(
             if until:
                 q += " AND oe.created_at <= ?"
                 params.append(until)
+            scoped, scoped_params = _patient_filter("o.patient_id", facilities)
+            q += scoped
+            params.extend(scoped_params)
             q += " ORDER BY oe.created_at DESC, oe.id DESC LIMIT ?"
             params.append(limit)
             for r in conn.execute(q, params).fetchall():
@@ -402,12 +446,25 @@ def _summarize_payload(payload: Any) -> str | None:
 # ════════════════════════════════════════════════════════════════
 
 
-def get_event_detail(event_id: Any, source: str) -> dict[str, Any] | None:
+def _patient_visible(conn: Any, patient_id: Any, facilities: frozenset[int] | None) -> bool:
+    """Whether a row about `patient_id` is within the reader's facilities
+    (always, for no facility limit; never, for a row with no patient)."""
+    if facilities is None:
+        return True
+    from permissions import patient_in_scope
+
+    return bool(patient_id) and patient_in_scope(conn, str(patient_id), None, facilities=facilities)
+
+
+def get_event_detail(
+    event_id: Any, source: str, *, facilities: frozenset[int] | None = None
+) -> dict[str, Any] | None:
     """Return the full raw row behind one timeline entry, plus chain status.
 
     `source` selects the backing table ('audit' | 'event' | 'order'). Returns
     None if no such row exists. For audit rows the returned dict includes a
-    `chain_ok` flag so the detail pane can flag a tampered record.
+    `chain_ok` flag so the detail pane can flag a tampered record. A row
+    outside the reader's `facilities` is None too, exactly like a missing one.
     """
     with db_session() as conn:
         if source == "audit":
@@ -417,6 +474,10 @@ def get_event_detail(event_id: Any, source: str) -> dict[str, Any] | None:
             if row is None:
                 return None
             d = dict(row)
+            if facilities is not None and not audit_facility.row_visible(
+                d, facilities, audit_facility.audit_epoch(conn)
+            ):
+                return None
             broken = set(_broken_audit_ids(conn)[0])
             d["chain_ok"] = d["row_hash"] is not None and d["id"] not in broken
             if d.get("metadata_json"):
@@ -431,6 +492,8 @@ def get_event_detail(event_id: Any, source: str) -> dict[str, Any] | None:
             if row is None:
                 return None
             d = dict(row)
+            if not _patient_visible(conn, d.get("patient_id"), facilities):
+                return None
             if d.get("payload"):
                 try:
                     d["payload_parsed"] = json.loads(d["payload"])
@@ -452,6 +515,8 @@ def get_event_detail(event_id: Any, source: str) -> dict[str, Any] | None:
                 return None
             if row["order_type"] == "medication" and not _drug_chart_enabled():
                 # Not on the timeline under the Orb Ward Record, so not here.
+                return None
+            if not _patient_visible(conn, row["patient_id"], facilities):
                 return None
             return {"source": "order", "event": dict(row)}
 

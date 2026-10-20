@@ -45,11 +45,28 @@ THE ONE THING THIS FILE MAY NEVER DO: return a refusal that stops clinical work.
 money, and even when enforcement is enabled it reports ``blocks_discharge`` as
 DATA rather than as an HTTP error, because it is the discharge path's decision,
 not billing's.
+
+FACILITY SCOPE (multisite-9a, W12-E; ruling MS-R5 (a), document-keyed). Once
+more than one facility is on record, the invoice and outpatient lists keep
+the documents whose own facility is one of the caller's, and every route that
+names an invoice or a charge, and every write that names an admission (a
+charge, a capture, bed days, a bill), refuses one of another facility with a
+404 and an authorization 'facility_document_denied' row before anything is
+read or written. An admission is checked by its own row, whichever patient it
+belongs to. A bill that names no charge takes only the pending lines stamped
+at the caller's facilities. The patient checks stay as they were, and the
+patient-keyed reads (charges, the money summary) stay whole-record once the
+patient is in scope. With one facility on record the caller's facility scope
+is None and nothing changes.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 import config
+from database import db_session
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from permissions import (
     BILLING_READ,
@@ -57,6 +74,7 @@ from permissions import (
     BILLING_WRITE,
     department_scope,
     enforce_patient_scope,
+    facility_scope,
     log_phi_read,
     require_patient_access,
     require_permission,
@@ -65,10 +83,67 @@ from pydantic import BaseModel, Field
 from services.audit_service import AuditWriteError
 from services.billing_masters import MasterDataError
 from services.billing_service import BillingError
+from services.facility_documents import (
+    admission_ref,
+    admission_row_facility,
+    charge_facility,
+    deny_if_outside,
+    request_meta,
+)
+from services.facility_stamp import invoice_facility
 from services.money import GST_EXEMPT, GST_TREATMENTS, QUANTITY_SCALE
 
 from routes.opt_in_gates import require_opd_feature
 from services import billing_masters, billing_service
+
+
+def _require_own_document(
+    user: dict,
+    request: Request | None,
+    *,
+    lookup: Callable[[Any, Any], int | None],
+    doc_id: Any,
+    target_type: str,
+    detail: str,
+) -> None:
+    """404, after an authorization 'facility_document_denied' row, when the
+    document `lookup` reads (its own facility_id) is outside the caller's
+    facility scope (multisite-9a). Plain def: the billing routes are
+    threadpooled. With one facility on record nothing is read; a document no
+    row holds passes, and the service refuses it in its own words."""
+    if doc_id is None:
+        return
+    facilities = facility_scope(user)
+    if facilities is None:
+        return
+    with db_session() as db:
+        facility_id = lookup(db, doc_id)
+    if deny_if_outside(
+        user,
+        document_facility_id=facility_id,
+        lane="billing",
+        target_type=target_type,
+        target_id=doc_id,
+        meta=request_meta(request),
+        facilities=facilities,
+    ):
+        raise HTTPException(status_code=404, detail=detail)
+
+
+def _require_own_admission(user: dict, request: Request | None, admission_id: Any) -> None:
+    """_require_own_document for an admission named in a request body: 404,
+    after the audit row, when that admission is at another facility, whichever
+    patient it belongs to (another patient's admission at the caller's own
+    facility is the service's admission_patient_mismatch, as before)."""
+    _require_own_document(
+        user,
+        request,
+        lookup=admission_row_facility,
+        doc_id=admission_ref(admission_id),
+        target_type="admission",
+        detail="Admission not found",
+    )
+
 
 router = APIRouter(prefix="/api/billing", tags=["Billing"])
 
@@ -473,7 +548,7 @@ def list_op_patients(
     date: str | None = _LIST_OP_PATIENTS_DATE_DEFAULT,
     _opd: None = _LIST_OP_PATIENTS_OPD_DEFAULT,
     user: dict = _LIST_OP_PATIENTS_USER_DEFAULT,
-):
+) -> dict:
     """Outpatients with pending outpatient lines on one hospital-local day.
 
     The Charges picker merges these with the ward and discharged patients, so
@@ -487,7 +562,12 @@ def list_op_patients(
     written nothing is returned (503).
     """
     dept = department_scope(user)
-    result = _handle(billing_service.list_op_patients, day=date, scope_department=dept)
+    result = _handle(
+        billing_service.list_op_patients,
+        day=date,
+        scope_department=dept,
+        facilities=facility_scope(user),
+    )
     if result["patients"]:
         try:
             log_phi_read(
@@ -561,12 +641,16 @@ _POST_CHARGE_USER_DEFAULT = Depends(require_patient_access(BILLING_READ, BILLING
 def post_charge(
     patient_id: str,
     payload: ChargeIn,
+    request: Request,
     # Same house guard as the reads: permission + ward scope off the PATH. No
     # audit_action — a mutation is already covered by the audit middleware and
     # by this module's own billing_charge_posted row.
     user: dict = _POST_CHARGE_USER_DEFAULT,
-):
+) -> dict:
     _billing_enabled()
+    # multisite-9a: a line is stamped with its admission's facility, so a
+    # named admission must be the caller's facility's.
+    _require_own_admission(user, request, payload.admission_id)
     charge = _handle(
         billing_service.add_charge,
         patient_id=patient_id,
@@ -597,14 +681,19 @@ _CAPTURE_CHARGES_USER_DEFAULT = Depends(require_patient_access(BILLING_READ, BIL
 def capture_charges(
     patient_id: str,
     payload: CaptureIn,
+    request: Request,
     user: dict = _CAPTURE_CHARGES_USER_DEFAULT,
-):
+) -> dict:
     """Pull the chargeable clinical events Orb already recorded onto the bill.
 
     READ-ONLY against every clinical table. Events Orb cannot price come back in
     ``skipped`` with a reason — they are never posted at ₹0.
+
+    Once more than one facility is on record, a named admission must be the
+    caller's facility's (multisite-9a), dry run included.
     """
     _billing_enabled()
+    _require_own_admission(user, request, payload.admission_id)
     result = _handle(
         billing_service.capture_clinical_charges,
         patient_id=patient_id,
@@ -623,12 +712,15 @@ _POST_BED_DAYS_USER_DEFAULT = Depends(require_patient_access(BILLING_READ, BILLI
 def post_bed_days(
     patient_id: str,
     payload: BedDaysIn,
+    request: Request,
     user: dict = _POST_BED_DAYS_USER_DEFAULT,
-):
+) -> dict:
     """Post bed days through a date (W136, adt-15). The admission must be the
     path patient's: the scope check above covers the patient, not an
-    admission id in the body."""
+    admission id in the body. Once more than one facility is on record it
+    must also be the caller's facility's (multisite-9a)."""
     _billing_enabled()
+    _require_own_admission(user, request, payload.admission_id)
     result = _handle(
         billing_service.post_bed_day_charges,
         admission_id=payload.admission_id,
@@ -645,7 +737,17 @@ _CANCEL_CHARGE_USER_DEFAULT = Depends(_write)
 
 
 @router.post("/charges/{charge_id}/cancel")
-def cancel_charge(charge_id: int, payload: ReasonIn, user: dict = _CANCEL_CHARGE_USER_DEFAULT):
+def cancel_charge(
+    charge_id: int, payload: ReasonIn, request: Request, user: dict = _CANCEL_CHARGE_USER_DEFAULT
+) -> dict:
+    _require_own_document(
+        user,
+        request,
+        lookup=charge_facility,
+        doc_id=charge_id,
+        target_type="encounter_charge",
+        detail="Charge not found",
+    )
     charge = _handle(
         billing_service.cancel_charge,
         charge_id,
@@ -670,7 +772,7 @@ def list_invoices(
     invoice_type: str | None = None,
     limit: int = _LIST_INVOICES_LIMIT_DEFAULT,
     user: dict = _LIST_INVOICES_USER_DEFAULT,
-):
+) -> dict:
     if patient_id:
         enforce_patient_scope(user, patient_id)
     return {
@@ -680,6 +782,7 @@ def list_invoices(
             status=status,
             invoice_type=invoice_type,
             limit=limit,
+            facilities=facility_scope(user),
         )
     }
 
@@ -691,10 +794,26 @@ _CREATE_INVOICE_USER_DEFAULT = Depends(require_patient_access(BILLING_READ, BILL
 def create_invoice(
     patient_id: str,
     payload: InvoiceIn,
+    request: Request,
     user: dict = _CREATE_INVOICE_USER_DEFAULT,
-):
-    """Raise an IPD interim/final bill (or an advance demand) over pending charges."""
+) -> dict:
+    """Raise an IPD interim/final bill (or an advance demand) over pending charges.
+
+    Once more than one facility is on record, the named admission and every
+    named charge must be the caller's facility's, and a bill that names no
+    charge takes only the pending lines stamped at the caller's facilities
+    (multisite-9a)."""
     _billing_enabled()
+    _require_own_admission(user, request, payload.admission_id)
+    for charge_id in payload.charge_ids or ():
+        _require_own_document(
+            user,
+            request,
+            lookup=charge_facility,
+            doc_id=charge_id,
+            target_type="encounter_charge",
+            detail="Charge not found",
+        )
     invoice = _handle(
         billing_service.create_invoice,
         patient_id=patient_id,
@@ -709,6 +828,7 @@ def create_invoice(
         notes=payload.notes,
         idempotency_key=payload.idempotency_key,
         created_by=user.get("id"),
+        facilities=facility_scope(user),
     )
     return {"status": "success", "invoice": invoice}
 
@@ -770,7 +890,15 @@ _GET_INVOICE_USER_DEFAULT = Depends(_read)
 
 
 @router.get("/invoices/{invoice_id}")
-def get_invoice(invoice_id: int, request: Request, user: dict = _GET_INVOICE_USER_DEFAULT):
+def get_invoice(invoice_id: int, request: Request, user: dict = _GET_INVOICE_USER_DEFAULT) -> dict:
+    _require_own_document(
+        user,
+        request,
+        lookup=invoice_facility,
+        doc_id=invoice_id,
+        target_type="invoice",
+        detail="Invoice not found",
+    )
     invoice = _handle(billing_service.get_invoice, invoice_id)
     enforce_patient_scope(user, invoice.get("patient_id"))
     log_phi_read(
@@ -789,8 +917,18 @@ _PRINT_INVOICE_USER_DEFAULT = Depends(_read)
 
 
 @router.get("/invoices/{invoice_id}/print")
-def print_invoice(invoice_id: int, request: Request, user: dict = _PRINT_INVOICE_USER_DEFAULT):
+def print_invoice(
+    invoice_id: int, request: Request, user: dict = _PRINT_INVOICE_USER_DEFAULT
+) -> dict:
     """The printable/exportable document, with its own honesty notices attached."""
+    _require_own_document(
+        user,
+        request,
+        lookup=invoice_facility,
+        doc_id=invoice_id,
+        target_type="invoice",
+        detail="Invoice not found",
+    )
     view = _handle(billing_service.invoice_print_view, invoice_id)
     enforce_patient_scope(user, view["invoice"].get("patient_id"))
     log_phi_read(
@@ -809,7 +947,17 @@ _ISSUE_INVOICE_USER_DEFAULT = Depends(_write)
 
 
 @router.post("/invoices/{invoice_id}/issue")
-def issue_invoice(invoice_id: int, user: dict = _ISSUE_INVOICE_USER_DEFAULT):
+def issue_invoice(
+    invoice_id: int, request: Request, user: dict = _ISSUE_INVOICE_USER_DEFAULT
+) -> dict:
+    _require_own_document(
+        user,
+        request,
+        lookup=invoice_facility,
+        doc_id=invoice_id,
+        target_type="invoice",
+        detail="Invoice not found",
+    )
     invoice = _handle(billing_service.issue_invoice, invoice_id, actor=user.get("id"))
     return {"status": "success", "invoice": invoice}
 
@@ -818,8 +966,18 @@ _CANCEL_INVOICE_USER_DEFAULT = Depends(_write)
 
 
 @router.post("/invoices/{invoice_id}/cancel")
-def cancel_invoice(invoice_id: int, payload: ReasonIn, user: dict = _CANCEL_INVOICE_USER_DEFAULT):
+def cancel_invoice(
+    invoice_id: int, payload: ReasonIn, request: Request, user: dict = _CANCEL_INVOICE_USER_DEFAULT
+) -> dict:
     """Cancel with a typed reason. Nothing is deleted; the number is never reused."""
+    _require_own_document(
+        user,
+        request,
+        lookup=invoice_facility,
+        doc_id=invoice_id,
+        target_type="invoice",
+        detail="Invoice not found",
+    )
     invoice = _handle(
         billing_service.cancel_invoice,
         invoice_id,
@@ -833,8 +991,18 @@ _CREDIT_NOTE_USER_DEFAULT = Depends(_write)
 
 
 @router.post("/invoices/{invoice_id}/credit-note")
-def credit_note(invoice_id: int, payload: ReasonIn, user: dict = _CREDIT_NOTE_USER_DEFAULT):
+def credit_note(
+    invoice_id: int, payload: ReasonIn, request: Request, user: dict = _CREDIT_NOTE_USER_DEFAULT
+) -> dict:
     """Reverse a paid/part-paid invoice with a second document."""
+    _require_own_document(
+        user,
+        request,
+        lookup=invoice_facility,
+        doc_id=invoice_id,
+        target_type="invoice",
+        detail="Invoice not found",
+    )
     invoice = _handle(
         billing_service.create_credit_note,
         invoice_id,

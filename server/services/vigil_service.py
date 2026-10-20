@@ -1289,13 +1289,23 @@ def board_order(patient_id: str, news2: dict | None) -> tuple:
     )
 
 
-def scored_admitted_patients(department: str | None) -> list[tuple]:
+def scored_admitted_patients(
+    department: str | None, *, facilities: frozenset[int] | None = None
+) -> list[tuple]:
     """Every admitted patient on an active admission, each with the NEWS2 of
     their latest vitals row, sorted with `board_order`. `department` None means
     the whole hospital; otherwise only that admission department.
 
+    `facilities` is the caller's permissions.facility_scope() (multisite-8,
+    W12-A): None (one facility on record, or a group-wide account) leaves both
+    statements exactly as they were; otherwise only patients whose active
+    admission is at one of those facilities are read, and the empty set reads
+    nobody. The ward narrator's shared snapshot passes no facilities and keeps
+    each reader to theirs when it serves the brief.
+
     Returns (patient, vitals, news2) triples. `patient` is the patients row as a
-    dict plus `attending_doctor_name` and `admission_department`, and for a
+    dict plus `attending_doctor_name`, `admission_department` and
+    `admission_facility_id`, and for a
     readmitted patient `previous_stay` (previous_stay_on). `vitals` is the
     latest vitals row of the current stay as a dict, or None (ruling ADT-S9:
     an earlier stay's set is never the latest). `news2` is `score_vitals_row` with the
@@ -1306,13 +1316,17 @@ def scored_admitted_patients(department: str | None) -> list[tuple]:
     overlay reads the vitals history on its own connection. Never call this from
     inside a db_session or a write transaction.
     """
-    scope_sql = "AND a.department = ?" if department else ""
-    scope_args = (department,) if department else ()
+    from services.facility_filter import column_clause
+
+    facility_sql, facility_args = column_clause("a.facility_id", facilities)
+    scope_sql = ("AND a.department = ?" if department else "") + facility_sql
+    scope_args = ((department,) if department else ()) + facility_args
     with db_session() as db:
         patients = db.execute(
             f"""SELECT p.*,
                        u.name as attending_doctor_name,
-                       a.department as admission_department
+                       a.department as admission_department,
+                       a.facility_id as admission_facility_id
                 FROM patients p
                 JOIN admissions a ON p.id = a.patient_id AND a.status = 'active'
                 LEFT JOIN users u ON u.id = p.attending_doctor_id

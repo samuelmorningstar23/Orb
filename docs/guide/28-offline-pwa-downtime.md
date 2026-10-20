@@ -53,9 +53,9 @@ Neighbors referenced below: NEWS2 scoring (see guide 07-vigil), FHIR export (see
 
 1. On startup, `main.py` lifespan schedules `downtime_snapshot_sweep()` as an asyncio background task (`server/main.py:458`).
 2. After a 30s settle delay (`server/main.py:145`), the sweep calls `capture_all_admitted("auto")` every hour, via `asyncio.to_thread` so the blocking DB work stays off the event loop (`server/main.py:149`).
-3. `capture_all_admitted` lists every `status='admitted'` patient and calls `capture_snapshot` for each, never aborting on one bad patient (`server/services/downtime_service.py:249`).
-4. `capture_snapshot` reads demographics, active allergies, active problems, active meds, the latest vitals row, recent signed notes, and recent risk scores, **all pure DB reads**, computes NEWS2 in-process, and INSERTs one `patient_snapshots` row (`server/services/downtime_service.py:83`).
-5. Once every 24 ticks (~daily), the same sweep also awaits `run_nightly_fhir_self_export_async` to write a FHIR `$everything` bundle per admitted patient to a local directory (`server/main.py:156`, `server/main.py:162`, `server/services/downtime_service.py:549`). Note this one is **not** dispatched with `asyncio.to_thread`: it runs on downtime_service's own single-thread lane and self-throttles, so a restart loop cannot re-write the whole export on every boot.
+3. `capture_all_admitted` lists every `status='admitted'` patient and calls `capture_snapshot` for each, never aborting on one bad patient (`server/services/downtime_service.py:250`).
+4. `capture_snapshot` reads demographics, active allergies, active problems, active meds, the latest vitals row, recent signed notes, and recent risk scores, **all pure DB reads**, computes NEWS2 in-process, and INSERTs one `patient_snapshots` row (`server/services/downtime_service.py:84`).
+5. Once every 24 ticks (~daily), the same sweep also awaits `run_nightly_fhir_self_export_async` to write a FHIR `$everything` bundle per admitted patient to a local directory (`server/main.py:156`, `server/main.py:162`, `server/services/downtime_service.py:650`). Note this one is **not** dispatched with `asyncio.to_thread`: it runs on downtime_service's own single-thread lane and self-throttles, so a restart loop cannot re-write the whole export on every boot.
 
 So by the time an outage hits, a recent read-only copy already exists on local disk. That is the whole design: you cannot assemble a snapshot when the network is already down, so you assemble it *continuously beforehand*.
 
@@ -201,7 +201,7 @@ This file is the typed contract between the React page and the backend. Lines 10
 
 #### Snapshot interfaces: `src/api/downtime.ts:10`–`src/api/downtime.ts:125`
 **Does:** describe every field of a snapshot: `DowntimeDemographics`, `DowntimeAllergy`, `DowntimeProblem`, `DowntimeMedication`, `DowntimeVitals`, `DowntimeNews2`, `DowntimeNote`, `DowntimeRiskScore`, the top-level `DowntimeSnapshot`, its `DowntimeSnapshotEnvelope` wrapper, and `CaptureAllResult`.
-**Why it exists:** these types must exactly match the dicts the Python service builds (`server/services/downtime_service.py:201`). They are the source of truth the page renders against.
+**Why it exists:** these types must exactly match the dicts the Python service builds (`server/services/downtime_service.py:202`). They are the source of truth the page renders against.
 **Data in/out:** `DowntimeSnapshotEnvelope` = `{ id, patient_id, summary, created_by, created_at, snapshot }` where `snapshot` is the full `DowntimeSnapshot` (`src/api/downtime.ts:111`).
 **Gotchas:** `DowntimeRiskScore.drivers` is typed `string[] | string | null` (`src/api/downtime.ts:93`) because the backend stores drivers as a JSON string and only *sometimes* decodes it (see the service gotcha below), the type honestly reflects that ambiguity.
 
@@ -233,97 +233,97 @@ This file is the typed contract between the React page and the backend. Lines 10
 
 This module's design contract (`server/services/downtime_service.py:11`) is the single most important fact: **everything here must work with NO Ollama and NO network.** Capture is pure DB reads plus one rule-based function.
 
-#### module constants: `server/services/downtime_service.py:33`
-`SNAPSHOT_SCHEMA_VERSION = 1` is stamped into every snapshot so readers can branch if the shape changes. `_RECENT_NOTES = 5` and `_RECENT_RISK = 5` (`server/services/downtime_service.py:36`) cap how many recent notes/risk rows are frozen.
+#### module constants: `server/services/downtime_service.py:34`
+`SNAPSHOT_SCHEMA_VERSION = 1` is stamped into every snapshot so readers can branch if the shape changes. `_RECENT_NOTES = 5` and `_RECENT_RISK = 5` (`server/services/downtime_service.py:37`) cap how many recent notes/risk rows are frozen.
 
-#### _now_iso / _row_to_dict: `server/services/downtime_service.py:45`, `server/services/downtime_service.py:49`
+#### _now_iso / _row_to_dict: `server/services/downtime_service.py:46`, `server/services/downtime_service.py:50`
 **Does:** UTC ISO-8601 timestamp helper; sqlite `Row` → `dict` (empty dict for None).
 **Gotchas:** `_now_iso` is timezone-aware UTC (`datetime.now(timezone.utc)`), so `captured_at` is unambiguous across timezones, good.
 
-#### _build_summary: `server/services/downtime_service.py:53`
+#### _build_summary: `server/services/downtime_service.py:54`
 **Signature:** `(demo, allergies, problems, medications, news2) → str`
 **Does:** compose the one-line human summary shown in the snapshot list / banner.
-**How it works:** builds `"Name (MRN x, 67M), Ward / Bed. N active allergies. N active problems. N active meds. NEWS2 5 (elevated)."`; uses `"NKDA"` (No Known Drug Allergies) when the allergy list is empty (`server/services/downtime_service.py:68`) and `"no vitals recorded"` when NEWS2 is absent.
+**How it works:** builds `"Name (MRN x, 67M), Ward / Bed. N active allergies. N active problems. N active meds. NEWS2 5 (elevated)."`; uses `"NKDA"` (No Known Drug Allergies) when the allergy list is empty (`server/services/downtime_service.py:69`) and `"no vitals recorded"` when NEWS2 is absent.
 **Why it exists:** so a list of snapshots is scannable without opening each one, and the printout has a header line.
-**Gotchas:** singular/plural handling is hand-rolled per field; the age/sex string takes only the first letter of `sex` uppercased (`server/services/downtime_service.py:62`).
+**Gotchas:** singular/plural handling is hand-rolled per field; the age/sex string takes only the first letter of `sex` uppercased (`server/services/downtime_service.py:63`).
 
-#### capture_snapshot: `server/services/downtime_service.py:83`
+#### capture_snapshot: `server/services/downtime_service.py:84`
 **Signature:** `(patient_id: str, created_by: str = "auto") → dict`
 **Does:** assemble one patient's essential clinical picture from the DB and persist it as a single `patient_snapshots` row.
 **How it works:**
-1. Open a DB session; SELECT the patient joined to their attending doctor's name; raise `ValueError` if not found (`server/services/downtime_service.py:103`). Pops `on_scale_2` out of the demographics dict (it is needed for NEWS2, not for display) (`server/services/downtime_service.py:106`).
-2. SELECT **active** allergies, ordered severe→moderate→mild (allergies are called out as "the single most safety-critical field") (`server/services/downtime_service.py:109`).
-3. SELECT **active** problems, newest first (`server/services/downtime_service.py:123`).
-4. SELECT medications with status `active` or `prn` (as-needed), active first (`server/services/downtime_service.py:135`).
-5. SELECT the single latest vitals row (`server/services/downtime_service.py:147`).
-6. SELECT up to 5 **signed** scribe notes, newest by signed/created time (`server/services/downtime_service.py:158`).
-7. SELECT up to 5 recent risk scores (`server/services/downtime_service.py:172`).
-8. Compute NEWS2 from the latest vitals via `compute_news2`, a pure rule-based function, NOT the LLM narrative and NOT the optional torch/CfC overlay (`server/services/downtime_service.py:186`). This is the crux: a snapshot can always be taken even on a box with no models and no connectivity.
-9. Decode each risk row's JSON `drivers` string into a list (`server/services/downtime_service.py:198`).
-10. Build the snapshot dict (schema_version, captured_at, all sections, `counts`) (`server/services/downtime_service.py:206`), build the summary (`:225`), and INSERT one row into `patient_snapshots` (`server/services/downtime_service.py:229`).
-11. Log and return the full envelope with the new row id (`server/services/downtime_service.py:235`).
+1. Open a DB session; SELECT the patient joined to their attending doctor's name; raise `ValueError` if not found (`server/services/downtime_service.py:104`). Pops `on_scale_2` out of the demographics dict (it is needed for NEWS2, not for display) (`server/services/downtime_service.py:107`).
+2. SELECT **active** allergies, ordered severe→moderate→mild (allergies are called out as "the single most safety-critical field") (`server/services/downtime_service.py:110`).
+3. SELECT **active** problems, newest first (`server/services/downtime_service.py:124`).
+4. SELECT medications with status `active` or `prn` (as-needed), active first (`server/services/downtime_service.py:136`).
+5. SELECT the single latest vitals row (`server/services/downtime_service.py:148`).
+6. SELECT up to 5 **signed** scribe notes, newest by signed/created time (`server/services/downtime_service.py:159`).
+7. SELECT up to 5 recent risk scores (`server/services/downtime_service.py:173`).
+8. Compute NEWS2 from the latest vitals via `compute_news2`, a pure rule-based function, NOT the LLM narrative and NOT the optional torch/CfC overlay (`server/services/downtime_service.py:187`). This is the crux: a snapshot can always be taken even on a box with no models and no connectivity.
+9. Decode each risk row's JSON `drivers` string into a list (`server/services/downtime_service.py:199`).
+10. Build the snapshot dict (schema_version, captured_at, all sections, `counts`) (`server/services/downtime_service.py:207`), build the summary (`:226`), and INSERT one row into `patient_snapshots` (`server/services/downtime_service.py:230`).
+11. Log and return the full envelope with the new row id (`server/services/downtime_service.py:236`).
 **Why it exists:** to freeze a safe, printable, offline copy of must-know data. The parameterized SQL (`?` placeholders) throughout prevents SQL injection.
 **Data in/out:** in: `patient_id`, optional `created_by`. Out: envelope `{id, patient_id, summary, created_by, created_at, snapshot}`.
 **Talks to:** `db_session` (see guide 04-database-schema), `compute_news2` (see guide 07-vigil, `server/services/vigil_service.py:227`). Called by `capture` route (`server/routes/downtime_routes.py:31`), `capture_all_admitted`, and the tests.
-**Change guide:** To add a new section (say, recent labs), (a) SELECT it inside the DB block, (b) add it to the `snapshot` dict (`server/services/downtime_service.py:206`), (c) bump `SNAPSHOT_SCHEMA_VERSION` (`server/services/downtime_service.py:38`), (d) add the matching TS interface field in `src/api/downtime.ts`, and (e) render it in `DowntimeMode.tsx`. Knock-on: old snapshots lack the field, so the page must null-guard. Watch out: whatever you add must be a pure DB read, never call the LLM or an external service here or you break the offline guarantee.
-**Gotchas:** The two `db_session()` blocks (read then write) are separate transactions (`server/services/downtime_service.py:91`, `server/services/downtime_service.py:227`); a concurrent write between them is possible but harmless for a point-in-time snapshot. NEWS2 is only computed when a vitals row exists; otherwise `news2` is `None`.
+**Change guide:** To add a new section (say, recent labs), (a) SELECT it inside the DB block, (b) add it to the `snapshot` dict (`server/services/downtime_service.py:207`), (c) bump `SNAPSHOT_SCHEMA_VERSION` (`server/services/downtime_service.py:39`), (d) add the matching TS interface field in `src/api/downtime.ts`, and (e) render it in `DowntimeMode.tsx`. Knock-on: old snapshots lack the field, so the page must null-guard. Watch out: whatever you add must be a pure DB read, never call the LLM or an external service here or you break the offline guarantee.
+**Gotchas:** The two `db_session()` blocks (read then write) are separate transactions (`server/services/downtime_service.py:92`, `server/services/downtime_service.py:228`); a concurrent write between them is possible but harmless for a point-in-time snapshot. NEWS2 is only computed when a vitals row exists; otherwise `news2` is `None`.
 
-#### capture_all_admitted: `server/services/downtime_service.py:249`
+#### capture_all_admitted: `server/services/downtime_service.py:250`
 **Signature:** `(created_by: str = "auto") → dict`
 **Does:** snapshot every `status='admitted'` patient; the scheduled/drill entry point.
-**How it works:** list admitted ids, loop `capture_snapshot`, catch per-patient exceptions so one bad patient never aborts the drill (`server/services/downtime_service.py:265`), return `{count, total_admitted, failed[], captured_at}`.
+**How it works:** list admitted ids, loop `capture_snapshot`, catch per-patient exceptions so one bad patient never aborts the drill (`server/services/downtime_service.py:266`), return `{count, total_admitted, failed[], captured_at}`.
 **Talks to:** called by the hourly sweep (`server/main.py:88`), the `/capture-all` route, and tests.
 **Gotchas:** Sequential and synchronous, fine for a ward, but O(patients) DB round-trips.
 
-#### fhir_self_export_dir: `server/services/downtime_service.py:278`
+#### fhir_self_export_dir: `server/services/downtime_service.py:279`
 **Signature:** `() → PathLike`
 **Does:** return (creating if needed) the directory for nightly FHIR exports.
-**How it works:** uses the `ORB_FHIR_EXPORT_DIR` env var or `BASE_DIR/downtime_exports`; creates it `0o700` (owner-only) and re-chmods even if it pre-existed (`server/services/downtime_service.py:302`). The env value is stripped, and a value that is empty after stripping is treated as unset, so `ORB_FHIR_EXPORT_DIR=` cannot silently resolve the PHI export root to the process working directory. It is read on every call rather than bound to a module constant at import, which is what makes the redirect below possible.
+**How it works:** uses the `ORB_FHIR_EXPORT_DIR` env var or `BASE_DIR/downtime_exports`; creates it `0o700` (owner-only) and re-chmods even if it pre-existed (`server/services/downtime_service.py:303`). The env value is stripped, and a value that is empty after stripping is treated as unset, so `ORB_FHIR_EXPORT_DIR=` cannot silently resolve the PHI export root to the process working directory. It is read on every call rather than bound to a module constant at import, which is what makes the redirect below possible.
 **Why it exists:** the export filenames encode patient ids, so the directory listing is PHI-adjacent (Protected Health Information) and must not be world-enumerable.
 **Gotchas:** the `import os` is inside the function; the return annotation string `"os.PathLike"` is a forward-ref because `os` isn't imported at module top.
 **In tests:** `server/tests/conftest.py` points `ORB_FHIR_EXPORT_DIR` at a per-session `tempfile.mkdtemp()`, the same pattern already used for `ORB_DB_PATH` and `ORB_WATCHDOG_DIR`. Without it every test run wrote real patient FHIR bundles into `server/downtime_exports/` in the source tree, where they accumulated untracked (~30 per full-suite run). It also stops concurrent test processes fighting over one shared directory.
 
-> **This export grew a whole throttling layer** (`server/services/downtime_service.py:355-548`)
+> **This export grew a whole throttling layer** (`server/services/downtime_service.py:356-649`)
 > after the naive version was measured writing ~287 MB on every process start and blocking the
 > event loop while it did. The block below describes the current shape.
 
-#### the export machinery: `server/services/downtime_service.py:355-548`
+#### the export machinery: `server/services/downtime_service.py:356-649`
 Six pieces sit between the caller and the disk, none of which existed in the first version:
-- `_EXPORT_EXECUTOR` (`:355`), a **private** `ThreadPoolExecutor(max_workers=1)`. Not asyncio's shared default executor: a multi-minute PHI write must not occupy a slot everything else in the process is also waiting on.
-- `_EXPORT_LOCK` (`:361`), a `threading.Lock` taken **non-blocking**. A second trigger while a run is in flight returns `{"skipped": "already_running"}` rather than queueing.
-- `_marker_path` / `_last_run_age_hours` / `_touch_marker` (`:397`, `:401`, `:409`), the `.last_fhir_export` throttle marker on disk, which is what makes the interval survive a restart.
-- `_bundle_path` (`:419`), sanitized id + `.` + first 8 hex of `sha256(id)` + `.fhir.json`. The hash suffix prevents two distinct ids that sanitize to the same string (e.g. `a.b` vs `a_b`) from colliding and overwriting each other.
-- `_write_bundle_throttled` (`:432`), the atomic write, now **chunked**: the temp file is created `0o600` **from the start** (`:452`, never world-readable even mid-write), the JSON is written in `_CHUNK_BYTES` slices with a `_CHUNK_SLEEP_S` yield between them, then `os.replace(tmp, final)`; rename preserves the mode.
-- `prune_fhir_self_exports` (`:499`), retention sweep, run at the end of every export (`:626`). This is what stops the directory growing without bound.
+- `_EXPORT_EXECUTOR` (`:356`), a **private** `ThreadPoolExecutor(max_workers=1)`. Not asyncio's shared default executor: a multi-minute PHI write must not occupy a slot everything else in the process is also waiting on.
+- `_EXPORT_LOCK` (`:362`), a `threading.Lock` taken **non-blocking**. A second trigger while a run is in flight returns `{"skipped": "already_running"}` rather than queueing.
+- `_marker_path` / `_last_run_age_hours` / `_touch_marker` (`:411`, `:415`, `:423`), the `.last_fhir_export` throttle marker on disk, which is what makes the interval survive a restart.
+- `_bundle_path` (`:433`), sanitized id + `.` + first 8 hex of `sha256(id)` + `.fhir.json`. The hash suffix prevents two distinct ids that sanitize to the same string (e.g. `a.b` vs `a_b`) from colliding and overwriting each other.
+- `_write_bundle_throttled` (`:446`), the atomic write, now **chunked**: the temp file is created `0o600` **from the start** (`:553`, never world-readable even mid-write), the JSON is written in `_CHUNK_BYTES` slices with a `_CHUNK_SLEEP_S` yield between them, then `os.replace(tmp, final)`; rename preserves the mode.
+- `prune_fhir_self_exports` (`:600`), retention sweep, run at the end of every export (`:727`). This is what stops the directory growing without bound.
 
-#### run_nightly_fhir_self_export: `server/services/downtime_service.py:549`
+#### run_nightly_fhir_self_export: `server/services/downtime_service.py:650`
 **Signature:** `(created_by="auto", min_interval_hours=24.0, chunk_bytes=None, chunk_sleep_s=None, patient_sleep_s=None) → dict`
 **Does:** write a FHIR `$everything` Bundle per admitted patient to local disk, Orb's own on-prem escrow of the record.
 Jargon: **FHIR** (Fast Healthcare Interoperability Resources) is the standard JSON format for exchanging health records; a `$everything` **Bundle** is "all resources for this patient in one document." **Escrow** here means a safe local copy that never left the building.
-**BLOCKING.** Callers on the event loop must use `run_nightly_fhir_self_export_async` (`:645`), which dispatches onto the module's private single-thread executor.
+**BLOCKING.** Callers on the event loop must use `run_nightly_fhir_self_export_async` (`:746`), which dispatches onto the module's private single-thread executor.
 **How it works:**
-1. Resolve the export dir, then try `_EXPORT_LOCK.acquire(blocking=False)`, bail with `skipped: "already_running"` if a run is in flight (`:574`).
-2. **Throttle:** if `min_interval_hours` is set and a successful export finished more recently than that, return `skipped: "too_soon"` with `last_run_age_hours` (`:580-585`). This is the guard that stops a restart loop re-writing ~287 MB on every boot. Pass `0`/`None` to force.
-3. Resolve chunking knobs, and an optional `since` cutoff from `ORB_FHIR_EXPORT_SINCE_DAYS`, a bad value logs a warning and falls back to full history (`:592-599`).
-4. SELECT admitted patient ids (`:600`), then for each call `_export_one_patient` (`:486`), which builds the bundle via `patient_bundle(pid)` (from `services.fhir_export_service`, see the FHIR export guide) and writes it through `_write_bundle_throttled`. One bad patient is logged and recorded in `failed[]`, never raised.
-5. `time.sleep(patient_sleep_s)` **between** patients (`:623`), the next patient immediately opens a DB read and starts another multi-MB write, so this is where the rest of the process gets its slot back.
+1. Resolve the export dir, then try `_EXPORT_LOCK.acquire(blocking=False)`, bail with `skipped: "already_running"` if a run is in flight (`:675`).
+2. **Throttle:** if `min_interval_hours` is set and a successful export finished more recently than that, return `skipped: "too_soon"` with `last_run_age_hours` (`:681-686`). This is the guard that stops a restart loop re-writing ~287 MB on every boot. Pass `0`/`None` to force.
+3. Resolve chunking knobs, and an optional `since` cutoff from `ORB_FHIR_EXPORT_SINCE_DAYS`, a bad value logs a warning and falls back to full history (`:693-700`).
+4. SELECT admitted patient ids (`:701`), then for each call `_export_one_patient` (`:587`), which builds the bundle via `patient_bundle(pid)` (from `services.fhir_export_service`, see the FHIR export guide) and writes it through `_write_bundle_throttled`. One bad patient is logged and recorded in `failed[]`, never raised.
+5. `time.sleep(patient_sleep_s)` **between** patients (`:724`), the next patient immediately opens a DB read and starts another multi-MB write, so this is where the rest of the process gets its slot back.
 6. Prune, touch the marker, log, and return `{count, total_admitted, failed[], directory, bytes_written, duration_s, pruned, exported_at}`.
 **Why it exists:** if the primary EHR is down or a hospital wants a portable, standards-based copy, the freshest per-patient FHIR bundle is already on local disk.
 **Talks to:** `patient_bundle` (FHIR export service). Called by the sweep once per 24 hourly ticks, as the **async** wrapper, deliberately *not* via `asyncio.to_thread` (`server/main.py:162`).
 **Change guide:** To export more often, change the `hours % 24` gate in `main.py` (`server/main.py:156`) **and** lower `min_interval_hours`, the on-disk marker will otherwise skip the extra runs as "too soon". Watch out: bundles are overwritten each run (latest-only), so there is no history on disk, if you need versioned exports, add a timestamp to the filename and revisit `prune_fhir_self_exports`.
 
-#### _envelope: `server/services/downtime_service.py:665`
+#### _envelope: `server/services/downtime_service.py:766`
 **Signature:** `(row) → dict`
 **Does:** turn a `patient_snapshots` row into the API envelope, parsing `snapshot_json` back to an object (None on bad JSON).
 **Talks to:** used by both read functions below.
 
-#### get_latest_snapshot: `server/services/downtime_service.py:683`
+#### get_latest_snapshot: `server/services/downtime_service.py:784`
 **Signature:** `(patient_id: str) → dict | None`
 **Does:** most-recent snapshot envelope for a patient (`ORDER BY created_at DESC, id DESC LIMIT 1`), or None.
 **Talks to:** the `/latest` route and tests.
 **Gotchas:** ties on `created_at` are broken by `id DESC`, important because the hourly sweep and a manual re-capture can share a timestamp.
 
-#### list_snapshots: `server/services/downtime_service.py:696`
+#### list_snapshots: `server/services/downtime_service.py:797`
 **Signature:** `(patient_id: str, limit: int = 50) → list[dict]`
 **Does:** newest-first history, capped at `limit`.
 **Talks to:** the `/history` route and tests.
@@ -345,15 +345,15 @@ Router prefix is `/api/downtime` (`server/routes/downtime_routes.py:23`), regist
 **Does:** snapshot every admitted patient (manual drill); audits the count.
 **Gotchas:** Higher privilege (`admin.overview`) than the per-patient capture (`vitals.read`), a bulk operation is an admin action.
 
-#### latest: `server/routes/downtime_routes.py:74`
+#### latest: `server/routes/downtime_routes.py:78`
 **Route:** `GET /api/downtime/{patient_id}/latest` · auth `require_patient_access("vitals.read")`
-**Does:** the downtime fallback read; 404 if none captured (`server/routes/downtime_routes.py:83`).
+**Does:** the downtime fallback read; 404 if none captured (`server/routes/downtime_routes.py:87`).
 **Talks to:** `get_latest_snapshot`. Called by `getLatestSnapshot`, i.e. `DowntimeMode.tsx` on mount.
 
-#### history: `server/routes/downtime_routes.py:88`
+#### history: `server/routes/downtime_routes.py:92`
 **Route:** `GET /api/downtime/{patient_id}/history?limit=50` · auth `require_patient_access("vitals.read")`
 **Does:** newest-first snapshot history wrapped as `{"snapshots": [...]}`.
-**Gotchas:** Unlike `capture`/`capture-all`, the two read routes do NOT emit an audit event. This is no longer an oversight, the comment at `server/routes/downtime_routes.py:76-78` makes it a deliberate decision: both read routes are **scope-checked but not read-audited**, because wiring a fail-closed audit write into the one surface whose whole job is to work when things are broken is exactly backwards.
+**Gotchas:** Unlike `capture`/`capture-all`, the two read routes do NOT emit an audit event. This is no longer an oversight, the comment at `server/routes/downtime_routes.py:80-82` makes it a deliberate decision: both read routes are **scope-checked but not read-audited**, because wiring a fail-closed audit write into the one surface whose whole job is to work when things are broken is exactly backwards.
 
 ---
 
@@ -436,7 +436,7 @@ Mounts the `/api/downtime` routes onto the app. Without this line the endpoints 
 
 **Exported functions other code relies on:** `capture_all_admitted` and `run_nightly_fhir_self_export` (called by `main.py`'s sweep, `server/main.py:83`); `capture_snapshot`, `get_latest_snapshot`, `list_snapshots` (called by routes + tests).
 
-**Consumes from other subsystems (contracts, not owned here):** `compute_news2` (Vigil, `server/services/vigil_service.py:227`), `patient_bundle` (FHIR export, `server/services/fhir_export_service.py:457`), `log_audit_event` (audit), `require_permission` (RBAC, `server/permissions.py:165`), `db_session` (DB). Reads from tables `patients`, `patient_allergies`, `problem_list`, `medications`, `vitals`, `scribe_notes`, `risk_scores`, `users`.
+**Consumes from other subsystems (contracts, not owned here):** `compute_news2` (Vigil, `server/services/vigil_service.py:227`), `patient_bundle` (FHIR export, `server/services/fhir_export_service.py:502`), `log_audit_event` (audit), `require_permission` (RBAC, `server/permissions.py:165`), `db_session` (DB). Reads from tables `patients`, `patient_allergies`, `problem_list`, `medications`, `vitals`, `scribe_notes`, `risk_scores`, `users`.
 
 **Frontend contract:** router mounts `DowntimeMode` at `/downtime/:patientId` for non-patient roles (`src/AppRoot.tsx:185`). PWA precache config lives at `vite.config.ts:26`. The offline write queue key is `localStorage['orb_offline_queue']`, replayed on `window 'online'` (`src/api/client.ts:567`).
 
@@ -466,9 +466,9 @@ Mounts the `/api/downtime` routes onto the app. Without this line the endpoints 
 
 ## Discrepancies and open questions
 
-- **No snapshot retention/pruning.** The hourly sweep INSERTs a new `patient_snapshots` row per admitted patient every hour forever (`server/main.py:88`, `server/services/downtime_service.py:222`); nothing deletes old rows. Over weeks this table grows unbounded. `list_snapshots` caps its *read* at `limit=50` but the rows persist.
+- **No snapshot retention/pruning.** The hourly sweep INSERTs a new `patient_snapshots` row per admitted patient every hour forever (`server/main.py:88`, `server/services/downtime_service.py:223`); nothing deletes old rows. Over weeks this table grows unbounded. `list_snapshots` caps its *read* at `limit=50` but the rows persist.
 - **"Nightly" FHIR export is not wall-clock nightly.** The `hours` counter is a local variable reset on every process restart (`server/main.py:85`), so the export runs every 24 hours of *uptime* and again immediately after each restart (`0 % 24 == 0`), not at a fixed time of night. The name "nightly" is misleading.
-- **Read routes are not PHI-access audited.** `capture`/`capture-all` write audit events, but `latest`/`history` (GETs that return full PHI snapshots) do not emit `log_audit_event` (`server/routes/downtime_routes.py:74`, `server/routes/downtime_routes.py:83`). If per-read PHI access auditing is a requirement, it is absent on the fallback read path.
-- **`drivers` decode asymmetry.** In `capture_snapshot`, `risk_scores` drivers are JSON-decoded to a list (`server/services/downtime_service.py:198`), but NEWS2 `drivers` come straight from `compute_news2` (already a list). The TS type `DowntimeRiskScore.drivers: string[] | string | null` (`src/api/downtime.ts:93`) honestly reflects that a very old snapshot could still hold a raw string. The page only `.join`s `news2.drivers`, not the risk-score drivers, so this is a latent shape it tolerates rather than an active bug.
+- **Read routes are not PHI-access audited.** `capture`/`capture-all` write audit events, but `latest`/`history` (GETs that return full PHI snapshots) do not emit `log_audit_event` (`server/routes/downtime_routes.py:78`, `server/routes/downtime_routes.py:87`). If per-read PHI access auditing is a requirement, it is absent on the fallback read path.
+- **`drivers` decode asymmetry.** In `capture_snapshot`, `risk_scores` drivers are JSON-decoded to a list (`server/services/downtime_service.py:199`), but NEWS2 `drivers` come straight from `compute_news2` (already a list). The TS type `DowntimeRiskScore.drivers: string[] | string | null` (`src/api/downtime.ts:93`) honestly reflects that a very old snapshot could still hold a raw string. The page only `.join`s `news2.drivers`, not the risk-score drivers, so this is a latent shape it tolerates rather than an active bug.
 - **`navigator.onLine` false-positive.** The offline queue only triggers when the browser reports offline (`src/api/client.ts:436`, inside `offlineMutate`); it reports `true` whenever any interface is up, so a reachable-Wi-Fi-but-dead-backend scenario bypasses the queue and the write fails hard. Known limitation of `navigator.onLine`, not a code defect.
 - **No runtime API caching in the PWA.** Only static assets are precached (`vite.config.ts:34`); there is no `runtimeCaching`, so opening a never-before-loaded patient with the backend down yields the app shell but a failed data fetch. Intentional (avoid stale PHI) but worth stating plainly.

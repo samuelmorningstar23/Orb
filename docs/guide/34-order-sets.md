@@ -37,9 +37,9 @@ graph TD
   LOAD -->|dose guard on the FILE| VAL[_validate_item<br/>:222]
   VAL -->|any failure| BOOM[OrderSetConfigError → server will not start]
   LOAD --> CFG[_CONFIG in process memory]
-  UI[OrderSetsPanel.tsx] -->|listOrderSets| R1[GET /api/orders/sets<br/>orders_routes.py:94]
-  UI -->|previewOrderSet| R2[POST /api/orders/sets/:id/preview<br/>orders_routes.py:119]
-  UI -->|applyOrderSet| R3[POST /api/orders/sets/:id/apply<br/>orders_routes.py:151]
+  UI[OrderSetsPanel.tsx] -->|listOrderSets| R1[GET /api/orders/sets<br/>orders_routes.py:92]
+  UI -->|previewOrderSet| R2[POST /api/orders/sets/:id/preview<br/>orders_routes.py:117]
+  UI -->|applyOrderSet| R3[POST /api/orders/sets/:id/apply<br/>orders_routes.py:149]
   R2 --> SCREEN[screen_items<br/>:694]
   R3 --> SCREEN
   SCREEN --> GATE1[enforce_medication_safety<br/>medication_safety_gate.py]
@@ -60,7 +60,7 @@ graph TD
 |---|---:|---|
 | `server/services/order_sets_service.py` | 1182 | Everything: the config schema, the line-numbered validator, the load-time dose guard, the reads, `screen_items`, `preview_set`, `apply_set`, the ledger and the audit event. Loads the file at **import** (`:1182`). |
 | `server/site_config/order_sets.json` | 473 | The five shipped protocols. `config_version: 1`. |
-| `server/routes/orders_routes.py` | 510 | Five order-set endpoints (`:95`, `:110`, `:120`, `:152`, `:197`) plus the request models `OrderSetItemSelection` (`:48`) and `OrderSetApplyRequest` (`:65`), and `_order_set_status` (`:84`). |
+| `server/routes/orders_routes.py` | 510 | Five order-set endpoints (`:121`, `:139`, `:152`, `:194`, `:246`) plus the request models `OrderSetItemSelection` (`:69`) and `OrderSetApplyRequest` (`:87`), and `_order_set_status` (`:107`). |
 | `server/migrations.py` | 1719 | Migration 13, `_m13_order_sets` (`:795`), `order_set_applications` (`:842`), `orders.order_set_application_id` (`:840`), and local terminology codes for the shipped protocols. |
 | `src/api/orderSets.ts` | 145 | Typed client: `listOrderSets` (`:108`), `getOrderSet` (`:115`), `previewOrderSet` (`:119`), `applyOrderSet` (`:130`), `listOrderSetApplications` (`:141`). |
 | `src/components/orders/OrderSetsPanel.tsx` | 637 | The screen. `PatientBannerView` (`:105`), `Placeholder` (`:142`), `findingsFor` (`:177`), `OrderSetsPanel` (`:213`), the invalidate-and-refetch effect (`:304`), `runPreview` (`:329`), `runApply` (`:343`). |
@@ -147,7 +147,7 @@ sequenceDiagram
 #### `_DEFAULT_CONFIG_PATH` / `CONFIG_PATH_ENV` / `config_path`: `order_sets_service.py:84` / `:88` / `:91`
 **Signature:** `Path` / `"ORB_ORDER_SETS_FILE"` / `() -> Path`
 **Does:** Locates the protocol file, `server/site_config/order_sets.json` by default, overridable by env with an absolute path.
-**On screen:** the resolved path is returned by `GET /api/orders/sets` as `config.path` (`server/routes/orders_routes.py:102`). The panel does not print it; it prints only `config_version` in the provenance line (`src/components/orders/OrderSetsPanel.tsx:262-270`).
+**On screen:** the resolved path is returned by `GET /api/orders/sets` as `config.path` (`server/routes/orders_routes.py:100`). The panel does not print it; it prints only `config_version` in the provenance line (`src/components/orders/OrderSetsPanel.tsx:262-270`).
 **Why it exists:** for sites that keep protocols in their own config repo, and for tests.
 **Breaks if you change it:** `config_path()` is read at **call** time, so a test can point it elsewhere and call `reload_config()`. Caching the path at import would break every test that swaps files.
 
@@ -162,7 +162,7 @@ sequenceDiagram
 **Signature:** `class OrderSetError(Exception)`
 **Does:** Request-level problems: unknown set, unknown or ineligible patient, no items selected.
 **On screen:** the panel's red error strip, with the server's message verbatim.
-**How it is mapped:** `_order_set_status` (`orders_routes.py:83`) returns **404** when the message contains "not found" or "Unknown order set", **400** otherwise.
+**How it is mapped:** `_order_set_status` (`orders_routes.py:81`) returns **404** when the message contains "not found" or "Unknown order set", **400** otherwise.
 **Breaks if you change it:** the 404 for a patient is not a style choice. A 403, or a 400 that distinguishes "this patient is not yours" from "no such patient", confirms the patient exists.
 
 #### `OrderSetBlocked`: `order_sets_service.py:110`, `status_code` at `:126`
@@ -328,53 +328,53 @@ sequenceDiagram
 
 ### File: `server/routes/orders_routes.py`: the five endpoints
 
-#### `OrderSetItemSelection` / `OrderSetApplyRequest`: `server/routes/orders_routes.py:71` / `:80`
+#### `OrderSetItemSelection` / `OrderSetApplyRequest`: `server/routes/orders_routes.py:69` / `:78`
 **Signature:** Pydantic bodies. `OrderSetApplyRequest` carries `patient_id` and an optional `items: list[OrderSetItemSelection]`.
 **Does:** The preview/apply request shape.
 **On screen:** the panel sends `{patient_id}` only (`src/api/orderSets.ts:126`, `:137`).
 **Gotchas:** **the patient is named in the body, not the path.** That is why both routes call `enforce_patient_scope(user, req.patient_id)` explicitly (`:135`, `:166`) instead of using the path-shaped `require_patient_access` dependency, the dependency cannot see a body field.
 **Breaks if you change it:** moving `patient_id` to the path without changing the guard, or removing the explicit `enforce_patient_scope`, opens a cross-ward hole: any `ORDER_WRITE` holder could apply a protocol to any patient in the hospital.
 
-#### `_selections`: `server/routes/orders_routes.py:105`
+#### `_selections`: `server/routes/orders_routes.py:103`
 **Signature:** `(req) -> list[dict] | None`
 **Does:** `[s.model_dump() for s in req.items] if req.items else None`.
 
-#### `_order_set_status`: `server/routes/orders_routes.py:109`
+#### `_order_set_status`: `server/routes/orders_routes.py:107`
 **Signature:** `(e: OrderSetError) -> int` → 404 or 400
 **Does:** Maps a service error to a status code by inspecting its message.
 **Gotchas:** it is **string matching on the exception message**, "not found" or "Unknown order set". Reword either message in the service and the endpoint silently starts returning 400 where it returned 404.
 
-#### `GET /api/orders/sets`: `server/routes/orders_routes.py:95` (`list_order_sets`)
+#### `GET /api/orders/sets`: `server/routes/orders_routes.py:93` (`list_order_sets`)
 **Signature:** guard `require_permission(ORDER_READ)` → `{sets, config:{path, config_version, fingerprint, editable_by}}`
 **Does:** Every configured set. No patient, no PHI, the protocol list itself.
 **On screen:** the left-hand card list, plus the provenance line built from `config.config_version` (`src/components/orders/OrderSetsPanel.tsx:262-270`, rendered at `:409`).
 **Why `editable_by` is a literal string:** `"an engineer, in the site configuration file, not through this API"` (`:105`). The panel does not print it: it names a config file, which a clinician should not be told to go and find, so the screen says *"Changes are made by your Orb administrator."* instead. The claim a CIO will test, that nobody changes protocols through this UI, still holds: no endpoint writes the protocol file.
 **Breaks if you change it:** returning `config.path` to a lower-privilege caller discloses a server filesystem path; today it is `ORDER_READ`, which is every clinician.
 
-#### `GET /api/orders/sets/{set_id}`: `server/routes/orders_routes.py:110` (`get_order_set`)
+#### `GET /api/orders/sets/{set_id}`: `server/routes/orders_routes.py:108` (`get_order_set`)
 **Signature:** guard `require_permission(ORDER_READ)` → `{set, unknown_codes}`; 404 unknown
 **Does:** One set in full, with the codes this deployment cannot resolve flagged.
 **On screen:** **nothing.** `getOrderSet` exists in `src/api/orderSets.ts:115` and no component calls it, the panel gets everything it needs from the list and the preview.
 
-#### `POST /api/orders/sets/{set_id}/preview`: `server/routes/orders_routes.py:120` (`preview_order_set`)
+#### `POST /api/orders/sets/{set_id}/preview`: `server/routes/orders_routes.py:118` (`preview_order_set`)
 **Signature:** body `OrderSetApplyRequest`; guard `require_permission(ORDER_WRITE)` → the preview dict
 **Does:** What this set would order for this patient, and what would stop it. Writes no orders.
 **On screen:** everything in the detail pane.
-**How it works:** `enforce_patient_scope` first, then `preview_set`, then a `log_phi_read` audit row recording the item count and the descriptions of the blocked items (`:141-148`).
+**How it works:** `enforce_patient_scope` first, then `preview_set`, then a `log_phi_read` audit row recording the item count and the descriptions of the blocked items (`:139-146`).
 **Breaks if you change it:** the guard is `ORDER_WRITE`, not `ORDER_READ`, a preview runs the allergy screen against a named patient and returns their safety verdicts, so it is a clinical read that only an orderer should make.
 
-#### `POST /api/orders/sets/{set_id}/apply`: `server/routes/orders_routes.py:152` (`apply_order_set`)
+#### `POST /api/orders/sets/{set_id}/apply`: `server/routes/orders_routes.py:150` (`apply_order_set`)
 **Signature:** body `OrderSetApplyRequest`; guard `require_permission(ORDER_WRITE)` → `{status:"success", application_id, patient_id, set, orders, items}`
 **Does:** Creates the real, individual, draft orders. **All or nothing.**
 **On screen:** the Apply button. The docstring states the two failure codes plainly: **428** = a severe allergy/interaction alert on at least one drug, re-submittable with that item's `safety_ack`; **422** = something harder (the dose guard stopped an item, or a screen could not run), *not acknowledgeable here; fix the protocol file, or order the drug individually where the per-dose override machinery lives*.
-**How it works:** `enforce_patient_scope` → `apply_set` → on `OrderSetBlocked`, a structured 428/422 body `{error:"order_set_blocked", message, blocked, items}`. The message is the one the panel prints: *"This order set was NOT applied, no orders were created. A safety check stopped at least one item, and a set is applied whole or not at all."* On success, every created order is passed to `_shadow_clinical_action` (`:193`) so the pilot scorecard sees it.
+**How it works:** `enforce_patient_scope` → `apply_set` → on `OrderSetBlocked`, a structured 428/422 body `{error:"order_set_blocked", message, blocked, items}`. The message is the one the panel prints: *"This order set was NOT applied, no orders were created. A safety check stopped at least one item, and a set is applied whole or not at all."* On success, every created order is passed to `_shadow_clinical_action` (`:191`) so the pilot scorecard sees it.
 **Breaks if you change it:** the client keys on `err.detail.error === 'order_set_blocked'` (`src/components/orders/OrderSetsPanel.tsx:361`). Rename that string and the panel falls through to its generic error branch and stops listing which items were stopped.
 
-#### `GET /api/orders/sets/applications/{patient_id}`: `server/routes/orders_routes.py:197` (`list_order_set_applications`)
+#### `GET /api/orders/sets/applications/{patient_id}`: `server/routes/orders_routes.py:195` (`list_order_set_applications`)
 **Signature:** guard `require_patient_access(ORDER_READ, audit_action="order_set_applications_viewed")` → `{applications}`
 **Does:** Protocols applied to this patient, newest first.
 **On screen:** the "Already applied to this patient" section.
-**Gotchas:** the path segment `applications` must keep sitting **above** `/{order_id}` in the file, or FastAPI matches `applications` as an order id. The file has an explicit comment about this ordering hazard at `:206-208` for the terminology route, and the same rule applies here.
+**Gotchas:** the path segment `applications` must keep sitting **above** `/{order_id}` in the file, or FastAPI matches `applications` as an order id. The file has an explicit comment about this ordering hazard at `:204-206` for the terminology route, and the same rule applies here.
 
 ---
 
@@ -511,9 +511,9 @@ The file header states the rule this screen enforces **by its shape**: a set is 
 | `enforce_medication_safety` | `services/medication_safety_gate.py` (guide 43) | `screen_items` (`:743`) | re-implementing it here creates a second enforcement point that will drift |
 | `evaluate_dose` verdict shape (`decision`, `rule`, `findings`, `parsed_dose`, `route_tags`) | `services/drug_safety_service.py` (guide 14) | `_validate_item` (`:297`), `_dose_screen` (`:675`) | a renamed key silently degrades the load-time guard to "no block found" |
 | `orders_service.create_order` | guide 16 | `apply_set` (`:1025`) | a stricter create would fail mid-loop and leave a half-applied protocol |
-| `{error: "order_set_blocked", blocked, items}` | `server/routes/orders_routes.py:174-186` | `src/components/orders/OrderSetsPanel.tsx:361` | rename the string and the UI stops listing blocked items |
+| `{error: "order_set_blocked", blocked, items}` | `server/routes/orders_routes.py:172-184` | `src/components/orders/OrderSetsPanel.tsx:361` | rename the string and the UI stops listing blocked items |
 | `order_set_applications.config_fingerprint` | `_fingerprint` (`:400`) | migration 13's column, any later review | change the hash input and history becomes unmatchable |
-| `_shadow_clinical_action` | `server/routes/orders_routes.py:337` | guide 41's scorecard | applied orders stop appearing as shadow episodes |
+| `_shadow_clinical_action` | `server/routes/orders_routes.py:335` | guide 41's scorecard | applied orders stop appearing as shadow episodes |
 
 ---
 
@@ -534,7 +534,7 @@ The file header states the rule this screen enforces **by its shape**: a set is 
 
 ## Discrepancies and open questions
 
-1. **The per-item edit capability is server-only.** `resolve_items` (`server/services/order_sets_service.py:557`), `OrderSetItemSelection` (`server/routes/orders_routes.py:48`) and `OrderSetSelection` (`src/api/orderSets.ts:97`) fully support include/exclude and per-item dose/route/frequency overrides with `edited_fields` tracked into the audit row. **The panel never sends selections**, `previewOrderSet`/`applyOrderSet` are always called with `items` undefined. So today a set is all-items-as-written or nothing.
+1. **The per-item edit capability is server-only.** `resolve_items` (`server/services/order_sets_service.py:557`), `OrderSetItemSelection` (`server/routes/orders_routes.py:46`) and `OrderSetSelection` (`src/api/orderSets.ts:97`) fully support include/exclude and per-item dose/route/frequency overrides with `edited_fields` tracked into the audit row. **The panel never sends selections**, `previewOrderSet`/`applyOrderSet` are always called with `items` undefined. So today a set is all-items-as-written or nothing.
 
 2. **`safety_ack` cannot be supplied from the UI either.** The 428 path exists end to end on the server (`screen_items(honour_acks=True)` consumes `item["safety_ack"]`), but with no selection UI there is no way for a clinician to acknowledge a severe alert on an order-set item. In practice every 428 is a dead end on this screen, the message correctly tells them to go to the individual order.
 
@@ -542,7 +542,7 @@ The file header states the rule this screen enforces **by its shape**: a set is 
 
 4. **`GET /api/orders/sets/{set_id}` has no caller.** `getOrderSet` (`src/api/orderSets.ts:115`) is unused.
 
-5. **`_order_set_status` matches on exception message text** (`server/routes/orders_routes.py:84`). Rewording `require_orderable_patient`'s or `get_set`'s message changes the HTTP status silently.
+5. **`_order_set_status` matches on exception message text** (`server/routes/orders_routes.py:82`). Rewording `require_orderable_patient`'s or `get_set`'s message changes the HTTP status silently.
 
 6. **Load-time and per-patient dose screening are not identical.** Load time is pure `evaluate_dose` with no ingredient resolution (no database at import); per-patient adds `allergy_interlock.resolve_ingredients`. A branded protocol item can therefore pass startup and be blocked at the bedside. That is the safe direction, but it means "the file loaded" is not a promise that every item will clear.
 

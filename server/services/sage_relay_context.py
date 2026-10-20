@@ -99,8 +99,9 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import Any
 
-from permissions import RELAY_READ, has_permission
+from permissions import RELAY_READ, facility_scope, has_permission
 
 # The department gate is REUSED, not reimplemented. See rule 2 above: a second
 # copy of a scoping predicate is a second thing to forget to update.
@@ -223,7 +224,7 @@ _ROOM_MESSAGE_SQL = """
 
 
 def fetch_room_messages(
-    db, patient_id: str, dept: str | None, user: dict, limit: int = MAX_ROOM_MESSAGES
+    db: Any, patient_id: str, dept: str | None, user: dict, limit: int = MAX_ROOM_MESSAGES
 ) -> list[dict]:
     """The most recent clinician text messages from THIS patient's case room(s).
 
@@ -245,8 +246,18 @@ def fetch_room_messages(
     if not has_permission((user or {}).get("role") or "", RELAY_READ):
         return []
 
+    # The facility half of gates 2 and 3 (multisite-10), from the same user row.
+    # Passed only when there is one: with one facility on record both calls are
+    # exactly what they were. A scope that cannot be read reads no room.
+    try:
+        facilities = facility_scope(user or {})
+    except Exception:
+        logger.warning("sage: room messages withheld, facility scope unreadable", exc_info=True)
+        return []
+    scope_kw: dict[str, frozenset[int]] = {} if facilities is None else {"facilities": facilities}
+
     # GATE 2: the patient. Same helper the chart assembler uses.
-    if not patient_id or not _patient_in_scope(db, patient_id, dept):
+    if not patient_id or not _patient_in_scope(db, patient_id, dept, **scope_kw):
         return []
 
     try:
@@ -254,7 +265,9 @@ def fetch_room_messages(
         # the message query itself, through the one helper that knows it. If
         # gate 2 is ever refactored away, this query still cannot return another
         # department's room.
-        sql, params = _scope_sql(_ROOM_MESSAGE_SQL, dept, (patient_id, _ALLOWED_MESSAGE_TYPE))
+        sql, params = _scope_sql(
+            _ROOM_MESSAGE_SQL, dept, (patient_id, _ALLOWED_MESSAGE_TYPE), **scope_kw
+        )
         # Newest first for the LIMIT (that is what "recent" means), reversed to
         # chronological below. `m.id` breaks ties: relay writes several messages
         # inside one second routinely, and CURRENT_TIMESTAMP has second

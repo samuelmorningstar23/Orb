@@ -75,7 +75,7 @@ wrapping an inline SVG (`<path d="M19 12H5M12 19l-7-7 7-7"/>`).
 **API:** its `onClick` calls `loadChannels()` (`RelayPanel.tsx:205-207`) → `getChannels()`
 (`src/api/client.ts:778-780`) → `GET /api/relay/channels`.
 **Server:** `server/routes/relay_routes.py:78-81` `list_channels` →
-`server/services/relay_service.py:11` `get_channels_for_user`.
+`server/services/relay_service.py:12` `get_channels_for_user`.
 **Change this →** clicking it replaces this entire screen with the room list. The refetch is
 deliberate: unread counts and `last_message` for every *other* room went stale while you were in
 here, so without it you would return to a list showing login-time numbers. Remove the
@@ -90,7 +90,7 @@ badges, wrong ordering under "Recency"). Styling: `Relay.css:124-137`; hover swa
 **Data from:** the `channels` array (`RelayPanel.tsx:34`), set by `loadChannels` at `:206` and
 re-set every 30 seconds by `useVisiblePolling(loadChannels, 30000)` at `:215`.
 **API:** `GET /api/relay/channels`.
-**Server:** `server/routes/relay_routes.py:78-81` → `server/services/relay_service.py:11`
+**Server:** `server/routes/relay_routes.py:78-81` → `server/services/relay_service.py:12`
 `get_channels_for_user` (the `name` column of the `channels` row).
 **Change this →** this is a **lookup, not a stored value**. If `channels` has not loaded yet, or
 the open channel is not in it, the title renders **empty**, the header shows only the back arrow.
@@ -120,7 +120,7 @@ inside `loadMessages`.
 **API:** `GET /api/relay/channels/{channel_id}/messages` via `getMessages`
 (`src/api/client.ts:793-795`).
 **Server:** `server/routes/relay_routes.py:90-98` `get_messages` →
-`server/services/relay_service.py:584` `get_channel_messages`.
+`server/services/relay_service.py:644` `get_channel_messages`.
 **Change this →** this text is what a clinician stares at on a slow ward link. Note that
 `.orb-panel-loading` **has no CSS rule anywhere in `src/`**, it renders as default body text, no
 spinner, no animation. Adding a rule for it would change this state on six other panels too
@@ -144,7 +144,7 @@ containing:
 channel" (`server/routes/relay_routes.py:97`), surfaced through the structured-403 branch at
 `src/api/client.ts:210-225`.
 **Server:** `server/routes/relay_routes.py:90-98`; the authorisation gate is
-`can_access_channel` (`server/services/relay_service.py:244`).
+`can_access_channel` (`server/services/relay_service.py:257`).
 **Change this →** the second sentence is the entire point of this box: it tells the reader the
 blank pane is deliberate. The failure it replaced left the **previous** channel's messages sitting
 under the **new** channel's title (see the comment block at `RelayPanel.tsx:218-229`). Deleting
@@ -173,7 +173,7 @@ as a third branch of the ternary; there is no other place it can live.
 (`:241`), the optimistic send (`:316`), the send response merge (`:329-331`), the post-send refresh
 (`:350`) and the socket handlers (`:120-137`).
 **API/Server:** `GET /api/relay/channels/{id}/messages` →
-`server/services/relay_service.py:584-614` `get_channel_messages` (a `SELECT * FROM messages`
+`server/services/relay_service.py:644-674` `get_channel_messages` (a `SELECT * FROM messages`
 ordered newest-first inside a subquery, then re-ordered ascending).
 **Change this →** `.relay-msg` is `Relay.css:208-217`: flat glass card, hairline border, 16px
 padding, `slide-up 0.3s` entry animation. `.relay-msg--alert` (`Relay.css:220-223`) tints it 10%
@@ -185,7 +185,7 @@ looks exactly like an ordinary one today.
 **Where:** first item in the bubble's header row.
 **Rendered by:** `RelayPanel.tsx:623`, `<span className="relay-msg__sender">{m.sender_name}</span>`.
 **Data from:** `messages.sender_name`, a denormalised column written at send time
-(`server/services/relay_service.py:826-830`, from `user["name"]` at
+(`server/services/relay_service.py:886-890`, from `user["name"]` at
 `server/routes/relay_routes.py:413`).
 **Change this →** because the name is **copied into the row at send time**, renaming a user in
 admin does **not** retitle their old messages. Styling `Relay.css:231-235`.
@@ -197,13 +197,13 @@ admin does **not** retitle their old messages. Styling `Relay.css:231-235`.
 `aria-label="Automated bot message"`.
 **Data from:** `Message.is_bot` (`src/api/client.ts:685`).
 **API:** the messages GET.
-**Server:** `server/services/relay_service.py:610`, 
+**Server:** `server/services/relay_service.py:670`, 
 `"is_bot": bool(r["is_bot"]) if "is_bot" in r.keys() else False`. Written at insert time by
-`send_message` (`relay_service.py:826-830`, `1 if is_bot else 0`); bots pass `is_bot=True`, e.g.
+`send_message` (`relay_service.py:886-890`, `1 if is_bot else 0`); bots pass `is_bot=True`, e.g.
 the surgery system messages at `server/routes/surgery_routes.py:443-446` and `:476-479`.
 **Change this →** this badge is the only thing separating a Vigil/Lab/Lens bot post from a
 clinician's. It disappears the moment `is_bot` is false or the column is missing (old rows default
-to `False` at `relay_service.py:610`, so **pre-migration bot posts render with no badge**).
+to `False` at `relay_service.py:670`, so **pre-migration bot posts render with no badge**).
 Styling `Relay.css:250-261`, including `cursor: help` so the tooltip is discoverable.
 
 ### Role chip
@@ -222,7 +222,7 @@ mapping**, so a new role id appears verbatim on every message it sends.
 `parseUTC(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })`.
 `parseUTC` is `src/lib/datetime.ts:17`.
 **Server:** the `timestamp` column, defaulted by SQLite at insert
-(`server/services/relay_service.py:826-830` does not pass it).
+(`server/services/relay_service.py:886-890` does not pass it).
 **Change this →** it shows **time only, never a date**. A message from last Tuesday reads "09:14",
 identical to one from this morning, and there are no day separators anywhere in this list. Adding a
 date would be a change to `formatTime` at `:24` and would affect every bubble including the
@@ -254,7 +254,7 @@ message silently unlabelled.
 **Formatting:** `formatMessage` at `RelayPanel.tsx:14-21`, turns leading `-`/`*` into `•`,
 HTML-escapes `& < >`, then converts `**bold**` → `<strong>` and `*italic*` → `<em>`.
 **Server:** the `content` column, written verbatim by
-`server/services/relay_service.py:826-830`.
+`server/services/relay_service.py:886-890`.
 **Change this →** widen `ALLOWED_TAGS` at `:686` and you widen the XSS surface on the one screen
 where anyone in the hospital can type. `Relay.css:269-281` carries a load-bearing rule:
 `overflow-wrap: anywhere`, **not** `break-word`. Only `anywhere` contributes to min-content width,
@@ -601,15 +601,15 @@ that removes it again. All timers are cleared and the list emptied on unmount or
 **Outbound:** `emitTyping` (`RelayPanel.tsx:265-271`) fires on every keystroke
 (`onChange` at `:728`) but is throttled to **once per 1.5s** by `typingEmitRef` (`:72`, `:268`).
 **API:** socket event, not HTTP.
-**Server:** `server/ws/realtime.py:570-587` `typing`, it re-checks channel authorisation via
+**Server:** `server/ws/realtime.py:722-745` `typing`, it re-checks channel authorisation via
 `_user_can_access_channel` (`:416`, which calls the same `get_channels_for_user` as REST,
-`realtime.py:526-540`), **re-derives the sender identity from the session rather than trusting
+`realtime.py:678-692`), **re-derives the sender identity from the session rather than trusting
 client fields** (`:799-804`), and re-broadcasts with `skip_sid=sid` so you never see yourself.
 **Change this →** `.relay-chat__typing` has **no CSS rule**, its entire appearance is the inline
 style at `:713` (2px/16px/4px padding, 0.72rem, `--text-muted`, italic). The line occupies zero
 height when nobody is typing, so the composer shifts up and down by ~14px as people type; giving it
 a fixed height would stop that. The name shown is `session["name"]` from the server
-(`realtime.py:585`), so it cannot be spoofed by the sending client.
+(`realtime.py:743`), so it cannot be spoofed by the sending client.
 
 ---
 
@@ -667,7 +667,7 @@ onClick={handleSend} disabled={sending}>` wrapping the plane SVG (`<line>` + `<p
 (`client.ts:428-445`) → `POST /api/relay/channels/{id}/messages` **with an `Idempotency-Key`
 header** minted per call at `client.ts:435`.
 **Server:** `server/routes/relay_routes.py:383-443` `post_message` →
-`server/services/relay_service.py:778-853` `send_message`. The route authorises by looking the
+`server/services/relay_service.py:838-913` `send_message`. The route authorises by looking the
 channel up in `get_channels_for_user` (`relay_routes.py:405-408`) and reuses that same list as the
 detector's PHI boundary. It broadcasts `message:new` at `:434`, queues Sage Ambient observation at
 `:437-438`, then runs the wrong-room check at `:440`.
@@ -992,9 +992,9 @@ Registered in one effect keyed on `selectedChannel` (`RelayPanel.tsx:107-200`), 
 | `disconnect` | `:179` | the typing line clears |
 
 **Server side:** the socket room is entered by `join_channel`
-(`server/ws/realtime.py:543-559`), which admits a socket **only after**
+(`server/ws/realtime.py:695-711`), which admits a socket **only after**
 `_user_can_access_channel` → the same `get_channels_for_user` the REST layer uses
-(`realtime.py:526-540`). That single gate is what makes the room-scoped `relay:room_fit`
+(`realtime.py:678-692`). That single gate is what makes the room-scoped `relay:room_fit`
 broadcast safe even though it carries a suspected patient's **name**, see the corrected reasoning
 at `server/routes/relay_routes.py:555-578`. Narrowing the channel list narrows socket membership
 automatically; there is no second rule to keep in sync.

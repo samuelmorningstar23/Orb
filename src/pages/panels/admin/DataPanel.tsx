@@ -3,6 +3,7 @@ import type { CSSProperties, FormEvent } from 'react'
 import { apiFetch } from '../../../api/client'
 import { useFocusTrap } from '../../../hooks/useFocusTrap'
 import { formatClinicalDateTime } from '../../../lib/datetime'
+import { usePlatformFlags } from '../../../shellConfig'
 import { AdminLoadingState, AdminErrorState, AdminEmptyState } from './AdminEmptyState'
 import WardRecordSection from './WardRecordSection'
 
@@ -11,6 +12,34 @@ interface BackupFile {
   filename: string
   size_bytes: number
   modified_at: string
+}
+
+// What a restore rolls back (server/routes/backup_routes.py _restore_scope,
+// ruling MS-R12 (a)): the whole appliance, every facility on it.
+interface RestoreScope {
+  whole_appliance: boolean
+  facilities_on_record: number
+  statement: string
+  facilities?: { id: number; code: string | null; name: string }[]
+}
+
+// Said when the server's own words are not to hand (the screen is fenced
+// while a second facility's screens are unfinished, or the list failed).
+const RESTORE_EVERY_FACILITY_TEXT =
+  'A backup holds every facility on this appliance in one database. Restoring one puts '
+  + 'every facility back to the moment it was taken, not just one: anything recorded at '
+  + 'any facility after that moment is lost and must be entered again. One facility '
+  + 'cannot be restored on its own.'
+
+/** The restore statement to show, or null on a single-site install with
+ *  ORB_MULTI_SITE off (where the screen stays as it was). */
+function restoreStatement(
+  scope: RestoreScope | null,
+  platform: { multiSite: boolean; multiFacilityData: boolean },
+): string | null {
+  const many = (scope?.facilities_on_record ?? 1) > 1
+  if (!many && !platform.multiSite && !platform.multiFacilityData) return null
+  return many && scope?.statement ? scope.statement : RESTORE_EVERY_FACILITY_TEXT
 }
 
 // Mirrors services/consent_service.py: a request is recorded, then decided
@@ -313,7 +342,9 @@ function ErasureRequestView({ detail, busy, onAdjudicate, onExecute }: {
 
 /* ── Main panel ── */
 export default function DataPanel() {
+  const platform = usePlatformFlags()
   const [backups, setBackups] = useState<BackupFile[]>([])
+  const [restoreScope, setRestoreScope] = useState<RestoreScope | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
@@ -341,8 +372,11 @@ export default function DataPanel() {
   const fetchBackups = useCallback(() => {
     setLoading(true)
     setError(null)
-    apiFetch<{ backups: BackupFile[] }>('/admin/backups')
-      .then((res) => setBackups(res.backups))
+    apiFetch<{ backups: BackupFile[]; restore_scope?: RestoreScope }>('/admin/backups')
+      .then((res) => {
+        setBackups(res.backups)
+        setRestoreScope(res.restore_scope ?? null)
+      })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load backups'))
       .finally(() => setLoading(false))
   }, [])
@@ -423,6 +457,8 @@ export default function DataPanel() {
     }, 'Erasure failed').finally(() => setShowExecute(false))
   }
 
+  const restoreText = restoreStatement(restoreScope, platform)
+
   return (
     <div className="admin-security">
       {/* ── Backups card ── */}
@@ -470,6 +506,17 @@ export default function DataPanel() {
         Restores are intentionally not available here. They must be performed
         out-of-band by an operator with the server stopped.
       </p>
+
+      {restoreText && (
+        <p
+          className="admin-modal__text"
+          role="note"
+          aria-label="What a restore rolls back"
+          style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: '0.82rem' }}
+        >
+          <strong>A restore rolls back every facility.</strong> {restoreText}
+        </p>
+      )}
 
       {/* ── Data erasure card ── */}
       <div className="admin-filter-bar glass-card" style={{ padding: '12px 16px', marginTop: 20 }}>

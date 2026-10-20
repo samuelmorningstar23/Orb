@@ -4,18 +4,34 @@ The closed loop for AI/agentic medications. A pharmacist (helix.read/helix.write
 reviews meds charted with provenance ``llm_extracted``/``agentic`` and either
 verifies (activates) or rejects (discontinues) them, correcting the dose as
 needed. Every verify/reject is audited under the ``clinical_record`` category.
+
+FACILITY SCOPE (multisite-9a, W12-E; ruling MS-R9 (a): the verify queue is per
+facility). With more than one facility on record the queue lists only the
+medicines of patients whose latest encounter is at the caller's facilities,
+and verify or reject of a medicine outside them is a 404 that writes an
+authorization 'facility_document_denied' row before anything is screened or
+changed. With one facility on record the caller's facility scope is None and
+every route here runs exactly as before.
 """
 
 from __future__ import annotations
 
 import uuid
 
+from database import db_session
 from fastapi import APIRouter, Depends, HTTPException, Request
-from permissions import enforce_patient_scope, log_phi_read, require_permission
+from permissions import (
+    enforce_patient_scope,
+    facility_denial,
+    facility_scope,
+    log_phi_read,
+    require_permission,
+)
 from pydantic import BaseModel
 from services.audit_service import log_audit_event
 from services.drug_chart import require_drug_chart
 from services.drug_safety_service import formulary_interaction_coverage
+from services.facility_documents import audit_document_denial, request_meta
 
 from services import pharmacy_verification_service as pharmacy
 
@@ -42,13 +58,45 @@ class RejectRequest(BaseModel):
     reason: str
 
 
+def _facility_gate(user: dict, med_id: int, request: Request) -> None:
+    """404, after an authorization 'facility_document_denied' row, when the
+    medicine's patient is outside the caller's facility scope (multisite-9a).
+    Checked before the service screens or changes anything.
+
+    With one facility on record facility_scope answers None and nothing is
+    read. A medicine no row holds passes here and the service refuses it in
+    its own words, exactly as before."""
+    facilities = facility_scope(user)
+    if facilities is None:
+        return
+    patient_id = pharmacy.medication_patient_id(med_id)
+    if patient_id is None:
+        return
+    with db_session() as db:
+        denied, patient_facility = facility_denial(db, patient_id, facilities)
+    if not denied:
+        return
+    audit_document_denial(
+        user=user,
+        lane="pharmacy_verify_queue",
+        target_type="medication",
+        target_id=med_id,
+        document_facility_id=patient_facility,
+        facilities=facilities,
+        patient_id=patient_id,
+        meta=request_meta(request),
+    )
+    raise HTTPException(status_code=404, detail=pharmacy.NOT_ON_CHART_MESSAGE)
+
+
 _GET_PENDING_USER_DEFAULT = Depends(require_permission("helix.read"))
 
 
 @router.get("/pending")
-def get_pending(user=_GET_PENDING_USER_DEFAULT):
-    """List all AI/agentic meds awaiting pharmacist verification."""
-    return {"pending": pharmacy.list_pending_verification()}
+def get_pending(user: dict = _GET_PENDING_USER_DEFAULT) -> dict:
+    """List all AI/agentic meds awaiting pharmacist verification: the caller's
+    facilities only, once more than one facility is on record."""
+    return {"pending": pharmacy.list_pending_verification(facilities=facility_scope(user))}
 
 
 _GET_INTERACTION_COVERAGE_USER_DEFAULT = Depends(require_permission("helix.read"))
@@ -104,8 +152,8 @@ def verify(
     med_id: int,
     req: VerifyRequest,
     request: Request,
-    user=_VERIFY_USER_DEFAULT,
-):
+    user: dict = _VERIFY_USER_DEFAULT,
+) -> dict:
     """Verify (and optionally dose-correct) an AI/agentic med → active order.
 
     A blank or placeholder dose, route or frequency returns 422. A severe (or
@@ -113,6 +161,7 @@ def verify(
     pharmacist re-submits with a non-empty ``ack_reason`` to override (the
     override is audited on the tamper-evident chain by the service).
     """
+    _facility_gate(user, med_id, request)
     try:
         result = pharmacy.verify_medication(
             med_id=med_id,
@@ -174,9 +223,10 @@ def reject(
     med_id: int,
     req: RejectRequest,
     request: Request,
-    user=_REJECT_USER_DEFAULT,
-):
+    user: dict = _REJECT_USER_DEFAULT,
+) -> dict:
     """Reject an AI/agentic med → discontinued, with the reason recorded."""
+    _facility_gate(user, med_id, request)
     try:
         result = pharmacy.reject_medication(
             med_id=med_id,

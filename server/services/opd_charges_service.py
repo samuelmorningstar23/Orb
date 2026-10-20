@@ -656,7 +656,7 @@ def payer_snapshot_on(db, patient_id: str) -> billing_masters.PayerResolution:
 
 
 def raise_op_line_on(
-    db,
+    db: Any,
     *,
     patient_id: str,
     service_code: str,
@@ -669,6 +669,7 @@ def raise_op_line_on(
     description_fallback: str,
     unpriced_note: str,
     interstate: bool = False,
+    facility_id: int | None = None,
 ) -> ChargeLine:
     """Write ONE outpatient line (encounter_type 'op', no admission) into the
     billing spine's table, or return the line the idempotency key already
@@ -678,7 +679,19 @@ def raise_op_line_on(
     `service_day` is the hospital-local calendar day the bill prints and the
     tariff is looked up against; `charged_at` is the UTC instant it was
     posted. `source` is 'manual' (migration 20's CHECK has no OPD member) and
-    `source_ref` carries what raised it. On the caller's connection."""
+    `source_ref` carries what raised it. On the caller's connection.
+
+    The line is stamped with the facility it belongs to (migration 75,
+    multisite-9a): `facility_id` when the caller knows it (the visit's), else
+    the patient's (services.facility_stamp.patient_facility). Facility 1, with
+    nothing read, while only one facility is on record."""
+    from services import facility_stamp
+
+    line_facility = (
+        int(facility_id)
+        if facility_id is not None
+        else facility_stamp.patient_facility(db, patient_id=patient_id)
+    )
     resolution = billing_masters.resolve_rate_on(
         db, service_code, tariff_plan_id=tariff_plan_id, ward_class=None, on_date=service_day
     )
@@ -720,9 +733,9 @@ def raise_op_line_on(
                 discount_paise, gst_treatment, gst_rate_bp, taxable_value_paise,
                 cgst_paise, sgst_paise, igst_paise, total_paise, status,
                 source, source_ref, service_date, charged_by, charged_at,
-                idempotency_key, notes
+                idempotency_key, notes, facility_id
            ) VALUES (?, NULL, 'op', ?, ?, ?, 1000, ?, ?, ?, NULL, ?, ?, ?, ?, ?,
-                     ?, ?, ?, ?, 'pending', 'manual', ?, ?, ?, ?, ?, ?)""",
+                     ?, ?, ?, ?, 'pending', 'manual', ?, ?, ?, ?, ?, ?, ?)""",
         (
             patient_id,
             resolution.service_item_id,
@@ -746,6 +759,7 @@ def raise_op_line_on(
             charged_at,
             idempotency_key,
             None if configured else unpriced_note,
+            line_facility,
         ),
     )
     return ChargeLine(
@@ -841,7 +855,9 @@ def raise_registration_fee_on(
     return line
 
 
-def raise_consultation_at_registration_on(db, *, visit: Mapping, charged_by: str | None) -> tuple:
+def raise_consultation_at_registration_on(
+    db: Any, *, visit: Mapping, charged_by: str | None
+) -> tuple:
     """OPD_CHARGE_AT 'registration': the visit's consultation line, raised
     now, once per visit (the same idempotency key completion uses, so
     completing the visit later finds it and raises nothing more). The visit
@@ -866,6 +882,7 @@ def raise_consultation_at_registration_on(db, *, visit: Mapping, charged_by: str
         source_ref=visit_id,
         description_fallback=f"{visit.get('department') or 'Outpatient'} consultation",
         unpriced_note="Rate not configured at registration",
+        facility_id=visit.get("facility_id"),
     )
     db.execute(
         "UPDATE opd_visits SET consultation_charge_id = ?, registration_charge_id = ? WHERE id = ?",

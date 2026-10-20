@@ -189,14 +189,16 @@ _GET_MASTER_WARD_ID_DEFAULT = Query(None)
 _GET_MASTER_USER_DEFAULT = Depends(require_permission(ADT_READ))
 
 
-@router.get("/master")
+@router.get("/master", response_model=None)
 def get_master(
     ward_id: str | None = _GET_MASTER_WARD_ID_DEFAULT,
     _user: dict = _GET_MASTER_USER_DEFAULT,
-):
+) -> dict:
     """Wards, rooms, beds and bed classes. Hospital structure only: no
-    patient appears here, so there is no read audit."""
-    return bm.list_master(ward_id=ward_id)
+    patient appears here, so there is no read audit. With more than one
+    facility on record, the caller's facility's structure only
+    (multisite-8h1)."""
+    return bm.list_master(ward_id=ward_id, actor=_user)
 
 
 # ── Wards ────────────────────────────────────────────────────────────────────

@@ -29,6 +29,8 @@ from database import db_session
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from permissions import (
     department_scope,
+    facility_denial,
+    facility_scope,
     patient_in_scope,
     require_patient_access,
     require_permission,
@@ -96,23 +98,43 @@ def _enforce_medication_scope(med_id: int, user: dict, request: Request) -> None
     and the attempt is audited before the refusal so a cross-ward probe shows in
     the trail. An unknown medication id falls through to the service, which
     answers it as before.
+
+    FACILITY SCOPE (multisite-8, W12-A). With more than one facility on record
+    the patient's facility is checked first (permissions.facility_denial, the
+    check require_patient_access makes), whatever the department says, and a
+    refusal it causes is audited with scope_cause 'facility', the caller's
+    facility_scope and the patient's facility. With one facility nothing more
+    is read and the department-only row keeps its shape.
     """
     dept = department_scope(user)
-    if dept is None:
+    facilities = facility_scope(user)
+    if dept is None and facilities is None:
         return
     with db_session() as db:
         med = db.execute("SELECT patient_id FROM medications WHERE id = ?", (med_id,)).fetchone()
-        if med is None or patient_in_scope(db, med["patient_id"], dept):
+        if med is None:
             return
         patient_id = med["patient_id"]
+        denied, patient_facility = facility_denial(db, patient_id, facilities)
+        if not denied and (dept is None or patient_in_scope(db, patient_id, dept)):
+            return
+    metadata: dict = {"department": dept, "scope_source": "authenticated_user"}
+    summary = f"Medication {med_id} belongs to a patient outside the caller's department ({dept})"
+    if denied:
+        assert facilities is not None
+        summary = f"Medication {med_id} belongs to a patient outside the caller's facility scope"
+        metadata.update(
+            scope_cause="facility",
+            facility_scope=sorted(facilities),
+            patient_facility_id=patient_facility,
+            scope_helper="_enforce_medication_scope",
+        )
     log_audit_event(
         correlation_id=str(uuid.uuid4()),
         event_category="authorization",
         action_type="patient_scope_denied",
         outcome="denied",
-        summary_message=(
-            f"Medication {med_id} belongs to a patient outside the caller's department ({dept})"
-        ),
+        summary_message=summary,
         actor_user_id=user.get("id"),
         actor_role=user.get("role"),
         patient_id=patient_id,
@@ -122,7 +144,7 @@ def _enforce_medication_scope(med_id: int, user: dict, request: Request) -> None
         http_method=request.method,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
-        metadata={"department": dept, "scope_source": "authenticated_user"},
+        metadata=metadata,
     )
     raise HTTPException(status_code=404, detail="Medication not found")
 

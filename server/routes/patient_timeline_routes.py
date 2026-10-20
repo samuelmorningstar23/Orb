@@ -25,14 +25,17 @@ Marking them ``async def`` would silently put both back on the loop.
 
 from __future__ import annotations
 
+from database import db_session
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from permissions import (
     department_scope,
+    facility_scope,
     log_phi_read,
     require_patient_access,
     require_permission,
 )
 from pydantic import BaseModel
+from services.facility_filter import patient_clause
 from services.patient_timeline_service import (
     build_chart_timeline,
     mark_reviewed,
@@ -102,6 +105,22 @@ def mark_chart_reviewed(
     return {"patient_id": patient_id, "new_count": 0, **result}
 
 
+def _at_facilities(patient_ids: list[str], facilities: frozenset[int]) -> set[str]:
+    """The ids among `patient_ids` whose latest encounter is at one of
+    `facilities` (permissions.FACILITY_PATIENT_SQL, the rule
+    require_patient_access applies to one chart). BLOCKING: plain-def routes."""
+    clause, args = patient_clause(facilities)
+    marks = ",".join("?" for _ in patient_ids)
+    with db_session() as db:
+        return {
+            row["id"]
+            for row in db.execute(
+                f"SELECT p.id FROM patients p WHERE p.id IN ({marks}){clause}",
+                (*patient_ids, *args),
+            ).fetchall()
+        }
+
+
 _UNSEEN_COUNTS_USER_DEFAULT = Depends(require_permission("patient.read_all"))
 
 
@@ -110,7 +129,7 @@ _UNSEEN_COUNTS_USER_DEFAULT = Depends(require_permission("patient.read_all"))
 def unseen_counts(
     request: Request,
     user: dict = _UNSEEN_COUNTS_USER_DEFAULT,
-):
+) -> dict:
     """{patient_id: N} for admitted patients this clinician has reviewed before.
 
     Patients never reviewed by this account are ABSENT, not zero — a badge on
@@ -121,9 +140,20 @@ def unseen_counts(
     SQLite file. It is also deliberately NOT wired to the vitals poll — one
     audited read per board load, not one per tick, because a per-poll encrypted
     write is the exact shape behind the 2026-07-30 loop stalls.
+
+    FACILITY SCOPE (multisite-8). With more than one facility on record the
+    counts keep only patients whose latest encounter is at the caller's
+    facilities (_at_facilities), before anything is audited or returned: a
+    clinician who reviewed a patient at one facility and now works at another
+    no longer sees that patient's count. The list carries no LIMIT, so keeping
+    it after the read drops nothing in scope. With one facility nothing changes.
     """
     dept = department_scope(user)
     counts = unseen_counts_for_scope(user["id"], dept)
+    facilities = facility_scope(user)
+    if facilities is not None and counts:
+        kept = _at_facilities(sorted(counts), facilities)
+        counts = {pid: n for pid, n in counts.items() if pid in kept}
 
     # Audited only when something was actually disclosed. An empty result names
     # no patient and therefore discloses nothing worth a row.

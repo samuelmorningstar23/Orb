@@ -168,15 +168,22 @@ def cancel_bundle(
     return cancelled
 
 
-def get_active_bundles(department: str | None = None) -> list[dict]:
+def get_active_bundles(
+    department: str | None = None, *, facilities: frozenset[int] | None = None
+) -> list[dict]:
     """Active bundles, hospital-wide, or for one ADMISSION department when
     `department` is given (permissions.department_scope's value: None means an
-    unscoped account, not "scope unknown")."""
+    unscoped account, not "scope unknown").
+
+    `facilities` is permissions.facility_scope(user) (multisite-8): None (one
+    facility on record, a group-wide account, the Command Center) changes
+    nothing; otherwise only patients whose latest encounter is at those
+    facilities are listed."""
     from permissions import scope_patient_ids_sql
 
     # The same subquery every other patient list scopes through, so a bundle
     # list cannot develop its own idea of which ward a patient is on.
-    scope_sql, scope_params = scope_patient_ids_sql(department)
+    scope_sql, scope_params = scope_patient_ids_sql(department, facilities=facilities)
     # Admitted patients only. A bundle left open on a discharged patient (one
     # discharged before discharge_patient closed bundles, or by another path)
     # is not on the ward, and the Command Center counted it in compliance.

@@ -17,6 +17,7 @@ from fastapi.responses import StreamingResponse
 from permissions import (
     department_scope,
     enforce_patient_scope,
+    facility_scope,
     log_phi_read,
     require_permission,
     scope_patient_ids_sql,
@@ -374,7 +375,7 @@ def list_analyses(
     request: Request,
     patient_id: str | None = None,
     user: dict = _LIST_ANALYSES_USER_DEFAULT,
-):
+) -> list:
     """Saved Lens analyses — the caller's department only.
 
     Called with no patient_id this returned the 50 most recent imaging analyses
@@ -385,8 +386,16 @@ def list_analyses(
     department. They are the upload staging area — an image a clinician has just
     analysed and not yet filed — so instead of being dropped they are scoped to
     their AUTHOR, which is the only ownership an unfiled row has.
+
+    FACILITY SCOPE (multisite-8, W12-A). With more than one facility on record
+    a department-less account no longer reads the whole house: like a ward
+    account it gets the filed reads of patients in its facility scope
+    (permissions.scope_patient_ids_sql with facilities) and its own unfiled
+    ones, never another clinician's unfiled read, which has no patient and so
+    no facility to check. With one facility nothing changes.
     """
     dept = department_scope(user)
+    facilities = facility_scope(user)
 
     if patient_id:
         # ONE guard for every caller-named patient_id, whether it arrives on the
@@ -394,10 +403,10 @@ def list_analyses(
         # confirm the patient exists.
         enforce_patient_scope(user, patient_id)
         rows = get_lens_analyses(patient_id)
-    elif dept is None:
+    elif dept is None and facilities is None:
         rows = get_lens_analyses(None)
     else:
-        ids_sql, ids_params = scope_patient_ids_sql(dept)
+        ids_sql, ids_params = scope_patient_ids_sql(dept, facilities=facilities)
         with db_session() as db:
             rows = [
                 decorate_analysis(r)

@@ -20,7 +20,11 @@ Rules for every endpoint added here (design: docs/his_design/opd.json):
   * a probable duplicate follows config.DUPLICATE_MODE ('block' until ruling
     OPD-S2 is confirmed); an exact UHID or active ABHA match is always refused;
   * no allergy field at the desk (ruling OPD-S5, held);
-  * every write audits as patient_identity (fail-closed) in the transaction.
+  * every write audits as patient_identity (fail-closed) in the transaction;
+  * with more than one facility on record (multisite-8h1) the search, the
+    duplicate candidates, the worklist and the sweep stay inside the caller's
+    facility, a candidate at another facility is counted but never shown, and
+    a new patient is registered at the registrar's facility.
 
 Endpoints (opd-4 and opd-5, W4-A, 4 October 2026; services/
 registration_service.py holds the rules):
@@ -75,6 +79,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from services.audit_service import AuditWriteError, log_audit_event
 
 from routes.opt_in_gates import require_registration_feature
+from services import facility_lanes
 from services import registration_service as reg
 
 router = APIRouter(
@@ -355,16 +360,18 @@ _SEARCH_PATIENT_INDEX_Q_DEFAULT = Query("", max_length=200)
 _SEARCH_PATIENT_INDEX_USER_DEFAULT = Depends(require_registration_desk("read"))
 
 
-@router.get("/search")
+@router.get("/search", response_model=None)
 def search_patient_index(
     request: Request,
     q: str = _SEARCH_PATIENT_INDEX_Q_DEFAULT,
     user: dict = _SEARCH_PATIENT_INDEX_USER_DEFAULT,
-):
+) -> dict:
     """Hospital-wide minimal-field search (ruling OPD-N4): UHID, name, sex, age,
-    phone last 4, last visit date and inpatient now. Audited with the ids."""
+    phone last 4, last visit date and inpatient now. Audited with the ids.
+    With more than one facility on record, the caller's own facility only
+    (multisite-8h1, ruling MS-R5 (a))."""
     try:
-        found = reg.search_index(q)
+        found = reg.search_index(q, facilities=facility_lanes.scope_of(user))
     except reg.RegistrationError as err:
         raise _http(err) from err
     ids = [c["patient_id"] for c in found["results"]]
@@ -595,16 +602,20 @@ _DUPLICATE_WORKLIST_LIMIT_DEFAULT = Query(50, ge=1, le=100)
 _DUPLICATE_WORKLIST_USER_DEFAULT = Depends(require_registration_desk("read"))
 
 
-@router.get("/duplicates")
+@router.get("/duplicates", response_model=None)
 def duplicate_worklist(
     request: Request,
     status: str = _DUPLICATE_WORKLIST_STATUS_DEFAULT,
     limit: int = _DUPLICATE_WORKLIST_LIMIT_DEFAULT,
     user: dict = _DUPLICATE_WORKLIST_USER_DEFAULT,
-):
-    """The possible-duplicate worklist, minimal fields per side, audited."""
+) -> dict:
+    """The possible-duplicate worklist, minimal fields per side, audited.
+    With more than one facility on record, only pairs whose two records are
+    both at the caller's facilities (multisite-8h1)."""
     try:
-        found = reg.list_duplicates(status=status, limit=limit)
+        found = reg.list_duplicates(
+            status=status, limit=limit, facilities=facility_lanes.scope_of(user)
+        )
     except reg.RegistrationError as err:
         raise _http(err) from err
     ids = found.pop("patient_ids")
@@ -725,13 +736,13 @@ def retire_outpatient_charge_rule(
 _RESOLVE_DUPLICATE_USER_DEFAULT = Depends(require_permission(REGISTRATION_WRITE))
 
 
-@router.post("/duplicates/{candidate_id}/resolve")
+@router.post("/duplicates/{candidate_id}/resolve", response_model=None)
 def resolve_duplicate(
     candidate_id: int,
     body: ResolveRequest,
     request: Request,
     user: dict = _RESOLVE_DUPLICATE_USER_DEFAULT,
-):
+) -> dict:
     """Not the same person, or the same person (records are never merged
     here). The person who registered past the warning may not resolve it."""
     try:
@@ -741,6 +752,7 @@ def resolve_duplicate(
             reason=body.reason,
             user=user,
             request_meta=_request_meta(request),
+            facilities=facility_lanes.scope_of(user),
         )
     except reg.RegistrationError as err:
         raise _http(err) from err

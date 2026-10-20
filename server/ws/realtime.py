@@ -27,6 +27,7 @@ from config import CORS_ORIGINS
 from database import db_session, run_db
 from permissions import (
     ADT_READ,
+    FACILITY_PATIENT_SQL,
     PATIENT_READ_ALL,
     REGISTRATION_READ,
     VITALS_READ,
@@ -34,6 +35,8 @@ from permissions import (
     has_permission,
 )
 from services.relay_service import get_channels_for_user
+
+from services import facility_service
 
 logger = logging.getLogger("orb.ws")
 
@@ -152,14 +155,24 @@ class AuthorizedSocketServer(socketio.AsyncServer):
         super().__init__(*args, **kwargs)
         self.session_principals = {}
 
-    async def _fresh(self, sid):
+    async def _fresh(self, sid: str) -> dict | None:
         original = self.session_principals.get(sid)
         if original is None:
             return None
         user = await run_db(_authenticate, {"token": original["_socket_token"]})
         # Scope/role changes discard all old subscriptions. Reconnect derives
         # new memberships from the current record rather than widening in place.
-        keys = ("id", "role", "department", "facility_id", "token_version")
+        # The facility view counts as scope (multisite-10): a facility move, a
+        # revoked group grant or a second facility appearing drops the socket.
+        keys = (
+            "id",
+            "role",
+            "department",
+            "facility_id",
+            "token_version",
+            FACILITY_SCOPE_KEY,
+            MULTI_FACILITY_KEY,
+        )
         if user is None or any(user.get(k) != original.get(k) for k in keys):
             self.session_principals.pop(sid, None)
             await self.disconnect(sid)
@@ -233,7 +246,7 @@ def _cookie_token(environ) -> str | None:
         return None
 
 
-def _authenticate(auth, environ=None) -> dict | None:
+def _authenticate(auth: object, environ: dict | None = None) -> dict | None:
     """Validate the JWT supplied in the Socket.IO handshake `auth` payload, or —
     for cookie-based clients — the HttpOnly session cookie on the handshake request.
 
@@ -245,6 +258,11 @@ def _authenticate(auth, environ=None) -> dict | None:
 
     The role/name/id are ALWAYS taken from the DB row keyed by the token's
     `sub`, never from client-supplied fields.
+
+    The facility view (multisite-10) rides on the same dict: whether more than
+    one facility is on record, and the account's facility scope from the shared
+    resolver (facility_service.facility_scope_for, the one every REST loader
+    uses). A scope that cannot be read refuses the socket.
     """
     token = None
     if isinstance(auth, dict):
@@ -261,7 +279,13 @@ def _authenticate(auth, environ=None) -> dict | None:
         user = authenticate_session_token(token)
     except Exception:
         return None
-    return {**user, "_socket_token": token}
+    try:
+        multi = facility_service.multi_facility_data()
+        scope = facility_service.facility_scope_for(user) if multi else None
+    except Exception:
+        logger.warning("WS connection refused: the facility scope could not be read")
+        return None
+    return {**user, "_socket_token": token, FACILITY_SCOPE_KEY: scope, MULTI_FACILITY_KEY: multi}
 
 
 # ── The outpatient queue nudge rooms (opd-9b) ────────────────────────────────
@@ -294,8 +318,17 @@ def queue_nudge_rooms(department: str) -> list[str]:
     """Every room the clinic's queue nudge goes to: the clinic's vitals room
     and the whole-census room (doctors and other vitals.read holders), and the
     clinic's opd room and the all-clinics opd room (desk accounts). Emitted as
-    one list so a socket in two of them hears it once."""
-    return [f"dept:{department}", "dept:__all__", opd_desk_room(department), OPD_ALL_ROOM]
+    one list so a socket in two of them hears it once.
+
+    With more than one facility on record (multisite-10) a department-less
+    vitals.read socket sits in a facility room or the group room instead of
+    the whole-census room. The nudge names a clinic and nothing about anybody,
+    so it goes to all of those, as it went to the whole-census room. Read from
+    memory only: this runs on the event loop."""
+    rooms = [f"dept:{department}", "dept:__all__", opd_desk_room(department), OPD_ALL_ROOM]
+    if facility_service.cached_multi_facility_data():
+        rooms[2:2] = [GROUP_ALL_ROOM, *sorted(_FACILITY_ROOMS)]
+    return rooms
 
 
 def receives_queue_nudges(role: str) -> bool:
@@ -372,6 +405,75 @@ def schedule_adt_changed(ward_ids, departments) -> bool:
     )
 
 
+# ── Facility rooms (multisite-10) ────────────────────────────────────────────
+# With one facility on record nothing here changes: a vitals.read socket joins
+# 'dept:<department>', or 'dept:__all__' with none, and a vitals update goes to
+# both. Once more than one facility is on record (keyed on data, like every
+# facility check, whatever ORB_MULTI_SITE says), 'dept:__all__' would carry
+# every facility's census, so:
+#   * a department-less vitals.read socket joins 'fac:<id>:all' for each
+#     facility in its scope (its home facility, or 1), and a group-wide account
+#     (an admin with a live enterprise grant) joins 'grp:all';
+#   * a ward-scoped socket keeps 'dept:<department>', which belongs to one
+#     facility because department names are unique across the group (MS-R4 (a));
+#   * an account whose department no facility lists joins no vitals room: it
+#     reads no patient over REST either;
+#   * a vitals update goes to the patient's department room, the room of the
+#     facility of the patient's latest encounter (permissions.FACILITY_PATIENT_SQL,
+#     the REST scope's own derivation) and 'grp:all', in one emit, and never to
+#     'dept:__all__'.
+# The opd and adt rooms carry content-free nudges and are unchanged.
+GROUP_ALL_ROOM = "grp:all"
+FACILITY_ROOM_PREFIX = "fac:"
+
+#: Keys _authenticate adds to the socket's user dict: the account's facility
+#: scope (None for no facility limit) and whether more than one facility is on
+#: record. _fresh compares both with what the socket connected under.
+FACILITY_SCOPE_KEY = "_facility_scope"
+MULTI_FACILITY_KEY = "_multi_facility"
+
+#: Every facility room a socket was put in since boot (names only, no member).
+#: The content-free queue nudge goes to each, as it went to 'dept:__all__'.
+_FACILITY_ROOMS: set[str] = set()
+
+
+def facility_all_room(facility_id: int) -> str:
+    """The room of one facility's department-less vitals.read sockets."""
+    return f"{FACILITY_ROOM_PREFIX}{int(facility_id)}:all"
+
+
+def vitals_rooms_for(dept: str | None, facilities: frozenset[int] | None, multi: bool) -> list[str]:
+    """The vitals rooms a vitals.read socket joins (see the block above)."""
+    if not multi:
+        return [f"dept:{dept}" if dept else "dept:__all__"]
+    if facilities is not None and not facilities:
+        return []
+    if dept:
+        return [f"dept:{dept}"]
+    if facilities is None:
+        return [GROUP_ALL_ROOM]
+    return [facility_all_room(f) for f in sorted(facilities)]
+
+
+def patient_vitals_rooms(dept: str | None, facility_id: int | None) -> list[str]:
+    """Where one patient's update goes while more than one facility is on
+    record: its department room, its facility's room and the group room."""
+    rooms = [f"dept:{dept}"] if dept else []
+    if facility_id is not None:
+        rooms.append(facility_all_room(facility_id))
+    rooms.append(GROUP_ALL_ROOM)
+    return rooms
+
+
+async def _socket_facility_view(user: dict) -> tuple[bool, frozenset[int] | None]:
+    """(more than one facility on record, the account's facility scope) as
+    _authenticate read them; computed here only for a user dict without them."""
+    if MULTI_FACILITY_KEY in user:
+        return bool(user[MULTI_FACILITY_KEY]), user.get(FACILITY_SCOPE_KEY)
+    multi = await facility_service.multi_facility_data_async()
+    return multi, (await facility_service.facility_scope_for_async(user) if multi else None)
+
+
 def _self_patient_id(user_id: str) -> str | None:
     """Patient record owned by this login, or None when the account has none.
 
@@ -390,7 +492,7 @@ def _self_patient_id(user_id: str) -> str | None:
 
 
 @sio.event
-async def connect(sid, environ, auth=None):
+async def connect(sid: str, environ: dict, auth: object = None) -> bool:
     """Authenticate the Socket.IO handshake before accepting the client.
 
     Rejecting (returning False) refuses the connection. On success the
@@ -431,8 +533,14 @@ async def connect(sid, environ, auth=None):
     role = user["role"]
     if has_permission(role, VITALS_READ):
         # Mirrors the REST board filter (get_patients): a user with a department
-        # sees that department's patients; one without sees everything.
-        await sio.enter_room(sid, f"dept:{dept}" if dept else "dept:__all__")
+        # sees that department's patients; one without sees everything (with
+        # more than one facility on record, everything at its facilities:
+        # vitals_rooms_for, multisite-10).
+        multi, facilities = await _socket_facility_view(user)
+        for room in vitals_rooms_for(dept, facilities, multi):
+            await sio.enter_room(sid, room)
+            if room.startswith(FACILITY_ROOM_PREFIX):
+                _FACILITY_ROOMS.add(room)
     elif role == "patient":
         # Self-scoped room only — a patient account carries a department (their
         # ward) purely as a location, never as a care-team scope.
@@ -521,6 +629,50 @@ async def _department_for_emit(patient_id: str) -> str | None:
     return await run_db(_patient_department, patient_id)
 
 
+# The facility of the patient whose update it is (multisite-10), cached like
+# the department. Only asked while more than one facility is on record.
+_patient_facility_cache: dict[str, tuple[int | None, float]] = {}
+
+
+def _cached_facility(patient_id: str) -> tuple[bool, int | None]:
+    """(hit, facility id) from memory only, safe on the event loop."""
+    cached = _patient_facility_cache.get(patient_id) if patient_id else None
+    if cached and cached[1] > _time.monotonic():
+        return True, cached[0]
+    return False, None
+
+
+def _patient_facility(patient_id: str) -> int | None:
+    """The facility of the patient's latest encounter, the REST scope's own
+    derivation (permissions.FACILITY_PATIENT_SQL), or None when unknown.
+    BLOCKING on a cache miss: coroutines go through `_facility_for_emit()`."""
+    if not patient_id:
+        return None
+    hit, fid = _cached_facility(patient_id)
+    if hit:
+        return fid
+    try:
+        with db_session() as db:
+            row = db.execute(
+                f"SELECT {FACILITY_PATIENT_SQL} AS fid FROM patients p WHERE p.id = ?",
+                (patient_id,),
+            ).fetchone()
+            fid = None if row is None or row[0] is None else int(row[0])
+    except Exception as e:
+        logger.warning("vitals scoping: facility lookup failed for %s: %s", patient_id, e)
+        fid = None
+    _patient_facility_cache[patient_id] = (fid, _time.monotonic() + _PATIENT_DEPT_TTL)
+    return fid
+
+
+async def _facility_for_emit(patient_id: str) -> int | None:
+    """Loop-safe facility lookup for the emit path, as `_department_for_emit`."""
+    hit, fid = _cached_facility(patient_id)
+    if hit:
+        return fid
+    return await run_db(_patient_facility, patient_id)
+
+
 # ── The patient's name on a vitals update ─────────────────────────────────────
 # A deterioration alert (src/services/criticalAlerts.ts) names the patient from
 # `vital.patient_name`, and no lane ever sent one, so the notification read the
@@ -581,6 +733,12 @@ async def emit_patient_vitals(event: str, payload: dict) -> None:
         name = await _name_for_emit(payload["patient_id"])
         if name:
             payload = {**payload, "patient_name": name}
+    if await facility_service.multi_facility_data_async():
+        # More than one facility on record (multisite-10): the patient's own
+        # rooms only, in one emit, and never the whole-census room.
+        facility_id = await _facility_for_emit(payload["patient_id"])
+        await sio.emit(event, payload, room=patient_vitals_rooms(dept, facility_id))
+        return
     # __all__ always: no-department clinicians (whole-census board) must still see it.
     await sio.emit(event, payload, room="dept:__all__")
     if dept:

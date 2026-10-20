@@ -348,9 +348,9 @@ A plain `Exception` subclass signalling an unparseable payload; caught by `inges
 
 ### `server/services/fhir_export_service.py`
 
-Provenance-tag constants (`:39-52`): `ORB_SOURCE_SYSTEM/CODE/DISPLAY` mark **every** exported resource as "from Orb"; `ORB_PROVENANCE_SYSTEM` + `AI_DRAFT_CODE` mark AI-derived content; `_AI_DERIVED_SOURCES` (`:52`) is the set of `source` values (`llm_extracted, agentic, ai, ai_extracted, ai_draft`) treated as AI, note `ingested_fhir` is deliberately excluded (it is real external data, not AI output). Coding-system constants (`:59-84`): LOINC/UCUM/SNOMED/ICD-10 URIs and `_VITAL_FHIR`, the exact inverse of the ingest `_VITAL_CODE_MAP`.
+Provenance-tag constants (`:40-53`): `ORB_SOURCE_SYSTEM/CODE/DISPLAY` mark **every** exported resource as "from Orb"; `ORB_PROVENANCE_SYSTEM` + `AI_DRAFT_CODE` mark AI-derived content; `_AI_DERIVED_SOURCES` (`:53`) is the set of `source` values (`llm_extracted, agentic, ai, ai_extracted, ai_draft`) treated as AI, note `ingested_fhir` is deliberately excluded (it is real external data, not AI output). Coding-system constants (`:60-122`): LOINC/UCUM/SNOMED/ICD-10 URIs and `_VITAL_FHIR`, the exact inverse of the ingest `_VITAL_CODE_MAP`.
 
-#### _reader: `fhir_export_service.py:91`
+#### _reader: `fhir_export_service.py:129`
 **Signature:** `@contextmanager _reader(db=None)`.
 **Does:** yields a DB connection, reusing a caller-supplied one (left open) or opening+closing a fresh one.
 **Why it exists:** lets `patient_bundle` share one connection across five queries while each serialiser also works standalone.
@@ -367,13 +367,13 @@ Provenance-tag constants (`:39-52`): `ORB_SOURCE_SYSTEM/CODE/DISPLAY` mark **eve
 
 **Why they exist:** small, testable mappers keep the resource builders declarative and keep coding conventions identical to the ingest side so exports round-trip.
 
-#### patient_to_fhir: `fhir_export_service.py:208`
+#### patient_to_fhir: `fhir_export_service.py:246`
 **Signature:** `(patient_id, db=None) → Optional[dict]`.
 **Does:** one `patients` row → a FHIR `Patient` resource (id, name, gender, MRN identifier, birthDate); None if absent.
 **Talks to:** `patient_bundle`, `export_patient` route.
 **Gotchas:** MRN uses the Orb-private system URI `_MRN_SYSTEM`; `birthDate` is truncated to 10 chars (date only).
 
-#### observations_to_fhir: `fhir_export_service.py:244`
+#### observations_to_fhir: `fhir_export_service.py:282`
 **Signature:** `(patient_id, since=None, db=None) → list[dict]`.
 **Does:** `vitals` rows → one `Observation` per non-null vital per row (LOINC-coded, `valueQuantity` with UCUM unit, category `vital-signs`).
 **How it works:** SELECTs rows (optionally `timestamp >= since`, newest first); for each row iterates `_VITAL_ORDER`, skips NULLs, emits an Observation with a deterministic id `orb-obs-{rowid}-{loinc}`.
@@ -393,12 +393,12 @@ Provenance-tag constants (`:39-52`): `ORB_SOURCE_SYSTEM/CODE/DISPLAY` mark **eve
 Serialise `patient_allergies` → `AllergyIntolerance` (criticality from severity; ai-draft when AI-sourced) and `problem_list` → `Condition` (ICD-10 + SNOMED codings; ai-draft when AI-sourced). Both default clinicalStatus to `active`.
 **Gotchas:** allergies get the ai-draft tag purely from `source` (there is no `verified_by` gate as with meds), so an `llm_extracted` allergy is always tagged draft (`test_allergies_resource`).
 
-#### patient_bundle: `fhir_export_service.py:457`
+#### patient_bundle: `fhir_export_service.py:502`
 **Signature:** `(patient_id, since=None, db=None) → Optional[dict]`.
 **Does:** assembles the `$everything` **collection Bundle** (Patient + Observations + MedicationRequests + AllergyIntolerances + Conditions), each entry with a `fullUrl`.
 **How it works:** opens one shared connection via `_reader`, returns None if the patient is missing, else concatenates all serialisers' output and wraps in a `Bundle` with an Orb-source `meta` and a `timestamp`.
 **Why it exists:** the single call an EHR (or Orb's own offline snapshotter) makes to pull a complete, provenance-tagged patient record.
-**Talks to:** `export_everything` route; **`downtime_service`** calls it to write per-patient bundles to local disk for offline resilience (guide 28-offline-pwa-downtime, `downtime_service.py:302,315`).
+**Talks to:** `export_everything` route; **`downtime_service`** calls it to write per-patient bundles to local disk for offline resilience (guide 28-offline-pwa-downtime, `downtime_service.py:303,316`).
 **Gotchas:** `type="collection"` (not `transaction`), so it is a read snapshot, not a write instruction.
 
 ---
@@ -437,9 +437,9 @@ Map `IngestionResult.parse_status` to HTTP (`parsed→200`, `partially_parsed→
 
 ---
 
-### `server/routes/fhir_export_routes.py`: router prefix `/api/fhir` (`:26`)
+### `server/routes/fhir_export_routes.py`: router prefix `/api/fhir` (`:32`)
 
-#### _audit_export: `fhir_export_routes.py:57`
+#### _audit_export: `fhir_export_routes.py:62`
 **Does:** writes a `phi_access` audit event (actor, patient, path, method, IP, UA, resource count) for every export.
 **Why it exists:** PHI is leaving the building; the fail-closed `phi_access` category means if the audit write fails, the export is aborted (guide 05).
 

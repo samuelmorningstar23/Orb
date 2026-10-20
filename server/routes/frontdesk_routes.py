@@ -126,13 +126,34 @@ is 429. A patient registered a moment ago is no exception: the desk sends
 what it just typed and the UHID the registration returned. The passing check
 is stored on opd_visits.identity_check_json and in the visit's audit row.
 With the feature off the field is ignored and nothing here changes.
+
+── FACILITIES (multisite-9a and multisite-17, W12-E) ───────────────────────
+With more than one facility on record (and only then; with one, the caller's
+facility scope is None and nothing below runs):
+  * the queue, the doctors list and the transfer destinations are the
+    caller's facilities' own (a queue is document-keyed: the visit's own
+    facility, migration 74);
+  * a visit of another facility is a 404 on every route that names one, with
+    an authorization 'facility_document_denied' row;
+  * registering a visit into a clinic of another facility is 403
+    'facility_scope', and registering a patient whose latest encounter is at
+    another facility is a 404 (an authorization 'patient_scope_denied' row),
+    unless the desk found them through the group identity match below and
+    sends its ticket; a matched patient admitted at another facility now is a
+    409 'cross_facility_move_refused';
+  * POST /api/frontdesk/group-match (ORB_MULTI_SITE on, more than one facility
+    on record, an account with no department) finds a patient across the whole
+    group by name, age or date of birth, sex and phone, answers who they are
+    and nothing clinical, and is audited phi_access with the desk's reason and
+    rate-limited (frontdesk_service.group_identity_match).
 """
 
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from datetime import date, timedelta
-from typing import TypedDict
+from typing import Any, TypedDict
 
 import config
 from database import db_session
@@ -143,8 +164,11 @@ from permissions import (
     PATIENT_READ_ALL,
     PATIENT_WRITE,
     SCHEDULE_MANAGE,
+    _audit_facility_denial,
     department_scope,
     enforce_patient_scope,
+    facility_denial,
+    facility_scope,
     has_permission,
     log_phi_read,
     opd_scope_window,
@@ -156,19 +180,27 @@ from pydantic import BaseModel, ConfigDict, Field
 from services.adt import core as adt_core
 from services.adt import transfer as adt_transfer
 from services.audit_service import AuditWriteError, log_audit_event
+from services.facility_documents import deny_if_outside, request_meta
 from services.frontdesk_service import (
+    GROUP_MATCH_INPATIENT_WORDS,
     CrossFacilityMoveRefused,
     FrontDeskError,
+    GroupMatchError,
     OpdReplayConflict,
+    audit_cross_facility_refusal,
+    audit_group_match_visit_on,
     cancel_opd_visit,
     complete_opd_visit,
     get_opd_visit,
+    group_identity_match,
+    group_match_ticket_valid,
     list_consulting_doctors,
     list_opd_queue,
     list_patient_movements,
     list_transfer_destinations,
     opd_mode,
     opd_registration_allowed,
+    opd_visit_facility_id,
     register_opd_visit,
     start_opd_consultation,
     transfer_patient,
@@ -238,6 +270,23 @@ class OpdVisitIn(BaseModel):
     idempotency_key: str | None = None
     # Required while the 'registration' feature is on (opd-6a); ignored off.
     identity_check: IdentityStatedIn | None = None
+    # multisite-17: the ticket a group identity match gave for this patient.
+    # Read only for a patient whose latest encounter is at another facility.
+    group_match_ticket: str | None = Field(None, max_length=200)
+
+
+class GroupMatchIn(BaseModel):
+    """What the patient states for a group identity search (multisite-17):
+    their name, their age or date of birth, their sex and their phone, plus
+    the desk's reason for searching the whole group. Never echoed back."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = Field(None, max_length=200)
+    date_of_birth: str | None = Field(None, max_length=40)
+    age_years: int | None = None
+    sex: str | None = Field(None, max_length=20)
+    phone: str | None = Field(None, max_length=40)
+    reason: str | None = Field(None, max_length=1000)
 
 
 class CompleteVisitIn(BaseModel):
@@ -392,11 +441,40 @@ def _bad_request(err: FrontDeskError) -> HTTPException:
     return HTTPException(status_code=422, detail=str(err))
 
 
-def _visit_in_department(visit_id: str, dept: str | None) -> dict:
+def _visit_facility_gate(visit_id: str, user: dict | None, request: Request | None) -> None:
+    """404, after an authorization 'facility_document_denied' row, for a visit
+    of another facility than the caller's (multisite-9a: a queue is
+    document-keyed). Reads nothing with one facility on record."""
+    if user is None:
+        return
+    facilities = facility_scope(user)
+    if facilities is None:
+        return
+    if deny_if_outside(
+        user,
+        document_facility_id=opd_visit_facility_id(visit_id),
+        lane="frontdesk_opd",
+        target_type="opd_visit",
+        target_id=visit_id,
+        meta=request_meta(request),
+        facilities=facilities,
+    ):
+        raise HTTPException(status_code=404, detail="OPD visit not found")
+
+
+def _visit_in_department(
+    visit_id: str,
+    dept: str | None,
+    *,
+    user: dict | None = None,
+    request: Request | None = None,
+) -> dict:
     """_visit_or_404 for a caller whose scope the ENDPOINT already derived
     (opd-8): `dept` is permissions.department_scope(user), passed in so the
     derivation is visible in the route itself (tests/test_nurse_write_scope.py
-    reads the endpoint for it). 404 for no such visit and for another clinic."""
+    reads the endpoint for it). 404 for no such visit and for another clinic,
+    and (given `user`) for a visit of another facility."""
+    _visit_facility_gate(visit_id, user, request)
     visit = get_opd_visit(visit_id)
     if visit is None:
         raise HTTPException(status_code=404, detail="OPD visit not found")
@@ -405,13 +483,15 @@ def _visit_in_department(visit_id: str, dept: str | None) -> dict:
     return visit
 
 
-def _visit_or_404(visit_id: str, user: dict) -> dict:
+def _visit_or_404(visit_id: str, user: dict, request: Request | None = None) -> dict:
     """Load a visit and prove the caller's department owns its clinic.
 
     404 on both "no such visit" and "not your clinic", never 403 — a 403 confirms
     the visit exists, and a visit id implies a patient attended a named clinic on
-    a named day. Same rule as require_patient_access.
+    a named day. Same rule as require_patient_access. A visit of another
+    facility is a 404 too (multisite-9a).
     """
+    _visit_facility_gate(visit_id, user, request)
     visit = get_opd_visit(visit_id)
     if visit is None:
         raise HTTPException(status_code=404, detail="OPD visit not found")
@@ -776,6 +856,140 @@ def _identity_facts(identity: dict | None) -> dict:
     return {"identity_check": {k: identity.get(k) for k in ("result", "checked", "checked_at")}}
 
 
+# ── Facilities at registration (multisite-9a, multisite-17) ─────────────────
+
+#: The refusal for a clinic of another facility of the group.
+CLINIC_AT_ANOTHER_FACILITY_WORDS = (
+    "That clinic belongs to another facility of the group. Register the visit in a "
+    "clinic of your own facility. Nothing was saved."
+)
+
+
+def _require_clinic_at_facility(
+    request: Request,
+    user: dict,
+    *,
+    patient_id: str,
+    department: str,
+    facilities: frozenset[int],
+) -> None:
+    """403 'facility_scope', after an authorization 'cross_facility_move_refused'
+    row, when the clinic belongs to a facility outside the caller's scope. A
+    clinic no facility lists passes here and register_opd_visit refuses it in
+    its own words."""
+    from services import facility_service
+
+    clinic_facility = facility_service.department_facility(department)
+    if clinic_facility is None or clinic_facility in facilities:
+        return
+    audit_cross_facility_refusal(
+        lane="opd_registration",
+        cause="actor_outside_facility",
+        patient_id=patient_id,
+        actor_id=user.get("id"),
+        actor_role=user.get("role"),
+        to_department=department,
+        to_facility_id=clinic_facility,
+        from_facility_ids=facilities,
+        request_meta=request_meta(request),
+    )
+    raise HTTPException(
+        status_code=403,
+        detail={"error": "facility_scope", "message": CLINIC_AT_ANOTHER_FACILITY_WORDS},
+    )
+
+
+def _patient_facility_gate(
+    request: Request,
+    user: dict,
+    *,
+    patient_id: str,
+    dept: str | None,
+    facilities: frozenset[int],
+    ticket: str | None,
+) -> int | None:
+    """The patient's facility when it is outside the caller's scope and the
+    caller's own group-match ticket lets them in (multisite-17); None when the
+    patient is in scope, or no patient has that id (register_opd_visit then
+    refuses it as before).
+
+    Without a valid ticket a patient outside the scope is a 404 with an
+    authorization patient_scope_denied row (scope_cause 'facility'). A matched
+    patient admitted at another facility right now is a 409 with an
+    authorization 'cross_facility_move_refused' row: the visit would sit on
+    this facility's queue while the chart stays with the admission."""
+    from services.frontdesk_service import _patient_has_active_admission
+
+    with db_session() as db:
+        denied, patient_facility = facility_denial(db, patient_id, facilities)
+        admitted = denied and _patient_has_active_admission(db, patient_id)
+    if not denied:
+        return None
+    if not group_match_ticket_valid(ticket, user_id=user.get("id"), patient_id=patient_id):
+        meta = request_meta(request)
+        _audit_facility_denial(
+            user=user,
+            patient_id=patient_id,
+            dept=dept,
+            facilities=facilities,
+            patient_facility_id=patient_facility,
+            helper="frontdesk_registration",
+            request_path=meta.get("request_path"),
+            http_method=meta.get("http_method"),
+            ip_address=meta.get("ip_address"),
+            user_agent=meta.get("user_agent"),
+        )
+        raise HTTPException(status_code=404, detail="Patient not found")
+    if admitted:
+        audit_cross_facility_refusal(
+            lane="opd_registration",
+            cause="patient_at_another_facility",
+            patient_id=patient_id,
+            actor_id=user.get("id"),
+            actor_role=user.get("role"),
+            to_department=None,
+            to_facility_id=None,
+            from_facility_ids={patient_facility} if patient_facility is not None else set(),
+            request_meta=request_meta(request),
+        )
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "cross_facility_move_refused", "message": GROUP_MATCH_INPATIENT_WORDS},
+        )
+    return patient_facility
+
+
+def _with_group_match_audit(
+    inner: Callable[[Any, dict], None] | None,
+    request: Request,
+    user: dict,
+    *,
+    crossed: int | None,
+) -> Callable[[Any, dict], None] | None:
+    """The visit's in-transaction callback, plus (for a patient a group match
+    let in) the fail-closed clinical_access row saying the chart now opens at
+    this facility. `inner` unchanged when no match was used."""
+    if crossed is None:
+        return inner
+    meta = request_meta(request)
+
+    def _on_registered(db: Any, visit: dict) -> None:
+        from services.frontdesk_service import department_facility_on
+
+        if inner is not None:
+            inner(db, visit)
+        audit_group_match_visit_on(
+            db,
+            user=user,
+            visit=visit,
+            from_facility_id=crossed,
+            to_facility_id=department_facility_on(db, visit.get("department")),
+            request_meta=meta,
+        )
+
+    return _on_registered
+
+
 # ── OPD mode: the consulting doctor's actions (opd-8) ───────────────────────
 
 
@@ -835,7 +1049,7 @@ def _call_in(visit_id: str, request: Request, user: dict, *, dept: str | None) -
     The caller's opd.consult was checked first; the visit must be in the
     caller's clinic, `dept` = department_scope(user) (404 otherwise). Audited
     in the visit's transaction, then the clinic's open queues are nudged."""
-    _visit_in_department(visit_id, dept)
+    _visit_in_department(visit_id, dept, user=user, request=request)
     try:
         visit = start_opd_consultation(
             visit_id,
@@ -871,7 +1085,7 @@ def opd_queue(
     doctor_id: str | None = None,
     include_completed: bool = False,
     user: dict = _OPD_QUEUE_USER_DEFAULT,
-):
+) -> dict:
     """Today's OPD queues for the caller's department, grouped by doctor.
 
     THE DEPARTMENT IS NOT A PARAMETER. It is derived from the authenticated user;
@@ -885,7 +1099,11 @@ def opd_queue(
     )
     try:
         result = list_opd_queue(
-            department=dept, visit_date=date, doctor_id=doctor_id, statuses=statuses
+            department=dept,
+            visit_date=date,
+            doctor_id=doctor_id,
+            statuses=statuses,
+            facilities=facility_scope(user),
         )
     except FrontDeskError as err:
         raise _bad_request(err) from err
@@ -935,7 +1153,7 @@ _OPD_DOCTORS_USER_DEFAULT = Depends(require_desk_read())
 
 
 @router.get("/opd/doctors")
-def opd_doctors(user: dict = _OPD_DOCTORS_USER_DEFAULT):
+def opd_doctors(user: dict = _OPD_DOCTORS_USER_DEFAULT) -> dict:
     """The doctors this desk may book a visit with, from the STAFF TABLE.
 
     Not from today's queue. The panel used to derive its dropdown from
@@ -947,7 +1165,9 @@ def opd_doctors(user: dict = _OPD_DOCTORS_USER_DEFAULT):
     authenticated user, never from the request. Carries no PHI — names and
     employee ids of staff — so there is no `log_phi_read` here.
     """
-    return {"doctors": list_consulting_doctors(department_scope(user))}
+    return {
+        "doctors": list_consulting_doctors(department_scope(user), facilities=facility_scope(user))
+    }
 
 
 _FRONT_OFFICE_DAILY_SUMMARY_OPD_DEFAULT = Depends(require_opd_feature)
@@ -959,7 +1179,7 @@ def front_office_daily_summary(
     date: str | None = None,
     _opd: None = _FRONT_OFFICE_DAILY_SUMMARY_OPD_DEFAULT,
     user: dict = _FRONT_OFFICE_DAILY_SUMMARY_USER_DEFAULT,
-):
+) -> dict:
     """The front office day summary (opd-18): one hospital-local day, counts only.
 
     The 'opd' feature gate runs first (404 feature_disabled while it is off).
@@ -971,11 +1191,102 @@ def front_office_daily_summary(
     from services import front_office_mis
 
     try:
-        return front_office_mis.daily_summary(date, department=department_scope(user))
+        return front_office_mis.daily_summary(
+            date, department=department_scope(user), facilities=facility_scope(user)
+        )
     except front_office_mis.MisError as err:
         raise HTTPException(
             status_code=err.status, detail={"error": err.code, "message": str(err)}
         ) from err
+
+
+# ── Group identity match (multisite-17) ─────────────────────────────────────
+
+_GROUP_MATCH_GATE_DEFAULT = Depends(feature_gate("multi_site"))
+_GROUP_MATCH_USER_DEFAULT = Depends(require_desk_write())
+
+
+@router.post("/group-match")
+def group_match(
+    data: GroupMatchIn,
+    request: Request,
+    _gate: None = _GROUP_MATCH_GATE_DEFAULT,
+    user: dict = _GROUP_MATCH_USER_DEFAULT,
+) -> dict:
+    """Find the patient at the desk across every facility of the group.
+
+    For a patient who says they were seen at another facility, so the desk
+    attaches the visit to their one record rather than registering a second
+    (ruling MS-R11 (a)). Needs ORB_MULTI_SITE on (404 feature_disabled
+    otherwise), more than one facility on record (409 single_facility) and an
+    account with no department, the central desk (403 desk_only). All four
+    stated facts are required and compared on the server; the answer is who
+    each match is (id, name, age, sex, group record number, the facility the
+    record was registered at) and a ticket for registering their visit here,
+    never a clinical field or a stated value. Every search is audited
+    phi_access with the reason (503 and nothing shown when that row cannot be
+    written), and an account gets GROUP_MATCH_LIMIT searches an hour (429)."""
+    from services import facility_service
+
+    if not facility_service.multi_facility_data():
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "single_facility",
+                "message": (
+                    "Only one facility is on record, so every patient is already in your "
+                    "own patient list. Search there."
+                ),
+            },
+        )
+    if department_scope(user) is not None:
+        log_audit_event(
+            correlation_id=str(uuid.uuid4()),
+            event_category="authorization",
+            action_type="permission_denied",
+            outcome="denied",
+            summary_message="Group identity search is for the central front desk only",
+            actor_user_id=user.get("id"),
+            actor_role=user.get("role"),
+            request_path=request.url.path,
+            http_method=request.method,
+            ip_address=request.client.host if request.client else None,
+            metadata={"lane": "group_identity_match", "department": department_scope(user)},
+        )
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "desk_only",
+                "message": (
+                    "Only a front desk account with no department can search the whole "
+                    "group. Ask the front desk to find this patient."
+                ),
+            },
+        )
+    try:
+        return group_identity_match(
+            data.model_dump(exclude={"reason"}),
+            user=user,
+            reason=data.reason,
+            request_meta=request_meta(request),
+        )
+    except GroupMatchError as err:
+        headers = (
+            {"Retry-After": str(err.retry_after_seconds)}
+            if err.retry_after_seconds is not None
+            else None
+        )
+        raise HTTPException(status_code=err.status, detail=err.detail(), headers=headers) from err
+    except AuditWriteError:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "audit_unavailable",
+                "message": (
+                    "The search could not be recorded, so nothing is shown. Try again in a moment."
+                ),
+            },
+        ) from None
 
 
 _CREATE_OPD_VISIT_USER_DEFAULT = Depends(require_desk_write())
@@ -986,8 +1297,16 @@ def create_opd_visit(
     data: OpdVisitIn,
     request: Request,
     user: dict = _CREATE_OPD_VISIT_USER_DEFAULT,
-):
-    """Register an outpatient visit and issue a token."""
+) -> dict:
+    """Register an outpatient visit and issue a token.
+
+    With more than one facility on record the clinic must be one of the
+    caller's facilities' (403 'facility_scope'), and the patient's latest
+    encounter must be there too (404) unless `group_match_ticket` is the
+    caller's own ticket from a group identity match for this patient
+    (multisite-17); a matched patient admitted at another facility now is a
+    409. A visit registered through a match is audited clinical_access in
+    its own transaction."""
     patient_id = (data.patient_id or "").strip()
     if not patient_id:
         raise HTTPException(status_code=422, detail="patient_id is required")
@@ -1013,6 +1332,24 @@ def create_opd_visit(
                 "error": "department_scope",
                 "message": f"You can only register visits in {dept}",
             },
+        )
+
+    # multisite-9a and multisite-17: the clinic and the patient must be the
+    # caller's facilities', unless a group identity match found the patient.
+    # Nothing here reads anything with one facility on record.
+    facilities = facility_scope(user)
+    crossed: int | None = None
+    if facilities is not None:
+        _require_clinic_at_facility(
+            request, user, patient_id=patient_id, department=department, facilities=facilities
+        )
+        crossed = _patient_facility_gate(
+            request,
+            user,
+            patient_id=patient_id,
+            dept=dept,
+            facilities=facilities,
+            ticket=data.group_match_ticket,
         )
 
     with db_session() as db:
@@ -1046,13 +1383,18 @@ def create_opd_visit(
                 registered_by=user.get("id"),
                 idempotency_key=data.idempotency_key,
                 self_registered=self_registered,
-                on_registered=_registration_audit(
+                on_registered=_with_group_match_audit(
+                    _registration_audit(
+                        request,
+                        user,
+                        patient_id=patient_id,
+                        dept=dept,
+                        self_registered=self_registered,
+                        identity=identity,
+                    ),
                     request,
                     user,
-                    patient_id=patient_id,
-                    dept=dept,
-                    self_registered=self_registered,
-                    identity=identity,
+                    crossed=crossed,
                 ),
                 on_replay=_registration_replay_audit(request, user),
                 identity_check=identity,
@@ -1082,9 +1424,15 @@ def create_opd_visit(
             registered_by=user.get("id"),
             idempotency_key=data.idempotency_key,
             identity_check=identity,
+            # multisite-17: None (exactly as before) unless a group match let
+            # this patient in, when the move of the chart is audited inside the
+            # visit's transaction.
+            on_registered=_with_group_match_audit(None, request, user, crossed=crossed),
         )
     except FrontDeskError as err:
         raise _bad_request(err) from err
+    except AuditWriteError:
+        raise _audit_unavailable() from None
 
     log_audit_event(
         correlation_id=f"opd-register-{visit['id']}",
@@ -1108,6 +1456,7 @@ def create_opd_visit(
             "token_number": visit["token_number"],
             "doctor_id": visit.get("doctor_id"),
             **_identity_facts(identity),
+            **({"group_match": True} if crossed is not None else {}),
         },
     )
     return {**visit, **_identity_facts(identity)}
@@ -1121,8 +1470,8 @@ def read_opd_visit(
     visit_id: str,
     request: Request,
     user: dict = _READ_OPD_VISIT_USER_DEFAULT,
-):
-    visit = _visit_or_404(visit_id, user)
+) -> dict:
+    visit = _visit_or_404(visit_id, user, request)
     log_phi_read(
         request=request,
         user=user,
@@ -1143,7 +1492,7 @@ def start_visit(
     visit_id: str,
     request: Request,
     user: dict = _START_VISIT_USER_DEFAULT,
-):
+) -> dict:
     """Call the patient in: 'waiting' → 'in_consultation'.
 
     In OPD mode this needs opd.consult (opd-8): the administrator's
@@ -1151,7 +1500,7 @@ def start_visit(
     if opd_mode():
         _require_opd_consult(request, user)
         return _call_in(visit_id, request, user, dept=department_scope(user))
-    _visit_or_404(visit_id, user)
+    _visit_or_404(visit_id, user, request)
     try:
         visit = start_opd_consultation(visit_id, called_by=user.get("id"))
     except FrontDeskError as err:
@@ -1184,7 +1533,7 @@ def complete_visit(
     request: Request,
     data: CompleteVisitIn | None = None,
     user: dict = _COMPLETE_VISIT_USER_DEFAULT,
-):
+) -> dict:
     """Finish the consultation and raise the consultation charge line.
 
     The charge goes into the billing spine's `encounter_charges` table with
@@ -1200,7 +1549,7 @@ def complete_visit(
     body = data or CompleteVisitIn()
     if opd_mode():
         _require_opd_consult(request, user)
-    _visit_or_404(visit_id, user)
+    _visit_or_404(visit_id, user, request)
     if opd_mode():
 
         def _charge_summary(v: dict) -> str:
@@ -1287,12 +1636,12 @@ def cancel_visit(
     data: CancelVisitIn,
     request: Request,
     user: dict = _CANCEL_VISIT_USER_DEFAULT,
-):
+) -> dict:
     """No-show / left without being seen. Soft: the row is kept.
 
     In OPD mode (opd-8) the body may carry a reason_code; the LWBS code is
     'left_without_being_seen'. A cancel never raises a charge."""
-    _visit_or_404(visit_id, user)
+    _visit_or_404(visit_id, user, request)
     reason = (data.reason or "").strip()
     if not reason:
         raise HTTPException(status_code=422, detail="A cancellation reason is required")
@@ -1342,13 +1691,21 @@ def cancel_visit(
     return visit
 
 
-def _run_queue_action(visit_id: str, dept: str | None, action) -> dict:
+def _run_queue_action(
+    visit_id: str,
+    dept: str | None,
+    action: Callable[[], dict],
+    *,
+    user: dict | None = None,
+    request: Request | None = None,
+) -> dict:
     """The shared shape of an OPD-mode queue action: the visit must be in the
     caller's clinic (404), the service refuses a state that does not allow the
     action (409) or bad input (422), a fail-closed audit outage rolls back
     (503), and after the commit the clinic's open queues are nudged. `dept`
-    is department_scope(user), derived by the endpoint."""
-    _visit_in_department(visit_id, dept)
+    is department_scope(user), derived by the endpoint; `user` adds the
+    facility check (multisite-9a)."""
+    _visit_in_department(visit_id, dept, user=user, request=request)
     try:
         visit = action()
     except QueueConflict as err:
@@ -1387,7 +1744,7 @@ def skip_opd_visit(
     request: Request,
     _opd: None = _SKIP_OPD_VISIT_OPD_DEFAULT,
     user: dict = _SKIP_OPD_VISIT_USER_DEFAULT,
-):
+) -> dict:
     """OPD mode: the patient did not come when called. Back to waiting,
     marked skipped, until recalled or called again."""
     return _run_queue_action(
@@ -1404,6 +1761,8 @@ def skip_opd_visit(
                 summary=lambda v: f"OPD visit {v['id']} skipped (token {v['token_number']})",
             ),
         ),
+        user=user,
+        request=request,
     )
 
 
@@ -1417,7 +1776,7 @@ def recall_opd_visit(
     request: Request,
     _opd: None = _RECALL_OPD_VISIT_OPD_DEFAULT,
     user: dict = _RECALL_OPD_VISIT_USER_DEFAULT,
-):
+) -> dict:
     """OPD mode: a skipped patient is back in the line at their own token."""
     return _run_queue_action(
         visit_id,
@@ -1435,6 +1794,8 @@ def recall_opd_visit(
                 ),
             ),
         ),
+        user=user,
+        request=request,
     )
 
 
@@ -1448,7 +1809,7 @@ def assign_opd_visit(
     request: Request,
     _opd: None = _ASSIGN_OPD_VISIT_OPD_DEFAULT,
     user: dict = _ASSIGN_OPD_VISIT_USER_DEFAULT,
-):
+) -> dict:
     """OPD mode: the signed-in doctor takes an unassigned patient of their own
     clinic. The doctor is always the caller; nobody assigns another doctor.
 
@@ -1476,6 +1837,8 @@ def assign_opd_visit(
                 metadata=lambda v: {"doctor_id": v.get("doctor_id")},
             ),
         ),
+        user=user,
+        request=request,
     )
 
 
@@ -1490,7 +1853,7 @@ def update_opd_visit_queue(
     request: Request,
     _opd: None = _UPDATE_OPD_VISIT_QUEUE_OPD_DEFAULT,
     user: dict = _UPDATE_OPD_VISIT_QUEUE_USER_DEFAULT,
-):
+) -> dict:
     """OPD mode: the desk (or a doctor) sets a visit's queue priority, with a
     reason for anything but normal (ruling OPD-N9), and its room. Only the
     fields the body names change."""
@@ -1527,6 +1890,8 @@ def update_opd_visit_queue(
                 },
             ),
         ),
+        user=user,
+        request=request,
     )
 
 
@@ -1698,16 +2063,17 @@ _TRANSFER_DESTINATIONS_USER_DEFAULT = Depends(require_frontdesk_read())
 
 
 @router.get("/transfers/destinations")
-def transfer_destinations(user: dict = _TRANSFER_DESTINATIONS_USER_DEFAULT):
+def transfer_destinations(user: dict = _TRANSFER_DESTINATIONS_USER_DEFAULT) -> dict:
     """Departments a patient may be transferred INTO, and the wards in use there.
 
     Carries no PHI (department names, ward labels and occupancy counts), so it is
     not scoped to the caller's ward: choosing a destination requires seeing the
     destinations. `staff_count` is included so the clerk can see WHY a department
     is offered — it is the anti-orphaning rule made visible rather than a silent
-    filter.
+    filter. Once more than one facility is on record, only the caller's
+    facilities' departments (a move into another facility is refused anyway).
     """
-    return {"destinations": list_transfer_destinations()}
+    return {"destinations": list_transfer_destinations(facilities=facility_scope(user))}
 
 
 _CREATE_TRANSFER_USER_DEFAULT = Depends(require_frontdesk_write())

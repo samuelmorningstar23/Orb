@@ -11,6 +11,7 @@ from permissions import (
     PATIENT_DEPARTMENT_SQL,
     department_scope,
     enforce_patient_scope,
+    facility_scope,
     log_phi_read,
     require_patient_access,
     require_permission,
@@ -18,6 +19,7 @@ from permissions import (
 from pydantic import BaseModel
 from services.clinical_time import format_utc
 from services.drug_chart import drug_chart_enabled, require_drug_chart
+from services.facility_filter import column_clause, patient_clause
 from services.lens_service import decorate_analysis
 from services.medication_safety_gate import enforce_medication_safety
 from services.medorders import chart_lane
@@ -384,15 +386,20 @@ def _insert_medication(
 # is not something a pilot appliance should be able to serve at all.
 
 
-def _active_admission_ids(patient_ids: list) -> dict:
-    """patient id -> id of their active admission (the newest, if several)."""
+def _active_admission_ids(patient_ids: list, facilities: frozenset[int] | None = None) -> dict:
+    """patient id -> id of their active admission (the newest, if several).
+
+    `facilities` is the caller's facility_scope(): None leaves the statement as
+    it was; otherwise only admissions at those facilities are read, the same
+    limit the board itself was read under (multisite-8)."""
     marks = ",".join("?" * len(patient_ids))
+    facility_sql, facility_args = column_clause("facility_id", facilities)
     with db_session() as db:
         found = db.execute(
             f"""SELECT patient_id, id FROM admissions
-                WHERE status = 'active' AND patient_id IN ({marks})
+                WHERE status = 'active' AND patient_id IN ({marks}){facility_sql}
                 ORDER BY created_at ASC, rowid ASC""",
-            tuple(patient_ids),
+            tuple(patient_ids) + facility_args,
         ).fetchall()
     # Ascending, so the newest active admission is written last and wins.
     return {r["patient_id"]: r["id"] for r in found}
@@ -412,7 +419,7 @@ def list_patients(
     limit: int = _LIST_PATIENTS_LIMIT_DEFAULT,
     offset: int = _LIST_PATIENTS_OFFSET_DEFAULT,
     user: dict = _LIST_PATIENTS_USER_DEFAULT,
-):
+) -> list:
     """Get admitted patients filtered by the user's department, each with the
     NEWS2 of their latest vitals row (`news2`, null when nothing is recorded).
 
@@ -446,7 +453,13 @@ def list_patients(
     # boardOrder is its twin) and then paged, not paged in SQL, because the
     # sort key is the score: page one is the top of the board and the order
     # never contradicts the numbers shown.
-    scored = scored_admitted_patients(dept)
+    #
+    # Facility scope (multisite-8): with more than one facility on record the
+    # board holds only patients whose active admission is at the caller's
+    # facilities, so a department-less account at one facility never lists
+    # another facility's ward. None (one facility) changes nothing.
+    facilities = facility_scope(user)
+    scored = scored_admitted_patients(dept, facilities=facilities)
 
     total = len(scored)
     response.headers["X-Total-Count"] = str(total)
@@ -483,7 +496,7 @@ def list_patients(
     # picker lands on the stay (encounter 'ip'). Without it the billing desk
     # posted every inpatient charge as outpatient.
     if rows:
-        admission_ids = _active_admission_ids([r["id"] for r in rows])
+        admission_ids = _active_admission_ids([r["id"] for r in rows], facilities)
         for r in rows:
             r["admission_id"] = admission_ids.get(r["id"])
         # adt-10: whether each patient is on the ward, for the board's 'Not on
@@ -541,7 +554,7 @@ def list_discharged(
     limit: int = _LIST_DISCHARGED_LIMIT_DEFAULT,
     offset: int = _LIST_DISCHARGED_OFFSET_DEFAULT,
     user: dict = _LIST_DISCHARGED_USER_DEFAULT,
-):
+) -> list:
     """Discharged patients from the caller's department, paginated.
 
     This route sat ten lines below list_patients — which does scope — and did
@@ -565,7 +578,13 @@ def list_discharged(
     # nothing here. permissions.PATIENT_DEPARTMENT_SQL prefers an active row and
     # falls back to the newest — the same derivation the Sage lane uses.
     dept_clause = f"AND {PATIENT_DEPARTMENT_SQL} = ?" if dept else ""
-    dept_param = (dept,) if dept else ()
+    dept_param: tuple = (dept,) if dept else ()
+    # Facility scope (multisite-8): the facility of each patient's latest
+    # encounter (permissions.FACILITY_PATIENT_SQL), the rule require_patient_access
+    # applies to the chart this list opens. Nothing is added with one facility.
+    facility_sql, facility_args = patient_clause(facility_scope(user))
+    dept_clause += facility_sql
+    dept_param += facility_args
 
     with db_session() as db:
         total = db.execute(
@@ -1437,7 +1456,7 @@ def list_escalations_route(
     include_resolved: bool = _LIST_ESCALATIONS_ROUTE_INCLUDE_RESOLVED_DEFAULT,
     limit: int = _LIST_ESCALATIONS_ROUTE_LIMIT_DEFAULT,
     user: dict = _LIST_ESCALATIONS_ROUTE_USER_DEFAULT,
-):
+) -> dict:
     """Everything on this ward that a deterioration alert is still waiting on.
 
     THE READ IS ALSO A TICK OF THE MECHANISM, and that is a deliberate design
@@ -1462,12 +1481,15 @@ def list_escalations_route(
     from services import escalation_service
 
     dept = department_scope(user)
+    # Facility scope (multisite-8): the scan and the board both keep to the
+    # caller's facilities while more than one facility is on record.
+    facilities = facility_scope(user)
     escalation_service.advance_due()
     if dept is not None:
-        escalation_service.scan_new_observations(department=dept)
+        escalation_service.scan_new_observations(department=dept, facilities=facilities)
 
     rows = escalation_service.list_escalations(
-        department=dept, include_resolved=include_resolved, limit=limit
+        department=dept, include_resolved=include_resolved, limit=limit, facilities=facilities
     )
 
     if rows:
@@ -1577,7 +1599,7 @@ _SWEEP_ESCALATIONS_ROUTE_USER_DEFAULT = Depends(require_permission("alert.read")
 @router.post("/escalations/sweep")
 def sweep_escalations_route(
     user: dict = _SWEEP_ESCALATIONS_ROUTE_USER_DEFAULT,
-):
+) -> dict:
     """One tick of the mechanism for an ops caller or a scheduler: advance every
     overdue tier, then catch any qualifying observation nothing dispatched.
 
@@ -1585,10 +1607,16 @@ def sweep_escalations_route(
     from a cron line and safe to log. Scoped to the caller's department when they
     have one; hospital-wide for an unscoped governance account, which is the case
     a scheduled sweep should run under.
+
+    With more than one facility on record the sweep keeps to the caller's
+    facilities (multisite-8): an account at one facility never raises chains
+    for another facility's patients. A group-wide account still sweeps all.
     """
     from services import escalation_service
 
-    return escalation_service.sweep(department=department_scope(user))
+    return escalation_service.sweep(
+        department=department_scope(user), facilities=facility_scope(user)
+    )
 
 
 _PATIENT_ESCALATIONS_ROUTE_INCLUDE_RESOLVED_DEFAULT = Query(True)

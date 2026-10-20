@@ -63,6 +63,13 @@
  * same handover words. It posts to /api/adt/transfers; the old form posts to
  * /api/frontdesk/transfers, which delegates to the same writer while the
  * module is on. With the module off this screen is unchanged.
+ *
+ * ── A PATIENT FROM ANOTHER FACILITY (multisite-17) ──────────────────────────
+ * While the server reports ORB_MULTI_SITE on and more than one facility on
+ * record, a central desk (no department) also gets ./frontdesk/GroupMatchCard:
+ * a search of the whole group by name, age or date of birth, sex and phone,
+ * so a patient treated at another facility is registered on their one record
+ * rather than a second one. With one facility this screen is unchanged.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
@@ -95,7 +102,10 @@ import {
   type Permission,
 } from '../../lib/roles'
 import QueueView, { type OpdModeQueue } from './frontdesk/QueueView'
-import { currentFeatureFlags, currentModuleFlags, subscribeModuleFlags } from '../../shellConfig'
+import GroupMatchCard from './frontdesk/GroupMatchCard'
+import {
+  currentFeatureFlags, currentModuleFlags, subscribeModuleFlags, usePlatformFlags,
+} from '../../shellConfig'
 import MoveDrawer from '../../components/adt/MoveDrawer'
 import {
   discoverFrontDeskViews,
@@ -899,6 +909,9 @@ export default function FrontDeskPanel({
      Transfer then opens the Move screen (adt-6a). */
   const modules = useSyncExternalStore(subscribeModuleFlags, currentModuleFlags)
   const adtOn = modules.adt === true
+  /* multisite-17: ORB_MULTI_SITE and more than one facility on record, as the
+     shell's health probe last read them. */
+  const platform = usePlatformFlags()
   const [featureGone, setFeatureGone] = useState(false)
   const registrationOn = features.registration === true && !featureGone
   /* A desk-only account (registration.* and no chart): the clinical board and
@@ -990,6 +1003,17 @@ export default function FrontDeskPanel({
    * show in the queue below.
    */
   const doctors = roster
+
+  /* multisite-17: the group identity match, for a central desk (the server
+     derived no department) while more than one facility is on record. Its
+     clinics are this facility's: the transfer list, or for a desk-only account
+     (which does not read that list) the clinics of the roster. Both lists come
+     from the server already limited to the caller's facility. */
+  const groupMatchOn = platform.multiSite && platform.multiFacilityData
+    && queue !== null && (queue.department ?? null) === null
+  const groupMatchClinics = destinations.length
+    ? destinations.map(d => d.department)
+    : [...new Set(roster.map(d => d.department).filter((d): d is string => !!d))].sort()
 
   if (loading) return <div className="orb-panel-loading">Loading the front desk…</div>
 
@@ -1085,6 +1109,9 @@ export default function FrontDeskPanel({
               scopedDepartment={queue?.department ?? null}
               onRegistered={load}
             />
+          )}
+          {groupMatchOn && (
+            <GroupMatchCard clinics={groupMatchClinics} doctors={doctors} onRegistered={load} />
           )}
           {queue && (isOpdModeQueue(queue)
             /* The server's 'opd' feature is on: priority, room, skipped and

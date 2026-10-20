@@ -794,7 +794,13 @@ def attach_people(
     return rows
 
 
-def search_patients(query: str | None, *, dept: str | None = None, limit: int = 20) -> list[dict]:
+def search_patients(
+    query: str | None,
+    *,
+    dept: str | None = None,
+    limit: int = 20,
+    facilities: frozenset[int] | None = None,
+) -> list[dict]:
     """Patients the counter can take money for, by name, MRN, bed or exact ID.
 
     Who they are and where they are, nothing clinical: no diagnosis, no risk.
@@ -802,7 +808,13 @@ def search_patients(query: str | None, *, dept: str | None = None, limit: int = 
     included, because the final bill is settled at discharge and a refund is
     often paid weeks after it. Admitted patients sort first. `dept` scopes the
     QUERY, never a post-filter, so a LIMIT cannot hide an in-scope match.
+
+    `facilities` is the caller's permissions.facility_scope (multisite-9a):
+    None (one facility on record) changes nothing; a set keeps the patients
+    whose latest encounter is at one of those facilities, in the query too.
     """
+    from services.facility_documents import patient_facility_clause
+
     text = (query or "").strip()
     if len(text) < PATIENT_SEARCH_MIN_CHARS:
         return []
@@ -820,6 +832,9 @@ def search_patients(query: str | None, *, dept: str | None = None, limit: int = 
 
         sql += f" AND {PATIENT_DEPARTMENT_SQL} = ?"
         args.append(dept)
+    facility_sql, facility_params = patient_facility_clause("p.id", facilities)
+    sql += facility_sql
+    args.extend(facility_params)
     sql += (
         " ORDER BY CASE WHEN p.id = ? THEN 0 WHEN p.mrn LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END,"
         " (p.status = 'admitted') DESC, p.name COLLATE NOCASE, p.id LIMIT ?"
@@ -839,21 +854,30 @@ def search_patients(query: str | None, *, dept: str | None = None, limit: int = 
         ]
 
 
-def open_invoices_for_payment(patient_id: str) -> list[dict]:
+def open_invoices_for_payment(
+    patient_id: str, *, facilities: frozenset[int] | None = None
+) -> list[dict]:
     """This patient's bills that still owe money, oldest first, so the counter
     offers a choice instead of an invoice number typed by hand (one wrong digit
-    named another patient's bill)."""
+    named another patient's bill).
+
+    `facilities` (multisite-9a, document-keyed): a set keeps the bills whose
+    own facility is one of them, so a counter is never offered another
+    facility's bill. None (one facility on record) changes nothing."""
+    from services.facility_documents import facility_clause
+
     patient_id = _text(patient_id, "patient_id", required=True, max_len=64)
     marks = ",".join("?" * len(OPEN_INVOICE_STATUSES))
+    facility_sql, facility_params = facility_clause("facility_id", facilities)
     out: list[dict] = []
     with db_session() as db:
         rows = [
             _row(r)
             for r in db.execute(
                 f"SELECT * FROM invoices WHERE patient_id = ? AND status IN ({marks}) "
-                "AND invoice_type != 'credit_note' "
+                f"AND invoice_type != 'credit_note'{facility_sql} "
                 "ORDER BY COALESCE(issued_at, created_at), id",
-                (patient_id, *OPEN_INVOICE_STATUSES),
+                (patient_id, *OPEN_INVOICE_STATUSES, *facility_params),
             ).fetchall()
         ]
         for inv in rows:
@@ -1436,7 +1460,13 @@ def list_payments(
     status: str | None = None,
     direction: str | None = None,
     limit: int = 100,
+    facilities: frozenset[int] | None = None,
 ) -> list[dict]:
+    """Receipts, newest first. `facilities` (multisite-9a, document-keyed)
+    keeps the receipts whose own facility is one of them; None (one facility
+    on record) changes nothing."""
+    from services.facility_documents import facility_condition
+
     clauses: list[str] = []
     args: list = []
     if patient_id:
@@ -1454,6 +1484,10 @@ def list_payments(
     if direction:
         clauses.append("direction = ?")
         args.append(direction)
+    facility_sql, facility_params = facility_condition("facility_id", facilities)
+    if facility_sql is not None:
+        clauses.append(facility_sql)
+        args.extend(facility_params)
     sql = "SELECT * FROM payments"
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
@@ -2343,8 +2377,15 @@ def get_refund(refund_id: int) -> dict | None:
 
 
 def list_refunds(
-    *, patient_id: str | None = None, status: str | None = None, limit: int = 100
+    *,
+    patient_id: str | None = None,
+    status: str | None = None,
+    limit: int = 100,
+    facilities: frozenset[int] | None = None,
 ) -> list[dict]:
+    """Refund requests, newest first; `facilities` as in list_payments."""
+    from services.facility_documents import facility_condition
+
     args: list[str | int | float | bytes | None]
     clauses, args = [], []
     if patient_id:
@@ -2353,6 +2394,10 @@ def list_refunds(
     if status:
         clauses.append("status = ?")
         args.append(status)
+    facility_sql, facility_params = facility_condition("facility_id", facilities)
+    if facility_sql is not None:
+        clauses.append(facility_sql)
+        args.extend(facility_params)
     sql = "SELECT * FROM refunds"
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
@@ -2582,7 +2627,13 @@ def list_discounts(
     invoice_id: int | None = None,
     patient_id: str | None = None,
     limit: int = 100,
+    facilities: frozenset[int] | None = None,
 ) -> list[dict]:
+    """Discount requests, newest first. `facilities` (multisite-9a) keeps the
+    requests whose bill, else whose patient, is at one of them; None (one
+    facility on record) changes nothing."""
+    from services.facility_documents import discount_facility_condition
+
     args: list[str | int | float | bytes | None]
     clauses, args = [], []
     if status:
@@ -2594,6 +2645,10 @@ def list_discounts(
     if patient_id:
         clauses.append("patient_id = ?")
         args.append(patient_id)
+    facility_sql, facility_params = discount_facility_condition(facilities)
+    if facility_sql is not None:
+        clauses.append(facility_sql)
+        args.extend(facility_params)
     sql = "SELECT * FROM discount_approvals"
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
@@ -2943,8 +2998,15 @@ def get_counter_session(session_id: int) -> dict | None:
 
 
 def list_counter_sessions(
-    *, counter_code: str | None = None, status: str | None = None, limit: int = 50
+    *,
+    counter_code: str | None = None,
+    status: str | None = None,
+    limit: int = 50,
+    facilities: frozenset[int] | None = None,
 ) -> list[dict]:
+    """Counter sessions, newest first; `facilities` as in list_payments."""
+    from services.facility_documents import facility_condition
+
     args: list[str | int | float | bytes | None]
     clauses, args = [], []
     if counter_code:
@@ -2953,6 +3015,10 @@ def list_counter_sessions(
     if status:
         clauses.append("status = ?")
         args.append(status)
+    facility_sql, facility_params = facility_condition("facility_id", facilities)
+    if facility_sql is not None:
+        clauses.append(facility_sql)
+        args.extend(facility_params)
     sql = "SELECT * FROM cash_counter_sessions"
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
@@ -2962,8 +3028,20 @@ def list_counter_sessions(
         return [_session_view(_row(r)) for r in db.execute(sql, tuple(args)).fetchall()]
 
 
-def day_end_summary(*, day: date | str | None = None, counter_code: str | None = None) -> dict:
+def day_end_summary(
+    *,
+    day: date | str | None = None,
+    counter_code: str | None = None,
+    facilities: frozenset[int] | None = None,
+) -> dict:
     """The day's takings, by method, with the totals proved against the ledger.
+
+    PER FACILITY (multisite-9a). `facilities` is the caller's
+    permissions.facility_scope: a set keeps the receipts, drawers, unattributed
+    cash and open refund requests whose own facility is one of them, and the
+    discount requests whose bill or patient is there; with exactly one, the
+    receipt series asked about is that facility's. None (one facility on
+    record) is the whole hospital, exactly as before.
 
     THE DAY IS A HOSPITAL-LOCAL DAY, converted to a UTC WINDOW. Stored timestamps
     are UTC (SQLite's CURRENT_TIMESTAMP), and in IST a local day starts at
@@ -3004,6 +3082,8 @@ def day_end_summary(*, day: date | str | None = None, counter_code: str | None =
     each leg was written, so an earlier day's sheet does not change when one of
     its receipts is reversed later.
     """
+    from services.facility_documents import discount_facility_condition, facility_clause
+
     if day is None:
         local_day = hospital_today()
     elif isinstance(day, str):
@@ -3028,6 +3108,11 @@ def day_end_summary(*, day: date | str | None = None, counter_code: str | None =
             "WHERE counter_code = ?)"
         )
         args.append(counter_code)
+    # The facility predicate (multisite-9a); '' and () with no facility limit.
+    facility_sql, facility_params = facility_clause("facility_id", facilities)
+    where += facility_sql
+    args.extend(facility_params)
+    discount_sql, discount_params = discount_facility_condition(facilities)
 
     with db_session() as db:
         parts, totals = _method_breakdown(db, where, args)
@@ -3049,10 +3134,12 @@ def day_end_summary(*, day: date | str | None = None, counter_code: str | None =
                 "AND datetime(received_at) >= ? AND datetime(received_at) < ? "
                 f"AND {_NOT_A_REVERSAL})) "
                 + ("AND counter_code = ? " if counter_code else "")
+                + (f"{facility_sql.strip()} " if facility_sql else "")
                 + "ORDER BY id DESC",
                 tuple(
                     [start_s, start_s, end_s, end_s, start_s, end_s]
                     + ([counter_code] if counter_code else [])
+                    + list(facility_params)
                 ),
             ).fetchall()
         ]
@@ -3071,21 +3158,29 @@ def day_end_summary(*, day: date | str | None = None, counter_code: str | None =
             "COUNT(*) AS n FROM payments "
             "WHERE datetime(received_at) >= ? AND datetime(received_at) < ? "
             f"AND status IN ({placeholders}) AND counter_session_id IS NULL "
-            f"AND method IN ({cash_placeholders})",
-            (start_s, end_s, *LEDGER_PAYMENT_STATUSES, *sorted(CASH_METHODS)),
+            f"AND method IN ({cash_placeholders}){facility_sql}",
+            (start_s, end_s, *LEDGER_PAYMENT_STATUSES, *sorted(CASH_METHODS), *facility_params),
         ).fetchone()
 
         refunds_open = int(
             db.execute(
                 "SELECT COUNT(*) AS c FROM refunds WHERE status IN ('requested','approved')"
+                + facility_sql,
+                facility_params,
             ).fetchone()["c"]
         )
         discounts_open = int(
             db.execute(
                 "SELECT COUNT(*) AS c FROM discount_approvals WHERE status = 'requested'"
+                + (f" AND {discount_sql}" if discount_sql else ""),
+                discount_params,
             ).fetchone()["c"]
         )
-        series_configured = _receipt_series_is_configured(db)
+        # The series of the one facility the sheet is for; facility 1 otherwise.
+        series_facility = (
+            next(iter(facilities)) if facilities and len(facilities) == 1 else MAIN_FACILITY_ID
+        )
+        series_configured = _receipt_series_is_configured(db, int(series_facility))
 
     cash = next((p for p in parts if p["method"] == "cash"), None)
     counted = sum(

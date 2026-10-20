@@ -711,6 +711,127 @@ def strict_place_refusal(target: dict, *, recorded: dict | None = None) -> AdtEr
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+#  Moves between facilities (multisite-8h1, W12-F; ruling MS-R3 (c))
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# An admission's facility never changes (admissions.facility_id, migration 70),
+# and Orb tells which facility a chart belongs to from the patient's admissions,
+# which is exact only while they are all at one facility (the multi-site
+# design's attribution invariant). So while more than one facility is on record
+# every lane that writes a place or a treating department refuses a ward, or a
+# department, at another facility than the admission's own: a bed assignment, a
+# bed change, a transfer (the front desk's, the ward clerk's ordered transfer and
+# the Relay transfer lane included, which all come through here), a swap, a
+# correction and a reconciliation link. MS-R3 stays at (c), refuse, until it and
+# R009 are ruled. The refusal is raised before anything is written and carries
+# the facts of the authorization row (cross_facility_move_refused), which the
+# caller writes once its own session has rolled back (audit_facility_refusal):
+# a row written inside the rolled-back transaction would be lost. With one
+# facility on record nothing is read.
+
+CROSS_FACILITY_CODE = "cross_facility_move_refused"
+
+CROSS_FACILITY_WARD_WORDS = (
+    "That ward belongs to another facility of the group. Orb does not move a patient "
+    "between facilities yet, so nothing was changed. Choose a ward of the facility the "
+    "patient is at."
+)
+
+
+class AdtCrossFacility(AdtConflict):
+    """A move into another facility refused (multisite-8h1, MS-R3 (c)). 409.
+    `facts` holds the authorization row's fields; `audited` turns True once
+    audit_facility_refusal has written it, so it is written once."""
+
+    def __init__(self, message: str, *, facts: dict) -> None:
+        super().__init__(message, code=CROSS_FACILITY_CODE)
+        self.facts = facts
+        self.audited = False
+
+
+def cross_facility_refusal_on(
+    db: Any,
+    *,
+    admission_id: str | None,
+    ward: dict | None,
+    to_department: str | None = None,
+) -> AdtCrossFacility | None:
+    """The refusal for putting this admission on `ward`, or giving it the
+    treating department `to_department`, at another facility than the
+    admission's own; None when neither crosses, when the admission is not
+    written yet (the admission door checks its own facility first), and
+    always while one facility is on record (nothing is read)."""
+    from services import facility_lanes
+
+    if not admission_id or not facility_lanes.multi_facility(db):
+        return None
+    adm = db.execute(
+        "SELECT id, patient_id, department, facility_id FROM admissions WHERE id = ?",
+        (admission_id,),
+    ).fetchone()
+    if adm is None:
+        return None
+    home = int(adm["facility_id"] or 1)
+    to_facility: int | None = None
+    cause: str | None = None
+    if ward is not None and int(ward.get("facility_id") or 1) != home:
+        to_facility, cause = int(ward.get("facility_id") or 1), "ward_at_another_facility"
+    elif to_department is not None and not _same(to_department, adm["department"]):
+        from services.frontdesk_service import department_facility_on
+
+        at = department_facility_on(db, to_department)
+        if at is None:
+            cause = "department_not_listed"
+        elif at != home:
+            to_facility, cause = at, "patient_at_another_facility"
+    if cause is None:
+        return None
+    from services.frontdesk_service import CROSS_FACILITY_TRANSFER_WORDS, patient_facility_ids_on
+
+    return AdtCrossFacility(
+        CROSS_FACILITY_WARD_WORDS
+        if cause == "ward_at_another_facility"
+        else CROSS_FACILITY_TRANSFER_WORDS,
+        facts={
+            "cause": cause,
+            "patient_id": adm["patient_id"],
+            "admission_id": adm["id"],
+            "to_department": to_department,
+            "to_ward_id": (ward or {}).get("id"),
+            "to_facility_id": to_facility,
+            "from_facility_ids": sorted(patient_facility_ids_on(db, adm["patient_id"])),
+        },
+    )
+
+
+def audit_facility_refusal(
+    err: BaseException, *, lane: str, actor: dict | None, request_meta: dict | None = None
+) -> None:
+    """The authorization 'cross_facility_move_refused' row for a refusal
+    cross_facility_refusal_on raised, once, on a connection of its own. Call
+    it after the caller's session has closed. Does nothing for any other
+    error. BLOCKING; fail-soft like every authorization row."""
+    if not isinstance(err, AdtCrossFacility) or err.audited:
+        return
+    from services.frontdesk_service import audit_cross_facility_refusal
+
+    facts = err.facts
+    audit_cross_facility_refusal(
+        lane=lane,
+        cause=str(facts.get("cause")),
+        patient_id=facts.get("patient_id"),
+        actor_id=_actor_id(actor),
+        actor_role=(actor or {}).get("role"),
+        to_department=facts.get("to_department"),
+        to_facility_id=facts.get("to_facility_id"),
+        from_facility_ids=facts.get("from_facility_ids") or (),
+        admission_id=facts.get("admission_id"),
+        request_meta=request_meta,
+    )
+    err.audited = True
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 #  The single location writer
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -760,7 +881,7 @@ def _case_room_line_on(db, patient_id: str, text: str) -> bool:
 
 
 def locate_admission_on(
-    db,
+    db: Any,
     *,
     admission_id: str,
     actor: dict | None,
@@ -855,6 +976,13 @@ def locate_admission_on(
     unlisted = strict_place_refusal(target, recorded=adm)
     if unlisted is not None:
         raise unlisted
+    # multisite-8h1: never a ward or a treating department at another
+    # facility than the admission's own (ruling MS-R3 (c)).
+    crossing = cross_facility_refusal_on(
+        db, admission_id=admission_id, ward=ward, to_department=to_department
+    )
+    if crossing is not None:
+        raise crossing
 
     if bed is not None:
         holder = db.execute(
@@ -1395,7 +1523,7 @@ def bed_readiness_on(db, *, ward: dict, bed: dict, reservations: bool = True) ->
     }
 
 
-def bed_choices_on(db) -> list:
+def bed_choices_on(db: Any, *, facilities: frozenset[int] | None = None) -> list:
     """Every active ward with its beds, for the admission form's bed picker.
 
     Each bed says what placing a patient there needs: nothing, a typed reason
@@ -1404,8 +1532,12 @@ def bed_choices_on(db) -> list:
     out-of-service bed then says out_of_service True and needs its reason as
     well), or it cannot be chosen (occupied or reserved; an occupied bed
     offers an extra bed beside it instead). NO PATIENT DATA:
-    an occupied bed says 'Occupied' and nothing about who lies in it."""
+    an occupied bed says 'Occupied' and nothing about who lies in it.
+
+    `facilities` (multisite-8h1) is the caller's facility scope: with one,
+    the wards of those facilities only."""
     from services import bed_master_service as bm
+    from services.facility_lanes import wards_in_scope
 
     wards = [
         dict(r)
@@ -1413,6 +1545,7 @@ def bed_choices_on(db) -> list:
             "SELECT * FROM wards WHERE is_active = 1 ORDER BY LOWER(code)"
         ).fetchall()
     ]
+    wards = wards_in_scope(wards, facilities)
     board = _board_tiles_on(db, wards)
     tracked = [w for w in board["wards"] if w["cleaning_tracked"]]
     terminal = _terminal_pending_on(
@@ -1994,7 +2127,7 @@ def add_extra_bed_on(
 
 
 def prepare_place_on(
-    db,
+    db: Any,
     *,
     admission_id: str | None,
     actor: dict | None,
@@ -2078,6 +2211,13 @@ def prepare_place_on(
         unlisted = strict_place_refusal(target, recorded=_recorded_place_on(db, admission_id))
         if unlisted is not None:
             raise unlisted
+    # multisite-8h1: a ward or treating department at another facility is
+    # refused here, before the cleaning and occupancy rules read that ward.
+    crossing = cross_facility_refusal_on(
+        db, admission_id=admission_id, ward=ward, to_department=treating_department
+    )
+    if crossing is not None:
+        raise crossing
     if bed is not None:
         if _holder_on(db, admission_id=admission_id, ward=ward, bed=bed) is not None:
             raise AdtConflict(

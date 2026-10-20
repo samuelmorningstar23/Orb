@@ -218,7 +218,7 @@ def _serialize_med(row) -> dict:
     }
 
 
-def list_pending_verification() -> list[dict]:
+def list_pending_verification(*, facilities: frozenset[int] | None = None) -> list[dict]:
     """All AI/agentic-sourced meds awaiting pharmacist verification.
 
     A med is pending when its provenance is llm_extracted/agentic AND no
@@ -227,7 +227,17 @@ def list_pending_verification() -> list[dict]:
     one for a patient who has gone home, is not an order awaiting review. Each
     row is joined to the patient name and annotated with any drug-safety alerts
     so the queue can render them in-line.
+
+    `facilities` is the caller's permissions.facility_scope (multisite-9a,
+    ruling MS-R9 (a): the verify queue is per facility). None, which is every
+    install with one facility on record, runs exactly the statement it always
+    ran. A set keeps the medicines of patients whose latest encounter is at
+    one of those facilities (a medication row has no facility of its own), in
+    the statement, so nothing of another facility is read or screened.
     """
+    from services.facility_documents import patient_facility_clause
+
+    facility_sql, facility_params = patient_facility_clause("m.patient_id", facilities)
     with db_session() as db:
         rows = db.execute(
             """SELECT m.id, m.patient_id, m.drug_name, m.dosage, m.route, m.frequency,
@@ -245,11 +255,12 @@ def list_pending_verification() -> list[dict]:
                LEFT JOIN users sn_u ON sn_u.id = COALESCE(sn.signed_by, sn.author_id)
                WHERE m.source IN ({placeholders})
                  AND m.verified_by IS NULL
-                 AND m.status = 'active'
+                 AND m.status = 'active'{facility}
                ORDER BY m.started_at DESC, m.id DESC""".format(
-                placeholders=",".join("?" * len(_UNVERIFIED_SOURCES))
+                placeholders=",".join("?" * len(_UNVERIFIED_SOURCES)),
+                facility=facility_sql,
             ),
-            _UNVERIFIED_SOURCES,
+            (*_UNVERIFIED_SOURCES, *facility_params),
         ).fetchall()
 
     pending = []
@@ -316,6 +327,17 @@ def _fetch_med(db, med_id: int):
            WHERE m.id = ?""",
         (med_id,),
     ).fetchone()
+
+
+def medication_patient_id(med_id: int) -> str | None:
+    """The patient a medication row is charted for, or None when no row has
+    that id. The verify and reject routes read it to check the caller's
+    facility scope before anything is changed or screened (multisite-9a)."""
+    with db_session() as db:
+        row = db.execute(
+            "SELECT patient_id FROM medications WHERE id = ?", (int(med_id),)
+        ).fetchone()
+    return None if row is None else row["patient_id"]
 
 
 def _mirror_into_order_store(

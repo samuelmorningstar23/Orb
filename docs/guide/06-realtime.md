@@ -10,7 +10,7 @@ Orb's realtime subsystem is what makes the UI feel alive: vitals tick across the
 
 - **WebSocket**, a browser API and network protocol that upgrades a normal HTTP request into a persistent, two-way TCP connection, so the server can push data to the browser at any time without the browser asking.
 - **socket.io**, a library layered *on top of* WebSocket (via its transport engine, engine.io). It adds three things raw WebSockets lack: **named events** (you emit `"vitals:update"` with a JSON payload instead of untyped frames), **automatic fallback** to HTTP long-polling when a proxy blocks WebSockets, and **automatic reconnection**. Client and server must both speak socket.io; a raw WebSocket client cannot connect. All traffic flows over the `/socket.io/` URL path (Vite proxies it to the backend with `ws: true`, `vite.config.ts:39-43`).
-- **Socket room**, a server-side label attached to a connection. `sio.emit(event, data, room="X")` delivers only to connections that joined room `"X"`. Rooms are free to create and exist only in server memory. Orb uses three kinds: a **personal room** `user:<user_id>` (every connection joins its own at connect, `server/ws/realtime.py:186`), a **channel room** named by the Relay channel id, e.g. `CH-3F2A9B` (joined on demand, `server/ws/realtime.py:225`), and the implicit **per-connection room** (each socket id `sid` is its own room; `to=sid` targets one client).
+- **Socket room**, a server-side label attached to a connection. `sio.emit(event, data, room="X")` delivers only to connections that joined room `"X"`. Rooms are free to create and exist only in server memory. Orb uses three kinds: a **personal room** `user:<user_id>` (every connection joins its own at connect, `server/ws/realtime.py:199`), a **channel room** named by the Relay channel id, e.g. `CH-3F2A9B` (joined on demand, `server/ws/realtime.py:238`), and the implicit **per-connection room** (each socket id `sid` is its own room; `to=sid` targets one client).
 - **ASGI** (Asynchronous Server Gateway Interface), the Python standard interface between an async web server (uvicorn) and an async web application (FastAPI, python-socketio). Because both FastAPI and `socketio.AsyncServer` are ASGI apps, one can wrap the other: `socketio.ASGIApp(sio, app)` routes `/socket.io/*` traffic to the socket server and everything else to FastAPI (`server/main.py:461`).
 - **JWT** (JSON Web Token), a signed, self-describing credential string. Orb's login endpoint issues one; REST requests carry it in the `Authorization: Bearer` header, and the socket handshake carries it in the socket.io `auth` payload. See guide 03-auth-rbac.
 - **RBAC** (role-based access control), permissions are attached to roles (`doctor`, `nurse`, …), not individuals; `has_permission(role, "relay.send")` (`server/permissions.py:145-147`) is the check. See guide 03-auth-rbac.
@@ -55,12 +55,12 @@ Neighbors: guide 01 (app shell that renders the panels consuming these events), 
 ### Flow 1: a browser gets live data (handshake → rooms → events)
 
 1. On module load, `src/api/client.ts:42` creates one socket.io client for the whole app: `io(API_HOST, { autoConnect: false, withCredentials: true, auth: (cb) => cb({ token: getToken() }) })`. **`autoConnect` is `false`** (`src/api/client.ts:43`), the module then connects only when there is already either a persisted token or a session cookie (`src/api/client.ts:54`), so a visitor sitting on the login screen never holds an anonymous socket open. `withCredentials: true` (`:48`) sends the HttpOnly session cookie with the handshake; that cookie, not `auth.token`, is how an ordinary browser session authenticates. The `auth` callback (`:49`) is still evaluated at each (re)connect for machine/back-compat clients that hold a token.
-2. The socket.io handshake arrives at `connect(sid, environ, auth)` on the server (`server/ws/realtime.py:358`, decorated `@sio.event` at `:246`). `_authenticate(auth, environ)` (`server/ws/realtime.py:160`) takes the token from the handshake `auth` payload *or* falls back to the session cookie on the handshake request (`_cookie_token`, `:140`), decodes it with the same `decode_token` the REST layer uses (`server/auth.py:371`), and re-reads the user row from the DB so identity/role come from the database, never from the client (docstring, `:71-73`). It is called through `run_db(...)` (`server/ws/realtime.py:368`) because it reads `users` on an encrypted DB and a reconnect storm, a ward wifi blip redialling every tablet at once, would otherwise serialise those reads through the event loop (comment at `:254-256`).
-3. On failure, `connect` returns `False` (`server/ws/realtime.py:371`), socket.io refuses the connection and the client's reconnection logic will retry, until `authenticateSocket()` refreshes the handshake after login (`src/api/client.ts:57-64`).
-4. On success, the user's `{user_id, name, role, department}` is saved in the per-connection session (`server/ws/realtime.py:372-377`) and the connection auto-joins its personal room `user:<id>` (`server/ws/realtime.py:380`) so surgical alerts can target a single person.
-5. **Vitals rooms are gated on the permission, not on mere authentication** (`server/ws/realtime.py:393-402`). A `vitals.read` holder enters `dept:<their department>`, or `dept:__all__` when they have no department (`:407`); a `patient` role instead enters only `patient-self:<their patient id>` (`:408-413`). This matters because patient-portal and pharmacist logins are ordinary rows in the same `users` table and pass the handshake cleanly, authentication alone would hand them the live vitals feed the REST layer denies them. The department is derived by the shared `department_scope(user)` helper (`:402`), the same one `/api/vigil/patients` and the nurse shift board use; the comment at `:398-401` records that the nurse board's private copy of those two lines is exactly how a client-supplied `?all_departments=true` once widened a nurse's PHI reach.
-6. When the user opens a Relay channel, `RelayPanel.tsx:79` emits `join_channel` with `{channel_id}`. The server re-checks authorization in `_user_can_access_channel` (`server/ws/realtime.py:578`) via `get_channels_for_user` (`server/services/relay_service.py:11`) before `enter_room` (`server/ws/realtime.py:596-610`), so socket-room visibility exactly matches REST visibility.
-7. From then on, any server code that calls `sio.emit("message:new", msg, room=channel_id)` reaches that browser instantly. Vitals go out through `emit_patient_vitals` (`server/ws/realtime.py:486`), which routes to the patient's department room rather than broadcasting globally.
+2. The socket.io handshake arrives at `connect(sid, environ, auth)` on the server (`server/ws/realtime.py:391`, decorated `@sio.event` at `:259`). `_authenticate(auth, environ)` (`server/ws/realtime.py:163`) takes the token from the handshake `auth` payload *or* falls back to the session cookie on the handshake request (`_cookie_token`, `:143`), decodes it with the same `decode_token` the REST layer uses (`server/auth.py:371`), and re-reads the user row from the DB so identity/role come from the database, never from the client (docstring, `:71-73`). It is called through `run_db(...)` (`server/ws/realtime.py:401`) because it reads `users` on an encrypted DB and a reconnect storm, a ward wifi blip redialling every tablet at once, would otherwise serialise those reads through the event loop (comment at `:272-274`).
+3. On failure, `connect` returns `False` (`server/ws/realtime.py:404`), socket.io refuses the connection and the client's reconnection logic will retry, until `authenticateSocket()` refreshes the handshake after login (`src/api/client.ts:57-64`).
+4. On success, the user's `{user_id, name, role, department}` is saved in the per-connection session (`server/ws/realtime.py:510-518`) and the connection auto-joins its personal room `user:<id>` (`server/ws/realtime.py:521`) so surgical alerts can target a single person.
+5. **Vitals rooms are gated on the permission, not on mere authentication** (`server/ws/realtime.py:522-534`). A `vitals.read` holder enters `dept:<their department>`, or `dept:__all__` when they have no department (`:448`); a `patient` role instead enters only `patient-self:<their patient id>` (`:544-549`). This matters because patient-portal and pharmacist logins are ordinary rows in the same `users` table and pass the handshake cleanly, authentication alone would hand them the live vitals feed the REST layer denies them. The department is derived by the shared `department_scope(user)` helper (`:532`), the same one `/api/vigil/patients` and the nurse shift board use; the comment at `:528-531` records that the nurse board's private copy of those two lines is exactly how a client-supplied `?all_departments=true` once widened a nurse's PHI reach.
+6. When the user opens a Relay channel, `RelayPanel.tsx:79` emits `join_channel` with `{channel_id}`. The server re-checks authorization in `_user_can_access_channel` (`server/ws/realtime.py:730`) via `get_channels_for_user` (`server/services/relay_service.py:12`) before `enter_room` (`server/ws/realtime.py:754-768`), so socket-room visibility exactly matches REST visibility.
+7. From then on, any server code that calls `sio.emit("message:new", msg, room=channel_id)` reaches that browser instantly. Vitals go out through `emit_patient_vitals` (`server/ws/realtime.py:594`), which routes to the patient's department room rather than broadcasting globally.
 8. On logout, `deauthenticateSocket()` (`src/api/client.ts:68-73`) nulls the auth and disconnects, so the next user on the machine does not inherit a live authenticated socket.
 
 ### Flow 2: the nervous system (bot → bus → trigger), the main cross-layer flow
@@ -69,7 +69,7 @@ Neighbors: guide 01 (app shell that renders the panels consuming these events), 
 sequenceDiagram
     participant T as SimulatorSource._loop (simulator_source.py:86)
     participant B as run_vitals_bot (bot_service.py:322)
-    participant S as sio (realtime.py:135)
+    participant S as sio (realtime.py:138)
     participant EB as LocalEventBus (event_bus.py:140)
     participant NT as on_critical_vigil_alert (nervous_system_triggers.py:21)
     participant DB as SQLite
@@ -94,7 +94,7 @@ sequenceDiagram
 ```
 
 1. `lifespan` registers the deployment's vitals sources via `_configure_vitals_sources()` (`server/main.py:526`, function at `:184`) and starts them with `registry.start_all()` (`server/main.py:527`). There is no `vitals_simulator()` coroutine in `main.py` any more, the synthetic bot is now one `SimulatorSource` peer among several (see `_configure_vitals_sources` below). If `INGESTION_MODE` is `"ingestion"` (the shipped default, `server/config.py:348`) the simulator is simply never registered, and the log line "Simulation bots disabled" is emitted once (`server/main.py:198-199`), real HL7/JSON/CSV feeds via `/api/ingest/*` and the bedside-monitor source are then the only vitals producers. In `"simulation"` or `"hybrid"` mode, `SimulatorSource._loop` (`server/services/vitals_source/simulator_source.py:86`) calls `run_vitals_bot` every `VITALS_INTERVAL_SECONDS` (5 s, `server/config.py:342`), then the companion reports/lab bots on the same tick.
-2. `run_vitals_bot` (`server/services/bot_service.py:391`) random-walks each admitted patient's vitals toward severity-appropriate targets, inserts them, computes NEWS2, and emits `vitals:update` per patient through `emit_patient_vitals` (`server/services/bot_service.py:431` → `server/ws/realtime.py:546`), which scopes the emit to that patient's department room.
+2. `run_vitals_bot` (`server/services/bot_service.py:391`) random-walks each admitted patient's vitals toward severity-appropriate targets, inserts them, computes NEWS2, and emits `vitals:update` per patient through `emit_patient_vitals` (`server/services/bot_service.py:431` → `server/ws/realtime.py:698`), which scopes the emit to that patient's department room.
 3. `evaluate_and_dispatch_alerts` (`server/services/bot_service.py:442`) posts a formatted alert into the patient's Relay **case room** (a per-patient channel created at admission, `server/services/admission_service.py:251`) and publishes a `vigil.alert.critical` `StateEvent` to the bus (`server/services/bot_service.py:648-660`); the queued room emits go out at `:654`.
 4. `LocalEventBus.publish` (`server/services/event_bus.py:205`) persists the event to `event_log`, records one pending delivery row per matched subscriber, then dispatches them as fire-and-forget tasks capped at 64 concurrent (`_MAX_CONCURRENT_DISPATCH`, `server/services/event_bus.py:72`; semaphore at `:151-154`). All three DB writes are handed to a thread via `_in_db_thread` rather than run inline, the comment at `:210-224` records the 2026-07-30 incident where doing them on the loop serialised the whole API behind the event bus and `/api/health` stopped answering for minutes.
 5. `on_critical_vigil_alert` (`server/services/nervous_system_triggers.py:21`) opens a time-boxed sepsis/deterioration care bundle and pre-assembles patient facts + guideline RAG context into `sage_decision_cache`, so that when a clinician opens Sage seconds later, the context is already compiled.
@@ -118,26 +118,26 @@ instead of leaving them pending.
 
 ### server/ws/realtime.py
 
-### sio (AsyncServer instance): `server/ws/realtime.py:136`
+### sio (AsyncServer instance): `server/ws/realtime.py:139`
 **Signature:** `socketio.AsyncServer(async_mode="asgi", cors_allowed_origins=_origin_allowed, logger=False, engineio_logger=False)`
 **Does:** Creates the single socket.io server object the entire backend shares.
 **How it works:**
 1. `async_mode="asgi"` makes it awaitable-native so it can be wrapped by `socketio.ASGIApp` in main.py.
-2. `cors_allowed_origins` is the callable `_origin_allowed` (`server/ws/realtime.py:115`). engine.io calls it with the `Origin` header and the request environ on every polling request and on the WebSocket upgrade. It admits an origin listed in `ORB_CORS_ORIGINS` (`_configured_origins`, `server/ws/realtime.py:63`), or the page's own address (`_is_own_origin`, `server/ws/realtime.py:94`): host and port equal to the `Host` header's, and a scheme that is the request's own or https (a TLS proxy that sends no `X-Forwarded-Proto`), never an http page on a connection known to be https. `"*"` in the list still means any origin, as it always did. The comment above it (`server/ws/realtime.py:34-62`) carries the DNS-rebinding reasoning: a rebinding page passes the origin check but never gets the real host's session cookie, so `connect` refuses it.
+2. `cors_allowed_origins` is the callable `_origin_allowed` (`server/ws/realtime.py:118`). engine.io calls it with the `Origin` header and the request environ on every polling request and on the WebSocket upgrade. It admits an origin listed in `ORB_CORS_ORIGINS` (`_configured_origins`, `server/ws/realtime.py:66`), or the page's own address (`_is_own_origin`, `server/ws/realtime.py:97`): host and port equal to the `Host` header's, and a scheme that is the request's own or https (a TLS proxy that sends no `X-Forwarded-Proto`), never an http page on a connection known to be https. `"*"` in the list still means any origin, as it always did. The comment above it (`server/ws/realtime.py:35-65`) carries the DNS-rebinding reasoning: a rebinding page passes the origin check but never gets the real host's session cookie, so `connect` refuses it.
 3. Every other module (`bot_service`, `relay_routes`, `sage_ambient_service`, …) does `from ws.realtime import sio` to emit.
 **Why it exists:** One process, one socket server; sharing the instance is how REST handlers and background tasks push to browsers.
 **Data in/out:** n/a (infrastructure object).
-**Talks to:** wrapped by `socketio.ASGIApp` (`server/main.py:1572`); imported by 10+ modules (see event reference below).
+**Talks to:** wrapped by `socketio.ASGIApp` (`server/main.py:1600`); imported by 10+ modules (see event reference below).
 **Change guide:** To add a new allowed frontend origin, set `ORB_CORS_ORIGINS` (comma-separated, `server/config.py:69`); this feeds both the socket's list and (in prod) the REST CORS middleware. Dev REST CORS is permissive regardless (`server/main.py:919`), so a mismatch only bites the socket. A page the backend serves itself needs no entry. Do not swap the callable back for a list: a list without the appliance's own address is the 3 October 2026 hang (INSTALL_RUNBOOK F11), and `[]` tells engine.io to skip the origin check entirely, so an empty `ORB_CORS_ORIGINS` used to admit every origin. engine.io's built-in same-origin mode (`None`) is no substitute: its ASGI driver assumes http without `X-Forwarded-Proto`, so it refuses a page served over `ORB_TLS_CERT`. Watch out: Chrome sends no `Origin` on a same-origin GET, so the polling handshake GET passes even for a refused origin; the POSTs and the WebSocket upgrade are where a refusal shows. Tests: `server/tests/test_ws_origin.py`.
 **Gotchas:** `DEPLOYMENT_PROFILE` is imported at `server/ws/realtime.py:25` but never used in this file, dead import.
 
-### _authenticate: `server/ws/realtime.py:160`
+### _authenticate: `server/ws/realtime.py:163`
 **Signature:** `(auth: Any) → dict | None`
 **Does:** Validates the JWT presented in the socket.io handshake and returns the authoritative user row, or `None` to reject.
 **How it works:**
-1. Requires `auth` to be a dict; reads `token`, `Authorization`, or `authorization` (`server/ws/realtime.py:136-140`).
+1. Requires `auth` to be a dict; reads `token`, `Authorization`, or `authorization` (`server/ws/realtime.py:139-143`).
 2. Strips a `"Bearer "` prefix if present (line 43-44), so both raw tokens and header-style values work.
-3. Calls `decode_token` (`server/auth.py:371`), which raises `HTTPException` on expiry/invalid signature; any exception here means reject (`server/ws/realtime.py:185-187`).
+3. Calls `decode_token` (`server/auth.py:371`), which raises `HTTPException` on expiry/invalid signature; any exception here means reject (`server/ws/realtime.py:198-200`).
 4. Rejects tokens whose `sub` is missing or equals `discharge_access`, those are patient-facing discharge-link grants that share the signing key but must never become a staff socket session (lines 50-56).
 5. Fetches `SELECT * FROM users WHERE id = ?` and returns the row as a dict; DB failure or missing user → `None` (lines 57-65).
 **Why it exists:** The realtime channel must be exactly as authenticated as REST. Re-reading the DB row (rather than trusting token claims for name/role) means a role change or user deletion takes effect on the next connect.
@@ -146,7 +146,7 @@ instead of leaving them pending.
 **Change guide:** To force sockets to drop when a token expires mid-session (currently they live until disconnect), you would need a periodic re-validation loop or per-event expiry check, today only the *handshake* is validated; every later event trusts the saved session. Watch out: `decode_token` raises FastAPI's `HTTPException`, which is caught generically here, do not "improve" it to let exceptions propagate, or a malformed token would crash the handshake handler instead of rejecting.
 **Gotchas:** Token expiry is checked once, at connect. A connection made 1 minute before a 24-hour token expires stays authenticated for as long as it stays connected.
 
-### connect: `server/ws/realtime.py:358`
+### connect: `server/ws/realtime.py:391`
 **Signature:** `async (sid: str, environ: dict, auth: dict | None) → bool`
 **Does:** The socket.io connection gate: authenticate, save the session, join the personal room.
 **How it works:**
@@ -159,7 +159,7 @@ instead of leaving them pending.
 **Change guide:** Worked example, *make sockets role-aware for broadcasts*: add `await sio.enter_room(sid, f"role:{user['role']}")` after line 87, then emit e.g. `sio.emit("vitals:update", p, room="role:nurse")` in `bot_service.py:252`; knock-on: the frontend needs no change (rooms are invisible to clients), but every emit site that assumed global broadcast must pick a room; watch out for the pharmacist role, which has no vitals UI and would silently stop receiving nothing it used anyway.
 **Gotchas:** Returning `False` yields a generic rejection with no reason string; the client cannot distinguish "expired token" from "server down", so `authenticateSocket()` after login is essential to break a bad-token retry loop.
 
-### disconnect: `server/ws/realtime.py:566`
+### disconnect: `server/ws/realtime.py:718`
 **Signature:** `async (sid) → None`
 **Does:** Logs the disconnect.
 **How it works:** Single `logger.info` line.
@@ -167,13 +167,13 @@ instead of leaving them pending.
 **Data in/out:** none.
 **Talks to:** nothing.
 **Change guide:** Put any per-connection cleanup here, but see Gotchas first.
-**Gotchas:** **Likely dead code.** `server/ws/scribe_stream.py:233` registers a second `disconnect` handler on the same `sio` instance *after* this one (via the import at `server/ws/realtime.py:875`). python-socketio (pinned `python-socketio==5.12.1`, `server/requirements.txt:4`) keeps exactly one handler per event name per namespace, so the later registration replaces this one and the "WS disconnected" log never fires. Recorded in Discrepancies.
+**Gotchas:** **Likely dead code.** `server/ws/scribe_stream.py:233` registers a second `disconnect` handler on the same `sio` instance *after* this one (via the import at `server/ws/realtime.py:1033`). python-socketio (pinned `python-socketio==5.12.1`, `server/requirements.txt:4`) keeps exactly one handler per event name per namespace, so the later registration replaces this one and the "WS disconnected" log never fires. Recorded in Discrepancies.
 
-### _user_can_access_channel: `server/ws/realtime.py:578`
+### _user_can_access_channel: `server/ws/realtime.py:730`
 **Signature:** `async (user_id: str, user_role: str, channel_id: str) → bool`
 **Does:** Checks whether this user may see this Relay channel, by reusing the REST visibility function.
 **How it works:**
-1. Calls `get_channels_for_user(user_id, user_role)` (`server/services/relay_service.py:9`), the same department/role filter the REST channel list applies.
+1. Calls `get_channels_for_user(user_id, user_role)` (`server/services/relay_service.py:10`), the same department/role filter the REST channel list applies.
 2. Returns `True` iff the channel id appears in that list; any exception → `False` (fail closed).
 **Why it exists:** One source of truth for channel visibility. If WS had its own rule it would drift from REST and someone would join a room they cannot list.
 **Data in/out:** in: ids/role strings; out: bool.
@@ -181,7 +181,7 @@ instead of leaving them pending.
 **Change guide:** To change who sees which channels, change `get_channels_for_user` only, both REST and WS follow. Watch out: this runs a multi-subquery SQL statement per check, and `typing` calls it on every emit, the client's 1.5-second throttle (`src/pages/panels/RelayPanel.tsx:263-270`) is what keeps that off the per-keystroke path.
 **Gotchas:** It is O(all channels) per call, fine at demo scale, a hotspot at hospital scale.
 
-### join_channel: `server/ws/realtime.py:596`
+### join_channel: `server/ws/realtime.py:754`
 **Signature:** `async (sid, data: {channel_id}) → None` (client→server event `"join_channel"`)
 **Does:** Puts an authorized connection into a channel room.
 **How it works:**
@@ -195,7 +195,7 @@ instead of leaving them pending.
 **Change guide:** none beyond the visibility note above.
 **Gotchas:** Channel rooms and channel ids share a namespace with the personal `user:` prefix deliberately avoiding collision; if you ever mint a channel id starting with `user:` you would cross-deliver.
 
-### leave_channel: `server/ws/realtime.py:615`
+### leave_channel: `server/ws/realtime.py:773`
 **Signature:** `async (sid, data: {channel_id}) → None`
 **Does:** Leaves a channel room. No auth check needed, leaving is always safe.
 **How it works:** `sio.leave_room(sid, channel_id)` if the id is present.
@@ -205,35 +205,35 @@ instead of leaving them pending.
 **Change guide:** n/a.
 **Gotchas:** none noteworthy.
 
-### typing: `server/ws/realtime.py:623`
+### typing: `server/ws/realtime.py:781`
 **Signature:** `async (sid, data: {channel_id}) → None`; re-broadcasts server→client event `"typing"`.
 **Does:** Relays a typing indicator to the rest of a channel room.
 **How it works:**
-1. Requires a session and an authorized channel (`server/ws/realtime.py:625-632`).
-2. Rebuilds the payload from the session, `{channel_id, sender_id, sender_name}`, ignoring any client-supplied identity (`:799-804`).
-3. Emits `typing` to the room with `skip_sid=sid` so the typist does not see their own indicator (`:424`).
+1. Requires a session and an authorized channel (`server/ws/realtime.py:783-790`).
+2. Rebuilds the payload from the session, `{channel_id, sender_id, sender_name}`, ignoring any client-supplied identity (`:957-962`).
+3. Emits `typing` to the room with `skip_sid=sid` so the typist does not see their own indicator (`:526`).
 **Why it exists:** Standard chat UX affordance.
 **Data in/out:** in: `{channel_id}`; out: `{channel_id, sender_id, sender_name}` to the room.
 **On screen:** the italic "… is typing…" line just above the Relay composer (`src/pages/panels/RelayPanel.tsx:712-715`), which names one peer or summarises two-plus.
-**Chain:** `RelayPanel.tsx:270` emits `typing` (throttled) → `server/ws/realtime.py:623` → re-emit `:520` → `RelayPanel.tsx:181` subscribes → `typingUsers` state (`:47-48`) → the indicator at `:712-715`.
-**Talks to:** `_user_can_access_channel` (`server/ws/realtime.py:578`); `RelayPanel` on both ends.
+**Chain:** `RelayPanel.tsx:270` emits `typing` (throttled) → `server/ws/realtime.py:781` → re-emit `:628` → `RelayPanel.tsx:181` subscribes → `typingUsers` state (`:47-48`) → the indicator at `:712-715`.
+**Talks to:** `_user_can_access_channel` (`server/ws/realtime.py:730`); `RelayPanel` on both ends.
 **Gotchas:** the client throttles its emit to at most once every 1.5 s (`src/pages/panels/RelayPanel.tsx:263-270`), and each received indicator self-expires after ~4 s via a per-sender timer (`:158-168`), there is no "stopped typing" event, so the timeout *is* the clear. The per-emit authorization check runs a multi-subquery SQL statement, so removing that throttle puts one such query on the server per keystroke per typist.
 
-### new_message: `server/ws/realtime.py:643`
+### new_message: `server/ws/realtime.py:801`
 **Signature:** `async (sid, data: {channel_id, content, message_type?}) → None`
 **Does:** WS-path message send: authenticate, RBAC-check, persist, broadcast.
 **How it works:**
 1. Session check → `error {error:"unauthenticated"}` to sender if absent (lines 166-169).
-2. RBAC: `has_permission(session["role"], "relay.send")` (`server/permissions.py:173`) → `error {error:"insufficient permissions"}` if denied (`server/ws/realtime.py:660-662`).
+2. RBAC: `has_permission(session["role"], "relay.send")` (`server/permissions.py:173`) → `error {error:"insufficient permissions"}` if denied (`server/ws/realtime.py:818-820`).
 3. Channel authorization via `_user_can_access_channel` → `error {error:"not authorized for channel"}` (lines 181-186).
 4. Persists via `relay_service.send_message` with identity taken **from the session** (lines 189-198) and broadcasts the returned message dict as `message:new` to the channel room (line 200).
 **Why it exists:** A lower-latency alternative to `POST /api/relay/channels/{id}/messages`; both paths enforce the same RBAC and produce the same broadcast. (The REST path additionally schedules Sage ambient analysis, `server/routes/relay_routes.py:225-227`, the WS path does not.)
-**Data in/out:** in: `{channel_id, content, message_type="text"}`; out: the full message row (`{id, channel_id, sender_id, sender_name, sender_role, content, message_type, timestamp, is_bot, source}`, `server/services/relay_service.py:233-244`).
+**Data in/out:** in: `{channel_id, content, message_type="text"}`; out: the full message row (`{id, channel_id, sender_id, sender_name, sender_role, content, message_type, timestamp, is_bot, source}`, `server/services/relay_service.py:246-257`).
 **Talks to:** `permissions.has_permission`, `relay_service.send_message`.
 **Change guide:** To make WS messages also trigger Sage ambient observation (parity with REST), add `asyncio.create_task(sage_ambient_observe(channel_id, msg["id"]))` after line 200; knock-on: bot chatter would then also be analyzed if a bot ever used this path; footgun: `sage_ambient_observe` gates on sender, so import cost is the only real risk.
 **Gotchas:** The current frontend sends messages via REST (`RelayPanel` calls the API client), so this WS handler is a parallel, currently-unused write path, keep its RBAC in lockstep with the REST route or it becomes a privilege bypass.
 
-### import ws.scribe_stream: `server/ws/realtime.py:411`
+### import ws.scribe_stream: `server/ws/realtime.py:513`
 **Does:** Side-effect import that registers the streaming transcription handlers (`scribe:start_session`, `scribe:audio_chunk`, `scribe:end_utterance`, `scribe:stop_session`, and its own `disconnect`) on this same `sio` instance. The pipeline itself (Whisper daemon, RxNorm correction) is **guide 11's** territory; realtime only hosts the transport. Note `scribe_stream._require_authenticated` (`server/ws/scribe_stream.py:34`) leans on the session saved by `connect` above, the handshake gate protects Scribe streams too.
 
 ---
@@ -574,8 +574,8 @@ instead of leaving them pending.
 **Talks to:** uvicorn; the Vite dev proxy forwards `/socket.io` with `ws: true` (`vite.config.ts:39-43`).
 **Change guide:** To move the socket path, pass `socketio_path=` here *and* `path:` in the client `io(...)` options, they must match.
 
-### `__main__` block: `server/main.py:1219-1264`
-**Does:** Direct-run entry: optional TLS via `ORB_TLS_CERT`/`ORB_TLS_KEY` (with a loud prod warning when absent, PHI and session cookies must not cross a network in cleartext, `server/main.py:1234`), and auto-reload enabled only when `DEPLOYMENT_PROFILE != "prod"` (`:1242`).
+### `__main__` block: `server/main.py:1238-1283`
+**Does:** Direct-run entry: optional TLS via `ORB_TLS_CERT`/`ORB_TLS_KEY` (with a loud prod warning when absent, PHI and session cookies must not cross a network in cleartext, `server/main.py:1253`), and auto-reload enabled only when `DEPLOYMENT_PROFILE != "prod"` (`:1261`).
 **Gotchas:** Uvicorn's reload mode re-imports the module in a child process, another reason all startup work lives in `lifespan`, which runs exactly once per serving process.
 
 ---
@@ -636,24 +636,24 @@ Compiled from a full grep of `sio.emit` across `server/` (every hit read in cont
 
 > **Rebuilt.** The largest change since earlier editions: `vitals:update` and
 > `patient_status_update` are **no longer global**. Both now go through
-> `emit_patient_vitals` (`server/ws/realtime.py:486-493`), which resolves the patient's
+> `emit_patient_vitals` (`server/ws/realtime.py:594-601`), which resolves the patient's
 > department and emits to `dept:__all__` plus `dept:<department>`. Nothing emits those two events
 > directly any more. A presence subsystem (`presence:update`) and two Relay room-fit events were
 > also added, and the whole table's line numbers have moved.
 
 | Event | Payload shape | Room / target | Emitting file:line |
 |---|---|---|---|
-| `vitals:update` | `{patient_id, timestamp, heart_rate, systolic_bp, diastolic_bp, spo2, temperature, respiratory_rate, consciousness, on_oxygen, risk}` (+ `source` from ingestion only), plus `patient_name`, added by `emit_patient_vitals` (`server/ws/realtime.py:553-556`) for every lane from a 60 s cache so the deterioration notification can name the patient; absent when the patient is unknown | `dept:__all__` **and** `dept:<department>` | via `emit_patient_vitals` (`server/ws/realtime.py:546`) from `server/services/bot_service.py:431`; `server/services/ingestion_service.py:1226` |
+| `vitals:update` | `{patient_id, timestamp, heart_rate, systolic_bp, diastolic_bp, spo2, temperature, respiratory_rate, consciousness, on_oxygen, risk}` (+ `source` from ingestion only), plus `patient_name`, added by `emit_patient_vitals` (`server/ws/realtime.py:705-708`) for every lane from a 60 s cache so the deterioration notification can name the patient; absent when the patient is unknown | `dept:__all__` **and** `dept:<department>` | via `emit_patient_vitals` (`server/ws/realtime.py:698`) from `server/services/bot_service.py:431`; `server/services/ingestion_service.py:1226` |
 | `patient_status_update` | `{patient_id, name, status: "critical_alert", timestamp}` | `dept:__all__` **and** `dept:<department>` | via `emit_patient_vitals` from `server/services/ingestion_service.py:1356` |
-| `message:new` | full message row: `{id, channel_id, sender_id, sender_name, sender_role, content, message_type, timestamp[, is_bot, source]}` | `room=<channel_id>`; surgical/handoff alerts additionally `room=user:<target_user_id>` | `server/ws/realtime.py:797`; `server/services/bot_service.py:1085,1245,1480`; `server/routes/relay_routes.py:570,916`; `server/routes/lens_routes.py:384`; `server/routes/surgery_routes.py:649,651`; `server/services/sage_handoff_service.py:771,737`; `server/services/nervous_system_triggers.py:930`; `server/services/ingestion_service.py:1516` |
+| `message:new` | full message row: `{id, channel_id, sender_id, sender_name, sender_role, content, message_type, timestamp[, is_bot, source]}` | `room=<channel_id>`; surgical/handoff alerts additionally `room=user:<target_user_id>` | `server/ws/realtime.py:955`; `server/services/bot_service.py:1085,1245,1480`; `server/routes/relay_routes.py:570,916`; `server/routes/lens_routes.py:385`; `server/routes/surgery_routes.py:649,651`; `server/services/sage_handoff_service.py:771,737`; `server/services/nervous_system_triggers.py:930`; `server/services/ingestion_service.py:1516` |
 | `message:update` | same message-row shape, updated `content` (alert resolved) | `room=<channel_id>` | `server/routes/relay_routes.py:1065` |
-| `typing` | `{channel_id, sender_id, sender_name}` | `room=<channel_id>`, `skip_sid=sender` | `server/ws/realtime.py:639` |
-| `error` | `{error: string}` | `to=sid` (sender only) | `server/ws/realtime.py:608,600,610,618` |
-| `presence:update` | `{patient_id, viewers: [{user_id, name, role}]}` | `room=patient-presence:<patient_id>` | `server/ws/realtime.py:517` |
+| `typing` | `{channel_id, sender_id, sender_name}` | `room=<channel_id>`, `skip_sid=sender` | `server/ws/realtime.py:797` |
+| `error` | `{error: string}` | `to=sid` (sender only) | `server/ws/realtime.py:766,758,768,776` |
+| `presence:update` | `{patient_id, viewers: [{user_id, name, role}]}` | `room=patient-presence:<patient_id>` | `server/ws/realtime.py:625` |
 | `sage:insight` | `{event: "new"\|"transition"\|"acted", count?, id?}` | global | `server/main.py:133`; `server/routes/sage_proactive_routes.py:54,135,155` |
 | `sage:action_update` | `{channel_id}` (fetch hint) | `room=<channel_id>` | `server/routes/relay_routes.py:428,1619`; `server/routes/sage_proactive_routes.py:142`; `server/services/sage_ambient_service.py:1978` |
 | `sage:memory_update` | `{room_id, updated_at}` | `room=<channel_id>` | `server/services/sage_ambient_service.py:1983` |
-| `sage:ward_brief` | `{updated_at}` | global | `server/services/sage_narrator_service.py:297` |
+| `sage:ward_brief` | `{updated_at}` | global | `server/services/sage_narrator_service.py:391` |
 | `relay:room_fit` | room-fit flag payload | `room=<channel_id>` | `server/routes/relay_routes.py:715` |
 | `relay:room_fit_resolved` | resolved flag payload | `room=<channel_id>` | `server/routes/relay_routes.py:778,945` |
 | `patient:timeline_updated` | `{patient_id, source}` | `dept:__all__` **and** `dept:<department>` (Scribe extraction, via `emit_patient_vitals`) / `room=<channel_id>` (agentic confirm) | `server/services/nervous_system_triggers.py:935`; `server/routes/relay_routes.py:1620` |
@@ -662,9 +662,9 @@ Compiled from a full grep of `sio.emit` across `server/` (every hit read in cont
 | `scribe:transcript` | `{text, duration_ms, is_final, utterance_index}` | `to=sid` | `server/ws/scribe_stream.py:142` (guide 11) |
 | `scribe:error` | `{error}` | `to=sid` | `server/ws/scribe_stream.py:154,172` (guide 11) |
 
-**Why the vitals fan-out changed.** A global emit sent every bed's observations to every connected client, including clinicians in unrelated departments, a needless PHI spray and the hottest event in the appliance. `_department_for_emit` (`server/ws/realtime.py:471-483`) resolves the department behind a TTL cache precisely because a blanket `run_db` hop would add a thread round-trip to *every* vitals tick; only a genuine miss (an admission or a transfer) pays the encrypted `admissions` read, and that read happens off the loop. `dept:__all__` still receives everything, because a no-department clinician on a whole-census board must not go blind.
+**Why the vitals fan-out changed.** A global emit sent every bed's observations to every connected client, including clinicians in unrelated departments, a needless PHI spray and the hottest event in the appliance. `_department_for_emit` (`server/ws/realtime.py:579-591`) resolves the department behind a TTL cache precisely because a blanket `run_db` hop would add a thread round-trip to *every* vitals tick; only a genuine miss (an admission or a transfer) pays the encrypted `admissions` read, and that read happens off the loop. `dept:__all__` still receives everything, because a no-department clinician on a whole-census board must not go blind.
 
-**Client → server events** (for completeness): `join_channel`, `leave_channel`, `typing`, `new_message` (`server/ws/realtime.py:762,781,789,809`), plus `enter_patient` / `leave_patient` (`:683,714`); `scribe:start_session`, `scribe:audio_chunk` (binary PCM16), `scribe:end_utterance`, `scribe:stop_session` (`server/ws/scribe_stream.py:168,195,209,220`; guide 11).
+**Client → server events** (for completeness): `join_channel`, `leave_channel`, `typing`, `new_message` (`server/ws/realtime.py:920,939,947,967`), plus `enter_patient` / `leave_patient` (`:841,872`); `scribe:start_session`, `scribe:audio_chunk` (binary PCM16), `scribe:end_utterance`, `scribe:stop_session` (`server/ws/scribe_stream.py:168,195,209,220`; guide 11).
 
 **Event-bus topics** (in-process, not socket events): `vigil.alert.critical` (pub `server/services/bot_service.py:648`), `scribe.note.signed` (pub `server/services/scribe_service.py:847`), `relay.intent.voice_prewarm` (pub `server/services/sage_ambient_service.py:1915`), `bridge.emergency.flag` (pub `server/services/bridge_service.py:84`; **no subscriber**). All subscriptions are registered in one place, `register_triggers` (`server/services/nervous_system_triggers.py:1015`).
 
@@ -685,7 +685,7 @@ Compiled from a full grep of `sio.emit` across `server/` (every hit read in cont
 
 **Exported symbols others rely on:** `ws.realtime.sio` (imported by 10+ modules to emit, the whole table above), `services.event_bus.event_bus` + `StateEvent` (publishers: bot, scribe, sage-ambient, bridge), `services.bot_service.run_vitals_bot/run_reports_bot/run_lab_bot` (only `main.py`), `services.nervous_system_triggers.register_triggers` (only `main.py`), and on the frontend `socket`, `authenticateSocket`, `deauthenticateSocket` from `src/api/client.ts` (guide 02 owns the rest of that module).
 
-**Contracts this subsystem consumes:** `auth.decode_token` (`server/auth.py:66`) and `permissions.has_permission` (`server/permissions.py:145`), guide 03; `relay_service.get_channels_for_user`/`send_message` (`server/services/relay_service.py:9,212`), Relay guide; `vigil_service.compute_news2/generate_ai_recommendation` (`server/services/vigil_service.py:227,654`), Vigil guide; `sage_service._assemble_patient_context/_get_guideline_context`, `sepsis_bundle_service`, `voice_agent_service`, `llm_queue_service`, `forecast_service.refresh_all_predictions`, `downtime_service`, `sage_proactive_service`, their respective guides.
+**Contracts this subsystem consumes:** `auth.decode_token` (`server/auth.py:66`) and `permissions.has_permission` (`server/permissions.py:145`), guide 03; `relay_service.get_channels_for_user`/`send_message` (`server/services/relay_service.py:10,225`), Relay guide; `vigil_service.compute_news2/generate_ai_recommendation` (`server/services/vigil_service.py:227,654`), Vigil guide; `sage_service._assemble_patient_context/_get_guideline_context`, `sepsis_bundle_service`, `voice_agent_service`, `llm_queue_service`, `forecast_service.refresh_all_predictions`, `downtime_service`, `sage_proactive_service`, their respective guides.
 
 **DB tables touched:** `event_log`, `event_deliveries`, `sage_decision_cache` (owned here; `server/database.py:605,621,688`); read/write into `users`, `patients`, `vitals`, `risk_scores`, `channels`, `messages`, `medications`, `clinical_documents`, `scribe_notes`, `lens_analyses` (guide 04 owns the schema).
 
@@ -708,11 +708,11 @@ Compiled from a full grep of `sio.emit` across `server/` (every hit read in cont
 1. **ClinicianShell.tsx contains no socket code.** This guide's scope expected the shell to own the socket client lifecycle; in reality the singleton, auth re-handshake, and teardown live in `src/api/client.ts:43-65` and `src/AppRoot.tsx:81-109`, and event listeners live in the individual panels/hooks. The shell (`src/pages/ClinicianShell.tsx:1-10`) never imports the socket. Documented here from the real files; the corpus scope map should be corrected.
 2. **Cross-patient data leak in the bus event payload.** In `evaluate_and_dispatch_alerts`, the `StateEvent` built at `server/services/bot_service.py:414-425` reads `risk_score`, `risk_level`, and `drivers`, loop variables from the *first* loop (lines 268-273) that retain the **last processed patient's** values (including from `stable` patients, which set the variables before `continue` at line 278). When two or more alerts dispatch in one cycle, every published event carries the final patient's score/level/drivers while `patient_id` points at a different patient. The per-alert level is stored correctly in `alert["risk_level"]` (line 371) but not used in the event.
 3. **Elevated alerts fire the "critical" topic.** The topic at `server/services/bot_service.py:416` is hardcoded `"vigil.alert.critical"` even when the alert's level is `elevated`, so elevated patients also trigger `on_critical_vigil_alert`, auto-opening care bundles and preloading Sage cache designed for critical alerts only (`server/services/nervous_system_triggers.py:27-38` explicitly assumes "This event only fires on a critical Vigil alert").
-4. **`patient:timeline_updated` reaches its listener from one lane only.** The Unified Patient Story listens for it and reloads when the `patient_id` matches (`src/components/vigil/PatientStory.tsx:111-112`). The Scribe extraction lane emits it department-scoped through `emit_patient_vitals` (`server/services/nervous_system_triggers.py:935`), to rooms every clinician socket joins (its department room or `dept:__all__`, `server/ws/realtime.py:397`); it used to go to `room=<patient_id>`, which no socket joins (fixed 2026-10-03). The agentic-confirm lane still emits it to the case-room channel only (`server/routes/relay_routes.py:1620`), so a Patient Story open by someone who has not joined that channel room does not hear it.
+4. **`patient:timeline_updated` reaches its listener from one lane only.** The Unified Patient Story listens for it and reloads when the `patient_id` matches (`src/components/vigil/PatientStory.tsx:111-112`). The Scribe extraction lane emits it department-scoped through `emit_patient_vitals` (`server/services/nervous_system_triggers.py:935`), to rooms every clinician socket joins (its department room or `dept:__all__`, `server/ws/realtime.py:499`); it used to go to `room=<patient_id>`, which no socket joins (fixed 2026-10-03). The agentic-confirm lane still emits it to the case-room channel only (`server/routes/relay_routes.py:1620`), so a Patient Story open by someone who has not joined that channel room does not hear it.
 5. **`patient_status_update` has no listener.** Emitted globally at `server/services/ingestion_service.py:1105`; nothing in `src/` subscribes.
 6. **RelayPanel listens for four `ambient:*` events that nothing emits.** `src/pages/panels/RelayPanel.tsx:125-128` registers handlers for `ambient:executed`, `ambient:cancelled`, `ambient:processing`, `ambient:done`; a grep of `server/` finds no emitter for any `ambient:` event, dead listeners (likely removed server feature).
-7. *(resolved, was: "`typing` is dead end-to-end".)* It is live in both directions: `src/pages/panels/RelayPanel.tsx:270` emits it, `:181` subscribes, and the server handler at `server/ws/realtime.py:623` re-emits to the room at `:520`. The remaining nit is that there is no "stopped typing" event, the indicator is cleared by a 4-second client-side timer (`src/pages/panels/RelayPanel.tsx:166-168`), so a peer who types and then closes the tab leaves the indicator up for up to four seconds.
-8. **Duplicate `disconnect` handlers, realtime's is likely shadowed.** `server/ws/realtime.py:191` and `server/ws/scribe_stream.py:233` both register `disconnect` on the same `sio` instance; python-socketio (pinned 5.12.1, `server/requirements.txt:4`) stores one handler per event per namespace, so the scribe registration (executed later via the import at `server/ws/realtime.py:411`) replaces realtime's, and the "WS disconnected" log presumably never fires. Not verified at runtime in this session (the package is not installed in this environment); scribe's handler does perform its session cleanup, so no functional leak beyond the lost log.
+7. *(resolved, was: "`typing` is dead end-to-end".)* It is live in both directions: `src/pages/panels/RelayPanel.tsx:270` emits it, `:181` subscribes, and the server handler at `server/ws/realtime.py:781` re-emits to the room at `:628`. The remaining nit is that there is no "stopped typing" event, the indicator is cleared by a 4-second client-side timer (`src/pages/panels/RelayPanel.tsx:166-168`), so a peer who types and then closes the tab leaves the indicator up for up to four seconds.
+8. **Duplicate `disconnect` handlers, realtime's is likely shadowed.** `server/ws/realtime.py:204` and `server/ws/scribe_stream.py:233` both register `disconnect` on the same `sio` instance; python-socketio (pinned 5.12.1, `server/requirements.txt:4`) stores one handler per event per namespace, so the scribe registration (executed later via the import at `server/ws/realtime.py:513`) replaces realtime's, and the "WS disconnected" log presumably never fires. Not verified at runtime in this session (the package is not installed in this environment); scribe's handler does perform its session cleanup, so no functional leak beyond the lost log.
 9. **`bridge.emergency.flag` has no subscriber.** `server/services/bridge_service.py:75-97` publishes it and its docstring claims "The duty nurse / Relay layer subscribes"; no `event_bus.subscribe` for that topic exists anywhere, so patient red-flag events land in `event_log` and go nowhere live.
 10. **`raw_news2` branch in the vigil trigger is unreachable from the bot.** `server/services/nervous_system_triggers.py:34` reads `event.payload.get("raw_news2")`, but the only production publisher (`server/services/bot_service.py:419-424`) never includes that key, so `maybe_autostart` is never used from this path and `start_bundle` always runs.
 11. **`DEPLOYMENT_PROFILE` used before its import line in `main.py`.** `server/main.py:133` (inside `lifespan`) references `DEPLOYMENT_PROFILE`, which is only bound at module level at `server/main.py:270`. It works because lifespan executes after full module import, but deleting the later import (it looks redundant next to line 15) would crash startup. Relatedly, `server/ws/realtime.py:6` imports `DEPLOYMENT_PROFILE` and never uses it.

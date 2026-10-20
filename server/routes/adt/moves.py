@@ -126,14 +126,14 @@ _ASSIGN_ADMISSION_BED_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempotency-
 _ASSIGN_ADMISSION_BED_USER_DEFAULT = Depends(require_any_permission(ADT_BED, PATIENT_WRITE))
 
 
-@router.post("/admissions/{admission_id}/bed")
+@router.post("/admissions/{admission_id}/bed", response_model=None)
 def assign_admission_bed(
     admission_id: str,
     body: AssignBedIn,
     request: Request,
     idempotency_key: str | None = _ASSIGN_ADMISSION_BED_IDEMPOTENCY_KEY_DEFAULT,
     user: dict = _ASSIGN_ADMISSION_BED_USER_DEFAULT,
-):
+) -> dict:
     """Give an admission awaiting a bed its bed. Refused (409
     bed_already_recorded) when a bed is already recorded, so nobody overwrites
     where a patient actually lies, unless the body says correction, which
@@ -173,7 +173,7 @@ def assign_admission_bed(
             **kwargs,
         )
     except adt_core.AdtError as err:
-        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err)) from err
+        raise _move_refused(err, "adt_bed_assignment", user, request) from err
     except AuditWriteError:
         raise _audit_unavailable("bed") from None
     if not placed.get("replayed"):
@@ -191,6 +191,14 @@ def _audit_unavailable(what: str) -> HTTPException:
             "Try again in a moment.",
         },
     )
+
+
+def _move_refused(err: adt_core.AdtError, lane: str, user: dict, request: Request) -> HTTPException:
+    """A move's refusal as its HTTP answer. A move into another facility
+    (multisite-8h1, ruling MS-R3 (c)) writes its authorization row first,
+    once, after the move's transaction has rolled back."""
+    adt_core.audit_facility_refusal(err, lane=lane, actor=user, request_meta=_meta(request))
+    return HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err))
 
 
 def _expected(body: BaseModel) -> dict:
@@ -311,14 +319,14 @@ _CHANGE_ADMISSION_BED_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempotency-
 _CHANGE_ADMISSION_BED_USER_DEFAULT = Depends(require_any_permission(ADT_BED, PATIENT_WRITE))
 
 
-@router.post("/admissions/{admission_id}/bed-change")
+@router.post("/admissions/{admission_id}/bed-change", response_model=None)
 def change_admission_bed(
     admission_id: str,
     body: MoveIn,
     request: Request,
     idempotency_key: str | None = _CHANGE_ADMISSION_BED_IDEMPOTENCY_KEY_DEFAULT,
     user: dict = _CHANGE_ADMISSION_BED_USER_DEFAULT,
-):
+) -> dict:
     """Move an admitted patient to another bed. The treating department never
     changes here (ruling ADT-S8). Needs expected_bed_id (stale is 409
     state_changed), a reason and the Idempotency-Key header; a replay by the
@@ -343,7 +351,7 @@ def change_admission_bed(
             **_move_kwargs(body),
         )
     except adt_core.AdtError as err:
-        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err)) from err
+        raise _move_refused(err, "adt_bed_change", user, request) from err
     except AuditWriteError:
         raise _audit_unavailable("move") from None
     return _pushed(moved, admission_id)
@@ -353,13 +361,13 @@ _CREATE_ADT_TRANSFER_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempotency-K
 _CREATE_ADT_TRANSFER_USER_DEFAULT = Depends(require_any_permission(ADT_TRANSFER, PATIENT_WRITE))
 
 
-@router.post("/transfers")
+@router.post("/transfers", response_model=None)
 def create_adt_transfer(
     body: TransferIn,
     request: Request,
     idempotency_key: str | None = _CREATE_ADT_TRANSFER_IDEMPOTENCY_KEY_DEFAULT,
     user: dict = _CREATE_ADT_TRANSFER_USER_DEFAULT,
-):
+) -> dict:
     """Transfer an admitted patient to another treating department: the same
     admission, its status untouched, the department, ward and bed updated in
     one transaction (rules A and B). The receiving department must have
@@ -391,7 +399,7 @@ def create_adt_transfer(
             **_move_kwargs(body),
         )
     except adt_core.AdtError as err:
-        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err)) from err
+        raise _move_refused(err, "adt_transfer", user, request) from err
     except AuditWriteError:
         raise _audit_unavailable("transfer") from None
     return _pushed(moved, body.admission_id)
@@ -411,13 +419,13 @@ _CREATE_ORDERED_TRANSFER_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempoten
 _CREATE_ORDERED_TRANSFER_USER_DEFAULT = Depends(require_ward_clerk)
 
 
-@router.post("/ordered-transfers")
+@router.post("/ordered-transfers", response_model=None)
 def create_ordered_transfer(
     body: OrderedTransferIn,
     request: Request,
     idempotency_key: str | None = _CREATE_ORDERED_TRANSFER_IDEMPOTENCY_KEY_DEFAULT,
     user: dict = _CREATE_ORDERED_TRANSFER_USER_DEFAULT,
-):
+) -> dict:
     """The ward clerk carries out a transfer a doctor ordered: another
     treating department, through the same transfer writer as POST /transfers
     (rule C, the bed lock, the cleaning rules, the boarder acknowledgement,
@@ -450,7 +458,7 @@ def create_ordered_transfer(
             **_move_kwargs(body),
         )
     except adt_core.AdtError as err:
-        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err)) from err
+        raise _move_refused(err, "clerk_ordered_transfer", user, request) from err
     except AuditWriteError:
         raise _audit_unavailable("transfer") from None
     return _pushed(moved, body.admission_id)
@@ -491,13 +499,13 @@ _SWAP_ADMISSION_BEDS_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempotency-K
 _SWAP_ADMISSION_BEDS_USER_DEFAULT = Depends(require_any_permission(ADT_BED, PATIENT_WRITE))
 
 
-@router.post("/bed-swaps")
+@router.post("/bed-swaps", response_model=None)
 def swap_admission_beds(
     body: SwapIn,
     request: Request,
     idempotency_key: str | None = _SWAP_ADMISSION_BEDS_IDEMPOTENCY_KEY_DEFAULT,
     user: dict = _SWAP_ADMISSION_BEDS_USER_DEFAULT,
-):
+) -> dict:
     """Swap the beds of two admitted patients in one transaction: two
     'bed_swap' movements, each patient in the other's bed, the index never
     tripped. BOTH admissions must be in the caller's department scope (404
@@ -533,7 +541,7 @@ def swap_admission_beds(
             **kwargs,
         )
     except adt_core.AdtError as err:
-        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err)) from err
+        raise _move_refused(err, "adt_bed_swap", user, request) from err
     except AuditWriteError:
         raise _audit_unavailable("swap") from None
     return _pushed(swapped, body.first_admission_id, body.second_admission_id)
@@ -561,14 +569,14 @@ _CORRECT_ADMISSION_MOVEMENT_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempo
 _CORRECT_ADMISSION_MOVEMENT_USER_DEFAULT = Depends(require_any_permission(ADT_BED, PATIENT_WRITE))
 
 
-@router.post("/movements/{movement_id}/correct")
+@router.post("/movements/{movement_id}/correct", response_model=None)
 def correct_admission_movement(
     movement_id: str,
     body: CorrectionIn,
     request: Request,
     idempotency_key: str | None = _CORRECT_ADMISSION_MOVEMENT_IDEMPOTENCY_KEY_DEFAULT,
     user: dict = _CORRECT_ADMISSION_MOVEMENT_USER_DEFAULT,
-):
+) -> dict:
     """Undo the stay's latest move (a bed assignment, a bed change or a
     transfer) as recorded in error: a new 'correction' movement pointing at
     it restores the earlier place through the single location writer, and
@@ -614,7 +622,7 @@ def correct_admission_movement(
             **kwargs,
         )
     except adt_core.AdtError as err:
-        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err)) from err
+        raise _move_refused(err, "adt_movement_correction", user, request) from err
     except AuditWriteError:
         raise _audit_unavailable("correction") from None
     return _pushed(corrected, found["admission_id"])

@@ -88,7 +88,7 @@ def second_facility():
 
 @pytest.mark.parametrize("path", [
     "/api/vigil/patients", "/api/sage/query", "/api/bridge/me", "/api/admin/users",
-    "/api/discharge-access/verify", "/api/ingest/vitals", "/uploads/scan.png",
+    "/api/discharge-access/verify", "/api/ingest/vitals", "/api/nurse/board",
     "/socket.io/", "/api/healthcare", "/api/opsroom", "/api",
     # Crafted spellings of an open prefix are judged as fenced.
     "/api/auth/../vigil/patients", "/api/health/../vigil/patients", "/api//auth/me",
@@ -194,9 +194,12 @@ def test_patient_routes_answer_503_within_thirty_seconds(clock, second_facility)
     check = next(c for c in ops.json()["checks"] if c["key"] == "facilities")
     assert check["status"] in ("attention", "urgent")
     assert check["detail"]["facility_fence"]["holding"] is True
-    # Every other patient surface too, unauthenticated or not.
-    assert client.get("/uploads/nothing.png", headers=admin).status_code == 503
+    # Every other blind patient surface too, unauthenticated or not.
+    assert client.get("/api/nurse/board", headers=admin).status_code == 503
     assert client.get("/api/vigil/patients").status_code == 503
+    # The media route was swept in multisite-8 (W12-A): it answers itself, so a
+    # file that is not there is its own 404, not the fence's 503.
+    assert client.get("/uploads/nothing.png", headers=admin).status_code == 404
     assert client.post("/api/sage/query", json={}, headers=nurse).status_code == 503
 
 

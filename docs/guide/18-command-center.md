@@ -187,7 +187,7 @@ Module constants: `WARD_CAPACITY`, `TOTAL_CAPACITY`, `_normalize_ward` are **imp
 **How it works:** for each patient, `get_latest_snapshot(id)`; parse its `created_at`; if age ≤ `DOWNTIME_RECENT_WINDOW_MIN` count it "recent"; track the maximum age; return `{patients_with_recent_snapshot, total, pct, oldest_snapshot_age_min}`.
 **Why it exists:** A downtime snapshot is the ward's safety net when the EHR/network/LLM is down; the board answers "if we lost systems now, how many patients are covered?"
 **Data in/out:** patient list → readiness dict.
-**Talks to:** `downtime_service.get_latest_snapshot` (`server/services/downtime_service.py:683`, reads `patient_snapshots`); uses `_parse_ts`.
+**Talks to:** `downtime_service.get_latest_snapshot` (`server/services/downtime_service.py:784`, reads `patient_snapshots`); uses `_parse_ts`.
 **Change guide:** To tighten "fresh" to 12 hours, change `DOWNTIME_RECENT_WINDOW_MIN` at `:38`; knock-on: `readinessTone` thresholds in the client (`src/components/command/CommandCenter.tsx:36-40`) may need retuning so the KPI colour still reads sensibly.
 **Gotchas:** A per-patient snapshot lookup means N queries for N patients (no batch), fine for a 32-bed demo, a hotspot at real scale. `oldest_snapshot_age_min` is `None` when no patient has any snapshot.
 
@@ -342,7 +342,7 @@ The header trigger and panel. It calls `fetchPulseSeason()` and renders the "Thi
 | `predict_hospital_flow(days_ahead)` | `server/services/forecast_service.py:559` | `daily_forecasts[i]` with `predicted_admissions/predicted_occupancy/occupancy_pct`. |
 | `compute_news2(...)` | `server/services/vigil_service.py:236` | Returns `{raw_news2, …}` for a set of vitals. |
 | `get_active_bundles()` | `server/services/sepsis_bundle_service.py:104` | Active bundles decorated with `on_track`. |
-| `get_latest_snapshot(pid)` | `server/services/downtime_service.py:683` | Latest snapshot envelope with `created_at`. |
+| `get_latest_snapshot(pid)` | `server/services/downtime_service.py:784` | Latest snapshot envelope with `created_at`. |
 | `require_permission(*perms)`, `FORECAST_READ`, `AUDIT_READ` | `server/permissions.py:386,65,92` | RBAC dependency + permission constants. |
 | `apiFetch<T>(path)` | `src/api/client.ts:195` | Adds `/api` + JWT, throws typed errors. |
 

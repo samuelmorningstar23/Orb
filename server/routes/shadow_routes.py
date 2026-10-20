@@ -94,16 +94,19 @@ from datetime import UTC, datetime, timedelta
 from datetime import time as dt_time
 from typing import Any
 
+from database import db_session
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 from permissions import (
     ADMIN_OVERVIEW,
     OUTCOME_RECORD,
     enforce_patient_scope,
+    facility_scope,
     require_permission,
 )
 from pydantic import BaseModel, Field
 from services.audit_service import AuditWriteError, log_audit_event
+from services.facility_filter import patient_clause
 
 from services import shadow_export_service as exporter
 from services import shadow_service, shadow_verdicts
@@ -111,6 +114,26 @@ from services import shadow_service, shadow_verdicts
 logger = logging.getLogger("orb.shadow.routes")
 
 router = APIRouter(prefix="/api/admin/shadow", tags=["shadow-scorecard"])
+
+
+def _patients_at_facilities(patient_ids: list, facilities: frozenset[int]) -> set[str]:
+    """The ids among `patient_ids` whose latest encounter is at one of
+    `facilities` (permissions.FACILITY_PATIENT_SQL, the rule
+    require_patient_access applies to one chart; multisite-8). BLOCKING."""
+    ids = sorted({str(p) for p in patient_ids if p})
+    if not ids:
+        return set()
+    clause, args = patient_clause(facilities)
+    marks = ",".join("?" for _ in ids)
+    with db_session() as db:
+        return {
+            row["id"]
+            for row in db.execute(
+                f"SELECT p.id FROM patients p WHERE p.id IN ({marks}){clause}",
+                (*ids, *args),
+            ).fetchall()
+        }
+
 
 #: One dependency object per permission, so neither can drift between handlers.
 _ADMIN = Depends(require_permission(ADMIN_OVERVIEW))
@@ -418,7 +441,7 @@ def list_episodes(
     limit: int = _LIST_EPISODES_LIMIT_DEFAULT,
     offset: int = _LIST_EPISODES_OFFSET_DEFAULT,
     user: dict = _ADMIN,
-):
+) -> dict:
     """The adjudication queue — **BLINDED**.
 
     The adjudicator decides whether a deterioration was real from the CLINICAL
@@ -457,6 +480,15 @@ def list_episodes(
     items = [r for r in items if isinstance(r, dict)]
     if status == "adjudicated":
         items = [r for r in items if r.get("verdict") or r.get("adjudicated")]
+    # Facility scope (multisite-8, W12-A): with more than one facility on
+    # record an account with a facility limit sees only episodes of patients
+    # whose latest encounter is at its facilities; an episode with no patient
+    # has no facility and is withheld, and the house-wide total is not given.
+    # With one facility facility_scope is None and nothing changes.
+    facilities = facility_scope(user)
+    if facilities is not None:
+        kept = _patients_at_facilities([r.get("patient_id") for r in items], facilities)
+        items = [r for r in items if r.get("patient_id") in kept]
 
     blinded = status == "pending"
     projected = [_blind(r) for r in items] if blinded else items
@@ -474,7 +506,9 @@ def list_episodes(
         "count": len(projected),
         "limit": limit,
         "offset": offset,
-        "total": rows.get("total") if isinstance(rows, dict) else None,
+        "total": (rows.get("total") if isinstance(rows, dict) else None)
+        if facilities is None
+        else None,
         # The vocabulary the adjudicator may choose from, and how each one is
         # counted — served from the same table the metric classifies with, so
         # the UI cannot offer a verdict the scorecard would discard.
@@ -537,7 +571,7 @@ def _blind(row: Any) -> dict[str, Any]:
 
 
 @router.get("/episode/{episode_id}")
-def get_episode(episode_id: str, user: dict = _ADMIN):
+def get_episode(episode_id: str, user: dict = _ADMIN) -> Any:
     """Ordered detail for one episode: every row, in the order it occurred.
 
     Unblinded by design — this is the review view, opened once a verdict has
@@ -551,7 +585,29 @@ def get_episode(episode_id: str, user: dict = _ADMIN):
         raise HTTPException(status_code=404, detail=f"No episode {episode_id}")
     if isinstance(detail, list):
         detail = {"episode_id": episode_id, "events": detail}
+    # Facility scope (multisite-8): with more than one facility on record an
+    # account with a facility limit opens an episode only when every patient
+    # it names is at its facilities; otherwise the answer is the same 404 as
+    # an episode that does not exist. With one facility nothing changes.
+    facilities = facility_scope(user)
+    if facilities is not None:
+        named = _episode_patients(detail)
+        if not named or not named <= _patients_at_facilities(sorted(named), facilities):
+            raise HTTPException(status_code=404, detail=f"No episode {episode_id}")
     return detail
+
+
+def _episode_patients(detail: Any) -> set[str]:
+    """Every patient id an episode detail names: its own and its events'."""
+    named: set[str] = set()
+    if not isinstance(detail, dict):
+        return named
+    if detail.get("patient_id"):
+        named.add(str(detail["patient_id"]))
+    for event in detail.get("events") or []:
+        if isinstance(event, dict) and event.get("patient_id"):
+            named.add(str(event["patient_id"]))
+    return named
 
 
 # ══════════════════════════════════════════════════════════════════════════════

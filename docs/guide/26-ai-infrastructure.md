@@ -142,7 +142,7 @@ sequenceDiagram
 5. If a `label` was given, logs elapsed ms at debug level (`:78-79`).
 **Why it exists:** without step 2/4 the MPS allocator fragments and the MLX buffer pool bloats (~50-100 MB/inference per the module docstring), eventually starving the machine. It is deliberately a *sync* context manager (not async) because it wraps the tight CPU/GPU-bound call itself, not the await.
 **Data in/out:** in, a label string; out, nothing (it is a side-effecting cleanup).
-**Talks to:** called by `vigil_service.py:200` (CfC), `forecast_service.py:466` (LSTM), `voice_agent_service.py:378/439` (Sage voice MLX), `scribe_providers.py:223/301` (Scribe MLX). Calls PyTorch and MLX only if installed.
+**Talks to:** called by `vigil_service.py:200` (CfC), `forecast_service.py:466` (LSTM), `voice_agent_service.py:405/439` (Sage voice MLX), `scribe_providers.py:223/301` (Scribe MLX). Calls PyTorch and MLX only if installed.
 **Change guide:** To add a third framework's cache flush (say a future JAX-Metal), add another guarded `try/except` block after `:76`; knock-on effects: none, because each block is independent and failure-tolerant. Watch out: never raise from cleanup, a raised cleanup would mask the body's real exception.
 **Gotchas:** the framework imports are *inside* the `finally` so a missing framework is a silent no-op; that is intentional (test `test_no_crash_without_torch_or_mlx` sets the modules to `None`). It does **not** acquire any lock, so calling `vram_guard` alone (as Vigil/Forecast do) provides hygiene but *not* GPU exclusivity.
 
@@ -261,7 +261,7 @@ Lazy-init the `asyncio.Lock`, `asyncio.PriorityQueue` and `asyncio.BoundedSemaph
 **Signature:** `async acquire(priority: int = PRIORITY_SCRIBE, timeout: float = 120.0)`
 **How it works:** `_bind_loop()`, then a two-way split (`:262`): `priority <= PRIORITY_SAGE` → `_acquire_interactive`, everything else → `_acquire_background`.
 **Data in/out:** in, priority int, timeout; out, `True` on success (the caller then streams from Ollama), or raises `asyncio.TimeoutError`. On **any** failure path neither a lane slot nor a gate reference is leaked.
-**Talks to:** called by `sage_service.py:1349` (P1), `scribe_service.py:413/445` (P2) and `:571` (P3), `lens_service.py:84` (P2), `bridge_service.py:211` (P2), `discharge_service.py:694` (P2), `surgery_service.py:208` (P2), `vigil_service.py:731` (P2) and `:1658` (P3), `timeline_service.py:233` (P3), `sage_narrator_service.py:220` (P3), `nervous_system_triggers.py:263/522` (P3), `batch_coordinator.py:100/146` (caller-supplied), `main.py:378/411` (P5 warmup).
+**Talks to:** called by `sage_service.py:1349` (P1), `scribe_service.py:413/445` (P2) and `:571` (P3), `lens_service.py:84` (P2), `bridge_service.py:211` (P2), `discharge_service.py:694` (P2), `surgery_service.py:208` (P2), `vigil_service.py:731` (P2) and `:1672` (P3), `timeline_service.py:233` (P3), `sage_narrator_service.py:311` (P3), `nervous_system_triggers.py:263/522` (P3), `batch_coordinator.py:100/146` (caller-supplied), `main.py:378/411` (P5 warmup).
 
 ##### PriorityLLMQueue._acquire_interactive: `:266`
 Bumps `_interactive_waiting` **synchronously before the first await** (`:269`) so `preempt_requested` is live the instant a clinician's turn exists, not after it is granted. Then: `wait_for(sem.acquire())` → `_gate_ref_acquire(deadline)` → `_install_ticket(LANE_INTERACTIVE)` → `_interactive_active += 1` → `granted = True`, with **no await** between the ticket install and `granted` so no observer can see the acquisition counted twice. The `finally` decrements `_interactive_waiting` on every path and, when not granted, unwinds gate then slot **fully synchronously**, a second cancellation cannot interrupt it, so nothing leaks.
@@ -458,7 +458,7 @@ This subsystem exposes **no REST routes and no DB tables**. Its contract surface
 | Pillar / caller | Entry point | Priority | Line |
 |---|---|---|---|
 | Sage chat | `llm_queue.acquire` | 1 (SAGE) | `sage_service.py:221` |
-| Sage voice (MLX) | `umsq.acquire` + `vram_guard` | PRIORITY_SAGE | `voice_agent_service.py:456` |
+| Sage voice (MLX) | `umsq.acquire` + `vram_guard` | PRIORITY_SAGE | `voice_agent_service.py:483` |
 | Scribe draft / correction (Ollama) | `llm_queue.acquire` | 2 (SCRIBE) | `scribe_service.py:407,434` |
 | Scribe background summary | `llm_queue.acquire` | 3 | `scribe_service.py:534` |
 | Scribe MLX (in-process) | `umsq.acquire` | PRIORITY_SCRIBE | `scribe_providers.py:316` |
