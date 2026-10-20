@@ -825,7 +825,15 @@ WARD_ORDER_PATTERNS = [
     # 9. An order after a condition: "if grbs > 300 give actrapid 8 units sc".
     #    Not after a subject, which asks: "if we give lasix will her k drop".
     rf"^(?:if|unless|once)\s+(?:[^.?!]|(?<=\d)\.(?=\d)){{1,40}}?[\s,]"
-    rf"(?<!\bwe\s)(?<!\bi\s)(?<!\byou\s)(?<!\bthey\s)(?<!\bshe\s)(?<!\bhe\s)(?:then\s+)?"
+    rf"(?<!\bwe\s)(?<!\bi\s)(?<!\byou\s)(?<!\bthey\s)(?<!\bshe\s)(?<!\bhe\s)"
+    # Nor after a hypothetical or someone else's plan, which a modal or another
+    # person's future puts in front of the verb: "if k drops below 3.5 we would
+    # start kcl", "if she spikes again they will add vanco" (blind set 5, 20
+    # October 2026). The first-person "we will start kcl" is still an order.
+    rf"(?<!\bwould\s)(?<!\bshould\s)(?<!\bcould\s)(?<!\bmight\s)(?<!\bmay\s)"
+    rf"(?<!\bthey\swill\s)(?<!\bthey'll\s)(?<!\bthey\u2019ll\s)(?<!\bhe\swill\s)"
+    rf"(?<!\bhe'll\s)(?<!\bshe\swill\s)(?<!\bshe'll\s)(?<!\byou\swill\s)(?<!\byou'll\s)"
+    rf"(?:then\s+)?"
     rf"(?:{_ADD_VERBS}|{_STOP_VERBS}|{_CHANGE_VERBS}|{order_wording.WARD_VERBS})\b{_GAP}"
     rf"\b{_ANY_THERAPY}\b",
     # 10. A hold said as a negative: "no lasix today", "no more tramadol for him",

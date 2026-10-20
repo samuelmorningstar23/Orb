@@ -199,6 +199,15 @@ def test_a_plan_line_is_read_like_the_order_under_it(query, order):
     ("we'll continue lasix 40 bd", True),
     ("we'll check the potassium", False),
     ("i'll check the drug chart", False),
+    # Found by blind set 5 (20 October): a conditional with a hypothetical or
+    # someone else's plan is still a read, and a first-person one is an order.
+    ("if k drops below 3.5 we would start kcl", False),
+    ("if map drops again we would add vasopressin", False),
+    ("if she spikes again they will add vanco", False),
+    ("if bp is high they'll add amlodipine", False),
+    ("if sugars stay high we should start insulin", False),
+    ("if k drops below 3.5 we will start kcl", True),
+    ("if k drops below 3.5 start kcl 20 mmol iv", True),
     ("well, the lasix seems to be working", False),
 ])
 def test_a_we_will_line_is_read_like_a_plan_line(query, order):
@@ -235,6 +244,12 @@ def test_a_we_will_line_is_read_like_a_plan_line(query, order):
     ("lasix 40 iv bd continued", False),
     ("she continues to need oxygen", False),
     ("contd", False),
+    # Found by blind set 5 (20 October): monitoring is not a medicine, even on a
+    # line with a frequency that would pass for a dosing signature.
+    ("continue vitals 2 hourly", False),
+    ("continue obs 4 hourly", False),
+    ("cont grbs 6 hourly", False),
+    ("continue i/o charting", False),
 ])
 def test_a_continue_line_is_read_like_a_plan_line(query, order):
     assert detect_mutation_intent(query) is order

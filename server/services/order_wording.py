@@ -766,6 +766,60 @@ REPORT = frozenset(
         "list",
     }
 )
+#: What a ward watches, never a medicine: "continue vitals 2 hourly" has a
+#: frequency that would pass for a dosing signature with "vitals" read as a
+#: brand nobody listed (blind set 5, 20 October 2026). One of these and the
+#: message is not a prescription line.
+MONITORING = frozenset(
+    {
+        "vitals",
+        "vital",
+        "obs",
+        "observation",
+        "observations",
+        "monitoring",
+        "monitor",
+        "charting",
+        "grbs",
+        "cbg",
+        "rbs",
+        "sugars",
+        "bp",
+        "pulse",
+        "spo2",
+        "sats",
+        "saturation",
+        "temp",
+        "temperature",
+        "intake",
+        "output",
+        "i/o",
+        "io",
+        "uo",
+        "weight",
+        "gcs",
+        "news2",
+        "feeds",
+        "feed",
+        "diet",
+        "physio",
+        "physiotherapy",
+        "mobilisation",
+        "mobilization",
+        "dressing",
+        "dressings",
+        "suction",
+        "positioning",
+        "turning",
+        "ecg",
+        "abg",
+        "cbc",
+        "labs",
+        "investigations",
+        "cultures",
+    }
+)
+
 #: The REPORT words that tell a drug's own state. A reason after an order may
 #: hold the rest ("inj lorazepam 2 mg iv now, bed 11 is seizing"); one of these
 #: makes the clause a status ("inj monocef 1 g iv bd, day 3", "tab ecosprin 75 od
@@ -957,7 +1011,7 @@ def line_signals(q: str, is_drug):
             continue  # "pantop dsr": still the drug's name
         elif t == "this" and nxt in ("patient", "pt"):
             pass
-        elif t in REPORT or t in TAIL_VETO:
+        elif t in REPORT or t in TAIL_VETO or t in MONITORING:
             return None  # one report or question word and it is not a line
         elif prev == "honorific" and unknown == 0:
             unknown = -1  # the name after Mr or Mrs
