@@ -1,4 +1,4 @@
-# Orb security and browser assessment — 12 October 2026
+# Orb security and browser assessment, 12 October 2026
 
 ## Independent follow-up - 19-20 October 2026
 
@@ -59,7 +59,7 @@ The review covered HTTP and socket authentication, object/patient scope, Scribe 
 
 ## Reproduced security findings
 
-### SEC-01 — Scribe object authorization
+### SEC-01: Scribe object authorization
 
 **Observed:** a Cardiology doctor cannot GET an Oncology draft (404), but can PATCH it (200); the stored note changes while retaining the other author. A different clinician's signed, unfiled note also returns 404, but the same caller can revise it (200), GET the resulting copy (200), and read the original raw transcript. Signed unfiled notes are a state the current signing route permits; the test did not change a clinical gate.
 
@@ -69,7 +69,7 @@ The review covered HTTP and socket authentication, object/patient scope, Scribe 
 
 **Remediation:** enforce the common note/patient scope policy before every lifecycle read, model invocation or write; recheck it within the mutation transaction. Preserve private/unfiled ownership rules and existing signing decisions. Add negative tests for every lifecycle operation, including revision copies. The structure route's unchecked patient field is a related source-only gap below.
 
-### SEC-02 — Connected socket sessions survive revocation
+### SEC-02: Connected socket sessions survive revocation
 
 **Observed:** after an actual `users.token_version` increment, `/api/auth/me` returns 401 and a fresh socket authentication check rejects the token. An already connected socket still receives a `vitals:update` frame containing the synthetic patient's name and heart rate.
 
@@ -79,7 +79,7 @@ The review covered HTTP and socket authentication, object/patient scope, Scribe 
 
 **Remediation:** retain authoritative session/device/expiry information, revalidate it on a bounded schedule and sensitive publication, and evict affected sockets/rooms on revocation or scope change. Test an existing connection after revocation rather than only testing fresh handshakes.
 
-### SEC-03 — Revoked tablet HTTP/socket parity
+### SEC-03: Revoked tablet HTTP/socket parity
 
 **Observed:** a correctly signed synthetic token with a `did` referring to an already revoked enrolled-device row returns HTTP 401 but receives the actual socket namespace acceptance frame. It can also receive the demonstrated vitals event.
 
@@ -89,7 +89,7 @@ The review covered HTTP and socket authentication, object/patient scope, Scribe 
 
 **Remediation:** share one authoritative authentication policy between HTTP and sockets, including enrolled-device status; invalidate connected sessions when a device is revoked.
 
-### SEC-04 — Downtime pack widens patient scope
+### SEC-04: Downtime pack widens patient scope
 
 **Observed:** a doctor's direct downtime read for another department's patient returns 404. The doctor's permitted patient occupies the same physical ward; its ward-pack request returns 200 and contains the foreign patient's name. Shared-ward boarders are supported by the bed-management model, so ward equality does not prove department scope.
 
@@ -97,7 +97,7 @@ The review covered HTTP and socket authentication, object/patient scope, Scribe 
 
 **Remediation:** scope every included patient and the cached artifact to the requesting principal's effective access. Do not use a permitted anchor patient as authority for an entire ward. Preserve the explicitly designed degraded-mode behavior; this finding does not require changing held read-audit decisions.
 
-### SEC-05 — Restore archive containment
+### SEC-05: Restore archive containment
 
 **Observed:** the exact `tar -xf ... -C dirname(UPLOADS_DIR)` extraction primitive replaces an owned harmless file beside uploads. A normal top-level archive member suffices; no traversal, absolute path or symlink was used. The full restore script and its gates were not executed.
 
@@ -107,7 +107,7 @@ The review covered HTTP and socket authentication, object/patient scope, Scribe 
 
 **Remediation:** authenticate the backup set and media companion; extract into a private staging directory; allow only expected regular files under the upload root; reject links, devices and unexpected paths; validate before installation. Ensure failed validation cannot leave a partially installed database/media pair.
 
-### SEC-06 — TOTP single-use race
+### SEC-06: TOTP single-use race
 
 **Observed:** two real `consume_totp` calls accept the same valid step (`true, true`) when both actual SELECTs complete before either UPDATE. A normal sequential replay returns false.
 
@@ -117,7 +117,7 @@ The review covered HTTP and socket authentication, object/patient scope, Scribe 
 
 **Remediation:** consume the step with an atomic conditional update and check the affected-row count, or an equivalent correctly serialized transaction. Add a concurrent regression alongside the existing sequential replay test.
 
-### SEC-07 — Lens orphan retention
+### SEC-07: Lens orphan retention
 
 **Observed:** a foreign-patient request returns 404 but creates one encrypted mode-0600 upload with no analysis row. A controlled generator failure likewise produces a visible typed terminal error and leaves one unregistered upload. An unauthenticated request returns 401 and creates no file.
 
@@ -127,7 +127,7 @@ The review covered HTTP and socket authentication, object/patient scope, Scribe 
 
 **Remediation:** authorize before publishing, retain explicit ownership of temporary media until successful registration, clean it on denial/failure/cancellation, and apply bounded quotas/retention. Preserve Lens's unfiled-first clinical review gate.
 
-### SEC-08 — Discharge QR storage bypass
+### SEC-08: Discharge QR storage bypass
 
 **Observed:** `generate_qr_code` creates a plaintext PNG with mode 0644 under umask 022 despite a configured synthetic upload-encryption key.
 
@@ -143,35 +143,35 @@ These were independently source-reviewed. They are not additional executed explo
 
 | Concern | Source and bounded assessment | Recommended verification/fix |
 |---|---|---|
-| P1 — Scribe structure accepts foreign patient ownership | [scribe_routes.py:475](/Users/samuelmorningstar/Documents/Projects/Orb/server/routes/scribe_routes.py:475), save at line 530; [scribe_service.py:584](/Users/samuelmorningstar/Documents/Projects/Orb/server/services/scribe_service.py:584). A doctor/nurse with `scribe.create_draft`, models enabled and successful generation can save a draft under a caller-supplied foreign patient ID. It does not itself sign a note or read existing patient facts. | Enforce patient scope before model work and within save. Use a controlled generation seam for a negative route test. |
-| P2 — Presence room patient scope | [realtime.py:682](/Users/samuelmorningstar/Documents/Projects/Orb/server/ws/realtime.py:682) accepts caller-named patient rooms using `patient.read_all` without patient scope. The matching publisher at line 673 carries viewer IDs/names/roles, not chart/vitals/transcript. Patient and pharmacist roles fail the permission gate. | Test foreign-patient room entry; scope the patient and preserve capability checks. |
-| P2 — Live Scribe capability and resource limits | [scribe_stream.py:171](/Users/samuelmorningstar/Documents/Projects/Orb/server/ws/scribe_stream.py:171) uses authentication/model gates without Scribe capability or patient scope. Lines 204/217 grow cumulative audio and create transcription tasks without a session bound. A one-million-byte packet limit does not bound cumulative memory or task count. Raw hint disclosure and exhaustion were not tested. | Gate capability/patient context, cap session bytes/duration/queued work and apply backpressure; test with small bounded fixtures. |
-| P2 — Lens accepts incomplete upstream completion | [lens_service.py:126](/Users/samuelmorningstar/Documents/Projects/Orb/server/services/lens_service.py:126) treats natural EOF as completion, ignores malformed JSON frames and does not require a valid `done:true` frame. Partial nonempty prose can receive the disclaimer and reach route persistence. | Use fake upstream frames to test missing/malformed terminal events; require explicit valid completion. Keep clinical review gates. |
-| P2 — ASR hint data in process arguments | [scribe_service.py:228](/Users/samuelmorningstar/Documents/Projects/Orb/server/services/scribe_service.py:228) sends patient-derived decoder hints in the fallback subprocess argument list; hint construction is at line 57. Local process inspection may expose the text. Argument-list execution avoids shell injection; remote disclosure was not demonstrated. | Use private stdin/IPC or another non-argv channel for patient text. |
-| P2 — Offline model destination is not enforced at configuration boundary | [config.py:219](/Users/samuelmorningstar/Documents/Projects/Orb/server/config.py:219) normalizes `ORB_OLLAMA_BASE_URL` without a loopback restriction. [run-orb.sh:96](/Users/samuelmorningstar/Documents/Projects/Orb/run-orb.sh:96) refuses remote probing/startup but can continue the backend with that destination configured. No caller-controlled API setter or SSRF was found; this requires configuration control. | Fail closed for off-box inference in the offline policy, with an explicit separately approved policy if LAN inference is supported. No external destination was contacted in this assessment. |
-| P3 — Presence disconnect cleanup is overwritten | [realtime.py:723](/Users/samuelmorningstar/Documents/Projects/Orb/server/ws/realtime.py:723), later [scribe_stream.py:241](/Users/samuelmorningstar/Documents/Projects/Orb/server/ws/scribe_stream.py:241), import at realtime line 866. The actual registered handler is the Scribe handler. Stale roster effects are source-derived; registration identity was inspected at runtime. | Compose both cleanups in one registered handler and assert roster/session cleanup on disconnect. |
+| P1: Scribe structure accepts foreign patient ownership | [scribe_routes.py:475](/Users/samuelmorningstar/Documents/Projects/Orb/server/routes/scribe_routes.py:475), save at line 530; [scribe_service.py:584](/Users/samuelmorningstar/Documents/Projects/Orb/server/services/scribe_service.py:584). A doctor/nurse with `scribe.create_draft`, models enabled and successful generation can save a draft under a caller-supplied foreign patient ID. It does not itself sign a note or read existing patient facts. | Enforce patient scope before model work and within save. Use a controlled generation seam for a negative route test. |
+| P2: Presence room patient scope | [realtime.py:682](/Users/samuelmorningstar/Documents/Projects/Orb/server/ws/realtime.py:682) accepts caller-named patient rooms using `patient.read_all` without patient scope. The matching publisher at line 673 carries viewer IDs/names/roles, not chart/vitals/transcript. Patient and pharmacist roles fail the permission gate. | Test foreign-patient room entry; scope the patient and preserve capability checks. |
+| P2: Live Scribe capability and resource limits | [scribe_stream.py:171](/Users/samuelmorningstar/Documents/Projects/Orb/server/ws/scribe_stream.py:171) uses authentication/model gates without Scribe capability or patient scope. Lines 204/217 grow cumulative audio and create transcription tasks without a session bound. A one-million-byte packet limit does not bound cumulative memory or task count. Raw hint disclosure and exhaustion were not tested. | Gate capability/patient context, cap session bytes/duration/queued work and apply backpressure; test with small bounded fixtures. |
+| P2: Lens accepts incomplete upstream completion | [lens_service.py:126](/Users/samuelmorningstar/Documents/Projects/Orb/server/services/lens_service.py:126) treats natural EOF as completion, ignores malformed JSON frames and does not require a valid `done:true` frame. Partial nonempty prose can receive the disclaimer and reach route persistence. | Use fake upstream frames to test missing/malformed terminal events; require explicit valid completion. Keep clinical review gates. |
+| P2: ASR hint data in process arguments | [scribe_service.py:228](/Users/samuelmorningstar/Documents/Projects/Orb/server/services/scribe_service.py:228) sends patient-derived decoder hints in the fallback subprocess argument list; hint construction is at line 57. Local process inspection may expose the text. Argument-list execution avoids shell injection; remote disclosure was not demonstrated. | Use private stdin/IPC or another non-argv channel for patient text. |
+| P2: Offline model destination is not enforced at configuration boundary | [config.py:219](/Users/samuelmorningstar/Documents/Projects/Orb/server/config.py:219) normalizes `ORB_OLLAMA_BASE_URL` without a loopback restriction. [run-orb.sh:96](/Users/samuelmorningstar/Documents/Projects/Orb/run-orb.sh:96) refuses remote probing/startup but can continue the backend with that destination configured. No caller-controlled API setter or SSRF was found; this requires configuration control. | Fail closed for off-box inference in the offline policy, with an explicit separately approved policy if LAN inference is supported. No external destination was contacted in this assessment. |
+| P3: Presence disconnect cleanup is overwritten | [realtime.py:723](/Users/samuelmorningstar/Documents/Projects/Orb/server/ws/realtime.py:723), later [scribe_stream.py:241](/Users/samuelmorningstar/Documents/Projects/Orb/server/ws/scribe_stream.py:241), import at realtime line 866. The actual registered handler is the Scribe handler. Stale roster effects are source-derived; registration identity was inspected at runtime. | Compose both cleanups in one registered handler and assert roster/session cleanup on disconnect. |
 
 ## Browser findings
 
 The [browser evidence package](/Users/samuelmorningstar/Documents/Projects/Orb/docs/audit-2026-10/browser-evidence/ui-ux-20261012/README.md) contains corrected accepted coverage and retained original attempts. Broad inventory screenshots are not a claim that every interaction passed. Missing patient selection, a missed logout, hidden panels and disabled setup actions were classified as harness/setup limitations rather than application crashes. The corrected focused and settled-register runs cover 58 states with 116 screenshots and zero scenario, console or page errors. No external or inference requests were recorded.
 
-### UX-01 — Mobile admission form is obscured
+### UX-01: Mobile admission form is obscured
 
 At 390 × 844, the dialog keeps a 280px summary beside the form. The measured content column collapses to about 12px while form controls remain about 430px wide. The summary covers the identity/admission tabs and core fields; the footer also overlaps content. The behavior reproduces in light and dark modes. Some controls retain a tiny hit area, so this is not a claim that every control is technically unclickable.
 
 The fixed horizontal layout is in [AdmitPatientModal.css:87](/Users/samuelmorningstar/Documents/Projects/Orb/src/components/AdmitPatientModal.css:87) and its fixed sidebar at [line 328](/Users/samuelmorningstar/Documents/Projects/Orb/src/components/AdmitPatientModal.css:328). Stack or collapse the summary at narrow widths, allow the form to shrink, and make the footer participate in a bounded scroll layout. Verify tabs, every field and submission at mobile width. The [light screenshot](/Users/samuelmorningstar/Documents/Projects/Orb/docs/audit-2026-10/browser-evidence/ui-ux-20261012/focused-final/screenshots/036-390-light-admission-overlap-viewport.png) and [dark screenshot](/Users/samuelmorningstar/Documents/Projects/Orb/docs/audit-2026-10/browser-evidence/ui-ux-20261012/focused-final/screenshots/045-390-dark-admission-overlap-viewport.png) show the obstruction.
 
-### UX-02 — Radiation-safety mobile clipping and overlay
+### UX-02: Radiation-safety mobile clipping and overlay
 
 The settled mobile radiation-safety content is about 665px wide inside a 366px container. Labels, fields and next-page content are initially clipped, but horizontal panning recovers them; the test measured approximately 299px of pan. Document-level overflow checks alone miss this nested scrolling defect. The floating Sage orb overlaps the “Next equipment page” label. The seeded button was disabled, so blocked live navigation/mutation was not established.
 
 The shared [RecordGovernancePanel.css layout](/Users/samuelmorningstar/Documents/Projects/Orb/src/pages/panels/RecordGovernancePanel.css:1) is used by the radiation panel. Give the form controls a mobile layout and reserve space for floating controls. Medical-records content in the corrected run fit at 366px and is not included as a clipping finding. Compare the [initial viewport](/Users/samuelmorningstar/Documents/Projects/Orb/docs/audit-2026-10/browser-evidence/ui-ux-20261012/registers-verified/screenshots/002-390-light-radiation-safety-viewport.png) with the [panned viewport](/Users/samuelmorningstar/Documents/Projects/Orb/docs/audit-2026-10/browser-evidence/ui-ux-20261012/registers-verified/screenshots/003-390-light-radiation-safety-horizontal-pan-end-viewport.png).
 
-### UX-03 — Admission dialog loses focus on close
+### UX-03: Admission dialog loses focus on close
 
 Pressing Escape returns focus to `BODY` rather than the admission trigger across six viewport/theme profiles, including 1440px, 1280px and 390px widths. The dialog's [autoFocus input](/Users/samuelmorningstar/Documents/Projects/Orb/src/components/AdmitPatientModal.tsx:795) has already taken focus when [useFocusTrap captures it](/Users/samuelmorningstar/Documents/Projects/Orb/src/hooks/useFocusTrap.ts:94), so the trap does not retain the original trigger. Capture the opener before moving focus into the dialog and restore it on every close path; verify both Escape and close-button behavior by keyboard.
 
-### UX-04 — Mobile self-service MFA enrollment is hidden
+### UX-04: Mobile self-service MFA enrollment is hidden
 
 The authenticated shell's [account-security trigger](/Users/samuelmorningstar/Documents/Projects/Orb/src/pages/ClinicianShell.tsx:547) sits inside `.shell__user-card`, which [the mobile CSS hides](/Users/samuelmorningstar/Documents/Projects/Orb/src/pages/ClinicianShell.css:1082) at widths of 768px or less. Both mobile themes retain the trigger in the DOM but hide it; no alternate authenticated mobile trigger was found. The [mandatory enrollment flow at login](/Users/samuelmorningstar/Documents/Projects/Orb/src/pages/Login.tsx:513) still renders when required by the server. This is a self-service access/discoverability gap, not an MFA enforcement bypass. Provide a reachable account-security entry in the mobile shell.
 

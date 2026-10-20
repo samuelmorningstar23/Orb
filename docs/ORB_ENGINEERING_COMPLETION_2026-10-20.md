@@ -144,7 +144,7 @@ power-loss and backup-under-load drills; and pilot ownership, training and
 approved module enablement. The updated PDF preserves those boundaries.
 
 
-## Legacy lint and typing follow-up — 20 October 2026
+## Legacy lint and typing follow-up, 20 October 2026
 
 This follow-up supersedes the legacy diagnostic counts above for the reviewed
 source at parent `59ee1bc` (including committed HIS changes). Across 398 production
