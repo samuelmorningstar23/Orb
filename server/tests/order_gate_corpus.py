@@ -329,7 +329,6 @@ HAND_READS = {
         'she got her stat lasix 40 iv',
         'was on ceftriaxone 1 g od before transfer',
         'ceftriaxone 1 g iv od x 3 days completed',
-        'plan: continue current meds',
         'rx: as before',
         'lasix 40 iv bd as per chart',
     ],
@@ -386,9 +385,10 @@ POLITE_QUESTION_MARK_ORDERS = [
 # Not orders by an earlier ruling or by plain reading.
 
 NOT_ORDERS_BY_RULING = [
-    'continue lasix 40 bd',
+    # "continue lasix 40 bd" and "continue home meds" left this list on 20
+    # October 2026, when continuing a medicine was ruled an order (read like a
+    # plan line); "continue" with no medicine after it is still a read.
     'continue same',
-    'continue home meds',
     'metformin should be stopped before contrast',
     'we should stop the heparin soon',
     'repeat potassium at 6 pm',
@@ -2953,7 +2953,6 @@ KNOWN_MISSES_HELDOUT2 = [
     'strat inj piptaz 4.5 g iv q8h',
     'inj hydrocort 100 mg iv sat',
     'hold metfromin, ct with contrast tomorrow',
-    'continue home meds except ramipril',
     'magnesium sulphate 2 g iv ovr 20 min',
     'sistr nebulise bed 3 with asthalin now',
     'insulin infusion 0.1 u/kg/hr, cbg hourly',
@@ -3025,6 +3024,17 @@ KNOWN_TRIPS_HELDOUT3 = [
     'we will need to restart clexane after the biopsy',
     'we will wean norad in the morning',
     "we'll start insulin if sugars stay above 250",
+    # The 20 October "continue" ruling: continuing a medicine is an order, read like a
+    # plan line. Set 3 was written to the earlier rule that "continue X" is not an
+    # order.
+    'cont nebs',
+    'cont same antibiotics',
+    'cont tab ecosprin 75 od',
+    'continue all meds',
+    'continue current fluids',
+    'continue duolin q6h',
+    'continue inj meropenem 1 g iv q8h till day 7',
+    'continue inj pan 40 iv od',
 ]
 KNOWN_TRIPS_HELDOUT4 = [
     'start the round from bed 1',
@@ -3032,4 +3042,13 @@ KNOWN_TRIPS_HELDOUT4 = [
     # The 20 October "we will" ruling, as in set 3.
     'we will give 1 unit prbc after dialysis',
     'we will hold heparin on the morning of surgery',
+    # The 20 October "continue" ruling, as in set 3.
+    'cont pan 40 od',
+    'continue ceftriaxone, review culture',
+    'continue insulin as per sclae',
+    'continue iv fluids ns 75 ml/hr',
+    'continue lasix 40 bd for now',
+    'continue rest of the treatment',
+    'continue same antibiotics',
+    'continue the prbc at the same rate',
 ]

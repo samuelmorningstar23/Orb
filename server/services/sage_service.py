@@ -721,6 +721,7 @@ _WARD_OBJECT = (
 )
 _ANY_DRUG = rf"(?:{_MED_OBJECT}|{_WARD_OBJECT})"
 _ANY_THERAPY = rf"(?:{_MED_OBJECT}|{_WARD_OBJECT}|{order_wording.BLOOD_AND_FLUIDS})"
+_CONTINUE_ORDER = rf"{order_wording.CONTINUE_LEAD}(?:{_ANY_THERAPY}|nebs?|nebuli[sz]ations?)\b"
 
 # Verb families. STOP/CHANGE require an object (see _MED_OBJECT) because bare
 # "stop"/"hold" are common in ordinary chat ("hold on", "stop there").
@@ -838,6 +839,10 @@ WARD_ORDER_PATTERNS = [
     rf"(?:\s*,(?![^.?!]*\b(?:given|gave|received|charted|since|yesterday)\b)[^.?!]*)?\s*$",
     rf"{_ORDER_HEAD}(?:do\s+not|don'?t|dont)\s+(?:{_GIVE_ORDER_VERB}|start|add|restart|push|run)\b{_GAP}"
     rf"\b{_ANY_THERAPY}\b",
+    # 12 (20 October 2026). Continuing a medicine is an order, read like a plan
+    # line: "continue lasix 40 bd", "cont iv fluids", "continue home meds". The
+    # medicine comes straight after the verb (order_wording.CONTINUE_LEAD).
+    rf"{_ORDER_HEAD}{_CONTINUE_ORDER}",
 ]
 
 _WARD_ORDER_RE = [re.compile(p) for p in WARD_ORDER_PATTERNS]
@@ -847,8 +852,8 @@ _WARD_ORDER_RE = [re.compile(p) for p in WARD_ORDER_PATTERNS]
 # stops at a comma. Not the bare verbs of patterns 3 and 4, which would make
 # "we'll start the round from bed 1" an order.
 _INTENT_ORDER_RE = re.compile(
-    rf"^(?:{_ADD_VERBS}|{_STOP_VERBS}|{_CHANGE_VERBS}|{order_wording.WARD_VERBS})\b"
-    rf"[^.?!,]{{0,48}}?\b{_ANY_THERAPY}\b"
+    rf"^(?:(?:{_ADD_VERBS}|{_STOP_VERBS}|{_CHANGE_VERBS}|{order_wording.WARD_VERBS})\b"
+    rf"[^.?!,]{{0,48}}?\b{_ANY_THERAPY}\b|{_CONTINUE_ORDER})"
 )
 
 # An utterance that ASKS. Leading discourse filler is skipped; the test is on the

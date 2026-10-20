@@ -144,7 +144,7 @@ def test_an_informational_give_beside_ward_wording(query, order):
     ("rx: tab dolo 650 sos", True),
     ("orders: ns 100 ml/hr", True),
     ("Plan: continue same", False),
-    ("plan: continue current meds", False),
+    ("plan: continue current meds", True),
     ("Plan: review in the evening", False),
     ("plan: discharge tomorrow", False),
     ("plan: repeat cbc and rft", False),
@@ -196,12 +196,47 @@ def test_a_plan_line_is_read_like_the_order_under_it(query, order):
     ("we'll give the family an update", False),
     ("we'll give a summary at handover", False),
     ("we'll repeat the potassium at 6 pm", False),
-    ("we'll continue lasix 40 bd", False),
+    ("we'll continue lasix 40 bd", True),
     ("we'll check the potassium", False),
     ("i'll check the drug chart", False),
     ("well, the lasix seems to be working", False),
 ])
 def test_a_we_will_line_is_read_like_a_plan_line(query, order):
+    assert detect_mutation_intent(query) is order
+
+
+@pytest.mark.parametrize("query,order", [
+    # Ruled 20 October 2026 (Samuel): "continue lasix" is read like a plan line.
+    # Continuing a named medicine, or the medicines as a group ("continue home
+    # meds"), is an order; "continue" with no medicine straight after it, a
+    # question and the past stay reads.
+    ("continue lasix 40 bd", True),
+    ("continue inj ceftriaxone 1 g iv bd", True),
+    ("cont iv fluids at 100 ml/hr", True),
+    ("cont. tab ecosprin 75 od", True),
+    ("continue home meds", True),
+    ("continue all meds", True),
+    ("continue the antibiotics", True),
+    ("cont same antibiotics", True),
+    ("cont nebs", True),
+    ("continue with pantop 40 iv od", True),
+    ("metformin: continue", True),
+    ("lasix 40 iv bd, continue", True),
+    ("bed 12 continue lasix 40 bd", True),
+    ("Plan: continue inj meronem 1 g iv tds", True),
+    ("continue lasix 40 bd for now", True),
+    ("continue same", False),
+    ("continue monitoring", False),
+    ("continue to monitor urine output after lasix", False),
+    ("continue lasix?", False),
+    ("should we continue lasix", False),
+    ("how long to continue ceftriaxone for pyelo", False),
+    ("continued on lasix", False),
+    ("lasix 40 iv bd continued", False),
+    ("she continues to need oxygen", False),
+    ("contd", False),
+])
+def test_a_continue_line_is_read_like_a_plan_line(query, order):
     assert detect_mutation_intent(query) is order
 
 

@@ -296,6 +296,17 @@ WARD_VERBS = (
     r"run(?!\s+(?:me\s+)?through|\s+out)|skip"
 )
 
+#: "continue lasix 40 bd", "cont iv fluids", "continue home meds". Ruled 20
+#: October 2026 (Samuel): continuing a medicine is read like a plan line, so it
+#: is an order. The medicine must come straight after the verb, past only these
+#: fillers, so "continue to monitor urine output after lasix" and "continue
+#: same" stay reads. sage_service appends the therapy object.
+CONTINUE_LEAD = (
+    r"(?:continue|cont\.?)\s+"
+    r"(?:(?:with|the|same|all|current|home|regular|usual|present|rest\s+of\s+the|her|his"
+    r"|their|iv|oral|po|inj|tab|tabs|syp|neb)\s+){0,3}"
+)
+
 #: "escalate" alone is a nurse's word for calling a doctor ("escalate to the
 #: registrar if the antibiotics fail"), so it orders only straight into a drug.
 ESCALATE = r"(?:de-?)?escalate\s+(?:abx\s+|antibiotics?\s+)?to\s+(?:inj\s+|iv\s+|oral\s+)?"
@@ -489,6 +500,10 @@ ACTION = frozenset(
         "keep",
         "putup",
         "adjust",
+        # "continue lasix 40 bd": ruled 20 October 2026, read like a plan line.
+        # "continued" stays a report word ("lasix 40 iv bd continued").
+        "continue",
+        "cont",
     }
 )
 #: "she needs lasix 40 iv" is an order; "he really needs paracetamol for the
@@ -704,9 +719,7 @@ REPORT = frozenset(
         "what",
         "or",
         "vs",
-        "continue",
         "continued",
-        "cont",
         "same",
         "after",
         "before",
