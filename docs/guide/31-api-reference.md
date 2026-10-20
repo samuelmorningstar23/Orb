@@ -128,7 +128,7 @@ Take a typical call: `GET /api/vigil/patients` from the ward board.
 4. **Dependency resolution.** The handler declares
    `user = Depends(require_permission("patient.read_all"))`. FastAPI runs that
    factory's inner `_checker` (`permissions.py:177`), which itself depends on
-   `get_current_user` (`auth.py:75`). `get_current_user` decodes the JWT,
+   `get_current_user` (`auth.py:76`). `get_current_user` decodes the JWT,
    re-reads the user row from SQLite, and checks the token version. If any step
    fails it raises `HTTPException(401)` and the body never runs.
 5. **Permission check.** `_checker` looks up the role's permission set in
@@ -224,7 +224,7 @@ Auth-column shorthand:
 
 ### The dependency helpers (every table row rests on these)
 
-#### get_current_user: `server/auth.py:416`
+#### get_current_user: `server/auth.py:418`
 **Signature:** `async (request: Request) -> dict`
 **Does:** validates the session and returns the authoritative user row.
 
@@ -234,32 +234,32 @@ Auth-column shorthand:
 > rule below depends on knowing which.
 
 **How it works:**
-1. `_extract_token(request)` returns the token **and its source** (`auth.py:419`);
+1. `_extract_token(request)` returns the token **and its source** (`auth.py:421`);
    no token → `401 "Not authenticated"`.
-2. **CSRF double-submit** (`auth.py:429`): if the token came from the *cookie*
+2. **CSRF double-submit** (`auth.py:437`): if the token came from the *cookie*
    and the method is unsafe, a valid double-submit token must also be present, or
    `403`. Bearer auth (an explicit header a cross-site attacker cannot forge) and
    safe methods are exempt. It is enforced here, the one dependency every
    session-protected route passes through, so it can never falsely block a
    public or alt-auth endpoint.
-3. Decodes the token with the server secret (`decode_token`, `auth.py:371`); an
+3. Decodes the token with the server secret (`decode_token`, `auth.py:372`); an
    expired or malformed token becomes `401`. Reads `sub`; a payload without one
    is `401`.
 4. Loads the user row **off the event loop** via `await run_db(_load_session_context, ...)`
-   (`auth.py:442`). The comment at `:437-440` is the reason: this is the single
+   (`auth.py:450`, which reads through `_load_session_snapshot`, `auth.py:472`). The comment at `:478-480` is the reason: this is the single
    highest-traffic blocking call in the process, and since encryption-at-rest each
    page read also costs HMAC-SHA512 + AES, on the loop it serialises the whole
    API behind one SQLite lock. It re-reads the full row and does **not** trust the
    role embedded in the token.
-5. **Device binding** (`auth.py:464`): if the token carries a `did`, the device
+5. **Device binding** (`auth.py:501`): if the token carries a `did`, the device
    must still be enrolled and un-revoked, else `401`, so revoking a lost tablet
    severs its live sessions at the next request instead of at token expiry. Note
-   what this deliberately does *not* do (`:455-463`): it checks enrolment, not
+   what this deliberately does *not* do (`:487-495`): it checks enrolment, not
    re-presentation of the device credential, because whoever physically holds the
    tablet holds both cookies anyway.
-6. **Deactivation** (`auth.py:478`): an inactive account is `403` on *every*
+6. **Deactivation** (`auth.py:515`): an inactive account is `403` on *every*
    request, not just at login, so deactivating a terminated clinician is immediate.
-7. **Session revocation** (`auth.py:488`): the token's `tv` claim must equal
+7. **Session revocation** (`auth.py:551`): the token's `tv` claim must equal
    `users.token_version`; a mismatch → `401 "Session revoked; please log in again"`.
    Logout and password/MFA changes bump the DB value, invalidating every
    previously-issued token without a server-side blocklist.
@@ -272,7 +272,7 @@ deactivation all work without a server-side token blocklist.
 **Gotchas:** the returned dict is the raw DB row, so `user["role"]` is always
 current even if the token is stale, this is deliberate and load-bearing for
 authz. The `device_id` it may attach is for **audit metadata only**; the actor is
-always `user["id"]`, never the device (`auth.py:472-473`).
+always `user["id"]`, never the device (`auth.py:509-510`).
 
 #### require_permission: `server/permissions.py:386`
 **Signature:** `(*permissions) -> dependency`
@@ -297,11 +297,11 @@ path belongs to the caller. The Bridge routes never take a `patient_id` from the
 client, they resolve it from `user_id` server-side (`bridge_routes.py:77`), so
 ownership is enforced by construction, not by this dependency.
 
-#### require_role: `server/auth.py:493`
+#### require_role: `server/auth.py:644`
 **Signature:** `(*roles) -> dependency`
 **Does:** legacy gate; passes if `user["role"]` is in `roles`.
 **Why it exists / gotcha:** marked **deprecated** in its own docstring
-(`auth.py:494-499`), it bypasses the central permission map and does not audit
+(`auth.py:558-563`), it bypasses the central permission map and does not audit
 denials. Still used by Scribe and Lens upload routes (`role: doctor/nurse/admin`).
 New routes should use `require_permission`.
 
@@ -325,48 +325,48 @@ log.
 
 | Method | Path | Auth | Request | Response | Purpose | Handler |
 |---|---|---|---|---|---|---|
-| POST | `/api/auth/login` | public (rate-limited) | `{employee_id, password, totp_code?}` | `{token, user{id,name,role,department,registration_number}}` | Authenticate; issue JWT (MFA-gated). | `auth_routes.py:96` |
-| GET | `/api/auth/me` | (broken stub) | n/a | n/a | Dead stub; real `/me` is in `main.py`. See Discrepancies. | `auth_routes.py:228` |
-| POST | `/api/auth/mfa/enroll/begin` | auth | n/a | `{secret, otpauth_uri, issuer}` | Start TOTP enrolment (QR provisioning). | `auth_routes.py:244` |
-| POST | `/api/auth/mfa/enroll/confirm` | auth | `{totp_code}` | `{status:"enabled"}` | Confirm first code; flip MFA on. | `auth_routes.py:272` |
-| POST | `/api/auth/mfa/disable` | auth | `{password, totp_code}` | `{status:"disabled"}` | Disable MFA (password + live code). | `auth_routes.py:305` |
-| POST | `/api/auth/logout` | auth | n/a | `{status:"logged_out"}` | Revoke all sessions (bump token_version). | `auth_routes.py:340` |
+| POST | `/api/auth/login` | public (rate-limited) | `{employee_id, password, totp_code?}` | `{token, user{id,name,role,department,registration_number}}` | Authenticate; issue JWT (MFA-gated). | `auth_routes.py:101` |
+| GET | `/api/auth/me` | (broken stub) | n/a | n/a | Dead stub; real `/me` is in `main.py`. See Discrepancies. | `auth_routes.py:233` |
+| POST | `/api/auth/mfa/enroll/begin` | auth | n/a | `{secret, otpauth_uri, issuer}` | Start TOTP enrolment (QR provisioning). | `auth_routes.py:249` |
+| POST | `/api/auth/mfa/enroll/confirm` | auth | `{totp_code}` | `{status:"enabled"}` | Confirm first code; flip MFA on. | `auth_routes.py:277` |
+| POST | `/api/auth/mfa/disable` | auth | `{password, totp_code}` | `{status:"disabled"}` | Disable MFA (password + live code). | `auth_routes.py:310` |
+| POST | `/api/auth/logout` | auth | n/a | `{status:"logged_out"}` | Revoke all sessions (bump token_version). | `auth_routes.py:345` |
 
-#### login: `server/routes/auth_routes.py:362` (route decorator `:361`)
+#### login: `server/routes/auth_routes.py:367` (route decorator `:366`)
 **Signature:** `(credentials: UserLogin, request: Request, response: Response) -> TokenResponse`, it takes `response` because the session is now set as an HttpOnly cookie, not only returned in the body.
 **Does:** authenticates a user and returns a JWT, enforcing rate-limiting and MFA.
 **How it works:**
 1. **Rate-limit** by client IP via an in-memory sliding window
-   (`is_ip_rate_limited`, `auth_routes.py:61`); 5 failures in 15 min → `429`.
-   Localhost in the `dev` profile is exempt (`auth_routes.py:65`).
+   (`is_ip_rate_limited`, `auth_routes.py:66`); 5 failures in 15 min → `429`.
+   Localhost in the `dev` profile is exempt (`auth_routes.py:70`).
 2. Looks up the user by id (employee id for staff, patient id for patients) and
-   verifies the password with a **constant-work** helper that always runs one bcrypt op so a missing user and a wrong password cost the same (`verify_password_ct`, `auth.py:185`; the plain `verify_password` is at `:163`, and the constant-work rationale is at `auth_routes.py:445`). Wrong → record attempt, audit `login_failure`, `401`.
-3. **MFA gate** (`auth_routes.py:489`): if the role is in `MFA_REQUIRED_ROLES`
-   but the user has not enrolled → `403 "mfa_enrollment_required"` (`auth_routes.py:520`). If MFA is
+   verifies the password with a **constant-work** helper that always runs one bcrypt op so a missing user and a wrong password cost the same (`verify_password_ct`, `auth.py:186`; the plain `verify_password` is at `:164`, and the constant-work rationale is at `auth_routes.py:450`). Wrong → record attempt, audit `login_failure`, `401`.
+3. **MFA gate** (`auth_routes.py:494`): if the role is in `MFA_REQUIRED_ROLES`
+   but the user has not enrolled → `403 "mfa_enrollment_required"` (`auth_routes.py:525`). If MFA is
    enabled but no code was supplied → `401 "mfa_required"` (this is *not*
    counted toward lockout, it is a normal two-step flow). A wrong code →
    `401 "Invalid MFA code"` and counts toward lockout.
-4. `consume_totp` (`auth_routes.py:275`) verifies the code **and** enforces
+4. `consume_totp` (`auth_routes.py:280`) verifies the code **and** enforces
    single-use by persisting `totp_last_step`, so a code (or an earlier in-window
    code) cannot be replayed.
 5. On success: clears the lockout bucket, auto-upgrades a legacy password hash to
-   bcrypt if needed (`auth_routes.py:570`), mints the token with the current
+   bcrypt if needed (`auth_routes.py:575`), mints the token with the current
    `token_version`, audits `login_success`, returns `{token, user}`.
 **Data in/out:** in `UserLogin{employee_id, password, totp_code?}`; out
 `TokenResponse{token, user: UserOut}`.
-**Talks to:** `verify_password_ct`, `create_token` (`auth.py:323`), `mfa_service`,
+**Talks to:** `verify_password_ct`, `create_token` (`auth.py:324`), `mfa_service`,
 `log_audit_event`. Called by the frontend login form.
 **Change guide:** to raise the lockout threshold, change `MAX_LOGIN_ATTEMPTS`
-(`auth_routes.py:40`); knock-on: attackers get more guesses, and the in-memory
+(`auth_routes.py:41`); knock-on: attackers get more guesses, and the in-memory
 counter is per-process (resets on restart, keyed on raw peer IP, behind a proxy
 this is one shared IP). To require MFA for nurses, add `"nurse"` to
 `MFA_REQUIRED_ROLES` in `config`; footgun: existing nurses without enrolment then
 get `403` at login until they enrol.
 **Gotchas:** the rate limiter is in-memory and per-IP only (documented at
-`auth_routes.py:26-38`), credential stuffing across many IPs is unthrottled; noted
+`auth_routes.py:27-39`), credential stuffing across many IPs is unthrottled; noted
 as a deferred fix in the code.
 
-#### logout: `server/routes/auth_routes.py:883` (route decorator `:855`)
+#### logout: `server/routes/auth_routes.py:888` (route decorator `:860`)
 **Does:** revokes **every** outstanding session for the user by
 `UPDATE users SET token_version = token_version + 1`. Because
 `get_current_user` compares each token's `tv` claim to this counter, all
@@ -680,10 +680,10 @@ at rest, streams the analysis, and saves it. See the Lens guide.
 |---|---|---|---|---|---|---|
 | GET | `/api/forecast/hospital` | perm: forecast.read | `?days=7` | flow forecast | 7-day hospital flow. | `forecast_routes.py:25` |
 | GET | `/api/forecast/patient/{patient_id}` | perm: forecast.read | n/a | LoS prediction | Per-patient length-of-stay. | `forecast_routes.py:37` |
-| GET | `/api/forecast/capacity` | perm: forecast.read | n/a | capacity object | Bed capacity by ward. | `forecast_routes.py:50` |
-| GET | `/api/forecast/discharge-board` | perm: forecast.read | n/a | ranked board | Discharge-readiness ranking. | `forecast_routes.py:61` |
-| GET | `/api/forecast/admission-patterns` | perm: forecast.read | n/a | pattern analysis | Historical admission analysis. | `forecast_routes.py:72` |
-| GET | `/api/forecast/appointments` | perm: forecast.read | `?days=7` | schedule | Upcoming appointments. | `forecast_routes.py:83` |
+| GET | `/api/forecast/capacity` | perm: forecast.read | n/a | capacity object | Bed capacity by ward. | `forecast_routes.py:58` |
+| GET | `/api/forecast/discharge-board` | perm: forecast.read | n/a | ranked board | Discharge-readiness ranking. | `forecast_routes.py:69` |
+| GET | `/api/forecast/admission-patterns` | perm: forecast.read | n/a | pattern analysis | Historical admission analysis. | `forecast_routes.py:80` |
+| GET | `/api/forecast/appointments` | perm: forecast.read | `?days=7` | schedule | Upcoming appointments. | `forecast_routes.py:95` |
 
 All six are thin wrappers over `forecast_service` and clamp `days` to 1-14.
 
@@ -751,7 +751,7 @@ status to signal parse outcome**: 200 parsed/duplicate, 207 partial, 422 failed
 
 | Method | Path | Auth | Request | Response | Purpose | Handler |
 |---|---|---|---|---|---|---|
-| GET | `/api/admin/overview` | perm: admin.overview | n/a | governance snapshot | 24h aggregates (audit, ingestion, alerts). | `admin_routes.py:16` |
+| GET | `/api/admin/overview` | perm: admin.overview | n/a | governance snapshot | 24h aggregates (audit, ingestion, alerts). | `admin_routes.py:17` |
 
 **model_governance_routes.py, `/api/admin`** (same prefix as admin_routes)
 
@@ -772,14 +772,14 @@ status to signal parse outcome**: 200 parsed/duplicate, 207 partial, 422 failed
 
 | Method | Path | Auth | Request | Response | Purpose | Handler |
 |---|---|---|---|---|---|---|
-| GET | `/api/helix/catalog` | perm: helix.read | n/a | `{catalog}` | Medication master catalog. | `helix_routes.py:26` |
-| GET | `/api/helix/inventory` | perm: helix.read | n/a | `{inventory}` | Inventory lots. | `helix_routes.py:32` |
-| GET | `/api/helix/orders/pending` | perm: helix.read | n/a | `{orders}` | Orders awaiting verification. | `helix_routes.py:37` |
-| GET | `/api/helix/orders` | perm: helix.read | n/a | `{orders}` | All orders. | `helix_routes.py:42` |
-| GET | `/api/helix/stock-movements` | perm: helix.read | n/a | `{movements}` | Stock movement log. | `helix_routes.py:47` |
-| GET | `/api/helix/orders/{order_id}/transitions` | perm: helix.read | n/a | `{transitions}` | Order transition history. | `helix_routes.py:52` |
-| POST | `/api/helix/orders/approve` | perm: helix.write | `{patient_name,medication,dose?,route?,frequency?}` | `{status,order}` | Approve a drafted med → Helix order. | `helix_routes.py:156` |
-| POST | `/api/helix/orders/{order_id}/transition` | perm: helix.write | `{target_status,idempotency_key?,pharmacist_notes?,substitute_medication_id?,scheduled_at?}` | order result | Guarded order state transition. | `helix_routes.py:185` |
+| GET | `/api/helix/catalog` | perm: helix.read | n/a | `{catalog}` | Medication master catalog. | `helix_routes.py:33` |
+| GET | `/api/helix/inventory` | perm: helix.read | n/a | `{inventory}` | Inventory lots. | `helix_routes.py:39` |
+| GET | `/api/helix/orders/pending` | perm: helix.read | n/a | `{orders}` | Orders awaiting verification. | `helix_routes.py:44` |
+| GET | `/api/helix/orders` | perm: helix.read | n/a | `{orders}` | All orders. | `helix_routes.py:49` |
+| GET | `/api/helix/stock-movements` | perm: helix.read | n/a | `{movements}` | Stock movement log. | `helix_routes.py:54` |
+| GET | `/api/helix/orders/{order_id}/transitions` | perm: helix.read | n/a | `{transitions}` | Order transition history. | `helix_routes.py:59` |
+| POST | `/api/helix/orders/approve` | perm: helix.write | `{patient_name,medication,dose?,route?,frequency?}` | `{status,order}` | Approve a drafted med → Helix order. | `helix_routes.py:173` |
+| POST | `/api/helix/orders/{order_id}/transition` | perm: helix.write | `{target_status,idempotency_key?,pharmacist_notes?,substitute_medication_id?,scheduled_at?}` | order result | Guarded order state transition. | `helix_routes.py:202` |
 
 **pulse_routes.py, `/api/pulse`**
 
@@ -891,7 +891,7 @@ Route order matters here: `/terminology/validate` is defined **before**
 
 | Method | Path | Auth | Request | Response | Purpose | Handler |
 |---|---|---|---|---|---|---|
-| GET | `/api/admin/compliance/` | perm: admin.overview | n/a | compliance report | Live compliance posture. | `compliance_routes.py:21` |
+| GET | `/api/admin/compliance/` | perm: admin.overview | n/a | compliance report | Live compliance posture. | `compliance_routes.py:30` |
 
 **coding_routes.py, `/api/coding`**
 
@@ -903,7 +903,7 @@ Route order matters here: `/terminology/validate` is defined **before**
 
 | Method | Path | Auth | Request | Response | Purpose | Handler |
 |---|---|---|---|---|---|---|
-| GET | `/api/command-center` and `/api/command-center/` | perm: forecast.read | n/a | house snapshot | House-wide operational snapshot. | `command_center_routes.py:18` |
+| GET | `/api/command-center` and `/api/command-center/` | perm: forecast.read | n/a | house snapshot | House-wide operational snapshot. | `command_center_routes.py:32` |
 
 **capacity_sim_routes.py, `/api/capacity-sim`**
 
@@ -944,7 +944,7 @@ TODO at `main.py:735`.
 Other subsystems depend on these exact facts:
 
 - **Auth contract.** Every protected route trusts `get_current_user`
-  (`auth.py:75`) to return the authoritative user dict and to reject revoked
+  (`auth.py:76`) to return the authoritative user dict and to reject revoked
   tokens; `require_permission` (`permissions.py:165`) enforces the
   `ROLE_PERMISSIONS` map (`permissions.py:94`). Changing a permission's role
   membership silently widens/narrows every route guarded by it. See guide
@@ -1023,7 +1023,7 @@ schemes and the audit path, the whole HTTP boundary is then live.
 
 ## Discrepancies and open questions
 
-1. **Duplicate `/api/auth/me`, one broken.** `auth_routes.py:228` defines a
+1. **Duplicate `/api/auth/me`, one broken.** `auth_routes.py:233` defines a
    `GET /me` stub whose body is `pass` (returns `None`) with signature
    `(user: dict = None)`, no auth dependency, no real logic. Because
    `auth_router` is included (`main.py:297`) *before* the app-level
@@ -1084,7 +1084,7 @@ schemes and the audit path, the whole HTTP boundary is then live.
    (`_confirm_lock` is per process), left a `pending` Helix order with no
    `agentic_med_confirm` audit row naming it. `_persist_confirmation`
    (`server/routes/relay_routes.py:1273`) now claims the action, inserts the order
-   through `helix_service.insert_order` (`server/services/helix_service.py:236`) and
+   through `helix_service.insert_order` (`server/services/helix_service.py:246`) and
    writes the audit row in one transaction, and the claim bumps `version` so a
    racing dismissal cannot overwrite it. Regression tests:
    `server/tests/test_agentic_confirm_race.py`.

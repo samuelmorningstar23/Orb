@@ -70,7 +70,7 @@ graph LR
 ### Core flow 1: the queue loads
 
 1. A pharmacist logs in. The frontend shell reads which tabs the role may see from `shellConfig`; `pharmacist` gets `helix`, `pharmacy-verify` and `sage` (`src/shellConfig.tsx:894`).
-2. Clicking the **Verify Queue** tab lazy-loads and mounts `<PharmacyVerifyQueue/>` (`src/pages/ClinicianShell.tsx:124`, rendered at `:541-543`).
+2. Clicking the **Verify Queue** tab lazy-loads and mounts `<PharmacyVerifyQueue/>` (`src/pages/ClinicianShell.tsx:130`, rendered at `:774-776`).
 3. On mount the component calls `load()` (`src/components/helix/PharmacyVerifyQueue.tsx:197`), which calls `getPendingVerifications()` → `GET /api/pharmacy/pending`.
 4. The route handler calls `pharmacy.list_pending_verification()`, which SQL-selects every still-active med with `source IN ('llm_extracted','agentic') AND verified_by IS NULL` on the chart of an admitted patient, joins the patient (name, ward, bed) and the prescriber's name, and for each row **re-runs the drug-safety screen** so allergy/interaction alerts and screening gaps render inline.
 5. The component seeds an editable field-set per row, blanking any `REVIEW REQUIRED` placeholder so the pharmacist types a real value into an empty box.
@@ -276,7 +276,7 @@ Router declared with `prefix="/api/pharmacy"` and tag `"Pharmacy Verification"` 
 #### `get_pending`: `server/routes/pharmacy_routes.py:96`
 **Signature:** `GET /api/pharmacy/pending`, dep `require_permission("helix.read")` → `{ "pending": [...] }`
 **Does:** Returns the verification queue.
-**How it works:** The `Depends(require_permission("helix.read"))` runs first: it resolves the JWT to a user, checks the user's role grants `helix.read`, and 403s otherwise (`server/permissions.py:851-859`). On success it returns the authenticated `user` dict, and the handler returns `{"pending": pharmacy.list_pending_verification()}`.
+**How it works:** The `Depends(require_permission("helix.read"))` runs first: it resolves the JWT to a user, checks the user's role grants `helix.read`, and 403s otherwise (`server/permissions.py:856-864`). On success it returns the authenticated `user` dict, and the handler returns `{"pending": pharmacy.list_pending_verification()}`.
 **Why it exists:** The read endpoint behind the queue. Uses `helix.read` (not a dedicated `pharmacy.read`) because pharmacy verification is scoped as part of the Helix pharmacist permission family.
 **Data in/out:** none → `{"pending": PendingMedication[]}`.
 **Talks to:** Calls `list_pending_verification`. Called by `getPendingVerifications` (`src/api/pharmacy.ts:99`).
@@ -357,7 +357,7 @@ Nested functions:
 
 **Why it exists:** The single pharmacist-facing surface. The optimistic row removal + local `edits` state make it feel instant without a full reload after each action.
 **Data in/out:** consumes `PendingMedication[]`; sends `{dosage,route,frequency}` (+ `ack_reason`) / `{reason}`.
-**Talks to:** `getPendingVerifications`, `verifyMedication`, `rejectMedication` (`src/api/pharmacy.ts`). Mounted lazily by `ClinicianShell` (`src/pages/ClinicianShell.tsx:124`, `:571-573`) inside a `PanelErrorBoundary`.
+**Talks to:** `getPendingVerifications`, `verifyMedication`, `rejectMedication` (`src/api/pharmacy.ts`). Mounted lazily by `ClinicianShell` (`src/pages/ClinicianShell.tsx:130`, `:822-824`) inside a `PanelErrorBoundary`.
 **Change guide (worked example):** *"Refresh the queue automatically every 30s."* Add a second `useEffect` with `setInterval(load, 30000)` and clear it on unmount. Watch out: `load` sets `loading=true` each time, which would swap the table for the loading state; guard with a "silent reload" flag so background refreshes don't blank the list, and do not reseed `edits` over a pharmacist's half-typed correction.
 **Gotchas:** (1) The placeholder test is a substring match on the *uppercased* value, so a legitimate value literally containing "review" would be treated as blank; the server applies the same rule, so the two agree. (2) Optimistic removal means if the server call *actually* succeeds but the network response is lost, the row vanishes locally while remaining pending server-side until a Refresh, mildly confusing but self-healing.
 

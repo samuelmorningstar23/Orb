@@ -81,6 +81,17 @@ always blocks, because nothing waits on it at a bedside):
             in the same transaction for same-day reconciliation. If the
             variance or its audit row cannot be written either, the dispense is
             refused: a discrepancy is never left unrecorded.
+
+PER FACILITY (multisite-8h3, ruling MS-R9 (a): an NDPS licence is per
+premises). The register is already kept per store, so once more than one
+facility is on record each facility's register is the entries of its own
+stores: the balances, the register pages, the export, the variances, the
+openings, a reconciliation run and the screen's stores are the caller's
+facilities' only (services/pharmacy_facility), a variance of another
+facility's store is not found, and a patient on an entry is named only when
+the caller may open that patient's chart at their facility (patient_in_scope
+with facilities=). With one facility on record nothing here reads anything
+new.
 """
 
 from __future__ import annotations
@@ -1150,20 +1161,30 @@ def _drug_rows(conn, ids) -> dict[str, dict]:
     return out
 
 
-def balances(conn=None, *, store_id: int | None = None, drug_id: str | None = None) -> dict:
+def balances(
+    conn: Any = None,
+    *,
+    store_id: int | None = None,
+    drug_id: str | None = None,
+    facilities: frozenset[int] | None = None,
+) -> dict:
     """The register against the shelf, per drug and store, in this lane.
     Read-only. Reconciliation runs from the latest opening entry: every entry
     after it must carry on the running balance, and the balance must equal
     what the stock ledger holds there. Rows: every store and controlled drug
     with units on the shelf, plus every store and drug with register entries.
-    `clean` is True when every row matches."""
+    `clean` is True when every row matches. `facilities` (multisite-8h3)
+    keeps the stores at those facilities, and the unplaced units to the
+    legacy lots there."""
+    from services.pharmacy_facility import lot_sql, store_ids_sql
+
     if conn is None:
         with db_session() as fresh:
-            return balances(fresh, store_id=store_id, drug_id=drug_id)
+            return balances(fresh, store_id=store_id, drug_id=drug_id, facilities=facilities)
     lane = current_lane()
     pairs: set[tuple[int, str]] = set()
     params: list[str | int | float | bytes | None]
-    where, params = "", []
+    where, params = store_ids_sql("l.store_id", facilities), []
     if store_id is not None:
         where += " AND l.store_id = ?"
         params.append(store_id)
@@ -1179,7 +1200,7 @@ def balances(conn=None, *, store_id: int | None = None, drug_id: str | None = No
     ).fetchall():
         pairs.add((int(r["store_id"]), str(r["medication_id"])))
     rparams: list[str | int | float | bytes | None]
-    rwhere, rparams = "", [lane]
+    rwhere, rparams = store_ids_sql("store_id", facilities), [lane]
     if store_id is not None:
         rwhere += " AND store_id = ?"
         rparams.append(store_id)
@@ -1196,6 +1217,7 @@ def balances(conn=None, *, store_id: int | None = None, drug_id: str | None = No
             "SELECT COALESCE(SUM(COALESCE(l.quantity, 0)), 0) FROM helix_inventory_lots l "
             "JOIN helix_medication_master m ON m.id = l.medication_id WHERE l.store_id IS NULL "
             "AND m.ndps_category IN ('narcotic', 'psychotropic')"
+            + lot_sql("l", facilities)
             + (" AND l.medication_id = ?" if drug_id else ""),
             ([drug_id] if drug_id else []),
         ).fetchone()[0]
@@ -1302,9 +1324,12 @@ def _patient_rows(conn, ids) -> dict[str, dict]:
     return out
 
 
-def _decorate_entries(conn, rows: list[dict], *, dept: str | None) -> tuple[list[dict], list]:
-    """Words for each entry. A patient outside the caller's department is
-    named only as such. Returns (entries, patient ids disclosed)."""
+def _decorate_entries(
+    conn: Any, rows: list[dict], *, dept: str | None, facilities: frozenset[int] | None = None
+) -> tuple[list[dict], list]:
+    """Words for each entry. A patient outside the caller's department, or
+    (multisite-8h3) outside the caller's facilities, is named only as such.
+    Returns (entries, patient ids disclosed)."""
     from permissions import patient_in_scope
 
     stores = _store_rows(conn)
@@ -1334,7 +1359,7 @@ def _decorate_entries(conn, rows: list[dict], *, dept: str | None) -> tuple[list
         in_scope = True
         if pid:
             if pid not in scope_cache:
-                scope_cache[pid] = patient_in_scope(conn, pid, dept)
+                scope_cache[pid] = patient_in_scope(conn, pid, dept, facilities=facilities)
             in_scope = scope_cache[pid]
             if in_scope:
                 p = patients.get(pid, {})
@@ -1408,9 +1433,14 @@ def _register_query(
     lane: str | None,
     date_from: str | None = None,
     date_to: str | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> tuple[str, list]:
+    """The register's WHERE clause; `facilities` keeps the entries of stores
+    at those facilities (multisite-8h3)."""
+    from services.pharmacy_facility import store_ids_sql
+
     params: list[str | int | float | bytes | None]
-    where, params = ["1 = 1"], []
+    where, params = ["1 = 1" + store_ids_sql("store_id", facilities)], []
     if lane:
         where.append("lane = ?")
         params.append(lane)
@@ -1453,14 +1483,20 @@ def register_page(
 ) -> dict:
     """Register entries in this lane, newest first, paged by entry id. A read
     that names a patient writes one fail-closed phi_access row in the same
-    session before anything is returned."""
+    session before anything is returned. Once more than one facility is on
+    record, the entries of the caller's facilities' stores only."""
     from permissions import department_scope
+
+    from services.pharmacy_facility import scope
 
     me = _actor_id(actor)
     limit = max(1, min(int(limit or 100), MAX_PAGE))
     lane = current_lane()
+    facilities = scope(actor)
     params: list[str | int | float | bytes | None]
-    sql, params = _register_query(store_id=store_id, drug_id=drug_id, lane=lane)
+    sql, params = _register_query(
+        store_id=store_id, drug_id=drug_id, lane=lane, facilities=facilities
+    )
     if before_id is not None:
         sql += " AND id < ?"
         params.append(int(before_id))
@@ -1474,7 +1510,9 @@ def register_page(
         ]
         more = len(rows) > limit
         rows = rows[:limit]
-        entries, disclosed = _decorate_entries(conn, rows, dept=department_scope(actor))
+        entries, disclosed = _decorate_entries(
+            conn, rows, dept=department_scope(actor), facilities=facilities
+        )
         if disclosed:
             _audit(
                 conn,
@@ -1504,13 +1542,21 @@ def register_page(
     }
 
 
-def list_variances(*, status: str | None = "open", limit: int = 200) -> dict:
+def list_variances(
+    *,
+    status: str | None = "open",
+    limit: int = 200,
+    facilities: frozenset[int] | None = None,
+) -> dict:
     """Variances in this lane, newest first. No patient is named: a dispense
-    variance carries its order id only."""
+    variance carries its order id only. `facilities` (multisite-8h3) keeps
+    the variances of stores at those facilities."""
+    from services.pharmacy_facility import store_ids_sql
+
     if status not in (None, "", "all") and status not in VARIANCE_STATUSES:
         raise NdpsError("unknown variance filter", code="bad_value")
     lane = current_lane()
-    sql = "SELECT * FROM ndps_variances WHERE lane = ?"
+    sql = "SELECT * FROM ndps_variances WHERE lane = ?" + store_ids_sql("store_id", facilities)
     params: list[Any] = [lane]
     if status in VARIANCE_STATUSES:
         sql += " AND status = ?"
@@ -1545,8 +1591,12 @@ def list_variances(*, status: str | None = "open", limit: int = 200) -> dict:
 def options(actor: Mapping) -> dict:
     """What the NDPS screen needs: the switch, the failure mode, the lane, the
     pharmacy stores, the controlled drugs and who may witness (never the
-    caller). No patient data."""
+    caller). No patient data. Once more than one facility is on record, the
+    stores at the caller's facilities only."""
+    from services.pharmacy_facility import column_sql, scope
+
     me = str(actor.get("id") or "")
+    facility_sql = column_sql("facility_id", scope(actor))
     with db_session() as conn:
         stores = [
             {
@@ -1557,7 +1607,7 @@ def options(actor: Mapping) -> dict:
             }
             for s in conn.execute(
                 "SELECT id, code, name, pharmacy_kind FROM stores WHERE pharmacy_kind IS NOT NULL "
-                "AND is_active = 1 ORDER BY name, code"
+                f"AND is_active = 1{facility_sql} ORDER BY name, code"
             ).fetchall()
         ]
         drugs = [
@@ -1659,11 +1709,23 @@ def open_register(
     (all of it when none is open against that register) and its 'security'
     audit row are raised for that drug and store. Each opening names the
     variance it raised, or the newest open one already recording the
-    difference."""
+    difference.
+
+    Once more than one facility is on record (multisite-8h3), only the
+    caller's facilities' stores are opened, and a named store of another
+    facility is not found (after an authorization row), before any witness
+    PIN is asked for."""
+    from services import pharmacy_facility
+
     me = _actor_id(actor)
     _require_ndps(actor)
     _require_register_on()
     why = _text(reason, "the reason for opening the register", required=True)
+    facilities = pharmacy_facility.scope(actor)
+    if store_id is not None and pharmacy_facility.document_outside(
+        actor, "store", store_id, audit_ctx=audit_ctx, facilities=facilities
+    ):
+        raise NdpsError(f"no pharmacy store {store_id}", code="not_found")
     witness = verify_witness(
         actor=actor,
         witness_id=witness_id,
@@ -1682,7 +1744,7 @@ def open_register(
             ).fetchone()
             if row is None:
                 raise NdpsError(f"no pharmacy store {store_id}", code="not_found")
-        report = balances(conn, store_id=store_id, drug_id=drug_id)
+        report = balances(conn, store_id=store_id, drug_id=drug_id, facilities=facilities)
         opened: list[dict] = []
         for r in report["rows"]:
             if not r["controlled"]:
@@ -1756,7 +1818,7 @@ def open_register(
             },
             audit_ctx=audit_ctx,
         )
-        after = balances(conn, store_id=store_id, drug_id=drug_id)
+        after = balances(conn, store_id=store_id, drug_id=drug_id, facilities=facilities)
     return {"opened": opened, "balances": after}
 
 
@@ -1766,13 +1828,17 @@ def raise_reconciliation_variances(*, actor: Mapping, audit_ctx: Mapping | None 
     'reconciliation_mismatch' variance for the part of the difference the
     variances still open against that register do not record (none when
     they record all of it; a reconciled one never counts;
-    _reconciliation_variance)."""
+    _reconciliation_variance). Once more than one facility is on record, the
+    caller's facilities' registers only (multisite-8h3)."""
+    from services.pharmacy_facility import scope
+
     me = _actor_id(actor)
     _require_ndps(actor)
     _require_register_on()
+    facilities = scope(actor)
     raised: list[dict] = []
     with db_session(immediate=True) as conn:
-        report = balances(conn)
+        report = balances(conn, facilities=facilities)
         for r in report["rows"]:
             variance_id, new = _reconciliation_variance(conn, r, raised_by=me)
             if not new:
@@ -1807,7 +1873,7 @@ def raise_reconciliation_variances(*, actor: Mapping, audit_ctx: Mapping | None 
                 metadata={"variances": raised, "lane": current_lane()},
                 audit_ctx=audit_ctx,
             )
-        report = balances(conn)
+        report = balances(conn, facilities=facilities)
     return {"raised": raised, "balances": report}
 
 
@@ -1822,7 +1888,10 @@ def reconcile_variance(
 ) -> dict:
     """Close an open variance with what was found and done, witnessed. The
     register itself is never edited: a correction is a later entry (or a new
-    witnessed opening)."""
+    witnessed opening). A variance of another facility's store is not found
+    (multisite-8h3), before any witness PIN is asked for."""
+    from services import pharmacy_facility
+
     me = _actor_id(actor)
     _require_ndps(actor)
     text = _text(note, "what was found and done", required=True)
@@ -1830,6 +1899,8 @@ def reconcile_variance(
         vid = int(variance_id)
     except (TypeError, ValueError):
         raise NdpsError(f"no variance {variance_id}", code="not_found") from None
+    if pharmacy_facility.document_outside(actor, "ndps_variance", vid, audit_ctx=audit_ctx):
+        raise NdpsError(f"no variance {vid}", code="not_found")
     with db_session() as conn:
         row = conn.execute(
             "SELECT * FROM ndps_variances WHERE id = ? AND lane = ?", (vid, current_lane())
@@ -1876,7 +1947,10 @@ def reconcile_variance(
 def draft_incident(variance_id: Any, *, actor: Mapping, audit_ctx: Mapping | None = None) -> dict:
     """Report a variance to the hospital's incident register (GRN-R14) as a
     'security' incident naming no patient, and link it to the variance. Needs
-    the incident register on this site (ORB_NABH)."""
+    the incident register on this site (ORB_NABH). A variance of another
+    facility's store is not found (multisite-8h3)."""
+    from services import pharmacy_facility
+
     me = _actor_id(actor)
     _require_ndps(actor)
     if not getattr(config, "NABH_ENABLED", False):
@@ -1888,6 +1962,8 @@ def draft_incident(variance_id: Any, *, actor: Mapping, audit_ctx: Mapping | Non
         vid = int(variance_id)
     except (TypeError, ValueError):
         raise NdpsError(f"no variance {variance_id}", code="not_found") from None
+    if pharmacy_facility.document_outside(actor, "ndps_variance", vid, audit_ctx=audit_ctx):
+        raise NdpsError(f"no variance {vid}", code="not_found")
     with db_session() as conn:
         row = conn.execute(
             "SELECT * FROM ndps_variances WHERE id = ? AND lane = ?", (vid, current_lane())
@@ -1999,8 +2075,12 @@ def export_csv(
     export is audited ('security', fail-closed) in the same session BEFORE the
     text is returned; no audit row, no file. A patient outside the caller's
     department is named only as such. Statutory form layouts (NDPS Forms 3D,
-    3E, 3H) are W170's and are not this file."""
+    3E, 3H) are W170's and are not this file. Once more than one facility is
+    on record, the entries of the caller's facilities' stores only, and a
+    patient outside the caller's facilities is named only as such."""
     from permissions import department_scope
+
+    from services.pharmacy_facility import scope
 
     me = _actor_id(actor)
     _require_ndps(actor)
@@ -2009,8 +2089,14 @@ def export_csv(
     if start and end and start > end:
         raise NdpsError("the first date is after the last date", code="bad_date")
     lane = current_lane()
+    facilities = scope(actor)
     sql, params = _register_query(
-        store_id=store_id, drug_id=drug_id, lane=lane, date_from=start, date_to=end
+        store_id=store_id,
+        drug_id=drug_id,
+        lane=lane,
+        date_from=start,
+        date_to=end,
+        facilities=facilities,
     )
     with db_session() as conn:
         rows = [
@@ -2026,7 +2112,9 @@ def export_csv(
                 f"more than {MAX_EXPORT_ROWS} entries: narrow the export by store, drug or dates",
                 code="export_too_large",
             )
-        entries, disclosed = _decorate_entries(conn, rows, dept=department_scope(actor))
+        entries, disclosed = _decorate_entries(
+            conn, rows, dept=department_scope(actor), facilities=facilities
+        )
         buf = io.StringIO()
         writer = csv.writer(buf)
         writer.writerow(_CSV_COLUMNS)

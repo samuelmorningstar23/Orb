@@ -6,6 +6,13 @@ orders of patients at the caller's facilities, and an order outside them is a
 404 with an authorization row on every route that names one (the routes that
 already called enforce_patient_scope get it from there). With one facility on
 record the caller's facility scope is None and nothing here changes.
+
+STOCK PER FACILITY (multisite-14, W13-C). The inventory and the stock
+movements are the caller's facilities' only, the inventory answer names the
+facility whose stock it is (`facility`, only while more than one facility is
+on record and the caller works at one), and a dispense, its batch picker and
+the pre-flight take only lots at the facility of the order's patient
+(services/helix_service._atomic_dispense).
 """
 
 from typing import Any
@@ -57,9 +64,18 @@ _GET_INVENTORY_USER_DEFAULT = Depends(require_permission("helix.read"))
 
 
 @router.get("/inventory")
-def get_inventory(user=_GET_INVENTORY_USER_DEFAULT):
-    """Get all inventory lots."""
-    return {"inventory": helix_service.get_inventory()}
+def get_inventory(user: dict = _GET_INVENTORY_USER_DEFAULT) -> dict:
+    """Get the dispensing shelf's lots: the caller's facilities only once more
+    than one facility is on record (multisite-14). `facility` names the one
+    facility whose stock this is ({id, code, name}), or is null with one
+    facility on record and for a group-wide account."""
+    from services.pharmacy_facility import scope_view
+
+    facilities = facility_scope(user)
+    out: dict = {"inventory": helix_service.get_inventory(facilities=facilities)}
+    if facilities is not None:
+        out["facility"] = scope_view(facilities)
+    return out
 
 
 _GET_PENDING_ORDERS_USER_DEFAULT = Depends(require_permission("helix.read"))
@@ -86,9 +102,10 @@ _GET_STOCK_MOVEMENTS_USER_DEFAULT = Depends(require_permission("helix.read"))
 
 
 @router.get("/stock-movements")
-def get_stock_movements(user=_GET_STOCK_MOVEMENTS_USER_DEFAULT):
-    """Get stock movement audit log."""
-    return {"movements": helix_service.get_stock_movements()}
+def get_stock_movements(user: dict = _GET_STOCK_MOVEMENTS_USER_DEFAULT) -> dict:
+    """Get stock movement audit log (the caller's facilities only, once more
+    than one facility is on record)."""
+    return {"movements": helix_service.get_stock_movements(facilities=facility_scope(user))}
 
 
 _GET_ORDER_TRANSITIONS_USER_DEFAULT = Depends(require_permission("helix.read"))

@@ -11,7 +11,12 @@
  *              day's outpatients with lines to bill join the picker (opd-14);
  *              "Bill this visit" and the counter form bill them as outpatient
  *              bills, which never take a line recorded for a stay.
- *   PRICE LIST the masters: service items, tariff plans, packages.
+ *   PRICE LIST the masters: service items, tariff plans, packages. With the
+ *              multi-site switch on, or more than one facility on record, the
+ *              tab also lists the price lists with where each applies (the
+ *              whole group or one facility, multisite-13), and the rate form
+ *              names it beside each list; a facility's default is chosen in
+ *              Admin, Facilities.
  *
  * THREE RULES THIS FILE IS BUILT ON
  * ────────────────────────────────
@@ -51,10 +56,28 @@ import {
   formatClinicalDate, formatClinicalDateKey, formatClinicalDateTime, localDateKey,
 } from '../../lib/datetime'
 import { humaniseEnum, plural } from '../../lib/humanise'
-import { currentFeatureFlags, currentModuleFlags, subscribeModuleFlags } from '../../shellConfig'
+import {
+  currentFeatureFlags, currentModuleFlags, subscribeModuleFlags, usePlatformFlags,
+} from '../../shellConfig'
 import './BillingPanel.css'
 
 type TabId = 'bills' | 'charges' | 'prices'
+
+/** A tariff plan as /billing/tariff-plans sends it since multisite-13: where
+ *  it applies ("Whole group" or a facility's name), read here without
+ *  widening src/api/billing.ts. */
+type ScopedPlan = TariffPlan & { facility_id?: number | null; applies_to?: string }
+
+/** Show where each price list applies only on a multi-site install. */
+function useShowAppliesTo(): boolean {
+  const { multiSite, multiFacilityData } = usePlatformFlags()
+  return multiSite || multiFacilityData
+}
+
+function planOptionLabel(plan: ScopedPlan, showAppliesTo: boolean): string {
+  const base = `${plan.name} (${plan.code})`
+  return showAppliesTo && plan.applies_to ? `${base}, ${plan.applies_to}` : base
+}
 
 interface WardPatient {
   id: string
@@ -1737,6 +1760,7 @@ function SetRateModal({ item, plans, onClose, onDone }: {
   const [rate, setRate] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const showAppliesTo = useShowAppliesTo()
 
   const submit = async () => {
     setBusy(true)
@@ -1763,7 +1787,9 @@ function SetRateModal({ item, plans, onClose, onDone }: {
         <span className="bill-field__label">Tariff plan</span>
         <select id="rate-plan" className="bill-input" value={planId}
                 onChange={e => setPlanId(e.target.value)}>
-          {plans.map(p => <option key={p.id} value={p.id}>{p.name} ({p.code})</option>)}
+          {plans.map(p => (
+            <option key={p.id} value={p.id}>{planOptionLabel(p, showAppliesTo)}</option>
+          ))}
         </select>
       </label>
       <MoneyInput id="rate-amount" label="Rate" value={rate} onChange={setRate} />
@@ -1774,6 +1800,47 @@ function SetRateModal({ item, plans, onClose, onDone }: {
         </button>
       </div>
     </Modal>
+  )
+}
+
+/** The price lists and where each applies (multisite-13). A facility's
+ *  default is chosen in Admin, Facilities. */
+function PriceListsTable({ plans }: { plans: ScopedPlan[] }) {
+  return (
+    <section className="bill-section" aria-labelledby="bill-price-lists-title">
+      <h3 className="bill-subhead" id="bill-price-lists-title">Price lists</h3>
+      <p className="bill-muted">
+        A patient is priced on their facility&apos;s own default list, else on the
+        group&apos;s default, unless their payer names a list.
+      </p>
+      <div className="bill-tablewrap">
+        <table className="bill-table">
+          <thead>
+            <tr>
+              <th scope="col">Price list</th>
+              <th scope="col">Applies to</th>
+              <th scope="col">Default</th>
+            </tr>
+          </thead>
+          <tbody>
+            {plans.map(p => (
+              <tr key={p.id}>
+                <td>{p.name} ({p.code})</td>
+                <td>{p.applies_to ?? 'Whole group'}</td>
+                <td>
+                  {p.is_default
+                    ? (p.facility_id == null ? "The group's default" : `Default at ${p.applies_to ?? 'its facility'}`)
+                    : ''}
+                </td>
+              </tr>
+            ))}
+            {plans.length === 0 && (
+              <tr><td colSpan={3} className="bill-muted">No price lists yet.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
   )
 }
 
@@ -1795,6 +1862,7 @@ function PricesTab({ items, plans, reload }: {
   }, [items, search])
 
   const unpriced = items.filter(i => !i.rate_is_configured).length
+  const showAppliesTo = useShowAppliesTo()
 
   return (
     <section className="bill-section">
@@ -1863,6 +1931,8 @@ function PricesTab({ items, plans, reload }: {
           </tbody>
         </table>
       </div>
+
+      {showAppliesTo && <PriceListsTable plans={plans} />}
 
       {creating && <NewItemModal onClose={() => setCreating(false)} onDone={reload} />}
       {pricing && (

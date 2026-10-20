@@ -8,8 +8,8 @@ A hospital cannot let "give the patient amoxcilin" flow straight from a doctor's
 
 1. **Naming.** Doctors say brand names, generics, and misspellings. **RxNorm** is the US National Library of Medicine's standard vocabulary of drug names, where every concept has a numeric ID called an **RxCUI** (RxNorm Concept Unique Identifier). Helix keys its formulary on RxCUIs when loaded from RxNorm (`server/scripts/load_rxnorm_formulary.py:22`) and uses phonetic matching to map noisy names onto catalog rows.
 2. **Safety.** A **drug–drug interaction (DDI)** is when two medications taken together cause harm (e.g. warfarin + ibuprofen → bleeding). A **contraindication** is a reason a drug must not be given at all, in Orb the practical case is a documented allergy, including **cross-reactivity** (an allergy to one drug class implying risk from a chemically related class, e.g. penicillins ↔ cephalosporins, `server/services/drug_safety_service.py:139-143`). The safety gate screens both at order time.
-3. **Process.** Pharmacy law and safety practice require a pharmacist to verify orders before dispensing. Helix encodes that as a legal-transition state machine with an idempotent, audited transition log (`server/services/helix_service.py:14-23`).
-4. **Stock.** Orders must not be dispensed from empty shelves. Helix tracks per-lot inventory, decrements atomically on dispense, and suggests therapeutic alternatives on stockout (`server/services/helix_service.py:300-555`).
+3. **Process.** Pharmacy law and safety practice require a pharmacist to verify orders before dispensing. Helix encodes that as a legal-transition state machine with an idempotent, audited transition log (`server/services/helix_service.py:15-24`).
+4. **Stock.** Orders must not be dispensed from empty shelves. Helix tracks per-lot inventory, decrements atomically on dispense, and suggests therapeutic alternatives on stockout (`server/services/helix_service.py:1272-1406`, `:1477-1557`).
 
 The terminology service rides along in this guide because it is the same pattern applied to lab/diagnosis codes: **LOINC** (Logical Observation Identifiers Names and Codes, standard codes for lab tests), **SNOMED CT** (Systematized Nomenclature of Medicine, Clinical Terms, codes for findings/procedures), and **ICD-10** (International Classification of Diseases, 10th revision, diagnosis codes). The Orders (CPOE) workflow validates codes against a local `terminology` table via this service (`server/services/orders_service.py:109`). **CPOE** = Computerized Provider Order Entry, the electronic ordering of tests and treatments.
 
@@ -53,7 +53,7 @@ Neighboring files touched for contracts (owned by other guides): `server/main.py
 
 ### One database, plus one deliberate exception
 
-Helix's clinical tables (`helix_medication_master`, `helix_inventory_lots`, `helix_patient_med_orders`, `helix_stock_movements`, `helix_transitions`, `helix_pharmacy_verifications`) live inside the **main** `orb.db`, `helix_db.py` imports the shared `db_session` from `database.py` (`server/services/helix_db.py:3`), the context manager that opens the app's single SQLite database with `PRAGMA foreign_keys=ON` and WAL mode (`server/database.py:994-1004`; see guide 04). They must: orders join `patients` and `users` (`server/services/helix_service.py:54-59`) and a verified order writes into the Relay `messages` table (`server/services/helix_service.py:279-282`), which is only possible transactionally inside one file.
+Helix's clinical tables (`helix_medication_master`, `helix_inventory_lots`, `helix_patient_med_orders`, `helix_stock_movements`, `helix_transitions`, `helix_pharmacy_verifications`) live inside the **main** `orb.db`, `helix_db.py` imports the shared `db_session` from `database.py` (`server/services/helix_db.py:3`), the context manager that opens the app's single SQLite database with `PRAGMA foreign_keys=ON` and WAL mode (`server/database.py:994-1004`; see guide 04). They must: orders join `patients` and `users` (`server/services/helix_service.py:55-60`) and a verified order writes into the Relay `messages` table (`server/services/helix_service.py:289-292`), which is only possible transactionally inside one file.
 
 The **RxNorm dictionary is the exception**: `RxNormCorrector` opens its own standalone SQLite file at `server/datasets/rxnorm/rxnorm_drugs.db` via a raw `sqlite3.connect` (`server/services/rxnorm_corrector.py:187`), path configured at `server/config.py:460-461`. Why isolate it? It is a large, read-only reference dataset (tens of thousands of names when fully loaded), rebuilt wholesale from a CSV rather than migrated, license-adjacent (the full RxNorm release sits behind the free-but-registration-gated UMLS license, `server/scripts/load_rxnorm_formulary.py:9-11`), needed by out-of-process scripts (`benchmark_wer.py`, `test_indian_drugs.py`), and it never joins clinical rows, the corrector loads it entirely into Python dicts at startup anyway (`server/services/rxnorm_corrector.py:184-198`). Keeping it out of `orb.db` keeps patient data backups small and lets you regenerate the dictionary without touching PHI.
 
@@ -61,7 +61,7 @@ The **RxNorm dictionary is the exception**: `RxNormCorrector` opens its own stan
 
 ### Flow 1: the pharmacist order lifecycle (main flow)
 
-Every medication order is a row in `helix_patient_med_orders` with a `status` column constrained by a CHECK to eight values (`server/services/helix_db.py:31`). Only the transitions in `LEGAL_TRANSITIONS` are allowed (`server/services/helix_service.py:14-23`):
+Every medication order is a row in `helix_patient_med_orders` with a `status` column constrained by a CHECK to eight values (`server/services/helix_db.py:31`). Only the transitions in `LEGAL_TRANSITIONS` are allowed (`server/services/helix_service.py:15-24`):
 
 ```
 pending → reviewing → { verified | rejected | substitute_suggested }
@@ -70,13 +70,13 @@ verified → scheduled → dispensed → delivered
 rejected, delivered = terminal
 ```
 
-1. A doctor (or the Sage agentic path, flow 2) creates an order → status `pending` (`server/services/helix_service.py:124-140`).
+1. A doctor (or the Sage agentic path, flow 2) creates an order → status `pending` (`server/services/helix_service.py:125-141`).
 2. A pharmacist opens the Helix panel; `HelixPanel` fetches `/api/helix/orders`, `/inventory`, `/catalog` in parallel (`src/pages/panels/HelixPanel.tsx:21-25`).
 3. Clicking a queue row opens `HelixOrderReviewModal`, which derives the allowed buttons from the current status (`src/components/helix/HelixOrderReviewModal.tsx:69-90`, a client-side mirror of the server state machine).
-4. Each button POSTs `/api/helix/orders/{id}/transition` (`src/api/client.ts:1895-1906`), guarded by the `helix.write` permission (`server/routes/helix_routes.py:242`). **RBAC** (Role-Based Access Control) means each role owns a fixed permission set; `pharmacist` gets exactly `sage.query`, `helix.read`, `helix.write` (`server/permissions.py:136-140`, guide 03).
-5. `transition_order_status` checks the **idempotency key** (a caller-chosen unique string; replaying the same key returns the recorded result instead of re-applying, `server/services/helix_service.py:164-175`), validates legality, decrements stock atomically if the target is `dispensed`, updates the order, and appends an immutable row to `helix_transitions`.
-6. On `verified`, the service drops a system message into the patient's Relay case room so the care team sees "Pharmacy has verified the order..." (`server/services/helix_service.py:255-282`; the `channels`/`messages` tables are guide 08's).
-7. The modal calls `onTransition`, wired to `handleTransitionComplete`, which closes it and refetches everything (`src/pages/panels/HelixPanel.tsx:47-50`, passed as the prop at `:112`).
+4. Each button POSTs `/api/helix/orders/{id}/transition` (`src/api/client.ts:1895-1906`), guarded by the `helix.write` permission (`server/routes/helix_routes.py:259`). **RBAC** (Role-Based Access Control) means each role owns a fixed permission set; `pharmacist` gets exactly `sage.query`, `helix.read`, `helix.write` (`server/permissions.py:136-140`, guide 03).
+5. `transition_order_status` checks the **idempotency key** (a caller-chosen unique string; replaying the same key returns the recorded result instead of re-applying, `server/services/helix_service.py:165-176`), validates legality, decrements stock atomically if the target is `dispensed`, updates the order, and appends an immutable row to `helix_transitions`.
+6. On `verified`, the service drops a system message into the patient's Relay case room so the care team sees "Pharmacy has verified the order..." (`server/services/helix_service.py:265-292`; the `channels`/`messages` tables are guide 08's).
+7. The modal calls `onTransition`, wired to `handleTransitionComplete`, which closes it and refetches everything (`src/pages/panels/HelixPanel.tsx:59-62`, passed as the prop at `:126`).
 
 ```mermaid
 sequenceDiagram
@@ -182,17 +182,17 @@ Startup order in `main.py`'s lifespan: `init_db()` → `init_helix_db()` → `se
 
 ### server/services/helix_service.py
 
-### LEGAL_TRANSITIONS / _is_legal_transition: `server/services/helix_service.py:14`, `:26`
+### LEGAL_TRANSITIONS / _is_legal_transition: `server/services/helix_service.py:15`, `:27`
 **Signature:** `dict[str, list[str]]`; `(from_status, to_status) → bool`
 **Does:** The single source of truth for which order-status moves are allowed.
-**How it works:** Plain dict lookup with `.get(from, [])` so unknown statuses allow nothing (`:27`).
+**How it works:** Plain dict lookup with `.get(from, [])` so unknown statuses allow nothing (`:28`).
 **Why it exists:** A **state machine** (a fixed set of states with an explicit list of legal moves between them) makes "you can't dispense an unverified order" a data-shape guarantee instead of scattered `if`s.
 **Data in/out:** status strings → bool.
 **Talks to:** `transition_order_status`; mirrored client-side by `getNextActions` (`src/components/helix/HelixOrderReviewModal.tsx:69`).
-**Change guide:** Worked example, to let pharmacists reject an already-`verified` order: change `"verified": ["scheduled"]` to `"verified": ["scheduled", "rejected"]` at `server/services/helix_service.py:18`, add a matching `{ target: 'rejected', ... }` entry to the `'verified'` case in `getNextActions` (`src/components/helix/HelixOrderReviewModal.tsx:82`), and confirm the status is already in the DB CHECK (`server/services/helix_db.py:31`, it is). Knock-on: the route docstring listing the legal transitions (`server/routes/helix_routes.py:470-475`) becomes stale; watch out for the client/server duplication, forgetting the UI side silently hides the new action.
+**Change guide:** Worked example, to let pharmacists reject an already-`verified` order: change `"verified": ["scheduled"]` to `"verified": ["scheduled", "rejected"]` at `server/services/helix_service.py:19`, add a matching `{ target: 'rejected', ... }` entry to the `'verified'` case in `getNextActions` (`src/components/helix/HelixOrderReviewModal.tsx:82`), and confirm the status is already in the DB CHECK (`server/services/helix_db.py:31`, it is). Knock-on: the route docstring listing the legal transitions (`server/routes/helix_routes.py:487-492`) becomes stale; watch out for the client/server duplication, forgetting the UI side silently hides the new action.
 **Gotchas:** Terminal states are empty lists, not absent keys, both behave the same but read differently.
 
-### get_medication_catalog: `server/services/helix_service.py:34`
+### get_medication_catalog: `server/services/helix_service.py:35`
 **Signature:** `() → list[dict]`
 **Does:** Returns every formulary row.
 **How it works:** `SELECT * FROM helix_medication_master`, rows → dicts.
@@ -202,91 +202,91 @@ Startup order in `main.py`'s lifespan: `init_db()` → `init_helix_db()` → `se
 **Change guide:** For big formularies (full RxNorm load) add pagination here and in the route; the UI currently assumes the whole list fits in memory.
 **Gotchas:** none noteworthy.
 
-### get_inventory: `server/services/helix_service.py:40`
+### get_inventory: `server/services/helix_service.py:41`
 **Signature:** `() → list[dict]`
 **Does:** Returns all lots joined with medication name/strength.
-**How it works:** INNER JOIN `helix_inventory_lots` × `helix_medication_master` (`:43-47`).
+**How it works:** INNER JOIN `helix_inventory_lots` × `helix_medication_master` (`:44-48`).
 **Why it exists:** Lots are meaningless to a human without the drug name; joining server-side saves a client-side lookup.
 **Data in/out:** → `[{id, medication_id, lot_number, quantity, expiration_date, name, strength}]`, exactly the `InventoryItem` interface at `src/components/helix/HelixFormulary.tsx:11-19`.
 **Talks to:** `GET /api/helix/inventory`.
 **Gotchas:** INNER JOIN drops orphan lots whose medication was deleted (seed_helix deletes meds and lots together, so consistent in practice).
 **Change guide:** none beyond pagination as above.
 
-### get_pending_orders: `server/services/helix_service.py:50`
+### get_pending_orders: `server/services/helix_service.py:51`
 **Signature:** `() → list[dict]`
 **Does:** Returns only `status='pending'` orders with patient/prescriber context.
-**How it works:** Joins `patients` (name/ward/bed) and LEFT JOINs `users` for prescriber name; newest first (`:53-62`).
+**How it works:** Joins `patients` (name/ward/bed) and LEFT JOINs `users` for prescriber name; newest first (`:54-63`).
 **Why it exists:** The pharmacist queue endpoint, LEFT JOIN on users tolerates system-created orders with no human prescriber.
 **Data in/out:** → order dicts plus `medication_name, patient_name, prescribed_by_name, ward, bed`.
 **Talks to:** `GET /api/helix/orders/pending`.
 **Gotchas:** The `patients` join is INNER, an order whose `patient_id` doesn't resolve vanishes from every list (relevant to the `"UNKNOWN"` fallback bug, see Discrepancies).
 **Change guide:** none noteworthy.
 
-### get_all_orders: `server/services/helix_service.py:79`
+### get_all_orders: `server/services/helix_service.py:80`
 **Signature:** `() → list[dict]`
-**Does:** Same as above without the status filter, plus the substitute medication's name via a second LEFT JOIN aliased `sm` (`:76`).
+**Does:** Same as above without the status filter, plus the substitute medication's name via a second LEFT JOIN aliased `sm` (`:77`).
 **How it works / Why / Talks to:** As `get_pending_orders`; feeds `GET /api/helix/orders`, the panel's primary data source.
 **Data in/out:** adds `substitute_name`, used by the UI to display the swapped drug (`src/components/helix/HelixDashboard.tsx:157`).
 **Gotchas / Change guide:** as `get_pending_orders`.
 
-### get_stock_movements: `server/services/helix_service.py:95`
+### get_stock_movements: `server/services/helix_service.py:96`
 **Signature:** `() → list[dict]`
 **Does:** Full inventory audit log, newest first, with medication name and lot number.
-**How it works:** LEFT JOINs so movements survive deleted meds/lots (`:84-90`).
+**How it works:** LEFT JOINs so movements survive deleted meds/lots (`:85-91`).
 **Why it exists:** Regulators ask "where did unit X go"; this is the answer surface.
 **Data in/out:** → `[{..., quantity_change, reason, is_mock, timestamp, medication_name, lot_number}]`.
 **Talks to:** `GET /api/helix/stock-movements`; client helper `getHelixStockMovements` (`src/api/client.ts:1908`), note no current UI component calls it.
 **Gotchas / Change guide:** none noteworthy.
 
-### get_order_transitions: `server/services/helix_service.py:107`
+### get_order_transitions: `server/services/helix_service.py:108`
 **Signature:** `(order_id: str) → list[dict]`
 **Does:** Chronological transition history for one order with actor names.
-**How it works:** Parameterized WHERE on `order_id`, LEFT JOIN `users` (`:96-102`).
+**How it works:** Parameterized WHERE on `order_id`, LEFT JOIN `users` (`:97-103`).
 **Why it exists:** Per-order audit trail for the (currently unused) timeline UI, the `.timeline*` CSS classes exist (`src/components/helix/Helix.module.css:589-651`) but no component renders them.
 **Talks to:** `GET /api/helix/orders/{id}/transitions`; client helper at `src/api/client.ts:1912`.
 **Data in/out:** → `[{id, order_id, from_status, to_status, idempotency_key, actor_id, payload, created_at, actor_name}]`.
 **Gotchas / Change guide:** none noteworthy.
 
-### create_order: `server/services/helix_service.py:124`
+### create_order: `server/services/helix_service.py:125`
 **Signature:** `(patient_id, medication_name, dose, route, frequency, prescribed_by) → dict`
 **Does:** Resolves a free-text medication name to a formulary row and inserts a `pending` order.
-**How it works:** 1) `SELECT ... WHERE name LIKE ? OR generic_name LIKE ?` with `%name%` wildcards, taking the **first** match (`:113-116`). 2) Raises `ValueError` if nothing matches (`:117-118`). 3) Inserts with a fresh UUID, status `'pending'` (`:120-124`). 4) Returns the inserted row.
+**How it works:** 1) `SELECT ... WHERE name LIKE ? OR generic_name LIKE ?` with `%name%` wildcards, taking the **first** match (`:114-117`). 2) Raises `ValueError` if nothing matches (`:118-119`). 3) Inserts with a fresh UUID, status `'pending'` (`:121-125`). 4) Returns the inserted row.
 **Why it exists:** Single entry point for order creation from any pathway (Sage confirm, handoff adapters, `/orders/approve`).
 **Data in/out:** free-text name in; full order row dict out.
-**Talks to:** Called by `helix_routes.approve_helix_order` (`server/routes/helix_routes.py:286`), `relay_routes.confirm_agentic_action` (`server/routes/relay_routes.py:1586-1594`), `sage_handoff_service` (`server/services/sage_handoff_service.py:368`). All SQL is **parameterized** (values passed as `?` placeholders so user input can never rewrite the SQL, the defense against SQL injection).
+**Talks to:** Called by `helix_routes.approve_helix_order` (`server/routes/helix_routes.py:303`), `relay_routes.confirm_agentic_action` (`server/routes/relay_routes.py:1586-1594`), `sage_handoff_service` (`server/services/sage_handoff_service.py:368`). All SQL is **parameterized** (values passed as `?` placeholders so user input can never rewrite the SQL, the defense against SQL injection).
 **Change guide:** To make resolution deterministic, add `ORDER BY length(name) ASC` or route callers through `reconcile_medication` first (the Relay path already does, it passes an exact catalog `name` back in, so the LIKE is effectively exact there).
-**Gotchas:** `LIKE '%amox%'` matches both "Amoxicillin 500mg" and "Amoxicillin 250mg" with no ordering guarantee, which strength you get is up to SQLite row order. FK enforcement is ON (`server/database.py:1002`), so a bad `patient_id` raises `sqlite3.IntegrityError`, **not** `ValueError`, callers that only catch `ValueError` (the route at `server/routes/helix_routes.py:231-232`) turn that into an HTTP 500.
+**Gotchas:** `LIKE '%amox%'` matches both "Amoxicillin 500mg" and "Amoxicillin 250mg" with no ordering guarantee, which strength you get is up to SQLite row order. FK enforcement is ON (`server/database.py:1002`), so a bad `patient_id` raises `sqlite3.IntegrityError`, **not** `ValueError`, callers that only catch `ValueError` (the route at `server/routes/helix_routes.py:248-249`) turn that into an HTTP 500.
 
-### transition_order_status: `server/services/helix_service.py:143`
+### transition_order_status: `server/services/helix_service.py:144`
 **Signature:** `(order_id, target_status, actor_id, idempotency_key=None, pharmacist_notes="", substitute_medication_id=None, scheduled_at=None) → dict`
 **Does:** The guarded, idempotent transition engine, the heart of Helix.
-**How it works:** 1) If no idempotency key given, fabricate one with a random suffix (`:144-146`), which makes the call **non**-idempotent for keyless callers (see Gotchas). 2) Replay check: if a `helix_transitions` row already carries this key, return it with `already_applied: True` and do nothing (`:150-161`). 3) Load the order, 404 as `ValueError` (`:164-166`). 4) Reject illegal moves with an error message listing what *is* allowed (`:171-175`). 5) If target is `dispensed`, run `_atomic_dispense` first, using the substitute medication if one was set (`:179-181`). 6) Build the UPDATE dynamically: review statuses stamp `reviewed_by/reviewed_at` (`:191-193`), notes/substitute/schedule fields only when supplied, and `dispensed`/`delivered` set `is_mock_event=1` (`:207-208`). 7) Insert the `helix_transitions` row with a JSON payload capturing notes/substitute/schedule/stock-movement id (`:216-226`). 8) On `verified`, find the patient's `case_room` channel and insert the "Pharmacy has verified..." system message (`:229-258`). 9) Commit once; return fresh order + transition (`:260-277`).
+**How it works:** 1) If no idempotency key given, fabricate one with a random suffix (`:145-147`), which makes the call **non**-idempotent for keyless callers (see Gotchas). 2) Replay check: if a `helix_transitions` row already carries this key, return it with `already_applied: True` and do nothing (`:151-162`). 3) Load the order, 404 as `ValueError` (`:165-167`). 4) Reject illegal moves with an error message listing what *is* allowed (`:172-176`). 5) If target is `dispensed`, run `_atomic_dispense` first, using the substitute medication if one was set (`:725-738`). 6) Build the UPDATE dynamically: review statuses stamp `reviewed_by/reviewed_at` (`:198-200`), notes/substitute/schedule fields only when supplied, and `dispensed`/`delivered` set `is_mock_event=1` (`:217-218`). 7) Insert the `helix_transitions` row with a JSON payload capturing notes/substitute/schedule/stock-movement id (`:226-236`). 8) On `verified`, find the patient's `case_room` channel and insert the "Pharmacy has verified..." system message (`:239-268`). 9) Commit once; return fresh order + transition (`:270-287`).
 **Why it exists:** Networked clients retry; without idempotency a retried "dispense" would decrement stock twice. Recording the transition and mutating the order in a single transaction keeps audit and state consistent.
 **Data in/out:** in: the `TransitionRequest` fields; out: `{"ok": True, "order": {...}, "transition": {...}, "already_applied": bool}`.
-**Talks to:** Called only by the route (`server/routes/helix_routes.py:243`); writes `helix_patient_med_orders`, `helix_transitions`, `helix_inventory_lots`, `helix_stock_movements`, `messages`.
-**Change guide:** Worked example, to notify the ward on **delivery** as well as verification: duplicate the block at `server/services/helix_service.py:255-282` under a `target_status == "delivered"` condition with new copy; knock-on: nothing else, the message rides the existing Relay fetch. To make it appear in *real time*, you would additionally need a socket emit, this function is synchronous and has no access to the async `sio` server (guide 06), which is why the current message only appears on the next Relay refresh.
+**Talks to:** Called only by the route (`server/routes/helix_routes.py:260`); writes `helix_patient_med_orders`, `helix_transitions`, `helix_inventory_lots`, `helix_stock_movements`, `messages`.
+**Change guide:** Worked example, to notify the ward on **delivery** as well as verification: duplicate the block at `server/services/helix_service.py:265-292` under a `target_status == "delivered"` condition with new copy; knock-on: nothing else, the message rides the existing Relay fetch. To make it appear in *real time*, you would additionally need a socket emit, this function is synchronous and has no access to the async `sio` server (guide 06), which is why the current message only appears on the next Relay refresh.
 **Gotchas:** (a) The UI never sends an idempotency key (`src/components/helix/HelixOrderReviewModal.tsx:113-120`), so a double-clicked "Dispense" that races the disabled-button state could decrement stock twice, the idempotency guarantee is opt-in. (b) `datetime.utcnow()` (`:185`) produces a naive timestamp; combined with SQLite's naive `CURRENT_TIMESTAMP` the frontend must regex-sniff whether `created_at` has a timezone suffix before parsing (`src/components/helix/HelixDashboard.tsx:109`). (c) Everything shares one transaction, good, but the system-message INSERT references sender `'system'`, which exists only because `init_db` seeds that user (`server/database.py:1893`).
 
-### _atomic_dispense: `server/services/helix_service.py:300`
+### _atomic_dispense: `server/services/helix_service.py:310`
 **Signature:** `(conn, order_id, medication_id, actor_id) → str` (stock_movement_id)
 **Does:** Decrements one unit from the earliest-expiring lot and records the movement, inside the caller's transaction.
-**How it works:** 1) `SELECT` the lot with `quantity > 0` ordered by `expiration_date ASC LIMIT 1` (`:293-298`). 2) `ValueError` if none, which aborts the whole transition (`:300-304`). 3) `UPDATE quantity = quantity - 1` (computed in Python, `:307-311`). 4) INSERT a `-1` movement with reason `mock_dispense`, `is_mock=1` (`:314-318`).
+**How it works:** 1) `SELECT` the lot with `quantity > 0` ordered by `expiration_date ASC LIMIT 1` (`:303-308`). 2) `ValueError` if none, which aborts the whole transition (`:310-314`). 3) `UPDATE quantity = quantity - 1` (computed in Python, `:317-321`). 4) INSERT a `-1` movement with reason `mock_dispense`, `is_mock=1` (`:1387-1398`).
 **Why it exists:** Expiry-first picking minimizes waste (the docstring calls it FIFO; strictly it is FEFO, first-*expiry*-first-out).
 **Data in/out:** conn + ids → movement id string.
 **Talks to:** Only `transition_order_status` (dispense branch).
 **Change guide:** To dispense N units per order, replace the constant `-1`/`new_qty` logic and loop lots until N is satisfied; watch out: quantity is read then written as two statements, safe only because SQLite serializes writers and this runs inside one transaction; a port to Postgres would need `UPDATE ... SET quantity = quantity - 1 WHERE quantity > 0 RETURNING`.
 **Gotchas:** `actor_id` is accepted but never stored on the movement row, the audit trail attributes the movement to the order, not the person.
 
-### pre_flight_inventory_check: `server/services/helix_service.py:985`
+### pre_flight_inventory_check: `server/services/helix_service.py:1018`
 **Signature:** `(medication_id) → {"medication_id", "in_stock": bool, "total_quantity": int}`
 **Does:** Sums the in-date lot quantities for one medication.
-**How it works:** `_in_date_stock` (`:730`) sums `quantity` over lots that pass the same in-date filter `_atomic_dispense` applies, with a NULL-safe fallback to 0, so a pre-flight never promises stock the dispense would then refuse.
+**How it works:** `_in_date_stock` (`:763`) sums `quantity` over lots that pass the same in-date filter `_atomic_dispense` applies, with a NULL-safe fallback to 0, so a pre-flight never promises stock the dispense would then refuse.
 **Why it exists:** Lets the agentic confirm flow fail fast ("out of stock, need override") *before* creating an order that could never dispense.
 **Talks to:** `relay_routes.pre_flight_sage_action` (`server/routes/relay_routes.py:1134`) and `confirm_agentic_action` (`:1481`).
 **Data in/out:** id in, dict out.
 **Change guide / Gotchas:** none noteworthy; change the in-date rule in one place (`_IN_DATE_LOT_SQL`) so the pre-flight and the dispense keep agreeing.
 
-### pre_flight_alternative_suggestion: `server/services/helix_service.py:1006`
+### pre_flight_alternative_suggestion: `server/services/helix_service.py:1039`
 **Signature:** `(medication_id) → Optional[dict]`
 **Does:** Finds an in-stock **equivalent** of a stocked-out drug: the same molecule, strength and form under another brand or pack, nothing else.
 **How it works:** 1) Load the drug's `generic_name`, `strength` and `form`; with any of the three missing there is no basis to call anything equivalent, so it returns None. 2) Walk every other catalog row in name order and return the first whose normalised (lower-case, whitespace-free) molecule, strength and form all match and which has in-date stock, with `stock_status` and `equivalence: "Same molecule, strength and form"` attached. 3) Otherwise None.
@@ -294,7 +294,7 @@ Startup order in `main.py`'s lifespan: `init_db()` → `init_helix_db()` → `se
 **Data in/out:** id in → catalog row + `{"stock_status": {"in_stock": True, "total_quantity": n}, "equivalence": ...}` or None.
 **Talks to:** Both Relay endpoints above.
 **Change guide:** A hospital-approved interchange list (a different molecule) is a pharmacy and therapeutics committee decision, not code; the docstring says so. If a site wants one, it needs its own reviewed data source and must still only suggest.
-**Gotchas:** It used to fall back to a hard-coded class map that offered warfarin for heparin and sodium chloride for potassium, and the confirm route switched the order to it silently (docstring at `:1273-1278`). The old body still sits **after** the final `return None` (`:1310`) and references a `SOP_SUBSTITUTIONS` map that no longer exists; it is unreachable dead code.
+**Gotchas:** It used to fall back to a hard-coded class map that offered warfarin for heparin and sodium chloride for potassium, and the confirm route switched the order to it silently (docstring at `:1345-1350`). The old body still sits **after** the final `return None` (`:1388`) and references a `SOP_SUBSTITUTIONS` map that no longer exists; it is unreachable dead code.
 
 ### server/services/interaction_db.py
 
@@ -495,31 +495,31 @@ Startup order in `main.py`'s lifespan: `init_db()` → `init_helix_db()` → `se
 
 ### server/routes/helix_routes.py
 
-FastAPI concepts used on every handler here, defined once: an **APIRouter** is a mountable group of routes sharing a prefix, this one is `APIRouter(prefix="/api/helix", tags=["Helix Pharmacy"])` (`server/routes/helix_routes.py:21`), mounted without extra prefix at `server/main.py:695`, so paths below are complete. `Depends(require_permission("helix.read"))` is **dependency injection**, FastAPI runs the permission check (which decodes the **JWT**, a signed JSON Web Token carried in the `Authorization: Bearer` header, guide 03) before the handler and passes the authenticated user in; failures return 403 and write an audit event (`server/permissions.py:386-448`). A **Pydantic model** (`BaseModel` subclass) declares and validates the JSON request body shape.
+FastAPI concepts used on every handler here, defined once: an **APIRouter** is a mountable group of routes sharing a prefix, this one is `APIRouter(prefix="/api/helix", tags=["Helix Pharmacy"])` (`server/routes/helix_routes.py:28`), mounted without extra prefix at `server/main.py:695`, so paths below are complete. `Depends(require_permission("helix.read"))` is **dependency injection**, FastAPI runs the permission check (which decodes the **JWT**, a signed JSON Web Token carried in the `Authorization: Bearer` header, guide 03) before the handler and passes the authenticated user in; failures return 403 and write an audit event (`server/permissions.py:386-448`). A **Pydantic model** (`BaseModel` subclass) declares and validates the JSON request body shape.
 
-### Read endpoints (six GET handlers): `server/routes/helix_routes.py:28-56`
+### Read endpoints (six GET handlers): `server/routes/helix_routes.py:35-63`
 **Signature:** each `(user=Depends(require_permission("helix.read"))) → dict`; the transitions route also takes `order_id: str` from the path.
-**Does:** One-line wrappers: `/catalog` → `{"catalog": [...]}` (`:26-30`), `/inventory` → `{"inventory": [...]}` (`:32-35`), `/orders/pending` → `{"orders": [...]}` (`:37-40`), `/orders` → `{"orders": [...]}` (`:42-45`), `/stock-movements` → `{"movements": [...]}` (`:47-50`), `/orders/{order_id}/transitions` → `{"transitions": [...]}` (`:52-55`).
+**Does:** One-line wrappers: `/catalog` → `{"catalog": [...]}` (`:33-37`), `/inventory` → `{"inventory": [...]}` (`:39-42`), `/orders/pending` → `{"orders": [...]}` (`:44-47`), `/orders` → `{"orders": [...]}` (`:49-52`), `/stock-movements` → `{"movements": [...]}` (`:54-57`), `/orders/{order_id}/transitions` → `{"transitions": [...]}` (`:59-62`).
 **Why it exists:** Thin HTTP skin over `helix_service` so business logic stays testable without HTTP.
 **Data in/out:** wrappers put the list under a named key, the client unwraps accordingly (`src/pages/panels/HelixPanel.tsx:26-28`).
 **Talks to:** `helix_service` read functions; called by `HelixPanel` and the `client.ts` helpers.
 **Change guide:** Route ordering matters in FastAPI: `/orders/pending` is declared *before* `/orders/{order_id}/transitions`, and neither collides with `/orders`, keep literal segments above parameterized ones when adding routes here.
 **Gotchas:** none noteworthy.
 
-### approve_helix_order: `server/routes/helix_routes.py:208`
-**Signature:** `POST /api/helix/orders/approve`, body `OrderApproveRequest {patient_name, medication, dose?, route?, frequency?}` (`:61-66`), permission `helix.write` → `{"status": "success", "order": {...}}`
+### approve_helix_order: `server/routes/helix_routes.py:225`
+**Signature:** `POST /api/helix/orders/approve`, body `OrderApproveRequest {patient_name, medication, dose?, route?, frequency?}` (`:222-229`), permission `helix.write` → `{"status": "success", "order": {...}}`
 **Does:** Approves a Sage-drafted medication request: resolves the patient by name-LIKE, then `create_order`.
-**How it works:** 1) `SELECT id FROM patients WHERE name LIKE '%<patient_name>%' LIMIT 1` (`:75`). 2) Falls back to the literal string `"UNKNOWN"` if no patient matches (`:76`). 3) Delegates to `create_order` with the caller as prescriber (`:78-86`). 4) Maps `ValueError` → HTTP 400 (`:88-89`).
+**How it works:** 1) `SELECT id FROM patients WHERE name LIKE '%<patient_name>%' LIMIT 1` (`:91`). 2) Falls back to the literal string `"UNKNOWN"` if no patient matches (`:92`). 3) Delegates to `create_order` with the caller as prescriber (`:361-369`). 4) Maps `ValueError` → HTTP 400 (`:371-372`).
 **Why it exists:** The Sage chat surface's "Approve & Send to Helix" button posts here (`src/components/sage/SageMessage.tsx:186-200` via `approveHelixOrder`, `src/api/client.ts:1884-1889`).
 **Data in/out:** as above.
 **Talks to:** `patients` table, `helix_service.create_order`.
 **Change guide:** Replace the name-LIKE with a patient id in the request body, Sage already knows the patient context; knock-on: `SageMessage.tsx` must send `patient_id`.
 **Gotchas:** The `"UNKNOWN"` fallback hits the `patient_id REFERENCES patients(id)` FK with enforcement ON → `sqlite3.IntegrityError`, which is not caught → HTTP 500 instead of a clean 400 (Discrepancies). Name-LIKE matching is also ambiguous across similarly named patients.
 
-### transition_order: `server/routes/helix_routes.py:243`
-**Signature:** `POST /api/helix/orders/{order_id}/transition`, body `TransitionRequest {target_status, idempotency_key?, pharmacist_notes?, substitute_medication_id?, scheduled_at?}` (`:358-370`), permission `helix.write` → the `transition_order_status` result dict.
-**Does:** The transition endpoint; docstring restates the legal map (`:137-143`).
-**How it works:** Delegates wholesale; `ValueError` (illegal transition, missing order, insufficient stock) → HTTP 400 with the explanatory message (`:145-157`).
+### transition_order: `server/routes/helix_routes.py:260`
+**Signature:** `POST /api/helix/orders/{order_id}/transition`, body `TransitionRequest {target_status, idempotency_key?, pharmacist_notes?, substitute_medication_id?, scheduled_at?}` (`:375-387`), permission `helix.write` → the `transition_order_status` result dict.
+**Does:** The transition endpoint; docstring restates the legal map (`:154-160`).
+**How it works:** Delegates wholesale; `ValueError` (illegal transition, missing order, insufficient stock) → HTTP 400 with the explanatory message (`:162-174`).
 **Talks to:** `transitionHelixOrder` client helper; `helix_service.transition_order_status`.
 **Change guide / Gotchas:** covered on the service function; the route adds nothing but auth and error mapping.
 
@@ -614,8 +614,8 @@ argparse CLI with `--file` and `--source`. none noteworthy.
 ### HelixPanel: `src/pages/panels/HelixPanel.tsx:11`
 **Signature:** `() → JSX` (default export; no props)
 **Does:** The pharmacy panel shell: header + three tab buttons, tab-body switch, and the review-modal mount.
-**How it works:** 1) State: `activeView` (`'dashboard'|'patients'|'formulary'`), `loading`, `orders`, `inventory`, `catalog`, `selectedOrder` (`:12-17`), React **state** via the `useState` hook (a **hook** is a function starting with `use` that lets a function component hold state or side effects). 2) `loadData` is a `useCallback`-memoized async that fires the three GETs in parallel with `Promise.all` (`:19-34`); `apiFetch` is the shared JWT-attaching fetch wrapper (guide 02). 3) A `useEffect` runs it once on mount (`:36-38`). 4) `handleTransitionComplete` closes the modal and refetches (`:40-43`), the panel's only "realtime" mechanism is refetch-on-action; there is no socket subscription. 5) Renders the active tab component with the fetched arrays as props; renders `HelixOrderReviewModal` only while `selectedOrder` is set (`:91-98`).
-**Why it exists:** One data-owner component so all three tabs share the same snapshot and one reload path. It is **lazy-loaded** (code-split so its JS downloads only when the tab opens) in the shell: `const HelixPanel = lazy(...)` (`src/pages/ClinicianShell.tsx:304`), and the `pharmacist` role's tab set is exactly `['helix', 'pharmacy-verify', 'sage']` (`src/pages/ClinicianShell.tsx:229`).
+**How it works:** 1) State: `activeView` (`'dashboard'|'patients'|'formulary'`), `loading`, `orders`, `inventory`, `catalog`, `selectedOrder` (`:12-17`), React **state** via the `useState` hook (a **hook** is a function starting with `use` that lets a function component hold state or side effects). 2) `loadData` is a `useCallback`-memoized async that fires the three GETs in parallel with `Promise.all` (`:19-34`); `apiFetch` is the shared JWT-attaching fetch wrapper (guide 02). 3) A `useEffect` runs it once on mount (`:36-38`). 4) `handleTransitionComplete` closes the modal and refetches (`:40-43`), the panel's only "realtime" mechanism is refetch-on-action; there is no socket subscription. 5) Renders the active tab component with the fetched arrays as props; renders `HelixOrderReviewModal` only while `selectedOrder` is set (`:105-112`).
+**Why it exists:** One data-owner component so all three tabs share the same snapshot and one reload path. It is **lazy-loaded** (code-split so its JS downloads only when the tab opens) in the shell: `const HelixPanel = lazy(...)` (`src/pages/ClinicianShell.tsx:470`), and the `pharmacist` role's tab set is exactly `['helix', 'pharmacy-verify', 'sage']` (`src/pages/ClinicianShell.tsx:395`).
 **Data in/out:** consumes the three GET response shapes; passes arrays down untyped (`any[]`, see Gotchas).
 **Talks to:** `apiFetch` (guide 02), the four child components.
 **Change guide:** To make the queue live-update when doctors create orders, subscribe to a socket event in a `useEffect` and call `loadData()`, but note the server currently emits no Helix socket events, so the server side must be built first (see Cross-subsystem contracts).
@@ -665,7 +665,7 @@ argparse CLI with `--file` and `--source`. none noteworthy.
 **Signature:** `(status) → [{target, label, btnClass}]`
 **Does:** Client-side mirror of `LEGAL_TRANSITIONS`: pending→Begin Review; reviewing→Verify/Reject/Suggest Substitute; substitute_suggested→Return to Review; verified→Schedule; scheduled→Dispense; **dispensed→`[]`** (the ward, not pharmacy, closes this step: see `helix_routes.py` `POST /orders/{id}/receive` under `helix.receive`, and `src/pages/panels/nurse/DeliveriesSheet.tsx`); terminals → `[]`.
 **Why it exists:** Renders only legal buttons so users rarely see a 400; the server remains the enforcer.
-**Change guide:** Must be edited in lockstep with `server/services/helix_service.py:14-23` (worked example under `LEGAL_TRANSITIONS`).
+**Change guide:** Must be edited in lockstep with `server/services/helix_service.py:15-24` (worked example under `LEGAL_TRANSITIONS`).
 **Gotchas:** The duplication is the gotcha, drift here shows stale/missing buttons, never a security hole.
 
 ### HelixOrderReviewModal: `src/components/helix/HelixOrderReviewModal.tsx:99`
@@ -702,7 +702,7 @@ argparse CLI with `--file` and `--source`. none noteworthy.
 
 ## Cross-subsystem contracts
 
-**REST endpoints owned by this subsystem** (prefix verified: `APIRouter(prefix="/api/helix")` at `server/routes/helix_routes.py:21`, mounted bare at `server/main.py:695`):
+**REST endpoints owned by this subsystem** (prefix verified: `APIRouter(prefix="/api/helix")` at `server/routes/helix_routes.py:28`, mounted bare at `server/main.py:695`):
 
 | Method | Path | Auth (permission) | Request | Response |
 |---|---|---|---|---|
@@ -719,7 +719,7 @@ argparse CLI with `--file` and `--source`. none noteworthy.
 
 | Function | Consumers |
 |---|---|
-| `helix_service.create_order` | `server/routes/relay_routes.py:1587` (imported `:1480`), `server/services/sage_handoff_service.py:368` (imported `:15`), `server/routes/helix_routes.py:286` |
+| `helix_service.create_order` | `server/routes/relay_routes.py:1587` (imported `:1480`), `server/services/sage_handoff_service.py:368` (imported `:15`), `server/routes/helix_routes.py:303` |
 | `helix_service.pre_flight_inventory_check` / `pre_flight_alternative_suggestion` | `server/routes/relay_routes.py:1134,1138,1481,1494` |
 | `drug_safety_service.check_medication_safety` | `server/routes/clinical_records_routes.py:12`, `server/services/pharmacy_verification_service.py:24` (guide 15), `server/services/sage_handoff_service.py:193` |
 | `drug_safety_service.classify_drug` | `server/services/clinical_records_service.py:14` |
@@ -731,9 +731,9 @@ argparse CLI with `--file` and `--source`. none noteworthy.
 
 **DB tables**, owns `helix_medication_master`, `helix_inventory_lots`, `helix_patient_med_orders`, `helix_pharmacy_verifications` (unused), `helix_stock_movements`, `helix_transitions` (all in `server/services/helix_db.py:7-86`); is the primary writer of `drug_interactions` and `terminology` (defined in the shared schema, `server/database.py:829-854`); reads `patients`, `users`, `medications`, `patient_allergies`, `channels`; writes one `messages` row per verified order. The corrector additionally owns the `drugs` table in the standalone `server/datasets/rxnorm/rxnorm_drugs.db`.
 
-**Socket events:** none. Helix neither emits nor subscribes to socket.io events; its only realtime-adjacent behavior is the system message written into the Relay `messages` table on `verified` (`server/services/helix_service.py:277-282`), which surfaces when Relay next loads that channel (guides 06/08). The UI is refetch-on-action only.
+**Socket events:** none. Helix neither emits nor subscribes to socket.io events; its only realtime-adjacent behavior is the system message written into the Relay `messages` table on `verified` (`server/services/helix_service.py:287-292`), which surfaces when Relay next loads that channel (guides 06/08). The UI is refetch-on-action only.
 
-**Frontend contract:** `src/api/client.ts:1884-1914` (`approveHelixOrder`, `getHelixOrders`, `transitionHelixOrder`, `getHelixStockMovements`, `getHelixOrderTransitions`) and the pharmacist tab set in `src/pages/ClinicianShell.tsx:229`. The **PharmacyVerifyQueue** (`src/components/helix/PharmacyVerifyQueue.tsx`, `/api/pharmacy/*` routes, `pharmacy_verification_service.py`) reuses Helix's `helix.read`/`helix.write` permissions and the safety gate but is a separate workflow over the `medications` table, see guide 15.
+**Frontend contract:** `src/api/client.ts:1884-1914` (`approveHelixOrder`, `getHelixOrders`, `transitionHelixOrder`, `getHelixStockMovements`, `getHelixOrderTransitions`) and the pharmacist tab set in `src/pages/ClinicianShell.tsx:395`. The **PharmacyVerifyQueue** (`src/components/helix/PharmacyVerifyQueue.tsx`, `/api/pharmacy/*` routes, `pharmacy_verification_service.py`) reuses Helix's `helix.read`/`helix.write` permissions and the safety gate but is a separate workflow over the `medications` table, see guide 15.
 
 ## Rebuild notes
 
@@ -756,10 +756,10 @@ argparse CLI with `--file` and `--source`. none noteworthy.
 1. **Most of the interaction knowledge base is unreachable through the safety gate.** `check_interactions` matches only terms produced by `classify_drug` (`server/services/drug_safety_service.py:401,412`), which emits solely the 12 class names in `_DRUG_CLASS_PATTERNS` (`:28-48`), never raw ingredient names, and never classes like `ssri`, `maoi`, `benzodiazepines`, `qt_prolonging`, `thiazides`, `fibrates`, `beta_blockers`. Of the 55 curated pairs in `server/services/interaction_db.py:37-169`, only 7 have both terms producible (anticoagulants/nsaids, anticoagulants/anticoagulants, ace_inhibitors/potassium, ace_inhibitors/nsaids, statins/macrolides, opioids/opioids, nsaids/nsaids); every `ingredient` row, including the FDA-black-box opioid+benzodiazepine pair via the gate, all warfarin/digoxin/lithium/methotrexate rows, and **everything loaded by `scripts/load_interactions.py`**, can never fire in `check_medication_safety`. The `interaction_db` docstring's claim that class terms are "as produced by `drug_safety_service.classify_drug`" (`server/services/interaction_db.py:15-16`) is false for most rows, and tests only exercise unreachable pairs via direct `lookup_interactions` calls (`server/tests/test_interaction_db.py:60,80`), masking the gap. **Partly mitigated since this was written:** `check_medication_safety` no longer pretends the gap does not exist, it returns `interaction_screened: false` plus a `coverage_note` naming the drug as outside the knowledge base (`server/services/drug_safety_service.py:449,458-462`), so an unscreened drug is at least distinguishable from a clean screen. The coverage itself is unchanged; only the honesty is.
 2. **`init_helix_db`'s users-table rebuild drops `pin_hash`.** The rebuilt `users` schema (`server/services/helix_db.py:103-111`) omits the `pin_hash` column present in the shipped schema (`server/database.py:46`); on a legacy DB whose `users` had 8 columns, `INSERT INTO users SELECT * FROM users_old` fails on column count, aborting mid-migration with `users` already renamed, `server/main.py:245-247` merely logs a warning. It also uses the trial-INSERT-under-`PRAGMA foreign_keys OFF` probe pattern that `server/database.py:1527-1531` documents as broken (the PRAGMA is a no-op inside a transaction).
 3. **The corrector's data pipeline references a script that does not exist.** `build_rxnorm_db` says "Run fetch_rxnorm.py first" (`server/services/rxnorm_corrector.py:289`) but no `fetch_rxnorm.py` exists anywhere in the repo, and `server/datasets/rxnorm/` is not checked in, on a fresh clone the corrector warns and no-ops (`:134`), and running `add_indian_drugs.py` first creates a 20-brand-only dictionary (`server/scripts/add_indian_drugs.py:44-63`).
-4. **~~`approve_helix_order`'s `"UNKNOWN"` patient fallback~~, FIXED, kept here because the fix is the interesting part.** This entry used to read: with no matching patient the route inserted `patient_id="UNKNOWN"`, which FK enforcement (`server/database.py:1002`) turned into a `sqlite3.IntegrityError` that the route's `except ValueError` never caught, a guaranteed 500, and an order invisible to the queue even if it had succeeded (`get_all_orders` INNER-JOINs `patients`, `server/services/helix_service.py:88`). Patient resolution now lives in `_resolve_approve_patient` (`server/routes/helix_routes.py:160`) and its contract is spelled out in the docstring (`server/routes/helix_routes.py:161-167`): an explicit `patient_id` wins and 404s if unknown; a bare `patient_name` must match **exactly one** patient by case-insensitive equality, and zero or several matches fail 422 carrying the candidate count (`server/routes/helix_routes.py:176-203`). No LIKE scan, no `"UNKNOWN"`, "a medication order must not be chartable to the wrong patient." The route now also runs every approval through `enforce_medication_safety` before creating the order (`server/routes/helix_routes.py:213-219`), which returns 428 on an unacknowledged severe alert.
+4. **~~`approve_helix_order`'s `"UNKNOWN"` patient fallback~~, FIXED, kept here because the fix is the interesting part.** This entry used to read: with no matching patient the route inserted `patient_id="UNKNOWN"`, which FK enforcement (`server/database.py:1002`) turned into a `sqlite3.IntegrityError` that the route's `except ValueError` never caught, a guaranteed 500, and an order invisible to the queue even if it had succeeded (`get_all_orders` INNER-JOINs `patients`, `server/services/helix_service.py:89`). Patient resolution now lives in `_resolve_approve_patient` (`server/routes/helix_routes.py:177`) and its contract is spelled out in the docstring (`server/routes/helix_routes.py:178-184`): an explicit `patient_id` wins and 404s if unknown; a bare `patient_name` must match **exactly one** patient by case-insensitive equality, and zero or several matches fail 422 carrying the candidate count (`server/routes/helix_routes.py:193-220`). No LIKE scan, no `"UNKNOWN"`, "a medication order must not be chartable to the wrong patient." The route now also runs every approval through `enforce_medication_safety` before creating the order (`server/routes/helix_routes.py:230-236`), which returns 428 on an unacknowledged severe alert.
 5. **Seed data lies about generics to power the substitution demo.** `seed_helix.py` labels Cefadin (a cephalosporin) with `generic_name="Amoxicillin"` (`server/scripts/seed_helix.py:23`) and Atenolol with `"Metoprolol"` (`:27`) so `pre_flight_alternative_suggestion`'s exact-generic-match step finds them. Clinically wrong, and safety-relevant, since a penicillin-allergic patient's substitution to "Cefadin-labeled-as-amoxicillin" would be classified by name (correctly, as cephalosporin) but the catalog metadata misleads humans.
-6. **Idempotency is opt-in and the UI opts out.** `transition_order_status` fabricates a random key when none is supplied (`server/services/helix_service.py:158-160`) and `HelixOrderReviewModal` never sends one (`src/components/helix/HelixOrderReviewModal.tsx:113-120`), so the documented replay protection protects no current caller.
-7. **Naive timestamps.** `datetime.utcnow()` (`server/services/helix_service.py:199`) and SQLite `CURRENT_TIMESTAMP` produce timezone-less strings; the frontend compensates with a regex-and-append-`Z` hack (`src/components/helix/HelixDashboard.tsx:109`).
-8. **Dead artifacts:** `helix_pharmacy_verifications` is created (`server/services/helix_db.py:47-53`) and never referenced elsewhere (the actual verification workflow lives in `pharmacy_verification_service` over `medications`); the timeline CSS (`src/components/helix/Helix.module.css:589-651`) and the `getHelixStockMovements`/`getHelixOrderTransitions` client helpers (`src/api/client.ts:1908-1914`) have no consuming UI; `_atomic_dispense` accepts an `actor_id` it never stores (`server/services/helix_service.py:300-438`).
-9. **Minor doc/code mismatches:** `RxNormCorrector`'s docstring claims an "FTS5 index" (`server/services/rxnorm_corrector.py:3`), no FTS5 exists, matching is in-memory; `_atomic_dispense` calls expiry-first picking "FIFO" (`server/services/helix_service.py:303`) where FEFO is meant; the module example "metopro lol" (`server/services/rxnorm_corrector.py:8`) is not actually correctable by the tokenizer; `"insulin"` sits in the not-a-drug stoplist (`server/services/rxnorm_corrector.py:114`); `pre_flight_inventory_check` counts expired lots as stock (`server/services/helix_service.py:447-452`); the terminology module docstring and the `terminology` schema comment both point at `scripts/load_terminology.py` as the bulk-load path (`server/services/terminology_service.py:11`, `server/database.py:827`), but that script does not exist anywhere in the repo, the same shape of dangling reference as `fetch_rxnorm.py` (#3).
+6. **Idempotency is opt-in and the UI opts out.** `transition_order_status` fabricates a random key when none is supplied (`server/services/helix_service.py:159-161`) and `HelixOrderReviewModal` never sends one (`src/components/helix/HelixOrderReviewModal.tsx:113-120`), so the documented replay protection protects no current caller.
+7. **Naive timestamps.** `datetime.utcnow()` (`server/services/helix_service.py:209`) and SQLite `CURRENT_TIMESTAMP` produce timezone-less strings; the frontend compensates with a regex-and-append-`Z` hack (`src/components/helix/HelixDashboard.tsx:109`).
+8. **Dead artifacts:** `helix_pharmacy_verifications` is created (`server/services/helix_db.py:47-53`) and never referenced elsewhere (the actual verification workflow lives in `pharmacy_verification_service` over `medications`); the timeline CSS (`src/components/helix/Helix.module.css:589-651`) and the `getHelixStockMovements`/`getHelixOrderTransitions` client helpers (`src/api/client.ts:1908-1914`) have no consuming UI; `_atomic_dispense` accepts an `actor_id` it never stores (`server/services/helix_service.py:310-464`).
+9. **Minor doc/code mismatches:** `RxNormCorrector`'s docstring claims an "FTS5 index" (`server/services/rxnorm_corrector.py:3`), no FTS5 exists, matching is in-memory; `_atomic_dispense` calls expiry-first picking "FIFO" (`server/services/helix_service.py:313`) where FEFO is meant; the module example "metopro lol" (`server/services/rxnorm_corrector.py:8`) is not actually correctable by the tokenizer; `"insulin"` sits in the not-a-drug stoplist (`server/services/rxnorm_corrector.py:114`); `pre_flight_inventory_check` counts expired lots as stock (`server/services/helix_service.py:475-480`); the terminology module docstring and the `terminology` schema comment both point at `scripts/load_terminology.py` as the bulk-load path (`server/services/terminology_service.py:11`, `server/database.py:827`), but that script does not exist anywhere in the repo, the same shape of dangling reference as `fetch_rxnorm.py` (#3).
 10. **UI inconsistencies:** low-stock thresholds differ (30 in `src/components/helix/HelixFormulary.tsx:27` vs 100 in `src/components/helix/HelixPatientBoard.tsx:127`); the patient board checks stock for the original drug even when a substitute is displayed (`src/components/helix/HelixPatientBoard.tsx:100` vs `:122`); patients are grouped by display name, not id (`src/components/helix/HelixPatientBoard.tsx:31-37`).

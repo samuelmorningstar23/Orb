@@ -10,10 +10,10 @@ row, `VigilPanel` returns `PatientDetailView` instead (`VigilPanel.tsx:215-231`)
 below line 430 takes over, that is the patient chart, a different screen, a different file.
 
 **How to get to this screen.** Left nav → **Patients**. The nav entry is declared at
-`src/pages/ClinicianShell.tsx:52`, `id: 'vigil', label: 'Patients', pillar: 'Vigil'` with a
-heartbeat-trace SVG at `:53-57`. Note the label a user sees is **"Patients"**, not "Vigil".
-The panel is lazily imported at `src/pages/ClinicianShell.tsx:310` and mounted inside a tab panel
-at `src/pages/ClinicianShell.tsx:540-544`:
+`src/pages/ClinicianShell.tsx:58`, `id: 'vigil', label: 'Patients', pillar: 'Vigil'` with a
+heartbeat-trace SVG at `:59-63`. Note the label a user sees is **"Patients"**, not "Vigil".
+The panel is lazily imported at `src/pages/ClinicianShell.tsx:476` and mounted inside a tab panel
+at `src/pages/ClinicianShell.tsx:773-777`:
 
 ```
 {shouldRenderPanel('vigil') && (
@@ -24,11 +24,11 @@ at `src/pages/ClinicianShell.tsx:540-544`:
 The `role` prop passed there is the **only** prop this panel takes, and it controls exactly one
 thing on screen, the fourth metric tile (see §1.4).
 
-**Who sees the tab.** Per-role tab lists at `src/pages/ClinicianShell.tsx:209-230`. `vigil` is
+**Who sees the tab.** Per-role tab lists at `src/pages/ClinicianShell.tsx:375-396`. `vigil` is
 first in the list for `surgeon` (:189), `doctor` (:195-196), `admin` (:201) and the `default`
 fallback (:203), and second for `nurse` (:200, behind `shift`). Because the shell opens
-`accessibleTabs[0]` (`ClinicianShell.tsx:339`), **this board is the landing screen for doctors,
-surgeons and admins.** A pharmacist never sees it at all (`:202` gives them helix /
+`accessibleTabs[0]` (`ClinicianShell.tsx:505`), **this board is the landing screen for doctors,
+surgeons and admins.** A pharmacist never sees it at all (`:368` gives them helix /
 pharmacy-verify / sage).
 
 **Layout in one sentence.** Top to bottom in a single column (`.orb-panel`, root element at
@@ -140,7 +140,7 @@ there are exactly 3 red rows *among the loaded rows*.
 ### "Bed Occupancy" tile: admin only
 **Where:** fourth tile. **Absent for every non-admin.**
 **Rendered by:** `VigilPanel.tsx:258-263`, guarded by `{role === 'admin' && (…)}` at `:256`.
-**Data from:** the `role` prop, supplied by the shell at `src/pages/ClinicianShell.tsx:542` as
+**Data from:** the `role` prop, supplied by the shell at `src/pages/ClinicianShell.tsx:775` as
 `role={user?.role}`. The value is `Math.round((admitted / 35) * 100)` (`VigilPanel.tsx:260`).
 **API / Server:** none of its own, it is arithmetic on the `admitted` number above.
 **Change this →** **The 35 is a hardcoded literal, not a bed count from the site config.** A
@@ -535,7 +535,7 @@ that line and an expired session would instead surface as the generic failure bl
 (`permissions.py:106`), `nurse` (`:121`) and `admin` (`:142`); `pharmacist` (`:135`) and
 `patient` (`:158`) do not.
 **Change this →** in practice unreachable from the UI, because the shell never renders the tab
-for a role that lacks it (`ClinicianShell.tsx:229`). A role added to the tab list but not to
+for a role that lacks it (`ClinicianShell.tsx:395`). A role added to the tab list but not to
 `ROLE_PERMISSIONS` would land on the red "could not be loaded" block with a 403 in the message.
 
 ### The empty ward
@@ -607,7 +607,7 @@ implementation of the RCP NEWS2 table in the product; `escalation_service.py:34-
 second scorer is how two screens come to disagree about the same patient, and
 `nurse_shift_service.py:681` says the same. It is called by `bot_service.py:200`,
 `ingestion_service.py` (via `_persist_risk_score`, `:264-272`), `nurse_shift_service.py:386`,
-`downtime_service.py:187`, `escalation_service.py:1692`, `command_center_service.py:177` and
+`downtime_service.py:187`, `escalation_service.py:1694`, `command_center_service.py:205` and
 `sage_service.py:1711`, so a threshold edit lands on the board, the nurse shift board, the
 downtime pack, escalation and Sage's answers simultaneously.
 

@@ -12,6 +12,26 @@ interface HeatCell { ward: string; critical: number; elevated: number; stable: n
 /** `news2_complete` false: an incomplete set, so the number is a minimum. */
 interface Deterioration { patient_id: string; name: string | null; ward: string | null; bed: string | null; level: string; news2: number | null; news2_complete?: boolean | null }
 interface ORCase { id: string; procedure_name: string | null; operating_room: string | null; scheduled_time: string | null; status: string | null; patient_name: string | null; ward: string | null }
+/** A facility of the hospital group (multisite-12). */
+interface CmdFacility { id: number; code: string | null; name: string | null }
+/** One facility's figures in the group view, from the same patient list as the group's. */
+interface FacilityTile {
+  facility: CmdFacility | null
+  total_admitted: number
+  total_capacity: number
+  occupancy_pct: number
+  critical: number
+  elevated: number
+  stable: number
+  not_scored: number
+}
+
+/** The facility in words, for the header, the selector and the tiles. */
+function facilityName(facility: CmdFacility | null | undefined): string {
+  if (!facility) return 'Facility not on record'
+  const name = facility.name || facility.code || `Facility ${facility.id}`
+  return facility.code && facility.name ? `${name} (${facility.code})` : name
+}
 
 interface HouseSnapshot {
   generated_at: string
@@ -31,6 +51,14 @@ interface HouseSnapshot {
   /** False with ORB_SCORING_ENABLED off (the Orb Ward Record): every patient
    *  is "not scored" and the highest-scores list is empty. */
   scoring_enabled?: boolean
+  // Present only with more than one facility on record (multisite-12): which
+  // facility the figures are about (null for the group view), the facilities
+  // this reader may choose, and for a group-wide reader one tile per facility.
+  facility?: CmdFacility | null
+  facility_view?: 'facility' | 'group' | 'no_facility'
+  facilities?: CmdFacility[]
+  facility_tiles?: FacilityTile[]
+  unplaced_capacity?: number
 }
 
 const REFRESH_MS = 20_000
@@ -77,10 +105,13 @@ export default function CommandCenter() {
   const [captureMsg, setCaptureMsg] = useState<string | null>(null)
   const [captureErr, setCaptureErr] = useState<string | null>(null)
   const captureMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // multisite-12: the facility a group-wide reader narrowed to (null: the group).
+  const [facilityId, setFacilityId] = useState<number | null>(null)
 
   const load = useCallback(async () => {
     try {
-      const data = await apiFetch<HouseSnapshot>('/command-center/')
+      const path = facilityId === null ? '/command-center/' : `/command-center/?facility=${facilityId}`
+      const data = await apiFetch<HouseSnapshot>(path)
       setSnap(data)
       setError(null)
       setLastUpdated(new Date())
@@ -89,7 +120,7 @@ export default function CommandCenter() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [facilityId])
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch/subscribe trigger: the setState is the loader's own loading flag, not state derived from props or state.
@@ -144,6 +175,19 @@ export default function CommandCenter() {
   // count, the acuity heatmap and the highest-scores list are not drawn. Either
   // the shell's switch or the server's own flag turns them off.
   const scoring = scoringEnabled && snap.scoring_enabled !== false
+  // Facilities (multisite-12): only with more than one on record. A reader who
+  // may see more than one facility gets a selector; everyone is told which
+  // facility the figures are about.
+  const facilityOptions = snap.facilities ?? []
+  const canChooseFacility = facilityOptions.length > 1
+  const context = snap.facility_view === 'group'
+    ? 'Every facility of the group on one screen'
+    : snap.facility_view === 'no_facility'
+      ? 'Your department is not listed at any facility, so there is nothing to count'
+      : snap.facility
+        ? `${facilityName(snap.facility)} on one screen`
+        : 'House-wide operations on one screen'
+  const houseWords = snap.facility ? `at ${facilityName(snap.facility)}` : 'house-wide'
 
   return (
     <div className="cmd">
@@ -152,9 +196,25 @@ export default function CommandCenter() {
       <header className="orb-home__header">
         <div>
           <h2 className="orb-home__title">Command Center</h2>
-          <p className="orb-home__context">House-wide operations on one screen</p>
+          <p className="orb-home__context">{context}</p>
         </div>
         <div className="cmd__meta">
+          {canChooseFacility && (
+            <label className="cmd__facility">
+              <span>Facility</span>
+              <select
+                aria-label="Facility"
+                style={{ minHeight: 'var(--tap-min)' }}
+                value={facilityId === null ? '' : String(facilityId)}
+                onChange={(e) => setFacilityId(e.target.value ? Number(e.target.value) : null)}
+              >
+                <option value="">All facilities</option>
+                {facilityOptions.map(f => (
+                  <option key={f.id} value={String(f.id)}>{facilityName(f)}</option>
+                ))}
+              </select>
+            </label>
+          )}
           {error && <span className="cmd__stale" title={error}>reconnecting…</span>}
           <span className="cmd__updated">
             {lastUpdated ? `Updated ${formatClinicalTime(lastUpdated, { seconds: true })}` : ''}
@@ -209,6 +269,35 @@ export default function CommandCenter() {
           </div>
         </div>
       </section>
+
+      {/* ── FACILITY TILES (a group-wide reader, multisite-12) ─────────── */}
+      {snap.facility_tiles && snap.facility_tiles.length > 0 && (
+        <section className="cmd__kpis" aria-label="Facilities of the group">
+          {snap.facility_tiles.map(tile => (
+            <div
+              key={tile.facility?.id ?? facilityName(tile.facility)}
+              className={`cmd-kpi cmd-kpi--${pctTone(tile.occupancy_pct)}`}
+            >
+              <span className="cmd-kpi__label">{facilityName(tile.facility)}</span>
+              <span className="cmd-kpi__value">{tile.total_admitted}<span className="cmd-kpi__unit">/{tile.total_capacity}</span></span>
+              <div className="cmd-kpi__bar"><span style={{ width: `${Math.min(100, tile.occupancy_pct)}%` }} /></div>
+              <span className="cmd-kpi__foot">
+                {tile.occupancy_pct}% beds occupied
+                {scoring ? ` · ${tile.critical} critical · ${tile.elevated} elevated` : ''}
+              </span>
+            </div>
+          ))}
+          {(snap.unplaced_capacity ?? 0) > 0 && (
+            <div className="cmd-kpi cmd-kpi--warn">
+              <span className="cmd-kpi__label">Beds at no facility</span>
+              <span className="cmd-kpi__value">{snap.unplaced_capacity}</span>
+              <span className="cmd-kpi__foot">
+                Beds on wards that Bed setup places at no facility. They count in the group total only.
+              </span>
+            </div>
+          )}
+        </section>
+      )}
 
       <div className="cmd__grid">
         {/* ── ACUITY HEATMAP ───────────────────────────────────── */}
@@ -274,7 +363,7 @@ export default function CommandCenter() {
             </div>
             <span className="cmd-count">
               {scope && houseCount != null
-                ? `${deteriorations.length} of ${houseCount} house-wide`
+                ? `${deteriorations.length} of ${houseCount} ${houseWords}`
                 : deteriorations.length}
             </span>
           </header>

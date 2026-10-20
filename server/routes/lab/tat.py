@@ -27,7 +27,13 @@ laboratory roles have no department and read hospital-wide (ruling LIS-R12).
 
 from database import db_session
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from permissions import LAB_READ, department_scope, log_phi_read, require_permission
+from permissions import (
+    LAB_READ,
+    department_scope,
+    facility_scope,
+    log_phi_read,
+    require_permission,
+)
 from services.audit_service import AuditWriteError
 
 from routes.opt_in_gates import require_lab_module
@@ -63,17 +69,20 @@ _GET_TAT_LAST_DEFAULT = Query(None, alias="to", max_length=10)
 _GET_TAT_USER_DEFAULT = Depends(require_permission(LAB_READ))
 
 
-@router.get("/tat")
+@router.get("/tat", response_model=None)
 def get_tat(
     request: Request,
     first: str | None = _GET_TAT_FIRST_DEFAULT,
     last: str | None = _GET_TAT_LAST_DEFAULT,
     user: dict = _GET_TAT_USER_DEFAULT,
-):
+) -> dict:
+    """The turnaround screen, inside the caller's department and facilities."""
     first_day, last_day = _period(first, last)
     dept = department_scope(user)
     with db_session() as db:
-        board = lab_tat_service.dashboard(db, first=first_day, last=last_day, dept=dept)
+        board = lab_tat_service.dashboard(
+            db, first=first_day, last=last_day, dept=dept, facilities=facility_scope(user)
+        )
     overdue = board["overdue"]["items"]
     patient_ids = sorted({o["patient"]["id"] for o in overdue if o["patient"]["id"]})
     try:
@@ -105,17 +114,20 @@ _EXPORT_TAT_LAST_DEFAULT = Query(None, alias="to", max_length=10)
 _EXPORT_TAT_USER_DEFAULT = Depends(require_permission(LAB_READ))
 
 
-@router.get("/tat/export")
+@router.get("/tat/export", response_model=None)
 def export_tat(
     request: Request,
     first: str | None = _EXPORT_TAT_FIRST_DEFAULT,
     last: str | None = _EXPORT_TAT_LAST_DEFAULT,
     user: dict = _EXPORT_TAT_USER_DEFAULT,
-):
+) -> dict:
+    """The turnaround export, inside the caller's department and facilities."""
     first_day, last_day = _period(first, last)
     dept = department_scope(user)
     with db_session() as db:
-        export = lab_tat_service.export_csv(db, first=first_day, last=last_day, dept=dept)
+        export = lab_tat_service.export_csv(
+            db, first=first_day, last=last_day, dept=dept, facilities=facility_scope(user)
+        )
     try:
         log_phi_read(
             request=request,

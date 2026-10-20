@@ -50,24 +50,39 @@ date-ranged evidence pack a hospital hands an assessor.
 All handlers are plain `def`, so FastAPI runs them in a threadpool: everything
 below opens SQLite, and blocking the event loop is the failure mode this repo
 has shipped three production freezes from.
+
+6. ONE FACILITY AT A TIME (multisite-12). NABH accredits each hospital on its
+   own. With more than one facility of a group on the appliance the
+   indicators, the register, the dispositions and the packs are the caller's
+   facility's (services/nabh_service.py, "One facility's figures"); a reader
+   with no facility limit (an administrator with an enterprise grant) sees
+   the group and may narrow with ?facility= (in the body for a pack), and a
+   facility outside the reader's own is a 404 like the audit views. A pack
+   always names one facility: a group-wide reader must choose one. An
+   incident of another facility answers 404 exactly like one that does not
+   exist. With one facility on record nothing here changes.
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
+from typing import Any
 
 import config
 from auth import get_current_user
+from database import db_session
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from permissions import (
     ADMIN_OVERVIEW,
     enforce_patient_scope,
+    facility_scope,
     require_permission,
 )
 from pydantic import BaseModel, Field
 from services.audit_service import log_audit_event
 
+from services import audit_facility, facility_service
 from services import nabh_service as svc
 
 logger = logging.getLogger("orb.nabh_routes")
@@ -145,8 +160,92 @@ def _fail(exc: svc.NabhError) -> HTTPException:
         "bad_period": 422,
         "future_incident": 422,
         "future_disposition": 422,
+        "pack_spans_facilities": 409,
+        "series_not_set_up": 409,
     }.get(exc.code, 400)
     return HTTPException(status_code=status, detail={"error": exc.code, "message": str(exc)})
+
+
+# ── Facilities (multisite-12) ────────────────────────────────────────────────
+
+_NO_SUCH_FACILITY = "There is no facility with that number among the ones you can see."
+_NO_FACILITY_WORDS = (
+    "Your department is not listed at any facility, so there are no NABH figures to show."
+)
+
+
+class _FacilityView:
+    """Which facilities one NABH read covers: `scope` (None for no facility
+    limit), whether more than one facility is on record, and the facilities
+    the reader may choose."""
+
+    def __init__(self, scope: frozenset[int] | None, multi: bool, options: list[dict]) -> None:
+        self.scope = scope
+        self.multi = multi
+        self.options = options
+
+    @property
+    def facilities(self) -> frozenset[int] | None:
+        """The filter for a list: None with one facility on record."""
+        return self.scope if self.multi else None
+
+    def one(self) -> int | None:
+        """The single facility an indicator set or a pack counts, or None
+        (one facility on record, or the group view of a group-wide reader).
+        An account whose department no facility lists is refused."""
+        if not self.multi or self.scope is None:
+            return None
+        if not self.scope:
+            raise HTTPException(
+                status_code=403, detail={"error": "facility_scope", "message": _NO_FACILITY_WORDS}
+            )
+        if len(self.scope) > 1:
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "facility_required", "message": "Choose one facility."},
+            )
+        return next(iter(self.scope))
+
+    def labels(self, facility_id: int | None) -> dict[str, Any]:
+        """The facility keys an answer gains, only with more than one facility."""
+        if not self.multi:
+            return {}
+        return {
+            "facility": facility_service.facility_identity(facility_id) if facility_id else None,
+            "facilities": self.options,
+        }
+
+
+def _facility_view(user: dict, facility: int | None = None) -> _FacilityView:
+    """The reader's facilities, narrowed by ?facility= (never widened: outside
+    the reader's own, or not on record, is a 404). With one facility on
+    record nothing is read beyond the cached facility count."""
+    with db_session() as db:
+        try:
+            scope, multi = audit_facility.narrowed_scope(user, facility, db=db)
+        except audit_facility.FacilityFilterError:
+            raise HTTPException(
+                status_code=404, detail={"error": "not_found", "message": _NO_SUCH_FACILITY}
+            ) from None
+        options = (
+            audit_facility.facility_options(audit_facility.reader_scope(user, db=db), db=db)
+            if multi
+            else []
+        )
+    return _FacilityView(scope, multi, options)
+
+
+def _incident_in_scope(incident_id: int, user: dict) -> dict:
+    """The incident, or the same 404 as a missing one when it was filed at a
+    facility outside the reader's (multisite-12)."""
+    try:
+        incident = svc.get_incident(incident_id)
+    except svc.NabhError as exc:
+        raise _fail(exc) from exc
+    facilities = facility_scope(user)
+    if facilities is not None and incident.get("facility_id") not in facilities:
+        raise _fail(svc.NabhError("not_found", f"incident {incident_id} does not exist"))
+    return incident
 
 
 def _audit(
@@ -253,6 +352,9 @@ class ExportIn(BaseModel):
     #: pack that leaves the hospital is the wrong place to discover it carried
     #: patient identifiers nobody needed.
     include_patient_identifiers: bool = False
+    #: The facility the pack is for (multisite-12), among the reader's own.
+    #: Needed only by a reader who sees more than one facility.
+    facility: int | None = Field(default=None, ge=1)
 
 
 # ── Meta ─────────────────────────────────────────────────────────────────────
@@ -266,8 +368,12 @@ _GET_META_USER_DEFAULT = Depends(staff_reporter)
 def get_meta(_: None = _GET_META__DEFAULT, user: dict = _GET_META_USER_DEFAULT) -> dict:
     """The vocabulary the client builds its forms from — types, severities, the
     lifecycle, the indicator catalogue, the thresholds each indicator was
-    computed under, and the anonymity statement."""
-    return svc.meta()
+    computed under, and the anonymity statement. The ward list is the
+    caller's facility's wards while more than one facility is on record."""
+    facilities = facility_scope(user)
+    if facilities is None:
+        return svc.meta()
+    return svc.meta(facilities=facilities)
 
 
 # ── Indicators ───────────────────────────────────────────────────────────────
@@ -278,6 +384,7 @@ _GET_INDICATORS_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 _GET_INDICATORS_PERIOD_START_DEFAULT = Query(None, description="ISO date, inclusive")
 _GET_INDICATORS_PERIOD_END_DEFAULT = Query(None, description="ISO date, inclusive")
 _GET_INDICATORS_WARD_DEFAULT = Query(None)
+_GET_INDICATORS_FACILITY_DEFAULT = Query(None, ge=1)
 
 
 @router.get("/indicators")
@@ -287,17 +394,31 @@ def get_indicators(
     period_start: str | None = _GET_INDICATORS_PERIOD_START_DEFAULT,
     period_end: str | None = _GET_INDICATORS_PERIOD_END_DEFAULT,
     ward: str | None = _GET_INDICATORS_WARD_DEFAULT,
+    facility: int | None = _GET_INDICATORS_FACILITY_DEFAULT,
 ) -> dict:
     """The quality-indicator dashboard for one period.
 
     Never raises on an empty database: a hospital that switched Orb on this
     morning gets a complete dashboard in which every indicator says what it is
     missing. That is the point of the module.
+
+    With more than one facility on record the figures are one facility's (the
+    caller's, or the one a group-wide reader chose with ?facility=), and the
+    answer names it; a group-wide reader who names none sees the group's.
     """
+    view = _facility_view(user, facility)
+    fid = view.one()
     try:
-        return svc.indicators(period_start=period_start, period_end=period_end, ward=ward)
+        if fid is None:
+            out = svc.indicators(period_start=period_start, period_end=period_end, ward=ward)
+        else:
+            out = svc.indicators(
+                period_start=period_start, period_end=period_end, ward=ward, facility_id=fid
+            )
     except svc.NabhError as exc:
         raise _fail(exc) from exc
+    out.update(view.labels(fid))
+    return out
 
 
 # ── Incident register ────────────────────────────────────────────────────────
@@ -387,6 +508,7 @@ _LIST_REGISTER_WARD_DEFAULT = Query(None)
 _LIST_REGISTER_PATIENT_ID_DEFAULT = Query(None)
 _LIST_REGISTER_INCLUDE_VOID_DEFAULT = Query(False)
 _LIST_REGISTER_LIMIT_DEFAULT = Query(200, ge=1, le=1000)
+_LIST_REGISTER_FACILITY_DEFAULT = Query(None, ge=1)
 
 
 @router.get("/incidents")
@@ -402,28 +524,50 @@ def list_register(
     patient_id: str | None = _LIST_REGISTER_PATIENT_ID_DEFAULT,
     include_void: bool = _LIST_REGISTER_INCLUDE_VOID_DEFAULT,
     limit: int = _LIST_REGISTER_LIMIT_DEFAULT,
+    facility: int | None = _LIST_REGISTER_FACILITY_DEFAULT,
 ) -> dict:
     """The register, filtered.
 
     `patient_id` arrives on the QUERY STRING, which makes this a per-patient PHI
     read that the path-param drift guard cannot see — so it goes through
     `enforce_patient_scope` (404, never 403: a 403 confirms the patient exists).
+
+    With more than one facility on record it lists only the incidents filed at
+    the reader's facilities (or the one chosen with ?facility=).
     """
     enforce_patient_scope(user, patient_id)
+    view = _facility_view(user, facility)
     try:
-        return svc.list_incidents(
-            period_start=period_start,
-            period_end=period_end,
-            status=status,
-            incident_type=incident_type,
-            severity=severity,
-            ward=ward,
-            patient_id=patient_id,
-            include_void=include_void,
-            limit=limit,
-        )
+        if view.facilities is None:
+            out = svc.list_incidents(
+                period_start=period_start,
+                period_end=period_end,
+                status=status,
+                incident_type=incident_type,
+                severity=severity,
+                ward=ward,
+                patient_id=patient_id,
+                include_void=include_void,
+                limit=limit,
+            )
+        else:
+            out = svc.list_incidents(
+                period_start=period_start,
+                period_end=period_end,
+                status=status,
+                incident_type=incident_type,
+                severity=severity,
+                ward=ward,
+                patient_id=patient_id,
+                include_void=include_void,
+                limit=limit,
+                facilities=view.facilities,
+            )
     except svc.NabhError as exc:
         raise _fail(exc) from exc
+    if view.multi:
+        out["facilities"] = view.options
+    return out
 
 
 _GET_ONE__DEFAULT = Depends(require_module)
@@ -436,10 +580,7 @@ def get_one(
     _: None = _GET_ONE__DEFAULT,
     user: dict = _GET_ONE_USER_DEFAULT,
 ) -> dict:
-    try:
-        return svc.get_incident(incident_id)
-    except svc.NabhError as exc:
-        raise _fail(exc) from exc
+    return _incident_in_scope(incident_id, user)
 
 
 _INVESTIGATE__DEFAULT = Depends(require_module)
@@ -457,6 +598,7 @@ def investigate(
     """Take the incident on: `reported` → `under_investigation`. Also the
     REOPEN path from `closed`, which is recorded as a reopen, never as an edit
     that erases the closure."""
+    _incident_in_scope(incident_id, user)
     try:
         incident = svc.start_investigation(incident_id, actor_user_id=user["id"], note=body.note)
     except svc.NabhError as exc:
@@ -484,6 +626,7 @@ def record_investigation(
     _: None = _RECORD_INVESTIGATION__DEFAULT,
     user: dict = _RECORD_INVESTIGATION_USER_DEFAULT,
 ) -> dict:
+    _incident_in_scope(incident_id, user)
     try:
         incident = svc.record_investigation(
             incident_id,
@@ -517,6 +660,7 @@ def add_action(
     _: None = _ADD_ACTION__DEFAULT,
     user: dict = _ADD_ACTION_USER_DEFAULT,
 ) -> dict:
+    _incident_in_scope(incident_id, user)
     try:
         incident = svc.add_action(
             incident_id,
@@ -553,6 +697,7 @@ def complete_action(
     _: None = _COMPLETE_ACTION__DEFAULT,
     user: dict = _COMPLETE_ACTION_USER_DEFAULT,
 ) -> dict:
+    _incident_in_scope(incident_id, user)
     try:
         incident = svc.complete_action(
             incident_id, action_id, actor_user_id=user["id"], note=body.note
@@ -584,6 +729,7 @@ def close(
 ) -> dict:
     """Close an incident. Refuses on an unrecorded investigation, on outstanding
     open actions, and on a closure with neither an action nor a reason."""
+    _incident_in_scope(incident_id, user)
     try:
         incident = svc.close_incident(
             incident_id,
@@ -618,6 +764,7 @@ def void(
 ) -> dict:
     """Mark a report void — a duplicate, or something that turned out not to
     have happened. THE ROW STAYS: there is no delete in this module."""
+    _incident_in_scope(incident_id, user)
     try:
         incident = svc.void_incident(incident_id, actor_user_id=user["id"], reason=body.reason)
     except svc.NabhError as exc:
@@ -700,8 +847,17 @@ def list_dispositions(
     period_end: str | None = _LIST_DISPOSITIONS_PERIOD_END_DEFAULT,
     limit: int = _LIST_DISPOSITIONS_LIMIT_DEFAULT,
 ) -> dict:
+    """The dispositions recorded in the period: the reader's facilities'
+    patients' while more than one facility is on record."""
+    facilities = facility_scope(user)
     try:
-        return svc.list_dispositions(period_start=period_start, period_end=period_end, limit=limit)
+        if facilities is None:
+            return svc.list_dispositions(
+                period_start=period_start, period_end=period_end, limit=limit
+            )
+        return svc.list_dispositions(
+            period_start=period_start, period_end=period_end, limit=limit, facilities=facilities
+        )
     except svc.NabhError as exc:
         raise _fail(exc) from exc
 
@@ -726,17 +882,19 @@ def export_pack(
     produced which period, with what options, and the SHA-256 of the document.
     "Which pack did we hand the assessor in March, and is this that file" is a
     question a hospital gets asked.
+
+    With more than one facility on record the pack is one facility's: the
+    caller's, or the one a group-wide reader names in `facility`.
     """
-    try:
-        pack = svc.record_evidence_export(
-            period_start=body.period_start,
-            period_end=body.period_end,
-            ward=body.ward,
-            generated_by=user["id"],
-            include_patient_identifiers=body.include_patient_identifiers,
-        )
-    except svc.NabhError as exc:
-        raise _fail(exc) from exc
+    pack, fid = _record_pack(body, user)
+    metadata: dict[str, Any] = {
+        "sha256": pack["content_sha256"],
+        "include_patient_identifiers": body.include_patient_identifiers,
+        "indicators_reported": pack["indicator_summary"]["reported"],
+        "indicators_not_collected": pack["indicator_summary"]["not_collected"],
+    }
+    if fid is not None:
+        metadata["facility_id"] = fid
     _audit(
         request,
         user,
@@ -747,14 +905,38 @@ def export_pack(
         ),
         target_type="nabh_evidence_pack",
         target_id=pack["reference"],
-        metadata={
-            "sha256": pack["content_sha256"],
-            "include_patient_identifiers": body.include_patient_identifiers,
-            "indicators_reported": pack["indicator_summary"]["reported"],
-            "indicators_not_collected": pack["indicator_summary"]["not_collected"],
-        },
+        metadata=metadata,
     )
     return pack
+
+
+def _record_pack(body: ExportIn, user: dict) -> tuple[dict, int | None]:
+    """Build and log one pack: (the pack, the facility it is for, or None with
+    one facility on record). A group-wide reader who names no facility is
+    refused by the service (pack_spans_facilities)."""
+    view = _facility_view(user, body.facility)
+    fid = view.one()
+    try:
+        if fid is None:
+            pack = svc.record_evidence_export(
+                period_start=body.period_start,
+                period_end=body.period_end,
+                ward=body.ward,
+                generated_by=user["id"],
+                include_patient_identifiers=body.include_patient_identifiers,
+            )
+        else:
+            pack = svc.record_evidence_export(
+                period_start=body.period_start,
+                period_end=body.period_end,
+                ward=body.ward,
+                generated_by=user["id"],
+                include_patient_identifiers=body.include_patient_identifiers,
+                facility_id=fid,
+            )
+    except svc.NabhError as exc:
+        raise _fail(exc) from exc
+    return pack, fid
 
 
 _EXPORT_PACK_MARKDOWN__DEFAULT = Depends(require_module)
@@ -774,16 +956,10 @@ def export_pack_markdown(
     DATA or NOT COLLECTED in the result column, never a number and never a dash
     that somebody downstream could read as a zero.
     """
-    try:
-        pack = svc.record_evidence_export(
-            period_start=body.period_start,
-            period_end=body.period_end,
-            ward=body.ward,
-            generated_by=user["id"],
-            include_patient_identifiers=body.include_patient_identifiers,
-        )
-    except svc.NabhError as exc:
-        raise _fail(exc) from exc
+    pack, fid = _record_pack(body, user)
+    metadata: dict[str, Any] = {"sha256": pack["content_sha256"], "format": "markdown"}
+    if fid is not None:
+        metadata["facility_id"] = fid
     _audit(
         request,
         user,
@@ -791,7 +967,7 @@ def export_pack_markdown(
         summary=f"NABH evidence pack {pack['reference']} generated (markdown)",
         target_type="nabh_evidence_pack",
         target_id=pack["reference"],
-        metadata={"sha256": pack["content_sha256"], "format": "markdown"},
+        metadata=metadata,
     )
     return Response(
         content=svc.render_pack_markdown(pack),
@@ -811,5 +987,9 @@ def list_exports(
     user: dict = _LIST_EXPORTS_USER_DEFAULT,
     limit: int = _LIST_EXPORTS_LIMIT_DEFAULT,
 ) -> dict:
-    """Every pack this hospital has produced, newest first, with its digest."""
-    return svc.list_evidence_exports(limit=limit)
+    """Every pack this hospital has produced, newest first, with its digest:
+    the reader's facilities' packs while more than one facility is on record."""
+    facilities = facility_scope(user)
+    if facilities is None:
+        return svc.list_evidence_exports(limit=limit)
+    return svc.list_evidence_exports(limit=limit, facilities=facilities)

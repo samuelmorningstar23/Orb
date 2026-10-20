@@ -23,6 +23,13 @@
  * prefix, the digits or whether it is the hospital's real series, and sets up
  * a second facility's own series. The server refuses any prefix that could
  * repeat a number and says why beside the field.
+ *
+ * And each facility card has its price lists (multisite-13), loaded when
+ * opened: which list its patients are priced on when no payer names one (its
+ * own default, else the group's), the lists that apply there with where each
+ * applies, and the default price list editor. Choosing a group list other
+ * than the group's default keeps it for that facility from now on, which only
+ * an account with group-wide access may do; the server says why it refuses.
  */
 import { Fragment, useCallback, useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
@@ -36,6 +43,14 @@ import {
   updateFacility,
 } from '../../../api/facilities'
 import { listDocumentSeries, saveDocumentSeries } from '../../../api/documentSeries'
+import {
+  getFacilityPriceLists,
+  isUnavailable,
+  refusalText,
+  setFacilityDefaultPriceList,
+  setPriceListAppliesTo,
+} from '../../../api/priceLists'
+import type { DefaultSource, FacilityPriceLists, PriceList } from '../../../api/priceLists'
 import type {
   DocumentSeries,
   DocumentSeriesChange,
@@ -576,6 +591,230 @@ function SeriesSection({ facility }: { facility: Facility }) {
   )
 }
 
+/* ── Price lists (multisite-13) ──────────────────────────────────────────── */
+
+const SOURCE_WORDS: Record<DefaultSource, string> = {
+  facility: "this facility's own default",
+  group: "the group's default",
+  first_active: 'the first list in use, because no list is marked as a default',
+  none: '',
+}
+
+function planLabel(plan: PriceList): string {
+  return `${plan.name} (${plan.code})`
+}
+
+/** The editor's choices: '' is the group's default; then this facility's own
+ *  lists; then, for an account with group-wide access, the other group lists
+ *  no payer prices on (choosing one keeps it for this facility). */
+function defaultChoices(data: FacilityPriceLists): { value: string; label: string }[] {
+  const groupDefault = data.plans.find(p => p.facility_id === null && p.is_default)
+  const out = [{
+    value: '',
+    label: groupDefault ? `The group's default, ${planLabel(groupDefault)}` : "The group's default",
+  }]
+  for (const p of data.plans) {
+    if (p.facility_id === data.facility.id) out.push({ value: String(p.id), label: planLabel(p) })
+  }
+  if (data.group_wide) {
+    for (const p of data.plans) {
+      if (p.facility_id === null && !p.is_default && p.used_by_payers === 0) {
+        out.push({ value: String(p.id), label: `${planLabel(p)}, to be kept for this facility` })
+      }
+    }
+  }
+  return out
+}
+
+function currentChoice(data: FacilityPriceLists): string {
+  return data.default_source === 'facility' && data.default_plan ? String(data.default_plan.id) : ''
+}
+
+function PriceListSection({ facility }: { facility: Facility }) {
+  const [open, setOpen] = useState(false)
+  const [data, setData] = useState<FacilityPriceLists | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [hidden, setHidden] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
+  const [choice, setChoice] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    let alive = true
+    getFacilityPriceLists(facility.id)
+      .then(res => {
+        if (!alive) return
+        setData(res)
+        setChoice(currentChoice(res))
+        setLoadError(null)
+      })
+      .catch(err => {
+        if (!alive) return
+        if (isUnavailable(err)) setHidden(true)
+        else setLoadError(errorText(err, 'Could not load the price lists.'))
+      })
+    return () => { alive = false }
+  }, [open, facility.id, reloadKey])
+
+  const save = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!data) return
+    if (choice === currentChoice(data)) {
+      setNotice('Nothing was changed.')
+      return
+    }
+    setSaving(true)
+    setFormError(null)
+    setNotice(null)
+    try {
+      const res = await setFacilityDefaultPriceList(facility.id, choice === '' ? null : Number(choice))
+      setData(res)
+      setChoice(currentChoice(res))
+      const name = res.default_plan ? planLabel(res.default_plan) : 'no price list'
+      setNotice(res.moved
+        ? `Saved. ${name} now applies to this facility only and is its default.`
+        : `Saved. Bills raised here from now on are priced on ${name}.`)
+    } catch (err) {
+      setFormError(refusalText(err, 'Could not save the default price list.'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const makeGroupWide = async (plan: PriceList) => {
+    setSaving(true)
+    setFormError(null)
+    setNotice(null)
+    try {
+      await setPriceListAppliesTo(plan.id, null)
+      setNotice(`${planLabel(plan)} now applies to the whole group.`)
+      setReloadKey(k => k + 1)
+    } catch (err) {
+      setFormError(refusalText(err, 'Could not change where the price list applies.'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (hidden) return null
+  const titleId = `facility-${facility.id}-prices-title`
+  const selectId = `facility-${facility.id}-default-price-list`
+  return (
+    <section
+      className="glass-card" style={{ padding: 16 }} aria-labelledby={titleId}
+      data-testid={`facility-price-lists-${facility.id}`}
+    >
+      <div className="admin-filter-row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+        <h3 className="admin-section__title" id={titleId}>
+          Price lists, {facility.display_name}
+        </h3>
+        <button
+          type="button" className="admin-btn-ghost" aria-expanded={open}
+          onClick={() => setOpen(o => !o)}
+        >
+          {open ? 'Hide price lists' : 'Show price lists'}
+        </button>
+      </div>
+      {open && (
+        <>
+          <p className="admin-section__hint" style={{ marginTop: 4 }}>
+            A price list applies to the whole group or to one facility. Unless a patient&apos;s
+            payer names a list, a patient is priced on their facility&apos;s own default list,
+            else on the group&apos;s default.
+          </p>
+          {notice && <p className="admin-modal__text" role="status" style={{ marginTop: 8 }}>{notice}</p>}
+          {loadError && (
+            <div style={{ marginTop: 8 }}>
+              <p className="admin-form__error" role="alert">{loadError}</p>
+              <button type="button" className="admin-btn-ghost" style={{ marginTop: 8 }}
+                      onClick={() => setReloadKey(k => k + 1)}>
+                Try again
+              </button>
+            </div>
+          )}
+          {!data && !loadError && <p className="admin-modal__text" style={{ marginTop: 8 }}>Loading…</p>}
+          {data && (
+            <p className="admin-modal__text" style={{ marginTop: 8 }} data-testid={`facility-price-default-${facility.id}`}>
+              {data.default_plan
+                ? `Patients billed here are priced on ${planLabel(data.default_plan)}, ${SOURCE_WORDS[data.default_source]}.`
+                : 'No price list applies here yet. Items are billed at their own default rate, and an item without one is refused.'}
+            </p>
+          )}
+          {data && data.plans.length > 0 && (
+            <div className="admin-table-wrap" style={{ marginTop: 8 }}>
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Price list</th>
+                    <th scope="col">Applies to</th>
+                    <th scope="col">Default</th>
+                    <th scope="col"><span className="sr-only">Action</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.plans.map(p => (
+                    <tr key={p.id}>
+                      <td>{planLabel(p)}</td>
+                      <td>{p.applies_to}</td>
+                      <td>
+                        {p.id === data.default_plan?.id
+                          ? 'Prices patients here'
+                          : p.is_default && p.facility_id === null
+                            ? "The group's default"
+                            : ''}
+                      </td>
+                      <td>
+                        {data.can_edit && data.group_wide && p.facility_id === facility.id && (
+                          <button
+                            type="button" className="admin-btn-ghost" disabled={saving}
+                            onClick={() => { void makeGroupWide(p) }}
+                          >
+                            Make group-wide<span className="sr-only"> {planLabel(p)}</span>
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {data && data.can_edit && (
+            <form className="admin-form" onSubmit={save} style={{ marginTop: 12 }} noValidate
+                  aria-label={`Default price list of ${facility.display_name}`}>
+              <div className="admin-field">
+                <label className="admin-field__label" htmlFor={selectId}>Default price list</label>
+                <select
+                  id={selectId} className="admin-filter-input" value={choice}
+                  onChange={e => setChoice(e.target.value)}
+                  aria-describedby={data.group_wide ? `${selectId}-hint` : undefined}
+                >
+                  {defaultChoices(data).map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+                </select>
+                {data.group_wide && (
+                  <span className="admin-section__hint" id={`${selectId}-hint`}>
+                    Choosing a group list other than the group&apos;s default keeps it for this
+                    facility from now on. A list a payer prices on stays with the whole group.
+                  </span>
+                )}
+              </div>
+              {formError && <p className="admin-form__error" role="alert">{formError}</p>}
+              <div className="admin-modal__actions">
+                <button type="submit" className="admin-filter-btn" disabled={saving}>
+                  {saving ? 'Saving…' : 'Save default price list'}
+                </button>
+              </div>
+            </form>
+          )}
+        </>
+      )}
+    </section>
+  )
+}
+
 function CreateCheckSection() {
   const [check, setCheck] = useState<CreateCheck | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -669,6 +908,7 @@ export default function FacilitiesPanel() {
         <Fragment key={f.id}>
           <IdentityCard facility={f} onSaved={onSaved} />
           {multiSite && <SeriesSection facility={f} />}
+          {multiSite && <PriceListSection facility={f} />}
         </Fragment>
       ))}
 

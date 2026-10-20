@@ -142,7 +142,7 @@ sequenceDiagram
 5. If a `label` was given, logs elapsed ms at debug level (`:78-79`).
 **Why it exists:** without step 2/4 the MPS allocator fragments and the MLX buffer pool bloats (~50-100 MB/inference per the module docstring), eventually starving the machine. It is deliberately a *sync* context manager (not async) because it wraps the tight CPU/GPU-bound call itself, not the await.
 **Data in/out:** in, a label string; out, nothing (it is a side-effecting cleanup).
-**Talks to:** called by `vigil_service.py:200` (CfC), `forecast_service.py:466` (LSTM), `voice_agent_service.py:405/439` (Sage voice MLX), `scribe_providers.py:223/301` (Scribe MLX). Calls PyTorch and MLX only if installed.
+**Talks to:** called by `vigil_service.py:200` (CfC), `forecast_service.py:554` (LSTM), `voice_agent_service.py:405/439` (Sage voice MLX), `scribe_providers.py:223/301` (Scribe MLX). Calls PyTorch and MLX only if installed.
 **Change guide:** To add a third framework's cache flush (say a future JAX-Metal), add another guarded `try/except` block after `:76`; knock-on effects: none, because each block is independent and failure-tolerant. Watch out: never raise from cleanup, a raised cleanup would mask the body's real exception.
 **Gotchas:** the framework imports are *inside* the `finally` so a missing framework is a silent no-op; that is intentional (test `test_no_crash_without_torch_or_mlx` sets the modules to `None`). It does **not** acquire any lock, so calling `vram_guard` alone (as Vigil/Forecast do) provides hygiene but *not* GPU exclusivity.
 
@@ -468,7 +468,7 @@ This subsystem exposes **no REST routes and no DB tables**. Its contract surface
 | Surgery | `llm_queue.acquire` | 2 | `surgery_service.py:186` |
 | Vigil narrative | `llm_queue.acquire` | 2 and 3 | `vigil_service.py:615,663` |
 | Vigil CfC scoring (torch/MPS) | `vram_guard` **only** | n/a | `vigil_service.py:200` |
-| Forecast LSTM (torch/MPS) | `vram_guard` **only** | n/a | `forecast_service.py:466` |
+| Forecast LSTM (torch/MPS) | `vram_guard` **only** | n/a | `forecast_service.py:554` |
 | Nervous-system triggers | `llm_queue.acquire` | 3 | `nervous_system_triggers.py:111` |
 | Startup warmup | `llm_queue.acquire` | 5 (raw, below all) | `main.py:183` |
 | **Helix (14), Orders/CPOE (16)** |, none, | n/a | deterministic DB/rules; do not touch this subsystem |
@@ -498,7 +498,7 @@ This subsystem exposes **no REST routes and no DB tables**. Its contract surface
 
 ## Discrepancies and open questions
 
-1. **Vigil CfC and Forecast LSTM bypass the cross-lane gate.** The module docstring and the gate comment (`gpu_coordinator.py:98-104`) claim the gate closes the gap where "a P3 background CfC run under umsq could execute concurrently with a P1 Sage Ollama stream." But at the actual call sites, `vigil_service.py:200` and `forecast_service.py:466` wrap their torch/MPS inference in **`vram_guard` only**, they never call `umsq.acquire` or `acquire_gpu_gate`. So those in-process ML inferences do **not** hold the gate and *can* overlap a concurrent Ollama LLM stream on the physical GPU. The gate only actually protects the MLX paths (voice_agent, scribe_providers) versus Ollama. This is the single most important correctness gap in the subsystem's stated guarantee.
+1. **Vigil CfC and Forecast LSTM bypass the cross-lane gate.** The module docstring and the gate comment (`gpu_coordinator.py:98-104`) claim the gate closes the gap where "a P3 background CfC run under umsq could execute concurrently with a P1 Sage Ollama stream." But at the actual call sites, `vigil_service.py:200` and `forecast_service.py:554` wrap their torch/MPS inference in **`vram_guard` only**, they never call `umsq.acquire` or `acquire_gpu_gate`. So those in-process ML inferences do **not** hold the gate and *can* overlap a concurrent Ollama LLM stream on the physical GPU. The gate only actually protects the MLX paths (voice_agent, scribe_providers) versus Ollama. This is the single most important correctness gap in the subsystem's stated guarantee.
 
 2. **Callers pass raw priority integers, not the shared constants.** Despite `PRIORITY_SAGE/SCRIBE/BACKGROUND` existing precisely to be a single source of truth, every `llm_queue.acquire` caller passes literal `priority=1/2/3` (and the warmup passes `priority=5`, which is not a named constant at all). It works because the queue sorts numerically, but it defeats the "import the constant" intent and makes a future renumbering error-prone.
 

@@ -5,23 +5,23 @@ that produces it. Depth is lighter than the clinical screens (Vigil / Nurse / Ro
 but every citation was opened and verified at the stated line.
 
 **How to reach each screen.** All of them except Bridge are tabs in the clinician shell,
-declared in `src/pages/ClinicianShell.tsx:25` (`TABS`) and mounted in the `shell__body`
+declared in `src/pages/ClinicianShell.tsx:31` (`TABS`) and mounted in the `shell__body`
 section:
 
 | Screen | Tab id | Sidebar label | Mounted at |
 |---|---|---|---|
-| Forecast | `forecast` | "Forecast" (`shellConfig.tsx:454`) | `ClinicianShell.tsx:592` |
-| Command Center | `command` | "Command" (`shellConfig.tsx:463`) | `ClinicianShell.tsx:557` |
-| Pulse |, (header icon, not a tab) | heartbeat-line button in the top bar | `ClinicianShell.tsx:571` |
-| Helix / Pharmacy | `helix` | "Pharmacy" (`shellConfig.tsx:374`) | `ClinicianShell.tsx:532` |
-| Pharmacist Verify Queue | `pharmacy-verify` | "Verify Queue" (`shellConfig.tsx:382`) | `ClinicianShell.tsx:537` |
-| Scribe | `scribe` | "Scribe" (`shellConfig.tsx:433`) | `ClinicianShell.tsx:582` |
-| Lens | `lens` | "Lens" (`shellConfig.tsx:444`) | `ClinicianShell.tsx:587` |
+| Forecast | `forecast` | "Forecast" (`shellConfig.tsx:454`) | `ClinicianShell.tsx:843` |
+| Command Center | `command` | "Command" (`shellConfig.tsx:463`) | `ClinicianShell.tsx:808` |
+| Pulse |, (header icon, not a tab) | heartbeat-line button in the top bar | `ClinicianShell.tsx:822` |
+| Helix / Pharmacy | `helix` | "Pharmacy" (`shellConfig.tsx:374`) | `ClinicianShell.tsx:765` |
+| Pharmacist Verify Queue | `pharmacy-verify` | "Verify Queue" (`shellConfig.tsx:382`) | `ClinicianShell.tsx:770` |
+| Scribe | `scribe` | "Scribe" (`shellConfig.tsx:433`) | `ClinicianShell.tsx:833` |
+| Lens | `lens` | "Lens" (`shellConfig.tsx:444`) | `ClinicianShell.tsx:838` |
 | Patient Bridge | n/a | separate app shell for `role === 'patient'` | `src/pages/PatientShell.tsx:105` |
 
 Every panel is lazy-loaded and wrapped in `PanelErrorBoundary`, so a crash inside one panel
 shows that boundary's fallback instead of blanking the app. While the chunk is still
-downloading you see the plain text **"Loading panel..."** (`ClinicianShell.tsx:515`).
+downloading you see the plain text **"Loading panel..."** (`ClinicianShell.tsx:748`).
 
 ---
 
@@ -149,19 +149,19 @@ at line 110.
 `current_occupancy_pct`.
 **API:** `GET /api/forecast/hospital` (`ForecastPanel.tsx:137`).
 **Server:** `forecast_routes.hospital_forecast` (`server/routes/forecast_routes.py:33`) →
-`forecast_service.predict_hospital_flow` (`server/services/forecast_service.py:452`).
+`forecast_service.predict_hospital_flow` (`server/services/forecast_service.py:540`).
 The number is `len(patients)` for `status = 'admitted'` (line 470/496); capacity is
-`TOTAL_CAPACITY = sum(WARD_CAPACITY.values())` (`forecast_service.py:75`).
+`TOTAL_CAPACITY = sum(WARD_CAPACITY.values())` (`forecast_service.py:77`).
 **Change this →** admitting or discharging a patient moves the big amber number and the
 "% occupied" sub-line, but not for up to an hour: `predict_hospital_flow` caches its whole
-result for `HOSPITAL_FLOW_CACHE_TTL` (`forecast_service.py:462`), so the panel's 5-minute
+result for `HOSPITAL_FLOW_CACHE_TTL` (`forecast_service.py:550`), so the panel's 5-minute
 refresh usually re-renders the same figures.
 
 ### KPI tile: "Beds Available in 48h"
 **Where:** second tile.
 **Rendered by:** `ForecastPanel.tsx:274-279`.
 **Data from:** `summary.beds_available_in_48h`.
-**Server:** computed at `forecast_service.py:589` as
+**Server:** computed at `forecast_service.py:677` as
 `TOTAL_CAPACITY - daily_forecasts[1].predicted_occupancy` (day 2 of the forecast), floored at 0.
 **Change this →** the number turns **red** (`--status-danger`) the moment it drops to 2 or
 below; above 2 it is green (`--status-ok`), the ternary at line 277.
@@ -170,15 +170,15 @@ below; above 2 it is green (`--status-ok`), the ternary at line 277.
 **Where:** third tile; sub-line reads "N admissions predicted".
 **Rendered by:** `ForecastPanel.tsx:280-285`.
 **Data from:** `summary.total_predicted_discharges_7d` and `total_predicted_admissions_7d`.
-**Server:** summed over the seven daily rows at `forecast_service.py:574` and `:588`.
+**Server:** summed over the seven daily rows at `forecast_service.py:662` and `:676`.
 **Change this →** raising `avg_admission_rate` (driven by the last 30 days of
-`admission_history`, `forecast_service.py:489-501`) raises the sub-line number.
+`admission_history`, `forecast_service.py:577-589`) raises the sub-line number.
 
 ### KPI tile: "Peak Day"
 **Where:** fourth tile; shows a date label like "Tue Aug 12", sub-line "N patients".
 **Rendered by:** `ForecastPanel.tsx:286-291`.
 **Data from:** `summary.peak_day` / `summary.peak_occupancy`.
-**Server:** `max(daily_forecasts, key=predicted_occupancy)` at `forecast_service.py:575`.
+**Server:** `max(daily_forecasts, key=predicted_occupancy)` at `forecast_service.py:663`.
 **Change this →** with no forecast loaded the tile shows an em-dash `, ` and "0 patients"
 (the `|| ', '` fallback at line 288).
 
@@ -196,7 +196,7 @@ Its parts, top to bottom:
 - **Data-point dots + value labels**, circles with the occupancy number above each,
   lines 370–382.
 - **X-axis date labels**, lines 385–396. The server sends `day_label` as `"%a %b %d"`
-  (`forecast_service.py:561`) and the panel drops the weekday token so ticks read "Aug 09".
+  (`forecast_service.py:649`) and the panel drops the weekday token so ticks read "Aug 09".
 **Data from:** `hospitalData.daily_forecasts`.
 **API/Server:** same `GET /api/forecast/hospital` → `predict_hospital_flow`.
 **Change this →** the y-axis auto-scales to `max(total_capacity + 2, max predicted_occupancy)`
@@ -225,8 +225,8 @@ and `--status-danger` above 90% (line 423).
 **Rendered by:** `ForecastPanel.tsx:437-513`; the per-ward `.map` at line 440.
 **Data from:** `capacity.current[ward]` and `capacity.projected_48h[ward]`.
 **API:** `GET /api/forecast/capacity` (`ForecastPanel.tsx:139`).
-**Server:** `forecast_routes.capacity_forecast` (`forecast_routes.py:60`) →
-`forecast_service.get_bed_capacity_forecast` (`forecast_service.py:600`). Current occupancy is
+**Server:** `forecast_routes.capacity_forecast` (`forecast_routes.py:68`) →
+`forecast_service.get_bed_capacity_forecast` (`forecast_service.py:688`). Current occupancy is
 a per-ward count of admitted patients (line 610); the 48h projection subtracts every patient
 whose predicted LoS is `<= 2.0` days (line 628).
 **Change this →** the whole card turns red-tinted with a red border the moment
@@ -256,7 +256,7 @@ Hovering shows the native tooltip "Occupied" / "Available" (the `title` at line 
 **Where:** the single wide card at the bottom of the Ward Capacity section, four big numbers.
 **Rendered by:** `ForecastPanel.tsx:516-537`: Total Occupied, Available Now, Total Capacity,
 Utilization Rate.
-**Data from:** `capacity.total`, from `forecast_service.py:644-648`.
+**Data from:** `capacity.total`, from `forecast_service.py:758-762`.
 **Change this →** the Utilization Rate number flips to red once occupied/capacity exceeds 0.85
 (line 531).
 
@@ -268,10 +268,10 @@ Utilization Rate.
 lines 562–588.
 **Data from:** `dischargeBoard` state.
 **API:** `GET /api/forecast/discharge-board` (`ForecastPanel.tsx:138`).
-**Server:** `forecast_routes.discharge_board` (`forecast_routes.py:71`) →
-`forecast_service.get_discharge_board` (`forecast_service.py:652`), sorted by
+**Server:** `forecast_routes.discharge_board` (`forecast_routes.py:79`) →
+`forecast_service.get_discharge_board` (`forecast_service.py:766`), sorted by
 `discharge_probability` descending (line 697). **The route then filters the service's output
-to the caller's own department** (`forecast_routes.py:97-102`) and writes a PHI-read audit
+to the caller's own department** (`forecast_routes.py:109-114`) and writes a PHI-read audit
 entry naming every patient id returned (`log_phi_read`, lines 106–118).
 **Change this →** a nurse on W2 sees only W2 patients; an account with no department on record
 sees everyone (and the audit line says so explicitly). The **top five rows** get the
@@ -288,18 +288,18 @@ blank space with "0 patients" in the subtitle.
 **Rendered by:** `ForecastPanel.tsx:598-602`, "30-Day Admissions", "Avg Length of Stay",
 "Discharge Rate".
 **API:** `GET /api/forecast/admission-patterns` (`ForecastPanel.tsx:140`).
-**Server:** `forecast_routes.admission_patterns` (`forecast_routes.py:117`) →
-`forecast_service.get_admission_patterns` (`forecast_service.py:702`). `total_30d` is
+**Server:** `forecast_routes.admission_patterns` (`forecast_routes.py:129`) →
+`forecast_service.get_admission_patterns` (`forecast_service.py:837`). `total_30d` is
 literally `len(history)` over the whole `admission_history` table (line 773), `avg_daily`
 divides that by a hard-coded 30 (line 774), `discharge_rate` is the percentage of history rows
 with `discharged` set (line 778).
 **Change this →** with an empty `admission_history` table the service returns the all-zero
-shape at `forecast_service.py:716-724` and all three tiles read 0.
+shape at `forecast_service.py:851-859` and all three tiles read 0.
 
 ### "Admissions by Day of Week" bar chart
 **Where:** left card of the two-column row in Admission Patterns.
 **Rendered by:** `ForecastPanel.tsx:606-626`; bars at lines 614–622.
-**Data from:** `patterns.daily_summary` (`forecast_service.py:762-769`), Mon→Sun.
+**Data from:** `patterns.daily_summary` (`forecast_service.py:1233-1243`), Mon→Sun.
 **Change this →** the last two bars (index ≥ 5, i.e. Sat/Sun) render in flat
 `--bg-glass-hover` grey instead of the amber gradient, and their day label is muted
 (`isWeekend` at line 612).
@@ -308,7 +308,7 @@ shape at `forecast_service.py:716-724` and all three tiles read 0.
 **Where:** right card of that row.
 **Rendered by:** `ForecastPanel.tsx:629-654`; severity rows 634–641, ward rows 646–652.
 **Data from:** `patterns.severity_distribution` / `ward_distribution`
-(`forecast_service.py:776-777`).
+(`forecast_service.py:911-912`).
 **Change this →** severity labels are colour-coded inline: `critical` red, `elevated` amber,
 anything else green (line 636). Bars are scaled against `total_30d`, so a large history makes
 every bar short.
@@ -344,41 +344,41 @@ line 82).
 
 ### Title block: "Command Center" + "House-wide operations · single pane of glass"
 **Where:** top-left of the page, with a pulsing dot to its left.
-**Rendered by:** `CommandCenter.tsx:128-133`.
+**Rendered by:** `CommandCenter.tsx:159-164`.
 
 ### "Updated HH:MM:SS" + LIVE pill
 **Where:** top-right of the header.
-**Rendered by:** `CommandCenter.tsx:136-139`.
-**Data from:** `lastUpdated` state, set on every successful load (`CommandCenter.tsx:72`).
+**Rendered by:** `CommandCenter.tsx:167-170`.
+**Data from:** `lastUpdated` state, set on every successful load (`CommandCenter.tsx:100`).
 **Change this →** the timestamp only advances when a fetch **succeeds**. If a refresh fails
 while a snapshot is already on screen, an extra amber **"reconnecting…"** chip appears to the
 left of the timestamp (line 135) and the page keeps showing stale numbers rather than blanking.
 
 ### KPI tile: "Census / Occupancy"
 **Where:** first of four tiles in the KPI row.
-**Rendered by:** `CommandCenter.tsx:145-150`; the value/unit at line 147, the fill bar at 148.
+**Rendered by:** `CommandCenter.tsx:228-233`; the value/unit at line 147, the fill bar at 148.
 **Data from:** `snap.census.total_admitted` / `total_capacity` / `occupancy_pct`.
-**API:** `GET /api/command-center/` (`CommandCenter.tsx:69`).
+**API:** `GET /api/command-center/` (`CommandCenter.tsx:97`).
 **Server:** `command_center_routes.get_house_snapshot`
-(`server/routes/command_center_routes.py:27`) → `command_center_service.house_snapshot`
-(`server/services/command_center_service.py:329`) → `_census_and_acuity`
-(`command_center_service.py:102`).
+(`server/routes/command_center_routes.py:68`) → `command_center_service.house_snapshot`
+(`server/services/command_center_service.py:367`) → `_census_and_acuity`
+(`command_center_service.py:124`).
 **Change this →** the tile's colour class comes from `pctTone` (line 24): green under 75%,
 amber 75–89%, red at 90%+. The bar width is clamped to 100% so an over-capacity ward cannot
 overflow the tile.
 
 ### KPI tile: "Critical Patients"
 **Where:** second tile; sub-line "N elevated · N stable".
-**Rendered by:** `CommandCenter.tsx:152-156`.
+**Rendered by:** `CommandCenter.tsx:235-243`.
 **Data from:** `snap.acuity.critical / elevated / stable`, tallied in `_census_and_acuity`
-(`command_center_service.py:110-116`).
+(`command_center_service.py:135-141`).
 **Change this →** the tile is red whenever `critical > 0` and green otherwise (line 152), 
 there is no amber middle state on this one.
 
 ### KPI tile: "Sepsis Bundle Compliance"
 **Where:** third tile; sub-line "N/N bundles on track".
-**Rendered by:** `CommandCenter.tsx:158-162`.
-**Server:** `command_center_service._bundles` (`command_center_service.py:203`) →
+**Rendered by:** `CommandCenter.tsx:218-222`.
+**Server:** `command_center_service._bundles` (`command_center_service.py:231`) →
 `sepsis_bundle_service.get_active_bundles`. "Compliant" means the bundle's `on_track` flag is
 set, nothing has breached its 1-hour target (line 210).
 **Change this →** `complianceTone` (line 30) inverts the usual direction: **high is good**
@@ -387,13 +387,13 @@ set, nothing has breached its 1-hour target (line 210).
 
 ### KPI tile: "Downtime Readiness" + "Capture all" button
 **Where:** fourth tile; sub-line "N/N snapshots · oldest 3.2h".
-**Rendered by:** `CommandCenter.tsx:164-183`; the button at lines 170–179.
+**Rendered by:** `CommandCenter.tsx:224-243`; the button at lines 170–179.
 **Data from:** `snap.downtime_readiness`, from `command_center_service._downtime_readiness`
-(`command_center_service.py:240`). "Recent" means a snapshot newer than
-`DOWNTIME_RECENT_WINDOW_MIN` = 24 hours (`command_center_service.py:53`). The age string is
-formatted by `ageLabel` (`CommandCenter.tsx:49`): minutes under an hour, hours under a day,
+(`command_center_service.py:268`). "Recent" means a snapshot newer than
+`DOWNTIME_RECENT_WINDOW_MIN` = 24 hours (`command_center_service.py:70`). The age string is
+formatted by `ageLabel` (`CommandCenter.tsx:77`): minutes under an hour, hours under a day,
 then days.
-**API (button):** `POST /api/downtime/capture-all` (`CommandCenter.tsx:96`).
+**API (button):** `POST /api/downtime/capture-all` (`CommandCenter.tsx:127`).
 **Change this →** clicking swaps the label to "Capturing…" with a spinner and disables the
 button (lines 177–178). On success a green note "N snapshots captured" appears beside it and
 self-clears after 6 seconds (lines 99–100, 180); the tile then reloads and the percentage
@@ -402,27 +402,27 @@ Tone thresholds are `readinessTone` (line 36): ≥80 green, ≥50 amber, below r
 
 ### Ward Acuity Heatmap
 **Where:** the large card on the left of the grid below the KPIs.
-**Rendered by:** `CommandCenter.tsx:188-226`; the per-ward cell `.map` at line 199.
-**Data from:** `snap.acuity.heatmap` (one row per ward from `command_center_service.py:128`),
+**Rendered by:** `CommandCenter.tsx:304-355`; the per-ward cell `.map` at line 199.
+**Data from:** `snap.acuity.heatmap` (one row per ward from `command_center_service.py:154`),
 cross-referenced against `census.by_ward` for the occupancy line (line 200).
 **Change this →** each cell shows the ward name, `occupied/capacity` (or `, ` if that ward is
 missing from the census), a three-segment stacked bar whose segment widths are the raw
 critical/elevated/stable counts used as `flexGrow` (lines 214–216), and the three counts as
 bold/plain/italic (line 219). Background intensity comes from `heatIntensity`
-(`CommandCenter.tsx:43`), a weighted load of `crit*3 + elev*1.5 + stable*0.4` normalised
+(`CommandCenter.tsx:71`), a weighted load of `crit*3 + elev*1.5 + stable*0.4` normalised
 against a ceiling of 12, pushed into CSS as `--heat`. Any ward with at least one critical
 patient also gets the `--crit` modifier class (line 205). Hovering shows the native tooltip
 with the exact three counts (line 207).
 
 ### Active Deteriorations list
 **Where:** card to the right of the heatmap, with a count badge in its header.
-**Rendered by:** `CommandCenter.tsx:229-253`; the count at line 232, rows at 238–250.
+**Rendered by:** `CommandCenter.tsx:318-342`; the count at line 232, rows at 238–250.
 **Data from:** `snap.deteriorations`.
-**Server:** `command_center_service._deteriorations` (`command_center_service.py:151`), every
+**Server:** `command_center_service._deteriorations` (`command_center_service.py:177`), every
 patient at `critical` or `elevated`, annotated with a live NEWS2 from their latest vitals via
 `vigil_service.compute_news2` (line 177), sorted critical-first then by NEWS2 descending
 (line 199). **The route then filters this list to the caller's department**
-(`command_center_routes.py:51-63`) and audits the read (lines 65–81). The aggregate tiles
+(`command_center_routes.py:116-129`) and audits the read (lines 131–150). The aggregate tiles
 above are deliberately left house-wide; only this list is scoped.
 **Change this →** each row is a coloured stripe + name (falling back to the patient id if the
 name is null) + "Ward · Bed" (or `, ` when both are missing, line 243) + a level badge + a
@@ -432,9 +432,9 @@ or their level dropping to `stable` removes the row and decrements the header co
 
 ### Capacity Forecast · 24h strip
 **Where:** the third card in the grid, three big numbers side by side.
-**Rendered by:** `CommandCenter.tsx:256-274`: "+N projected admissions",
+**Rendered by:** `CommandCenter.tsx:345-363`: "+N projected admissions",
 "N/N projected occupancy", "N% projected utilization".
-**Server:** `command_center_service._forecast` (`command_center_service.py:219`), which calls
+**Server:** `command_center_service._forecast` (`command_center_service.py:315`), which calls
 `forecast_service.predict_hospital_flow(days_ahead=1)` and reads day 1 out of it, the same
 cached model that drives the Forecast screen.
 **Change this →** the utilization percentage is the only toned number here: `pctTone` again,
@@ -443,9 +443,9 @@ capacity the component falls back to the census's capacity (line 264).
 
 ### Operating Room · Today table
 **Where:** the last card in the grid.
-**Rendered by:** `CommandCenter.tsx:277-304`; columns `Time | Procedure | Patient | OR |
+**Rendered by:** `CommandCenter.tsx:415-442`; columns `Time | Procedure | Patient | OR |
 Status` at line 288, rows at 291–299.
-**Server:** `command_center_service._or_today` (`command_center_service.py:275`), surgeries
+**Server:** `command_center_service._or_today` (`command_center_service.py:308`), surgeries
 whose `scheduled_date` is today (UTC), left-joined to patients for the name, ordered by time.
 **Change this →** every cell falls back to `, ` when null. The status cell renders
 `status.replace(/_/g,' ')` as its label and takes its colour class from the **first
@@ -454,15 +454,15 @@ one class.
 **Empty state:** "No cases scheduled today." (line 284).
 
 ### Loading state: "Assembling house-wide operating picture…"
-**Rendered by:** `CommandCenter.tsx:111`. Only shown when there is no snapshot yet.
+**Rendered by:** `CommandCenter.tsx:142`. Only shown when there is no snapshot yet.
 
 ### Error state: "Command Center unavailable." + Retry
-**Rendered by:** `CommandCenter.tsx:113-121`, `role="alert"`, with the raw error message
+**Rendered by:** `CommandCenter.tsx:144-152`, `role="alert"`, with the raw error message
 underneath and a Retry button.
 **Change this →** this only replaces the page when there is **no** snapshot at all. Once one
 has loaded, later failures degrade to the "reconnecting…" chip described above. Note that
 `house_snapshot()` never raises, each section falls back to zeros with an `error` note
-(`command_center_service.py:340-362`), so this screen is far more likely to show
+(`command_center_service.py:380-402`), so this screen is far more likely to show
 zeroed tiles than this error page.
 
 ---
@@ -480,7 +480,7 @@ rebuilt file was still settling when this was written.
 ### Trigger button (heartbeat line)
 **Where:** the top bar of the clinician shell, next to the alert permission button.
 **Rendered by:** `PulseWidget` (`id="btn-pulse"`, tooltip "Pulse: season and conditions");
-mounted at `ClinicianShell.tsx:571`.
+mounted at `ClinicianShell.tsx:822`.
 **Change this →** clicking toggles the panel. There is no badge: nothing in Pulse is an alert.
 
 ### Panel header: "Pulse" / "Season and conditions"
@@ -545,11 +545,11 @@ Screen shell: `src/pages/panels/HelixPanel.tsx` (default export line 11). Three 
 requests on mount (`loadData`, lines 23–41).
 
 ### Header: "Pharmacy Operations" / "Medication orders, verification, and fulfillment"
-**Rendered by:** `HelixPanel.tsx:56-57`.
+**Rendered by:** `HelixPanel.tsx:69-70`.
 
 ### View tabs: Overview / Patient Board / Formulary
 **Where:** top-right of the header.
-**Rendered by:** `HelixPanel.tsx:59-78`.
+**Rendered by:** `HelixPanel.tsx:154-171`.
 **Data from:** `activeView` state (line 12), default `'dashboard'`.
 **Change this →** the active tab gets `styles.activeTab`; switching swaps which of the three
 child components renders (lines 94–102). No refetch happens on switch, all three views read
@@ -562,13 +562,13 @@ at line 175.
 **Data from:** client-side status filters over `orders` (`HelixDashboard.tsx:25-34`).
 "Pending Review" is the sum of `pending + reviewing + substitute_suggested` (line 41).
 **API:** `GET /api/helix/orders` (`HelixPanel.tsx:28`).
-**Server:** `helix_routes.get_all_orders` (`server/routes/helix_routes.py:43`) →
-`helix_service.get_all_orders` (`server/services/helix_service.py:65`), every order joined to
+**Server:** `helix_routes.get_all_orders` (`server/routes/helix_routes.py:50`) →
+`helix_service.get_all_orders` (`server/services/helix_service.py:66`), every order joined to
 the medication master, the patient, the prescriber and (if set) the substitute drug.
 **Change this →** the **Rejected** tile only exists when at least one order is rejected
 (line 46) and renders with the critical card styling. Transitioning an order between states
 moves the count from one tile to another instantly, because `handleTransitionComplete`
-(`HelixPanel.tsx:47`) re-runs `loadData`.
+(`HelixPanel.tsx:59`) re-runs `loadData`.
 
 ### Pharmacist Work Queue table
 **Where:** the main table of the Overview view.
@@ -613,9 +613,9 @@ patient's *name*, so two patients with identical names would merge into one row.
 `Medication | Formulation | Available Stock | Active Lots | Status` at lines 49–53.
 **Data from:** `catalog` joined to `inventory` by `medication_id` (line 24).
 **API:** `GET /api/helix/catalog` and `GET /api/helix/inventory` (`HelixPanel.tsx:28-29`).
-**Server:** `helix_routes.get_catalog` / `get_inventory` (`helix_routes.py:28` and `:33`) →
-`helix_service.get_medication_catalog` (`helix_service.py:34`) and `get_inventory`
-(`helix_service.py:40`).
+**Server:** `helix_routes.get_catalog` / `get_inventory` (`helix_routes.py:35` and `:40`) →
+`helix_service.get_medication_catalog` (`helix_service.py:35`) and `get_inventory`
+(`helix_service.py:41`).
 **Change this →** the Status pill is red "Out of Stock" at 0, amber "Low Stock" under **30**
 units, green "In Stock" otherwise (lines 27–28, 76–82). That 30 is a different threshold from
 the Patient Board's 100, the same drug can read "Low (45)" on one tab and "In Stock" on the
@@ -625,7 +625,7 @@ other. The Active Lots cell lists lot numbers comma-separated, or the literal "N
 ### Order Review modal
 **Where:** centred overlay, opened by clicking any queue or pipeline row.
 **Rendered by:** `src/components/helix/HelixOrderReviewModal.tsx`; mounted at
-`HelixPanel.tsx:107-114`.
+`HelixPanel.tsx:121-128`.
 **Its parts:**
 - **Title "Order Review" + close ✕**, lines 115–120. Focus is trapped by `useFocusTrap`
   (line 87), which also wires Escape.
@@ -644,17 +644,17 @@ other. The Active Lots cell lists lot numbers comma-separated, or the literal "N
   cannot close their own dispatch). Any other status shows no buttons at all.
 **API:** `POST /api/helix/orders/{id}/transition` via `transitionHelixOrder`
 (`src/api/client.ts:1895`).
-**Server:** `helix_routes.transition_order` (`helix_routes.py:190`) →
-`helix_service.transition_order_status` (`helix_service.py:129`), which enforces the legal
+**Server:** `helix_routes.transition_order` (`helix_routes.py:207`) →
+`helix_service.transition_order_status` (`helix_service.py:130`), which enforces the legal
 transition table (`_is_legal_transition`, line 26) and, on `scheduled → dispensed`, decrements
-inventory atomically via `_atomic_dispense` (`helix_service.py:280`).
+inventory atomically via `_atomic_dispense` (`helix_service.py:290`).
 **Change this →** while a transition is in flight every action button's label becomes
 "Processing..." and all are disabled (line 229). "Suggest Substitute" stays disabled until a
 substitute is picked (line 227). A rejected transition surfaces its message as red text above
 the button row (line 215). On success the modal closes and the whole panel reloads.
 
 ### Helix loading / error states
-**Rendered by:** `HelixPanel.tsx:81-91`. Loading shows "Connecting to Helix...". A failure
+**Rendered by:** `HelixPanel.tsx:95-105`. Loading shows "Connecting to Helix...". A failure
 shows a `role="alert"` block headed **"Pharmacy queue did not load."** whose body explicitly
 says this is a connection failure and not an empty queue, plus a **Retry** button, the point
 being that a silently-empty pharmacist queue is indistinguishable from "nothing to verify".
@@ -1149,7 +1149,7 @@ ask your nurse or doctor directly." (line 287).
 ## Cross-screen notes worth knowing
 
 - **Permission gate.** Forecast, Command Center and Pulse all sit behind the *same*
-  `forecast.read` permission (`forecast_routes.py:35`, `command_center_routes.py:29`,
+  `forecast.read` permission (`forecast_routes.py:32`, `command_center_routes.py:64`,
   `pulse_routes.py::pulse_season`). That permission is held by nurses, which is why the two
   identity-bearing surfaces, the Forecast discharge board and the Command Center
   deterioration list, carry their own department filter and PHI-read audit at the **route**

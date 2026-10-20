@@ -639,6 +639,11 @@ def department_scope(user: Mapping) -> str | None:
     something a request can ask for. A clinical account with a blank department
     therefore reads hospital-wide on every board equally — set departments on
     clinical users. User Management enforces that for DEPARTMENT_REQUIRED_ROLES.
+
+    In a visiting session (multisite-19) the authenticated user dict carries
+    the department of the account's live visiting row at that facility in
+    place of its own (auth.authenticate_session_token, checked on every
+    request), so this derivation answers for the visiting facility unchanged.
     """
     dept = (user or {}).get("department")
     if dept is None:
@@ -939,6 +944,9 @@ def _audit_facility_denial(
     }
     if opd_arm:
         metadata["opd_arm"] = True
+    # A visiting session (multisite-19) names its facility, access row and the
+    # account's own department; a home session adds nothing.
+    metadata.update(facility_service.session_audit_fields(user))
     log_audit_event(
         correlation_id=str(uuid.uuid4()),
         event_category="authorization",
@@ -1198,6 +1206,12 @@ def log_phi_read(
     group-wide account (multisite-5a). Set after the caller's metadata, so the
     recorded scope is always the server's. With one facility the key is
     absent and the row is exactly as before.
+
+    A visiting session (multisite-19) also names its facility, its access row
+    and the account's own department (facility_service.session_audit_fields),
+    and a read that names no patient is filed under the session's facility,
+    not the account's own (a read about a patient belongs to the patient's
+    facility, which the scope already holds). A home session adds nothing.
     """
     dept = department_scope(user)
     meta: dict[str, Any] = {
@@ -1212,6 +1226,11 @@ def log_phi_read(
     if facility_service.multi_facility_data():
         facilities = facility_scope(user)
         meta["facility_scope"] = None if facilities is None else sorted(facilities)
+    meta.update(facility_service.session_audit_fields(user))
+    session_facility = None if patient_id else facility_service.session_facility_id(user)
+    filed_under: dict[str, Any] = (
+        {} if session_facility is None else {"facility_id": session_facility}
+    )
     log_audit_event(
         correlation_id=str(uuid.uuid4()),
         event_category="phi_access",  # fail-closed
@@ -1228,6 +1247,7 @@ def log_phi_read(
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
         metadata=meta,
+        **filed_under,
     )
 
 
@@ -1517,6 +1537,7 @@ def require_patient_access(
                         "department": dept,
                         "scope_source": "authenticated_user",
                         "opd_arm": True,
+                        **facility_service.session_audit_fields(user),
                     },
                 )
                 raise HTTPException(status_code=404, detail="Patient not found")
@@ -1552,7 +1573,11 @@ def require_patient_access(
                     http_method=request.method,
                     ip_address=request.client.host if request.client else None,
                     user_agent=request.headers.get("user-agent"),
-                    metadata={"department": dept, "scope_source": "authenticated_user"},
+                    metadata={
+                        "department": dept,
+                        "scope_source": "authenticated_user",
+                        **facility_service.session_audit_fields(user),
+                    },
                 )
                 raise HTTPException(status_code=404, detail="Patient not found")
 

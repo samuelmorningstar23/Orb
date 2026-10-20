@@ -44,14 +44,28 @@ stock on hand, reorder points, consumption and expiry.
 All handlers are plain `def`, so FastAPI runs them in a threadpool: everything
 below opens SQLite, and blocking the event loop is the failure mode this repo
 has shipped three production freezes from.
+
+ONE FACILITY AT A TIME (multisite-9b). Stores, indents, purchase orders and
+goods receipts carry the facility they belong to (migration 75, stamped by
+services/procurement_service). With more than one facility of a group on the
+appliance a stores desk works for its own facility (ruling MS-R9 (a)): every
+list keeps to the caller's facilities' stores and documents, a store or
+document of another facility answers 404 exactly like one that does not
+exist, and a new store, indent or order that would land at another facility
+is refused (403 facility_scope). The vendor and item masters stay group-wide:
+one legal entity buys for every facility. With one facility on record the
+caller's facility scope is None and none of this runs.
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Callable, Iterable
+from typing import Any
 
 import config
+from database import db_session
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from permissions import (
     PROCUREMENT_APPROVE,
@@ -59,11 +73,14 @@ from permissions import (
     PROCUREMENT_WRITE,
     ROLE_PERMISSIONS,
     enforce_patient_scope,
+    facility_scope,
     require_permission,
 )
 from pydantic import BaseModel, Field
 from services.audit_service import log_audit_event
+from services.money import format_inr_or_unset
 
+from services import facility_stamp
 from services import procurement_service as svc
 
 logger = logging.getLogger("orb.procurement_routes")
@@ -128,6 +145,97 @@ def _fail(exc: svc.ProcurementError) -> HTTPException:
         "pharmacy_item_refused": 422,
     }.get(exc.code, 400)
     return HTTPException(status_code=status, detail={"error": exc.code, "message": str(exc)})
+
+
+# ── Facilities (multisite-9b; see the module docstring) ─────────────────────
+
+#: Fetched for a facility-limited reader before the limit is applied, so a
+#: list is cut to its limit after the facility filter, never before it.
+_SCOPED_FETCH = 500
+
+
+def _at(row: Any, facilities: frozenset[int] | None) -> bool:
+    """Is this store or document at one of `facilities`? Always with no limit."""
+    if facilities is None:
+        return True
+    if not isinstance(row, dict):
+        return False
+    fid = row.get("facility_id")
+    return fid is not None and int(fid) in facilities
+
+
+def _store_codes(facilities: frozenset[int]) -> set[str]:
+    """The codes of the stores at `facilities`."""
+    return {
+        str(s["code"]).upper() for s in svc.list_stores(active_only=False) if _at(s, facilities)
+    }
+
+
+def _not_found(what: str) -> HTTPException:
+    return HTTPException(status_code=404, detail={"error": "not_found", "message": f"No {what}"})
+
+
+def _require_store(code: str | None, facilities: frozenset[int] | None) -> None:
+    """A store named by a facility-limited caller must be one of theirs: 404
+    otherwise, the answer for a store that does not exist."""
+    if facilities is None or not code:
+        return
+    if not _at(svc.get_store(code.upper()), facilities):
+        raise _not_found(f"store {code.upper()}")
+
+
+def _require_doc(load: Callable[[], Any], facilities: frozenset[int] | None, what: str) -> None:
+    """For a facility-limited caller, 404 when the document does not exist or
+    is at another facility, before anything is changed. Nothing is read with
+    no facility limit: the service answers a missing document as before."""
+    if facilities is None:
+        return
+    doc = load()
+    if not doc or not _at(doc, facilities):
+        raise _not_found(what)
+
+
+def _keep_docs(rows: Iterable[dict], facilities: frozenset[int] | None, limit: int) -> list:
+    if facilities is None:
+        return list(rows)
+    return [r for r in rows if _at(r, facilities)][:limit]
+
+
+def _keep_store_rows(rows: Iterable[dict], codes: set[str]) -> list:
+    """Rows of the caller's stores; a row that names no store (an item nothing
+    has ever moved) carries no facility's stock and is kept."""
+    return [r for r in rows if not r.get("store_code") or str(r["store_code"]).upper() in codes]
+
+
+def _refuse_elsewhere(
+    facilities: frozenset[int] | None,
+    *,
+    department: str | None = None,
+    ward: str | None = None,
+    account: str | None = None,
+) -> None:
+    """403 facility_scope when a department, ward or in-charge account named
+    for a new store or document is at another facility than the caller's."""
+    if facilities is None:
+        return
+    with db_session() as db:
+        named = (
+            (
+                "department",
+                facility_stamp.department_facility(db, department) if department else None,
+            ),
+            ("ward", facility_stamp.ward_facility(db, ward=ward) if ward else None),
+            ("person in charge", facility_stamp.account_facility(db, account) if account else None),
+        )
+    for label, fid in named:
+        if fid is not None and fid not in facilities:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "facility_scope",
+                    "message": f"That {label} is at another facility, so nothing was saved.",
+                },
+            )
 
 
 def _audit(
@@ -349,14 +457,48 @@ _OVERVIEW_MODULE_DEFAULT = Depends(require_module)
 _OVERVIEW_USER_DEFAULT = Depends(_PROC_READ)
 
 
-@router.get("/overview")
+@router.get("/overview", response_model=None)
 def overview(
     store_code: str | None = _OVERVIEW_STORE_CODE_DEFAULT,
-    _module=_OVERVIEW_MODULE_DEFAULT,
-    user=_OVERVIEW_USER_DEFAULT,
-):
-    """The stores dashboard: low stock, expiring batches, open orders."""
-    return svc.procurement_overview(store_code=store_code)
+    _module: None = _OVERVIEW_MODULE_DEFAULT,
+    user: dict = _OVERVIEW_USER_DEFAULT,
+) -> dict:
+    """The stores dashboard: low stock, expiring batches, open orders. For a
+    facility-limited reader, the caller's facilities' stores and documents."""
+    facilities = facility_scope(user)
+    _require_store(store_code, facilities)
+    out = svc.procurement_overview(store_code=store_code)
+    if facilities is None:
+        return out
+    codes = _store_codes(facilities)
+    low = _keep_store_rows(out["low_stock"], codes)
+    expiring = _keep_store_rows(out["expiring"], codes)
+    open_pos = _keep_docs(out["open_purchase_orders"], facilities, _SCOPED_FETCH)
+    pending = [
+        i for i in svc.list_indents(status="submitted", limit=_SCOPED_FETCH) if _at(i, facilities)
+    ]
+    drafts = [
+        p
+        for p in svc.list_purchase_orders(limit=_SCOPED_FETCH)
+        if _at(p, facilities) and p.get("status") in ("draft", "pending_approval")
+    ]
+    outstanding = sum(int(p.get("total_paise") or 0) for p in open_pos)
+    out.update(
+        {
+            "low_stock": low,
+            "low_stock_count": len(low),
+            "expiring": expiring,
+            "expiring_count": len(expiring),
+            "expired_count": sum(1 for e in expiring if e.get("is_expired")),
+            "open_purchase_orders": open_pos,
+            "open_purchase_order_count": len(open_pos),
+            "open_purchase_order_value_paise": outstanding,
+            "open_purchase_order_value_display": format_inr_or_unset(outstanding),
+            "pending_indent_count": len(pending),
+            "draft_purchase_order_count": len(drafts),
+        }
+    )
+    return out
 
 
 _META_MODULE_DEFAULT = Depends(require_module)
@@ -496,30 +638,43 @@ _LIST_STORES_MODULE_DEFAULT = Depends(require_module)
 _LIST_STORES_USER_DEFAULT = Depends(_PROC_READ)
 
 
-@router.get("/stores")
+@router.get("/stores", response_model=None)
 def list_stores(
     active_only: bool = _LIST_STORES_ACTIVE_ONLY_DEFAULT,
-    _module=_LIST_STORES_MODULE_DEFAULT,
-    user=_LIST_STORES_USER_DEFAULT,
-):
-    return {"stores": svc.list_stores(active_only=active_only)}
+    _module: None = _LIST_STORES_MODULE_DEFAULT,
+    user: dict = _LIST_STORES_USER_DEFAULT,
+) -> dict:
+    facilities = facility_scope(user)
+    stores = svc.list_stores(active_only=active_only)
+    return {"stores": [s for s in stores if _at(s, facilities)]}
 
 
 _UPSERT_STORE_MODULE_DEFAULT = Depends(require_module)
 _UPSERT_STORE_USER_DEFAULT = Depends(_PROC_APPROVE)
 
 
-@router.post("/stores")
+@router.post("/stores", response_model=None)
 def upsert_store(
     payload: StoreIn,
     request: Request,
-    _module=_UPSERT_STORE_MODULE_DEFAULT,
+    _module: None = _UPSERT_STORE_MODULE_DEFAULT,
     # The store master is the control structure of hospital stock — where it
     # lives and who is in charge of it. Admin-only before the split; it stays on
     # the approval tier so a write grant (raising the day's indents) cannot
     # reshape the structure those indents move stock through.
-    user=_UPSERT_STORE_USER_DEFAULT,
-):
+    user: dict = _UPSERT_STORE_USER_DEFAULT,
+) -> dict:
+    facilities = facility_scope(user)
+    if facilities is not None:
+        existing = svc.get_store(payload.code.upper())
+        if existing is not None and not _at(existing, facilities):
+            raise _not_found(f"store {payload.code.upper()}")
+        _refuse_elsewhere(
+            facilities,
+            department=payload.department,
+            ward=payload.ward,
+            account=payload.incharge_user_id,
+        )
     try:
         store = svc.upsert_store(**payload.model_dump())
     except svc.ProcurementError as exc:
@@ -617,34 +772,38 @@ _LIST_INDENTS_MODULE_DEFAULT = Depends(require_module)
 _LIST_INDENTS_USER_DEFAULT = Depends(_PROC_READ)
 
 
-@router.get("/indents")
+@router.get("/indents", response_model=None)
 def list_indents(
     status: str | None = _LIST_INDENTS_STATUS_DEFAULT,
     store_code: str | None = _LIST_INDENTS_STORE_CODE_DEFAULT,
     department: str | None = _LIST_INDENTS_DEPARTMENT_DEFAULT,
     limit: int = _LIST_INDENTS_LIMIT_DEFAULT,
-    _module=_LIST_INDENTS_MODULE_DEFAULT,
-    user=_LIST_INDENTS_USER_DEFAULT,
-):
-    return {
-        "indents": svc.list_indents(
-            status=status, store_code=store_code, department=department, limit=limit
-        )
-    }
+    _module: None = _LIST_INDENTS_MODULE_DEFAULT,
+    user: dict = _LIST_INDENTS_USER_DEFAULT,
+) -> dict:
+    facilities = facility_scope(user)
+    _require_store(store_code, facilities)
+    rows = svc.list_indents(
+        status=status,
+        store_code=store_code,
+        department=department,
+        limit=limit if facilities is None else _SCOPED_FETCH,
+    )
+    return {"indents": _keep_docs(rows, facilities, limit)}
 
 
 _GET_INDENT_MODULE_DEFAULT = Depends(require_module)
 _GET_INDENT_USER_DEFAULT = Depends(_PROC_READ)
 
 
-@router.get("/indents/{indent_id}")
+@router.get("/indents/{indent_id}", response_model=None)
 def get_indent(
     indent_id: int,
-    _module=_GET_INDENT_MODULE_DEFAULT,
-    user=_GET_INDENT_USER_DEFAULT,
-):
+    _module: None = _GET_INDENT_MODULE_DEFAULT,
+    user: dict = _GET_INDENT_USER_DEFAULT,
+) -> dict:
     doc = svc.get_indent(indent_id)
-    if not doc:
+    if not doc or not _at(doc, facility_scope(user)):
         raise HTTPException(
             status_code=404, detail={"error": "not_found", "message": f"No indent {indent_id}"}
         )
@@ -655,13 +814,16 @@ _CREATE_INDENT_MODULE_DEFAULT = Depends(require_module)
 _CREATE_INDENT_USER_DEFAULT = Depends(_PROC_WRITE)
 
 
-@router.post("/indents")
+@router.post("/indents", response_model=None)
 def create_indent(
     payload: IndentIn,
     request: Request,
-    _module=_CREATE_INDENT_MODULE_DEFAULT,
-    user=_CREATE_INDENT_USER_DEFAULT,
-):
+    _module: None = _CREATE_INDENT_MODULE_DEFAULT,
+    user: dict = _CREATE_INDENT_USER_DEFAULT,
+) -> dict:
+    facilities = facility_scope(user)
+    _require_store(payload.store_code, facilities)
+    _refuse_elsewhere(facilities, department=payload.department, ward=payload.ward)
     try:
         doc = svc.create_indent(
             store_code=payload.store_code,
@@ -693,13 +855,14 @@ _SUBMIT_INDENT_MODULE_DEFAULT = Depends(require_module)
 _SUBMIT_INDENT_USER_DEFAULT = Depends(_PROC_WRITE)
 
 
-@router.post("/indents/{indent_id}/submit")
+@router.post("/indents/{indent_id}/submit", response_model=None)
 def submit_indent(
     indent_id: int,
     request: Request,
-    _module=_SUBMIT_INDENT_MODULE_DEFAULT,
-    user=_SUBMIT_INDENT_USER_DEFAULT,
-):
+    _module: None = _SUBMIT_INDENT_MODULE_DEFAULT,
+    user: dict = _SUBMIT_INDENT_USER_DEFAULT,
+) -> dict:
+    _require_doc(lambda: svc.get_indent(indent_id), facility_scope(user), f"indent {indent_id}")
     try:
         doc = svc.submit_indent(indent_id, actor=user.get("id"))
     except svc.ProcurementError as exc:
@@ -719,16 +882,17 @@ _DECIDE_INDENT_MODULE_DEFAULT = Depends(require_module)
 _DECIDE_INDENT_USER_DEFAULT = Depends(_PROC_APPROVE)
 
 
-@router.post("/indents/{indent_id}/decide")
+@router.post("/indents/{indent_id}/decide", response_model=None)
 def decide_indent(
     indent_id: int,
     payload: IndentDecisionIn,
     request: Request,
-    _module=_DECIDE_INDENT_MODULE_DEFAULT,
+    _module: None = _DECIDE_INDENT_MODULE_DEFAULT,
     # Approving an indent commits the hospital to spend. Deliberately a stricter
     # permission than raising one.
-    user=_DECIDE_INDENT_USER_DEFAULT,
-):
+    user: dict = _DECIDE_INDENT_USER_DEFAULT,
+) -> dict:
+    _require_doc(lambda: svc.get_indent(indent_id), facility_scope(user), f"indent {indent_id}")
     try:
         doc = svc.decide_indent(
             indent_id,
@@ -755,14 +919,15 @@ _CANCEL_INDENT_MODULE_DEFAULT = Depends(require_module)
 _CANCEL_INDENT_USER_DEFAULT = Depends(_PROC_WRITE)
 
 
-@router.post("/indents/{indent_id}/cancel")
+@router.post("/indents/{indent_id}/cancel", response_model=None)
 def cancel_indent(
     indent_id: int,
     payload: ReasonIn,
     request: Request,
-    _module=_CANCEL_INDENT_MODULE_DEFAULT,
-    user=_CANCEL_INDENT_USER_DEFAULT,
-):
+    _module: None = _CANCEL_INDENT_MODULE_DEFAULT,
+    user: dict = _CANCEL_INDENT_USER_DEFAULT,
+) -> dict:
+    _require_doc(lambda: svc.get_indent(indent_id), facility_scope(user), f"indent {indent_id}")
     try:
         doc = svc.cancel_indent(indent_id, reason=payload.reason, actor=user.get("id"))
     except svc.ProcurementError as exc:
@@ -792,34 +957,37 @@ _LIST_PURCHASE_ORDERS_MODULE_DEFAULT = Depends(require_module)
 _LIST_PURCHASE_ORDERS_USER_DEFAULT = Depends(_PROC_READ)
 
 
-@router.get("/purchase-orders")
+@router.get("/purchase-orders", response_model=None)
 def list_purchase_orders(
     status: str | None = _LIST_PURCHASE_ORDERS_STATUS_DEFAULT,
     vendor_code: str | None = _LIST_PURCHASE_ORDERS_VENDOR_CODE_DEFAULT,
     open_only: bool = _LIST_PURCHASE_ORDERS_OPEN_ONLY_DEFAULT,
     limit: int = _LIST_PURCHASE_ORDERS_LIMIT_DEFAULT,
-    _module=_LIST_PURCHASE_ORDERS_MODULE_DEFAULT,
-    user=_LIST_PURCHASE_ORDERS_USER_DEFAULT,
-):
-    return {
-        "purchase_orders": svc.list_purchase_orders(
-            status=status, vendor_code=vendor_code, open_only=open_only, limit=limit
-        )
-    }
+    _module: None = _LIST_PURCHASE_ORDERS_MODULE_DEFAULT,
+    user: dict = _LIST_PURCHASE_ORDERS_USER_DEFAULT,
+) -> dict:
+    facilities = facility_scope(user)
+    rows = svc.list_purchase_orders(
+        status=status,
+        vendor_code=vendor_code,
+        open_only=open_only,
+        limit=limit if facilities is None else _SCOPED_FETCH,
+    )
+    return {"purchase_orders": _keep_docs(rows, facilities, limit)}
 
 
 _GET_PURCHASE_ORDER_MODULE_DEFAULT = Depends(require_module)
 _GET_PURCHASE_ORDER_USER_DEFAULT = Depends(_PROC_READ)
 
 
-@router.get("/purchase-orders/{po_id}")
+@router.get("/purchase-orders/{po_id}", response_model=None)
 def get_purchase_order(
     po_id: int,
-    _module=_GET_PURCHASE_ORDER_MODULE_DEFAULT,
-    user=_GET_PURCHASE_ORDER_USER_DEFAULT,
-):
+    _module: None = _GET_PURCHASE_ORDER_MODULE_DEFAULT,
+    user: dict = _GET_PURCHASE_ORDER_USER_DEFAULT,
+) -> dict:
     doc = svc.get_purchase_order(po_id)
-    if not doc:
+    if not doc or not _at(doc, facility_scope(user)):
         raise HTTPException(
             status_code=404, detail={"error": "not_found", "message": f"No purchase order {po_id}"}
         )
@@ -830,13 +998,18 @@ _CREATE_PURCHASE_ORDER_MODULE_DEFAULT = Depends(require_module)
 _CREATE_PURCHASE_ORDER_USER_DEFAULT = Depends(_PROC_WRITE)
 
 
-@router.post("/purchase-orders")
+@router.post("/purchase-orders", response_model=None)
 def create_purchase_order(
     payload: PurchaseOrderIn,
     request: Request,
-    _module=_CREATE_PURCHASE_ORDER_MODULE_DEFAULT,
-    user=_CREATE_PURCHASE_ORDER_USER_DEFAULT,
-):
+    _module: None = _CREATE_PURCHASE_ORDER_MODULE_DEFAULT,
+    user: dict = _CREATE_PURCHASE_ORDER_USER_DEFAULT,
+) -> dict:
+    facilities = facility_scope(user)
+    _require_store(payload.store_code, facilities)
+    if payload.indent_id is not None:
+        indent_id = payload.indent_id
+        _require_doc(lambda: svc.get_indent(indent_id), facilities, f"indent {indent_id}")
     try:
         doc = svc.create_purchase_order(
             vendor_code=payload.vendor_code,
@@ -875,13 +1048,16 @@ _SUBMIT_PURCHASE_ORDER_MODULE_DEFAULT = Depends(require_module)
 _SUBMIT_PURCHASE_ORDER_USER_DEFAULT = Depends(_PROC_WRITE)
 
 
-@router.post("/purchase-orders/{po_id}/submit")
+@router.post("/purchase-orders/{po_id}/submit", response_model=None)
 def submit_purchase_order(
     po_id: int,
     request: Request,
-    _module=_SUBMIT_PURCHASE_ORDER_MODULE_DEFAULT,
-    user=_SUBMIT_PURCHASE_ORDER_USER_DEFAULT,
-):
+    _module: None = _SUBMIT_PURCHASE_ORDER_MODULE_DEFAULT,
+    user: dict = _SUBMIT_PURCHASE_ORDER_USER_DEFAULT,
+) -> dict:
+    _require_doc(
+        lambda: svc.get_purchase_order(po_id), facility_scope(user), f"purchase order {po_id}"
+    )
     try:
         doc = svc.submit_purchase_order(po_id, actor=user.get("id"))
     except svc.ProcurementError as exc:
@@ -901,13 +1077,16 @@ _APPROVE_PURCHASE_ORDER_MODULE_DEFAULT = Depends(require_module)
 _APPROVE_PURCHASE_ORDER_USER_DEFAULT = Depends(_PROC_APPROVE)
 
 
-@router.post("/purchase-orders/{po_id}/approve")
+@router.post("/purchase-orders/{po_id}/approve", response_model=None)
 def approve_purchase_order(
     po_id: int,
     request: Request,
-    _module=_APPROVE_PURCHASE_ORDER_MODULE_DEFAULT,
-    user=_APPROVE_PURCHASE_ORDER_USER_DEFAULT,
-):
+    _module: None = _APPROVE_PURCHASE_ORDER_MODULE_DEFAULT,
+    user: dict = _APPROVE_PURCHASE_ORDER_USER_DEFAULT,
+) -> dict:
+    _require_doc(
+        lambda: svc.get_purchase_order(po_id), facility_scope(user), f"purchase order {po_id}"
+    )
     try:
         doc = svc.approve_purchase_order(po_id, actor=user.get("id"))
     except svc.ProcurementError as exc:
@@ -929,13 +1108,16 @@ _ISSUE_PURCHASE_ORDER_MODULE_DEFAULT = Depends(require_module)
 _ISSUE_PURCHASE_ORDER_USER_DEFAULT = Depends(_PROC_APPROVE)
 
 
-@router.post("/purchase-orders/{po_id}/issue")
+@router.post("/purchase-orders/{po_id}/issue", response_model=None)
 def issue_purchase_order(
     po_id: int,
     request: Request,
-    _module=_ISSUE_PURCHASE_ORDER_MODULE_DEFAULT,
-    user=_ISSUE_PURCHASE_ORDER_USER_DEFAULT,
-):
+    _module: None = _ISSUE_PURCHASE_ORDER_MODULE_DEFAULT,
+    user: dict = _ISSUE_PURCHASE_ORDER_USER_DEFAULT,
+) -> dict:
+    _require_doc(
+        lambda: svc.get_purchase_order(po_id), facility_scope(user), f"purchase order {po_id}"
+    )
     try:
         doc = svc.issue_purchase_order(po_id, actor=user.get("id"))
     except svc.ProcurementError as exc:
@@ -957,16 +1139,19 @@ _CANCEL_PURCHASE_ORDER_MODULE_DEFAULT = Depends(require_module)
 _CANCEL_PURCHASE_ORDER_USER_DEFAULT = Depends(_PROC_APPROVE)
 
 
-@router.post("/purchase-orders/{po_id}/cancel")
+@router.post("/purchase-orders/{po_id}/cancel", response_model=None)
 def cancel_purchase_order(
     po_id: int,
     payload: ReasonIn,
     request: Request,
-    _module=_CANCEL_PURCHASE_ORDER_MODULE_DEFAULT,
+    _module: None = _CANCEL_PURCHASE_ORDER_MODULE_DEFAULT,
     # Withdrawing a commitment made to a vendor is the same kind of act as
     # making one, so it sits on the same tier as approve/issue.
-    user=_CANCEL_PURCHASE_ORDER_USER_DEFAULT,
-):
+    user: dict = _CANCEL_PURCHASE_ORDER_USER_DEFAULT,
+) -> dict:
+    _require_doc(
+        lambda: svc.get_purchase_order(po_id), facility_scope(user), f"purchase order {po_id}"
+    )
     try:
         doc = svc.cancel_purchase_order(po_id, reason=payload.reason or "", actor=user.get("id"))
     except svc.ProcurementError as exc:
@@ -995,33 +1180,35 @@ _LIST_GOODS_RECEIPTS_MODULE_DEFAULT = Depends(require_module)
 _LIST_GOODS_RECEIPTS_USER_DEFAULT = Depends(_PROC_READ)
 
 
-@router.get("/goods-receipts")
+@router.get("/goods-receipts", response_model=None)
 def list_goods_receipts(
     purchase_order_id: int | None = _LIST_GOODS_RECEIPTS_PURCHASE_ORDER_ID_DEFAULT,
     status: str | None = _LIST_GOODS_RECEIPTS_STATUS_DEFAULT,
     limit: int = _LIST_GOODS_RECEIPTS_LIMIT_DEFAULT,
-    _module=_LIST_GOODS_RECEIPTS_MODULE_DEFAULT,
-    user=_LIST_GOODS_RECEIPTS_USER_DEFAULT,
-):
-    return {
-        "goods_receipts": svc.list_goods_receipts(
-            purchase_order_id=purchase_order_id, status=status, limit=limit
-        )
-    }
+    _module: None = _LIST_GOODS_RECEIPTS_MODULE_DEFAULT,
+    user: dict = _LIST_GOODS_RECEIPTS_USER_DEFAULT,
+) -> dict:
+    facilities = facility_scope(user)
+    rows = svc.list_goods_receipts(
+        purchase_order_id=purchase_order_id,
+        status=status,
+        limit=limit if facilities is None else _SCOPED_FETCH,
+    )
+    return {"goods_receipts": _keep_docs(rows, facilities, limit)}
 
 
 _GET_GOODS_RECEIPT_MODULE_DEFAULT = Depends(require_module)
 _GET_GOODS_RECEIPT_USER_DEFAULT = Depends(_PROC_READ)
 
 
-@router.get("/goods-receipts/{grn_id}")
+@router.get("/goods-receipts/{grn_id}", response_model=None)
 def get_goods_receipt(
     grn_id: int,
-    _module=_GET_GOODS_RECEIPT_MODULE_DEFAULT,
-    user=_GET_GOODS_RECEIPT_USER_DEFAULT,
-):
+    _module: None = _GET_GOODS_RECEIPT_MODULE_DEFAULT,
+    user: dict = _GET_GOODS_RECEIPT_USER_DEFAULT,
+) -> dict:
     doc = svc.get_goods_receipt(grn_id)
-    if not doc:
+    if not doc or not _at(doc, facility_scope(user)):
         raise HTTPException(
             status_code=404, detail={"error": "not_found", "message": f"No goods receipt {grn_id}"}
         )
@@ -1032,15 +1219,19 @@ _CREATE_GOODS_RECEIPT_MODULE_DEFAULT = Depends(require_module)
 _CREATE_GOODS_RECEIPT_USER_DEFAULT = Depends(_PROC_WRITE)
 
 
-@router.post("/goods-receipts")
+@router.post("/goods-receipts", response_model=None)
 def create_goods_receipt(
     payload: GoodsReceiptIn,
     request: Request,
-    _module=_CREATE_GOODS_RECEIPT_MODULE_DEFAULT,
-    user=_CREATE_GOODS_RECEIPT_USER_DEFAULT,
-):
+    _module: None = _CREATE_GOODS_RECEIPT_MODULE_DEFAULT,
+    user: dict = _CREATE_GOODS_RECEIPT_USER_DEFAULT,
+) -> dict:
     """Receive a delivery. Partial receipt is the normal case; over-receipt is
     refused with 409."""
+    facilities = facility_scope(user)
+    po_id = payload.purchase_order_id
+    _require_doc(lambda: svc.get_purchase_order(po_id), facilities, f"purchase order {po_id}")
+    _require_store(payload.store_code, facilities)
     try:
         doc = svc.create_goods_receipt(
             purchase_order_id=payload.purchase_order_id,
@@ -1079,13 +1270,16 @@ _POST_GOODS_RECEIPT_MODULE_DEFAULT = Depends(require_module)
 _POST_GOODS_RECEIPT_USER_DEFAULT = Depends(_PROC_WRITE)
 
 
-@router.post("/goods-receipts/{grn_id}/post")
+@router.post("/goods-receipts/{grn_id}/post", response_model=None)
 def post_goods_receipt(
     grn_id: int,
     request: Request,
-    _module=_POST_GOODS_RECEIPT_MODULE_DEFAULT,
-    user=_POST_GOODS_RECEIPT_USER_DEFAULT,
-):
+    _module: None = _POST_GOODS_RECEIPT_MODULE_DEFAULT,
+    user: dict = _POST_GOODS_RECEIPT_USER_DEFAULT,
+) -> dict:
+    _require_doc(
+        lambda: svc.get_goods_receipt(grn_id), facility_scope(user), f"goods receipt {grn_id}"
+    )
     try:
         doc = svc.post_goods_receipt(grn_id, actor=user.get("id"))
     except svc.ProcurementError as exc:
@@ -1106,18 +1300,21 @@ _CANCEL_GOODS_RECEIPT_MODULE_DEFAULT = Depends(require_module)
 _CANCEL_GOODS_RECEIPT_USER_DEFAULT = Depends(_PROC_APPROVE)
 
 
-@router.post("/goods-receipts/{grn_id}/cancel")
+@router.post("/goods-receipts/{grn_id}/cancel", response_model=None)
 def cancel_goods_receipt(
     grn_id: int,
     payload: ReasonIn,
     request: Request,
-    _module=_CANCEL_GOODS_RECEIPT_MODULE_DEFAULT,
+    _module: None = _CANCEL_GOODS_RECEIPT_MODULE_DEFAULT,
     # Only a DRAFT is cancellable (the state machine refuses a posted one), and
     # a draft has moved no stock — but erasing a recorded delivery document was
     # deliberately kept above the clerk who recorded it before the split, and
     # stays there: the hands that record a receipt cannot also disappear it.
-    user=_CANCEL_GOODS_RECEIPT_USER_DEFAULT,
-):
+    user: dict = _CANCEL_GOODS_RECEIPT_USER_DEFAULT,
+) -> dict:
+    _require_doc(
+        lambda: svc.get_goods_receipt(grn_id), facility_scope(user), f"goods receipt {grn_id}"
+    )
     try:
         doc = svc.cancel_goods_receipt(grn_id, reason=payload.reason or "", actor=user.get("id"))
     except svc.ProcurementError as exc:
@@ -1148,25 +1345,28 @@ _STOCK_MODULE_DEFAULT = Depends(require_module)
 _STOCK_USER_DEFAULT = Depends(_PROC_READ)
 
 
-@router.get("/stock")
+@router.get("/stock", response_model=None)
 def stock(
     store_code: str | None = _STOCK_STORE_CODE_DEFAULT,
     category: str | None = _STOCK_CATEGORY_DEFAULT,
     low_only: bool = _STOCK_LOW_ONLY_DEFAULT,
     include_zero: bool = _STOCK_INCLUDE_ZERO_DEFAULT,
     limit: int = _STOCK_LIMIT_DEFAULT,
-    _module=_STOCK_MODULE_DEFAULT,
-    user=_STOCK_USER_DEFAULT,
-):
-    return {
-        "stock": svc.list_stock_on_hand(
-            store_code=store_code,
-            category=category,
-            low_only=low_only,
-            include_zero=include_zero,
-            limit=limit,
-        )
-    }
+    _module: None = _STOCK_MODULE_DEFAULT,
+    user: dict = _STOCK_USER_DEFAULT,
+) -> dict:
+    facilities = facility_scope(user)
+    _require_store(store_code, facilities)
+    rows = svc.list_stock_on_hand(
+        store_code=store_code,
+        category=category,
+        low_only=low_only,
+        include_zero=include_zero,
+        limit=limit,
+    )
+    if facilities is not None and not store_code:
+        rows = _keep_store_rows(rows, _store_codes(facilities))
+    return {"stock": rows}
 
 
 _STOCK_LEDGER_STORE_CODE_DEFAULT = Query(None)
@@ -1175,32 +1375,51 @@ _STOCK_LEDGER_MODULE_DEFAULT = Depends(require_module)
 _STOCK_LEDGER_USER_DEFAULT = Depends(_PROC_READ)
 
 
-@router.get("/stock/{item_code}/ledger")
+@router.get("/stock/{item_code}/ledger", response_model=None)
 def stock_ledger(
     item_code: str,
     store_code: str | None = _STOCK_LEDGER_STORE_CODE_DEFAULT,
     limit: int = _STOCK_LEDGER_LIMIT_DEFAULT,
-    _module=_STOCK_LEDGER_MODULE_DEFAULT,
-    user=_STOCK_LEDGER_USER_DEFAULT,
-):
-    return {
-        "item_code": item_code.upper(),
-        "on_hand": svc.stock_on_hand(item_code, store_code),
-        "movements": svc.stock_ledger(item_code, store_code=store_code, limit=limit),
-    }
+    _module: None = _STOCK_LEDGER_MODULE_DEFAULT,
+    user: dict = _STOCK_LEDGER_USER_DEFAULT,
+) -> dict:
+    facilities = facility_scope(user)
+    _require_store(store_code, facilities)
+    if facilities is None or store_code:
+        return {
+            "item_code": item_code.upper(),
+            "on_hand": svc.stock_on_hand(item_code, store_code),
+            "movements": svc.stock_ledger(item_code, store_code=store_code, limit=limit),
+        }
+    # Every store of the caller's facilities, and only those: the balance is
+    # the sum of their own balances, the ledger their own movements.
+    codes = _store_codes(facilities)
+    on_hand = svc.stock_on_hand(item_code, None)
+    held = sum(svc.stock_on_hand_milli(item_code, code) for code in sorted(codes))
+    level = on_hand.get("reorder_level_milli")
+    on_hand.update(
+        {
+            "on_hand_milli": held,
+            "on_hand_display": svc.format_quantity(held, on_hand.get("uom")),
+            "is_low": level is not None and held <= level,
+        }
+    )
+    every = svc.stock_ledger(item_code, store_code=None, limit=1000)
+    movements = _keep_store_rows(every, codes)[:limit]
+    return {"item_code": item_code.upper(), "on_hand": on_hand, "movements": movements}
 
 
 _RECORD_MOVEMENT_MODULE_DEFAULT = Depends(require_module)
 _RECORD_MOVEMENT_USER_DEFAULT = Depends(_PROC_WRITE)
 
 
-@router.post("/stock/movements")
+@router.post("/stock/movements", response_model=None)
 def record_movement(
     payload: StockMovementIn,
     request: Request,
-    _module=_RECORD_MOVEMENT_MODULE_DEFAULT,
-    user=_RECORD_MOVEMENT_USER_DEFAULT,
-):
+    _module: None = _RECORD_MOVEMENT_MODULE_DEFAULT,
+    user: dict = _RECORD_MOVEMENT_USER_DEFAULT,
+) -> dict:
     """Issue, return, transfer, adjust or write off stock.
 
     A WRITE-OFF needs the stricter permission: it is the one movement that makes
@@ -1212,6 +1431,7 @@ def record_movement(
     # writes a durable row. Optional field, so only checked when supplied.
     if getattr(payload, "patient_id", None):
         enforce_patient_scope(user, payload.patient_id)
+    _require_store(payload.store_code, facility_scope(user))
 
     if payload.movement_type in ("write_off", "adjustment", "expiry"):
         role = user.get("role", "")
@@ -1287,14 +1507,18 @@ _LOW_STOCK_MODULE_DEFAULT = Depends(require_module)
 _LOW_STOCK_USER_DEFAULT = Depends(_PROC_READ)
 
 
-@router.get("/reports/low-stock")
+@router.get("/reports/low-stock", response_model=None)
 def low_stock(
     store_code: str | None = _LOW_STOCK_STORE_CODE_DEFAULT,
     limit: int = _LOW_STOCK_LIMIT_DEFAULT,
-    _module=_LOW_STOCK_MODULE_DEFAULT,
-    user=_LOW_STOCK_USER_DEFAULT,
-):
+    _module: None = _LOW_STOCK_MODULE_DEFAULT,
+    user: dict = _LOW_STOCK_USER_DEFAULT,
+) -> dict:
+    facilities = facility_scope(user)
+    _require_store(store_code, facilities)
     rows = svc.low_stock(store_code=store_code, limit=limit)
+    if facilities is not None and not store_code:
+        rows = _keep_store_rows(rows, _store_codes(facilities))
     return {"low_stock": rows, "count": len(rows)}
 
 
@@ -1307,26 +1531,87 @@ _CONSUMPTION_MODULE_DEFAULT = Depends(require_module)
 _CONSUMPTION_USER_DEFAULT = Depends(_PROC_READ)
 
 
-@router.get("/reports/consumption")
+@router.get("/reports/consumption", response_model=None)
 def consumption(
     date_from: str | None = _CONSUMPTION_DATE_FROM_DEFAULT,
     date_to: str | None = _CONSUMPTION_DATE_TO_DEFAULT,
     department: str | None = _CONSUMPTION_DEPARTMENT_DEFAULT,
     store_code: str | None = _CONSUMPTION_STORE_CODE_DEFAULT,
     limit: int = _CONSUMPTION_LIMIT_DEFAULT,
-    _module=_CONSUMPTION_MODULE_DEFAULT,
-    user=_CONSUMPTION_USER_DEFAULT,
-):
+    _module: None = _CONSUMPTION_MODULE_DEFAULT,
+    user: dict = _CONSUMPTION_USER_DEFAULT,
+) -> dict:
+    facilities = facility_scope(user)
+    _require_store(store_code, facilities)
     try:
-        return svc.consumption_report(
-            date_from=date_from,
-            date_to=date_to,
-            department=department,
-            store_code=store_code,
-            limit=limit,
-        )
+        if facilities is None or store_code:
+            return svc.consumption_report(
+                date_from=date_from,
+                date_to=date_to,
+                department=department,
+                store_code=store_code,
+                limit=limit,
+            )
+        # The caller's facilities' stores, each counted by the service and
+        # added up here, so another facility's issues never enter a total.
+        reports = [
+            svc.consumption_report(
+                date_from=date_from,
+                date_to=date_to,
+                department=department,
+                store_code=code,
+                limit=limit,
+            )
+            for code in sorted(_store_codes(facilities))
+        ]
     except svc.ProcurementError as exc:
         raise _fail(exc) from exc
+    return _merged_consumption(reports, date_from=date_from, date_to=date_to, limit=limit)
+
+
+def _merged_consumption(
+    reports: list[dict], *, date_from: str | None, date_to: str | None, limit: int
+) -> dict:
+    """Several stores' consumption reports as one, the way the service adds a
+    single report up: lines by department and value, departments summed."""
+    lines = sorted(
+        (line for r in reports for line in r["lines"]),
+        key=lambda line: (line["department"], -int(line["value_paise"])),
+    )[:limit]
+    departments: dict[str, dict] = {}
+    for line in lines:
+        dept = departments.setdefault(
+            line["department"],
+            {
+                "department": line["department"],
+                "value_paise": 0,
+                "line_count": 0,
+                "unvalued_movement_count": 0,
+            },
+        )
+        dept["value_paise"] += int(line["value_paise"])
+        dept["line_count"] += 1
+        dept["unvalued_movement_count"] += int(line["unvalued_movement_count"])
+    for dept in departments.values():
+        dept["value_display"] = format_inr_or_unset(
+            dept["value_paise"] if dept["unvalued_movement_count"] == 0 else None,
+            unset="Partly unpriced",
+        )
+    total_value = sum(int(line["value_paise"]) for line in lines)
+    total_unvalued = sum(int(line["unvalued_movement_count"]) for line in lines)
+    first = reports[0] if reports else {}
+    return {
+        "date_from": first.get("date_from", date_from),
+        "date_to": first.get("date_to", date_to),
+        "lines": lines,
+        "departments": sorted(departments.values(), key=lambda d: -d["value_paise"]),
+        "total_value_paise": total_value,
+        "total_value_display": format_inr_or_unset(
+            total_value if total_unvalued == 0 else None, unset="Partly unpriced"
+        ),
+        "unvalued_movement_count": total_unvalued,
+        "value_is_complete": total_unvalued == 0,
+    }
 
 
 _EXPIRY_WITHIN_DAYS_DEFAULT = Query(90, ge=0, le=3650)
@@ -1337,18 +1622,22 @@ _EXPIRY_MODULE_DEFAULT = Depends(require_module)
 _EXPIRY_USER_DEFAULT = Depends(_PROC_READ)
 
 
-@router.get("/reports/expiry")
+@router.get("/reports/expiry", response_model=None)
 def expiry(
     within_days: int = _EXPIRY_WITHIN_DAYS_DEFAULT,
     store_code: str | None = _EXPIRY_STORE_CODE_DEFAULT,
     include_expired: bool = _EXPIRY_INCLUDE_EXPIRED_DEFAULT,
     limit: int = _EXPIRY_LIMIT_DEFAULT,
-    _module=_EXPIRY_MODULE_DEFAULT,
-    user=_EXPIRY_USER_DEFAULT,
-):
+    _module: None = _EXPIRY_MODULE_DEFAULT,
+    user: dict = _EXPIRY_USER_DEFAULT,
+) -> dict:
+    facilities = facility_scope(user)
+    _require_store(store_code, facilities)
     rows = svc.expiry_report(
         within_days=within_days, store_code=store_code, include_expired=include_expired, limit=limit
     )
+    if facilities is not None and not store_code:
+        rows = _keep_store_rows(rows, _store_codes(facilities))
     return {
         "expiring": rows,
         "count": len(rows),

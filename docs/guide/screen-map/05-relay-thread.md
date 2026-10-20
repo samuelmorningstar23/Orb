@@ -124,7 +124,7 @@ inside `loadMessages`.
 **Change this →** this text is what a clinician stares at on a slow ward link. Note that
 `.orb-panel-loading` **has no CSS rule anywhere in `src/`**, it renders as default body text, no
 spinner, no animation. Adding a rule for it would change this state on six other panels too
-(`ClinicianShell.tsx:286`, `:744`, `AppointmentsPanel.tsx:77`, `VigilPanel.tsx:300`, `:1068`,
+(`ClinicianShell.tsx:452`, `:995`, `AppointmentsPanel.tsx:77`, `VigilPanel.tsx:300`, `:1068`,
 `ForecastPanel.tsx:186`, `SurgicalSuitePanel.tsx:407`). It disappears the instant `loadMessages`
 reaches its `finally` at `:260`, **but only if the response still owns the request** (`owns()`,
 `:231`): a stale response for a channel you have already left never clears the flag, because the

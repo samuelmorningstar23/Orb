@@ -65,27 +65,71 @@ SITES = {
     # scripts/
     ('scripts/', '*'): appliance(
         'Console scripts an operator runs at the appliance; no request reaches them.'),
-    # services/abdm_service.py
-    ('services/abdm_service.py', '_clash_patient_line'): blind('multisite-9b'),
-    ('services/abdm_service.py', '_require_patient'): blind('multisite-9b'),
-    ('services/abdm_service.py', 'get_consent'): blind('multisite-9b'),
-    ('services/abdm_service.py', 'list_abha'): blind('multisite-9b'),
-    ('services/abdm_service.py', 'list_care_contexts'): blind('multisite-9b'),
-    ('services/abdm_service.py', 'list_consents'): blind('multisite-9b'),
-    ('services/abdm_service.py', 'unlinked_encounter_queue'): blind('multisite-9b'),
-    # services/command_center_service.py
-    ('services/command_center_service.py', '_admitted_with_acuity'): blind(
-        'multisite-12',
-        'Every admitted patient.'),
-    ('services/command_center_service.py', '_or_today'): blind('multisite-12'),
-    # services/dietary_service.py
-    ('services/dietary_service.py', '_ADMITTED_JOIN'): blind('multisite-9b'),
-    ('services/dietary_service.py', '_current_admission'): blind('multisite-9b'),
-    ('services/dietary_service.py', '_load_order'): blind('multisite-9b'),
-    ('services/dietary_service.py', '_patients_without_orders'): blind('multisite-9b'),
-    ('services/dietary_service.py', 'list_wards'): blind('multisite-9b'),
-    ('services/dietary_service.py', 'order_diet'): blind('multisite-9b'),
-    ('services/dietary_service.py', 'patient_diet_history'): blind('multisite-9b'),
+    # services/abdm_service.py (multisite-9b, W13-A: facilities= from the route)
+    ('services/abdm_service.py', '_clash_patient_line'): facility(
+        ['patients'], 1,
+        ("Names the patient a duplicate ABHA belongs to only when patient_in_scope holds with "
+         "the caller's department and facilities; a caller that gives no facility scope "
+         'learns no name while more than one facility is on record.')),
+    ('services/abdm_service.py', '_require_patient'): appliance(
+        ("An existence check on the patient an ABHA or consent write names; the row it reads "
+         'is not returned, and every route naming the patient checks its scope first.')),
+    ('services/abdm_service.py', 'get_consent'): document_keyed(
+        ['patients'], 1,
+        ("One consent artefact by id; every route checks the artefact's own patient with "
+         'enforce_patient_scope before it is shown or changed.')),
+    ('services/abdm_service.py', 'list_abha'): facility(
+        ['patients'], 1,
+        "ABHA records of the caller's ward and facilities (scope_patient_ids_sql, facilities=)."),
+    ('services/abdm_service.py', 'list_care_contexts'): facility(
+        ['patients'], 1,
+        ("Care-context links of the caller's ward and facilities (scope_patient_ids_sql, "
+         'facilities=).')),
+    ('services/abdm_service.py', 'list_consents'): facility(
+        ['patients'], 1,
+        ("Consent artefacts of the caller's ward and facilities (scope_patient_ids_sql, "
+         'facilities=).')),
+    ('services/abdm_service.py', 'unlinked_encounter_queue'): facility(
+        ['admissions', 'patients'], 2,
+        ("The linking queue: encounters at the caller's facilities (admissions.facility_id) "
+         "of patients inside the caller's ward and facility scope.")),
+    # services/command_center_service.py (multisite-12, W13-A)
+    ('services/command_center_service.py', '_admitted_with_acuity'): facility(
+        ['patients'], 2,
+        ("Admitted patients at the snapshot's facilities (facility_filter.patient_clause); "
+         'the route passes the caller\'s facility, or none for a group-wide reader.')),
+    ('services/command_center_service.py', '_or_today'): facility(
+        ['patients', 'surgeries'], 1,
+        "Today's operating list at the snapshot's facilities (surgeries.facility_id)."),
+    # services/dietary_service.py (multisite-9b, W13-A: facilities= from the route)
+    ('services/dietary_service.py', '_ADMITTED_JOIN'): facility(
+        ['admissions', 'patients'], 1,
+        ("The latest-admission join every diet list reads; each caller adds the facility "
+         'clause on that admission (a.facility_id).')),
+    ('services/dietary_service.py', '_current_admission'): patient_keyed(
+        ['admissions'], 1,
+        ("The admission of the one patient a diet order names; the order route checks that "
+         'patient with enforce_patient_scope first.')),
+    ('services/dietary_service.py', '_load_order'): document_keyed(
+        ['admissions', 'patients'], 1,
+        ("One diet order by id; the routes check the order's own patient with "
+         'enforce_patient_scope before acting on it or showing it.')),
+    ('services/dietary_service.py', '_patients_without_orders'): facility(
+        ['admissions', 'patients'], 1,
+        "Admitted patients with no diet order, at the caller's facilities (a.facility_id)."),
+    ('services/dietary_service.py', '_ward_facility_on'): facility(
+        ['admissions'], 1,
+        ("Which facility a ward is at (Bed setup, else its admissions' one facility): the "
+         'scope machinery for meal plans; it returns a facility id, never a patient.')),
+    ('services/dietary_service.py', 'list_wards'): facility(
+        ['admissions', 'patients'], 1,
+        "Ward counts of admitted patients at the caller's facilities (a.facility_id)."),
+    ('services/dietary_service.py', 'order_diet'): patient_keyed(
+        ['patients'], 1,
+        "Writes one named patient's diet order; the route checks the patient first."),
+    ('services/dietary_service.py', 'patient_diet_history'): patient_keyed(
+        ['admissions', 'patients'], 1,
+        "One patient's diet orders; the route checks the patient with enforce_patient_scope."),
     # services/facility_identity.py
     ('services/facility_identity.py', 'create_facility'): appliance(
         "Reads the newest audit row id as the new facility's audit epoch; no row is shown."),
@@ -102,33 +146,82 @@ SITES = {
     ('services/facility_service.py', 'facility_report'): appliance(
         ('Counts for the operations page (patients with admissions at more than one facility);'
          ' no patient is named.')),
+    # services/forecast_service.py (multisite-12 additions; the module's other rows are in
+    # clinical.py)
+    ('services/forecast_service.py', '_discharges_at'): facility(
+        ['admissions', 'patients'], 2,
+        ("Today's discharge events at the caller's facilities: summaries of their patients "
+         'and summary-less ends of their stays. A count, no patient named.')),
+    ('services/forecast_service.py', 'ward_facility_lookup'): facility(
+        ['admissions'], 1,
+        ('Which facility a ward is at: Bed setup, else the one facility of the stays open on '
+         'it. The capacity-per-facility machinery; it returns facility ids only.')),
     # services/history_import_service.py
     ('services/history_import_service.py', '_Resolver.prefetch'): blind('multisite-9b'),
     ('services/history_import_service.py', '_write_patient'): blind('multisite-9b'),
-    # services/housekeeping_service.py
-    ('services/housekeeping_service.py', '_canonical_ward'): blind('multisite-9b'),
-    ('services/housekeeping_service.py', 'sync_adt_movements'): blind('multisite-9b'),
-    ('services/housekeeping_service.py', 'sync_adt_movements._lies_in_now'): blind('multisite-9b'),
-    ('services/housekeeping_service.py', 'sync_discharge_turnarounds'): blind('multisite-9b'),
-    ('services/housekeeping_service.py', 'ward_readiness'): blind('multisite-9b'),
+    # services/housekeeping_service.py (multisite-9b, W13-A: routes/housekeeping_routes.py
+    # keeps every answer to the caller's facilities' units and wards)
+    ('services/housekeeping_service.py', '_canonical_ward'): appliance(
+        ("Matches a typed ward to the spelling patients and units already use; it returns a "
+         'ward name, never a patient.')),
+    ('services/housekeeping_service.py', 'sync_adt_movements'): appliance(
+        ('The appliance-wide sweep that raises cleaning requests from bed movements; it '
+         'answers with counts only.')),
+    ('services/housekeeping_service.py', 'sync_adt_movements._lies_in_now'): appliance(
+        ("Whether a bed's patient still lies in it, inside the movement sweep; a yes or no "
+         'that leaves the sweep as a count.')),
+    ('services/housekeeping_service.py', 'sync_discharge_turnarounds'): appliance(
+        ('The appliance-wide sweep that raises turnaround cleans from discharges; it answers '
+         "with counts and unmatched ward names, which the route keeps to the caller's.")),
+    ('services/housekeeping_service.py', 'ward_readiness'): appliance(
+        ('Admitted-patient counts per ward beside the units registered there; no patient is '
+         "named, and the route keeps the rows to the caller's facilities' wards.")),
     # services/impact_service.py
     ('services/impact_service.py', 'compute_impact'): blind('multisite-9b'),
     # services/metrics_service.py
     ('services/metrics_service.py', 'render_metrics'): appliance(
         ('Appliance-wide counters for the metrics page (records, orders, audit rows, admitted '
          'patients); no patient, ward or department is named.')),
-    # services/nabh_service.py
-    ('services/nabh_service.py', '_adt_disposition_on'): blind('multisite-12'),
-    ('services/nabh_service.py', '_disposition_base'): blind('multisite-12'),
-    ('services/nabh_service.py', '_escalation_ack_compliance'): blind('multisite-12'),
-    ('services/nabh_service.py', '_handoff_completion'): blind('multisite-12'),
-    ('services/nabh_service.py', '_inpatient_days'): blind('multisite-12'),
-    ('services/nabh_service.py', '_medication_override_rate'): blind('multisite-12'),
-    ('services/nabh_service.py', '_per_stay_counting_on'): blind('multisite-12'),
-    ('services/nabh_service.py', '_per_stay_totals'): blind('multisite-12'),
-    ('services/nabh_service.py', '_readmission'): blind('multisite-12'),
-    ('services/nabh_service.py', '_repeat_stay_patients'): blind('multisite-12'),
-    ('services/nabh_service.py', 'hospital_wards._work'): blind('multisite-12'),
+    # services/nabh_service.py (multisite-12, W13-A: one facility's figures, see the
+    # module's "One facility's figures" block)
+    ('services/nabh_service.py', '_PATIENT_STAY_FACILITY_SQL'): facility(
+        ['admissions'], 1,
+        ("The facility a patient's NABH events are counted at: their latest admission's, "
+         'else the registered facility. The scope machinery of the indicators.')),
+    ('services/nabh_service.py', '_adt_disposition_on'): appliance(
+        ("A writer's lookup of the disposition of the stay it is ending or keying; it reads "
+         "the one patient its lane has already scoped, and nothing is listed.")),
+    ('services/nabh_service.py', '_facility_rows'): facility(
+        ['patients'], 1,
+        "Keeps indicator rows to the patients counted at one facility (the scope machinery)."),
+    ('services/nabh_service.py', '_inpatient_days'): facility(
+        ['patients'], 1,
+        ("The inpatient-day count; with a facility it counts that facility's patients only "
+         '(_facility_rows). Counts, no patient named.')),
+    ('services/nabh_service.py', '_patient_join'): facility(
+        ['patients'], 1,
+        ("The patients join of every per-event indicator: the chosen ward and the facility "
+         "of the patient's stays (the scope machinery).")),
+    ('services/nabh_service.py', '_per_stay_counting_on'): appliance(
+        'Whether any admission carries what the beds module writes; a yes or no, no row.'),
+    ('services/nabh_service.py', '_per_stay_totals'): facility(
+        ['admissions', 'patients'], 2,
+        ("Per-stay inpatient hours; with a facility only that facility's stays "
+         '(admissions.facility_id) and its legacy patients. Counts, no patient named.')),
+    ('services/nabh_service.py', '_readmission'): facility(
+        ['admissions', 'patients'], 2,
+        ("The re-admission rate over one facility's discharges (_patient_join); the "
+         'admissions it looks for are read whole so the rate is never flattered. Counts only.')),
+    ('services/nabh_service.py', '_repeat_stay_patients'): appliance(
+        ('The patients with more than one stay, used inside the inpatient-day count; no id '
+         'leaves the module.')),
+    ('services/nabh_service.py', 'hospital_wards._work'): facility(
+        ['patients'], 2,
+        ("Ward names for the NABH selects; with facilities only those facilities' patients' "
+         'and incidents\' wards. Ward names, never a patient.')),
+    ('services/nabh_service.py', 'list_dispositions'): facility(
+        ['patients'], 1,
+        "Discharge dispositions of the patients at the caller's facilities."),
     # services/ops_health_service.py
     ('services/ops_health_service.py', '_check_site_config'): appliance(
         ('Counts active admissions per department name for the operations page; no patient is '
@@ -141,37 +234,57 @@ SITES = {
     ('services/roster_import.py', 'apply_import'): blind('multisite-9b'),
 }
 
+#: Wave 13 (W13-A) made the lanes of these groups facility-aware. A group that
+#: reaches no blind or unregistered owner any more (/api/abdm, /api/dietary,
+#: /api/biomedical, /api/procurement and /api/workforce, pinned by
+#: tests/test_command_center_facility.py) is ready to move to cleared_surface;
+#: that move and the regenerated fence lists are one wave-level step
+#: (server/facility_fence.py), so every group below stays blind until it lands.
 SURFACES = {
     '/api/admin': blind_surface(
         'multisite-9b',
-        'Administration, compliance, imports, backups and shadow mode.'),
+        ('Administration, compliance, imports, backups and shadow mode. The overview, '
+         'alerts and compliance lanes are facility-aware (W13-A); the roster and history '
+         'imports, consent retention and erasure, the impact figures and the user list '
+         'still reach rows other owners hold.')),
     '/api/abdm': blind_surface(
         'multisite-9b',
-        'ABDM identities, consents and care contexts.'),
+        ('ABDM identities, consents and care contexts: facility-aware (W13-A) and reaching '
+         'no blind owner; it waits for the wave-level fence step.')),
     '/api/dietary': blind_surface(
         'multisite-9b',
-        'Diet orders by ward.'),
+        ('Diet orders, meal plans and kitchen indents: facility-aware (W13-A) and reaching '
+         'no blind owner; it waits for the wave-level fence step.')),
     '/api/housekeeping': blind_surface(
         'multisite-9b',
-        'Housekeeping by ward.'),
+        ('Housekeeping by unit and ward: facility-aware in the routes (W13-A); the board '
+         'and the sweeps still reach the shared stay-time and ADT helpers (multisite-8, '
+         'multisite-8h1).')),
     '/api/biomedical': blind_surface(
         'multisite-9b',
-        'Biomedical assets.'),
+        ('Biomedical machines, schedules, calls and contracts: facility-aware (W13-A) and '
+         'reaching no blind owner; it waits for the wave-level fence step.')),
     '/api/procurement': blind_surface(
         'multisite-9b',
-        'Procurement documents.'),
+        ('Stores and their documents: facility-aware (W13-A) and reaching no blind owner; '
+         'it waits for the wave-level fence step.')),
     '/api/workforce': blind_surface(
         'multisite-9b',
-        'Rosters and payroll exports.'),
+        ("Staff, rosters, attendance and payroll exports: kept to the caller's facility's "
+         'staff (W13-A) and reaching no blind owner; it waits for the wave-level fence step.')),
     '/api/nabh': blind_surface(
         'multisite-12',
-        'NABH indicators and evidence packs.'),
+        ('NABH indicators, the register and evidence packs per facility (W13-A); the '
+         'indicators still reach the shared stay-time helpers (multisite-8) and the '
+         'laboratory turnaround readers (multisite-8h2).')),
     '/api/command-center': blind_surface(
         'multisite-12',
-        'The house snapshot lists every admitted patient.'),
+        ('The snapshot per facility with group tiles (W13-A); it still reaches the shared '
+         'per-patient forecast, stay-time and Vigil helpers (multisite-8).')),
     '/api/capacity-sim': blind_surface(
         'multisite-12',
-        'Capacity scenarios from the whole census.'),
+        ('Capacity scenarios from the whole census: routes/capacity_sim_routes.py and its '
+         'service are not facility-aware yet.')),
     '/api/pulse': no_patient_data_surface(
         "The seasonal calendar for the hospital's state; it reads no patient."),
 }

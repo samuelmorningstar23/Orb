@@ -32,20 +32,28 @@ router = APIRouter(prefix="/api/forecast", tags=["forecast"])
 _HOSPITAL_FORECAST_USER_DEFAULT = Depends(require_permission("forecast.read"))
 
 
-@router.get("/hospital")
+@router.get("/hospital", response_model=None)
 def hospital_forecast(
     days: int = 7,
     user: dict = _HOSPITAL_FORECAST_USER_DEFAULT,
-):
+) -> dict:
     """Get hospital-level admission/discharge/occupancy forecast.
 
     The series leads with a MEASURED day 0 (`is_current: true`) — today's census
     and today's actual admissions/discharges. Without it the panel's first chart
     point was tomorrow's prediction sitting next to a Current Census card that
     said something else.
+
+    With more than one facility on record it is the caller's facilities'
+    forecast (multisite-12); a group-wide reader gets the whole group.
     """
     try:
-        return predict_hospital_flow(days_ahead=max(1, min(days, 14)), include_current_day=True)
+        facilities = facility_scope(user)
+        if facilities is None:
+            return predict_hospital_flow(days_ahead=max(1, min(days, 14)), include_current_day=True)
+        return predict_hospital_flow(
+            days_ahead=max(1, min(days, 14)), include_current_day=True, facilities=facilities
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Forecast error: {str(e)}") from e
 
@@ -71,13 +79,17 @@ def patient_forecast(
 _CAPACITY_FORECAST_USER_DEFAULT = Depends(require_permission("forecast.read"))
 
 
-@router.get("/capacity")
+@router.get("/capacity", response_model=None)
 def capacity_forecast(
     user: dict = _CAPACITY_FORECAST_USER_DEFAULT,
-):
-    """Get current + projected bed capacity by ward."""
+) -> dict:
+    """Get current + projected bed capacity by ward: the wards of the caller's
+    facilities while more than one facility is on record (multisite-12)."""
     try:
-        return get_bed_capacity_forecast()
+        facilities = facility_scope(user)
+        if facilities is None:
+            return get_bed_capacity_forecast()
+        return get_bed_capacity_forecast(facilities=facilities)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Capacity error: {str(e)}") from e
 

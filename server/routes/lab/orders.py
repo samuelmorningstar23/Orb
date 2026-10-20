@@ -43,6 +43,7 @@ from permissions import (
     LAB_RECEIVE,
     ORDER_WRITE,
     department_scope,
+    facility_scope,
     has_permission,
     log_phi_read,
     require_permission,
@@ -67,21 +68,25 @@ _LIST_LAB_EXCEPTIONS_LIMIT_DEFAULT = Query(200, ge=1, le=500)
 _LIST_LAB_EXCEPTIONS_USER_DEFAULT = Depends(require_permission(LAB_READ))
 
 
-@router.get("/exceptions")
+@router.get("/exceptions", response_model=None)
 def list_lab_exceptions(
     request: Request,
     limit: int = _LIST_LAB_EXCEPTIONS_LIMIT_DEFAULT,
     user: dict = _LIST_LAB_EXCEPTIONS_USER_DEFAULT,
-):
+) -> dict:
     """Open laboratory exceptions, oldest first, with the order and patient
     each concerns. A department account sees only its own department's
-    patients (department_scope, never a request parameter). The audit row is
-    written from the rows after that filter: it records the patients actually
-    returned (their count, and the first 200 ids, which keeps the row under
-    the audit metadata size cap)."""
+    patients (department_scope, never a request parameter), and every
+    account only its own facilities' rows (facility_scope, multisite-8h2).
+    The audit row is written from the rows after that filter: it records the
+    patients actually returned (their count, and the first 200 ids, which
+    keeps the row under the audit metadata size cap)."""
     dept = department_scope(user)
+    facilities = facility_scope(user)
     with db_session() as db:
-        rows = lab_order_service.list_open_exceptions(db, dept=dept, limit=limit)
+        rows = lab_order_service.list_open_exceptions(
+            db, dept=dept, limit=limit, facilities=facilities
+        )
     for row in rows:
         row["kind_label"] = _KIND_TEXT.get((row.get("kind") or ""), "Exception")
     patient_ids = sorted({r["patient_id"] for r in rows if r.get("patient_id")})
@@ -180,16 +185,16 @@ class CancelBody(BaseModel):
 _CANCEL_LAB_ORDER_USER_DEFAULT = Depends(_require_any_permission(ORDER_WRITE, LAB_RECEIVE))
 
 
-@router.post("/orders/{order_id}/cancel")
+@router.post("/orders/{order_id}/cancel", response_model=None)
 def cancel_lab_order(
     order_id: str,
     body: CancelBody,
     request: Request,
     user: dict = _CANCEL_LAB_ORDER_USER_DEFAULT,
-):
+) -> dict:
     """Cancel an order the laboratory manages. The order must be inside the
-    caller's department (department_scope, never a request parameter); out of
-    scope and unknown are the same 404."""
+    caller's department and facilities (department_scope and facility_scope,
+    never a request parameter); out of scope and unknown are the same 404."""
     try:
         return lab_order_service.cancel_order(
             order_id,
@@ -197,6 +202,7 @@ def cancel_lab_order(
             reason=body.reason,
             dept=department_scope(user),
             request_meta=request_meta(request),
+            facilities=facility_scope(user),
         )
     except lab_order_service.LabOrderError as err:
         raise lab_refusal(err) from err

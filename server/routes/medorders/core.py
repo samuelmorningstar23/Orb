@@ -69,6 +69,8 @@ from permissions import (
     PATIENT_READ_ALL,
     ROLE_PERMISSIONS,
     department_scope,
+    facility_denial,
+    facility_scope,
     log_phi_read,
     patient_in_scope,
     require_any_permission,
@@ -82,6 +84,7 @@ from services.medorders import adoption, chart_lane, cpoe, queries
 from services.medorders import core as store
 
 from routes.medorders import require_med_order_lifecycle
+from services import facility_lanes
 
 logger = logging.getLogger("orb.medorders.routes")
 
@@ -212,17 +215,58 @@ def _scope_denied(
     return HTTPException(status_code=404, detail=not_found)
 
 
+def _facility_denied(
+    user: Mapping,
+    request: Request,
+    *,
+    patient_id: str,
+    facilities: frozenset[int],
+    patient_facility_id: int | None,
+    not_found: str,
+) -> HTTPException:
+    """The out-of-facility refusal (multisite-8h2): the authorization
+    patient_scope_denied row with scope_cause 'facility' (the row
+    permissions.require_patient_access writes), then the same 404 an unknown
+    id gets. A medication order belongs to its patient's facility (the
+    facility of the patient's latest encounter, MS-R5 (a)). BLOCKING: call it
+    after the read session has closed."""
+    facility_lanes.audit_denial(
+        user=dict(user),
+        patient_id=patient_id,
+        dept=department_scope(user),
+        facilities=facilities,
+        facility_id=patient_facility_id,
+        helper="med_order_scope",
+        request_meta=_request_meta(request),
+    )
+    return HTTPException(status_code=404, detail=not_found)
+
+
 def _med_order_patient_in_scope_or_404(order_id: str, user: Mapping, request: Request) -> str:
     """The order's patient, when the caller may see it. BLOCKING. Modelled on
     emar_routes._enforce_medication_scope: 404 rather than 403, and a cross-ward
-    attempt is audited before the refusal. Returns the patient id."""
+    attempt is audited before the refusal. Returns the patient id. The
+    facility is checked first (permissions.facility_denial, a no-op with one
+    facility on record): an order of a patient at another facility is the
+    same audited 404."""
     dept = department_scope(user)
+    facilities = facility_scope(user)
     with db_session() as db:
         row = queries.order_scope_row(db, order_id)
         if row is None:
             raise HTTPException(status_code=404, detail=ORDER_NOT_FOUND)
-        if dept is None or patient_in_scope(db, row["patient_id"], dept):
+        denied, patient_facility = facility_denial(db, row["patient_id"], facilities)
+        if not denied and (dept is None or patient_in_scope(db, row["patient_id"], dept)):
             return row["patient_id"]
+    if denied:
+        raise _facility_denied(
+            user,
+            request,
+            patient_id=row["patient_id"],
+            facilities=frozenset(facilities or ()),
+            patient_facility_id=patient_facility,
+            not_found=ORDER_NOT_FOUND,
+        )
     raise _scope_denied(
         user,
         request,
@@ -235,13 +279,24 @@ def _med_order_patient_in_scope_or_404(order_id: str, user: Mapping, request: Re
 
 def _patient_in_scope_or_404(patient_id: str, user: Mapping, request: Request) -> None:
     """The same rule for a patient named in a BODY (permissions.enforce_patient_scope
-    writes no audit row, so it is not used here)."""
+    writes no audit row, so it is not used here), the facility first."""
     dept = department_scope(user)
+    facilities = facility_scope(user)
     with db_session() as db:
         if db.execute("SELECT 1 FROM patients WHERE id = ?", (patient_id,)).fetchone() is None:
             raise HTTPException(status_code=404, detail=PATIENT_NOT_FOUND)
-        if dept is None or patient_in_scope(db, patient_id, dept):
+        denied, patient_facility = facility_denial(db, patient_id, facilities)
+        if not denied and (dept is None or patient_in_scope(db, patient_id, dept)):
             return
+    if denied:
+        raise _facility_denied(
+            user,
+            request,
+            patient_id=patient_id,
+            facilities=frozenset(facilities or ()),
+            patient_facility_id=patient_facility,
+            not_found=PATIENT_NOT_FOUND,
+        )
     raise _scope_denied(
         user,
         request,
@@ -335,12 +390,15 @@ class AdoptRequest(BaseModel):
 _TO_SIGN_QUEUE_USER_DEFAULT = Depends(require_permission(MEDICATION_PRESCRIBE))
 
 
-@router.get("/queue/to-sign")
-def to_sign_queue(request: Request, user: dict = _TO_SIGN_QUEUE_USER_DEFAULT):
+@router.get("/queue/to-sign", response_model=None)
+def to_sign_queue(request: Request, user: dict = _TO_SIGN_QUEUE_USER_DEFAULT) -> dict:
     """Unsigned drafts in the caller's department, oldest first (a draft
     waiting over 24 hours is marked, ruling MO-R10 (a)), and the live orders a
-    nurse charted, listed for visibility only (held ruling R010)."""
-    scope_sql, scope_params = scope_patient_ids_sql(department_scope(user))
+    nurse charted, listed for visibility only (held ruling R010). Only the
+    caller's facilities' patients (facility_scope, multisite-8h2)."""
+    scope_sql, scope_params = scope_patient_ids_sql(
+        department_scope(user), facilities=facility_scope(user)
+    )
     with db_session() as db:
         queue = queries.to_sign_queue(db, scope_sql, scope_params)
     items = queue["drafts"] + queue["entered_by_a_nurse"]
@@ -362,10 +420,42 @@ def to_sign_queue(request: Request, user: dict = _TO_SIGN_QUEUE_USER_DEFAULT):
 _PARITY_REPORT_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
-@router.get("/admin/parity")
-def parity_report(request: Request, user: dict = _PARITY_REPORT_USER_DEFAULT):
+#: The refusal a facility-bound administrator gets from the appliance-wide
+#: medication-order administration (multisite-8h2).
+GROUP_ACCESS_WORDS = (
+    "This covers the medication orders of every facility on this system, so it needs an "
+    "administrator with group-wide access."
+)
+
+
+def _require_group_wide(user: Mapping, request: Request, *, action: str) -> None:
+    """The parity report and adoption read and write every facility's chart
+    rows, so while more than one facility is on record they are refused (403
+    group_access_required, audited as authorization
+    'facility_group_access_required') to an account with a facility limit.
+    With one facility on record facility_scope is None and nothing changes."""
+    facilities = facility_scope(user)
+    if facilities is None:
+        return
+    _audit_denied(
+        user,
+        request,
+        action_type="facility_group_access_required",
+        summary=f"Medication order {action} refused: the caller's access is limited to a facility",
+        metadata={"action": action, "facility_scope": sorted(facilities)},
+    )
+    raise HTTPException(
+        status_code=403,
+        detail={"error": "group_access_required", "message": GROUP_ACCESS_WORDS},
+    )
+
+
+@router.get("/admin/parity", response_model=None)
+def parity_report(request: Request, user: dict = _PARITY_REPORT_USER_DEFAULT) -> dict:
     """Where the store and the ward disagree, and what is not adopted yet.
-    Read-only; ids only, no drug names. Audited like the parity CLI."""
+    Read-only; ids only, no drug names. Audited like the parity CLI. Every
+    facility's rows, so a facility-bound administrator is refused."""
+    _require_group_wide(user, request, action="parity report")
     report = adoption.parity_report()
     log_phi_read(
         request=request,
@@ -381,14 +471,17 @@ def parity_report(request: Request, user: dict = _PARITY_REPORT_USER_DEFAULT):
 _ADOPT_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
-@router.post("/admin/adopt")
+@router.post("/admin/adopt", response_model=None)
 def adopt(
     request: Request,
     body: AdoptRequest | None = None,
     user: dict = _ADOPT_USER_DEFAULT,
-):
+) -> dict:
     """Adopt unlinked chart rows into the store (the one record-mode write, so
-    no lifecycle gate). Idempotent; one clinical_access audit row per batch."""
+    no lifecycle gate). Idempotent; one clinical_access audit row per batch.
+    It can reach every facility's rows, so a facility-bound administrator is
+    refused while more than one facility is on record."""
+    _require_group_wide(user, request, action="adoption")
     try:
         return adoption.adopt_legacy(
             trigger="admin",

@@ -42,6 +42,15 @@ WHY THE ROUTES ARE `admin.overview`
    as the TPA desk (see routes/payer_routes.py for the same note). Inventing a
    permission this module cannot grant would produce a screen nobody can open. A
    dedicated `abdm.read` / `abdm.write` pair is recorded as a followup.
+
+ONE FACILITY AT A TIME (multisite-9b)
+   With more than one facility of a group on the appliance the lists, the
+   summary and the linking queue are the caller's facility's
+   (permissions.facility_scope, passed to the service as `facilities`): patients
+   whose latest encounter is there, and for the queue encounters AT the
+   caller's facility. Records named by id already pass enforce_patient_scope,
+   which applies the facility; a care context of another facility answers 404
+   at unlink. One facility on record: the scope is None and nothing changes.
 """
 
 from __future__ import annotations
@@ -50,7 +59,12 @@ import logging
 
 import config
 from fastapi import APIRouter, Depends, HTTPException, Query
-from permissions import department_scope, enforce_patient_scope, require_permission
+from permissions import (
+    department_scope,
+    enforce_patient_scope,
+    facility_scope,
+    require_permission,
+)
 from pydantic import BaseModel, Field
 from services.abdm_service import (
     CONSENT_STATUSES,
@@ -358,7 +372,7 @@ _SUMMARY_M_DEFAULT = Depends(require_module)
 
 @router.get("/summary")
 def summary(user: dict = _SUMMARY_USER_DEFAULT, _m: None = _SUMMARY_M_DEFAULT) -> dict:
-    return _wrap(abdm_summary(department=department_scope(user)))
+    return _wrap(abdm_summary(department=department_scope(user), facilities=facility_scope(user)))
 
 
 _CHECK_USER_DEFAULT = Depends(_DESK)
@@ -420,6 +434,7 @@ def identities(
         department=department_scope(user),
         active_only=active_only,
         limit=limit,
+        facilities=facility_scope(user),
     )
     if patient_id:
         # Fail-closed: a named patient's national health id is PHI, and a read
@@ -487,6 +502,7 @@ def create_identity(
         is_primary=body.is_primary,
         # A duplicate refusal names the other patient only inside this scope.
         department=department_scope(user),
+        facilities=facility_scope(user),
     )
     _audit(
         user,
@@ -640,6 +656,7 @@ def care_contexts(
         status=status,
         department=department_scope(user),
         limit=limit,
+        facilities=facility_scope(user),
     )
     if patient_id:
         _audit(
@@ -725,6 +742,7 @@ def unlink(
         reason=body.reason,
         actor_id=user.get("id") or "",
         unlinked_at=body.unlinked_at,
+        facilities=facility_scope(user),
     )
     _audit(
         user,
@@ -767,6 +785,7 @@ def consents(
         status=status,
         department=department_scope(user),
         limit=limit,
+        facilities=facility_scope(user),
     )
     if patient_id:
         _audit(
@@ -1006,19 +1025,24 @@ def queue(
     department scope comes from the AUTHENTICATED USER, never from the request —
     there is no `department=` parameter here and there must never be one.
     """
+    facilities = facility_scope(user)
     payload = _handle(
         unlinked_encounter_queue,
         department=department_scope(user),
         bucket=bucket,
         include_discharged=include_discharged,
         limit=limit,
+        facilities=facilities,
     )
+    metadata: dict = {"counts": payload["counts"], "bucket": bucket}
+    if facilities is not None:
+        metadata["facility_scope"] = sorted(facilities)
     _audit(
         user,
         "queue_read",
         category="phi_access",
         summary=f"ABDM linking queue read ({payload['total']} encounters)",
         target_type="care_context",
-        metadata={"counts": payload["counts"], "bucket": bucket},
+        metadata=metadata,
     )
     return _wrap(payload)

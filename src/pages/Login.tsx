@@ -103,6 +103,11 @@ export default function Login() {
       department,
       registrationNumber: data.user.registration_number,
       authMethod,
+      // Kept in the stored sign-in, which every tab of this browser shares, so
+      // a tab can tell when another one moves it to another facility
+      // (multisite-19) and reload rather than keep one facility's screens
+      // under a session answered for another.
+      facility: data.user.facility ?? null,
     }
     login(user)
     navigate(normalizedRole === 'patient' ? '/bridge' : '/dashboard')

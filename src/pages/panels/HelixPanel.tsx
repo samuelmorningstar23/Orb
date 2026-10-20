@@ -42,6 +42,18 @@ type CatalogEntry = ComponentProps<typeof HelixFormulary>['catalog'][number]
  *  tests it for truthiness, so a null is read the same as a missing note. */
 type ReviewOrder = ComponentProps<typeof HelixOrderReviewModal>['order']
 
+/** The facility whose stock the inventory answer is (multisite-14). The
+ *  server sends it only while more than one facility is on record and the
+ *  pharmacist works at one; it is absent or null on every other site. */
+type StockFacility = { id: number; code: string | null; name: string | null }
+
+/** The words the header uses for that facility: its name, else its code. */
+function stockFacilityLabel(facility: StockFacility | null | undefined): string | null {
+  if (!facility) return null
+  const name = (facility.name || '').trim() || (facility.code || '').trim()
+  return name || null
+}
+
 export default function HelixPanel() {
   const [activeView, setActiveView] = useState<HelixView>('dashboard')
   const [loading, setLoading] = useState(true)
@@ -49,6 +61,7 @@ export default function HelixPanel() {
   const [orders, setOrders] = useState<QueueOrder[]>([])
   const [inventory, setInventory] = useState<InventoryLot[]>([])
   const [catalog, setCatalog] = useState<CatalogEntry[]>([])
+  const [stockFacility, setStockFacility] = useState<string | null>(null)
   const [selectedOrder, setSelectedOrder] = useState<SelectedOrder | null>(null)
   /* A failed load used to console.error and fall through with orders=[], so the
      pharmacist's work queue rendered EMPTY — indistinguishable from "nothing to
@@ -69,12 +82,13 @@ export default function HelixPanel() {
     try {
       const [ordersRes, invRes, catRes] = await Promise.all([
         apiFetch<{ orders: QueueOrder[] }>('/helix/orders'),
-        apiFetch<{ inventory: InventoryLot[] }>('/helix/inventory'),
+        apiFetch<{ inventory: InventoryLot[]; facility?: StockFacility | null }>('/helix/inventory'),
         apiFetch<{ catalog: CatalogEntry[] }>('/helix/catalog')
       ])
       if (seq !== loadSeq.current) return
       setOrders(ordersRes.orders || [])
       setInventory(invRes.inventory || [])
+      setStockFacility(stockFacilityLabel(invRes.facility))
       setCatalog(catRes.catalog || [])
       setError(null)
       setRefreshFailed(false)
@@ -131,6 +145,7 @@ export default function HelixPanel() {
             role={refreshFailed ? 'alert' : undefined}
           >
             Medication orders, verification, and fulfillment
+            {stockFacility && <> · stock at <span data-testid="helix-stock-facility">{stockFacility}</span></>}
             {loadedAt && <> · updated <span className="orb-home__clock">{formatUTCTime(loadedAt)}</span></>}
             {refreshFailed && <> · the last refresh failed, so these lists may be out of date</>}
           </p>

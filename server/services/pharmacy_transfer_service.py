@@ -149,6 +149,17 @@ Ward lots are never dispensable by Helix (pharmacy_stock_service.shelf_lot_sql
 takes only the dispensing store and the NDPS vault), and giving a dose from
 ward stock still needs an active eMAR order: nothing here touches the eMAR.
 
+PER FACILITY (multisite-8h3, ruling MS-R9 (a): a drug licence is per premises).
+Once more than one facility is on record a transfer never crosses facilities:
+both its stores must be at one facility (409 cross_facility_transfer, nothing
+written), a ward indent is issued from the dispensing store of the ward
+store's own facility, the lists and the transfer screen's stores are the
+caller's facilities' only (facilities=, from permissions.facility_scope), and
+a ward account and the pharmacy desk see only the ward stores at their
+facilities (_ward_scope_sql). The routes check a named transfer or store
+against the caller's facilities first (services/pharmacy_facility.gate). With
+one facility on record nothing here reads anything new.
+
 THE BARRED LIST (GRN-RS5 (b), strictest reading). It starts from
 drug_safety_service's curated dose and route rules: every rule whose source
 cites the ISMP high-alert list bars every drug its names match. Concentrated
@@ -451,6 +462,25 @@ def _check_store(store: Mapping, *, ward_ok: bool = False) -> None:
     if not store["is_active"]:
         raise TransferError(
             f"{_store_name(store)} is closed. Reopen it in Masters first.", code="store_inactive"
+        )
+
+
+def _check_one_facility(conn: Any, from_store: Mapping, to_store: Mapping) -> None:
+    """Both ends of a transfer at one facility (multisite-8h3, ruling MS-R9
+    (a): a drug licence is per premises, so stock never moves between
+    facilities by transfer). Nothing is read with one facility on record."""
+    from services import pharmacy_facility
+
+    if not pharmacy_facility.multi(conn):
+        return
+    here = pharmacy_facility.store_facility(conn, from_store["id"])
+    there = pharmacy_facility.store_facility(conn, to_store["id"])
+    if here is None or there is None or int(here) != int(there):
+        raise TransferError(
+            f"{_store_name(from_store)} and {_store_name(to_store)} are at different "
+            "facilities. Stock does not move between facilities by transfer. Nothing was "
+            "changed.",
+            code="cross_facility_transfer",
         )
 
 
@@ -931,11 +961,20 @@ def get_transfer(transfer_id: Any) -> dict | None:
 
 
 def list_transfers(
-    *, status: str | None = None, store_id: int | None = None, limit: int = 100
+    *,
+    status: str | None = None,
+    store_id: int | None = None,
+    limit: int = 100,
+    facilities: frozenset[int] | None = None,
 ) -> list[dict]:
     """Newest first. `status` is one status or 'open' (on its way: dispatched
-    or partly received); `store_id` keeps transfers leaving or entering it."""
+    or partly received); `store_id` keeps transfers leaving or entering it;
+    `facilities` (multisite-8h3) keeps the transfers between stores at the
+    caller's facilities."""
+    from services.pharmacy_facility import store_ids_sql
+
     sql = "SELECT * FROM pharmacy_transfers WHERE 1 = 1"
+    sql += store_ids_sql("from_store_id", facilities) + store_ids_sql("to_store_id", facilities)
     params: list[Any] = []
     if status:
         if status == OPEN_FILTER:
@@ -1013,11 +1052,15 @@ def options(actor: Mapping) -> dict:
     """The stores a transfer may run between, the people who may witness a
     controlled transfer (never the caller, only active users with a signing
     PIN; empty for a caller without pharmacy_store.ndps), and the site's
-    settings for the screen."""
+    settings for the screen. Once more than one facility is on record, the
+    stores are those at the caller's facilities (multisite-8h3)."""
     from permissions import PHARMACY_STORE_NDPS, ROLE_PERMISSIONS
+
+    from services.pharmacy_facility import column_sql, scope
 
     me = str(actor.get("id") or "")
     may_ndps = _may_ndps(actor)
+    facility_sql = column_sql("facility_id", scope(actor))
     with db_session() as conn:
         marks = ",".join("?" for _ in TRANSFER_STORE_KINDS)
         stores = [
@@ -1029,7 +1072,7 @@ def options(actor: Mapping) -> dict:
             }
             for s in conn.execute(
                 f"SELECT {_STORE_COLUMNS} FROM stores WHERE is_active = 1 "
-                f"AND pharmacy_kind IN ({marks}) ORDER BY name, code",
+                f"AND pharmacy_kind IN ({marks}){facility_sql} ORDER BY name, code",
                 TRANSFER_STORE_KINDS,
             ).fetchall()
         ]
@@ -1327,6 +1370,7 @@ def create_transfer(
             raise TransferError("a transfer goes from one store to another", code="same_store")
         _check_store(from_store)
         _check_store(to_store)
+        _check_one_facility(conn, from_store, to_store)
         if key:
             prior = conn.execute(
                 "SELECT * FROM pharmacy_transfers WHERE idempotency_key = ?", (key,)
@@ -1460,7 +1504,7 @@ def replan_transfer(transfer_id: Any, *, actor: Mapping, audit_ctx: Mapping | No
     return {"transfer": doc, "replayed": False}
 
 
-def _dispatch_checks(conn, row: Mapping) -> tuple | None:
+def _dispatch_checks(conn: Any, row: Mapping) -> tuple | None:
     """Everything a dispatch checks before any stock moves, read again inside
     the write: None when the transfer was already dispatched (a replay), else
     (lines, from_store, to_store, {drug id: drug row}). Refuses a cancelled
@@ -1490,6 +1534,8 @@ def _dispatch_checks(conn, row: Mapping) -> tuple | None:
     ward_ok = row["source_indent_ref"] is not None
     _check_store(from_store, ward_ok=ward_ok)
     _check_store(to_store, ward_ok=ward_ok)
+    # Read again at dispatch: nothing leaves for another facility's store.
+    _check_one_facility(conn, from_store, to_store)
     drugs: dict[str, Any] = {}
     for line in lines:
         did = line["helix_medication_id"]
@@ -2413,26 +2459,38 @@ def _is_desk(actor: Mapping) -> bool:
     return _holds(actor, PHARMACY_STORE_READ)
 
 
-def _ward_scope_sql(actor: Mapping, alias: str = "s") -> tuple[str, tuple]:
+def _ward_scope_sql(actor: Mapping, alias: str = "s", conn: Any = None) -> tuple[str, tuple]:
     """The condition on stores `alias` for the ward stores this caller sees.
     `alias` is a literal from this module. A ward account with no department
-    on record sees none (a blank department is not every ward here)."""
+    on record sees none (a blank department is not every ward here).
+
+    Once more than one facility is on record (multisite-8h3) the desk and the
+    ward alike see only the ward stores at their own facilities (the store's
+    facility_id, inlined, so no parameter is added). `conn` is the caller's
+    open connection, so the facility scope is never read in a second session
+    inside the caller's write transaction."""
+    from services.pharmacy_facility import column_sql, scope
+
+    facility_sql = column_sql(f"{alias}.facility_id", scope(actor, db=conn))
     if _is_desk(actor):
-        return "1 = 1", ()
+        return "1 = 1" + facility_sql, ()
     from permissions import department_scope
 
     dept = department_scope(dict(actor))
     if dept is None:
         return "0 = 1", ()
-    return f"lower(trim(COALESCE({alias}.department, ''))) = lower(trim(?))", (dept,)
+    return (
+        f"lower(trim(COALESCE({alias}.department, ''))) = lower(trim(?)){facility_sql}",
+        (dept,),
+    )
 
 
 def _ward_kinds_sql(alias: str = "s") -> str:
     return f"{alias}.pharmacy_kind IN ({','.join(repr(k) for k in WARD_STORE_KINDS)})"
 
 
-def _ward_store_visible(conn, actor: Mapping, store_id: int) -> bool:
-    cond, params = _ward_scope_sql(actor, "s")
+def _ward_store_visible(conn: Any, actor: Mapping, store_id: int) -> bool:
+    cond, params = _ward_scope_sql(actor, "s", conn)
     return (
         conn.execute(
             f"SELECT 1 FROM stores s WHERE s.id = ? AND {_ward_kinds_sql('s')} AND {cond}",
@@ -2442,8 +2500,8 @@ def _ward_store_visible(conn, actor: Mapping, store_id: int) -> bool:
     )
 
 
-def _visible_ward_stores(conn, actor: Mapping) -> list[dict]:
-    cond, params = _ward_scope_sql(actor, "s")
+def _visible_ward_stores(conn: Any, actor: Mapping) -> list[dict]:
+    cond, params = _ward_scope_sql(actor, "s", conn)
     return [
         dict(r)
         for r in conn.execute(
@@ -2455,11 +2513,11 @@ def _visible_ward_stores(conn, actor: Mapping) -> list[dict]:
     ]
 
 
-def _ward_store_by_code(conn, actor: Mapping, code: Any):
+def _ward_store_by_code(conn: Any, actor: Mapping, code: Any) -> Any:
     text = (code or "").strip().upper() if isinstance(code, str) else ""
     if not text:
         raise TransferError("choose the ward store", code="store_required")
-    cond, params = _ward_scope_sql(actor, "s")
+    cond, params = _ward_scope_sql(actor, "s", conn)
     row = conn.execute(
         f"SELECT s.* FROM stores s WHERE upper(s.code) = ? AND {_ward_kinds_sql('s')} AND {cond}",
         (text, *params),
@@ -2469,11 +2527,24 @@ def _ward_store_by_code(conn, actor: Mapping, code: Any):
     return row
 
 
-def _dispensing_store(conn):
-    row = conn.execute(
-        f"SELECT {_STORE_COLUMNS} FROM stores WHERE pharmacy_kind = ? AND is_active = 1",
-        (stock.DISPENSING_STORE_KIND,),
-    ).fetchone()
+def _dispensing_store(conn: Any, ward_store: Mapping | None = None) -> Any:
+    """The active dispensing store a ward is issued from. Once more than one
+    facility is on record (multisite-8h3), the one at `ward_store`'s own
+    facility: a ward is never issued another facility's stock."""
+    from services import pharmacy_facility
+
+    if ward_store is not None and pharmacy_facility.multi(conn):
+        home = pharmacy_facility.store_facility(conn, ward_store["id"])
+        row = conn.execute(
+            f"SELECT {_STORE_COLUMNS} FROM stores WHERE pharmacy_kind = ? AND is_active = 1 "
+            "AND facility_id IS ?",
+            (stock.DISPENSING_STORE_KIND, home),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            f"SELECT {_STORE_COLUMNS} FROM stores WHERE pharmacy_kind = ? AND is_active = 1",
+            (stock.DISPENSING_STORE_KIND,),
+        ).fetchone()
     if row is None:
         raise TransferError(
             "this site has no dispensing pharmacy in use, so nothing can be "
@@ -2995,7 +3066,7 @@ def raise_ward_indent(
             raise TransferError(
                 f"{_store_name(store)} is closed. Nothing was changed.", code="store_inactive"
             )
-        dispensing = _dispensing_store(conn)
+        dispensing = _dispensing_store(conn, store)
         drugs: dict[str, Any] = {}
         for req in requests:
             drug = _find_drug(conn, req["drug_id"])
@@ -3274,7 +3345,7 @@ def ward_issue_plan(indent_id: Any, *, actor: Mapping, today: str | None = None)
     with db_session() as conn:
         row = _indent_row(conn, indent_id, actor)
         store = conn.execute("SELECT * FROM stores WHERE id = ?", (row["store_id"],)).fetchone()
-        dispensing = _dispensing_store(conn)
+        dispensing = _dispensing_store(conn, store)
         out = []
         for line in _issuable(conn, row):
             drug = _find_drug(conn, line["helix_medication_id"])
@@ -3409,9 +3480,10 @@ def issue_ward_indent(
             raise TransferError(
                 f"{_store_name(to_store)} is closed. Nothing was changed.", code="store_inactive"
             )
-        from_store = _dispensing_store(conn)
+        from_store = _dispensing_store(conn, to_store)
         _check_store(from_store)
         _check_store(to_store, ward_ok=True)
+        _check_one_facility(conn, from_store, to_store)
         issuable = {int(line["line_no"]): line for line in _issuable(conn, row)}
         if chosen is not None:
             unknown = sorted(set(chosen) - set(issuable))

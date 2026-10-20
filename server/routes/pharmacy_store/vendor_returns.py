@@ -32,6 +32,12 @@ permission or a witness refusal is 403; a locked witness PIN is 429; a move the
 status does not allow, more units than the lot holds or a reused request key
 is 409; an audit outage is 503 audit_unavailable and nothing was changed;
 anything the request must correct is 422.
+
+PER FACILITY (multisite-8h3, ruling MS-R9 (a)). With more than one facility on
+record, a return or store of another facility is 404 after an authorization
+'facility_document_denied' row (services/pharmacy_facility.gate), and the list
+and the form's stores are the caller's facilities' only. With one facility on
+record nothing here changes.
 """
 
 import uuid
@@ -43,15 +49,32 @@ from permissions import (
     PHARMACY_STORE_NDPS,
     PHARMACY_STORE_READ,
     PHARMACY_STORE_WRITE,
+    facility_scope,
     has_permission,
     require_permission,
 )
 from pydantic import BaseModel, Field
 from services.audit_service import AuditWriteError
 
+from services import pharmacy_facility
 from services import pharmacy_purchasing_service as purchasing
 
 router = APIRouter()
+
+
+def _return_gate(user: dict, return_id: Any, request: Request) -> None:
+    """404 for a return to vendor from another facility's store (multisite-8h3)."""
+    pharmacy_facility.gate(
+        user, "vendor_return", return_id, request, message=f"No return to vendor {return_id}"
+    )
+
+
+def _store_gate(user: dict, store_code: Any, request: Request) -> None:
+    """404 for a store of another facility named in the request."""
+    pharmacy_facility.gate(
+        user, "store_code", store_code, request, message=f"no pharmacy store {store_code!r}"
+    )
+
 
 _PS_READ = require_permission(PHARMACY_STORE_READ)
 _PS_WRITE = require_permission(PHARMACY_STORE_READ, PHARMACY_STORE_WRITE)
@@ -165,10 +188,13 @@ def list_vendor_returns(
     status: str | None = _LIST_VENDOR_RETURNS_STATUS_DEFAULT,
     limit: int = _LIST_VENDOR_RETURNS_LIMIT_DEFAULT,
     user: dict = _LIST_VENDOR_RETURNS_USER_DEFAULT,
-):
+) -> dict:
+    """Returns to vendor, newest first (the caller's facilities only)."""
     try:
         return {
-            "vendor_returns": purchasing.list_vendor_returns(status=status or None, limit=limit)
+            "vendor_returns": purchasing.list_vendor_returns(
+                status=status or None, limit=limit, facilities=facility_scope(user)
+            )
         }
     except purchasing.PurchasingError as exc:
         raise _fail(exc, request, user) from exc
@@ -178,9 +204,10 @@ _VENDOR_RETURN_OPTIONS_USER_DEFAULT = Depends(_PS_READ)
 
 
 @router.get("/vendor-returns/options")
-def vendor_return_options(user: dict = _VENDOR_RETURN_OPTIONS_USER_DEFAULT):
-    """Stores stock goes back from, vendors, who may witness a controlled
-    return (never the caller) and the near-expiry window."""
+def vendor_return_options(user: dict = _VENDOR_RETURN_OPTIONS_USER_DEFAULT) -> dict:
+    """Stores stock goes back from (the caller's facilities'), vendors, who
+    may witness a controlled return (never the caller) and the near-expiry
+    window."""
     return purchasing.vendor_return_options(user)
 
 
@@ -193,9 +220,10 @@ def vendor_return_stock(
     request: Request,
     store_code: str = _VENDOR_RETURN_STOCK_STORE_CODE_DEFAULT,
     user: dict = _VENDOR_RETURN_STOCK_USER_DEFAULT,
-):
+) -> dict:
     """The lots of one store that may go back to a vendor now: held off the
-    shelf, expired or near expiry."""
+    shelf, expired or near expiry. A store of another facility is 404."""
+    _store_gate(user, store_code, request)
     try:
         return purchasing.returnable_stock(store_code)
     except purchasing.PurchasingError as exc:
@@ -206,7 +234,11 @@ _GET_VENDOR_RETURN_USER_DEFAULT = Depends(_PS_READ)
 
 
 @router.get("/vendor-returns/{return_id}")
-def get_vendor_return(return_id: int, user: dict = _GET_VENDOR_RETURN_USER_DEFAULT):
+def get_vendor_return(
+    return_id: int, request: Request, user: dict = _GET_VENDOR_RETURN_USER_DEFAULT
+) -> dict:
+    """One return with its lines; a return of another facility is 404."""
+    _return_gate(user, return_id, request)
     doc = purchasing.get_vendor_return(return_id)
     if doc is None:
         raise HTTPException(
@@ -244,8 +276,10 @@ def create_vendor_return(
     request: Request,
     idempotency_key: str | None = _CREATE_VENDOR_RETURN_IDEMPOTENCY_KEY_DEFAULT,
     user: dict = _CREATE_VENDOR_RETURN_USER_DEFAULT,
-):
-    """Draft a return. Nothing leaves the shelf until it is posted."""
+) -> dict:
+    """Draft a return. Nothing leaves the shelf until it is posted. A store
+    of another facility is 404."""
+    _store_gate(user, body.store_code, request)
     try:
         return purchasing.create_vendor_return(
             vendor_code=body.vendor_code,
@@ -274,8 +308,10 @@ _POST_VENDOR_RETURN_USER_DEFAULT = Depends(_PS_APPROVE)
 @router.post("/vendor-returns/{return_id}/post")
 def post_vendor_return(
     return_id: int, body: WitnessIn, request: Request, user: dict = _POST_VENDOR_RETURN_USER_DEFAULT
-):
-    """Send it back. A return already sent posts nothing again."""
+) -> dict:
+    """Send it back. A return already sent posts nothing again. A return of
+    another facility is 404."""
+    _return_gate(user, return_id, request)
     try:
         return purchasing.post_vendor_return(
             return_id,
@@ -303,7 +339,9 @@ def credit_vendor_return(
     body: CreditIn,
     request: Request,
     user: dict = _CREDIT_VENDOR_RETURN_USER_DEFAULT,
-):
+) -> dict:
+    """Record the vendor's credit note; a return of another facility is 404."""
+    _return_gate(user, return_id, request)
     try:
         return purchasing.record_vendor_credit(
             return_id, credit_note_ref=body.credit_note_ref, actor=user, audit_ctx=_ctx(request)
@@ -327,7 +365,9 @@ def cancel_vendor_return(
     body: CancelIn,
     request: Request,
     user: dict = _CANCEL_VENDOR_RETURN_USER_DEFAULT,
-):
+) -> dict:
+    """Give up a draft, with a reason; a return of another facility is 404."""
+    _return_gate(user, return_id, request)
     try:
         return purchasing.cancel_vendor_return(
             return_id, reason=body.reason, actor=user, audit_ctx=_ctx(request)

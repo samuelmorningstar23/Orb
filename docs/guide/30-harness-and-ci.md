@@ -435,7 +435,7 @@ The harness **owns no REST routes**, it is a *consumer*. What it depends on from
 
 | Contract | Surface | Consumed by | Owning guide |
 |----------|---------|-------------|--------------|
-| `POST /api/auth/login` returns 200 + `{token}` | REST (prefix `/api/auth`, verified `server/routes/auth_routes.py:14`) | `login()` helper | 03-auth |
+| `POST /api/auth/login` returns 200 + `{token}` | REST (prefix `/api/auth`, verified `server/routes/auth_routes.py:15`) | `login()` helper | 03-auth |
 | `GET /api/vigil/patients` returns `[{id,...}]` | REST (prefix `/api/vigil`, `server/routes/vigil_routes.py:11`) | spec 03 fetches a real patient id | 08-vigil |
 | `GET /api/health` returns 200 | REST (`server/main.py:454`) | Dockerfile HEALTHCHECK | 29-observability |
 | `GET /metrics` Prometheus text | REST | Grafana dashboard | 29-observability |

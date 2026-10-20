@@ -113,9 +113,25 @@ from db_backend import DBIntegrityError
 
 from services import facility_stamp
 from services.billing_masters import SeriesNotSetUp, next_document_number
+from services.facility_filter import column_clause
 from services.hospital_time import hospital_now, hospital_today
 
 logger = logging.getLogger("orb.dietary")
+
+# ── One facility at a time (multisite-9b) ────────────────────────────────────
+# With more than one facility of a hospital group on the appliance a ward desk,
+# a dietitian and a kitchen work for their own facility. Every reader and
+# writer below takes `facilities` (permissions.facility_scope of the caller;
+# None is no facility limit, the empty set is nothing):
+#   * a diet order belongs to the facility of its patient's latest admission
+#     (the `a` row _ADMITTED_JOIN picks, admissions.facility_id), so the ward
+#     view, the unordered list, lapsed orders, the tiles and the kitchen's live
+#     counts keep to the caller's facility;
+#   * a meal plan belongs to its ward's facility: Bed setup's, else that of the
+#     stays on the ward; a plan or a ward of another facility answers exactly
+#     like one that does not exist, and a ward nothing places is no facility's;
+#   * a kitchen indent carries its own facility (migration 75).
+# With one facility on record the callers pass None and nothing here changes.
 
 __all__ = [
     "DietaryError",
@@ -461,18 +477,20 @@ _STILL_ADMITTED = "a.status = 'active' AND p.status <> 'discharged'"
 
 
 def _active_diet_rows(
-    db,
+    db: Any,
     *,
     ward: str | None = None,
     department: str | None = None,
     patient_id: str | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> list[dict]:
     """Every ACTIVE diet order belonging to a patient who is STILL ADMITTED.
 
     The single source of the kitchen count and of the ward view. `department`
     is the caller's ward scope (permissions.department_scope) — filtering on
     `a.department` here is the same derivation as PATIENT_DEPARTMENT_SQL because
-    `a` IS that latest-admission row.
+    `a` IS that latest-admission row. `facilities` keeps it to the admissions
+    at those facilities (multisite-9b, see the block above).
     """
     where = ["d.status = 'active'", _STILL_ADMITTED]
     params: list[Any] = []
@@ -485,12 +503,39 @@ def _active_diet_rows(
     if patient_id:
         where.append("d.patient_id = ?")
         params.append(patient_id)
+    fac_sql, fac_args = column_clause("a.facility_id", facilities)
     rows = db.execute(
-        f"SELECT {_ORDER_COLUMNS} {_ADMITTED_JOIN} WHERE {' AND '.join(where)} "
+        f"SELECT {_ORDER_COLUMNS} {_ADMITTED_JOIN} WHERE {' AND '.join(where)}{fac_sql} "
         f"ORDER BY a.ward, a.bed, p.name",
-        tuple(params),
+        (*params, *fac_args),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def _ward_facility_on(db: Any, ward: str | None) -> int | None:
+    """The facility a ward is at: Bed setup's (through its department), else
+    the one facility of the admissions recorded on it; None when neither tells
+    (multisite-9b)."""
+    fid = facility_stamp.ward_facility(db, ward=ward)
+    if fid is not None or not (ward or "").strip():
+        return fid
+    held = {
+        int(r[0])
+        for r in db.execute(
+            "SELECT DISTINCT a.facility_id FROM admissions a "
+            "WHERE UPPER(TRIM(a.ward)) = UPPER(TRIM(?)) AND a.facility_id IS NOT NULL",
+            (ward,),
+        ).fetchall()
+    }
+    return held.pop() if len(held) == 1 else None
+
+
+def _ward_in_scope(db: Any, ward: str | None, facilities: frozenset[int] | None) -> bool:
+    """May a caller with `facilities` work this ward? Always with no limit."""
+    if facilities is None:
+        return True
+    fid = _ward_facility_on(db, ward)
+    return fid is not None and fid in facilities
 
 
 def _decorate(row: dict, *, now: datetime | None = None) -> dict:
@@ -789,15 +834,22 @@ def patient_diet_history(patient_id: str, *, limit: int = 50) -> list[dict]:
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def list_wards(*, department: str | None = None) -> list[dict]:
+def list_wards(
+    *, department: str | None = None, facilities: frozenset[int] | None = None
+) -> list[dict]:
     """Wards with at least one currently-admitted patient, and how many of them
     hold a diet order. The gap between the two numbers is the useful figure: it
-    is how many patients on that ward nobody has written a diet for."""
+    is how many patients on that ward nobody has written a diet for. Only the
+    admissions at `facilities` count (multisite-9b)."""
     where = ["a.status = 'active'", "p.status <> 'discharged'"]
     params: list[Any] = []
     if department:
         where.append("a.department = ?")
         params.append(department)
+    fac_sql, fac_args = column_clause("a.facility_id", facilities)
+    if fac_sql:
+        where.append(fac_sql.removeprefix(" AND "))
+        params.extend(fac_args)
     with db_session() as db:
         rows = db.execute(
             f"""SELECT a.ward AS ward,
@@ -832,8 +884,14 @@ def list_wards(*, department: str | None = None) -> list[dict]:
     return out
 
 
-def ward_view(*, ward: str | None = None, department: str | None = None) -> dict:
-    """The nurse's and dietitian's screen for one ward.
+def ward_view(
+    *,
+    ward: str | None = None,
+    department: str | None = None,
+    facilities: frozenset[int] | None = None,
+) -> dict:
+    """The nurse's and dietitian's screen for one ward (the caller's
+    facilities' patients only, multisite-9b).
 
     Returns NPO patients as their OWN list as well as inside `rows`. That
     duplication is the point: a panel that has to filter a mixed list to find who
@@ -846,10 +904,12 @@ def ward_view(*, ward: str | None = None, department: str | None = None) -> dict
     an order for cannot show you the one they forgot.
     """
     with db_session() as db:
-        rows = _active_diet_rows(db, ward=ward, department=department)
+        rows = _active_diet_rows(db, ward=ward, department=department, facilities=facilities)
         _attach_allergies(db, rows)
         decorated = [_decorate(r) for r in rows]
-        unordered = _patients_without_orders(db, ward=ward, department=department)
+        unordered = _patients_without_orders(
+            db, ward=ward, department=department, facilities=facilities
+        )
 
     npo_rows = [r for r in decorated if r["is_npo"]]
     meal_rows = [r for r in decorated if not r["is_npo"]]
@@ -878,7 +938,11 @@ def ward_view(*, ward: str | None = None, department: str | None = None) -> dict
 
 
 def _patients_without_orders(
-    db, *, ward: str | None = None, department: str | None = None
+    db: Any,
+    *,
+    ward: str | None = None,
+    department: str | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> list[dict]:
     where = ["a.status = 'active'", "p.status <> 'discharged'", "d.id IS NULL"]
     params: list[Any] = []
@@ -888,6 +952,10 @@ def _patients_without_orders(
     if department:
         where.append("a.department = ?")
         params.append(department)
+    fac_sql, fac_args = column_clause("a.facility_id", facilities)
+    if fac_sql:
+        where.append(fac_sql.removeprefix(" AND "))
+        params.extend(fac_args)
     rows = db.execute(
         f"""SELECT p.id AS patient_id, p.name AS patient_name, p.mrn AS patient_mrn,
                    a.ward AS ward, a.bed AS bed, a.department AS department
@@ -904,8 +972,11 @@ def _patients_without_orders(
     return [dict(r) for r in rows]
 
 
-def stale_orders(*, department: str | None = None) -> list[dict]:
-    """Active diet orders whose patient is NO LONGER being fed here.
+def stale_orders(
+    *, department: str | None = None, facilities: frozenset[int] | None = None
+) -> list[dict]:
+    """Active diet orders whose patient is NO LONGER being fed here (at the
+    caller's facilities: the patient's latest admission's, multisite-9b).
 
     The visible other half of "a discharged patient leaves the count". The count
     drops them silently and correctly; this list makes the drop VISIBLE, so a
@@ -918,6 +989,10 @@ def stale_orders(*, department: str | None = None) -> list[dict]:
     if department:
         where.append("a.department = ?")
         params.append(department)
+    fac_sql, fac_args = column_clause("a.facility_id", facilities)
+    if fac_sql:
+        where.append(fac_sql.removeprefix(" AND "))
+        params.extend(fac_args)
     with db_session() as db:
         rows = db.execute(
             f"SELECT {_ORDER_COLUMNS} {_ADMITTED_JOIN} WHERE {' AND '.join(where)} "
@@ -957,8 +1032,13 @@ def build_meal_plan(
     generated_by: str,
     service_date: str | None = None,
     notes: str | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Roll this ward's live diet orders into a count for one meal service.
+
+    With `facilities` (multisite-9b) a ward of another facility, or one no
+    facility can be told for, is refused as not found, and only the orders of
+    admissions at those facilities are counted.
 
     THE ARITHMETIC IS TRUE BY CONSTRUCTION, not by a later check: `total_meals`
     and the lines both come out of ONE `Counter`, so `total == sum(parts)` cannot
@@ -984,7 +1064,9 @@ def build_meal_plan(
     day = _as_date(service_date)
 
     with db_session(immediate=True) as db:
-        rows = _active_diet_rows(db, ward=ward)
+        if not _ward_in_scope(db, ward, facilities):
+            raise MealPlanError(f"ward {ward} not found among your facility's wards")
+        rows = _active_diet_rows(db, ward=ward, facilities=facilities)
         npo_rows = [r for r in rows if r["diet_type"] == NPO]
         meal_rows = [r for r in rows if r["diet_type"] != NPO]
         counts = Counter((r["diet_type"], r["texture"]) for r in meal_rows)
@@ -1054,16 +1136,19 @@ def build_meal_plan(
         return _load_meal_plan(db, plan_id)
 
 
-def lock_meal_plan(plan_id: int, *, locked_by: str) -> dict:
+def lock_meal_plan(
+    plan_id: int, *, locked_by: str, facilities: frozenset[int] | None = None
+) -> dict:
     """Freeze a plan so the kitchen can cook against a count that will not move.
 
     Locking is a precondition of raising an indent, and that ordering is the
     whole point: an indent raised off a count that is still being regenerated is
-    a number nobody can reconcile against the trays that arrived.
+    a number nobody can reconcile against the trays that arrived. A plan of
+    another facility than the caller's is not found (multisite-9b).
     """
     with db_session(immediate=True) as db:
         row = db.execute("SELECT * FROM meal_plans WHERE id = ?", (int(plan_id),)).fetchone()
-        if row is None:
+        if row is None or not _ward_in_scope(db, row["ward"], facilities):
             raise MealPlanError(f"meal plan {plan_id} not found")
         if row["status"] == "locked":
             return _load_meal_plan(db, int(plan_id))
@@ -1103,9 +1188,13 @@ def _load_meal_plan(db, plan_id: int) -> dict:
     return plan
 
 
-def get_meal_plan(plan_id: int) -> dict:
+def get_meal_plan(plan_id: int, *, facilities: frozenset[int] | None = None) -> dict:
+    """One plan; a plan of another facility than the caller's is not found."""
     with db_session() as db:
-        return _load_meal_plan(db, int(plan_id))
+        plan = _load_meal_plan(db, int(plan_id))
+        if not _ward_in_scope(db, plan.get("ward"), facilities):
+            raise MealPlanError(f"meal plan {plan_id} not found")
+        return plan
 
 
 def list_meal_plans(
@@ -1114,7 +1203,10 @@ def list_meal_plans(
     ward: str | None = None,
     meal_service: str | None = None,
     limit: int = 60,
+    facilities: frozenset[int] | None = None,
 ) -> list[dict]:
+    """Plans newest first; with `facilities`, only those facilities' wards'
+    plans (multisite-9b), the limit applied after that filter."""
     where: list[str] = []
     params: list[Any] = []
     if service_date:
@@ -1127,13 +1219,40 @@ def list_meal_plans(
         where.append("meal_service = ?")
         params.append(meal_service)
     clause = f"WHERE {' AND '.join(where)}" if where else ""
+    cap = max(1, min(int(limit), 300))
     with db_session() as db:
+        if facilities is not None:
+            ids = _plan_ids_in_scope(
+                db,
+                db.execute(
+                    f"SELECT id, ward FROM meal_plans {clause} "
+                    f"ORDER BY service_date DESC, ward, meal_service",
+                    tuple(params),
+                ).fetchall(),
+                facilities,
+            )
+            return [_load_meal_plan(db, plan_id) for plan_id in ids[:cap]]
         rows = db.execute(
             f"SELECT id FROM meal_plans {clause} "
             f"ORDER BY service_date DESC, ward, meal_service LIMIT ?",
-            tuple(params) + (max(1, min(int(limit), 300)),),
+            tuple(params) + (cap,),
         ).fetchall()
         return [_load_meal_plan(db, int(r["id"])) for r in rows]
+
+
+def _plan_ids_in_scope(db: Any, rows: Iterable[Any], facilities: frozenset[int]) -> list[int]:
+    """The plan ids (in order) whose ward is at one of `facilities`; each ward
+    is placed once."""
+    placed: dict[str, int | None] = {}
+    out: list[int] = []
+    for row in rows:
+        ward = str(row["ward"] or "")
+        if ward not in placed:
+            placed[ward] = _ward_facility_on(db, ward)
+        fid = placed[ward]
+        if fid is not None and fid in facilities:
+            out.append(int(row["id"]))
+    return out
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1169,17 +1288,24 @@ def _kitchen_indent_facility(db: Any, *, ward: str | None, raised_by: str | None
         raise KitchenIndentError(exc.message) from exc
 
 
-def raise_kitchen_indent(*, meal_plan_id: int, raised_by: str, notes: str | None = None) -> dict:
+def raise_kitchen_indent(
+    *,
+    meal_plan_id: int,
+    raised_by: str,
+    notes: str | None = None,
+    facilities: frozenset[int] | None = None,
+) -> dict:
     """Turn a LOCKED plan into the requisition the kitchen cooks against.
 
     The lines are COPIED from the plan rather than recomputed from live orders.
     That is deliberate and it is the difference between an indent and a report:
     the indent is what the ward asked for at the moment it asked, and it must not
     change under the kitchen's feet because a patient was admitted at 11:40.
+    A plan of another facility than the caller's is not found (multisite-9b).
     """
     with db_session(immediate=True) as db:
         plan = db.execute("SELECT * FROM meal_plans WHERE id = ?", (int(meal_plan_id),)).fetchone()
-        if plan is None:
+        if plan is None or not _ward_in_scope(db, plan["ward"], facilities):
             raise KitchenIndentError(f"meal plan {meal_plan_id} not found")
         if plan["status"] != "locked":
             raise KitchenIndentError(
@@ -1235,7 +1361,17 @@ def raise_kitchen_indent(*, meal_plan_id: int, raised_by: str, notes: str | None
         return _load_indent(db, indent_id)
 
 
-def issue_kitchen_indent(indent_id: int, *, issued_by: str) -> dict:
+def _indent_in_scope(row: Any, facilities: frozenset[int] | None) -> bool:
+    """Is this kitchen indent at one of `facilities`? Always with no limit."""
+    if facilities is None:
+        return True
+    fid = facility_stamp.row_facility(row)
+    return fid is not None and fid in facilities
+
+
+def issue_kitchen_indent(
+    indent_id: int, *, issued_by: str, facilities: frozenset[int] | None = None
+) -> dict:
     """Hand the indent to the kitchen, and allocate its number.
 
     The number comes from the EXISTING allocator (billing_masters.
@@ -1245,14 +1381,15 @@ def issue_kitchen_indent(indent_id: int, *, issued_by: str) -> dict:
 
     It is allocated at ISSUE, not at draft: a number is a thing people write on
     paper and quote on the phone, and a draft that is edited or abandoned must
-    not have consumed one.
+    not have consumed one. An indent of another facility than the caller's is
+    not found (multisite-9b).
     """
     with db_session() as db:
         row = db.execute(
             "SELECT id, status, facility_id FROM kitchen_indents WHERE id = ?",
             (int(indent_id),),
         ).fetchone()
-        if row is None:
+        if row is None or not _indent_in_scope(row, facilities):
             raise KitchenIndentError(f"kitchen indent {indent_id} not found")
         if row["status"] == "issued":
             return _load_indent(db, int(indent_id))
@@ -1299,12 +1436,20 @@ def issue_kitchen_indent(indent_id: int, *, issued_by: str) -> dict:
         return out
 
 
-def cancel_kitchen_indent(indent_id: int, *, cancelled_by: str, reason: str | None = None) -> dict:
+def cancel_kitchen_indent(
+    indent_id: int,
+    *,
+    cancelled_by: str,
+    reason: str | None = None,
+    facilities: frozenset[int] | None = None,
+) -> dict:
+    """Cancel an indent; one of another facility than the caller's is not
+    found (multisite-9b)."""
     with db_session(immediate=True) as db:
         row = db.execute(
-            "SELECT id, status FROM kitchen_indents WHERE id = ?", (int(indent_id),)
+            "SELECT id, status, facility_id FROM kitchen_indents WHERE id = ?", (int(indent_id),)
         ).fetchone()
-        if row is None:
+        if row is None or not _indent_in_scope(row, facilities):
             raise KitchenIndentError(f"kitchen indent {indent_id} not found")
         if row["status"] == "cancelled":
             return _load_indent(db, int(indent_id))
@@ -1345,9 +1490,13 @@ def _load_indent(db, indent_id: int) -> dict:
     return indent
 
 
-def get_kitchen_indent(indent_id: int) -> dict:
+def get_kitchen_indent(indent_id: int, *, facilities: frozenset[int] | None = None) -> dict:
+    """One indent; one of another facility than the caller's is not found."""
     with db_session() as db:
-        return _load_indent(db, int(indent_id))
+        indent = _load_indent(db, int(indent_id))
+    if not _indent_in_scope(indent, facilities):
+        raise KitchenIndentError(f"kitchen indent {indent_id} not found")
+    return indent
 
 
 def list_kitchen_indents(
@@ -1357,9 +1506,16 @@ def list_kitchen_indents(
     ward: str | None = None,
     status: str | None = None,
     limit: int = 60,
+    facilities: frozenset[int] | None = None,
 ) -> list[dict]:
+    """Indents newest first; with `facilities`, only those facilities'
+    (kitchen_indents.facility_id, multisite-9b)."""
     where: list[str] = []
     params: list[Any] = []
+    fac_sql, fac_args = column_clause("facility_id", facilities)
+    if fac_sql:
+        where.append(fac_sql.removeprefix(" AND "))
+        params.extend(fac_args)
     if service_date:
         where.append("service_date = ?")
         params.append(_as_date(service_date))
@@ -1387,8 +1543,15 @@ def list_kitchen_indents(
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def kitchen_board(*, service_date: str | None = None, meal_service: str | None = None) -> dict:
+def kitchen_board(
+    *,
+    service_date: str | None = None,
+    meal_service: str | None = None,
+    facilities: frozenset[int] | None = None,
+) -> dict:
     """What the kitchen needs: how many of what, for which ward, right now.
+    With `facilities` it is those facilities' kitchen: their admissions' live
+    orders and their wards' plans (multisite-9b).
 
     NO PHI. Not a name, not an MRN, not a bed, not an allergy — ward labels and
     integers only. The kitchen does not need to know who is diabetic in order to
@@ -1406,15 +1569,20 @@ def kitchen_board(*, service_date: str | None = None, meal_service: str | None =
     services = (meal_service,) if meal_service in MEAL_SERVICES else MEAL_SERVICES
 
     with db_session() as db:
-        live_rows = _active_diet_rows(db)
+        live_rows = _active_diet_rows(db, facilities=facilities)
         plans = db.execute(
-            "SELECT id FROM meal_plans WHERE service_date = ? "
+            "SELECT id, ward FROM meal_plans WHERE service_date = ? "
             "AND meal_service IN ({}) ORDER BY ward, meal_service".format(
                 ",".join("?" for _ in services)
             ),
             (day,) + tuple(services),
         ).fetchall()
-        plan_dicts = [_load_meal_plan(db, int(r["id"])) for r in plans]
+        plan_ids = (
+            [int(r["id"]) for r in plans]
+            if facilities is None
+            else _plan_ids_in_scope(db, plans, facilities)
+        )
+        plan_dicts = [_load_meal_plan(db, plan_id) for plan_id in plan_ids]
 
     by_ward: dict[str, Counter] = {}
     npo_by_ward: Counter = Counter()
@@ -1473,14 +1641,17 @@ def kitchen_board(*, service_date: str | None = None, meal_service: str | None =
     }
 
 
-def dietary_summary(*, department: str | None = None) -> dict:
-    """The overview tiles. Every figure is a live count, never a stored one."""
+def dietary_summary(
+    *, department: str | None = None, facilities: frozenset[int] | None = None
+) -> dict:
+    """The overview tiles. Every figure is a live count, never a stored one,
+    over the caller's facilities' admissions (multisite-9b)."""
     with db_session() as db:
-        rows = _active_diet_rows(db, department=department)
+        rows = _active_diet_rows(db, department=department, facilities=facilities)
     decorated = [_decorate(dict(r)) for r in rows]
     npo = [r for r in decorated if r["is_npo"]]
-    stale = stale_orders(department=department)
-    wards = list_wards(department=department)
+    stale = stale_orders(department=department, facilities=facilities)
+    wards = list_wards(department=department, facilities=facilities)
     return {
         "active_orders": len(decorated),
         "meals": sum(1 for r in decorated if not r["is_npo"]),

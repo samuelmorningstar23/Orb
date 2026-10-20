@@ -44,26 +44,47 @@ the breakdown/downtime log, and AMC/CMC contracts.
 All handlers are plain `def`, so FastAPI runs them in a threadpool: everything
 below opens SQLite, and blocking the event loop is the failure mode this repo
 has shipped three production freezes from.
+
+ONE FACILITY AT A TIME (multisite-9b). A machine is registered at one facility
+(biomedical_assets.facility_id, migration 75). With more than one facility of a
+group on the appliance an engineer or a ward works with its own facility's
+machines: every list, count and ward view keeps to the caller's facilities'
+assets (and the schedules, calls and downtime of those assets), a machine,
+schedule or call of another facility answers 404 exactly like one that does not
+exist, and a new machine placed on another facility's department or ward is
+refused (403 facility_scope). A maintenance contract is shown to a facility's
+reader only when it covers one of that facility's machines, with only those
+machines listed and counted. A facility's account changes a contract only when
+it covers no other facility's machine (403 facility_scope otherwise, since its
+dates, status and coverage list are shared by every machine on it), and a
+contract it makes or amends must cover at least one of its own machines. With
+one facility on record the caller's facility scope is None and none of this
+runs.
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Iterable
+from typing import Any
 
 import config
+from database import db_session
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from permissions import (
     ADMIN_OVERVIEW,
     HELIX_READ,
     HELIX_WRITE,
     VITALS_READ,
+    facility_scope,
     require_permission,
 )
 from pydantic import BaseModel, Field
 from services.audit_service import log_audit_event
 
 from services import biomedical_service as svc
+from services import facility_stamp
 
 logger = logging.getLogger("orb.biomedical_routes")
 
@@ -110,6 +131,166 @@ def _fail(exc: svc.BiomedicalError) -> HTTPException:
         "bad_date_order": 422,
     }.get(exc.code, 400)
     return HTTPException(status_code=status, detail={"error": exc.code, "message": str(exc)})
+
+
+# ── Facilities (multisite-9b; see the module docstring) ─────────────────────
+
+#: Fetched for a facility-limited reader before a list's own limit is applied,
+#: so the list is cut after the facility filter, never before it.
+_SCOPED_FETCH = 1000
+
+
+def _asset_ids(facilities: frozenset[int]) -> set[int]:
+    """The ids of the machines registered at `facilities`."""
+    ids = sorted(int(f) for f in facilities)
+    if not ids:
+        return set()
+    marks = ", ".join("?" for _ in ids)
+    with db_session() as db:
+        rows = db.execute(
+            f"SELECT id FROM biomedical_assets WHERE facility_id IN ({marks})", ids
+        ).fetchall()
+    return {int(r[0]) for r in rows}
+
+
+def _one_id(sql: str, params: tuple) -> int | None:
+    with db_session() as db:
+        row = db.execute(sql, params).fetchone()
+    return None if row is None or row[0] is None else int(row[0])
+
+
+def _unknown_asset(what: str) -> HTTPException:
+    return HTTPException(
+        status_code=404, detail={"error": "unknown_asset", "message": f"no {what}"}
+    )
+
+
+def _require_asset(
+    facilities: frozenset[int] | None,
+    *,
+    asset_id: int | None = None,
+    asset_tag: str | None = None,
+    must_exist: bool = True,
+) -> None:
+    """For a facility-limited caller, 404 when the machine named is at another
+    facility (or, with must_exist, not on the register at all)."""
+    if facilities is None or (asset_id is None and not asset_tag):
+        return
+    found = (
+        _one_id("SELECT id FROM biomedical_assets WHERE id = ?", (int(asset_id),))
+        if asset_id is not None
+        else _one_id(
+            "SELECT id FROM biomedical_assets WHERE asset_tag = ?",
+            (str(asset_tag).strip().upper(),),
+        )
+    )
+    if found is None:
+        if must_exist:
+            raise _unknown_asset(f"asset {asset_id if asset_id is not None else asset_tag}")
+        return
+    if found not in _asset_ids(facilities):
+        raise _unknown_asset(f"asset {asset_id if asset_id is not None else asset_tag}")
+
+
+def _require_call(facilities: frozenset[int] | None, call_id: int) -> None:
+    """For a facility-limited caller, 404 for a service call on another
+    facility's machine (or one that does not exist)."""
+    if facilities is None:
+        return
+    owner = _one_id("SELECT asset_id FROM biomedical_service_calls WHERE id = ?", (int(call_id),))
+    if owner is None or owner not in _asset_ids(facilities):
+        raise HTTPException(
+            status_code=404, detail={"error": "not_found", "message": f"no service call {call_id}"}
+        )
+
+
+def _keep_assets(rows: Iterable[dict], ids: set[int], key: str = "id") -> list[dict]:
+    return [r for r in rows if r.get(key) is not None and int(r[key]) in ids]
+
+
+def _scoped_due(due: dict, ids: set[int]) -> dict:
+    """A due register kept to these machines, its counts made again the way
+    services/biomedical_service.due_register makes them."""
+    overdue = _keep_assets(due.get("overdue") or [], ids, "asset_id")
+    due_soon = _keep_assets(due.get("due_soon") or [], ids, "asset_id")
+    return {
+        **due,
+        "overdue": overdue,
+        "overdue_count": len(overdue),
+        "due_soon": due_soon,
+        "due_soon_count": len(due_soon),
+        "overdue_calibration_count": sum(
+            1 for r in overdue if r.get("schedule_type") == "calibration"
+        ),
+        "overdue_life_support_count": sum(
+            1 for r in overdue if r.get("asset_criticality") == "life_support"
+        ),
+        "never_done_count": sum(1 for r in overdue if r.get("never_done")),
+        "measurement_at_risk_count": sum(1 for r in overdue if r.get("measurement_at_risk")),
+    }
+
+
+def _contract_assets(contract_id: int) -> set[int]:
+    with db_session() as db:
+        rows = db.execute(
+            "SELECT asset_id FROM biomedical_contract_assets WHERE contract_id = ?",
+            (int(contract_id),),
+        ).fetchall()
+    return {int(r[0]) for r in rows if r[0] is not None}
+
+
+def _contract_visible(contract_id: Any, ids: set[int]) -> bool:
+    return contract_id is not None and bool(_contract_assets(int(contract_id)) & ids)
+
+
+def _contracts_seen(rows: Iterable[dict], ids: set[int]) -> list[dict]:
+    """The contracts that cover one of these machines, each counting only them."""
+    seen: list[dict] = []
+    for contract in rows:
+        cid = contract.get("id")
+        mine = _contract_assets(int(cid)) & ids if cid is not None else set()
+        if mine:
+            seen.append({**contract, "asset_count": len(mine)})
+    return seen
+
+
+def _refuse_shared_contract(contract_number: str) -> HTTPException:
+    return HTTPException(
+        status_code=403,
+        detail={
+            "error": "facility_scope",
+            "message": (
+                f"Contract {contract_number} also covers another facility's machines, so "
+                "only an account that works across the group can change it. Nothing was saved."
+            ),
+        },
+    )
+
+
+def _refuse_elsewhere(
+    facilities: frozenset[int] | None, *, department: str | None, ward: str | None
+) -> None:
+    """403 facility_scope when a new machine is placed on another facility's
+    department or ward."""
+    if facilities is None:
+        return
+    with db_session() as db:
+        named = (
+            (
+                "department",
+                facility_stamp.department_facility(db, department) if department else None,
+            ),
+            ("ward", facility_stamp.ward_facility(db, ward=ward) if ward else None),
+        )
+    for label, fid in named:
+        if fid is not None and fid not in facilities:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "facility_scope",
+                    "message": f"That {label} is at another facility, so nothing was saved.",
+                },
+            )
 
 
 def _audit(
@@ -314,7 +495,52 @@ _OVERVIEW_USER_DEFAULT = Depends(require_permission(HELIX_READ))
 
 @router.get("/overview")
 def overview(_: None = _OVERVIEW__DEFAULT, user: dict = _OVERVIEW_USER_DEFAULT) -> dict:
-    return svc.biomedical_overview()
+    facilities = facility_scope(user)
+    out = svc.biomedical_overview()
+    if facilities is None:
+        return out
+    # The caller's facilities' machines only: every list kept to them and
+    # every count made again from what is kept.
+    ids = _asset_ids(facilities)
+    due = _scoped_due(svc.due_register(), ids)
+    assets = [
+        a
+        for a in svc.list_assets(limit=_SCOPED_FETCH)
+        if a.get("id") is not None and int(a["id"]) in ids
+    ]
+    calls = _keep_assets(svc.list_service_calls(open_only=True, limit=500), ids, "asset_id")
+    gaps = _keep_assets(svc.coverage_gaps(), ids)
+    contracts = svc.expiring_contracts()
+    expiring = _contracts_seen(contracts.get("expiring") or [], ids)
+    expired = _contracts_seen(contracts.get("expired") or [], ids)
+    out.update(
+        {
+            "assets_total": len(assets),
+            "assets_down": sum(1 for a in assets if a.get("status") == "down"),
+            "assets_under_maintenance": sum(
+                1 for a in assets if a.get("status") == "under_maintenance"
+            ),
+            "life_support_assets": sum(1 for a in assets if a.get("criticality") == "life_support"),
+            "measuring_assets": sum(1 for a in assets if a.get("produces_clinical_readings")),
+            "overdue": due["overdue"][:25],
+            "overdue_count": due["overdue_count"],
+            "overdue_calibration_count": due["overdue_calibration_count"],
+            "overdue_life_support_count": due["overdue_life_support_count"],
+            "measurement_at_risk_count": due["measurement_at_risk_count"],
+            "never_done_count": due["never_done_count"],
+            "due_soon": due["due_soon"][:25],
+            "due_soon_count": due["due_soon_count"],
+            "open_calls": calls[:25],
+            "open_call_count": len(calls),
+            "contracts_expiring": expiring[:25],
+            "contracts_expiring_count": len(expiring),
+            "contracts_expired_count": len(expired),
+            "assets_with_no_schedule": gaps[:25],
+            "assets_with_no_schedule_count": len(gaps),
+            "downtime_top": _keep_assets(out.get("downtime_top") or [], ids, "asset_id"),
+        }
+    )
+    return out
 
 
 _DUE_REGISTER_SCHEDULE_TYPE_DEFAULT = Query(None)
@@ -333,10 +559,12 @@ def due_register(
     user: dict = _DUE_REGISTER_USER_DEFAULT,
 ) -> dict:
     """THE OVERDUE VIEW — what is out of calibration or maintenance right now."""
+    facilities = facility_scope(user)
     try:
-        return svc.due_register(schedule_type=schedule_type, ward=ward, only_overdue=only_overdue)
+        due = svc.due_register(schedule_type=schedule_type, ward=ward, only_overdue=only_overdue)
     except svc.BiomedicalError as exc:
         raise _fail(exc) from exc
+    return due if facilities is None else _scoped_due(due, _asset_ids(facilities))
 
 
 _COVERAGE_GAPS__DEFAULT = Depends(require_module)
@@ -349,7 +577,10 @@ def coverage_gaps(
 ) -> dict:
     """Active assets with no maintenance schedule at all — the register's own
     blind spot, reported rather than hidden."""
+    facilities = facility_scope(user)
     rows = svc.coverage_gaps()
+    if facilities is not None:
+        rows = _keep_assets(rows, _asset_ids(facilities))
     return {"assets": rows, "count": len(rows)}
 
 
@@ -375,12 +606,32 @@ def ward_attention(
     vitals.read while none of them hold helix.read. There is NO PHI in this
     response — asset tags, ward names, dates and counts — so it needs no patient
     scoping and `enforce_patient_scope` does not apply (no patient_id is
-    accepted here, on the query string or anywhere else).
+    accepted here, on the query string or anywhere else). With more than one
+    facility on record only the caller's facilities' machines on the ward.
     """
+    facilities = facility_scope(user)
     try:
-        return svc.ward_attention(ward)
+        out = svc.ward_attention(ward)
     except svc.BiomedicalError as exc:
         raise _fail(exc) from exc
+    if facilities is None:
+        return out
+    ids = _asset_ids(facilities)
+    due = _scoped_due(out, ids)
+    unavailable = _keep_assets(out.get("unavailable") or [], ids)
+    calls = _keep_assets(out.get("open_calls") or [], ids, "asset_id")
+    mine = [a for a in svc.list_assets(ward=ward, limit=_SCOPED_FETCH) if a.get("id") in ids]
+    due.update(
+        {
+            "asset_count": len(mine),
+            "unavailable": unavailable,
+            "unavailable_count": len(unavailable),
+            "open_calls": calls,
+            "open_call_count": len(calls),
+            "headline": svc._ward_headline(due, unavailable),
+        }
+    )
+    return due
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -413,6 +664,7 @@ def list_assets(
     _: None = _LIST_ASSETS__DEFAULT,
     user: dict = _LIST_ASSETS_USER_DEFAULT,
 ) -> dict:
+    facilities = facility_scope(user)
     try:
         rows = svc.list_assets(
             ward=ward,
@@ -422,10 +674,12 @@ def list_assets(
             status=status,
             search=search,
             include_inactive=include_inactive,
-            limit=limit,
+            limit=limit if facilities is None else _SCOPED_FETCH,
         )
     except svc.BiomedicalError as exc:
         raise _fail(exc) from exc
+    if facilities is not None:
+        rows = _keep_assets(rows, _asset_ids(facilities))[:limit]
     return {"assets": rows, "count": len(rows)}
 
 
@@ -440,7 +694,8 @@ def get_asset(
     user: dict = _GET_ASSET_USER_DEFAULT,
 ) -> dict:
     asset = svc.get_asset(asset_id)
-    if not asset:
+    facilities = facility_scope(user)
+    if not asset or (facilities is not None and int(asset_id) not in _asset_ids(facilities)):
         raise HTTPException(
             status_code=404, detail={"error": "unknown_asset", "message": f"no asset {asset_id}"}
         )
@@ -458,6 +713,9 @@ def upsert_asset(
     _: None = _UPSERT_ASSET__DEFAULT,
     user: dict = _UPSERT_ASSET_USER_DEFAULT,
 ) -> dict:
+    facilities = facility_scope(user)
+    _require_asset(facilities, asset_tag=body.asset_tag, must_exist=False)
+    _refuse_elsewhere(facilities, department=body.department, ward=body.ward)
     try:
         asset = svc.upsert_asset(**body.model_dump(), actor=user.get("id"))
     except svc.BiomedicalError as exc:
@@ -512,6 +770,7 @@ def set_asset_status(
                     ),
                 },
             )
+    _require_asset(facility_scope(user), asset_id=asset_id)
     try:
         asset = svc.set_asset_status(
             asset_id=asset_id, status=body.status, reason=body.reason, actor=user.get("id")
@@ -550,10 +809,13 @@ def list_schedules(
     _: None = _LIST_SCHEDULES__DEFAULT,
     user: dict = _LIST_SCHEDULES_USER_DEFAULT,
 ) -> dict:
+    facilities = facility_scope(user)
     try:
         rows = svc.list_schedules(asset_id=asset_id, schedule_type=schedule_type, ward=ward)
     except svc.BiomedicalError as exc:
         raise _fail(exc) from exc
+    if facilities is not None:
+        rows = _keep_assets(rows, _asset_ids(facilities), "asset_id")
     return {"schedules": rows, "count": len(rows)}
 
 
@@ -568,6 +830,7 @@ def upsert_schedule(
     _: None = _UPSERT_SCHEDULE__DEFAULT,
     user: dict = _UPSERT_SCHEDULE_USER_DEFAULT,
 ) -> dict:
+    _require_asset(facility_scope(user), asset_id=body.asset_id, asset_tag=body.asset_tag)
     try:
         sched = svc.upsert_schedule(**body.model_dump(), actor=user.get("id"))
     except svc.BiomedicalError as exc:
@@ -607,6 +870,17 @@ def record_completion(
     A `result` of `fail` does NOT roll it forward — nothing was certified — and
     the asset stays in the overdue register. See the service docstring.
     """
+    facilities = facility_scope(user)
+    if facilities is not None and body.schedule_id is not None:
+        owner = _one_id(
+            "SELECT asset_id FROM biomedical_schedules WHERE id = ?", (int(body.schedule_id),)
+        )
+        if owner is None or owner not in _asset_ids(facilities):
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "not_found", "message": f"no schedule {body.schedule_id}"},
+            )
+    _require_asset(facilities, asset_id=body.asset_id, asset_tag=body.asset_tag)
     try:
         sched = svc.record_schedule_completion(**body.model_dump(), actor=user.get("id"))
     except svc.BiomedicalError as exc:
@@ -656,12 +930,19 @@ def list_service_calls(
     _: None = _LIST_SERVICE_CALLS__DEFAULT,
     user: dict = _LIST_SERVICE_CALLS_USER_DEFAULT,
 ) -> dict:
+    facilities = facility_scope(user)
     try:
         rows = svc.list_service_calls(
-            asset_id=asset_id, ward=ward, status=status, open_only=open_only, limit=limit
+            asset_id=asset_id,
+            ward=ward,
+            status=status,
+            open_only=open_only,
+            limit=limit if facilities is None else 500,
         )
     except svc.BiomedicalError as exc:
         raise _fail(exc) from exc
+    if facilities is not None:
+        rows = _keep_assets(rows, _asset_ids(facilities), "asset_id")[:limit]
     return {"service_calls": rows, "count": len(rows)}
 
 
@@ -676,6 +957,7 @@ def open_service_call(
     _: None = _OPEN_SERVICE_CALL__DEFAULT,
     user: dict = _OPEN_SERVICE_CALL_USER_DEFAULT,
 ) -> dict:
+    _require_asset(facility_scope(user), asset_id=body.asset_id, asset_tag=body.asset_tag)
     try:
         call = svc.open_service_call(**body.model_dump(), actor=user.get("id"))
     except svc.BiomedicalError as exc:
@@ -709,6 +991,7 @@ def update_service_call(
     _: None = _UPDATE_SERVICE_CALL__DEFAULT,
     user: dict = _UPDATE_SERVICE_CALL_USER_DEFAULT,
 ) -> dict:
+    _require_call(facility_scope(user), call_id)
     try:
         call = svc.update_service_call(call_id=call_id, **body.model_dump(), actor=user.get("id"))
     except svc.BiomedicalError as exc:
@@ -737,6 +1020,7 @@ def close_service_call(
     _: None = _CLOSE_SERVICE_CALL__DEFAULT,
     user: dict = _CLOSE_SERVICE_CALL_USER_DEFAULT,
 ) -> dict:
+    _require_call(facility_scope(user), call_id)
     try:
         call = svc.close_service_call(call_id=call_id, **body.model_dump(), actor=user.get("id"))
     except svc.BiomedicalError as exc:
@@ -774,7 +1058,12 @@ def downtime(
     from services.hospital_time import hospital_today
 
     today = hospital_today()
-    rows = svc.downtime_summary(since=today - timedelta(days=days), limit=limit)
+    facilities = facility_scope(user)
+    rows = svc.downtime_summary(
+        since=today - timedelta(days=days), limit=limit if facilities is None else 200
+    )
+    if facilities is not None:
+        rows = _keep_assets(rows, _asset_ids(facilities), "asset_id")[:limit]
     return {
         "as_of": today.isoformat(),
         "window_days": days,
@@ -802,10 +1091,13 @@ def list_contracts(
     _: None = _LIST_CONTRACTS__DEFAULT,
     user: dict = _LIST_CONTRACTS_USER_DEFAULT,
 ) -> dict:
+    facilities = facility_scope(user)
     try:
         rows = svc.list_contracts(status=status, contract_type=contract_type)
     except svc.BiomedicalError as exc:
         raise _fail(exc) from exc
+    if facilities is not None:
+        rows = _contracts_seen(rows, _asset_ids(facilities))
     return {"contracts": rows, "count": len(rows)}
 
 
@@ -821,10 +1113,25 @@ def expiring_contracts(
     user: dict = _EXPIRING_CONTRACTS_USER_DEFAULT,
 ) -> dict:
     """Contracts inside their notice window, plus the ones already expired."""
+    facilities = facility_scope(user)
     try:
-        return svc.expiring_contracts(within_days=within_days)
+        out = svc.expiring_contracts(within_days=within_days)
     except svc.BiomedicalError as exc:
         raise _fail(exc) from exc
+    if facilities is None:
+        return out
+    ids = _asset_ids(facilities)
+    expiring = _contracts_seen(out.get("expiring") or [], ids)
+    expired = _contracts_seen(out.get("expired") or [], ids)
+    out.update(
+        {
+            "expiring": expiring,
+            "expiring_count": len(expiring),
+            "expired": expired,
+            "expired_count": len(expired),
+        }
+    )
+    return out
 
 
 _GET_CONTRACT__DEFAULT = Depends(require_module)
@@ -838,10 +1145,16 @@ def get_contract(
     user: dict = _GET_CONTRACT_USER_DEFAULT,
 ) -> dict:
     contract = svc.get_contract(contract_id)
-    if not contract:
+    facilities = facility_scope(user)
+    ids = _asset_ids(facilities) if facilities is not None else set()
+    if not contract or (facilities is not None and not _contract_visible(contract_id, ids)):
         raise HTTPException(
             status_code=404, detail={"error": "not_found", "message": f"no contract {contract_id}"}
         )
+    if facilities is not None:
+        # Only this facility's machines on a contract that covers several.
+        contract["assets"] = _keep_assets(contract.get("assets") or [], ids)
+        contract["asset_count"] = len(contract["assets"])
     return contract
 
 
@@ -857,7 +1170,46 @@ def upsert_contract(
     user: dict = _UPSERT_CONTRACT_USER_DEFAULT,
 ) -> dict:
     """Create or amend an AMC/CMC. `admin.overview` because a maintenance
-    contract is money the hospital has committed, not a workshop record."""
+    contract is money the hospital has committed, not a workshop record.
+
+    A facility-limited caller amends only a contract that covers one of their
+    facility's machines and no other facility's: the dates, status, value and
+    the coverage list (which `asset_ids` / `asset_tags` REPLACE) belong to every
+    machine on it, so a contract shared with another facility is a group
+    account's to change (403 facility_scope). They name only their own machines
+    on it, and a contract they make or amend covers at least one of them."""
+    facilities = facility_scope(user)
+    if facilities is not None:
+        ids = _asset_ids(facilities)
+        existing = _one_id(
+            "SELECT id FROM biomedical_contracts WHERE contract_number = ?",
+            (body.contract_number.strip(),),
+        )
+        if existing is not None:
+            covered = _contract_assets(existing)
+            if not covered & ids:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"error": "not_found", "message": f"no contract {body.contract_number}"},
+                )
+            if covered - ids:
+                raise _refuse_shared_contract(body.contract_number.strip())
+        for asset_id in body.asset_ids or []:
+            _require_asset(facilities, asset_id=asset_id)
+        for tag in body.asset_tags or []:
+            _require_asset(facilities, asset_tag=tag)
+        replacing = body.asset_ids is not None or body.asset_tags is not None
+        if not (body.asset_ids or body.asset_tags) and (existing is None or replacing):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "assets_required",
+                    "message": (
+                        "Name at least one of this facility's machines the contract covers. "
+                        "Nothing was saved."
+                    ),
+                },
+            )
     try:
         contract = svc.upsert_contract(**body.model_dump(), actor=user.get("id"))
     except svc.BiomedicalError as exc:

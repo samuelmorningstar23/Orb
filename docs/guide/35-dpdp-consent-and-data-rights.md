@@ -58,7 +58,7 @@ graph TD
 | File | Lines | Role |
 |---|---:|---|
 | `server/services/consent_service.py` | 1583 | Everything. Vocabularies, consent, withdrawal, the schema-walking export, retention review, the four-stage erasure machinery, the breach register, and the posture summary. 18 public functions. The 105-line module docstring (`:1-105`) states the collision and Orb's position; it is required reading. |
-| `server/routes/compliance_routes.py` | 516 | Two routers. `router` (`/api/admin/compliance`, `:35`) is governance, all `admin.overview`. `consent_router` (`/api/consent`, `:36`) is bedside, department-scoped. Sixteen endpoints, five request bodies, one audit helper (`:93`). |
+| `server/routes/compliance_routes.py` | 516 | Two routers. `router` (`/api/admin/compliance`, `:35`) is governance, all `admin.overview`. `consent_router` (`/api/consent`, `:54`) is bedside, department-scoped. Sixteen endpoints, five request bodies, one audit helper (`:136`). |
 | `server/migrations.py` | 5587 | Migration 14, `_m14_dpdp_act_machinery` (`:903`). Seven tables, ten append-only triggers, the seeded retention matrix `_DPDP_RETENTION_SEED` (`:1239`). Registered at `:5460`. |
 | `server/services/compliance_service.py` | n/a | `compliance_report()` (`:1008`) calls `_dpdp_posture` (`:491`) which calls `dpdp_posture` (`server/services/consent_service.py:1607`); `_build_controls` (`server/services/compliance_service.py:537`) turns the counts into four Trust Center controls at `:932`, `:952`, `:962`, `:979`. |
 | `server/permissions.py` | n/a | `department_scope` (`:192`), `scope_patient_ids_sql` (`:248`), `enforce_patient_scope` (`:292`), `require_permission` (`:376`), `require_patient_access` (`:445`). |
@@ -131,10 +131,10 @@ Read the `erasable` column top to bottom and the position is legible without rea
 ### Flow 1: a consent is taken, and later withdrawn
 
 1. `POST /api/consent/{patient_id}` with a purpose, a method, and optionally the notice version and language. `record_consent` (`:179`) validates every coded field against a closed set **before** touching the database, because `consent_records` has a `BEFORE UPDATE` trigger and a typo'd purpose would be a permanent typo.
-2. One row is inserted. A `consent_recorded` audit row follows (`compliance_routes.py:195`).
-3. Later: `POST /api/consent/{patient_id}/{consent_id}/withdraw`. `withdraw_consent` (`:277`) inserts a **new** row into `consent_withdrawals`. The original consent row is untouched, it is physically impossible to touch it.
-4. Reading the consent back, `_hydrate_consent` (`:375`) joins the withdrawal and computes `effective_status` (`:363`) on the fly. There is no stored status to disagree with the evidence.
-5. The withdrawal response names the retention categories a human must now review (`_PURPOSE_TO_CATEGORIES`, `:351`) and returns `auto_deleted: False`. **DPDP s.8(7) creates an erasure obligation and Orb does not discharge it here.** Auto-deleting on withdrawal is how a patient who withdrew consent for *family updates* loses their AI-drafted notes.
+2. One row is inserted. A `consent_recorded` audit row follows (`compliance_routes.py:230`).
+3. Later: `POST /api/consent/{patient_id}/{consent_id}/withdraw`. `withdraw_consent` (`:312`) inserts a **new** row into `consent_withdrawals`. The original consent row is untouched, it is physically impossible to touch it.
+4. Reading the consent back, `_hydrate_consent` (`:426`) joins the withdrawal and computes `effective_status` (`:402`) on the fly. There is no stored status to disagree with the evidence.
+5. The withdrawal response names the retention categories a human must now review (`_PURPOSE_TO_CATEGORIES`, `:386`) and returns `auto_deleted: False`. **DPDP s.8(7) creates an erasure obligation and Orb does not discharge it here.** Auto-deleting on withdrawal is how a patient who withdrew consent for *family updates* loses their AI-drafted notes.
 
 ### Flow 2: the data-principal export (s.11)
 
@@ -143,14 +143,14 @@ Read the `erasable` column top to bottom and the position is legible without rea
 3. Three filters run over that walk: the static exclusion list with per-table reasons (`_EXPORT_EXCLUDED`, `:440`); a skip for virtual tables (`:503`); and the **structural guard** (`:543`), a table with more than one column that could name a patient is refused, with the reason stated.
 4. Access history is appended from `audit_logs`, restricted to nine columns (`:464`), no hash-chain internals, no staff IP address.
 5. Consents are appended in readable form.
-6. The route writes one **fail-closed** `phi_access` audit row naming the section count, the record count and the per-section row counts (`compliance_routes.py:273`). If that row cannot be persisted, the export does not return.
+6. The route writes one **fail-closed** `phi_access` audit row naming the section count, the record count and the per-section row counts (`compliance_routes.py:308`). If that row cannot be persisted, the export does not return.
 
 ### Flow 3: an erasure request, end to end
 
 1. `POST /api/admin/compliance/erasure` → `record_erasure_request` (`:869`). Logs the ask. Decides nothing, deletes nothing. `categories = None` means "everything", which is the normal case: a patient says "delete my data", not "delete retention category 7".
 2. `POST .../erasure/{id}/adjudicate` → `adjudicate_erasure_request` (`:907`). For every category in scope it reads `retention_policies.erasable` and writes **one immutable decision row**: honoured + executable, honoured + not-yet-executable, or refused with the compelling authority quoted. The request moves `recorded → decided`. A decision is sealed: re-adjudicating raises, and the route turns that into a 409.
 3. The response carries the `residue_notice`, the principal is told, at decision time, that the request itself is permanently recorded.
-4. `POST .../erasure/{id}/execute` → the route writes an **intent** `phi_access` audit row *first* (`compliance_routes.py:412`), then `execute_erasure_request` (`:998`) runs only the executors for decisions that are both honoured and `executable = 1`, then a second **outcome** audit row records what was actually destroyed.
+4. `POST .../erasure/{id}/execute` → the route writes an **intent** `phi_access` audit row *first* (`compliance_routes.py:570`), then `execute_erasure_request` (`server/services/consent_service.py:1497`) runs only the executors for decisions that are both honoured and `executable = 1`, then a second **outcome** audit row records what was actually destroyed.
 5. Each executor writes its own `erasure_executions` row with the per-table counts. The request moves `decided → executed`.
 
 ```mermaid
@@ -196,7 +196,7 @@ The module docstring (`:1-105`) is required reading and is summarised above rath
 #### `CONSENT_PURPOSES`: `consent_service.py:126`
 **Signature:** module-level `dict[str, str]` (value → human label)
 **Does:** The eight purposes a consent may be recorded against: `treatment`, `ai_assisted_documentation`, `ambient_recording`, `research_secondary_use`, `family_sharing`, `external_referral_sharing`, `patient_portal`, `marketing_communications`.
-**On screen:** nothing today. It is served verbatim by `GET /api/consent/vocabulary` (`compliance_routes.py:137`) precisely so a future consent form renders the same options the server will accept instead of guessing, but nothing calls it.
+**On screen:** nothing today. It is served verbatim by `GET /api/consent/vocabulary` (`compliance_routes.py:172`) precisely so a future consent form renders the same options the server will accept instead of guessing, but nothing calls it.
 **Why it exists:** free-text purposes are how a consent register becomes unauditable. Three spellings of "research" is three consents nobody can reconcile. The set is small on purpose; adding one is a deliberate act with a code review attached.
 **Breaks if you change it:** **removing or renaming a key strands every historical row that used it.** The row is immutable and cannot be migrated in place, and `_hydrate_consent` (`:379`) falls back to printing the raw key when the label is missing, so the register silently degrades from labels to slugs. Adding a key is safe. Renaming one is not.
 
@@ -210,7 +210,7 @@ The module docstring (`:1-105`) is required reading and is summarised above rath
 #### `GIVEN_BY` / `BREACH_NATURES`: `consent_service.py:145` / `:147`
 **Signature:** two module-level tuples
 **Does:** `("patient", "guardian", "proxy")`, and the seven breach natures the register accepts.
-**On screen:** `GIVEN_BY` is returned by the vocabulary endpoint (`compliance_routes.py:144`). `BREACH_NATURES` is not exposed anywhere, a caller must already know the vocabulary, which is a small asymmetry.
+**On screen:** `GIVEN_BY` is returned by the vocabulary endpoint (`compliance_routes.py:179`). `BREACH_NATURES` is not exposed anywhere, a caller must already know the vocabulary, which is a small asymmetry.
 **Why it exists:** `given_by != "patient"` is what triggers the DPDP s.9 guardian check in `record_consent` (`:249`), in an Indian ward, guardian consent for a child or a person with disability is the common case, not the edge one.
 **Breaks if you change it:** adding a fourth `given_by` value that is not `"patient"` silently inherits the proxy-name requirement, which is probably what you want; adding one that *should not* require a named proxy needs the check at `:249` rewritten, not the tuple extended.
 
@@ -223,7 +223,7 @@ The module docstring (`:1-105`) is required reading and is summarised above rath
 #### `record_consent`: `consent_service.py:188`
 **Signature:** `(*, patient_id, purpose, method, recorded_by, recorded_by_role=None, scope_detail=None, notice_version=None, notice_language=None, granted_at=None, expires_at=None, given_by='patient', proxy_name=None, proxy_relationship=None, evidence_ref=None) -> dict`
 **Does:** Writes **one immutable** consent row and returns it hydrated.
-**On screen:** nothing today. It is reachable only through `POST /api/consent/{patient_id}` (`compliance_routes.py:159`), which no component calls.
+**On screen:** nothing today. It is reachable only through `POST /api/consent/{patient_id}` (`compliance_routes.py:194`), which no component calls.
 **How it works:** validation is strict and entirely up front (`:239-256`), unknown purpose, unknown method, bad `given_by`, and the s.9 rule that a guardian/proxy consent must name the proxy *and* the relationship. Only then does it check the patient exists and insert. `notice_version` and `notice_language` are stored because DPDP s.5 makes the **notice** part of the consent: a consent taken against a notice nobody can reproduce, or in a language the principal does not read, is not a consent.
 **Why the validation is front-loaded:** the row can never be corrected. `consent_records` carries a `BEFORE UPDATE` trigger (`migrations.py:984`). A typo'd purpose is a permanent typo, so a bad purpose is refused rather than stored.
 **Breaks if you change it:** relaxing the proxy check produces guardian consents with no named guardian, rows that cannot be verified later and therefore cannot be relied on, which is worse than not having them. Moving validation *after* the insert makes a rejected consent leave a partial row that no code path can clean up.
@@ -231,8 +231,8 @@ The module docstring (`:1-105`) is required reading and is summarised above rath
 #### `withdraw_consent`: `consent_service.py:306`
 **Signature:** `(*, consent_id, recorded_by, method, reason=None, recorded_by_role=None, withdrawn_at=None) -> dict`
 **Does:** Records a withdrawal as a **new row**. The original consent is never touched.
-**On screen:** nothing today. Behind `POST /api/consent/{patient_id}/{consent_id}/withdraw` (`compliance_routes.py:203`).
-**How it works:** looks up the consent, checks no withdrawal exists (`:307`), inserts. The pre-check is not the safety mechanism, `idx_consent_withdrawal_unique` (`migrations.py:1012`) is, and would reject the second write anyway. The `ValueError` exists so the route can return **409** instead of **500** (`:311-313`, `compliance_routes.py:227`).
+**On screen:** nothing today. Behind `POST /api/consent/{patient_id}/{consent_id}/withdraw` (`compliance_routes.py:238`).
+**How it works:** looks up the consent, checks no withdrawal exists (`:307`), inserts. The pre-check is not the safety mechanism, `idx_consent_withdrawal_unique` (`migrations.py:1012`) is, and would reject the second write anyway. The `ValueError` exists so the route can return **409** instead of **500** (`:311-313`, `compliance_routes.py:262`).
 **The return value is the interesting part:** `erasure_review_required: True`, `categories_for_review: [...]`, `auto_deleted: False`, and a `next_step` sentence. DPDP s.8(7) says withdrawal creates an erasure obligation. **Orb names the categories a human must review and stops.**
 **Why it does not auto-delete:** a patient who withdraws consent for `family_sharing` has said nothing about their AI-drafted notes. A cascade from one withdrawal to a category sweep is how a narrow withdrawal destroys unrelated material, and it would do so with no decision row, no stated reason, and no possibility of review.
 **Breaks if you change it:** wiring a delete in here removes the adjudication step entirely, which means erasure happens with no `erasure_decisions` row, no stated basis, nothing to show the Board, nothing for the principal to disagree with. It also makes withdrawal irreversible in effect while remaining reversible in record, which is the worst of both.
@@ -240,7 +240,7 @@ The module docstring (`:1-105`) is required reading and is summarised above rath
 #### `_PURPOSE_TO_CATEGORIES`: `consent_service.py:350`
 **Signature:** module-level `dict[str, set[str]]`
 **Does:** Maps a withdrawn purpose to the retention categories a human should now look at.
-**On screen:** the `categories_for_review` list in the withdrawal response, and the `categories_for_review` key in the withdrawal audit row (`compliance_routes.py:232`).
+**On screen:** the `categories_for_review` list in the withdrawal response, and the `categories_for_review` key in the withdrawal audit row (`compliance_routes.py:267`).
 **Why it exists, and why it is narrow:** withdrawing consent for family updates must not put the clinical record in play. `family_sharing` maps only to `non_clinical_contact`. `treatment` maps to `clinical_record`, which is `erasable = 0`, so even the broadest withdrawal produces a *review*, not a deletion.
 **Breaks if you change it:** widening a mapping makes a narrow withdrawal generate a broad review list, which trains the records officer to skim it. Narrowing one hides an obligation.
 
@@ -254,7 +254,7 @@ The module docstring (`:1-105`) is required reading and is summarised above rath
 #### `_hydrate_consent` / `get_consent` / `list_consents`: `consent_service.py:399` / `:386` / `:395`
 **Signature:** `(db, row) -> dict` / `(consent_id) -> dict | None` / `(patient_id) -> list[dict]`
 **Does:** Attaches the purpose and method labels, the withdrawal row, and the derived status. `list_consents` returns every consent the patient ever gave, newest first.
-**On screen:** would be the consent register on a patient chart. Behind `GET /api/consent/{patient_id}` (`compliance_routes.py:180`). Nothing renders it.
+**On screen:** would be the consent register on a patient chart. Behind `GET /api/consent/{patient_id}` (`compliance_routes.py:215`). Nothing renders it.
 **Why withdrawn consents are always included:** a register that hides them cannot show the history the Board asks for, "was there a valid consent on 4 March, and when was it withdrawn?" is a question about rows that are no longer in force.
 **Breaks if you change it:** filtering withdrawn rows out of `list_consents` also silently changes `has_active_consent` (`:407`), which iterates the same list, so a filter added for display reasons would become a subtle change to a would-be enforcement gate.
 **Gotcha:** `_hydrate_consent` issues one extra `SELECT` per consent. Fine for a register; do not call it in a loop over the whole hospital.
@@ -315,7 +315,7 @@ The module docstring (`:1-105`) is required reading and is summarised above rath
 #### `list_retention_policies`: `consent_service.py:901`
 **Signature:** `() -> list[dict]`
 **Does:** The whole matrix, ordered `erasable, category`, so the refused categories print first.
-**On screen:** the `policies` half of `GET /api/admin/compliance/retention` (`compliance_routes.py:301`). No component renders it.
+**On screen:** the `policies` half of `GET /api/admin/compliance/retention` (`compliance_routes.py:336`). No component renders it.
 **Breaks if you change it:** the ordering is what makes the printed matrix readable as "here is what we must keep, and then here is what you can have". Alphabetical ordering interleaves them.
 
 #### `retention_review`: `consent_service.py:906`
@@ -455,113 +455,113 @@ Then the request moves to `decided`.
 
 ### File: `server/routes/compliance_routes.py`
 
-The module docstring (`:1-20`) states the split: `router` is **governance** (`/api/admin/compliance`, all `admin.overview`, the records officer's surfaces); `consent_router` is **bedside** (`/api/consent`, ordinary clinical permissions, department-scoped like any per-patient route). Every endpoint taking a patient id returns **404, never 403**, when out of scope, a 403 confirms the patient exists, which is itself a disclosure.
+The module docstring (`:1-29`) states the split: `router` is **governance** (`/api/admin/compliance`, all `admin.overview`, the records officer's surfaces); `consent_router` is **bedside** (`/api/consent`, ordinary clinical permissions, department-scoped like any per-patient route). Every endpoint taking a patient id returns **404, never 403**, when out of scope, a 403 confirms the patient exists, which is itself a disclosure.
 
 #### `ConsentRequest` / `WithdrawalRequest` / `ErasureRequestBody` / `BreachBody` / `BreachNotificationBody`: `:43` / `:57` / `:62` / `:70` / `:84`
 **Does:** The five request bodies. Note `WithdrawalRequest` carries only `method` and `reason`, the consent id and patient id come from the path.
 **On screen:** nothing; these would be the shapes a consent form posts.
 **Breaks if you change it:** `ConsentRequest` deliberately does **not** carry `recorded_by`; the route takes it from the authenticated user (`:180`). Adding it as a body field would let a caller attribute a consent to somebody else.
 
-#### `_audit`: `compliance_routes.py:101`
+#### `_audit`: `compliance_routes.py:136`
 **Signature:** `(request, user, *, action_type, summary, category='compliance', patient_id=None, target_type=None, target_id=None, metadata=None) -> None`
 **Does:** One audit row per compliance action, with the caller's department and `scope_source` folded into the metadata.
 **On screen:** nothing directly; the rows appear in a patient's own export under "Who has opened your record, and when".
 **Why it is blocking and that is correct:** every route in this file is a sync `def`, which FastAPI runs in a threadpool, so this stays off the event loop.
 **Breaks if you change it:** switching the default `category` away from `"compliance"` moves every consent action out of the category the audit-coverage probe counts. Making it async without moving the callers puts sync SQLite back on the loop.
 
-#### `GET /api/admin/compliance/`: `compliance_routes.py:125` (`get_compliance_report`)
+#### `GET /api/admin/compliance/`: `compliance_routes.py:160` (`get_compliance_report`)
 **Signature:** `(user = Depends(require_permission("admin.overview"))) -> dict`
 **Does:** Returns the aggregated live posture report.
 **On screen:** **the Trust Center** (`src/pages/panels/admin/TrustCenter.tsx:112`). This is the only endpoint in the file with a caller.
 **Breaks if you change it:** it is described in its own docstring as an unchanged contract; the Trust Center reads `controls`, `mfa`, `rbac_matrix`, `audit_chain` and the rest by name.
 
-#### `GET /api/consent/vocabulary`: `compliance_routes.py:137`
+#### `GET /api/consent/vocabulary`: `compliance_routes.py:172`
 **Signature:** `(user = Depends(require_permission("patient.read_all"))) -> {purposes, methods, given_by}`
 **Does:** The closed sets a consent form may use, as `{value, label}` pairs.
 **On screen:** nothing today; it exists so a UI renders the same options the server will accept instead of guessing.
-**Gotcha, and it is a real one (`:135-136`):** this literal path **must stay above `/{patient_id}`** or FastAPI matches `"vocabulary"` as a patient id and 404s the whole vocabulary lookup. Route order in this file is load-bearing.
+**Gotcha, and it is a real one (`:170-171`):** this literal path **must stay above `/{patient_id}`** or FastAPI matches `"vocabulary"` as a patient id and 404s the whole vocabulary lookup. Route order in this file is load-bearing.
 **Breaks if you change it:** moving it below the parameterised route breaks it silently, the endpoint still exists and always 404s.
 
-#### `GET /api/consent/{patient_id}`: `compliance_routes.py:180` (`list_patient_consents`)
+#### `GET /api/consent/{patient_id}`: `compliance_routes.py:215` (`list_patient_consents`)
 **Signature:** `(patient_id, user = Depends(require_patient_access("patient.read_all", audit_action="consent_register_read")))`
 **Does:** Every consent this patient gave, with withdrawals and effective status.
 **On screen:** nothing. This is the payload a consent register on the patient chart would render.
 **Breaks if you change it:** the `audit_action=` kwarg is what makes the dependency write the read-audit row; drop it and the register becomes a PHI read with no trail.
 
-#### `POST /api/consent/{patient_id}`: `compliance_routes.py:159` (`create_consent`)
+#### `POST /api/consent/{patient_id}`: `compliance_routes.py:194` (`create_consent`)
 **Signature:** `(patient_id, body: ConsentRequest, request, user = Depends(require_patient_access("patient.write")))`
 **Does:** Records one consent, then audits it with the purpose, method and notice version.
 **On screen:** nothing.
-**The permission is a known limitation, stated in the docstring (`:168-174`):** `patient.write` today means **doctors only**, not nurses, not administrators. In practice a registration clerk takes the treatment consent at the front desk, and Orb has no such role. Widening this needs a **new permission** in `permissions.py`, not a looser gate here, because `patient.write` also authorises editing the patient record and consent capture must not smuggle that in.
+**The permission is a known limitation, stated in the docstring (`:203-209`):** `patient.write` today means **doctors only**, not nurses, not administrators. In practice a registration clerk takes the treatment consent at the front desk, and Orb has no such role. Widening this needs a **new permission** in `permissions.py`, not a looser gate here, because `patient.write` also authorises editing the patient record and consent capture must not smuggle that in.
 **Breaks if you change it:** swapping to a broader existing permission grants record-editing rights to whoever you meant to give consent-capture rights to.
 
-#### `POST /api/consent/{patient_id}/{consent_id}/withdraw`: `compliance_routes.py:203`
+#### `POST /api/consent/{patient_id}/{consent_id}/withdraw`: `compliance_routes.py:238`
 **Signature:** `(patient_id, consent_id, body: WithdrawalRequest, request, user = Depends(require_patient_access("patient.write")))`
 **Does:** Withdraws a consent and returns `{withdrawal, consent}`, the consent re-read so the caller sees its new derived status.
 **On screen:** nothing.
-**How it works:** loads the consent first and 404s if it does not exist **or belongs to a different patient** (`:213`). The comment at `:214-216` explains the choice: the path already proved this caller may see *this* patient, so a consent belonging to a different one must not be confirmed to exist.
+**How it works:** loads the consent first and 404s if it does not exist **or belongs to a different patient** (`:248`). The comment at `:249-251` explains the choice: the path already proved this caller may see *this* patient, so a consent belonging to a different one must not be confirmed to exist.
 **Breaks if you change it:** returning 403 for the cross-patient case turns a 404 into an existence oracle. Dropping the `patient_id` comparison lets a caller withdraw a consent belonging to a patient they cannot see, using a patient they can.
 
-#### `GET /api/admin/compliance/data-principal/{patient_id}/export`: `compliance_routes.py:240`
+#### `GET /api/admin/compliance/data-principal/{patient_id}/export`: `compliance_routes.py:275`
 **Signature:** `(patient_id, request, user = Depends(require_patient_access("admin.overview")))`
 **Does:** The s.11 export, followed by a fail-closed `phi_access` audit row carrying the section names and row counts.
 **On screen:** nothing.
-**Why the dependency rather than a hand-rolled check, this is a real bug, fixed (`:244-256`):** the first cut did the scope check by hand with `enforce_patient_scope()`. It was **correct**, and `tests/test_patient_scope_routes.py::test_every_patient_id_route_that_returns_phi_carries_the_guard` failed it anyway, because the drift guard looks for the **dependency**. The guard was right and the hand-rolled version was wrong: the largest PHI disclosure in the system is the last place to have its own private spelling of the ward check. Using `require_patient_access("admin.overview")` keeps it admin-only *and* inherits the 404-never-403 behaviour and the cross-ward denial audit.
+**Why the dependency rather than a hand-rolled check, this is a real bug, fixed (`:279-291`):** the first cut did the scope check by hand with `enforce_patient_scope()`. It was **correct**, and `tests/test_patient_scope_routes.py::test_every_patient_id_route_that_returns_phi_carries_the_guard` failed it anyway, because the drift guard looks for the **dependency**. The guard was right and the hand-rolled version was wrong: the largest PHI disclosure in the system is the last place to have its own private spelling of the ward check. Using `require_patient_access("admin.overview")` keeps it admin-only *and* inherits the 404-never-403 behaviour and the cross-ward denial audit.
 **Why no `audit_action=` on the dependency:** the explicit `phi_access` row below carries the section and row counts, which a generic read audit cannot.
 **Why a missing patient returns the same 404 as an out-of-scope one (`:268`):** an admin probing ids learns nothing from the difference.
 **Breaks if you change it:** replacing the dependency with a manual check re-breaks the drift test. Moving the audit call after the `return`, or making it non-fail-closed, means the biggest disclosure in the system can happen with no record of it.
 
-#### `GET /api/admin/compliance/retention`: `compliance_routes.py:291`
+#### `GET /api/admin/compliance/retention`: `compliance_routes.py:326`
 **Signature:** `(request, patient_id: str | None = None, user = Depends(require_permission("admin.overview")))`
 **Does:** Returns `{policies, review}`. Deletes nothing, ever.
 **On screen:** nothing.
-**Breaks if you change it:** `enforce_patient_scope` is called explicitly when `patient_id` is supplied (`:299`) because this is not a `/{patient_id}` path route and the dependency form does not apply. Dropping it lets a scoped admin count another ward's overdue records.
+**Breaks if you change it:** `enforce_patient_scope` is called explicitly when `patient_id` is supplied (`:334`) because this is not a `/{patient_id}` path route and the dependency form does not apply. Dropping it lets a scoped admin count another ward's overdue records.
 
-#### `POST /api/admin/compliance/erasure`: `compliance_routes.py:310` (`create_erasure_request`)
+#### `POST /api/admin/compliance/erasure`: `compliance_routes.py:345` (`create_erasure_request`)
 **Signature:** `(body: ErasureRequestBody, request, user = Depends(require_permission("admin.overview")))`
 **Does:** Records the request, audits it with the requested categories.
 **On screen:** nothing.
-**Breaks if you change it:** `enforce_patient_scope(user, body.patient_id)` (`:317`) is the only ward check, the patient id is in the body, not the path, so no dependency can cover it.
+**Breaks if you change it:** `enforce_patient_scope(user, body.patient_id)` (`:352`) is the only ward check, the patient id is in the body, not the path, so no dependency can cover it.
 
-#### `GET /api/admin/compliance/erasure`: `compliance_routes.py:336` (`list_erasure`)
+#### `GET /api/admin/compliance/erasure`: `compliance_routes.py:371` (`list_erasure`)
 **Signature:** `(patient_id=None, status=None, user = Depends(require_permission("admin.overview")))`
 **Does:** The register, ward-scoped through `department_scope(user)`.
 **On screen:** nothing.
-**Why the listing is scoped and not just the by-id lookups (`:344-346`):** every row names a patient. `department_scope()` returns `None` for a genuinely unscoped governance account, which the service reads as "no filter".
+**Why the listing is scoped and not just the by-id lookups (`:379-381`):** every row names a patient. `department_scope()` returns `None` for a genuinely unscoped governance account, which the service reads as "no filter".
 **Breaks if you change it:** passing a literal `None` instead of `department_scope(user)` makes every scoped administrator a hospital-wide reader of who asked to be forgotten.
 
-#### `GET /api/admin/compliance/erasure/{request_id}`: `compliance_routes.py:351` (`get_erasure`)
-**Does:** One request with decisions and executions; 404 on unknown, then `enforce_patient_scope` on the request's patient (`:360`).
+#### `GET /api/admin/compliance/erasure/{request_id}`: `compliance_routes.py:495` (`get_erasure`)
+**Does:** One request with decisions and executions; 404 on unknown, then `enforce_patient_scope` on the request's patient (`:503`).
 **On screen:** nothing.
 **Breaks if you change it:** checking the scope *before* loading the request is impossible (the patient id is inside it), so the order here, load, then scope, is forced; do not "optimise" it into a single query without keeping the scope check.
 
-#### `POST /api/admin/compliance/erasure/{request_id}/adjudicate`: `compliance_routes.py:364`
+#### `POST /api/admin/compliance/erasure/{request_id}/adjudicate`: `compliance_routes.py:415`
 **Does:** Applies the retention matrix; audits honoured/refused/executable counts. A re-adjudication `ValueError` becomes **409**.
 **On screen:** nothing.
 **Breaks if you change it:** mapping the `ValueError` to 400 instead of 409 loses the "this is a state conflict, not a bad request" distinction a client needs to tell "already decided" from "malformed".
 
-#### `POST /api/admin/compliance/erasure/{request_id}/execute`: `compliance_routes.py:393`
+#### `POST /api/admin/compliance/erasure/{request_id}/execute`: `compliance_routes.py:444`
 **Does:** Two audit rows around one destructive call.
 **On screen:** nothing.
-**The ordering is the point (`:406-411`).** Erasure is irreversible and `phi_access` is a **fail-closed** audit category, so writing the **intent** row *before* touching any data means a failed audit write aborts the request with **nothing destroyed**. Auditing only afterwards would put the one case that matters (audit unavailable) on the wrong side of the line: data gone, no record that anyone asked for it.
+**The ordering is the point (`:457-462`).** Erasure is irreversible and `phi_access` is a **fail-closed** audit category, so writing the **intent** row *before* touching any data means a failed audit write aborts the request with **nothing destroyed**. Auditing only afterwards would put the one case that matters (audit unavailable) on the wrong side of the line: data gone, no record that anyone asked for it.
 **Breaks if you change it:** collapsing the two rows into one post-hoc row reintroduces exactly that window. Changing the category away from `phi_access` removes the fail-closed property that makes the ordering work at all.
 
-#### `POST /api/admin/compliance/breaches`: `compliance_routes.py:439` (`create_breach`)
+#### `POST /api/admin/compliance/breaches`: `compliance_routes.py:499` (`create_breach`)
 **Does:** Opens a breach, audits it under the **`security`** category (not `compliance`).
 **On screen:** changes the `dpdp_breach_register` Trust Center control.
 **Breaks if you change it:** the `security` category is what puts breach events alongside authentication failures in an audit review rather than alongside consent bookkeeping.
 
-#### `GET /api/admin/compliance/breaches`: `compliance_routes.py:470` (`get_breaches`)
+#### `GET /api/admin/compliance/breaches`: `compliance_routes.py:530` (`get_breaches`)
 **Does:** The register listing. **Not ward-scoped**, deliberately, but the affected-patient id list is stripped in the service (`consent_service.py:1599`).
 **On screen:** nothing.
 **Breaks if you change it:** if you ever add the id list back to the listing payload, this endpoint needs a `department` parameter first.
 
-#### `GET /api/admin/compliance/breaches/{breach_id}`: `compliance_routes.py:475` (`get_breach_detail`)
+#### `GET /api/admin/compliance/breaches/{breach_id}`: `compliance_routes.py:535` (`get_breach_detail`)
 **Does:** One breach, with the affected-patient list filtered to `department_scope(user)` and the withheld count stated.
 **On screen:** nothing.
 **Breaks if you change it:** passing `department=None` here hands every scoped administrator the full affected-patient list for every incident.
 
-#### `POST /api/admin/compliance/breaches/{breach_id}/notifications`: `compliance_routes.py:486`
+#### `POST /api/admin/compliance/breaches/{breach_id}/notifications`: `compliance_routes.py:546`
 **Does:** Records that the Board, or the affected people, were told, and when. Audited under `security`.
 **On screen:** flips `dpdp_breach_register` from `fail` to `pass`.
 **Breaks if you change it:** this endpoint is the only writer of `board_notified_at`; without it the control can never leave `fail` once a breach exists.
@@ -611,7 +611,7 @@ The module docstring (`:1-20`) states the split: `router` is **governance** (`/a
 | Schema shape: exactly one `patient_id` column | every migration that adds a patient-keyed table | `_patient_tables` (`:543`) | a new table with two patient columns is **refused with a reason**; a new table with one is exported the day it appears |
 | Virtual-table DDL sniff | sqlite-vec / fts5 extensions | `_patient_tables` (`:503`) | remove the sniff and the export 500s on any appliance with the knowledge corpus loaded |
 | `permissions.scope_patient_ids_sql` | `permissions.py:258` | `list_erasure_requests` (`:1104`), `get_breach` (`:1243`) | any second derivation of "which ward" drifts from the one every other route uses |
-| Fail-closed `phi_access` audit | `audit_service.log_audit_event` (guide 05) | export route (`compliance_routes.py:273`), execute route (`:412`, `:425`) | if the audit row cannot be written the disclosure or the destruction does not happen, by design |
+| Fail-closed `phi_access` audit | `audit_service.log_audit_event` (guide 05) | export route (`compliance_routes.py:359`), execute route (`:570`, `:599`) | if the audit row cannot be written the disclosure or the destruction does not happen, by design |
 | `dpdp_posture()` key names | `consent_service.py:1607` | `compliance_service._build_controls` (`compliance_service.py:537`) → `src/pages/panels/admin/TrustCenter.tsx:112` | a renamed key degrades to the `_safe` zero default, so a broken probe renders as `warn`, not as an error |
 | `users.password_hash` `NOT NULL` + the `$2` prefix convention | `auth.verify_password` (guide 03) | `_erase_portal_account` (`:833`) | make bcrypt the only accepted format and the tombstone stops being unmatchable-but-valid |
 | `sage_provenance_turns.patient_id` | `sage_provenance_service.py:88` | `_patient_tables` | its metadata rows land in every export by default, correct, but **not reviewed by anyone who knows what a patient should be shown** |
@@ -642,7 +642,7 @@ These are real, current, and load-bearing. An investor's engineer will find them
 
 1. **No consent is enforced anywhere.** `has_active_consent` (`:407`) exists, is tested, and has **zero production callers**. Nothing in Sage, Scribe or the Bridge portal checks whether the patient consented to `ai_assisted_documentation`, `ambient_recording` or `patient_portal` before acting. The register today is a **record** of consent, not a **gate** on processing. That is a defensible first cut, the record has to exist before it can be enforced, but "DPDP consent" in a demo means the former, not the latter.
 
-2. **There are two unrelated erasure mechanisms and they do not know about each other.** This chapter's adjudicated, category-driven DPDP path lives in `compliance_routes.py`. A second, older, **GDPR-style** path lives at `POST /api/admin/patients/{patient_id}/erase` (`admin_routes.py:265`), which anonymises the patient row and purges every patient-scoped table via a schema-derived plan (`_build_erase_plan`, `admin_routes.py:171`). **That second one is the one with a screen**, `src/pages/panels/admin/DataPanel.tsx:212`. So the only erasure a user can actually trigger is the one that **does not** consult `retention_policies`, does not write a decision row, and does not refuse anything with a stated reason. Reconciling the two is unfinished work and is the single most important gap in this chapter.
+2. **There are two unrelated erasure mechanisms and they do not know about each other.** This chapter's adjudicated, category-driven DPDP path lives in `compliance_routes.py`. A second, older, **GDPR-style** path lives at `POST /api/admin/patients/{patient_id}/erase` (`admin_routes.py:889-890`), which anonymises the patient row and purges every patient-scoped table via a schema-derived plan (`_build_erase_plan`, `admin_routes.py:791`). **That second one is the one with a screen**, `src/pages/panels/admin/DataPanel.tsx:212`. So the only erasure a user can actually trigger is the one that **does not** consult `retention_policies`, does not write a decision row, and does not refuse anything with a stated reason. Reconciling the two is unfinished work and is the single most important gap in this chapter.
 
 3. **No user interface for consent, retention, erasure or breaches.** Sixteen endpoints, no client. The natural homes: a consent register card on the patient chart (fed by `GET /api/consent/{patient_id}`), and a "Data rights" sub-tab of the admin panel beside the Trust Center for the export, the retention matrix, the erasure queue and the breach register.
 

@@ -365,6 +365,12 @@ def upsert_tariff_plan(
     on), so setting one clears the others in the same transaction — two defaults
     would make ``resolve_rate`` depend on insertion order, which is how the same
     service quietly costs two different amounts.
+
+    One default PER SCOPE (multisite-13): the others cleared are those of the
+    plan's own scope, the whole group or its one facility, so making a group
+    plan the default leaves each facility's own default as it was. Where a
+    plan applies is changed only through billing_masters.set_tariff_plan_scope;
+    this writer keeps it, and a new plan applies to the whole group.
     """
     code = _clean(code)
     if not code:
@@ -394,9 +400,12 @@ def upsert_tariff_plan(
                 notes,
             ),
         )
-        if is_default:
-            db.execute("UPDATE tariff_plans SET is_default = 0 WHERE code <> ?", (code,))
         row = db.execute("SELECT * FROM tariff_plans WHERE code = ?", (code,)).fetchone()
+        if is_default:
+            db.execute(
+                "UPDATE tariff_plans SET is_default = 0 WHERE code <> ? AND facility_id IS ?",
+                (code, row["facility_id"]),
+            )
     return _row(row)
 
 
@@ -2361,6 +2370,18 @@ def create_invoice(
                 },
             )
 
+        # CGST and SGST, or IGST (multisite-13): while the multi-site switch is
+        # on or more than one facility is on record, a place of supply naming
+        # a GST state is compared with the billing facility's state code, and
+        # that decides it whatever the caller sent. Otherwise the caller's
+        # flag decides, as before.
+        interstate, interstate_source = billing_masters.invoice_interstate_on(
+            db,
+            patient_id=patient_id,
+            admission_id=admission_id,
+            place_of_supply=place_of_supply,
+            interstate=interstate,
+        )
         lines = [_charge_line(r, interstate=interstate) for r in rows]
         totals = compute_invoice(
             lines,
@@ -2495,6 +2516,7 @@ def create_invoice(
                 "payable_paise": totals.payable_paise,
                 "tax_paise": totals.tax_paise,
                 "is_interstate": interstate,
+                "interstate_source": interstate_source,
             },
         )
 

@@ -7,10 +7,10 @@ message thread (documented separately), the list and the thread are two branches
 ternary, so nothing on this page survives into the thread.
 
 **How to reach it.** Sidebar → **Messages** (nav id `relay`, label "Messages", pillar "Relay",
-`src/pages/ClinicianShell.tsx:78`). The shell mounts the panel inside
-`<div id="panel-relay" role="tabpanel">` at `src/pages/ClinicianShell.tsx:571-573`, wrapped in
+`src/pages/ClinicianShell.tsx:84`). The shell mounts the panel inside
+`<div id="panel-relay" role="tabpanel">` at `src/pages/ClinicianShell.tsx:822-824`, wrapped in
 `<PanelErrorBoundary label="relay">`. The panel is lazy-loaded
-(`src/pages/ClinicianShell.tsx:311`) and, once mounted, is **never unmounted**, the shell
+(`src/pages/ClinicianShell.tsx:477`) and, once mounted, is **never unmounted**, the shell
 hides inactive tabs with `display: none`, which is why this panel polls rather than refetching
 on mount.
 
@@ -642,7 +642,7 @@ Case rooms are additionally dropped when the patient is `discharged`
 (`relay_routes.py:1204`). `relay.read` + `relay.send` are granted to `doctor` (and its alias
 `clinician`), `nurse` and `admin`, and **not** to `pharmacist` or `patient`
 (`server/permissions.py:110`, `:125`, `:146`, `:158-165`). The tab is also hidden for those
-roles client-side (`src/pages/ClinicianShell.tsx:227-230`, pharmacist gets
+roles client-side (`src/pages/ClinicianShell.tsx:393-396`, pharmacist gets
 `['helix','pharmacy-verify','sage']`), so a pharmacist never sees a Messages tab; the 403 is
 the backstop, not the UX.
 

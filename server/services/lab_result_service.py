@@ -151,8 +151,8 @@ from db_backend import DBIntegrityError
 from permissions import LAB_AUTHORISE, LAB_RESULT, has_permission
 
 from services import lab_critical_service as lcs
+from services import lab_facility, lab_module
 from services import lab_master_service as lm
-from services import lab_module
 from services import lab_observations as lobs
 from services import lab_order_service as los
 from services.audit_service import log_audit_event
@@ -707,12 +707,16 @@ _WORKLIST_SELECT = """
     LEFT JOIN lab_critical_limits cl ON cl.id = r.critical_limit_id"""
 
 
-def list_sections(conn) -> list[dict]:
+def list_sections(conn: Any, *, facilities: frozenset[int] | None = None) -> list[dict]:
     """Every active section with its counts: tests waiting for a result,
     results entered and not yet validated, and STAT tests waiting. Counts
-    only, no patient data."""
+    only, no patient data. `facilities` (the caller's facility_scope) counts
+    only the samples its facilities' laboratories perform; None counts all."""
     if not _tables_present(conn):
         return []
+    from services import facility_filter
+
+    facility_sql, facility_params = facility_filter.column_clause("s.facility_id", facilities)
     rows = conn.execute(
         f"""SELECT sec.id, sec.name, sec.sort_order,
                    SUM(CASE WHEN w.status = 'received' THEN 1 ELSE 0 END) AS waiting,
@@ -724,12 +728,13 @@ def list_sections(conn) -> list[dict]:
                        FROM lab_order_items i
                        JOIN lab_specimens s ON s.id = i.specimen_id
                        WHERE i.status IN ({_placeholders(WORKLIST_ITEM_STATUSES)})
-                         AND s.status IN ({_placeholders(_BENCH_SPECIMEN_STATUSES)})) w
+                         AND s.status IN ({_placeholders(_BENCH_SPECIMEN_STATUSES)})
+                         {facility_sql}) w
                  ON w.section_id = sec.id
             WHERE sec.active = 1
             GROUP BY sec.id
             ORDER BY sec.sort_order, sec.name COLLATE NOCASE""",
-        (*WORKLIST_ITEM_STATUSES, *_BENCH_SPECIMEN_STATUSES),
+        (*WORKLIST_ITEM_STATUSES, *_BENCH_SPECIMEN_STATUSES, *facility_params),
     ).fetchall()
     return [
         {
@@ -763,7 +768,14 @@ def _range_preview(
     return cache[key]
 
 
-def worklist(conn, section_id: str, *, dept: str | None, limit: int = WORKLIST_CAP) -> dict:
+def worklist(
+    conn: Any,
+    section_id: str,
+    *,
+    dept: str | None,
+    limit: int = WORKLIST_CAP,
+    facilities: frozenset[int] | None = None,
+) -> dict:
     """One section's bench: every test on a received sample waiting for a
     result or with one entered and not yet validated, STAT first, then the
     oldest receipt, then the sample and the test in order. Each row carries
@@ -774,7 +786,10 @@ def worklist(conn, section_id: str, *, dept: str | None, limit: int = WORKLIST_C
 
     `dept` is the caller's department_scope and is required: None (the
     laboratory roles) is hospital-wide; a department keeps only its own
-    patients, filtered in SQL before the LIMIT. 404 for an unknown section."""
+    patients, filtered in SQL before the LIMIT. 404 for an unknown section.
+    `facilities` (the caller's facility_scope) keeps the bench to the
+    samples its facilities' laboratories perform (a ward: its patients at
+    those facilities); None changes nothing."""
     if not _tables_present(conn):
         raise LabResultError("not_found", "Section not found", status=404)
     section = conn.execute(
@@ -790,6 +805,11 @@ def worklist(conn, section_id: str, *, dept: str | None, limit: int = WORKLIST_C
         scope_sql, params = scope_patient_ids_sql(dept)
         scope_where = f" AND s.patient_id IN ({scope_sql})"
         scope_params = tuple(params)
+    facility_where, facility_params = lab_facility.list_clause(
+        dept=dept, facilities=facilities, patient_col="s.patient_id", facility_sql="s.facility_id"
+    )
+    scope_where += facility_where
+    scope_params += tuple(facility_params)
     rows = [
         dict(r)
         for r in conn.execute(
@@ -1249,6 +1269,7 @@ def _refuse_if_changed(conn, current: dict, expected: Any, *, with_current: bool
     )
 
 
+@lab_facility.audit_refusals
 def enter_result(
     order_item_id: Any,
     *,
@@ -1257,6 +1278,7 @@ def enter_result(
     actor: dict,
     dept: str | None = None,
     request_meta: dict | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Enter one result by hand, in ONE immediate transaction: the
     lab_results row (status 'entered', version 1, source 'lis_manual', its
@@ -1265,10 +1287,10 @@ def enter_result(
     clinical_access audit row. Refused: a test not on a received sample,
     cancelled, rejected or already resulted; a value the test cannot take
     (precision, coded list). The partial unique index refuses a second live
-    result even under a race.
+    result even under a race. A test outside the caller's facilities
+    (`facilities`, its sample's performing facility) is the same 404, with
+    an audited facility refusal (lab_facility).
     """
-    from permissions import patient_in_scope
-
     _require_result_permission(actor)
     comment = _clean_comment(comment)
     actor_id = actor["id"]
@@ -1276,8 +1298,15 @@ def enter_result(
         if not _tables_present(conn):
             raise LabResultError("not_found", "Test not found", status=404)
         item = _item_for_entry(conn, order_item_id)
-        if not patient_in_scope(conn, item["patient_id"], dept):
-            raise LabResultError("not_found", "Test not found", status=404)
+        lab_facility.require_in_scope(
+            conn,
+            patient_id=item["patient_id"],
+            specimen_id=item["specimen_id"],
+            dept=dept,
+            facilities=facilities,
+            helper="lab_result",
+            not_found=LabResultError("not_found", "Test not found", status=404),
+        )
         _refuse_item_state(item)
         fields = _value_fields(conn, item, value)
         delta_flag, delta = _delta_for(conn, item, fields)
@@ -1360,6 +1389,7 @@ def enter_result(
         return {"result": _result_row(conn, result_id)}
 
 
+@lab_facility.audit_refusals
 def edit_result(
     result_id: Any,
     *,
@@ -1370,6 +1400,7 @@ def edit_result(
     actor: dict,
     dept: str | None = None,
     request_meta: dict | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Change an entered result before technical validation, in ONE immediate
     transaction: the row is updated in place (same version, the flag decided
@@ -1384,8 +1415,6 @@ def edit_result(
     current row, and nothing is written; this check runs before the new value
     is read, so a stale screen is never told its value was saved, even when
     it matches. An edit that changes nothing writes nothing."""
-    from permissions import patient_in_scope
-
     _require_result_permission(actor)
     comment = _clean_comment(comment)
     reason = str(reason if reason is not None else "").strip()[:500] or None
@@ -1397,10 +1426,7 @@ def edit_result(
     with db_session(immediate=True) as conn:
         if not _tables_present(conn):
             raise LabResultError("not_found", "Result not found", status=404)
-        current = conn.execute("SELECT * FROM lab_results WHERE id = ?", (rid,)).fetchone()
-        if current is None or not patient_in_scope(conn, current["patient_id"], dept):
-            raise LabResultError("not_found", "Result not found", status=404)
-        current = dict(current)
+        current = _live_result(conn, rid, dept, facilities)
         if current["status"] not in _EDITABLE_RESULT_STATUSES:
             if current["status"] in ("tech_validated", "released"):
                 raise LabResultError(
@@ -1571,12 +1597,25 @@ def _batch(results: Any) -> list[tuple[int, Any]]:
     return out
 
 
-def _live_result(conn, rid: int, dept: str | None) -> dict:
-    from permissions import patient_in_scope
-
+def _live_result(
+    conn: Any, rid: int, dept: str | None, facilities: frozenset[int] | None = None
+) -> dict:
+    """One result row inside the caller's scope, else 404 'Result not found'.
+    Outside the caller's facilities (its sample's performing facility for the
+    laboratory) raises lab_facility.FacilityRefusal: the calling step audits
+    it and answers the same 404."""
     row = conn.execute("SELECT * FROM lab_results WHERE id = ?", (rid,)).fetchone()
-    if row is None or not patient_in_scope(conn, row["patient_id"], dept):
+    if row is None:
         raise LabResultError("not_found", "Result not found", status=404)
+    lab_facility.require_in_scope(
+        conn,
+        patient_id=row["patient_id"],
+        specimen_id=row["specimen_id"],
+        dept=dept,
+        facilities=facilities,
+        helper="lab_result",
+        not_found=LabResultError("not_found", "Result not found", status=404),
+    )
     return dict(row)
 
 
@@ -1652,6 +1691,7 @@ def _test_name(item: dict) -> str:
     return item.get("test_name") or item["test_id"]
 
 
+@lab_facility.audit_refusals
 def acknowledge_delta(
     result_id: Any,
     *,
@@ -1660,6 +1700,7 @@ def acknowledge_delta(
     actor: dict,
     dept: str | None = None,
     request_meta: dict | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Give the technologist's reason for a delta flag (ruling LIS-R9 (a)),
     in ONE immediate transaction with its clinical_access audit row
@@ -1684,7 +1725,7 @@ def acknowledge_delta(
     with db_session(immediate=True) as conn:
         if not _tables_present(conn):
             raise LabResultError("not_found", "Result not found", status=404)
-        current = _live_result(conn, rid, dept)
+        current = _live_result(conn, rid, dept, facilities)
         if current["status"] != "entered":
             _refuse_result_status(current, "entered")
         item = _item_in_step(conn, current, "resulted")
@@ -1773,8 +1814,14 @@ def acknowledge_delta(
         return {"result": _result_row(conn, rid), "acknowledged": True}
 
 
+@lab_facility.audit_refusals
 def technically_validate(
-    results: Any, *, actor: dict, dept: str | None = None, request_meta: dict | None = None
+    results: Any,
+    *,
+    actor: dict,
+    dept: str | None = None,
+    request_meta: dict | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Technically validate entered results (lab.result), in ONE immediate
     transaction: all of them or none. Each result goes to 'tech_validated'
@@ -1805,7 +1852,7 @@ def technically_validate(
         now = utc_iso_now()
         validated: list[int] = []
         for rid, expected in entries:
-            current = _live_result(conn, rid, dept)
+            current = _live_result(conn, rid, dept, facilities)
             _refuse_result_status(current, "entered")
             item = _item_in_step(conn, current, "resulted")
             _refuse_if_changed(conn, current, expected, with_current=False)
@@ -2053,6 +2100,7 @@ def _release_in_txn(
     return observation_id
 
 
+@lab_facility.audit_refusals
 def authorise_and_release(
     specimen_id: Any,
     results: Any,
@@ -2060,6 +2108,7 @@ def authorise_and_release(
     actor: dict,
     dept: str | None = None,
     request_meta: dict | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Authorise technically validated results on ONE sample and release
     them into the chart (lab.authorise), in ONE immediate transaction: all
@@ -2080,9 +2129,9 @@ def authorise_and_release(
     While two different people are required (LIS-R5, the default) a
     signatory who entered, changed, explained the delta of or technically
     validated a result is refused 403 'second_person_required' for it; with
-    the setting off the release records that one person did every step."""
-    from permissions import patient_in_scope
-
+    the setting off the release records that one person did every step.
+    A sample outside the caller's facilities (`facilities`, its performing
+    facility) is the same 404, with an audited facility refusal."""
     _require_authorise_permission(actor)
     try:
         accession = los.checked_accession(specimen_id)
@@ -2098,8 +2147,17 @@ def authorise_and_release(
             "SELECT id, patient_id, status, collected_at FROM lab_specimens WHERE id = ?",
             (accession,),
         ).fetchone()
-        if specimen is None or not patient_in_scope(conn, specimen["patient_id"], dept):
+        if specimen is None:
             raise LabResultError("not_found", "Specimen not found", status=404)
+        lab_facility.require_in_scope(
+            conn,
+            patient_id=specimen["patient_id"],
+            specimen_id=specimen["id"],
+            dept=dept,
+            facilities=facilities,
+            helper="lab_result_release",
+            not_found=LabResultError("not_found", "Specimen not found", status=404),
+        )
         specimen = dict(specimen)
         if specimen["status"] not in ("received", "in_process"):
             raise LabResultError(
@@ -2128,7 +2186,7 @@ def authorise_and_release(
         raised: list[str] = []
         one_person_count = 0
         for rid, expected in entries:
-            current = _live_result(conn, rid, dept)
+            current = _live_result(conn, rid, dept, facilities)
             if current.get("specimen_id") != accession:
                 raise LabResultError(
                     "not_on_this_sample",
@@ -2213,6 +2271,7 @@ def authorise_and_release(
     return out
 
 
+@lab_facility.audit_refusals
 def return_to_bench(
     result_id: Any,
     *,
@@ -2221,6 +2280,7 @@ def return_to_bench(
     actor: dict,
     dept: str | None = None,
     request_meta: dict | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """A signatory sends a technically validated result back to the bench
     with a reason (lab.authorise), in ONE immediate transaction: the result
@@ -2235,7 +2295,7 @@ def return_to_bench(
     with db_session(immediate=True) as conn:
         if not _tables_present(conn):
             raise LabResultError("not_found", "Result not found", status=404)
-        current = _live_result(conn, rid, dept)
+        current = _live_result(conn, rid, dept, facilities)
         _refuse_result_status(current, "tech_validated")
         item = _item_in_step(conn, current, "tech_validated")
         _refuse_if_changed(conn, current, expected, with_current=False)
@@ -2440,7 +2500,12 @@ def _part_takers(conn, result_ids: list[int]) -> dict[int, set[str]]:
 
 
 def validation_queues(
-    conn, *, actor: dict, dept: str | None, limit: int = VALIDATION_QUEUE_CAP
+    conn: Any,
+    *,
+    actor: dict,
+    dept: str | None,
+    limit: int = VALIDATION_QUEUE_CAP,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """The Validate screen: results entered and waiting for technical
     validation, and results technically validated and waiting for a
@@ -2450,8 +2515,10 @@ def validation_queues(
     ('you_took_part', and 'may_authorise' while two different people are
     required, LIS-R5). `dept` is the caller's department_scope: None is
     hospital-wide (the laboratory roles); a department keeps its own
-    patients, filtered in SQL before the LIMIT. A read: the route audits the
-    patients returned."""
+    patients, filtered in SQL before the LIMIT. `facilities` (the caller's
+    facility_scope) keeps both queues to the samples its facilities'
+    laboratories perform (a ward: its patients there). A read: the route
+    audits the patients returned."""
     from permissions import scope_patient_ids_sql
 
     holds_authorise = has_permission((actor or {}).get("role", ""), LAB_AUTHORISE)
@@ -2470,6 +2537,11 @@ def validation_queues(
         scope_sql, params = scope_patient_ids_sql(dept)
         scope_where = f" AND r.patient_id IN ({scope_sql})"
         scope_params = tuple(params)
+    facility_where, facility_params = lab_facility.list_clause(
+        dept=dept, facilities=facilities, patient_col="r.patient_id", facility_sql="s.facility_id"
+    )
+    scope_where += facility_where
+    scope_params += tuple(facility_params)
     technical = _queue_rows(
         conn,
         result_status="entered",
@@ -2513,12 +2585,16 @@ def validation_queues(
 # ════════════════════════════════════════════════════════════════════════════
 
 
-def _reported(conn, rid: int, dept: str | None) -> tuple[dict, dict, dict]:
+def _reported(
+    conn: Any, rid: int, dept: str | None, facilities: frozenset[int] | None = None
+) -> tuple[dict, dict, dict]:
     """The released result, its test and its sample, for an amendment or a
-    withdrawal. Refused: out of scope (404), a result already amended or
-    withdrawn, one not yet reported (change it on the bench instead), a test
-    no longer reported, a sample with no readable collection time."""
-    current = _live_result(conn, rid, dept)
+    withdrawal. Refused: out of scope (404; outside the caller's facilities
+    raises lab_facility.FacilityRefusal, audited by the step), a result
+    already amended or withdrawn, one not yet reported (change it on the
+    bench instead), a test no longer reported, a sample with no readable
+    collection time."""
+    current = _live_result(conn, rid, dept, facilities)
     status = current["status"]
     if status == "superseded":
         raise LabResultError(
@@ -2896,6 +2972,7 @@ def _amendment_answer(applied: dict, *, rid: int) -> dict:
     }
 
 
+@lab_facility.audit_refusals
 def amend_result(
     result_id: Any,
     *,
@@ -2907,6 +2984,7 @@ def amend_result(
     actor: dict,
     dept: str | None = None,
     request_meta: dict | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Amend a reported result (lab.authorise), with a reason, in ONE
     immediate transaction.
@@ -2935,7 +3013,7 @@ def amend_result(
     with db_session(immediate=True) as conn:
         if not _tables_present(conn):
             raise LabResultError("not_found", "Result not found", status=404)
-        current, item, specimen = _reported(conn, rid, dept)
+        current, item, specimen = _reported(conn, rid, dept, facilities)
         _refuse_if_changed(conn, current, expected, with_current=False)
         if _pending_proposal(conn, rid) is not None:
             raise LabResultError(
@@ -3023,6 +3101,7 @@ def amend_result(
     return _amendment_answer(applied, rid=rid)
 
 
+@lab_facility.audit_refusals
 def confirm_amendment(
     result_id: Any,
     *,
@@ -3032,6 +3111,7 @@ def confirm_amendment(
     actor: dict,
     dept: str | None = None,
     request_meta: dict | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """A second signatory confirms a proposed amendment, which applies it in
     ONE immediate transaction (_apply_amendment): entered by the proposer,
@@ -3055,7 +3135,7 @@ def confirm_amendment(
     with db_session(immediate=True) as conn:
         if not _tables_present(conn):
             raise LabResultError("not_found", "Result not found", status=404)
-        current, item, specimen = _reported(conn, rid, dept)
+        current, item, specimen = _reported(conn, rid, dept, facilities)
         _refuse_if_changed(conn, current, expected, with_current=False)
         pending = _pending_proposal(conn, rid)
         if pending is None or pending["proposal_id"] != pid:
@@ -3101,6 +3181,7 @@ def confirm_amendment(
     return _amendment_answer(applied, rid=rid)
 
 
+@lab_facility.audit_refusals
 def cancel_amendment(
     result_id: Any,
     *,
@@ -3109,6 +3190,7 @@ def cancel_amendment(
     actor: dict,
     dept: str | None = None,
     request_meta: dict | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Cancel a proposed amendment (lab.authorise, either signatory), with a
     reason, in ONE immediate transaction: an 'amendment_cancelled' result
@@ -3126,7 +3208,7 @@ def cancel_amendment(
     with db_session(immediate=True) as conn:
         if not _tables_present(conn):
             raise LabResultError("not_found", "Result not found", status=404)
-        current = _live_result(conn, rid, dept)
+        current = _live_result(conn, rid, dept, facilities)
         pending = _pending_proposal(conn, rid)
         if pending is None or pending["proposal_id"] != pid:
             raise LabResultError(
@@ -3157,6 +3239,7 @@ def cancel_amendment(
         return {"result": _result_row(conn, rid), "cancelled": True}
 
 
+@lab_facility.audit_refusals
 def withdraw_result(
     result_id: Any,
     *,
@@ -3166,6 +3249,7 @@ def withdraw_result(
     actor: dict,
     dept: str | None = None,
     request_meta: dict | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Withdraw a reported result entered in error (lab.authorise), with a
     reason, in ONE immediate transaction: the result to 'withdrawn', its
@@ -3196,7 +3280,7 @@ def withdraw_result(
     with db_session(immediate=True) as conn:
         if not _tables_present(conn):
             raise LabResultError("not_found", "Result not found", status=404)
-        current, item, specimen = _reported(conn, rid, dept)
+        current, item, specimen = _reported(conn, rid, dept, facilities)
         _refuse_if_changed(conn, current, expected, with_current=False)
         now = utc_iso_now()
         pending = _pending_proposal(conn, rid)
@@ -3522,14 +3606,22 @@ def _reported_entry(row: dict) -> dict:
     return entry
 
 
-def reported_results(conn, specimen_id: Any, *, actor: dict, dept: str | None) -> dict:
+@lab_facility.audit_refusals
+def reported_results(
+    conn: Any,
+    specimen_id: Any,
+    *,
+    actor: dict,
+    dept: str | None,
+    facilities: frozenset[int] | None = None,
+    request_meta: dict | None = None,
+) -> dict:
     """One sample's reported results, for amending or withdrawing them: per
     test, the reported version, the versions it replaced or the withdrawal,
     and any amendment waiting for a second signatory. 404 for an unknown or
-    out-of-scope sample; 422 'bad_accession' for a bad check digit. A read:
-    the route audits the patient."""
-    from permissions import patient_in_scope
-
+    out-of-scope sample (outside the caller's facilities too, with an
+    audited facility refusal); 422 'bad_accession' for a bad check digit. A
+    read: the route audits the patient."""
     try:
         accession = los.checked_accession(specimen_id)
     except los.LabOrderError as err:
@@ -3543,8 +3635,17 @@ def reported_results(conn, specimen_id: Any, *, actor: dict, dept: str | None) -
            WHERE s.id = ?""",
         (accession,),
     ).fetchone()
-    if sample is None or not patient_in_scope(conn, sample["patient_id"], dept):
+    if sample is None:
         raise LabResultError("not_found", "Specimen not found", status=404)
+    lab_facility.require_in_scope(
+        conn,
+        patient_id=sample["patient_id"],
+        specimen_id=sample["id"],
+        dept=dept,
+        facilities=facilities,
+        helper="lab_reported_results",
+        not_found=LabResultError("not_found", "Specimen not found", status=404),
+    )
     rows = [
         dict(r)
         for r in conn.execute(

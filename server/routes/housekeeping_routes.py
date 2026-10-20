@@ -47,18 +47,36 @@ Every route 404s as a whole when the module is switched off, and no clinical
 path calls any of them. `POST /units/{id}/state` refusing an illegal transition
 refuses a HOUSEKEEPING RECORD; admission does not consult it. See the PILOT
 SAFETY section of services/housekeeping_service.py.
+
+── ONE FACILITY AT A TIME (multisite-9b) ────────────────────────────────────
+A unit (a bed, a room, a theatre) is registered at one facility
+(housekeeping_units.facility_id, migration 75). With more than one facility of a
+group on the appliance a housekeeping desk works its own facility: the board,
+the unit register, the queue, the turnaround, readiness and linen figures keep
+to the caller's facilities' units and wards, a unit or request of another
+facility answers 404 exactly like one that does not exist, and a unit or linen
+movement on another facility's ward is refused (403 facility_scope). A ward is
+the caller's when one of their facility's units is on it, or Bed setup (or the
+stays open on it) place it there. The discharge and bed-movement sweeps stay
+appliance-wide writers that return counts; the ward names a sweep could not
+match are kept to the caller's wards. With one facility on record the
+caller's facility scope is None and none of this runs.
 """
 
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterable
+from typing import Any
 
 import config
+from database import db_session
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from permissions import (
     ADMIN_OVERVIEW,
     FORECAST_READ,
     VITALS_WRITE,
+    facility_scope,
     has_permission,
     require_permission,
 )
@@ -266,6 +284,122 @@ def _bad_request(err: HousekeepingError) -> HTTPException:
     )
 
 
+class _FacilityView:
+    """The units and wards of the caller's facilities (see the module
+    docstring), read once per request and only with a facility limit."""
+
+    def __init__(self, facilities: frozenset[int]) -> None:
+        from services.forecast_service import ward_facility_lookup
+        from services.housekeeping_service import ensure_housekeeping_schema
+
+        ensure_housekeeping_schema()
+        self.facilities = facilities
+        ids = sorted(int(f) for f in facilities)
+        self.unit_ids: set[str] = set()
+        self.ward_keys: set[str] = set()
+        self.other_ward_keys: set[str] = set()
+        with db_session() as db:
+            for row in db.execute(
+                "SELECT id, ward, facility_id FROM housekeeping_units"
+            ).fetchall():
+                if row[2] is not None and int(row[2]) in ids:
+                    self.unit_ids.add(str(row[0]))
+                    if row[1]:
+                        self.ward_keys.add(_ward_key(row[1]))
+                elif row[1]:
+                    self.other_ward_keys.add(_ward_key(row[1]))
+            self._lookup = ward_facility_lookup(db)
+
+    def ward_ok(self, ward: Any) -> bool:
+        if not ward:
+            return False
+        if _ward_key(ward) in self.ward_keys:
+            return True
+        fid = self._lookup(ward)
+        return fid is not None and fid in self.facilities
+
+    def ward_elsewhere(self, ward: Any) -> bool:
+        """Is this ward known to be another facility's (Bed setup, the stays
+        on it, or only other facilities' units on it)?"""
+        if not ward or _ward_key(ward) in self.ward_keys:
+            return False
+        fid = self._lookup(ward)
+        if fid is not None:
+            return fid not in self.facilities
+        return _ward_key(ward) in self.other_ward_keys
+
+    def wards(self, rows: Iterable[dict]) -> list[dict]:
+        return [r for r in rows if self.ward_ok(r.get("ward"))]
+
+    def tasks(self, rows: Iterable[dict]) -> list[dict]:
+        return [r for r in rows if str(r.get("unit_id")) in self.unit_ids]
+
+
+def _ward_key(value: Any) -> str:
+    return " ".join(str(value or "").split()).casefold()
+
+
+def _view(user: dict) -> _FacilityView | None:
+    """The caller's facility view, or None with no facility limit."""
+    facilities = facility_scope(user)
+    return None if facilities is None else _FacilityView(facilities)
+
+
+def _not_found(what: str) -> HTTPException:
+    return HTTPException(status_code=404, detail={"error": "not_found", "message": f"No {what}"})
+
+
+def _require_unit(view: _FacilityView | None, unit_id: str) -> None:
+    """404 for a unit of another facility, looked up by id or code as the
+    service looks it up."""
+    if view is None:
+        return
+    try:
+        unit = get_unit(unit_id)
+    except HousekeepingError as e:
+        raise _not_found(f"unit {unit_id}") from e
+    if str(unit.get("id")) not in view.unit_ids:
+        raise _not_found(f"unit {unit_id}")
+
+
+def _require_task(view: _FacilityView | None, task_id: str) -> None:
+    """404 for a cleaning request on another facility's unit."""
+    if view is None:
+        return
+    try:
+        task = get_task(task_id)
+    except HousekeepingError as e:
+        raise _not_found(f"request {task_id}") from e
+    if str(task.get("unit_id")) not in view.unit_ids:
+        raise _not_found(f"request {task_id}")
+
+
+def _refuse_ward(view: _FacilityView | None, ward: str | None, *, known_only: bool = False) -> None:
+    """403 facility_scope for a ward of another facility. With known_only a
+    ward no facility can be told for passes (a first unit on a new ward is
+    stamped by the service from the account registering it); otherwise it is
+    refused too."""
+    if view is None:
+        return
+    if (not view.ward_elsewhere(ward)) if known_only else view.ward_ok(ward):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "error": "facility_scope",
+            "message": "That ward is not one of your facility's wards, so nothing was saved.",
+        },
+    )
+
+
+def _scoped_sweep(result: dict, view: _FacilityView | None) -> dict:
+    """A sweep's answer with the unmatched ward names kept to the caller's."""
+    if view is None or not isinstance(result.get("unmatched_wards"), dict):
+        return result
+    kept = {w: n for w, n in result["unmatched_wards"].items() if view.ward_ok(w)}
+    return {**result, "unmatched_wards": kept}
+
+
 def _audit(request: Request, user: dict, action: str, summary: str, **metadata) -> None:
     """One audit line per housekeeping write.
 
@@ -329,12 +463,49 @@ _HOUSEKEEPING_OVERVIEW_SYNC_DEFAULT = Query(
 _HOUSEKEEPING_OVERVIEW_USER_DEFAULT = Depends(require_housekeeping_read())
 
 
-@router.get("/overview")
+@router.get("/overview", response_model=None)
 def housekeeping_overview(
     sync: bool = _HOUSEKEEPING_OVERVIEW_SYNC_DEFAULT,
     _user: dict = _HOUSEKEEPING_OVERVIEW_USER_DEFAULT,
-):
-    return overview(sync=sync)
+) -> dict:
+    out = overview(sync=sync)
+    view = _view(_user)
+    if view is None:
+        return out
+    # The caller's facilities' units and wards only, every count made again
+    # the way services/housekeeping_service.overview makes it.
+    open_tasks = view.tasks(list_tasks(status="open", limit=1000))
+    active = view.tasks(list_tasks(status="in_progress", limit=1000))
+    both = open_tasks + active
+    readiness = dict(out.get("readiness") or {})
+    readiness["wards"] = view.wards(readiness.get("wards") or [])
+    marks = ", ".join("?" for _ in view.unit_ids) or "NULL"
+    with db_session() as db:
+        dirty = int(
+            db.execute(
+                "SELECT COUNT(*) FROM housekeeping_units u "
+                f"WHERE u.id IN ({marks}) AND u.is_active = 1 AND u.state = 'vacant_dirty' "
+                "AND NOT EXISTS (SELECT 1 FROM housekeeping_tasks t "
+                "WHERE t.unit_id = u.id AND t.status IN ('open', 'in_progress'))",
+                tuple(sorted(view.unit_ids)),
+            ).fetchone()[0]
+        )
+    out.update(
+        {
+            "counts": {
+                "open": len(open_tasks),
+                "in_progress": len(active),
+                "overdue": sum(1 for t in both if t.get("is_overdue")),
+                "terminal_open": sum(1 for t in both if t.get("is_terminal_clean")),
+                "immediate": sum(1 for t in both if t.get("priority") == "immediate"),
+                "dirty_without_request": dirty,
+            },
+            "queue": (active + open_tasks)[:50],
+            "readiness": readiness,
+            "discharge_sweep": _scoped_sweep(out.get("discharge_sweep") or {}, view),
+        }
+    )
+    return out
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -347,13 +518,17 @@ _GET_UNITS_INCLUDE_INACTIVE_DEFAULT = Query(False)
 _GET_UNITS_USER_DEFAULT = Depends(require_housekeeping_read())
 
 
-@router.get("/units")
+@router.get("/units", response_model=None)
 def get_units(
     ward: str | None = _GET_UNITS_WARD_DEFAULT,
     include_inactive: bool = _GET_UNITS_INCLUDE_INACTIVE_DEFAULT,
     _user: dict = _GET_UNITS_USER_DEFAULT,
-):
-    return {"units": list_units(ward, include_inactive=include_inactive)}
+) -> dict:
+    units = list_units(ward, include_inactive=include_inactive)
+    view = _view(_user)
+    if view is not None:
+        units = [u for u in units if str(u.get("id")) in view.unit_ids]
+    return {"units": units}
 
 
 #: The refusal a bed register request gets while Beds and admissions owns beds.
@@ -390,9 +565,15 @@ def _refuse_beds_while_adt_is_on(body: UnitIn) -> None:
 _POST_UNIT_USER_DEFAULT = Depends(require_housekeeping_write())
 
 
-@router.post("/units")
-def post_unit(body: UnitIn, request: Request, user: dict = _POST_UNIT_USER_DEFAULT):
+@router.post("/units", response_model=None)
+def post_unit(body: UnitIn, request: Request, user: dict = _POST_UNIT_USER_DEFAULT) -> dict:
     _refuse_beds_while_adt_is_on(body)
+    view = _view(user)
+    if view is not None:
+        existing = find_unit_by_code(body.unit_code)
+        if existing and str(existing.get("id")) not in view.unit_ids:
+            raise _not_found(f"unit {body.unit_code}")
+        _refuse_ward(view, body.ward, known_only=True)
     try:
         unit = register_unit(
             unit_code=body.unit_code,
@@ -432,26 +613,31 @@ def post_unit(body: UnitIn, request: Request, user: dict = _POST_UNIT_USER_DEFAU
 _GET_ONE_UNIT_USER_DEFAULT = Depends(require_housekeeping_read())
 
 
-@router.get("/units/{unit_id}")
-def get_one_unit(unit_id: str, _user: dict = _GET_ONE_UNIT_USER_DEFAULT):
+@router.get("/units/{unit_id}", response_model=None)
+def get_one_unit(unit_id: str, _user: dict = _GET_ONE_UNIT_USER_DEFAULT) -> dict:
     try:
-        return get_unit(unit_id)
+        unit = get_unit(unit_id)
     except HousekeepingError as e:
         raise HTTPException(
             status_code=404, detail={"error": "not_found", "message": str(e)}
         ) from e
+    view = _view(_user)
+    if view is not None and str(unit.get("id")) not in view.unit_ids:
+        raise _not_found(f"unit {unit_id}")
+    return unit
 
 
 _POST_UNIT_STATE_USER_DEFAULT = Depends(require_housekeeping_write())
 
 
-@router.post("/units/{unit_id}/state")
+@router.post("/units/{unit_id}/state", response_model=None)
 def post_unit_state(
     unit_id: str,
     body: StateIn,
     request: Request,
     user: dict = _POST_UNIT_STATE_USER_DEFAULT,
-):
+) -> dict:
+    _require_unit(_view(user), unit_id)
     try:
         unit = transition_unit(
             unit_id,
@@ -476,18 +662,19 @@ def post_unit_state(
 _POST_UNIT_OCCUPY_USER_DEFAULT = Depends(require_housekeeping_write())
 
 
-@router.post("/units/{unit_id}/occupy")
+@router.post("/units/{unit_id}/occupy", response_model=None)
 def post_unit_occupy(
     unit_id: str,
     body: OccupyIn,
     request: Request,
     user: dict = _POST_UNIT_OCCUPY_USER_DEFAULT,
-):
+) -> dict:
     """Record that a unit is occupied — INCLUDING when the clean was skipped.
 
     This is the honest-record path described in `force_occupied`. It records what
     happened; it does not authorise anything, and no admission consults it.
     """
+    _require_unit(_view(user), unit_id)
     try:
         unit = force_occupied(
             unit_id,
@@ -523,25 +710,32 @@ _GET_TASKS_LIMIT_DEFAULT = Query(200, ge=1, le=1000)
 _GET_TASKS_USER_DEFAULT = Depends(require_housekeeping_read())
 
 
-@router.get("/tasks")
+@router.get("/tasks", response_model=None)
 def get_tasks(
     ward: str | None = _GET_TASKS_WARD_DEFAULT,
     status: str | None = _GET_TASKS_STATUS_DEFAULT,
     priority: str | None = _GET_TASKS_PRIORITY_DEFAULT,
     limit: int = _GET_TASKS_LIMIT_DEFAULT,
     _user: dict = _GET_TASKS_USER_DEFAULT,
-):
+) -> dict:
+    view = _view(_user)
     try:
-        return {"tasks": list_tasks(ward=ward, status=status, priority=priority, limit=limit)}
+        tasks = list_tasks(
+            ward=ward, status=status, priority=priority, limit=limit if view is None else 1000
+        )
     except HousekeepingError as e:
         raise _bad_request(e) from e
+    if view is not None:
+        tasks = view.tasks(tasks)[:limit]
+    return {"tasks": tasks}
 
 
 _POST_TASK_USER_DEFAULT = Depends(require_housekeeping_write())
 
 
-@router.post("/tasks")
-def post_task(body: TaskIn, request: Request, user: dict = _POST_TASK_USER_DEFAULT):
+@router.post("/tasks", response_model=None)
+def post_task(body: TaskIn, request: Request, user: dict = _POST_TASK_USER_DEFAULT) -> dict:
+    _require_unit(_view(user), body.unit_id)
     try:
         task = raise_cleaning_request(
             unit_id=body.unit_id,
@@ -570,25 +764,30 @@ def post_task(body: TaskIn, request: Request, user: dict = _POST_TASK_USER_DEFAU
 _GET_ONE_TASK_USER_DEFAULT = Depends(require_housekeeping_read())
 
 
-@router.get("/tasks/{task_id}")
-def get_one_task(task_id: str, _user: dict = _GET_ONE_TASK_USER_DEFAULT):
+@router.get("/tasks/{task_id}", response_model=None)
+def get_one_task(task_id: str, _user: dict = _GET_ONE_TASK_USER_DEFAULT) -> dict:
     try:
-        return get_task(task_id)
+        task = get_task(task_id)
     except HousekeepingError as e:
         raise HTTPException(
             status_code=404, detail={"error": "not_found", "message": str(e)}
         ) from e
+    view = _view(_user)
+    if view is not None and str(task.get("unit_id")) not in view.unit_ids:
+        raise _not_found(f"request {task_id}")
+    return task
 
 
 _POST_TASK_START_USER_DEFAULT = Depends(require_housekeeping_write())
 
 
-@router.post("/tasks/{task_id}/start")
+@router.post("/tasks/{task_id}/start", response_model=None)
 def post_task_start(
     task_id: str,
     request: Request,
     user: dict = _POST_TASK_START_USER_DEFAULT,
-):
+) -> dict:
+    _require_task(_view(user), task_id)
     try:
         task = start_cleaning(task_id, actor_user_id=user.get("id"), actor_role=user.get("role"))
     except HousekeepingError as e:
@@ -606,13 +805,14 @@ def post_task_start(
 _POST_TASK_COMPLETE_USER_DEFAULT = Depends(require_housekeeping_write())
 
 
-@router.post("/tasks/{task_id}/complete")
+@router.post("/tasks/{task_id}/complete", response_model=None)
 def post_task_complete(
     task_id: str,
     body: NoteIn,
     request: Request,
     user: dict = _POST_TASK_COMPLETE_USER_DEFAULT,
-):
+) -> dict:
+    _require_task(_view(user), task_id)
     try:
         task = complete_cleaning(
             task_id,
@@ -636,13 +836,14 @@ def post_task_complete(
 _POST_TASK_CANCEL_USER_DEFAULT = Depends(require_housekeeping_write())
 
 
-@router.post("/tasks/{task_id}/cancel")
+@router.post("/tasks/{task_id}/cancel", response_model=None)
 def post_task_cancel(
     task_id: str,
     body: CancelIn,
     request: Request,
     user: dict = _POST_TASK_CANCEL_USER_DEFAULT,
-):
+) -> dict:
+    _require_task(_view(user), task_id)
     try:
         task = cancel_cleaning(task_id, reason=body.reason, actor_user_id=user.get("id"))
     except HousekeepingError as e:
@@ -661,12 +862,12 @@ _POST_SYNC_DISCHARGES_LOOKBACK_HOURS_DEFAULT = Query(None, ge=1, le=720)
 _POST_SYNC_DISCHARGES_USER_DEFAULT = Depends(require_housekeeping_write())
 
 
-@router.post("/sync-discharges")
+@router.post("/sync-discharges", response_model=None)
 def post_sync_discharges(
     request: Request,
     lookback_hours: int | None = _POST_SYNC_DISCHARGES_LOOKBACK_HOURS_DEFAULT,
     user: dict = _POST_SYNC_DISCHARGES_USER_DEFAULT,
-):
+) -> dict:
     """Run the discharge turnaround sweep now.
 
     Idempotent by construction (see `sync_discharge_turnarounds`): calling it ten
@@ -683,7 +884,7 @@ def post_sync_discharges(
         f"{result['unmatched']} discharges with no registered bed",
         **{k: v for k, v in result.items() if k != "unmatched_wards"},
     )
-    return result
+    return _scoped_sweep(result, _view(user))
 
 
 _POST_SYNC_MOVEMENTS_LOOKBACK_HOURS_DEFAULT = Query(None, ge=1, le=720)
@@ -729,31 +930,39 @@ _GET_TURNAROUND_DAYS_DEFAULT = Query(30, ge=1, le=365)
 _GET_TURNAROUND_USER_DEFAULT = Depends(require_housekeeping_read())
 
 
-@router.get("/turnaround")
+@router.get("/turnaround", response_model=None)
 def get_turnaround(
     ward: str | None = _GET_TURNAROUND_WARD_DEFAULT,
     days: int = _GET_TURNAROUND_DAYS_DEFAULT,
     _user: dict = _GET_TURNAROUND_USER_DEFAULT,
-):
-    return ward_turnaround_report(ward=ward, days=days)
+) -> dict:
+    out = ward_turnaround_report(ward=ward, days=days)
+    view = _view(_user)
+    if view is not None:
+        out["wards"] = view.wards(out.get("wards") or [])
+    return out
 
 
 _GET_READINESS_WARD_DEFAULT = Query(None)
 _GET_READINESS_USER_DEFAULT = Depends(require_housekeeping_read())
 
 
-@router.get("/readiness")
+@router.get("/readiness", response_model=None)
 def get_readiness(
     ward: str | None = _GET_READINESS_WARD_DEFAULT,
     _user: dict = _GET_READINESS_USER_DEFAULT,
-):
+) -> dict:
     """Housekeeping readiness, ALWAYS beside the capacity screen's own number.
 
     See the CAPACITY section of services/housekeeping_service.py: this module
     does not change what `available` means anywhere else in Orb, and the response
     says so in words as well as numbers.
     """
-    return ward_readiness(ward=ward)
+    out = ward_readiness(ward=ward)
+    view = _view(_user)
+    if view is not None:
+        out["wards"] = view.wards(out.get("wards") or [])
+    return out
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -766,20 +975,28 @@ _GET_LINEN_DAYS_DEFAULT = Query(30, ge=1, le=365)
 _GET_LINEN_USER_DEFAULT = Depends(require_housekeeping_read())
 
 
-@router.get("/linen")
+@router.get("/linen", response_model=None)
 def get_linen(
     ward: str | None = _GET_LINEN_WARD_DEFAULT,
     days: int = _GET_LINEN_DAYS_DEFAULT,
     _user: dict = _GET_LINEN_USER_DEFAULT,
-):
-    return {**linen_summary(ward=ward, days=days), "items": list_linen_items()}
+) -> dict:
+    out = {**linen_summary(ward=ward, days=days), "items": list_linen_items()}
+    view = _view(_user)
+    if view is not None:
+        out["lines"] = view.wards(out.get("lines") or [])
+    return out
 
 
 _POST_LINEN_USER_DEFAULT = Depends(require_housekeeping_write())
 
 
-@router.post("/linen")
-def post_linen(body: LinenIn, request: Request, user: dict = _POST_LINEN_USER_DEFAULT):
+@router.post("/linen", response_model=None)
+def post_linen(body: LinenIn, request: Request, user: dict = _POST_LINEN_USER_DEFAULT) -> dict:
+    view = _view(user)
+    _refuse_ward(view, body.ward)
+    if body.task_id:
+        _require_task(view, body.task_id)
     try:
         movement = record_linen_movement(
             ward=body.ward,

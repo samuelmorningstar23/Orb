@@ -470,11 +470,16 @@ def _ward_match(column: str) -> str:
     return f"UPPER(TRIM({column})) = ?"
 
 
-def hospital_wards(db: Any = None) -> list[str]:
+def hospital_wards(db: Any = None, *, facilities: frozenset[int] | None = None) -> list[str]:
     """The hospital's wards, for the panel's ward selects: the site's declared
     wards, every ward a patient has been on, and every ward already named on an
     incident, one entry per ward (case and spacing ignored, first spelling wins,
-    so a declared or charted 'GM-1' beats a hand-typed 'gm-1')."""
+    so a declared or charted 'GM-1' beats a hand-typed 'gm-1').
+
+    `facilities` (multisite-12) keeps the list to those facilities' wards: a
+    declared ward Bed setup or the open stays place there, the wards of the
+    patients whose stays are there and the wards named on incidents filed
+    there. None is every ward, as before."""
     names: list[str] = []
     try:
         from services.site_config_service import current_site_config
@@ -483,7 +488,25 @@ def hospital_wards(db: Any = None) -> list[str]:
     except Exception:  # noqa: BLE001 - no site file is a normal dev state
         pass
 
-    def _work(conn) -> list[str]:
+    def _work(conn: Any) -> list[str]:
+        if facilities is not None:
+            from services.forecast_service import ward_facility_lookup
+
+            lookup = ward_facility_lookup(conn)
+            names[:] = [w for w in names if lookup(w) in facilities]
+            ids = sorted(int(f) for f in facilities)
+            if not ids:
+                return []
+            marks = ", ".join("?" for _ in ids)
+            rows = conn.execute(
+                "SELECT p.ward FROM patients p WHERE TRIM(COALESCE(p.ward, '')) <> '' "
+                f"AND {_PATIENT_STAY_FACILITY_SQL} IN ({marks}) "
+                "UNION ALL "
+                "SELECT ward FROM nabh_incidents WHERE TRIM(COALESCE(ward, '')) <> '' "
+                f"AND facility_id IN ({marks})",
+                (*ids, *ids),
+            ).fetchall()
+            return [r[0] for r in rows]
         rows = conn.execute(
             "SELECT ward FROM patients WHERE TRIM(COALESCE(ward, '')) <> '' "
             "UNION ALL "
@@ -774,12 +797,19 @@ def list_incidents(
     patient_id: str | None = None,
     include_void: bool = False,
     limit: int = 200,
+    facilities: frozenset[int] | None = None,
     db: Any = None,
 ) -> dict:
-    """The register, filtered. Ordered newest incident FIRST by occurrence."""
+    """The register, filtered. Ordered newest incident FIRST by occurrence.
+    `facilities` (multisite-12) keeps it to the incidents filed at those
+    facilities; None is every incident, as before; the empty set is none."""
     start, end = resolve_period(period_start, period_end, default_days=365)
     clauses = [_in_window("occurred_at")]
     params: list[Any] = [_iso(start), _iso(end)]
+    if facilities is not None:
+        ids = sorted(int(f) for f in facilities)
+        clauses.append(f"facility_id IN ({', '.join('?' for _ in ids)})" if ids else "0")
+        params.extend(ids)
     if status:
         clauses.append("status = ?")
         params.append(_check_vocab(status, INCIDENT_STATUSES, "status"))
@@ -1282,21 +1312,36 @@ def list_dispositions(
     limit: int = 500,
     db: Any = None,
     include_voided: bool = False,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """The dispositions recorded in the period. A disposition voided because
     the stay it described was reopened (migration 59, adt-8b) is left out
-    unless `include_voided`: it is kept as evidence, never counted."""
+    unless `include_voided`: it is kept as evidence, never counted.
+    `facilities` (multisite-12) keeps the dispositions of patients whose
+    stays are at those facilities; None is every one, as before."""
     start, end = resolve_period(period_start, period_end, default_days=90)
+    fac_sql = ""
+    fac_args: tuple[int, ...] = ()
+    if facilities is not None:
+        ids = tuple(sorted(int(f) for f in facilities))
+        fac_sql = (
+            " AND patient_id IN (SELECT p.id FROM patients p WHERE "
+            f"{_PATIENT_STAY_FACILITY_SQL} IN ({', '.join('?' for _ in ids)}))"
+            if ids
+            else " AND 0"
+        )
+        fac_args = ids
 
-    def _work(conn) -> dict:
+    def _work(conn: Any) -> dict:
         rows = [
             dict(r)
             for r in conn.execute(
                 "SELECT * FROM nabh_discharge_dispositions WHERE "
                 + _in_window("occurred_at")
                 + ("" if include_voided else " AND voided_at IS NULL")
+                + fac_sql
                 + " ORDER BY occurred_at DESC LIMIT ?",
-                (_iso(start), _iso(end), max(1, min(int(limit), 2000))),
+                (_iso(start), _iso(end), *fac_args, max(1, min(int(limit), 2000))),
             ).fetchall()
         ]
         return {
@@ -1862,6 +1907,71 @@ def _ward_filter(rows: list[dict], ward: str | None, key: str = "ward") -> list[
     return [r for r in rows if _ward_key(r.get(key)) == wanted]
 
 
+# ── One facility's figures (multisite-12) ────────────────────────────────────
+# NABH accredits each hospital on its own, so with more than one facility of a
+# group on the appliance an indicator set or a pack is for ONE facility, and
+# its figures count that facility's encounters only:
+#   * a stay is the facility's when its admission is (admissions.facility_id,
+#     which never changes);
+#   * an event about a patient (an administration, an override, a handoff, an
+#     escalation, a disposition, a discharge) is counted at the facility of the
+#     patient's stays: their latest admission's, else the facility the record
+#     was registered at. An admission, re-admission or move into another
+#     facility is refused while ruling MS-R3 stands at refuse, so a patient's
+#     stays are all at one facility and this is the facility of the stay the
+#     event happened in;
+#   * an incident is the facility it was filed at (nabh_incidents.facility_id);
+#   * the bed movement record counts only the facility's wards and stays.
+# The laboratory figures are not split by facility yet (one laboratory may
+# serve every facility of the group), so a facility's pack says so instead of
+# printing the group's numbers. facility_id None is the whole appliance,
+# exactly as before.
+
+_PATIENT_STAY_FACILITY_SQL = (
+    "COALESCE((SELECT a.facility_id FROM admissions a WHERE a.patient_id = p.id "
+    "ORDER BY a.created_at DESC, a.rowid DESC LIMIT 1), p.registered_facility_id, 1)"
+)
+
+
+def _patient_join(column: str, ward: str | None, facility_id: int | None) -> tuple[str, list[Any]]:
+    """The patients join a per-event figure is filtered through, with its
+    parameters: the patient's CURRENT ward when a ward is chosen (as before),
+    and the facility of their stays when a facility is (above). ('', []) for
+    neither, so the statement is exactly what it was."""
+    if not ward and facility_id is None:
+        return "", []
+    sql = f" JOIN patients p ON p.id = {column}"
+    params: list[Any] = []
+    if ward:
+        sql += " AND UPPER(TRIM(p.ward)) = ?"
+        params.append(_ward_key(ward))
+    if facility_id is not None:
+        sql += f" AND {_PATIENT_STAY_FACILITY_SQL} = ?"
+        params.append(int(facility_id))
+    return sql, params
+
+
+def _facility_rows(
+    db: Any, rows: list[dict], facility_id: int | None, key: str = "patient_id"
+) -> list[dict]:
+    """The rows whose patient's events are counted at `facility_id` (above);
+    every row for None."""
+    if facility_id is None or not rows:
+        return rows
+    ids = sorted({str(r.get(key)) for r in rows if r.get(key) is not None})
+    at: dict[str, int] = {}
+    for i in range(0, len(ids), 500):
+        chunk = ids[i : i + 500]
+        marks = ", ".join("?" for _ in chunk)
+        for row in db.execute(
+            f"SELECT p.id, {_PATIENT_STAY_FACILITY_SQL} FROM patients p WHERE p.id IN ({marks})",
+            chunk,
+        ).fetchall():
+            if row[1] is not None:
+                at[str(row[0])] = int(row[1])
+    return [r for r in rows if at.get(str(r.get(key))) == int(facility_id)]
+
+
 def _overlap_hours(a_start: datetime, a_end: datetime, b_start: datetime, b_end: datetime) -> float:
     lo = max(a_start, b_start)
     hi = min(a_end, b_end)
@@ -1942,7 +2052,7 @@ def _last_vital_in_stay(
 
 
 def _per_stay_totals(
-    db,
+    db: Any,
     start: datetime,
     horizon: datetime,
     ward: str | None,
@@ -1950,6 +2060,7 @@ def _per_stay_totals(
     only_patients: set | None = None,
     native_only: bool = False,
     include_legacy: bool = True,
+    facility_id: int | None = None,
 ) -> dict:
     """The per-stay count behind _inpatient_days_per_stay, as raw hours.
 
@@ -1965,13 +2076,16 @@ def _per_stay_totals(
 
     `only_patients` restricts the count to those patients; `native_only`
     leaves out encounters a history import filed; `include_legacy` counts the
-    patients with no admission row from patients.admission_date."""
+    patients with no admission row from patients.admission_date.
+    `facility_id` (multisite-12) counts only the stays at that facility, and
+    the legacy patients registered there."""
     native = _native_admission_filter(db) if native_only else ""
     stays = [
         dict(r)
         for r in db.execute(
             "SELECT a.id, a.patient_id, a.ward, a.status, a.admitted_at, a.created_at, "
-            "a.discharged_at FROM admissions a" + (f" WHERE {native}" if native else "")
+            "a.discharged_at, a.facility_id FROM admissions a"
+            + (f" WHERE {native}" if native else "")
         ).fetchall()
     ]
     if only_patients is not None:
@@ -2003,6 +2117,8 @@ def _per_stay_totals(
                 else None
             )
     stays = _ward_filter(stays, ward)
+    if facility_id is not None:
+        stays = [s for s in stays if s.get("facility_id") == int(facility_id)]
 
     summaries: dict[str, list[datetime]] = {}
     keyed: dict[str, list[datetime]] = {}
@@ -2081,6 +2197,7 @@ def _per_stay_totals(
             ).fetchall()
         ]
         legacy = _ward_filter([p for p in legacy if p["id"] not in with_stays], ward)
+        legacy = _facility_rows(db, legacy, facility_id, key="id")
         for patient in legacy:
             stay_start = _dt(patient.get("admission_date"))
             if stay_start is None:
@@ -2110,7 +2227,13 @@ def _per_stay_totals(
     }
 
 
-def _inpatient_days_per_stay(db, start: datetime, horizon: datetime, ward: str | None) -> dict:
+def _inpatient_days_per_stay(
+    db: Any,
+    start: datetime,
+    horizon: datetime,
+    ward: str | None,
+    facility_id: int | None = None,
+) -> dict:
     """Inpatient-days inside [start, horizon), one stay at a time (adt-8a).
 
     Each admission counts from its start (the recorded arrival time, else when
@@ -2123,7 +2246,7 @@ def _inpatient_days_per_stay(db, start: datetime, horizon: datetime, ward: str |
     as the older method did, so nobody counted before drops out. A patient with
     several stays has each ended by its own summary and never counted past the
     next one's start (_per_stay_totals, opd-17b)."""
-    totals = _per_stay_totals(db, start, horizon, ward)
+    totals = _per_stay_totals(db, start, horizon, ward, facility_id=facility_id)
     return {
         "inpatient_days": round(totals["hours"] / 24.0, 1),
         "patients": len(totals["counted"]),
@@ -2142,7 +2265,13 @@ def _inpatient_days_per_stay(db, start: datetime, horizon: datetime, ward: str |
     }
 
 
-def _inpatient_days(db, start: datetime, end: datetime, ward: str | None) -> dict:
+def _inpatient_days(
+    db: Any,
+    start: datetime,
+    end: datetime,
+    ward: str | None,
+    facility_id: int | None = None,
+) -> dict:
     """Inpatient-days inside [start, end), and an honest account of how.
 
     KNOWN UNDER-COUNT, AND ITS DIRECTION. `patients` holds ONE row per patient
@@ -2159,7 +2288,8 @@ def _inpatient_days(db, start: datetime, end: datetime, ward: str | None) -> dic
 
     `patients.ward` is likewise the CURRENT ward, not the ward the patient
     occupied on each day, so a ward filter attributes the whole stay to where
-    the patient is now.
+    the patient is now. `facility_id` (multisite-12) counts that facility's
+    stays only (see "One facility's figures").
     """
     horizon = min(end, _now())
     if horizon <= start:
@@ -2174,7 +2304,7 @@ def _inpatient_days(db, start: datetime, end: datetime, ward: str | None) -> dic
     # Beds and admissions (adt-8a): once the module is on and has recorded
     # stays, count every stay, not only each patient's current one.
     if _per_stay_counting_on(db):
-        return _inpatient_days_per_stay(db, start, horizon, ward)
+        return _inpatient_days_per_stay(db, start, horizon, ward, facility_id)
 
     # A 'registered' row (migration 52) is a person on the patient index who
     # has never been admitted: they have no stay, so they add no inpatient-day.
@@ -2194,6 +2324,7 @@ def _inpatient_days(db, start: datetime, end: datetime, ward: str | None) -> dic
     # one stay this set is empty and every figure is what it was.
     repeat = _repeat_stay_patients(db)
     patients = _ward_filter([p for p in patients if p["id"] not in repeat], ward)
+    patients = _facility_rows(db, patients, facility_id, key="id")
 
     discharges: dict[str, datetime] = {}
     for row in db.execute(
@@ -2258,7 +2389,14 @@ def _inpatient_days(db, start: datetime, end: datetime, ward: str | None) -> dic
     # exactly as before.
     single = len(counted)
     extra = _per_stay_totals(
-        db, start, horizon, ward, only_patients=repeat, native_only=True, include_legacy=False
+        db,
+        start,
+        horizon,
+        ward,
+        only_patients=repeat,
+        native_only=True,
+        include_legacy=False,
+        facility_id=facility_id,
     )
     if not extra["stays"]:
         return result
@@ -2286,8 +2424,15 @@ def _inpatient_days(db, start: datetime, end: datetime, ward: str | None) -> dic
     return result
 
 
-def _register_in_use(db, start: datetime, end: datetime, ward: str | None) -> dict:
-    """Did anybody use the incident register in this window at all?
+def _register_in_use(
+    db: Any,
+    start: datetime,
+    end: datetime,
+    ward: str | None,
+    facility_id: int | None = None,
+) -> dict:
+    """Did anybody use the incident register in this window at all? (At
+    `facility_id` when one is given: the facility each incident was filed at.)
 
     THE GATE THAT STOPS THE WORST NUMBER IN THE PACK. Zero medication errors over
     a quarter in which the register recorded nothing whatsoever is a fact about
@@ -2300,6 +2445,9 @@ def _register_in_use(db, start: datetime, end: datetime, ward: str | None) -> di
     if ward:
         clauses.append(_ward_match("ward"))
         params.append(_ward_key(ward))
+    if facility_id is not None:
+        clauses.append("facility_id = ?")
+        params.append(int(facility_id))
     rows = db.execute(
         "SELECT incident_type, severity FROM nabh_incidents WHERE " + " AND ".join(clauses),
         params,
@@ -2371,12 +2519,15 @@ def _register_rate_indicator(
     return _finalise(indicator)
 
 
-def _medication_override_rate(db, start: datetime, end: datetime, ward: str | None) -> dict:
+def _medication_override_rate(
+    db: Any,
+    start: datetime,
+    end: datetime,
+    ward: str | None,
+    facility_id: int | None = None,
+) -> dict:
     indicator = _new_indicator("medication_override_rate")
-    ward_join = (
-        " JOIN patients p ON p.id = t.patient_id AND UPPER(TRIM(p.ward)) = ?" if ward else ""
-    )
-    ward_params: list[Any] = [_ward_key(ward)] if ward else []
+    ward_join, ward_params = _patient_join("t.patient_id", ward, facility_id)
 
     dose = db.execute(
         "SELECT COUNT(*) FROM medication_dose_overrides t"
@@ -2429,12 +2580,15 @@ def _medication_override_rate(db, start: datetime, end: datetime, ward: str | No
     return _finalise(indicator)
 
 
-def _handoff_completion(db, start: datetime, end: datetime, ward: str | None) -> dict:
+def _handoff_completion(
+    db: Any,
+    start: datetime,
+    end: datetime,
+    ward: str | None,
+    facility_id: int | None = None,
+) -> dict:
     indicator = _new_indicator("handoff_completion")
-    ward_join = (
-        " JOIN patients p ON p.id = n.patient_id AND UPPER(TRIM(p.ward)) = ?" if ward else ""
-    )
-    ward_params: list[Any] = [_ward_key(ward)] if ward else []
+    ward_join, ward_params = _patient_join("n.patient_id", ward, facility_id)
     rows = db.execute(
         "SELECT n.status AS status FROM scribe_notes n"
         + ward_join
@@ -2470,16 +2624,19 @@ def _handoff_completion(db, start: datetime, end: datetime, ward: str | None) ->
     return _finalise(indicator)
 
 
-def _escalation_ack_compliance(db, start: datetime, end: datetime, ward: str | None) -> dict:
+def _escalation_ack_compliance(
+    db: Any,
+    start: datetime,
+    end: datetime,
+    ward: str | None,
+    facility_id: int | None = None,
+) -> dict:
     indicator = _new_indicator("escalation_ack_compliance")
     minutes = _ack_minutes()
     window = timedelta(minutes=minutes)
     indicator["definition"] += f" The response window is {minutes} minutes."
 
-    ward_join = (
-        " JOIN patients p ON p.id = e.patient_id AND UPPER(TRIM(p.ward)) = ?" if ward else ""
-    )
-    ward_params: list[Any] = [_ward_key(ward)] if ward else []
+    ward_join, ward_params = _patient_join("e.patient_id", ward, facility_id)
     rows = [
         dict(r)
         for r in db.execute(
@@ -2570,26 +2727,36 @@ def _escalation_ack_compliance(db, start: datetime, end: datetime, ward: str | N
     return _finalise(indicator)
 
 
-def _summary_less_ends_in(db, start: datetime, end: datetime, ward: str | None) -> list[dict]:
+def _summary_less_ends_in(
+    db: Any,
+    start: datetime,
+    end: datetime,
+    ward: str | None,
+    facility_id: int | None = None,
+) -> list[dict]:
     """Ends of stay inside [start, end) that the beds and admissions module
     recorded with no discharge summary (services/stay_times.py, adt-8c),
     reopened ones excluded. A ward filter takes the ward the ended stay was
-    recorded on. Empty with ORB_ADT off: no such end exists."""
+    recorded on. Empty with ORB_ADT off: no such end exists. `facility_id`
+    keeps the ends of that facility's patients (multisite-12)."""
     rows = summary_less_ends(db, since=_iso(start), until=_iso(end))
-    return _ward_filter(rows, ward)
+    return _facility_rows(db, _ward_filter(rows, ward), facility_id)
 
 
-def _disposition_base(db, start: datetime, end: datetime, ward: str | None) -> dict:
+def _disposition_base(
+    db: Any,
+    start: datetime,
+    end: datetime,
+    ward: str | None,
+    facility_id: int | None = None,
+) -> dict:
     """The shared, coverage-gated denominator for mortality and LAMA.
 
     Voided dispositions (migration 59: a stay reopened as recorded in error)
     are never counted. The end of stay (adt-8a) writes at most one live row
     per admission, so an automatic row and a records-desk row for one death
     are one row here, not two."""
-    ward_join = (
-        " JOIN patients p ON p.id = d.patient_id AND UPPER(TRIM(p.ward)) = ?" if ward else ""
-    )
-    ward_params: list[Any] = [_ward_key(ward)] if ward else []
+    ward_join, ward_params = _patient_join("d.patient_id", ward, facility_id)
     rows = [
         dict(r)
         for r in db.execute(
@@ -2602,9 +2769,7 @@ def _disposition_base(db, start: datetime, end: datetime, ward: str | None) -> d
         ).fetchall()
     ]
 
-    summary_join = (
-        " JOIN patients p ON p.id = s.patient_id AND UPPER(TRIM(p.ward)) = ?" if ward else ""
-    )
+    summary_join, _summary_params = _patient_join("s.patient_id", ward, facility_id)
     observed = int(
         db.execute(
             "SELECT COUNT(*) FROM discharge_summaries s"
@@ -2617,7 +2782,7 @@ def _disposition_base(db, start: datetime, end: datetime, ward: str | None) -> d
     # Ends the beds and admissions module recorded with no summary are
     # discharge events too (adt-8c); a ward filter takes the ward the ended
     # stay was on. None exist with ORB_ADT off.
-    observed += len(_summary_less_ends_in(db, start, end, ward))
+    observed += len(_summary_less_ends_in(db, start, end, ward, facility_id))
 
     recorded = len(rows)
     pool = max(recorded, observed)
@@ -2682,17 +2847,22 @@ def _disposition_indicator(
     return _finalise(indicator)
 
 
-def _readmission(db, start: datetime, end: datetime, ward: str | None) -> dict:
+def _readmission(
+    db: Any,
+    start: datetime,
+    end: datetime,
+    ward: str | None,
+    facility_id: int | None = None,
+) -> dict:
     indicator = _new_indicator("readmission_7_day")
     days = _readmission_days()
     follow_up = timedelta(days=days)
     indicator["label"] = f"Unplanned re-admission within {days} days"
     indicator["definition"] += f" The follow-up window is {days} days."
 
-    ward_join = (
-        " JOIN patients p ON p.id = s.patient_id AND UPPER(TRIM(p.ward)) = ?" if ward else ""
-    )
-    ward_params: list[Any] = [_ward_key(ward)] if ward else []
+    # The discharges followed up are the facility's own; a re-admission is
+    # looked for at every facility, so a facility's rate is never flattered.
+    ward_join, ward_params = _patient_join("s.patient_id", ward, facility_id)
     discharges = [
         dict(r)
         for r in db.execute(
@@ -2707,7 +2877,7 @@ def _readmission(db, start: datetime, end: datetime, ward: str | None) -> dict:
     # would flatter the rate. Excluded by the recorded end type, never by
     # guesswork. None exist with ORB_ADT off.
     deaths_excluded = 0
-    for end_row in _summary_less_ends_in(db, start, end, ward):
+    for end_row in _summary_less_ends_in(db, start, end, ward, facility_id):
         if end_row.get("end_type") == "death":
             deaths_excluded += 1
             continue
@@ -2794,7 +2964,14 @@ def _readmission(db, start: datetime, end: datetime, ward: str | None) -> dict:
     return _finalise(indicator)
 
 
-def _incident_closure(db, start: datetime, end: datetime, ward: str | None, usage: dict) -> dict:
+def _incident_closure(
+    db: Any,
+    start: datetime,
+    end: datetime,
+    ward: str | None,
+    usage: dict,
+    facility_id: int | None = None,
+) -> dict:
     indicator = _new_indicator("incident_closure_30d")
     target_days = _closure_days()
     target = timedelta(days=target_days)
@@ -2806,6 +2983,9 @@ def _incident_closure(db, start: datetime, end: datetime, ward: str | None, usag
     if ward:
         clauses.append(_ward_match("ward"))
         params.append(_ward_key(ward))
+    if facility_id is not None:
+        clauses.append("facility_id = ?")
+        params.append(int(facility_id))
     rows = [
         dict(r)
         for r in db.execute(
@@ -2997,7 +3177,28 @@ def _lab_critical_ack_in_window(db, start: datetime, end: datetime, ward: str | 
     return _finalise(indicator)
 
 
-def _lab_indicators(db, start: datetime, end: datetime, ward: str | None) -> list[dict]:
+#: Why a facility's pack leaves the laboratory figures out (multisite-12).
+LAB_NOT_PER_FACILITY = (
+    "The laboratory figures are not counted per facility yet: one laboratory may "
+    "serve every facility of the group, so this facility's pack leaves them out "
+    "rather than print the whole group's numbers under its name."
+)
+
+
+def _lab_indicators(
+    db: Any,
+    start: datetime,
+    end: datetime,
+    ward: str | None,
+    facility_id: int | None = None,
+) -> list[dict]:
+    if facility_id is not None:
+        out = []
+        for indicator_id in ("lab_tat_within_target", "lab_critical_ack_in_window"):
+            indicator = _new_indicator(indicator_id)
+            indicator["blockers"] = [LAB_NOT_PER_FACILITY]
+            out.append(_finalise(indicator))
+        return out
     return [
         _lab_tat_within_target(db, start, end, ward),
         _lab_critical_ack_in_window(db, start, end, ward),
@@ -3072,7 +3273,13 @@ def _codes_words(wards: list[dict]) -> str:
     return ", ".join(sorted(str(w.get("code") or w.get("id")) for w in wards))
 
 
-def _ledger_context(db, start: datetime, end: datetime, ward: str | None) -> dict:
+def _ledger_context(
+    db: Any,
+    start: datetime,
+    end: datetime,
+    ward: str | None,
+    facility_id: int | None = None,
+) -> dict:
     """Everything the three ledger readers share, read once: the wards of Bed
     setup, the chosen ward, the stays overlapping the period (and the 48 hours
     after it, for a return to intensive care), and which wards' registers were
@@ -3082,17 +3289,22 @@ def _ledger_context(db, start: datetime, end: datetime, ward: str | None) -> dic
     ward that existed in the period and was switched on or held a stay in
     it); `gaps_all` is that hospital-wide list whatever the ward filter, which
     a return to intensive care always needs, because a patient leaves it for
-    any ward and comes back from any ward."""
+    any ward and comes back from any ward.
+
+    `facility_id` (multisite-12) keeps the wards to that facility's (and so
+    `gaps_all` to its wards) and the stays to its admissions."""
     from services import adt_census_service as census
     from services.hospital_time import hospital_timezone
 
     now = _now()
+    facilities = None if facility_id is None else frozenset({int(facility_id)})
     ctx: dict[str, Any] = {
         "start": start,
         "end": end,
         "horizon": min(end, now),
         "now": now,
         "ward": ward,
+        "facilities": facilities,
         "tz": hospital_timezone(),
         "problem": None,
         "wards": [],
@@ -3111,6 +3323,10 @@ def _ledger_context(db, start: datetime, end: datetime, ward: str | None) -> dic
         ctx["problem"] = "no_wards"
         return ctx
     wards = [dict(r) for r in db.execute("SELECT * FROM wards ORDER BY LOWER(code)").fetchall()]
+    if facilities is not None:
+        from services.facility_lanes import wards_in_scope
+
+        wards = wards_in_scope(wards, facilities)
     if not wards:
         ctx["problem"] = "no_wards"
         return ctx
@@ -3126,7 +3342,7 @@ def _ledger_context(db, start: datetime, end: datetime, ward: str | None) -> dic
     until = min(now, end + census.RETURN_WINDOW)
     if until > start:
         stays, no_end_time = census._load_stays(
-            db, since=start, until=until, wards=census._Wards(wards)
+            db, since=start, until=until, wards=census._Wards(wards), facilities=facilities
         )
         ctx["stays"] = stays
         ctx["ended_without_time"] = no_end_time
@@ -3221,7 +3437,7 @@ def _ledger_bed_days(ctx: dict, fallback: dict) -> dict:
     }
 
 
-def _bed_occupancy(db, ctx: dict) -> dict:
+def _bed_occupancy(db: Any, ctx: dict) -> dict:
     """QI-UTL-01: the census's NABH occupancy (ruling ADT-P4: midnight census
     over available beds) for the period's whole hospital-local days, from
     services/adt_census_service.census_on. Refused with words when any day of
@@ -3272,6 +3488,7 @@ def _bed_occupancy(db, ctx: dict) -> dict:
         hospital=chosen is None,
         tz=tz,
         now=now,
+        facilities=ctx.get("facilities"),
     )
     ward_rows = out["wards"]
     complete = [w for w in ward_rows if (w.get("totals") or {}).get("status") == "complete"]
@@ -3490,14 +3707,20 @@ def _icu_return_48h(ctx: dict) -> dict:
     return _finalise(indicator)
 
 
-def _ledger_or_none(db, start: datetime, end: datetime, ward: str | None) -> dict | None:
+def _ledger_or_none(
+    db: Any,
+    start: datetime,
+    end: datetime,
+    ward: str | None,
+    facility_id: int | None = None,
+) -> dict | None:
     """The shared ledger read while Beds and admissions is not off, else None.
     A record that cannot be read gives the indicators a reason, never a
     failed pack: the nine indicators above must still print."""
     if not adt_indicators_on():
         return None
     try:
-        return _ledger_context(db, start, end, ward)
+        return _ledger_context(db, start, end, ward, facility_id)
     except Exception:  # noqa: BLE001 - the pack must still print
         logger.exception("NABH: the bed movement record could not be read")
         now = _now()
@@ -3507,6 +3730,7 @@ def _ledger_or_none(db, start: datetime, end: datetime, ward: str | None) -> dic
             "horizon": min(end, now),
             "now": now,
             "ward": ward,
+            "facilities": None if facility_id is None else frozenset({int(facility_id)}),
             "tz": UTC,
             "problem": "unreadable",
             "wards": [],
@@ -3544,6 +3768,7 @@ def indicators(
     period_start: str | None = None,
     period_end: str | None = None,
     ward: str | None = None,
+    facility_id: int | None = None,
     db: Any = None,
 ) -> dict:
     """Every indicator for one period, each with its own honest state.
@@ -3552,30 +3777,35 @@ def indicators(
     morning must get a COMPLETE, explicitly-empty dashboard — nine indicators,
     every one saying what it is missing — rather than an exception or a page of
     zeroes. That property is asserted directly in tests/test_nabh.py.
+
+    `facility_id` (multisite-12) counts one facility's encounters only (see
+    "One facility's figures"); the answer then carries `facility_id`. None
+    is the whole appliance, exactly as before.
     """
     start, end = resolve_period(period_start, period_end, default_days=90)
+    fid = facility_id
 
-    def _work(conn) -> dict:
-        usage = _register_in_use(conn, start, end, ward)
-        bed_days = _inpatient_days(conn, start, end, ward)
+    def _work(conn: Any) -> dict:
+        usage = _register_in_use(conn, start, end, ward, fid)
+        bed_days = _inpatient_days(conn, start, end, ward, fid)
         # Beds and admissions (adt-13b): the inpatient days come from the bed
         # movement record when it covers the whole period, else from the
         # admissions as before, with the reason. None while the module is off.
-        ledger = _ledger_or_none(conn, start, end, ward)
+        ledger = _ledger_or_none(conn, start, end, ward, fid)
         if ledger is not None:
             bed_days = _ledger_bed_days(ledger, bed_days)
-        disposition_base = _disposition_base(conn, start, end, ward)
+        disposition_base = _disposition_base(conn, start, end, ward, fid)
 
         computed = [
             _register_rate_indicator(
                 "medication_error_rate", "medication_error", conn, start, end, ward, usage, bed_days
             ),
-            _medication_override_rate(conn, start, end, ward),
+            _medication_override_rate(conn, start, end, ward, fid),
             _register_rate_indicator(
                 "patient_fall_rate", "patient_fall", conn, start, end, ward, usage, bed_days
             ),
-            _handoff_completion(conn, start, end, ward),
-            _escalation_ack_compliance(conn, start, end, ward),
+            _handoff_completion(conn, start, end, ward, fid),
+            _escalation_ack_compliance(conn, start, end, ward, fid),
             _disposition_indicator("inpatient_mortality", DEATH_DISPOSITIONS, disposition_base, {}),
             _disposition_indicator(
                 "against_medical_advice_rate",
@@ -3583,16 +3813,18 @@ def indicators(
                 disposition_base,
                 {"absconded_reported_separately": disposition_base["rows"].get("absconded", 0)},
             ),
-            _readmission(conn, start, end, ward),
-            _incident_closure(conn, start, end, ward, usage),
+            _readmission(conn, start, end, ward, fid),
+            _incident_closure(conn, start, end, ward, usage, fid),
         ]
         if ledger is not None:
             computed.extend(_ledger_indicators(conn, ledger))
         if lab_indicators_on():
-            computed.extend(_lab_indicators(conn, start, end, ward))
+            computed.extend(_lab_indicators(conn, start, end, ward, fid))
 
         states = Counter(i["state"] for i in computed)
+        scoped: dict[str, Any] = {} if fid is None else {"facility_id": int(fid)}
         return {
+            **scoped,
             "period": {
                 "start": _iso(start),
                 "end": _iso(end),
@@ -3656,26 +3888,38 @@ def build_evidence_pack(
     ward: str | None = None,
     generated_by: str | None = None,
     include_patient_identifiers: bool = False,
+    facility_id: int | None = None,
     db: Any = None,
 ) -> dict:
-    """The date-ranged pack, as one JSON document. Reads only; writes nothing."""
+    """The date-ranged pack, as one JSON document. Reads only; writes nothing.
+
+    `facility_id` (multisite-12) builds one facility's pack: its encounters'
+    indicators, the incidents filed at it and its dispositions, stamped with
+    the facility it is for. None is the whole appliance, as before."""
     start, end = resolve_period(period_start, period_end, default_days=90)
 
-    def _work(conn) -> dict:
-        dash = indicators(period_start=period_start, period_end=period_end, ward=ward, db=conn)
+    def _work(conn: Any) -> dict:
+        dash = indicators(
+            period_start=period_start,
+            period_end=period_end,
+            ward=ward,
+            facility_id=facility_id,
+            db=conn,
+        )
         register = list_incidents(
             period_start=period_start,
             period_end=period_end,
             ward=ward,
             include_void=True,
             limit=1000,
+            facilities=None if facility_id is None else frozenset({int(facility_id)}),
             db=conn,
         )
         rows = register["incidents"]
         if not include_patient_identifiers:
             rows = [_deidentify(r) for r in rows]
 
-        dispositions = _disposition_base(conn, start, end, ward)
+        dispositions = _disposition_base(conn, start, end, ward, facility_id)
         anonymous = sum(1 for r in register["incidents"] if r["is_anonymous"])
 
         pack = {
@@ -3709,12 +3953,28 @@ def build_evidence_pack(
             "anonymity_statement": ANONYMITY_STATEMENT,
             "limitations": _limitations(dash, include_patient_identifiers),
         }
+        if facility_id is not None:
+            from services import facility_service
+
+            pack["facility"] = facility_service.facility_identity(int(facility_id), db=conn)
+            pack["limitations"].append(FACILITY_PACK_LIMITATION)
+            if lab_indicators_on():
+                pack["limitations"].append(LAB_NOT_PER_FACILITY)
         return pack
 
     if db is not None:
         return _work(db)
     with db_session() as conn:
         return _work(conn)
+
+
+#: The sentence a facility's pack carries about how its figures were counted.
+FACILITY_PACK_LIMITATION = (
+    "This pack is for one facility of the group. Stays are counted where they were "
+    "admitted, incidents where they were filed, and every other figure at the facility "
+    "of the patient's stays (a patient is never admitted at two facilities while moves "
+    "between facilities are refused)."
+)
 
 
 def _site_header() -> dict:
@@ -3823,6 +4083,7 @@ def record_evidence_export(
     ward: str | None = None,
     generated_by: str | None = None,
     include_patient_identifiers: bool = False,
+    facility_id: int | None = None,
     db: Any = None,
 ) -> dict:
     """Build the pack, log that it was produced, and return it with its digest.
@@ -3833,35 +4094,49 @@ def record_evidence_export(
     pack WITHOUT its own reference and digest fields, so it is reproducible from
     the returned document.
 
-    ONE FACILITY'S PACK (multisite-7b). NABH accredits each hospital on its
-    own, and the indicators and the register this pack is built from still
-    count the whole appliance. So while more than one facility is on record
-    the pack is refused (pack_spans_facilities) rather than handed to an
-    assessor under one facility's name; multisite-12 builds it per facility.
-    With one facility it is facility 1's, as it always was.
+    ONE FACILITY'S PACK (multisite-7b, multisite-12). NABH accredits each
+    hospital on its own. While more than one facility is on record a pack
+    names the facility it is for (`facility_id`): its figures count that
+    facility's encounters only (build_evidence_pack), it is numbered from that
+    facility's own NABHPACK series (a facility with none yet is refused in
+    words, never numbered from facility 1's) and its log row is stamped with
+    it. A pack that names no facility is still refused (pack_spans_facilities)
+    rather than handed to an assessor under one facility's name. With one
+    facility it is facility 1's, as it always was.
     """
     if db is not None:
         spans = facility_stamp.multi_facility(db)
     else:
         with db_session() as conn:
             spans = facility_stamp.multi_facility(conn)
-    if spans:
+    if spans and facility_id is None:
         raise NabhError(
             "pack_spans_facilities",
             "With more than one facility on record, an evidence pack has to cover one "
-            "facility, and Orb cannot build one per facility yet. No pack was made.",
+            "facility. Choose the facility the pack is for. No pack was made.",
         )
+    pack_facility = int(facility_id) if spans and facility_id is not None else None
     pack = build_evidence_pack(
         period_start=period_start,
         period_end=period_end,
         ward=ward,
         generated_by=generated_by,
         include_patient_identifiers=include_patient_identifiers,
+        facility_id=pack_facility,
         db=db,
     )
     digest = hashlib.sha256(_canonical_json(pack).encode("utf-8")).hexdigest()
-    # Facility 1's series: the only facility a pack can be made for (above).
-    reference = next_document_number("NABHPACK", facility_id=MAIN_FACILITY_ID)["number"]
+    # The series of the facility the pack is for: facility 1's with one
+    # facility on record. A facility with no series of its own is refused.
+    stamp = MAIN_FACILITY_ID if pack_facility is None else pack_facility
+    try:
+        reference = next_document_number("NABHPACK", facility_id=stamp)["number"]
+    except SeriesNotSetUp as exc:
+        raise NabhError(
+            "series_not_set_up",
+            "This facility has no evidence pack number series yet, so no pack was made. "
+            "An administrator sets one up in Admin, Facilities.",
+        ) from exc
     summary = pack["indicator_summary"]
 
     def _work(conn: Any) -> dict:
@@ -3887,7 +4162,7 @@ def record_evidence_export(
                 digest,
                 json.dumps(summary),
                 _iso(_now()),
-                MAIN_FACILITY_ID,
+                stamp,
             ),
         )
         return pack
@@ -3908,13 +4183,26 @@ def record_evidence_export(
     return pack
 
 
-def list_evidence_exports(*, limit: int = 50, db: Any = None) -> dict:
-    def _work(conn) -> dict:
+def list_evidence_exports(
+    *, limit: int = 50, facilities: frozenset[int] | None = None, db: Any = None
+) -> dict:
+    """The log of packs produced, newest first; `facilities` (multisite-12)
+    keeps it to the packs of those facilities (None: every pack)."""
+    where = ""
+    params: tuple[int, ...] = ()
+    if facilities is not None:
+        ids = tuple(sorted(int(f) for f in facilities))
+        where = f" WHERE facility_id IN ({', '.join('?' for _ in ids)})" if ids else " WHERE 0"
+        params = ids
+
+    def _work(conn: Any) -> dict:
         rows = [
             dict(r)
             for r in conn.execute(
-                "SELECT * FROM nabh_evidence_exports ORDER BY generated_at DESC, id DESC LIMIT ?",
-                (max(1, min(int(limit), 500)),),
+                "SELECT * FROM nabh_evidence_exports"
+                + where
+                + " ORDER BY generated_at DESC, id DESC LIMIT ?",
+                (*params, max(1, min(int(limit), 500))),
             ).fetchall()
         ]
         return {"exports": rows, "count": len(rows)}
@@ -3952,6 +4240,12 @@ def render_pack_markdown(pack: dict) -> str:
         f"**Ward:** {pack.get('ward') or 'All wards'}  ",
         f"**Generated:** {pack.get('generated_at')} by {pack.get('generated_by') or 'unknown'}  ",
     ]
+    facility = pack.get("facility")
+    if facility:
+        label = facility.get("name") or facility.get("code") or f"Facility {facility.get('id')}"
+        if facility.get("code") and facility.get("name"):
+            label = f"{facility['name']} ({facility['code']})"
+        lines.insert(3, f"**Facility:** {label}  ")
     if pack.get("reference"):
         lines.append(f"**Reference:** {pack['reference']}  ")
     if pack.get("content_sha256"):
@@ -4042,9 +4336,11 @@ def render_pack_markdown(pack: dict) -> str:
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-def meta() -> dict:
+def meta(*, facilities: frozenset[int] | None = None) -> dict:
     """Everything the client needs to render forms without hard-coding a
-    vocabulary that could drift from the database CHECK constraints."""
+    vocabulary that could drift from the database CHECK constraints. The ward
+    list is the caller's facilities' wards (`facilities`, multisite-12; None
+    is every ward)."""
     return {
         "incident_types": list(INCIDENT_TYPES),
         "severities": list(SEVERITIES),
@@ -4077,7 +4373,7 @@ def meta() -> dict:
         "attestation": PACK_ATTESTATION,
         # Ward names only, no patient data: what the ward selects offer, so the
         # register filter and the report form never take free text.
-        "wards": hospital_wards(),
+        "wards": hospital_wards(facilities=facilities),
         "thresholds": {
             "escalation_ack_minutes": _ack_minutes(),
             "readmission_days": _readmission_days(),

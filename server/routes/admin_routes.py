@@ -11,6 +11,7 @@ import sqlite3
 import tempfile
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from config import AUDIT_SIMULATION_EVENTS, INGESTION_MODE
 from database import db_session, run_db
@@ -105,8 +106,21 @@ def _shadow_off_reason() -> str | None:
     return None
 
 
-def _alerts_24h(db, cutoff_iso: str) -> dict:
+def _facility_patients_clause(facilities: frozenset[int] | None) -> tuple[str, tuple]:
+    """(' AND patient_id IN (the facilities' patients)', params) for a count
+    kept to the caller's facilities (multisite-12); ('', ()) with no limit. A
+    row that names no patient is no facility's, so it is left out."""
+    if facilities is None:
+        return "", ()
+    scope_sql, scope_args = scope_patient_ids_sql(None, facilities=facilities)
+    return f" AND patient_id IN ({scope_sql})", tuple(scope_args)
+
+
+def _alerts_24h(db: Any, cutoff_iso: str, facilities: frozenset[int] | None = None) -> dict:
     """Alerts fired in the window, counted from the SHADOW EVENT LOG.
+
+    `facilities` keeps the count to the alerts about those facilities'
+    patients (multisite-12); None counts the whole appliance, as before.
 
     SOURCE CHOICE — `shadow_events_current`, kind='alert.fired'. The three
     candidates and why this one:
@@ -159,21 +173,22 @@ def _alerts_24h(db, cutoff_iso: str) -> dict:
     if off_reason:
         return _unknown(off_reason)
 
+    fac_sql, fac_args = _facility_patients_clause(facilities)
     try:
         lane_rows = db.execute(
-            """SELECT lane, COUNT(*) AS cnt
+            f"""SELECT lane, COUNT(*) AS cnt
                  FROM shadow_events_current
-                WHERE kind = 'alert.fired' AND occurred_at >= ?
+                WHERE kind = 'alert.fired' AND occurred_at >= ?{fac_sql}
              GROUP BY lane""",
-            (cutoff_iso,),
+            (cutoff_iso, *fac_args),
         ).fetchall()
         level_rows = db.execute(
-            """SELECT COALESCE(json_extract(payload_json, '$.level'), 'unspecified') AS level,
+            f"""SELECT COALESCE(json_extract(payload_json, '$.level'), 'unspecified') AS level,
                       COUNT(*) AS cnt
                  FROM shadow_events_current
-                WHERE kind = 'alert.fired' AND occurred_at >= ?
+                WHERE kind = 'alert.fired' AND occurred_at >= ?{fac_sql}
              GROUP BY level""",
-            (cutoff_iso,),
+            (cutoff_iso, *fac_args),
         ).fetchall()
     except DBOperationalError as exc:
         # Missing view/table (migration 4 not applied) is a "cannot know", not a
@@ -194,8 +209,13 @@ def _alerts_24h(db, cutoff_iso: str) -> dict:
     }
 
 
-def _records_written_24h(db, cutoff_iso: str) -> dict:
+def _records_written_24h(
+    db: Any, cutoff_iso: str, facilities: frozenset[int] | None = None
+) -> dict:
     """Clinical rows written in the window, counted from the CLINICAL TABLES.
+
+    `facilities` keeps the count to those facilities' patients' rows
+    (multisite-12); None counts the whole appliance, as before.
 
     SOURCE CHOICE — `vitals` + `observations`, grouped by their `source` column.
     `ingestion_events.vitals_inserted/observations_inserted` (the old source) is
@@ -244,30 +264,31 @@ def _records_written_24h(db, cutoff_iso: str) -> dict:
         "source": "clinical_tables",
     }
     prefilter = _window_prefilter(cutoff_iso)
+    fac_sql, fac_args = _facility_patients_clause(facilities)
 
     try:
         vitals_rows = db.execute(
-            """SELECT COALESCE(source, 'unknown') AS src,
+            f"""SELECT COALESCE(source, 'unknown') AS src,
                       SUM(CASE WHEN datetime(timestamp) >= datetime(?) THEN 1 ELSE 0 END) AS cnt,
                       SUM(CASE WHEN datetime(timestamp) IS NULL THEN 1 ELSE 0 END) AS bad_ts
                  FROM vitals
-                WHERE timestamp >= ?
+                WHERE timestamp >= ?{fac_sql}
              GROUP BY src""",
-            (cutoff_iso, prefilter),
+            (cutoff_iso, prefilter, *fac_args),
         ).fetchall()
         # `recorded_at` is WRITE time (what this tile asks about); `observed_at`
         # is the clinical time the result belongs to and can predate the write by
         # hours on a lab backfill.
         obs_rows = db.execute(
-            """SELECT COALESCE(source, 'unknown') AS src,
+            f"""SELECT COALESCE(source, 'unknown') AS src,
                       SUM(CASE WHEN datetime(COALESCE(recorded_at, observed_at)) >= datetime(?)
                                THEN 1 ELSE 0 END) AS cnt,
                       SUM(CASE WHEN datetime(COALESCE(recorded_at, observed_at)) IS NULL
                                THEN 1 ELSE 0 END) AS bad_ts
                  FROM observations
-                WHERE COALESCE(recorded_at, observed_at) >= ?
+                WHERE COALESCE(recorded_at, observed_at) >= ?{fac_sql}
              GROUP BY src""",
-            (cutoff_iso, prefilter),
+            (cutoff_iso, prefilter, *fac_args),
         ).fetchall()
     except DBOperationalError as exc:  # pragma: no cover - defensive
         logger.warning("admin overview: clinical row counts unreadable: %s", exc)
@@ -384,8 +405,11 @@ def admin_overview(user: dict = _ADMIN_OVERVIEW_USER_DEFAULT) -> dict:
         # multisite-11: with more than one facility on record the four audit
         # counts below count the reader's facilities' rows under the epoch
         # rule (services/audit_facility). With one facility `vis` is empty and
-        # nothing else is read. The ingestion, alert and record figures are
-        # not audit rows and belong to the Command Center sweep (multisite-12).
+        # nothing else is read. multisite-12: the alert and record figures
+        # count the reader's facilities' patients only; the ingestion figures
+        # are the appliance's own feed and name nobody, so they stay whole, but
+        # the recent parse failures (their error text can quote a message) are
+        # shown only to a reader with no facility limit.
         from services import audit_facility
 
         scope = audit_facility.reader_scope(user, db=db)
@@ -438,10 +462,18 @@ def admin_overview(user: dict = _ADMIN_OVERVIEW_USER_DEFAULT) -> dict:
         sources = {r["source_type"]: r["cnt"] for r in source_mix}
 
         # ── Alerts (24h) — LANE-AGNOSTIC. See _alerts_24h for the source choice. ──
-        alerts = _alerts_24h(db, cutoff_24h_ms)
+        alerts = (
+            _alerts_24h(db, cutoff_24h_ms)
+            if scope is None
+            else _alerts_24h(db, cutoff_24h_ms, facilities=scope)
+        )
 
         # ── Records written (24h) — LANE-AGNOSTIC. See _records_written_24h. ──
-        records_written = _records_written_24h(db, cutoff_24h)
+        records_written = (
+            _records_written_24h(db, cutoff_24h)
+            if scope is None
+            else _records_written_24h(db, cutoff_24h, facilities=scope)
+        )
 
         # The audit trail's own view of alerting. KEPT, but scoped honestly: these
         # two action_types are written only by ingestion_service, so they describe
@@ -458,12 +490,16 @@ def admin_overview(user: dict = _ADMIN_OVERVIEW_USER_DEFAULT) -> dict:
         alert_audit = {r["action_type"]: r["cnt"] for r in alert_audit_rows}
 
         # ── Recent parse failures (last 5) ──
-        recent_failures = db.execute(
-            """SELECT id, received_at, source_type, parse_error, correlation_id
+        recent_failures = (
+            db.execute(
+                """SELECT id, received_at, source_type, parse_error, correlation_id
                FROM ingestion_events
                WHERE parse_status = 'failed'
                ORDER BY received_at DESC LIMIT 5"""
-        ).fetchall()
+            ).fetchall()
+            if scope is None
+            else []
+        )
 
         # ── Auth events (24h) ──
         # auth events are written with event_category='authentication' /
@@ -540,7 +576,7 @@ _ADMIN_ALERTS_OFFSET_DEFAULT = Query(0, ge=0)
 _ADMIN_ALERTS_USER_DEFAULT = Depends(require_permission("admin.overview"))
 
 
-@router.get("/alerts")
+@router.get("/alerts", response_model=None)
 def admin_alerts(
     request: Request,
     hours: int = _ADMIN_ALERTS_HOURS_DEFAULT,
@@ -549,14 +585,20 @@ def admin_alerts(
     limit: int = _ADMIN_ALERTS_LIMIT_DEFAULT,
     offset: int = _ADMIN_ALERTS_OFFSET_DEFAULT,
     user: dict = _ADMIN_ALERTS_USER_DEFAULT,
-):
+) -> dict:
     """Every alert.fired row in the window, newest first, with lane and level.
 
     Same contract as the tile: when the shadow log is off the answer is
     `total: null` with the reason, never an empty list read as "no alerts".
     The rows name patients, so a ward-scoped account sees its own ward only
     (with the house-wide count beside it) and every page of names is audited.
+    With more than one facility on record the rows, and the house-wide count,
+    are the caller's facilities' (multisite-9b): an account bound to one
+    facility never reads another facility's patients here.
     """
+    from permissions import facility_scope
+
+    facilities = facility_scope(user)
     base = {
         "hours": hours,
         "limit": limit,
@@ -587,6 +629,12 @@ def admin_alerts(
     if level:
         where.append("json_extract(payload_json, '$.level') = ?")
         params.append(level)
+
+    if facilities is not None:
+        # The facility's own alerts only, the "house" count included.
+        fac_sql, fac_args = scope_patient_ids_sql(None, facilities=facilities)
+        where.append(f"patient_id IN ({fac_sql})")
+        params.extend(fac_args)
 
     dept = department_scope(user)
     scoped_where, scoped_params = list(where), list(params)

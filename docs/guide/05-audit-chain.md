@@ -176,12 +176,12 @@ sequenceDiagram
 **Does:** Best-effort decode of the request's bearer JWT to identify the actor; never raises.
 **How it works:**
 1. Reads the `Authorization` header (either capitalization) and requires the `bearer ` prefix (`audit_middleware.py:32-34`).
-2. Calls `auth.decode_token`, a *JWT* (JSON Web Token) is a signed token whose payload carries claims like `sub` (subject = user id) and `role`; `decode_token` verifies the HS256 signature (`server/auth.py:371-377`).
+2. Calls `auth.decode_token`, a *JWT* (JSON Web Token) is a signed token whose payload carries claims like `sub` (subject = user id) and `role`; `decode_token` verifies the HS256 signature (`server/auth.py:372-378`).
 3. Returns `(payload["sub"] or payload["id"], payload["role"])`; any exception (expired, malformed, absent) yields `(None, None)` (`audit_middleware.py:36-41`).
 **Why it exists:** Middleware runs *before* FastAPI dependency injection (the `Depends(...)` mechanism that normally resolves the current user), so it must parse the token itself, and an unauditable actor must not make the request fail.
 **Data in/out:** in: Starlette `Request`; out: 2-tuple of strings or Nones.
 **Talks to:** `auth.decode_token` (guide 03-auth-rbac); called only by `audit_mutations`.
-**Gotchas:** `decode_token` raises `HTTPException` for expired/invalid tokens (`auth.py:69-72`); the bare `except Exception` correctly swallows it here, so an expired token logs an *anonymous* mutation rather than blocking it, actor attribution is best-effort by design.
+**Gotchas:** `decode_token` raises `HTTPException` for expired/invalid tokens (`auth.py:70-73`); the bare `except Exception` correctly swallows it here, so an expired token logs an *anonymous* mutation rather than blocking it, actor attribution is best-effort by design.
 
 ### `audit_mutations(request, call_next)`: `server/services/audit_middleware.py:53`
 **Signature:** `async (request, call_next) → Response`, Starlette HTTP middleware

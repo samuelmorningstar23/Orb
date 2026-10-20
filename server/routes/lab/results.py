@@ -101,6 +101,7 @@ from permissions import (
     LAB_AUTHORISE,
     LAB_RESULT,
     department_scope,
+    facility_scope,
     log_phi_read,
     require_permission,
 )
@@ -151,25 +152,30 @@ def _refusal(err: lab_result_service.LabResultError) -> HTTPException:
 _LIST_WORKLISTS_USER_DEFAULT = Depends(require_permission(LAB_RESULT))
 
 
-@router.get("/worklists")
-def list_worklists(user: dict = _LIST_WORKLISTS_USER_DEFAULT):
-    """The laboratory's sections and how much waits on each bench. Counts
-    only, so no audit row."""
+@router.get("/worklists", response_model=None)
+def list_worklists(user: dict = _LIST_WORKLISTS_USER_DEFAULT) -> dict:
+    """The laboratory's sections and how much waits on each bench, counting
+    only the samples the caller's facilities perform. Counts only, so no
+    audit row."""
     with db_session() as db:
-        return {"sections": lab_result_service.list_sections(db)}
+        return {"sections": lab_result_service.list_sections(db, facilities=facility_scope(user))}
 
 
 _GET_WORKLIST_USER_DEFAULT = Depends(require_permission(LAB_RESULT))
 
 
-@router.get("/worklists/{section_id}")
-def get_worklist(section_id: str, request: Request, user: dict = _GET_WORKLIST_USER_DEFAULT):
-    """One section's worklist. The audit row records the patients actually
-    returned."""
+@router.get("/worklists/{section_id}", response_model=None)
+def get_worklist(
+    section_id: str, request: Request, user: dict = _GET_WORKLIST_USER_DEFAULT
+) -> dict:
+    """One section's worklist, inside the caller's department and
+    facilities. The audit row records the patients actually returned."""
     dept = department_scope(user)
     try:
         with db_session() as db:
-            bench = lab_result_service.worklist(db, section_id, dept=dept)
+            bench = lab_result_service.worklist(
+                db, section_id, dept=dept, facilities=facility_scope(user)
+            )
     except lab_result_service.LabResultError as err:
         raise _refusal(err) from err
     patient_ids = sorted(
@@ -198,8 +204,10 @@ def get_worklist(section_id: str, request: Request, user: dict = _GET_WORKLIST_U
 _ENTER_RESULT_USER_DEFAULT = Depends(require_permission(LAB_RESULT))
 
 
-@router.post("/results")
-def enter_result(body: EnterBody, request: Request, user: dict = _ENTER_RESULT_USER_DEFAULT):
+@router.post("/results", response_model=None)
+def enter_result(
+    body: EnterBody, request: Request, user: dict = _ENTER_RESULT_USER_DEFAULT
+) -> dict:
     try:
         return lab_result_service.enter_result(
             body.order_item_id,
@@ -208,6 +216,7 @@ def enter_result(body: EnterBody, request: Request, user: dict = _ENTER_RESULT_U
             actor=user,
             dept=department_scope(user),
             request_meta=request_meta(request),
+            facilities=facility_scope(user),
         )
     except lab_result_service.LabResultError as err:
         raise _refusal(err) from err
@@ -218,13 +227,13 @@ def enter_result(body: EnterBody, request: Request, user: dict = _ENTER_RESULT_U
 _EDIT_RESULT_USER_DEFAULT = Depends(require_permission(LAB_RESULT))
 
 
-@router.patch("/results/{result_id}")
+@router.patch("/results/{result_id}", response_model=None)
 def edit_result(
     result_id: int,
     body: EditBody,
     request: Request,
     user: dict = _EDIT_RESULT_USER_DEFAULT,
-):
+) -> dict:
     try:
         return lab_result_service.edit_result(
             result_id,
@@ -235,6 +244,7 @@ def edit_result(
             actor=user,
             dept=department_scope(user),
             request_meta=request_meta(request),
+            facilities=facility_scope(user),
         )
     except lab_result_service.LabResultError as err:
         current = err.extra.get("current") if err.code == "result_changed" else None
@@ -311,13 +321,16 @@ def _write(call):
 _GET_VALIDATION_USER_DEFAULT = Depends(require_permission(LAB_RESULT))
 
 
-@router.get("/validation")
-def get_validation(request: Request, user: dict = _GET_VALIDATION_USER_DEFAULT):
-    """Results waiting for technical validation and for a signatory. The
-    audit row records the patients actually returned."""
+@router.get("/validation", response_model=None)
+def get_validation(request: Request, user: dict = _GET_VALIDATION_USER_DEFAULT) -> dict:
+    """Results waiting for technical validation and for a signatory, inside
+    the caller's department and facilities. The audit row records the
+    patients actually returned."""
     dept = department_scope(user)
     with db_session() as db:
-        queues = lab_result_service.validation_queues(db, actor=user, dept=dept)
+        queues = lab_result_service.validation_queues(
+            db, actor=user, dept=dept, facilities=facility_scope(user)
+        )
     groups = queues["technical"] + queues["authorisation"]
     patient_ids = sorted({g["patient"]["id"] for g in groups})
     count = sum(len(g["results"]) for g in groups)
@@ -342,13 +355,13 @@ def get_validation(request: Request, user: dict = _GET_VALIDATION_USER_DEFAULT):
 _ACKNOWLEDGE_DELTA_USER_DEFAULT = Depends(require_permission(LAB_RESULT))
 
 
-@router.post("/results/{result_id}/delta-ack")
+@router.post("/results/{result_id}/delta-ack", response_model=None)
 def acknowledge_delta(
     result_id: int,
     body: ReasonBody,
     request: Request,
     user: dict = _ACKNOWLEDGE_DELTA_USER_DEFAULT,
-):
+) -> dict:
     return _write(
         lambda: lab_result_service.acknowledge_delta(
             result_id,
@@ -357,6 +370,7 @@ def acknowledge_delta(
             actor=user,
             dept=department_scope(user),
             request_meta=request_meta(request),
+            facilities=facility_scope(user),
         )
     )
 
@@ -364,16 +378,17 @@ def acknowledge_delta(
 _TECH_VALIDATE_USER_DEFAULT = Depends(require_permission(LAB_RESULT))
 
 
-@router.post("/results/tech-validate")
+@router.post("/results/tech-validate", response_model=None)
 def tech_validate(
     body: TechValidateBody, request: Request, user: dict = _TECH_VALIDATE_USER_DEFAULT
-):
+) -> dict:
     return _write(
         lambda: lab_result_service.technically_validate(
             _seen_list(body.results),
             actor=user,
             dept=department_scope(user),
             request_meta=request_meta(request),
+            facilities=facility_scope(user),
         )
     )
 
@@ -381,8 +396,8 @@ def tech_validate(
 _AUTHORISE_USER_DEFAULT = Depends(require_permission(LAB_AUTHORISE))
 
 
-@router.post("/results/authorise")
-def authorise(body: AuthoriseBody, request: Request, user: dict = _AUTHORISE_USER_DEFAULT):
+@router.post("/results/authorise", response_model=None)
+def authorise(body: AuthoriseBody, request: Request, user: dict = _AUTHORISE_USER_DEFAULT) -> dict:
     return _write(
         lambda: lab_result_service.authorise_and_release(
             body.specimen_id,
@@ -390,6 +405,7 @@ def authorise(body: AuthoriseBody, request: Request, user: dict = _AUTHORISE_USE
             actor=user,
             dept=department_scope(user),
             request_meta=request_meta(request),
+            facilities=facility_scope(user),
         )
     )
 
@@ -397,13 +413,13 @@ def authorise(body: AuthoriseBody, request: Request, user: dict = _AUTHORISE_USE
 _RETURN_TO_BENCH_USER_DEFAULT = Depends(require_permission(LAB_AUTHORISE))
 
 
-@router.post("/results/{result_id}/return")
+@router.post("/results/{result_id}/return", response_model=None)
 def return_to_bench(
     result_id: int,
     body: ReasonBody,
     request: Request,
     user: dict = _RETURN_TO_BENCH_USER_DEFAULT,
-):
+) -> dict:
     return _write(
         lambda: lab_result_service.return_to_bench(
             result_id,
@@ -412,6 +428,7 @@ def return_to_bench(
             actor=user,
             dept=department_scope(user),
             request_meta=request_meta(request),
+            facilities=facility_scope(user),
         )
     )
 
@@ -460,15 +477,22 @@ class WithdrawBody(BaseModel):
 _GET_REPORTED_RESULTS_USER_DEFAULT = Depends(require_permission(LAB_RESULT))
 
 
-@router.get("/results/reported/{specimen_id}")
+@router.get("/results/reported/{specimen_id}", response_model=None)
 def get_reported_results(
     specimen_id: str, request: Request, user: dict = _GET_REPORTED_RESULTS_USER_DEFAULT
-):
+) -> dict:
     """One sample's reported results. The audit row names the patient."""
     dept = department_scope(user)
     try:
         with db_session() as db:
-            body = lab_result_service.reported_results(db, specimen_id, actor=user, dept=dept)
+            body = lab_result_service.reported_results(
+                db,
+                specimen_id,
+                actor=user,
+                dept=dept,
+                facilities=facility_scope(user),
+                request_meta=request_meta(request),
+            )
     except lab_result_service.LabResultError as err:
         raise _refusal(err) from err
     log_phi_read(
@@ -490,13 +514,13 @@ def get_reported_results(
 _AMEND_RESULT_USER_DEFAULT = Depends(require_permission(LAB_AUTHORISE))
 
 
-@router.post("/results/{result_id}/amend")
+@router.post("/results/{result_id}/amend", response_model=None)
 def amend_result(
     result_id: int,
     body: AmendBody,
     request: Request,
     user: dict = _AMEND_RESULT_USER_DEFAULT,
-):
+) -> dict:
     return _write(
         lambda: lab_result_service.amend_result(
             result_id,
@@ -508,6 +532,7 @@ def amend_result(
             actor=user,
             dept=department_scope(user),
             request_meta=request_meta(request),
+            facilities=facility_scope(user),
         )
     )
 
@@ -515,13 +540,13 @@ def amend_result(
 _CONFIRM_AMENDMENT_USER_DEFAULT = Depends(require_permission(LAB_AUTHORISE))
 
 
-@router.post("/results/{result_id}/amend/confirm")
+@router.post("/results/{result_id}/amend/confirm", response_model=None)
 def confirm_amendment(
     result_id: int,
     body: ConfirmAmendBody,
     request: Request,
     user: dict = _CONFIRM_AMENDMENT_USER_DEFAULT,
-):
+) -> dict:
     return _write(
         lambda: lab_result_service.confirm_amendment(
             result_id,
@@ -531,6 +556,7 @@ def confirm_amendment(
             actor=user,
             dept=department_scope(user),
             request_meta=request_meta(request),
+            facilities=facility_scope(user),
         )
     )
 
@@ -538,13 +564,13 @@ def confirm_amendment(
 _CANCEL_AMENDMENT_USER_DEFAULT = Depends(require_permission(LAB_AUTHORISE))
 
 
-@router.post("/results/{result_id}/amend/cancel")
+@router.post("/results/{result_id}/amend/cancel", response_model=None)
 def cancel_amendment(
     result_id: int,
     body: CancelAmendBody,
     request: Request,
     user: dict = _CANCEL_AMENDMENT_USER_DEFAULT,
-):
+) -> dict:
     return _write(
         lambda: lab_result_service.cancel_amendment(
             result_id,
@@ -553,6 +579,7 @@ def cancel_amendment(
             actor=user,
             dept=department_scope(user),
             request_meta=request_meta(request),
+            facilities=facility_scope(user),
         )
     )
 
@@ -560,13 +587,13 @@ def cancel_amendment(
 _WITHDRAW_RESULT_USER_DEFAULT = Depends(require_permission(LAB_AUTHORISE))
 
 
-@router.post("/results/{result_id}/withdraw")
+@router.post("/results/{result_id}/withdraw", response_model=None)
 def withdraw_result(
     result_id: int,
     body: WithdrawBody,
     request: Request,
     user: dict = _WITHDRAW_RESULT_USER_DEFAULT,
-):
+) -> dict:
     return _write(
         lambda: lab_result_service.withdraw_result(
             result_id,
@@ -576,5 +603,6 @@ def withdraw_result(
             actor=user,
             dept=department_scope(user),
             request_meta=request_meta(request),
+            facilities=facility_scope(user),
         )
     )

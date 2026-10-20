@@ -13,9 +13,9 @@ it is a full bedside data-entry screen of its own and deserves its own file. The
 to that screen's map.
 
 **How to get to this screen.** Left nav → **My Shift**. The nav entry is declared at
-`src/pages/ClinicianShell.tsx:27`, `id: 'shift', label: 'My Shift', pillar: 'Nurse Mode'`, with
-a clipboard-with-a-tick SVG at `:29-31`. The panel is lazily imported at
-`src/pages/ClinicianShell.tsx:116` and mounted at `src/pages/ClinicianShell.tsx:525-528`:
+`src/pages/ClinicianShell.tsx:33`, `id: 'shift', label: 'My Shift', pillar: 'Nurse Mode'`, with
+a clipboard-with-a-tick SVG at `:35-37`. The panel is lazily imported at
+`src/pages/ClinicianShell.tsx:122` and mounted at `src/pages/ClinicianShell.tsx:758-761`:
 
 ```
 {shouldRenderPanel('shift') && (
@@ -26,9 +26,9 @@ a clipboard-with-a-tick SVG at `:29-31`. The panel is lazily imported at
 `NursePanel` takes **no props at all** (`NursePanel.tsx:105`). Everything on this screen comes
 from one API call.
 
-**Who sees the tab.** Per-role tab lists at `src/pages/ClinicianShell.tsx:209-231`. `'shift'`
-appears in exactly one list, `case 'nurse'` at `:200`, and it is **first**, so because the
-shell opens `accessibleTabs[0]` (`ClinicianShell.tsx:339`) **this board is the landing screen for
+**Who sees the tab.** Per-role tab lists at `src/pages/ClinicianShell.tsx:375-397`. `'shift'`
+appears in exactly one list, `case 'nurse'` at `:366`, and it is **first**, so because the
+shell opens `accessibleTabs[0]` (`ClinicianShell.tsx:505`) **this board is the landing screen for
 every nurse**. No other role can reach it; a doctor, admin or pharmacist has no My Shift tab and
 no route to `NursePanel`.
 
@@ -297,7 +297,7 @@ role missing `patient.read_all` or `vitals.read` the server answers 403 with
 `{"error":"permission_denied","message":"Insufficient permissions", …}`
 (`server/permissions.py:435-443`), and `apiFetch:210-224` surfaces `detail.message`, so the
 notice reads **"Insufficient permissions"**. In practice only a nurse ever reaches this screen
-(`ClinicianShell.tsx:227`) and the nurse role holds both permissions
+(`ClinicianShell.tsx:393`) and the nurse role holds both permissions
 (`server/permissions.py:117-134`), so the 403 path is reachable only after a role change.
 **Change this →** the red line. Note the `&& offline.online` guard (`:278-281`): with the device
 offline this notice is **suppressed**, because the banner above already says it in words a nurse

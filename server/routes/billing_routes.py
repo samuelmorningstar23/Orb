@@ -58,6 +58,22 @@ at the caller's facilities. The patient checks stay as they were, and the
 patient-keyed reads (charges, the money summary) stay whole-record once the
 patient is in scope. With one facility on record the caller's facility scope
 is None and nothing changes.
+
+PRICE LISTS PER FACILITY (multisite-13). A price list applies to the whole
+group or to one facility, and each facility may have its own default
+(billing_masters.default_tariff_plan). Three routes edit that, behind
+ORB_MULTI_SITE (404 feature_disabled while it is off), for Admin, Facilities:
+GET /facilities/{id}/price-lists (billing.read), PUT
+/facilities/{id}/default-price-list and PUT /tariff-plans/{id}/applies-to
+(billing.tariff). Every tariff master write (those two, and POST
+/tariff-plans, /tariff-rates and /packages) is checked against the caller's
+facility scope first: a list kept for a facility outside it is not found
+(404), and a list for the whole group needs group-wide reach (403, ruling
+MS-R6 (a)), each after an authorization 'facility_document_denied' row. With
+one facility on record the scope is None and nothing is read. GET
+/tariff-plans lists the group's lists and the caller's facilities' lists,
+each with its "Applies to"; /config and /rate default to the caller's
+facility's list.
 """
 
 from __future__ import annotations
@@ -75,17 +91,19 @@ from permissions import (
     department_scope,
     enforce_patient_scope,
     facility_scope,
+    has_permission,
     log_phi_read,
     require_patient_access,
     require_permission,
 )
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from services.audit_service import AuditWriteError
-from services.billing_masters import MasterDataError
+from services.billing_masters import MasterDataError, TariffScopeError
 from services.billing_service import BillingError
 from services.facility_documents import (
     admission_ref,
     admission_row_facility,
+    audit_document_denial,
     charge_facility,
     deny_if_outside,
     request_meta,
@@ -93,8 +111,8 @@ from services.facility_documents import (
 from services.facility_stamp import invoice_facility
 from services.money import GST_EXEMPT, GST_TREATMENTS, QUANTITY_SCALE
 
-from routes.opt_in_gates import require_opd_feature
-from services import billing_masters, billing_service
+from routes.opt_in_gates import feature_gate, require_opd_feature
+from services import billing_masters, billing_service, facility_service
 
 
 def _require_own_document(
@@ -143,6 +161,29 @@ def _require_own_admission(user: dict, request: Request | None, admission_id: An
         target_type="admission",
         detail="Admission not found",
     )
+
+
+def _price_list_call(
+    user: dict, request: Request | None, fn: Callable[..., Any], **kwargs: Any
+) -> Any:
+    """Run a price list call with the caller's facility scope (multisite-13)
+    and answer its refusal (billing_masters.TariffScopeError) with its own
+    status and words. A refusal about the caller's reach (a list or facility
+    outside the scope, or the whole group without group-wide reach) is
+    recorded first as an authorization 'facility_document_denied' row."""
+    facilities = facility_scope(user)
+    try:
+        return fn(facilities=facilities, **kwargs)
+    except TariffScopeError as exc:
+        if exc.denial is not None and facilities is not None:
+            audit_document_denial(
+                user=user,
+                lane="billing",
+                facilities=facilities,
+                meta=request_meta(request),
+                **exc.denial,
+            )
+        raise HTTPException(status_code=exc.status, detail=exc.body()) from exc
 
 
 router = APIRouter(prefix="/api/billing", tags=["Billing"])
@@ -345,6 +386,24 @@ class ReasonIn(BaseModel):
     reason: str
 
 
+class DefaultPriceListIn(BaseModel):
+    """The price list a facility's patients are priced on when no payer names
+    one (multisite-13). Required; null leaves the facility on the group's
+    default."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tariff_plan_id: int | None
+
+
+class AppliesToIn(BaseModel):
+    """Where a price list applies: one facility, or null for the whole group."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    facility_id: int | None
+
+
 # ── Config / masters ─────────────────────────────────────────────────────────
 
 
@@ -352,9 +411,13 @@ _BILLING_CONFIG_USER_DEFAULT = Depends(_read)
 
 
 @router.get("/config")
-def billing_config(user: dict = _BILLING_CONFIG_USER_DEFAULT):
-    """What this deployment has configured — including what it has NOT."""
-    plan = billing_masters.default_tariff_plan()
+def billing_config(user: dict = _BILLING_CONFIG_USER_DEFAULT) -> dict:
+    """What this deployment has configured, including what it has NOT. The
+    default price list is the one of the caller's facility (multisite-13;
+    facility 1 while only one is on record), with its "Applies to"."""
+    plan = billing_masters.default_tariff_plan(facility_service.user_facility_id(user))
+    if plan is not None:
+        plan = billing_masters.plan_view(plan)
     items = billing_masters.list_service_items(limit=1000)
     priced = sum(1 for i in items if int(i.get("rate_is_configured") or 0) == 1)
     return {
@@ -425,15 +488,27 @@ _LIST_TARIFF_PLANS_USER_DEFAULT = Depends(_read)
 
 
 @router.get("/tariff-plans")
-def list_tariff_plans(active_only: bool = True, user: dict = _LIST_TARIFF_PLANS_USER_DEFAULT):
-    return {"plans": billing_masters.list_tariff_plans(active_only=active_only)}
+def list_tariff_plans(
+    active_only: bool = True, user: dict = _LIST_TARIFF_PLANS_USER_DEFAULT
+) -> dict:
+    """Every price list the caller's facilities use, each with "Applies to"."""
+    return {
+        "plans": billing_masters.list_tariff_plans(
+            active_only=active_only, facilities=facility_scope(user)
+        )
+    }
 
 
 _UPSERT_TARIFF_PLAN_USER_DEFAULT = Depends(_tariff)
 
 
 @router.post("/tariff-plans")
-def upsert_tariff_plan(payload: TariffPlanIn, user: dict = _UPSERT_TARIFF_PLAN_USER_DEFAULT):
+def upsert_tariff_plan(
+    payload: TariffPlanIn, request: Request, user: dict = _UPSERT_TARIFF_PLAN_USER_DEFAULT
+) -> dict:
+    # multisite-13: a list kept for another facility is not found, and a list
+    # for the whole group (a new one is) needs group-wide reach.
+    _price_list_call(user, request, billing_masters.assert_plan_editable, code=payload.code)
     plan = _handle(
         billing_service.upsert_tariff_plan,
         code=payload.code,
@@ -470,7 +545,12 @@ _SET_TARIFF_RATE_USER_DEFAULT = Depends(_tariff)
 
 
 @router.post("/tariff-rates")
-def set_tariff_rate(payload: TariffRateIn, user: dict = _SET_TARIFF_RATE_USER_DEFAULT):
+def set_tariff_rate(
+    payload: TariffRateIn, request: Request, user: dict = _SET_TARIFF_RATE_USER_DEFAULT
+) -> dict:
+    _price_list_call(
+        user, request, billing_masters.assert_plan_editable, tariff_plan_id=payload.tariff_plan_id
+    )
     rate = _handle(
         billing_masters.set_tariff_rate,
         tariff_plan_id=payload.tariff_plan_id,
@@ -495,7 +575,12 @@ _UPSERT_PACKAGE_USER_DEFAULT = Depends(_tariff)
 
 
 @router.post("/packages")
-def upsert_package(payload: PackageRateIn, user: dict = _UPSERT_PACKAGE_USER_DEFAULT):
+def upsert_package(
+    payload: PackageRateIn, request: Request, user: dict = _UPSERT_PACKAGE_USER_DEFAULT
+) -> dict:
+    _price_list_call(
+        user, request, billing_masters.assert_plan_editable, tariff_plan_id=payload.tariff_plan_id
+    )
     package = _handle(
         billing_service.upsert_package_rate,
         tariff_plan_id=payload.tariff_plan_id,
@@ -522,16 +607,102 @@ def resolve_rate(
     ward_class: str | None = None,
     on_date: str | None = None,
     user: dict = _RESOLVE_RATE_USER_DEFAULT,
-):
+) -> dict:
     """What one service costs — with ``rate_is_configured`` so the UI can say
-    "Not configured" instead of drawing a zero."""
+    "Not configured" instead of drawing a zero. With no plan named, on the
+    caller's facility's default list (multisite-13)."""
     resolution = billing_masters.resolve_rate(
         service_code,
         tariff_plan_id=tariff_plan_id,
         ward_class=ward_class,
         on_date=on_date,
+        facility_id=facility_service.user_facility_id(user),
     )
     return resolution.as_dict()
+
+
+# ── Price lists per facility (multisite-13, ORB_MULTI_SITE) ──────────────────
+
+_MULTI_SITE = feature_gate("multi_site")
+_PRICE_LISTS_GATE_DEFAULT = Depends(_MULTI_SITE)
+_FACILITY_PRICE_LISTS_USER_DEFAULT = Depends(_read)
+
+
+def _may_change_price_lists(user: dict) -> bool:
+    return has_permission(user.get("role", ""), BILLING_TARIFF)
+
+
+@router.get("/facilities/{facility_id}/price-lists")
+def facility_price_lists(
+    facility_id: int,
+    request: Request,
+    _gate: None = _PRICE_LISTS_GATE_DEFAULT,
+    user: dict = _FACILITY_PRICE_LISTS_USER_DEFAULT,
+) -> dict:
+    """The price lists that apply at one facility and the one its patients
+    are priced on when no payer names one, for Admin, Facilities."""
+    result: dict = _price_list_call(
+        user,
+        request,
+        billing_masters.facility_price_lists,
+        facility_id=facility_id,
+        can_change=_may_change_price_lists(user),
+    )
+    return result
+
+
+_SET_DEFAULT_PRICE_LIST_USER_DEFAULT = Depends(_tariff)
+
+
+@router.put("/facilities/{facility_id}/default-price-list")
+def set_default_price_list(
+    facility_id: int,
+    payload: DefaultPriceListIn,
+    request: Request,
+    _gate: None = _PRICE_LISTS_GATE_DEFAULT,
+    user: dict = _SET_DEFAULT_PRICE_LIST_USER_DEFAULT,
+) -> dict:
+    """Choose a facility's default price list (null: the group's default).
+    Choosing a group list other than the group's default keeps that list for
+    this facility from now on, which needs group-wide reach. Refusals answer
+    409 (plan_of_another_facility, plan_inactive, plan_used_by_payer,
+    group_default_plan, facility_inactive), 404 or 403 with
+    {error, message}."""
+    result: dict = _price_list_call(
+        user,
+        request,
+        billing_masters.set_facility_default_tariff_plan,
+        facility_id=facility_id,
+        tariff_plan_id=payload.tariff_plan_id,
+        actor=user,
+        can_change=True,
+    )
+    return result
+
+
+_SET_APPLIES_TO_USER_DEFAULT = Depends(_tariff)
+
+
+@router.put("/tariff-plans/{tariff_plan_id}/applies-to")
+def set_price_list_applies_to(
+    tariff_plan_id: int,
+    payload: AppliesToIn,
+    request: Request,
+    _gate: None = _PRICE_LISTS_GATE_DEFAULT,
+    user: dict = _SET_APPLIES_TO_USER_DEFAULT,
+) -> dict:
+    """Keep a price list for one facility, or make it the whole group's. A
+    list arrives in its new place as not the default. Refusals as for the
+    default price list."""
+    result: dict = _price_list_call(
+        user,
+        request,
+        billing_masters.set_tariff_plan_scope,
+        tariff_plan_id=tariff_plan_id,
+        facility_id=payload.facility_id,
+        actor=user,
+    )
+    return result
 
 
 # ── Outpatients at the counter (opd-14, the 'opd' feature) ──────────────────

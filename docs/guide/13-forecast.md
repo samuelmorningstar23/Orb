@@ -6,7 +6,7 @@ Three terms you need before anything else:
 
 - **Time-series forecasting**, predicting future values of a quantity from its past values sampled over time (here: a patient's vital signs every few minutes, or the hospital's daily admission counts). The core assumption is that the past contains signal about the future, a patient whose heart rate has been trending down toward normal is probably closer to discharge.
 - **LSTM (Long Short-Term Memory)**, a type of recurrent neural network built for sequences. A plain neural network sees one input at a time; an LSTM walks through a sequence step by step and carries a memory cell forward, with learned "gates" that decide what to remember, what to forget, and what to output at each step. This lets it capture patterns like "fever spiked two days ago but has been falling since," which a snapshot model cannot see. "Bidirectional" (BiLSTM) means two LSTMs read the sequence, one forward, one backward, and their outputs are concatenated, so every timestep's representation knows about both its past and its future within the window.
-- **Confidence interval (CI)**, a range around a prediction that quantifies uncertainty, e.g. "LoS 4.2 days, 95% CI [3.1, 5.6]." Be aware: **Orb Forecast does not produce confidence intervals.** The `confidence` field it returns is a single scalar, the softmax probability of the winning acuity class (`server/models/forecast_lstm.py:142`) or a fixed constant in the heuristic path (`server/services/forecast_service.py:525`). It measures how sure the acuity classifier is, not a statistical interval around the LoS number. Keep that distinction in mind when reading the UI.
+- **Confidence interval (CI)**, a range around a prediction that quantifies uncertainty, e.g. "LoS 4.2 days, 95% CI [3.1, 5.6]." Be aware: **Orb Forecast does not produce confidence intervals.** The `confidence` field it returns is a single scalar, the softmax probability of the winning acuity class (`server/models/forecast_lstm.py:142`) or a fixed constant in the heuristic path (`server/services/forecast_service.py:613`). It measures how sure the acuity classifier is, not a statistical interval around the LoS number. Keep that distinction in mind when reading the UI.
 
 ## Purpose and neighbors
 
@@ -33,7 +33,7 @@ graph LR
 - **Database** (see guide 04-database-schema): reads `patients`, `vitals`, `risk_scores`, `medications`, `admission_history`, `discharge_summaries`; reads/writes `forecast_predictions`.
 - **Pulse** (the seasonal calendar, guide 18): since 6 October 2026 (ruling R030 in `docs/RULINGS_NEEDED_2026-10.md`) Forecast applies no weather or seasonal adjustment. It shows the current season as one line of context, for example "Season: South-west monsoon (peak), Dengue season", and no number depends on it. Before that, Forecast read Pulse's in-memory caches of internet weather, AQI and flu data and multiplied admissions by hand-picked factors.
 - **Bot/simulation loop** (covered with the realtime/simulation guides): the vitals bot calls `refresh_all_predictions()` roughly every 10 minutes (`server/services/bot_service.py:338-341`).
-- **Command Center and Capacity Simulator** (their own guides): both import Forecast's ward-capacity constants and call `predict_hospital_flow()` so the whole platform reports one consistent census (`server/services/command_center_service.py:31-35`, `server/services/capacity_sim_service.py:41`).
+- **Command Center and Capacity Simulator** (their own guides): both import Forecast's ward-capacity constants and call `predict_hospital_flow()` so the whole platform reports one consistent census (`server/services/command_center_service.py:42-47`, `server/services/capacity_sim_service.py:41`).
 - **Model governance**: the panel's `ProvenanceChip` displays the `forecast_lstm` registry entry ("synthetic-v1" or "untrained", never "validated") from `server/services/model_governance_service.py:64-74`.
 
 ## File map
@@ -52,10 +52,10 @@ graph LR
 
 ### Flow 1: panel load (the main request path)
 
-1. A clinician with the `forecast` tab (doctors, nurses, admins, `src/shellConfig.tsx:836-892`) opens Forecast; `ClinicianShell` lazy-loads the panel (`src/pages/ClinicianShell.tsx:129`) and mounts it inside an error boundary (`src/pages/ClinicianShell.tsx:592`).
+1. A clinician with the `forecast` tab (doctors, nurses, admins, `src/shellConfig.tsx:836-892`) opens Forecast; `ClinicianShell` lazy-loads the panel (`src/pages/ClinicianShell.tsx:135`) and mounts it inside an error boundary (`src/pages/ClinicianShell.tsx:843`).
 2. On mount, `fetchAll` fires four API calls in parallel with `Promise.all` (`src/pages/panels/ForecastPanel.tsx:142-159`): `/api/forecast/hospital`, `/discharge-board`, `/capacity`, `/admission-patterns`. Each request carries the JWT (JSON Web Token, the signed credential issued at login, see guide 03-auth-rbac) read from `localStorage` as a `Bearer` header (`src/pages/panels/ForecastPanel.tsx:24-32`).
 3. Each route handler's `Depends(require_permission("forecast.read"))` verifies the token and the role's permission set before the handler body runs (`server/routes/forecast_routes.py:28`, `server/permissions.py:386`). This is FastAPI **dependency injection**: instead of the handler fetching the user itself, it declares "I need a user who passed this check" and the framework supplies it (or returns 403 first).
-4. The handlers call the corresponding service functions. `/hospital` hits an in-process cache with a 1-hour TTL (`server/services/forecast_service.py:37`, `390-391`); on a miss, `predict_hospital_flow()` recomputes the full 7-day projection.
+4. The handlers call the corresponding service functions. `/hospital` hits an in-process cache with a 1-hour TTL (`server/services/forecast_service.py:39`, `390-391`); on a miss, `predict_hospital_flow()` recomputes the full 7-day projection.
 5. The panel stores the four JSON payloads in React state (state variables that trigger re-render when set, see guide 01-app-shell for React hooks) and renders whichever of the four sections is active. A `setInterval` re-fetches every 5 minutes (`src/pages/panels/ForecastPanel.tsx:163`).
 
 ```mermaid
@@ -84,24 +84,24 @@ sequenceDiagram
 
 ### Flow 2: one patient's prediction (fail-closed)
 
-1. `predict_patient_los(pid)` lazily loads the singleton model (`server/services/forecast_service.py:40-52`, `267`).
-2. **Gate 1, untrained network.** If `model.trained` is `False` (no checkpoint was loaded), the service *never* runs the network. It returns `_heuristic_prediction()` tagged `prediction_source: "heuristic"`, `model_trained: False` (`server/services/forecast_service.py:454-459`). Rationale: an untrained network is random-initialized; its outputs are noise, and presenting noise as a "neural prediction" to clinicians is a safety defect. This is the "fail closed" contract the tests enforce.
-3. **Gate 2, insufficient data.** Even with a trained model, if the patient has fewer than 3 vitals rows, `extract_patient_features()` returns `None` and the heuristic is used (`server/services/forecast_service.py:364-365`, `284-289`).
-4. Otherwise a `(1, 48, 19)` feature tensor is built from the DB and pushed through `model.predict()` inside `vram_guard("Forecast LSTM")`, a context manager from the GPU coordinator that flushes GPU caches after inference so the shared Apple-Silicon GPU doesn't fragment (`server/services/forecast_service.py:471-474`, `server/services/gpu_coordinator.py:38`).
-5. The result (LoS days, discharge probability, acuity label, confidence) gets an `estimated_discharge_date` and is persisted to the `forecast_predictions` table (`server/services/forecast_service.py:478-483`).
+1. `predict_patient_los(pid)` lazily loads the singleton model (`server/services/forecast_service.py:42-54`, `267`).
+2. **Gate 1, untrained network.** If `model.trained` is `False` (no checkpoint was loaded), the service *never* runs the network. It returns `_heuristic_prediction()` tagged `prediction_source: "heuristic"`, `model_trained: False` (`server/services/forecast_service.py:542-547`). Rationale: an untrained network is random-initialized; its outputs are noise, and presenting noise as a "neural prediction" to clinicians is a safety defect. This is the "fail closed" contract the tests enforce.
+3. **Gate 2, insufficient data.** Even with a trained model, if the patient has fewer than 3 vitals rows, `extract_patient_features()` returns `None` and the heuristic is used (`server/services/forecast_service.py:452-453`, `284-289`).
+4. Otherwise a `(1, 48, 19)` feature tensor is built from the DB and pushed through `model.predict()` inside `vram_guard("Forecast LSTM")`, a context manager from the GPU coordinator that flushes GPU caches after inference so the shared Apple-Silicon GPU doesn't fragment (`server/services/forecast_service.py:559-562`, `server/services/gpu_coordinator.py:38`).
+5. The result (LoS days, discharge probability, acuity label, confidence) gets an `estimated_discharge_date` and is persisted to the `forecast_predictions` table (`server/services/forecast_service.py:566-571`).
 
 ### Flow 3: the hospital-level 7-day forecast
 
-For each of the next `days_ahead` days (`server/services/forecast_service.py:625-678`):
+For each of the next `days_ahead` days (`server/services/forecast_service.py:857-919`):
 
-1. **Admissions** = 30-day average daily admission rate from `admission_history` (default 4.5/day if empty) × a day-of-week multiplier (Mondays surge to 1.35×, Sundays dip to 0.65×, `server/services/forecast_service.py:65`) (no environmental or seasonal multiplier since 6 October 2026; the old one from Pulse's internet feeds, for example storm +20% and flu ILI > 5% +35%, is gone). The code deliberately reports the Poisson *mean* rather than a random draw so the number doesn't jump every time the cache expires (`server/services/forecast_service.py:633-637`).
-2. **Discharges** = count of patients whose predicted remaining LoS lands in that day's window, clamped by two admitted demo-smoothing bounds (cap at `n_patients // 3`, floor of ~8% per day after day 0, flagged in-code as placeholders, `server/services/forecast_service.py:646-652`).
-3. **Occupancy** = running census + admissions − discharges, clamped to `[0, capacity + 5]`; a per-ward breakdown is projected proportionally to the current ward distribution (`server/services/forecast_service.py:655-664`).
-4. A summary block computes peak day, 7-day totals, and "beds available in 48h" (`server/services/forecast_service.py:680-698`). The whole dict is cached for 1 hour.
+1. **Admissions** = 30-day average daily admission rate from `admission_history` (default 4.5/day if empty) × a day-of-week multiplier (Mondays surge to 1.35×, Sundays dip to 0.65×, `server/services/forecast_service.py:67`) (no environmental or seasonal multiplier since 6 October 2026; the old one from Pulse's internet feeds, for example storm +20% and flu ILI > 5% +35%, is gone). The code deliberately reports the Poisson *mean* rather than a random draw so the number doesn't jump every time the cache expires (`server/services/forecast_service.py:734-738`).
+2. **Discharges** = count of patients whose predicted remaining LoS lands in that day's window, clamped by two admitted demo-smoothing bounds (cap at `n_patients // 3`, floor of ~8% per day after day 0, flagged in-code as placeholders, `server/services/forecast_service.py:760-766`).
+3. **Occupancy** = running census + admissions − discharges, clamped to `[0, capacity + 5]`; a per-ward breakdown is projected proportionally to the current ward distribution (`server/services/forecast_service.py:897-907`).
+4. A summary block computes peak day, 7-day totals, and "beds available in 48h" (`server/services/forecast_service.py:950-980`). The whole dict is cached for 1 hour.
 
 ### Flow 4: background refresh
 
-The vitals simulation bot runs every 5 seconds (`server/config.py:342`, `server/main.py:197-204`); every 120th cycle (~10 minutes) it calls `refresh_all_predictions()` (`server/services/bot_service.py:410-413`), which re-predicts every admitted patient and prunes `forecast_predictions` to the latest 5 rows per patient (`server/services/forecast_service.py:908-957`). This keeps `_get_cached_or_predict()` fast for the aggregate endpoints.
+The vitals simulation bot runs every 5 seconds (`server/config.py:342`, `server/main.py:197-204`); every 120th cycle (~10 minutes) it calls `refresh_all_predictions()` (`server/services/bot_service.py:410-413`), which re-predicts every admitted patient and prunes `forecast_predictions` to the latest 5 rows per patient (`server/services/forecast_service.py:1087-1136`). This keeps `_get_cached_or_predict()` fast for the aggregate endpoints.
 
 ### Flow 5: training (overview)
 
@@ -122,7 +122,7 @@ Both train only three of the four heads (LoS, discharge, acuity); neither suppli
 **How it works:** 19 input channels = 6 vitals + 3 demographics + 4 one-hot ward flags + 3 one-hot severity flags + 3 operational markers (days-since-admission, medication count, risk score). The exact channel order is documented in `server/scripts/train_forecast_synth.py:84-92`.
 **Why it exists:** Training and inference must build byte-identical feature layouts or the network reads garbage; centralizing the dimension in one importable constant makes drift a compile-time-ish error rather than silent corruption.
 **Data in/out:** plain Python ints/dicts/Path.
-**Talks to:** imported by `server/services/forecast_service.py:29`, `server/scripts/train_forecast.py:36`, `server/scripts/train_forecast_synth.py:56-61`.
+**Talks to:** imported by `server/services/forecast_service.py:27`, `server/scripts/train_forecast.py:36`, `server/scripts/train_forecast_synth.py:56-61`.
 **Change guide:** To add a feature channel (e.g. lab values), bump `input_dim` at construction time rather than editing `INPUT_DIM`, `load_model()` already honors a checkpoint's own `input_dim` (`server/models/forecast_lstm.py:169-176`), but you must then extend `extract_patient_features()` to fill the new columns in the same order used in training.
 **Gotchas:** none noteworthy.
 
@@ -166,7 +166,7 @@ Both train only three of the four heads (LoS, discharge, acuity); neither suppli
 5. **Fail-closed ICU head:** `icu_transfer_risk_3h` is included *only* when `self.icu_head_trained` is true; otherwise the key is omitted entirely so no caller can mistake `sigmoid(random weights)` for a 3-hour transfer probability (`server/models/forecast_lstm.py:145-151`).
 **Why it exists:** Keeps tensor plumbing out of the service layer and centralizes the safety gating of the untrained head.
 **Data in/out:** see signature; all values are plain Python floats/strings, safe to `json.dumps`.
-**Talks to:** called by `forecast_service.predict_patient_los()` (`server/services/forecast_service.py:474`) and the smoke test in `server/scripts/train_forecast.py:548`.
+**Talks to:** called by `forecast_service.predict_patient_los()` (`server/services/forecast_service.py:562`) and the smoke test in `server/scripts/train_forecast.py:548`.
 **Change guide:** To expose ICU-transfer risk for real, you must (a) train `icu_head` against a genuine labeled target with a BCE loss term, (b) write `"icu_head_trained": True` into the checkpoint dict, and (c) change nothing here, `load_model()` (`server/models/forecast_lstm.py:182`) and this gate already do the right thing. Footgun: setting the flag by hand without real training re-creates the exact safety defect the gate exists to prevent.
 **Gotchas:** `confidence` describes only the acuity classification, it says nothing about how accurate the LoS regression is, yet the service reuses it as the overall prediction confidence.
 
@@ -179,28 +179,28 @@ Both train only three of the four heads (LoS, discharge, acuity); neither suppli
 3. If the file exists: `torch.load(..., weights_only=True)`, this restricts deserialization to tensors and simple scalars, refusing arbitrary pickle code execution from a file on disk (a real supply-chain concern for `.pt` files) (`server/models/forecast_lstm.py:174`). Reads `input_dim` from the checkpoint so extended-schema checkpoints construct a matching network, loads the `state_dict` (the flat name→tensor map PyTorch uses to persist weights), sets `trained = True`, and copies `icu_head_trained` from checkpoint metadata (default `False`) (`server/models/forecast_lstm.py:176-182`).
 4. If the file is missing or loading throws, constructs a fresh model with `trained = False` and logs a warning/error (`server/models/forecast_lstm.py:189-198`).
 5. Moves to device, `eval()`, returns.
-**Why it exists:** This *is* the "missing weights" fallback the whole subsystem is built around: no checkpoint → boot anyway → service routes every prediction to the labeled heuristic. Note the fallback covers absent **weights**, not absent **torch**, `forecast_service.py` imports `torch` unconditionally at module load (`server/services/forecast_service.py:24`), and `server/requirements-dev.txt:8` documents that torch is a hard dependency even for the test suite. If torch is not installed, the server does not start; there is no torch-free mode.
+**Why it exists:** This *is* the "missing weights" fallback the whole subsystem is built around: no checkpoint → boot anyway → service routes every prediction to the labeled heuristic. Note the fallback covers absent **weights**, not absent **torch**, `forecast_service.py` imports `torch` unconditionally at module load (`server/services/forecast_service.py:25`), and `server/requirements-dev.txt:8` documents that torch is a hard dependency even for the test suite. If torch is not installed, the server does not start; there is no torch-free mode.
 **Data in/out:** checkpoint dict keys consumed: `model_state_dict` (required), `input_dim`, `icu_head_trained`, `epoch`, `data_source` (logged), the exact contract `server/scripts/train_forecast_synth.py:24-31` documents and both trainers write.
-**Talks to:** called by `forecast_service.get_model()` (`server/services/forecast_service.py:51`) and directly by `test_model_ships_untrained` (`server/tests/test_forecast_service.py:26`).
+**Talks to:** called by `forecast_service.get_model()` (`server/services/forecast_service.py:53`) and directly by `test_model_ships_untrained` (`server/tests/test_forecast_service.py:26`).
 **Change guide:** Worked example, to run the synthetic checkpoint in dev: `python server/scripts/train_forecast_synth.py` writes `server/models/checkpoints/forecast_lstm_synth_v1.pt`; either copy it to `server/models/forecast_checkpoint.pt` or call `load_model(checkpoint_path=...)` explicitly (the script prints both options, `server/scripts/train_forecast_synth.py:312-314`). Knock-on effects: `model.trained` becomes `True`, so `predict_patient_los` starts using the LSTM path, and the model-governance registry starts reporting `checkpoint_present=1` (`server/services/model_governance_service.py:35-38`); the test `test_model_ships_untrained` will then fail because it asserts no checkpoint exists.
 **Gotchas:** any load failure is swallowed into "untrained model" (`server/models/forecast_lstm.py:196-198`), a corrupted checkpoint degrades silently to heuristics with only an error log to tell you.
 
 ### server/services/forecast_service.py
 
-### get_model: `server/services/forecast_service.py:40`
+### get_model: `server/services/forecast_service.py:42`
 **Signature:** `() → OrbForecastLSTM`
 **Does:** Lazily loads and memoizes the process-wide singleton model.
-**How it works:** checks the module global `_model` (`server/services/forecast_service.py:32`); on first call, populates it via `load_model()`.
+**How it works:** checks the module global `_model` (`server/services/forecast_service.py:34`); on first call, populates it via `load_model()`.
 **Why it exists:** Model construction + checkpoint load is expensive; every request must share one instance.
 **Data in/out:** none → model.
 **Talks to:** `predict_patient_los()`.
 **Change guide:** To hot-reload a newly trained checkpoint without restarting, set `forecast_service._model = None` (or add a `reload_model()` helper); footgun: no locking, so two first-requests racing can both load (harmless but wasteful).
 **Gotchas:** none noteworthy.
 
-### WARD_CAPACITY / TOTAL_CAPACITY / DOW_MULTIPLIERS: `server/services/forecast_service.py:56`
-**Signature:** module constants: `{"ICU": 8, "W1": 8, "W2": 8, "W3": 8}`, `32`, `{0: 1.35 … 6: 0.65}` (`server/services/forecast_service.py:56-65`)
+### WARD_CAPACITY / TOTAL_CAPACITY / DOW_MULTIPLIERS: `server/services/forecast_service.py:58`
+**Signature:** module constants: `{"ICU": 8, "W1": 8, "W2": 8, "W3": 8}`, `32`, `{0: 1.35 … 6: 0.65}` (`server/services/forecast_service.py:58-67`)
 **Does:** Hardcodes the hospital's bed capacity and the weekly admission seasonality.
-**Why it exists:** This 32-bed model hospital has no facilities database; these constants are the platform-wide source of truth, Command Center imports them verbatim so its occupancy math always agrees with Forecast (`server/services/command_center_service.py:29-35`), and the Capacity Simulator does the same (`server/services/capacity_sim_service.py:85-86`).
+**Why it exists:** This 32-bed model hospital has no facilities database; these constants are the platform-wide source of truth, Command Center imports them verbatim so its occupancy math always agrees with Forecast (`server/services/command_center_service.py:39-47`), and the Capacity Simulator does the same (`server/services/capacity_sim_service.py:85-86`).
 **Change guide:** To resize a ward, change the number here, knock-on effects ripple to `/api/forecast/hospital` percentages, the Command Center board, the Capacity Simulator baseline, and the panel's bed grid (which draws `data.total` bed icons, `src/pages/panels/ForecastPanel.tsx:478`). Watch out: `server/tests/test_command_center.py:11` imports these constants, so tests track the change automatically, but any *hardcoded* `32` elsewhere will not.
 **Gotchas:** `DOW_MULTIPLIERS` is duplicated (not imported) in `server/scripts/train_forecast.py:132-140`; if you retune one, the training data and the runtime forecast silently disagree.
 
@@ -209,137 +209,137 @@ Both train only three of the four heads (LoS, discharge, acuity); neither suppli
 **Why it went:** Orb is strictly offline (4 October 2026), so the feeds are gone, and the ruling of 6 October 2026 (R030) turned down replacing them with seasonal guesses.
 **What replaced it:** nothing in the arithmetic. Forecast reads the current season from Pulse's calendar for one line of context. A seasonal factor fitted from the hospital's own admission history may come later; do not put a hand-picked multiplier back.
 
-### extract_patient_features: `server/services/forecast_service.py:406`
+### extract_patient_features: `server/services/forecast_service.py:494`
 **Signature:** `(patient_id: str, seq_len=48) → torch.Tensor (1, 48, 19) | None`
 **Does:** Builds the LSTM input window for one patient from four DB queries, matching the training feature schema channel-for-channel.
 **How it works:**
-1. Fetches the patient row; returns `None` if missing (`server/services/forecast_service.py:349-353`).
-2. Fetches up to 48 most-recent vitals rows (DESC); requires at least 3 or returns `None` (`server/services/forecast_service.py:356-365`).
-3. Fetches the latest risk score and the active-medication count (`server/services/forecast_service.py:368-377`).
-4. Reverses vitals to chronological order (LSTMs read oldest→newest) (`server/services/forecast_service.py:382-383`).
-5. Fills a `(48, 19)` array: channels 0-5 from vitals with per-field defaults for NULLs (HR 80, SBP 120, DBP 75, SpO2 97, temp 37, RR 16); when fewer than 48 vitals exist, later timesteps repeat the newest reading (forward-fill via `v_idx = min(t, n_vitals-1)`, `server/services/forecast_service.py:388-398`). Channels 6-8: age and one-hot sex; 9-12: one-hot ward (accepting both `"W1"` and `"WARD 1"` spellings); 13-15: one-hot risk level; 16: days since admission parsed from ISO-8601 with a `Z→+00:00` fix-up and a 3.0-day fallback on parse failure; 17: med count; 18: risk score, default 0.5 (`server/services/forecast_service.py:401-432`).
+1. Fetches the patient row; returns `None` if missing (`server/services/forecast_service.py:437-441`).
+2. Fetches up to 48 most-recent vitals rows (DESC); requires at least 3 or returns `None` (`server/services/forecast_service.py:444-453`).
+3. Fetches the latest risk score and the active-medication count (`server/services/forecast_service.py:456-465`).
+4. Reverses vitals to chronological order (LSTMs read oldest→newest) (`server/services/forecast_service.py:470-471`).
+5. Fills a `(48, 19)` array: channels 0-5 from vitals with per-field defaults for NULLs (HR 80, SBP 120, DBP 75, SpO2 97, temp 37, RR 16); when fewer than 48 vitals exist, later timesteps repeat the newest reading (forward-fill via `v_idx = min(t, n_vitals-1)`, `server/services/forecast_service.py:476-486`). Channels 6-8: age and one-hot sex; 9-12: one-hot ward (accepting both `"W1"` and `"WARD 1"` spellings); 13-15: one-hot risk level; 16: days since admission parsed from ISO-8601 with a `Z→+00:00` fix-up and a 3.0-day fallback on parse failure; 17: med count; 18: risk score, default 0.5 (`server/services/forecast_service.py:489-520`).
 6. Returns as float32 with a batch dimension.
 **Why it exists:** The training/inference feature contract is the whole ballgame in ML systems; this function is the inference half of that contract (the training halves are `SyntheticPatientTrajectory.generate_sequence` and `_make_patient_window`).
 **Data in/out:** reads `patients`, `vitals`, `risk_scores`, `medications`; emits a tensor.
 **Talks to:** called by `predict_patient_los()`.
 **Change guide:** Worked example, to add SpO2 *trend* as channel 19: bump the constructed model's `input_dim` to 20 in the trainer, add the channel at the same index in **all three** feature builders (here, `server/scripts/train_forecast.py:196-248`, `server/scripts/train_forecast_synth.py:146-169`), retrain, and let `load_model()` pick up `input_dim=20` from the checkpoint. Footgun: get the channel *order* wrong in any one place and the model silently reads (say) temperature where it learned age, no error, just garbage predictions.
-**Gotchas:** static features (age, ward, severity) are copied into every one of the 48 timesteps, wasteful but intentional, since a vanilla LSTM has no separate static-input path. Timezone handling: `admission_date` values without timezone info make the subtraction against `datetime.now(timezone.utc)` raise `TypeError`, which is caught and silently replaced by the 3.0-day default (`server/services/forecast_service.py:418-425`).
+**Gotchas:** static features (age, ward, severity) are copied into every one of the 48 timesteps, wasteful but intentional, since a vanilla LSTM has no separate static-input path. Timezone handling: `admission_date` values without timezone info make the subtraction against `datetime.now(timezone.utc)` raise `TypeError`, which is caught and silently replaced by the 3.0-day default (`server/services/forecast_service.py:506-513`).
 
-### predict_patient_los: `server/services/forecast_service.py:506`
+### predict_patient_los: `server/services/forecast_service.py:594`
 **Signature:** `(patient_id: str) → dict{predicted_los_days, discharge_probability, acuity_trajectory, confidence, estimated_discharge_date, model_trained, prediction_source}`
 **Does:** The per-patient entry point: fail-closed gate → feature extraction → LSTM (or heuristic) → cache write.
 **How it works:**
 1. Gets the singleton model.
-2. **Fail-closed guard** (`server/services/forecast_service.py:454-459`): if `model.trained` is falsy, returns the heuristic tagged `model_trained: False`, `prediction_source: "heuristic"`, and still caches it.
-3. Extracts features; if `None`, returns the heuristic tagged `model_trained: True` (a trained model exists) but `prediction_source: "heuristic"` (this particular number is rule-based) (`server/services/forecast_service.py:463-468`).
-4. LSTM path: runs `model.predict(features)` inside `vram_guard("Forecast LSTM")` (imported lazily, `server/services/forecast_service.py:471-474`), tags `prediction_source: "lstm"`, computes `estimated_discharge_date = now + predicted_los_days`, caches, returns.
+2. **Fail-closed guard** (`server/services/forecast_service.py:542-547`): if `model.trained` is falsy, returns the heuristic tagged `model_trained: False`, `prediction_source: "heuristic"`, and still caches it.
+3. Extracts features; if `None`, returns the heuristic tagged `model_trained: True` (a trained model exists) but `prediction_source: "heuristic"` (this particular number is rule-based) (`server/services/forecast_service.py:551-556`).
+4. LSTM path: runs `model.predict(features)` inside `vram_guard("Forecast LSTM")` (imported lazily, `server/services/forecast_service.py:559-562`), tags `prediction_source: "lstm"`, computes `estimated_discharge_date = now + predicted_los_days`, caches, returns.
 **Why it exists:** Single choke point where the honesty policy is enforced, no other code path can reach `model.predict` for patient data.
 **Data in/out:** see signature; the dict is exactly what `GET /api/forecast/patient/{id}` returns.
-**Talks to:** called by `forecast_routes.patient_forecast` (`server/routes/forecast_routes.py:65`), `refresh_all_predictions` (`server/services/forecast_service.py:1096`), and `_get_cached_or_predict` (`server/services/forecast_service.py:1182`).
+**Talks to:** called by `forecast_routes.patient_forecast` (`server/routes/forecast_routes.py:73`), `refresh_all_predictions` (`server/services/forecast_service.py:1275`), and `_get_cached_or_predict` (`server/services/forecast_service.py:1361`).
 **Change guide:** To surface the ICU-transfer risk in this payload once a real checkpoint trains it, nothing changes here, `model.predict` will start including `icu_transfer_risk_3h` and it will pass through; you would only need to render it in the UI.
 **Gotchas:** read `model_trained` and `prediction_source` *together*: `model_trained: True` + `prediction_source: "heuristic"` means "we have a model but this patient lacked data," which trips up consumers that treat `model_trained` as "this number is neural."
 
-### _heuristic_prediction: `server/services/forecast_service.py:553`
+### _heuristic_prediction: `server/services/forecast_service.py:641`
 **Signature:** `(patient_id: str) → dict` (same shape as the LSTM result, minus source tags)
 **Does:** Transparent rule-based fallback: ward-typical LoS minus days already admitted.
 **How it works:**
-1. Unknown patient → fixed conservative answer (3.0 days remaining, 15% discharge probability, confidence 0.3) (`server/services/forecast_service.py:496-503`).
-2. Otherwise base LoS by ward, ICU 7.0, W1 4.0, W2 3.0, W3 3.5, default 4.0 days (`server/services/forecast_service.py:505-506`).
-3. `remaining = max(0.5, base − days_in)`; `discharge_prob = min(0.9, 1/(remaining+0.5))`, the closer to the typical stay's end, the higher the probability (`server/services/forecast_service.py:518-519`).
+1. Unknown patient → fixed conservative answer (3.0 days remaining, 15% discharge probability, confidence 0.3) (`server/services/forecast_service.py:584-591`).
+2. Otherwise base LoS by ward, ICU 7.0, W1 4.0, W2 3.0, W3 3.5, default 4.0 days (`server/services/forecast_service.py:593-594`).
+3. `remaining = max(0.5, base − days_in)`; `discharge_prob = min(0.9, 1/(remaining+0.5))`, the closer to the typical stay's end, the higher the probability (`server/services/forecast_service.py:606-607`).
 4. Always `acuity_trajectory: "stable"`, `confidence: 0.45`, deliberately ≤ 0.5 so the UI can distinguish rule-based numbers (the test asserts this bound, `server/tests/test_forecast_service.py:52`).
 **Why it exists:** The system must produce *some* planning number for every patient even with no model and no vitals; a legible rule beats a random network.
 **Data in/out:** reads `patients.ward/admission_date` only.
 **Talks to:** `predict_patient_los()`; imported directly by the tests.
 **Change guide:** The ward base-LoS map here is also documented as the Capacity Simulator's assumption source (`server/services/capacity_sim_service.py:50,71`); changing it changes that simulator's disclosed assumptions text too.
-**Gotchas:** same naive-datetime `TypeError` fallback pattern as feature extraction (`server/services/forecast_service.py:509-516`).
+**Gotchas:** same naive-datetime `TypeError` fallback pattern as feature extraction (`server/services/forecast_service.py:597-604`).
 
-### _cache_prediction: `server/services/forecast_service.py:530`
+### _cache_prediction: `server/services/forecast_service.py:618`
 **Signature:** `(patient_id: str, result: dict) → None`
 **Does:** Inserts the prediction into `forecast_predictions` with a JSON `feature_snapshot` carrying the discharge date and timestamp.
-**How it works:** one parameterized `INSERT` (placeholders `?` keep it SQL-injection-safe); any exception is logged and swallowed, caching must never break a prediction (`server/services/forecast_service.py:532-552`).
+**How it works:** one parameterized `INSERT` (placeholders `?` keep it SQL-injection-safe); any exception is logged and swallowed, caching must never break a prediction (`server/services/forecast_service.py:620-640`).
 **Why it exists:** The aggregate endpoints (`/hospital`, `/capacity`, `/discharge-board`) need dozens of per-patient numbers per request; reading the latest cached row is far cheaper than re-running inference.
 **Data in/out:** writes `forecast_predictions(patient_id, predicted_los_days, discharge_probability, acuity_trajectory, confidence, feature_snapshot)` (schema at `server/database.py:261-270`, index at `server/database.py:472`).
 **Talks to:** `predict_patient_los()` writes; `_get_cached_or_predict()` reads.
 **Gotchas:** the table has a CHECK constraint on `acuity_trajectory ∈ {improving, stable, worsening}` (`server/database.py:266`), a new acuity label added to `ACUITY_LABELS` without a schema migration makes every cache write fail silently (logged only).
 
-### predict_hospital_flow: `server/services/forecast_service.py:624`
+### predict_hospital_flow: `server/services/forecast_service.py:717`
 **Signature:** `(days_ahead=7) → dict{current_occupancy, total_capacity, current_occupancy_pct, daily_forecasts: [...], summary: {...}}`
 **Does:** Builds the N-day hospital census forecast (Flow 3 above) and caches it for an hour.
 **How it works:**
-1. Cache check against module globals `_hospital_flow_cache`/`_hospital_flow_cache_time` with `HOSPITAL_FLOW_CACHE_TTL = 3600` (`server/services/forecast_service.py:566-570`).
-2. Loads all admitted patients; counts current occupancy per ward with an *inline* normalizer (unknown wards fall back to `"General"` and are counted under a key that matches no capacity bucket, see Discrepancies) (`server/services/forecast_service.py:575-593`).
-3. Fits the average daily admission rate from the last 30 days of `admission_history` (default 4.5 if empty) (`server/services/forecast_service.py:596-610`).
-4. Collects a per-patient LoS prediction for everyone via `_get_cached_or_predict` (`server/services/forecast_service.py:613-616`). (It used to collect the environmental multipliers here too; removed 6 October 2026.)
-5. Day loop (`server/services/forecast_service.py:625-678`): admissions = rate × DOW (expected value, not a Poisson draw, the comment at `server/services/forecast_service.py:633-636` explains a single random draw made the number jump discontinuously at each cache expiry); discharges = patients whose remaining LoS falls inside `(day, day+1]`, then the admitted demo bounds (cap `n_patients // 3`, ~8% floor after day 0, flagged as `DEMO PLACEHOLDER` at `server/services/forecast_service.py:646-652`); occupancy accumulates and clamps to `[0, 37]`; ward breakdown scales the current ward ratio, clamped to `cap + 1`.
-6. Summary block: avg/peak occupancy, 7-day totals, `beds_available_in_48h` from day index 1 (`server/services/forecast_service.py:680-698`).
+1. Cache check against module globals `_hospital_flow_cache`/`_hospital_flow_cache_time` with `HOSPITAL_FLOW_CACHE_TTL = 3600` (`server/services/forecast_service.py:654-658`).
+2. Loads all admitted patients; counts current occupancy per ward with an *inline* normalizer (unknown wards fall back to `"General"` and are counted under a key that matches no capacity bucket, see Discrepancies) (`server/services/forecast_service.py:663-681`).
+3. Fits the average daily admission rate from the last 30 days of `admission_history` (default 4.5 if empty) (`server/services/forecast_service.py:776-798`, `:840-845`).
+4. Collects a per-patient LoS prediction for everyone via `_get_cached_or_predict` (`server/services/forecast_service.py:706-709`). (It used to collect the environmental multipliers here too; removed 6 October 2026.)
+5. Day loop (`server/services/forecast_service.py:857-919`): admissions = rate × DOW (expected value, not a Poisson draw, the comment at `server/services/forecast_service.py:864-867` explains a single random draw made the number jump discontinuously at each cache expiry); discharges = patients whose remaining LoS falls inside `(day, day+1]`, then the admitted demo bounds (cap `n_patients // 3`, ~8% floor after day 0, flagged as `DEMO PLACEHOLDER` at `server/services/forecast_service.py:877-883`); occupancy accumulates and clamps to `[0, 37]`; ward breakdown scales the current ward ratio, clamped to `cap + 1`.
+6. Summary block: avg/peak occupancy, 7-day totals, `beds_available_in_48h` from day index 1 (`server/services/forecast_service.py:950-980`).
 7. Stores in the cache and returns.
 **Why it exists:** This is the payload behind the panel's headline chart and KPI cards, and the shared census source for Command Center and the Capacity Simulator.
-**Data in/out:** each `daily_forecasts[i]` = `{date, day_label, predicted_admissions (int), predicted_discharges (int), predicted_occupancy (int), occupancy_pct, ward_breakdown}` (`server/services/forecast_service.py:666-678`; the `env_multiplier`, `env_factors` and `env_icons` fields were removed on 6 October 2026, and the season line is context only).
-**Talks to:** called by the `/hospital` route (`server/routes/forecast_routes.py:32`), `command_center_service._forecast()` with `days_ahead=1` (`server/services/command_center_service.py:218`), and `capacity_sim_service` with `days_ahead=7` (`server/services/capacity_sim_service.py:108`).
-**Change guide:** Worked example, to extend the panel to a 14-day view: the route already clamps `days` to 1–14 (`server/routes/forecast_routes.py:39`), so change the panel's fetch to `/api/forecast/hospital?days=14`; knock-on effects: the SVG x-axis density doubles (labels may collide at `chartWidth=700`), and, footgun, the shared 1-hour cache ignores `days_ahead`, so whichever caller populates it first dictates the horizon everyone gets for the next hour (see Discrepancies #2).
+**Data in/out:** each `daily_forecasts[i]` = `{date, day_label, predicted_admissions (int), predicted_discharges (int), predicted_occupancy (int), occupancy_pct, ward_breakdown}` (`server/services/forecast_service.py:909-919`; the `env_multiplier`, `env_factors` and `env_icons` fields were removed on 6 October 2026, and the season line is context only).
+**Talks to:** called by the `/hospital` route (`server/routes/forecast_routes.py:32`), `command_center_service._forecast()` with `days_ahead=1` (`server/services/command_center_service.py:246`), and `capacity_sim_service` with `days_ahead=7` (`server/services/capacity_sim_service.py:108`).
+**Change guide:** Worked example, to extend the panel to a 14-day view: the route already clamps `days` to 1–14 (`server/routes/forecast_routes.py:53-55`), so change the panel's fetch to `/api/forecast/hospital?days=14`; knock-on effects: the SVG x-axis density doubles (labels may collide at `chartWidth=700`), and, footgun, the shared 1-hour cache ignores `days_ahead`, so whichever caller populates it first dictates the horizon everyone gets for the next hour (see Discrepancies #2).
 **Gotchas:** `running_occupancy` accumulates the *unrounded* float admissions while the payload shows `round(...)`, so the displayed columns may not sum exactly to the displayed census; the occupancy clamp allows up to capacity + 5, i.e. the chart can legitimately show an over-capacity forecast.
 
-### get_bed_capacity_forecast: `server/services/forecast_service.py:772`
+### get_bed_capacity_forecast: `server/services/forecast_service.py:907`
 **Signature:** `() → dict{current: {ward: {total, occupied, available, utilization_pct}}, projected_48h: {ward: {...}}, total: {...}}`
 **Does:** Current per-ward bed utilization plus a 48-hour projection that subtracts patients predicted to leave within 2 days.
 **How it works:**
-1. Counts admitted patients per ward using `_normalize_ward` (`server/services/forecast_service.py:715-726`).
-2. For each patient, if the cached/computed `predicted_los_days ≤ 2.0`, counts one projected discharge for their ward (`server/services/forecast_service.py:732-736`).
-3. Projected occupancy = current − discharges, floored at 0; adds availability and percentages; note the projection ignores *incoming admissions*, so it is an optimistic "beds freeing up" view, not a net census (`server/services/forecast_service.py:738-746`).
+1. Counts admitted patients per ward using `_normalize_ward` (`server/services/forecast_service.py:850-861`).
+2. For each patient, if the cached/computed `predicted_los_days ≤ 2.0`, counts one projected discharge for their ward (`server/services/forecast_service.py:867-871`).
+3. Projected occupancy = current − discharges, floored at 0; adds availability and percentages; note the projection ignores *incoming admissions*, so it is an optimistic "beds freeing up" view, not a net census (`server/services/forecast_service.py:873-881`).
 **Why it exists:** Bed managers think in "which ward has a free bed", not hospital totals.
 **Talks to:** `/capacity` route; rendered as the panel's per-ward cards and bed-icon grid.
 **Change guide:** To make the 48h projection net of admissions, distribute `predict_hospital_flow()`'s day-1/2 admissions across wards by the same ratio logic, but then reconcile with the 1-hour cache staleness.
 **Gotchas:** the two normalizers disagree on unknown wards (this one buckets them into W1 via `_normalize_ward`; `/hospital` drops them), see Discrepancies #5.
 
-### get_discharge_board: `server/services/forecast_service.py:829`
+### get_discharge_board: `server/services/forecast_service.py:964`
 **Signature:** `() → list[dict]` sorted by `discharge_probability` desc
 **Does:** Builds the Discharge Readiness Board: every admitted patient with demographics, days admitted, and their prediction fields.
-**How it works:** one query for all admitted patients (`server/services/forecast_service.py:764-769`); per patient computes `days_admitted` from `admission_date` (same Z-fixup/3.0-fallback pattern) and merges the cached prediction (`server/services/forecast_service.py:774-806`); sorts by discharge probability (`server/services/forecast_service.py:809`).
+**How it works:** one query for all admitted patients (`server/services/forecast_service.py:1123-1128`); per patient computes `days_admitted` from `admission_date` (same Z-fixup/3.0-fallback pattern) and merges the cached prediction (`server/services/forecast_service.py:1133-1162`); sorts by discharge probability (`server/services/forecast_service.py:1165`).
 **Why it exists:** Discharge planning is the highest-leverage lever on capacity; ranking patients by predicted readiness turns the model into a to-do list.
 **Data in/out:** rows shaped exactly like the panel's `DischargeRow` interface (`src/pages/panels/ForecastPanel.tsx:59-73`).
 **Talks to:** `/discharge-board` route.
 **Gotchas:** with the untrained model, every heuristic row has `acuity_trajectory: "stable"` and confidence 0.45, so the board degenerates into "who has been here longest relative to their ward's typical stay", correct given the honesty policy, but worth knowing when reading it.
 
-### get_admission_patterns: `server/services/forecast_service.py:889`
+### get_admission_patterns: `server/services/forecast_service.py:1068`
 **Signature:** `() → dict{daily_summary: [7 x {day, avg_admissions, total}], total_30d, avg_daily, avg_los, severity_distribution, ward_distribution, discharge_rate}`
 **Does:** Descriptive statistics over the entire `admission_history` table for the "Admission Patterns" section.
-**How it works:** returns an all-zeros shape when the table is empty (`server/services/forecast_service.py:827-836`); otherwise tallies per-date counts, severity and ward distributions (via `_normalize_ward`), and mean LoS (`server/services/forecast_service.py:838-859`); groups the per-date counts by weekday to produce Mon–Sun averages (`server/services/forecast_service.py:871-891`); computes `discharge_rate` as the share of history rows flagged discharged.
+**How it works:** returns an all-zeros shape when the table is empty (`server/services/forecast_service.py:1183-1195`); otherwise tallies per-date counts, severity and ward distributions (via `_normalize_ward`), and mean LoS (`server/services/forecast_service.py:1197-1219`); groups the per-date counts by weekday to produce Mon–Sun averages (`server/services/forecast_service.py:1221-1243`); computes `discharge_rate` as the share of history rows flagged discharged.
 **Why it exists:** Shows the raw seasonality the forecast's DOW multipliers encode, so users can sanity-check the model against history.
 **Talks to:** `/admission-patterns` route.
-**Gotchas:** despite the docstring saying "7×24 heatmap data" and the field name `total_30d` (`server/services/forecast_service.py:817,702`), it returns no heatmap and it counts *all* history rows, not a 30-day window, `avg_daily` divides by a hardcoded 30 regardless of the table's actual span (see Discrepancies #6).
+**Gotchas:** despite the docstring saying "7×24 heatmap data" and the field name `total_30d` (`server/services/forecast_service.py:952,837`), it returns no heatmap and it counts *all* history rows, not a 30-day window, `avg_daily` divides by a hardcoded 30 regardless of the table's actual span (see Discrepancies #6).
 
-### refresh_all_predictions: `server/services/forecast_service.py:990`
+### refresh_all_predictions: `server/services/forecast_service.py:1169`
 **Signature:** `() → None`
 **Does:** Recomputes predictions for every admitted patient and prunes the cache table to 5 rows per patient.
-**How it works:** loops `predict_patient_los` over admitted patients, logging per-patient failures without stopping (`server/services/forecast_service.py:914-927`); prunes with a `ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY created_at DESC)` window function keeping `rn <= 5` (`server/services/forecast_service.py:944-954`); the outer try/except means a refresh failure can never crash the bot loop.
+**How it works:** loops `predict_patient_los` over admitted patients, logging per-patient failures without stopping (`server/services/forecast_service.py:1093-1106`); prunes with a `ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY created_at DESC)` window function keeping `rn <= 5` (`server/services/forecast_service.py:1123-1133`); the outer try/except means a refresh failure can never crash the bot loop.
 **Why it exists:** Keeps `_get_cached_or_predict` warm so the aggregate endpoints answer fast, and stops the cache table from growing without bound.
 **Talks to:** called by the vitals bot every 120th 5-second cycle ≈ every 10 minutes (`server/services/bot_service.py:338-341`).
 **Change guide:** To change refresh cadence, edit the `% 120` cycle check in `server/services/bot_service.py:410` (each unit = `VITALS_INTERVAL_SECONDS` = 5 s, `server/config.py:342`); footgun: the module docstring's "refreshed by bot every 60s" (`server/services/forecast_service.py:10`) is already stale, update it too.
 **Gotchas:** the window-function prune requires SQLite ≥ 3.25.
 
-### _normalize_ward: `server/services/forecast_service.py:1029`
+### _normalize_ward: `server/services/forecast_service.py:1208`
 **Signature:** `(ward: str) → "ICU" | "W1" | "W2" | "W3"`
 **Does:** Maps free-text ward names ("Ward 1", "w2", None) to the four canonical keys; anything unrecognized becomes `"W1"`.
 **Why it exists:** Ward names arrive in several spellings from seeds/ingestion; capacity math needs canonical buckets.
-**Talks to:** used here by `get_bed_capacity_forecast` and `get_admission_patterns`, and imported by `command_center_service` (`server/services/command_center_service.py:34`) so the whole platform buckets wards identically.
+**Talks to:** used here by `get_bed_capacity_forecast` and `get_admission_patterns`, and imported by `command_center_service` (`server/services/command_center_service.py:46`) so the whole platform buckets wards identically.
 **Gotchas:** the substring checks (`"1" in w`) mean "Ward 12" → W1 and "ICU-2" → W2; and `predict_hospital_flow` does *not* use this helper (Discrepancies #5).
 
-### _get_cached_or_predict: `server/services/forecast_service.py:1063`
+### _get_cached_or_predict: `server/services/forecast_service.py:1242`
 **Signature:** `(patient_id: str) → dict`
 **Does:** Returns the newest `forecast_predictions` row for a patient, or computes a fresh prediction if none exists (or the read fails).
-**How it works:** SELECT latest row; if found, re-hydrates `estimated_discharge_date` from the JSON `feature_snapshot` (`server/services/forecast_service.py:981-999`); any exception falls through (`except Exception: pass`) to `predict_patient_los`.
+**How it works:** SELECT latest row; if found, re-hydrates `estimated_discharge_date` from the JSON `feature_snapshot` (`server/services/forecast_service.py:1160-1178`); any exception falls through (`except Exception: pass`) to `predict_patient_los`.
 **Why it exists:** The aggregate endpoints call this once per patient; without it, every `/hospital` request would run up to ~32 LSTM inferences.
 **Gotchas:** there is **no freshness check**, a week-old cached row is served as-is; freshness is only maintained by the bot's 10-minute refresh loop. If the bot is disabled (`INGESTION_MODE='ingestion'`, `server/main.py:197-199`), cached predictions go stale indefinitely.
 
-### get_appointments: `server/services/forecast_service.py:1120`
+### get_appointments: `server/services/forecast_service.py:1299`
 **Signature:** `(days_ahead=7) → list[dict]` sorted by (date, time)
 **Does:** Fabricates a plausible outpatient-appointment schedule from real admitted + recently discharged patients, deterministically per date.
 **How it works:**
-1. Loads admitted patients, the 10 most recent discharge summaries, plus each patient's latest risk level and active-med count (`server/services/forecast_service.py:1043-1078`).
-2. For each non-Sunday day (`server/services/forecast_service.py:1085-1086`), seeds `random.Random(int(YYYYMMDD))` (`server/services/forecast_service.py:1092-1093`) so the same date always yields the same schedule, no flicker across refreshes.
-3. Samples 3–5 admitted patients, maybe (40%) one discharged patient for a "Post-Discharge Review" (`server/services/forecast_service.py:1096-1114`), assigns shuffled time slots from a fixed clinic grid (`server/services/forecast_service.py:1011-1012`), an appointment type, and a visit reason.
+1. Loads admitted patients, the 10 most recent discharge summaries, plus each patient's latest risk level and active-med count (`server/services/forecast_service.py:1222-1257`).
+2. For each non-Sunday day (`server/services/forecast_service.py:1264-1265`), seeds `random.Random(int(YYYYMMDD))` (`server/services/forecast_service.py:1271-1272`) so the same date always yields the same schedule, no flicker across refreshes.
+3. Samples 3–5 admitted patients, maybe (40%) one discharged patient for a "Post-Discharge Review" (`server/services/forecast_service.py:1275-1293`), assigns shuffled time slots from a fixed clinic grid (`server/services/forecast_service.py:1190-1191`), an appointment type, and a visit reason.
 **Why it exists:** The Appointments panel needs believable demo content tied to real patient rows; date-seeding is the trick that makes generated data feel persistent.
-**Data in/out:** each row: `{date, day_label, time, patient_id, patient_name, age, sex, ward, bed, diagnosis, type, reason, acuity, days_admitted, active_medications, is_discharged}` (`server/services/forecast_service.py:1145-1162`).
+**Data in/out:** each row: `{date, day_label, time, patient_id, patient_name, age, sex, ward, bed, diagnosis, type, reason, acuity, days_admitted, active_medications, is_discharged}` (`server/services/forecast_service.py:1324-1341`).
 **Talks to:** `/appointments` route; consumed by `src/pages/panels/AppointmentsPanel.tsx:62` (a different panel, see its guide).
 **Gotchas:** this is synthesized scheduling data, not a bookings system, nothing persists, and re-running on the *same date* is stable but the cast changes at midnight. It is somewhat oddly homed in the forecast service (it forecasts nothing).
 
@@ -347,41 +347,41 @@ Both train only three of the four heads (LoS, discharge, acuity); neither suppli
 
 All six handlers require the `forecast.read` permission (see guide 03-auth-rbac, RBAC = role-based access control, where permissions attach to roles like doctor/nurse/admin, `server/permissions.py:105-165`), and four of the six are still the original thin shape: `Depends(require_permission("forecast.read"))`, a one-line delegation to the service, and a try/except that turns any exception into HTTP 500 with the error text. **Two are no longer thin, and the difference is the point:**
 
-- `patient_forecast` guards with `require_patient_access("forecast.read", audit_action="patient_forecast_viewed")` (`server/routes/forecast_routes.py:47-49`), which adds a ward-scope check on the path's `patient_id` and writes a `phi_access` audit row. Out-of-scope patients get **404, not 403**, a 403 would confirm the patient exists (`server/permissions.py:463-465`).
-- `discharge_board` passes the caller's department and facility scope into the service, whose query keeps only those patients, and logs a PHI read (`server/routes/forecast_routes.py:110-131`).
+- `patient_forecast` guards with `require_patient_access("forecast.read", audit_action="patient_forecast_viewed")` (`server/routes/forecast_routes.py:61-63`), which adds a ward-scope check on the path's `patient_id` and writes a `phi_access` audit row. Out-of-scope patients get **404, not 403**, a 403 would confirm the patient exists (`server/permissions.py:463-465`).
+- `discharge_board` passes the caller's department and facility scope into the service, whose query keeps only those patients, and logs a PHI read (`server/routes/forecast_routes.py:122-143`).
 
 The router is created with `prefix="/api/forecast"` (`server/routes/forecast_routes.py:29`) and registered in `server/main.py:689`.
 
 ### hospital_forecast: `server/routes/forecast_routes.py:33`
 **Signature:** `GET /api/forecast/hospital?days=7 → HospitalForecast JSON`
-**Does:** Returns the N-day flow forecast, clamping `days` to 1–14 (`server/routes/forecast_routes.py:39`).
+**Does:** Returns the N-day flow forecast, clamping `days` to 1–14 (`server/routes/forecast_routes.py:53-55`).
 **Talks to:** `predict_hospital_flow`; called by `ForecastPanel` (`src/pages/panels/ForecastPanel.tsx:144`) and exercised by the RBAC tests (`server/tests/test_rbac.py:158,183`).
 **Gotchas:** the `days` clamp is defeated by the service-side cache ignoring `days_ahead` (Discrepancies #2).
 
 ### patient_forecast: `server/routes/forecast_routes.py:45`
 **Signature:** `GET /api/forecast/patient/{patient_id} → per-patient prediction JSON`
-**Does:** Returns `predict_patient_los(patient_id)` verbatim, behind `require_patient_access` (`server/routes/forecast_routes.py:47-49`) rather than the plain permission guard the other five use, so the patient must be on the caller's ward, and a `phi_access` row is written on every successful read.
-**Gotchas:** for a caller with **no** department on record (`department_scope` returns `None`, `server/permissions.py:193`) the scope check is skipped entirely and an unknown patient still returns 200, the heuristic's "unknown patient" branch produces a generic 3-day prediction (`server/services/forecast_service.py:496-503`). A *scoped* caller asking for an unknown id gets 404, the same answer they get for a real patient on another ward; that ambiguity is deliberate (`server/permissions.py:463-465`).
+**Does:** Returns `predict_patient_los(patient_id)` verbatim, behind `require_patient_access` (`server/routes/forecast_routes.py:61-63`) rather than the plain permission guard the other five use, so the patient must be on the caller's ward, and a `phi_access` row is written on every successful read.
+**Gotchas:** for a caller with **no** department on record (`department_scope` returns `None`, `server/permissions.py:193`) the scope check is skipped entirely and an unknown patient still returns 200, the heuristic's "unknown patient" branch produces a generic 3-day prediction (`server/services/forecast_service.py:584-591`). A *scoped* caller asking for an unknown id gets 404, the same answer they get for a real patient on another ward; that ambiguity is deliberate (`server/permissions.py:463-465`).
 
-### capacity_forecast: `server/routes/forecast_routes.py:60`
+### capacity_forecast: `server/routes/forecast_routes.py:68`
 **Signature:** `GET /api/forecast/capacity → CapacityData JSON`
 **Does:** Returns `get_bed_capacity_forecast()`.
 **Gotchas:** none noteworthy.
 
-### discharge_board: `server/routes/forecast_routes.py:71`
+### discharge_board: `server/routes/forecast_routes.py:79`
 **Signature:** `GET /api/forecast/discharge-board → DischargeRow[]`
-**Does:** Calls `get_discharge_board(dept, facilities=facility_scope(user))`, so **the service's query keeps only the caller's own department** (and, with more than one facility on record, the caller's facilities), and writes one `discharge_board_viewed` PHI-read audit entry naming every `patient_id` disclosed (`server/routes/forecast_routes.py:110-131`).
-**Why the filter is here and not in the service:** the route's own docstring explains it (`server/routes/forecast_routes.py:75-91`). This board used to bind `user` and never use it, `get_discharge_board()` takes no argument and its query has no department predicate, so any `forecast.read` holder, including a ward nurse, could read name, ward, bed, diagnosis, age and sex for every admitted patient in the hospital (found in the 2026-08-05 audit). The scope is applied over the service's output because that service belongs to another surface area; the docstring flags that `department` should become an explicit argument the next time the signature is touched.
-**Gotchas:** `department_scope(user)` returning `None` means *no* filter, a user with no department on record still sees the whole hospital (`server/routes/forecast_routes.py:97-98`). The audit line spells that case out as `"(all, user has no department on record)"`.
+**Does:** Calls `get_discharge_board(dept, facilities=facility_scope(user))`, so **the service's query keeps only the caller's own department** (and, with more than one facility on record, the caller's facilities), and writes one `discharge_board_viewed` PHI-read audit entry naming every `patient_id` disclosed (`server/routes/forecast_routes.py:122-143`).
+**Why the filter is here and not in the service:** the route's own docstring explains it (`server/routes/forecast_routes.py:83-103`). This board used to bind `user` and never use it, `get_discharge_board()` takes no argument and its query has no department predicate, so any `forecast.read` holder, including a ward nurse, could read name, ward, bed, diagnosis, age and sex for every admitted patient in the hospital (found in the 2026-08-05 audit). The scope is applied over the service's output because that service belongs to another surface area; the docstring flags that `department` should become an explicit argument the next time the signature is touched.
+**Gotchas:** `department_scope(user)` returning `None` means *no* filter, a user with no department on record still sees the whole hospital (`server/routes/forecast_routes.py:109-110`). The audit line spells that case out as `"(all, user has no department on record)"`.
 
-### admission_patterns: `server/routes/forecast_routes.py:117`
+### admission_patterns: `server/routes/forecast_routes.py:129`
 **Signature:** `GET /api/forecast/admission-patterns → AdmissionPatterns JSON`
 **Does:** Returns `get_admission_patterns()`.
 **Gotchas:** none noteworthy.
 
-### appointments_schedule: `server/routes/forecast_routes.py:128`
+### appointments_schedule: `server/routes/forecast_routes.py:140`
 **Signature:** `GET /api/forecast/appointments?days=7 → appointment[]`
-**Does:** Returns `get_appointments(days_ahead=min(days, 14))`; uniquely, it also prints a traceback on failure (`server/routes/forecast_routes.py:136-137`).
+**Does:** Returns `get_appointments(days_ahead=min(days, 14))`; uniquely, it also prints a traceback on failure (`server/routes/forecast_routes.py:148-149`).
 **Gotchas:** `min(days, 14)` has no lower bound, `days=0` or negative yields an empty list (harmless, but inconsistent with `/hospital`'s `max(1, …)` clamp).
 
 ### server/scripts/train_forecast.py (overview depth)
@@ -504,7 +504,7 @@ The router is created with `prefix="/api/forecast"` (`server/routes/forecast_rou
 12. **Footer** (`663-668`): a permanent disclaimer, figures are rule-based planning projections, not validated neural predictions, mirroring the backend's fail-closed stance in UI copy.
 **Why it exists:** Turns four JSON payloads into an operations dashboard; the sections match the four operational questions (how full? which ward? who leaves? what is normal?).
 **Data in/out:** consumes the four endpoint payloads typed above; renders only.
-**Talks to:** mounted by `ClinicianShell` (`src/pages/ClinicianShell.tsx:592`) for roles whose tab list includes `forecast` (`src/shellConfig.tsx:836-892`); `ProvenanceChip` fetches `/admin/models/provenance` once, process-wide (`src/components/ProvenanceChip.tsx:32-49`).
+**Talks to:** mounted by `ClinicianShell` (`src/pages/ClinicianShell.tsx:843`) for roles whose tab list includes `forecast` (`src/shellConfig.tsx:836-892`); `ProvenanceChip` fetches `/admin/models/provenance` once, process-wide (`src/components/ProvenanceChip.tsx:32-49`).
 **Change guide:** the season line (6 October 2026) is context only. Do not turn it into a number on the chart or the table.
 **Gotchas:** (1) The chart's x mapping divides by `forecasts.length - 1` (`170,352,372,386`), a single-day forecast (possible if the cache was populated with `days_ahead=1`) divides by zero, producing `NaN` coordinates and a blank chart. (2) The panel styles live partly in `src/index.css` (a comment there notes ForecastPanel has no dedicated stylesheet, `src/index.css:250`). (3) Several colors are hardcoded hex (`#eab308`, `#10b981`) rather than theme tokens, so theme changes will not reach them.
 
@@ -542,8 +542,8 @@ The router is created with `prefix="/api/forecast"` (`server/routes/forecast_rou
 **Socket events:** none, Forecast is pure request/response; freshness comes from the panel's 5-minute poll and the backend's caches (contrast with guide 06-realtime subsystems).
 
 **Python exports other subsystems import:**
-- `WARD_CAPACITY`, `TOTAL_CAPACITY`, `_normalize_ward` → `command_center_service` (`server/services/command_center_service.py:31-35`) and tests (`server/tests/test_command_center.py:13`).
-- `predict_hospital_flow()` → `command_center_service._forecast()` (`server/services/command_center_service.py:218`) and `capacity_sim_service` (`server/services/capacity_sim_service.py:108`); `DOW_MULTIPLIERS` and the heuristic's ward base-LoS are also cited as the simulator's assumption sources (`server/services/capacity_sim_service.py:17,50`).
+- `WARD_CAPACITY`, `TOTAL_CAPACITY`, `_normalize_ward` → `command_center_service` (`server/services/command_center_service.py:42-47`) and tests (`server/tests/test_command_center.py:13`).
+- `predict_hospital_flow()` → `command_center_service._forecast()` (`server/services/command_center_service.py:246`) and `capacity_sim_service` (`server/services/capacity_sim_service.py:108`); `DOW_MULTIPLIERS` and the heuristic's ward base-LoS are also cited as the simulator's assumption sources (`server/services/capacity_sim_service.py:17,50`).
 - `refresh_all_predictions()` → vitals bot (`server/services/bot_service.py:340-341`).
 - `OrbForecastLSTM`, `load_model`, `INPUT_DIM`, `HIDDEN_DIM`, `NUM_LAYERS` → service + both trainers + the CoreML converter (`server/scripts/convert_to_coreml.py:102`).
 
@@ -551,7 +551,7 @@ The router is created with `prefix="/api/forecast"` (`server/routes/forecast_rou
 
 **Model artifacts:** default checkpoint path `server/models/forecast_checkpoint.pt` (`server/models/forecast_lstm.py:48`); versioned synth checkpoint `server/models/checkpoints/forecast_lstm_synth_v1.pt`; both paths are what the governance registry probes to decide `checkpoint_present` (`server/services/model_governance_service.py:35-38`).
 
-**Frontend consumers:** `ForecastPanel` (tab `forecast`, `src/pages/ClinicianShell.tsx:590-592`) and `AppointmentsPanel` (`src/pages/panels/AppointmentsPanel.tsx:62`).
+**Frontend consumers:** `ForecastPanel` (tab `forecast`, `src/pages/ClinicianShell.tsx:841-843`) and `AppointmentsPanel` (`src/pages/panels/AppointmentsPanel.tsx:62`).
 
 ## Rebuild notes
 
@@ -576,15 +576,15 @@ The router is created with `prefix="/api/forecast"` (`server/routes/forecast_rou
 ## Discrepancies and open questions
 
 1. **The panel does not use recharts.** Despite `recharts` being a project dependency (`package.json:31`) used by `src/pages/panels/VigilPanel.tsx:19` and `src/components/capacity/CapacitySimulator.tsx:15`, `ForecastPanel.tsx` draws its census chart entirely with hand-written inline SVG (`src/pages/panels/ForecastPanel.tsx:302-405`). Any documentation describing "the recharts visualization in ForecastPanel" is inaccurate as of this reading.
-2. **`predict_hospital_flow`'s cache ignores `days_ahead`** (`server/services/forecast_service.py:566-570`). The Command Center calls it with `days_ahead=1` (`server/services/command_center_service.py:218`) and the panel/simulator with 7. Whoever populates the 1-hour cache first wins: if the Command Center board is opened first, `/api/forecast/hospital` returns a **1-day** forecast for up to an hour, `daily_forecasts` has one entry, `beds_available_in_48h` becomes 0 (the `len > 1` guard at `server/services/forecast_service.py:696`), and the panel's chart divides by `forecasts.length - 1 = 0`, yielding NaN coordinates (`src/pages/panels/ForecastPanel.tsx:177`). The `days` query parameter is likewise ineffective within the TTL.
+2. **`predict_hospital_flow`'s cache ignores `days_ahead`** (`server/services/forecast_service.py:654-658`). The Command Center calls it with `days_ahead=1` (`server/services/command_center_service.py:246`) and the panel/simulator with 7. Whoever populates the 1-hour cache first wins: if the Command Center board is opened first, `/api/forecast/hospital` returns a **1-day** forecast for up to an hour, `daily_forecasts` has one entry, `beds_available_in_48h` becomes 0 (the `len > 1` guard at `server/services/forecast_service.py:828`), and the panel's chart divides by `forecasts.length - 1 = 0`, yielding NaN coordinates (`src/pages/panels/ForecastPanel.tsx:177`). The `days` query parameter is likewise ineffective within the TTL.
 3. **Stale docstring on refresh cadence.** `server/services/forecast_service.py:10` says predictions are "refreshed by bot every 60s"; the actual cadence is every 120 cycles × 5 s ≈ 10 minutes (`server/services/bot_service.py:338-341`, `server/config.py:342`).
 4. **Chart capacity line is on a different y-scale than the occupancy line.** `capacityLine` normalizes by `capacity + 5` (`src/pages/panels/ForecastPanel.tsx:186`) while occupancy points normalize by `max(capacity + 2, …)` (`167-171`). With capacity 32, the dashed "capacity" line sits at 32/37 of the plot while an occupancy of exactly 32 plots at 32/34, visually *above* the capacity line. The chart can therefore show the census "breaching capacity" before it actually does.
-5. **Two inconsistent ward normalizers.** `predict_hospital_flow` inlines its own mapping where unrecognized wards become `"GENERAL"` and match no capacity bucket (they vanish from `ward_breakdown`) (`server/services/forecast_service.py:582-593`), while `_normalize_ward` buckets unknowns into `"W1"` (`server/services/forecast_service.py:964-975`). The same patient can count toward W1 in `/capacity` but toward no ward in `/hospital`.
-6. **`get_admission_patterns` mislabels its window.** The docstring promises "7×24 heatmap data" that is never produced (`server/services/forecast_service.py:816-817`), the query reads *all* history (no 30-day filter, `server/services/forecast_service.py:820-825`), yet the result names the total `total_30d` and computes `avg_daily = len(history)/30` (`server/services/forecast_service.py:895-897`), wrong whenever the table spans more or less than 30 days.
-7. **Resolved 6 October 2026: the environmental fields were removed with the multipliers.** **Environmental fields are computed but never rendered.** `env_multiplier`/`env_factors`/`env_icons` are in every daily forecast (`server/services/forecast_service.py:675-677`) but no frontend file references them (grep over `src/` returns nothing) and `DailyForecast` omits them (`src/pages/panels/ForecastPanel.tsx:34-43`).
+5. **Two inconsistent ward normalizers.** `predict_hospital_flow` inlines its own mapping where unrecognized wards become `"GENERAL"` and match no capacity bucket (they vanish from `ward_breakdown`) (`server/services/forecast_service.py:670-681`), while `_normalize_ward` buckets unknowns into `"W1"` (`server/services/forecast_service.py:1143-1154`). The same patient can count toward W1 in `/capacity` but toward no ward in `/hospital`.
+6. **`get_admission_patterns` mislabels its window.** The docstring promises "7×24 heatmap data" that is never produced (`server/services/forecast_service.py:1172-1173`), the query reads *all* history (no 30-day filter, `server/services/forecast_service.py:1176-1181`), yet the result names the total `total_30d` and computes `avg_daily = len(history)/30` (`server/services/forecast_service.py:1247-1248`), wrong whenever the table spans more or less than 30 days.
+7. **Resolved 6 October 2026: the environmental fields were removed with the multipliers.** **Environmental fields are computed but never rendered.** `env_multiplier`/`env_factors`/`env_icons` are in every daily forecast (`server/services/forecast_service.py:806-808`) but no frontend file references them (grep over `src/` returns nothing) and `DailyForecast` omits them (`src/pages/panels/ForecastPanel.tsx:34-43`).
 8. **`hospital_forecasts` table is dead schema.** Defined with an index (`server/database.py:273-282,469`) but no code inserts into or selects from it; only the reset script and test cleanup lists mention it.
 9. **Dead imports.** `server/routes/forecast_routes.py:12-27` imports `get_current_user` and `require_role` but uses neither; `server/services/forecast_service.py:16` imports `math` and line 27 imports `get_db`, both unused (verified by grep).
 10. **Route module docstring omits `/appointments`.** The header lists five endpoints (`server/routes/forecast_routes.py:3-8`) but six are defined; and `get_appointments`, which forecasts nothing, arguably belongs to the appointments feature, not this service.
 11. **"Confidence" is not what it sounds like.** The single `confidence` value attached to a whole prediction is only the acuity head's winning softmax probability (`server/models/forecast_lstm.py:135-143`); it carries no information about the LoS regression's uncertainty, and no confidence intervals are computed anywhere in the subsystem.
-12. **`model_trained: True` on heuristic outputs.** When a trained checkpoint is loaded but a patient has < 3 vitals, the heuristic result is tagged `model_trained: True` with `prediction_source: "heuristic"` (`server/services/forecast_service.py:463-468`), defensible ("the model *is* trained"), but consumers must check `prediction_source`, not `model_trained`, to know a number's origin.
-13. **`_get_cached_or_predict` has no staleness bound** (`server/services/forecast_service.py:978-1004`): it serves the latest cached row regardless of age, so with the simulation bots disabled (`INGESTION_MODE='ingestion'`, `server/main.py:197-199`) aggregate views can rest on arbitrarily old predictions.
+12. **`model_trained: True` on heuristic outputs.** When a trained checkpoint is loaded but a patient has < 3 vitals, the heuristic result is tagged `model_trained: True` with `prediction_source: "heuristic"` (`server/services/forecast_service.py:551-556`), defensible ("the model *is* trained"), but consumers must check `prediction_source`, not `model_trained`, to know a number's origin.
+13. **`_get_cached_or_predict` has no staleness bound** (`server/services/forecast_service.py:1157-1183`): it serves the latest cached row regardless of age, so with the simulation bots disabled (`INGESTION_MODE='ingestion'`, `server/main.py:197-199`) aggregate views can rest on arbitrarily old predictions.

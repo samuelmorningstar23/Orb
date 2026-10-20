@@ -45,6 +45,13 @@ FIVE THINGS THIS FILE IS CAREFUL ABOUT
    `phi_access` audit row: a read that cannot be audited is a read that does not
    happen. The KITCHEN board is the deliberate exception — it carries counts and
    ward labels and not one patient name, so there is no PHI to audit.
+
+6. ONE FACILITY AT A TIME (multisite-9b). With more than one facility of a
+   group on the appliance every list, count, plan and indent here is the
+   caller's facility's (permissions.facility_scope, passed to every service
+   call as `facilities`; see services/dietary_service.py). A plan or an indent
+   of another facility answers 404 like one that does not exist. One facility
+   on record: the scope is None and nothing changes.
 """
 
 from __future__ import annotations
@@ -61,6 +68,7 @@ from permissions import (
     ORDER_WRITE,
     department_scope,
     enforce_patient_scope,
+    facility_scope,
     has_permission,
     require_permission,
 )
@@ -396,11 +404,12 @@ def summary(user: dict = _SUMMARY_USER_DEFAULT, _m: None = _SUMMARY_M_DEFAULT) -
     explain a department with nobody admitted instead of showing bare zeros.
     """
     dept = department_scope(user)
-    body = dietary_summary(department=dept)
+    facilities = facility_scope(user)
+    body = dietary_summary(department=dept, facilities=facilities)
     body["scope"] = {
         "department": dept,
         "hospital_wide": dept is None,
-        "wards": [w["ward"] for w in list_wards(department=dept)],
+        "wards": [w["ward"] for w in list_wards(department=dept, facilities=facilities)],
     }
     return body
 
@@ -411,7 +420,7 @@ _WARDS_M_DEFAULT = Depends(require_module)
 
 @router.get("/wards")
 def wards(user: dict = _WARDS_USER_DEFAULT, _m: None = _WARDS_M_DEFAULT) -> dict:
-    return {"wards": list_wards(department=department_scope(user))}
+    return {"wards": list_wards(department=department_scope(user), facilities=facility_scope(user))}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -440,7 +449,16 @@ def ward_diets(
     the same latest-admission row.
     """
     dept = department_scope(user)
-    view = ward_view(ward=ward, department=dept)
+    facilities = facility_scope(user)
+    view = ward_view(ward=ward, department=dept, facilities=facilities)
+    metadata = {
+        "ward": ward,
+        "department": dept,
+        "order_count": view["order_count"],
+        "npo_count": view["npo_count"],
+    }
+    if facilities is not None:
+        metadata["facility_scope"] = sorted(facilities)
     # FAIL-CLOSED: names, beds and allergies are going over the wire.
     _audit(
         user,
@@ -449,12 +467,7 @@ def ward_diets(
         summary=f"Diet ward view read for {ward or 'all wards'} ({view['order_count']} orders)",
         target_type="ward",
         target_id=ward,
-        metadata={
-            "ward": ward,
-            "department": dept,
-            "order_count": view["order_count"],
-            "npo_count": view["npo_count"],
-        },
+        metadata=metadata,
     )
     return view
 
@@ -472,7 +485,7 @@ def stale(user: dict = _STALE_USER_DEFAULT, _m: None = _STALE_M_DEFAULT) -> dict
     happened and closes the order, rather than the row quietly vanishing.
     """
     dept = department_scope(user)
-    rows = stale_orders(department=dept)
+    rows = stale_orders(department=dept, facilities=facility_scope(user))
     _audit(
         user,
         "stale_orders_read",
@@ -626,7 +639,11 @@ def meal_plans(
     below: it is an audit aid for the ward, not something a catering screen
     needs, and an order id is a handle onto a patient.)"""
     plans = _handle(
-        list_meal_plans, service_date=service_date, ward=ward, meal_service=meal_service
+        list_meal_plans,
+        service_date=service_date,
+        ward=ward,
+        meal_service=meal_service,
+        facilities=facility_scope(user),
     )
     return {"plans": [_strip_basis(p) for p in plans]}
 
@@ -641,7 +658,7 @@ def meal_plan(
     user: dict = _MEAL_PLAN_USER_DEFAULT,
     _m: None = _MEAL_PLAN_M_DEFAULT,
 ) -> dict:
-    return {"plan": _strip_basis(_handle(get_meal_plan, plan_id))}
+    return {"plan": _strip_basis(_handle(get_meal_plan, plan_id, facilities=facility_scope(user)))}
 
 
 _MAKE_MEAL_PLAN_USER_DEFAULT = Depends(_KITCHEN)
@@ -660,7 +677,12 @@ def make_meal_plan(
     service re-derives who is still admitted on every build.
     """
     plan = _strip_basis(
-        _handle(build_meal_plan, generated_by=user.get("id") or "", **body.model_dump())
+        _handle(
+            build_meal_plan,
+            generated_by=user.get("id") or "",
+            facilities=facility_scope(user),
+            **body.model_dump(),
+        )
     )
     _audit(
         user,
@@ -693,7 +715,14 @@ def lock_plan(
     user: dict = _LOCK_PLAN_USER_DEFAULT,
     _m: None = _LOCK_PLAN_M_DEFAULT,
 ) -> dict:
-    plan = _strip_basis(_handle(lock_meal_plan, plan_id, locked_by=user.get("id") or ""))
+    plan = _strip_basis(
+        _handle(
+            lock_meal_plan,
+            plan_id,
+            locked_by=user.get("id") or "",
+            facilities=facility_scope(user),
+        )
+    )
     _audit(
         user,
         "meal_plan_locked",
@@ -727,7 +756,12 @@ def kitchen(
     MRN, bed or allergy. The kitchen does not need to know who is diabetic in
     order to cook fourteen diabetic trays, so there is no PHI here and therefore
     no PHI audit row."""
-    return _handle(kitchen_board, service_date=service_date, meal_service=meal_service)
+    return _handle(
+        kitchen_board,
+        service_date=service_date,
+        meal_service=meal_service,
+        facilities=facility_scope(user),
+    )
 
 
 _INDENTS_SERVICE_DATE_DEFAULT = Query(None)
@@ -754,6 +788,7 @@ def indents(
             meal_service=meal_service,
             ward=ward,
             status=status,
+            facilities=facility_scope(user),
         )
     }
 
@@ -768,7 +803,7 @@ def indent(
     user: dict = _INDENT_USER_DEFAULT,
     _m: None = _INDENT_M_DEFAULT,
 ) -> dict:
-    return {"indent": _handle(get_kitchen_indent, indent_id)}
+    return {"indent": _handle(get_kitchen_indent, indent_id, facilities=facility_scope(user))}
 
 
 _CREATE_INDENT_USER_DEFAULT = Depends(_KITCHEN)
@@ -786,6 +821,7 @@ def create_indent(
         meal_plan_id=body.meal_plan_id,
         raised_by=user.get("id") or "",
         notes=body.notes,
+        facilities=facility_scope(user),
     )
     _audit(
         user,
@@ -811,7 +847,12 @@ def issue_indent(
     user: dict = _ISSUE_INDENT_USER_DEFAULT,
     _m: None = _ISSUE_INDENT_M_DEFAULT,
 ) -> dict:
-    row = _handle(issue_kitchen_indent, indent_id, issued_by=user.get("id") or "")
+    row = _handle(
+        issue_kitchen_indent,
+        indent_id,
+        issued_by=user.get("id") or "",
+        facilities=facility_scope(user),
+    )
     _audit(
         user,
         "indent_issued",
@@ -842,6 +883,7 @@ def cancel_indent(
         indent_id,
         cancelled_by=user.get("id") or "",
         reason=body.reason,
+        facilities=facility_scope(user),
     )
     _audit(
         user,

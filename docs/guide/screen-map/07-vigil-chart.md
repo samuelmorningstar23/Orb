@@ -1051,10 +1051,10 @@ surfaces each failure differently:
   renders the "Patient not found" screen of §9.2, indistinguishable from a deleted patient. The
   attempt is audited as `patient_scope_denied` before the 404 is raised
   (`permissions.py:487-499`).
-- **Discharge without `discharge.generate`** → a browser `alert` (`:656`).
+- **Discharge without `discharge.generate`** → a browser `alert` (`:661`).
 - **Adding a med without `medication.write`** → the red `medError` box in the Add Medication modal
   (`:2989-2993`).
-- **Adding a note without `patient.write`** → a browser `alert` (`:698`).
+- **Adding a note without `patient.write`** → a browser `alert` (`:703`).
 - **Care bundle actions without `alert.read`** → the red error line in the bundle card footer
   (`CareBundleTimer.tsx:388`).
 - **Presence** silently never joins for a role without `PATIENT_READ_ALL`

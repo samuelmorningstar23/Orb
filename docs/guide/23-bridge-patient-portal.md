@@ -53,8 +53,8 @@ graph LR
 ### Flow A: Patient logs in and sees their dashboard
 
 1. A patient opens Orb. `App.tsx` has no stored user, so the router sends them to `/login/staff`; from there the patient login route (`/login/patient`) shows the patient sign-in form (owned by guide 01/Login).
-2. They enter their **patient ID** and password. The frontend POSTs to `/api/auth/login`, the *same* endpoint clinicians use (`server/routes/auth_routes.py:97`). The backend looks a user up by `id` (employee ID for staff, patient ID for patients, `auth_routes.py:121-124`), verifies the password, and issues a JWT carrying `id` and `role` (`create_token(user["id"], user["role"], ...)`, `auth_routes.py:199`).
-3. The JWT and user object land in `localStorage`; `App.login()` sets `user` in the auth context (`src/AppRoot.tsx:73-79`). Because `user.role === 'patient'`, the router now renders `PatientShell` at `/bridge/*` (`src/AppRoot.tsx:183`). Any non-patient hitting `/bridge/*` is bounced to `/login/patient`; a patient hitting `/dashboard/*` is bounced away (`src/AppRoot.tsx:182`).
+2. They enter their **patient ID** and password. The frontend POSTs to `/api/auth/login`, the *same* endpoint clinicians use (`server/routes/auth_routes.py:102`). The backend looks a user up by `id` (employee ID for staff, patient ID for patients, `auth_routes.py:126-129`), verifies the password, and issues a JWT carrying `id` and `role` (`create_token(user["id"], user["role"], ...)`, `auth_routes.py:204`).
+3. The JWT and user object land in `localStorage`; `App.login()` sets `user` in the auth context (`src/AppRoot.tsx:93-99`). Because `user.role === 'patient'`, the router now renders `PatientShell` at `/bridge/*` (`src/AppRoot.tsx:237`). Any non-patient hitting `/bridge/*` is bounced to `/login/patient`; a patient hitting `/dashboard/*` is bounced away (`src/AppRoot.tsx:236`).
 4. `PatientShell` mounts, and its `useEffect` fires `loadStatus()` and `loadReports()` (`src/pages/PatientShell.tsx:99-104`).
 5. `loadStatus()` → `getBridgeStatus()` → `GET /api/bridge/status`. The route's `require_patient_self` dependency verifies the JWT is a `patient` and hands the handler the user dict; the handler calls `get_patient_status_simple(user["id"])`, which resolves the patient record *from the logged-in user's id* and returns lay-language status + simplified vitals.
 6. `loadReports()` → `getBridgeReports()` → `GET /api/bridge/reports`, which aggregates medications, clinical documents, discharge summary, and imaging reports, all scoped to this patient.
@@ -310,7 +310,7 @@ One default-exported component plus one module helper. It imports `useAuth` from
 
 **Why it exists:** it is the single-page patient app. Everything a patient may see is here and nowhere else; there is no route inside `/bridge/*` that exposes another patient.
 **Data in/out:** consumes the `/api/bridge/status`, `/api/bridge/reports`, and `/api/bridge/ask` shapes. The `reports` modals read `reports.medications`, `reports.clinical_documents`, `reports.imaging_reports`, `reports.discharge_summary`.
-**Talks to:** `useAuth` (guide 01), `getBridgeStatus`/`getBridgeReports`/`askBridge` (guide 02), `OrbLogo`. Mounted by `AppRoot.tsx:183`.
+**Talks to:** `useAuth` (guide 01), `getBridgeStatus`/`getBridgeReports`/`askBridge` (guide 02), `OrbLogo`. Mounted by `AppRoot.tsx:237`.
 
 ##### handleBook / handleReset: `PatientShell.tsx:84` and `:89`
 **Does:** "book" (mock) and reset the appointment form.
@@ -327,7 +327,7 @@ One default-exported component plus one module helper. It imports `useAuth` from
 
 ### `src/pages/panels/AppointmentsPanel.tsx`
 
-> Important: **this is a clinician panel, not part of Bridge.** It is lazy-loaded and rendered inside `ClinicianShell` (`src/pages/ClinicianShell.tsx:236,533`), and it reads `GET /api/forecast/appointments` guarded by `require_permission("forecast.read")` (`server/routes/forecast_routes.py:83-90`), a permission a *patient* does not hold. It shares the word "appointments" with Bridge's mock scheduler but is a completely separate data path (the forecast service, guide 13). It is included here only because it was in scope.
+> Important: **this is a clinician panel, not part of Bridge.** It is lazy-loaded and rendered inside `ClinicianShell` (`src/pages/ClinicianShell.tsx:402,766`), and it reads `GET /api/forecast/appointments` guarded by `require_permission("forecast.read")` (`server/routes/forecast_routes.py:95-102`), a permission a *patient* does not hold. It shares the word "appointments" with Bridge's mock scheduler but is a completely separate data path (the forecast service, guide 13). It is included here only because it was in scope.
 
 #### getToken / apiFetch (local): `AppointmentsPanel.tsx:5` and `:9`
 **Does:** this file has its *own* `getToken` (reads `localStorage.orb_token`) and `apiFetch` (bare `fetch` with a Bearer header) instead of importing the shared api client.
@@ -411,7 +411,7 @@ This is the liquid-glass stylesheet for the portal. It is presentational; the lo
 
 **Prerequisites (must exist first):**
 1. Auth + RBAC (guide 03): `get_current_user`, the `patient` role in `ROLE_PERMISSIONS` (holding `bridge.read_own` + `bridge.ask`, `permissions.py:131-133`), and `require_patient_self` (`permissions.py:234`).
-2. The login endpoint that issues a JWT keyed on the patient's `id` (`auth_routes.py:97`), and a `users` row per patient whose `id` matches a `patients.user_id`.
+2. The login endpoint that issues a JWT keyed on the patient's `id` (`auth_routes.py:102`), and a `users` row per patient whose `id` matches a `patients.user_id`.
 3. The DB schema/tables listed above (guide 04-database-schema).
 4. The event bus (guide 06) and the LLM queue + Ollama (guide 09) for the chatbot; the app shell + auth context + api client (guides 01, 02).
 

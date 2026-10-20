@@ -221,6 +221,13 @@ def returnable_lots(
 # CREDIT. credit_candidate() is what grn-16 (pharmacy charges at batch MRP)
 # reads to credit the patient: units times the batch MRP per unit, or None
 # where the batch has no MRP or pack size on file. Nothing here bills.
+#
+# PER FACILITY (multisite-8h3, ruling MS-R9 (a)). The return lists and reads
+# keep the patients the caller may open, with the facility in the statement
+# (permissions.scope_patient_ids_sql and patient_in_scope with facilities=),
+# and once more than one facility is on record a return lands only in a
+# returns quarantine store at the facility the batch was dispensed from; the
+# screen offers the stores at the caller's facilities.
 
 
 _logger = _logging.getLogger("orb.pharmacy_store")
@@ -500,19 +507,27 @@ def _returned_units(conn, helix_order_id: str, lot_id: str) -> int:
     return int(row[0] or 0)
 
 
-def _returns_stores(conn) -> list[dict]:
+def _returns_stores(conn: Any, facilities: Any = None) -> list[dict]:
+    """The active returns quarantine stores; with `facilities`
+    (multisite-8h3), those at the given facilities only."""
+    from services.pharmacy_facility import column_sql
+
     return [
         dict(r)
         for r in conn.execute(
-            "SELECT id, code, name FROM stores WHERE pharmacy_kind = ? AND is_active = 1 "
+            "SELECT id, code, name FROM stores WHERE pharmacy_kind = ? AND is_active = 1"
+            f"{column_sql('facility_id', facilities)} "
             "ORDER BY name, id",
             (WARD_RETURN_STORE_KIND,),
         ).fetchall()
     ]
 
 
-def _pick_store(conn, store_code: str | None) -> dict:
-    stores = _returns_stores(conn)
+def _pick_store(conn: Any, store_code: str | None, facilities: Any = None) -> dict:
+    """The returns quarantine store a return lands in. With `facilities`
+    (multisite-8h3: the facility the batch was dispensed from), only a store
+    there: a return never lands at another facility."""
+    stores = _returns_stores(conn) if facilities is None else _returns_stores(conn, facilities)
     if store_code:
         for s in stores:
             if s["code"] == store_code:
@@ -535,6 +550,19 @@ def _pick_store(conn, store_code: str | None) -> dict:
             detail={"stores": [{"code": s["code"], "name": s["name"]} for s in stores]},
         )
     return stores[0]
+
+
+def _return_facilities(conn: Any, lot: Mapping) -> frozenset[int] | None:
+    """The facility a return of this batch lands at (multisite-8h3): the one
+    the batch was dispensed from. None with one facility on record; the empty
+    set for a lot that is at no facility (its stamp and store disagree), so
+    no store is offered and nothing is guessed."""
+    from services import pharmacy_facility
+
+    if not pharmacy_facility.multi(conn):
+        return None
+    home = pharmacy_facility.lot_facility(conn, lot["id"])
+    return frozenset() if home is None else frozenset({int(home)})
 
 
 def _is_controlled(lot: Mapping) -> bool:
@@ -844,15 +872,18 @@ def options(*, actor: Mapping) -> dict:
     restock is on for this site, whether the person who took a return in is
     barred from writing it off (RETURN_WRITE_OFF_NEEDS_SECOND_PERSON), whether
     this caller may take a controlled return, and who may witness one. No
-    patient data."""
+    patient data. Once more than one facility is on record, the stores at the
+    caller's facilities only (multisite-8h3)."""
     from database import db_session
     from permissions import PHARMACY_STORE_NDPS
 
     from services import ndps_service
 
     me = (actor or {}).get("id")
+    _dept, facilities = _scope(actor)
     with db_session() as conn:
-        stores = [{"code": s["code"], "name": s["name"]} for s in _returns_stores(conn)]
+        found = _returns_stores(conn) if facilities is None else _returns_stores(conn, facilities)
+        stores = [{"code": s["code"], "name": s["name"]} for s in found]
         may_ndps = _holds(actor, PHARMACY_STORE_NDPS)
         witnesses = (
             ndps_service.witnesses(conn, exclude=str(me) if me else None) if may_ndps else []
@@ -1126,7 +1157,7 @@ def _record_in_txn(
                     "returnable_units": max(0, left),
                 },
             )
-        store = _pick_store(conn, store_wanted)
+        store = _pick_store(conn, store_wanted, _return_facilities(conn, lot))
         patient_id = order["patient_id"]
         department = _patient_department(conn, patient_id)
         from services.clinical_time import utc_iso_now

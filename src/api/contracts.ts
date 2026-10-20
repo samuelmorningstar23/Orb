@@ -73,6 +73,9 @@ export interface LoginResponse {
     role: string;
     department?: string;
     registration_number?: string;
+    /** Where this sign-in works (server UserOut.facility): App's
+     *  UserFacility, null when the server could not say. */
+    facility?: { id: number; code: string | null; name: string | null } | null;
   };
 }
 

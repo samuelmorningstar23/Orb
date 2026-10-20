@@ -161,7 +161,7 @@ from database import db_session
 from db_backend import DBIntegrityError
 from permissions import LAB_CRITICAL_ACK, LAB_CRITICAL_LOG, has_permission
 
-from services import case_room_alerts, lab_module, lab_observations
+from services import case_room_alerts, lab_facility, lab_module, lab_observations
 from services.audit_service import log_audit_event
 from services.clinical_time import format_utc, parse_to_utc, utc_iso_now
 
@@ -1923,16 +1923,31 @@ def _clean(value: Any, *, limit: int) -> str:
     return re.sub(r"\s+", " ", str(value if value is not None else "")).strip()[:limit]
 
 
-def _open_notification(conn, notification_id: str, dept: str | None) -> dict:
-    from permissions import patient_in_scope
-
+def _open_notification(
+    conn: Any, notification_id: str, dept: str | None, facilities: frozenset[int] | None = None
+) -> dict:
+    """One open critical inside the caller's scope. Outside the caller's
+    facilities (the performing facility of its result's sample for the
+    laboratory, else its patient's) raises lab_facility.FacilityRefusal,
+    which the calling step audits and answers with the same 404."""
     if not _tables_present(conn):
         raise LabCriticalError("not_found", "Critical result not found", status=404)
     row = conn.execute(
         "SELECT * FROM lab_critical_notifications WHERE id = ?", (str(notification_id),)
     ).fetchone()
-    if row is None or not patient_in_scope(conn, row["patient_id"], dept):
+    if row is None:
         raise LabCriticalError("not_found", "Critical result not found", status=404)
+    lab_facility.require_in_scope(
+        conn,
+        patient_id=row["patient_id"],
+        specimen_id=lab_facility.result_specimen_on(conn, row["result_id"])
+        if facilities is not None and dept is None
+        else None,
+        dept=dept,
+        facilities=facilities,
+        helper="lab_critical",
+        not_found=LabCriticalError("not_found", "Critical result not found", status=404),
+    )
     n = dict(row)
     if n["status"] != "open":
         by = None
@@ -1992,6 +2007,7 @@ def _told_as_shown(conn, n: dict, shown: str) -> str:
     return told
 
 
+@lab_facility.audit_refusals
 def log_callback(
     notification_id: str,
     *,
@@ -2004,6 +2020,7 @@ def log_callback(
     value_told: Any = None,
     dept: str | None = None,
     request_meta: dict | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Close a critical with the laboratory's callback (ruling LIS-R3,
     closure (i)), in ONE immediate transaction: who was told (a name and one
@@ -2054,7 +2071,7 @@ def log_callback(
     text = _clean(note, limit=NOTE_MAX) or None
     actor_id = actor["id"]
     with db_session(immediate=True) as conn:
-        n = _open_notification(conn, notification_id, dept)
+        n = _open_notification(conn, notification_id, dept, facilities)
         told = _told_as_shown(conn, n, shown)
         now = utc_iso_now()
         moved = conn.execute(
@@ -2115,6 +2132,7 @@ def log_callback(
     return {"notification": view}
 
 
+@lab_facility.audit_refusals
 def log_attempt(
     notification_id: str,
     *,
@@ -2124,6 +2142,7 @@ def log_attempt(
     value_told: Any = None,
     dept: str | None = None,
     request_meta: dict | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Record a call that reached nobody, or nobody who could take it, in ONE
     immediate transaction with a fail-closed audit row. The critical stays
@@ -2142,7 +2161,7 @@ def log_attempt(
     shown = _value_shown(value_told)
     actor_id = actor["id"]
     with db_session(immediate=True) as conn:
-        n = _open_notification(conn, notification_id, dept)
+        n = _open_notification(conn, notification_id, dept, facilities)
         told = _told_as_shown(conn, n, shown)
         now = utc_iso_now()
         detail = {
@@ -2202,6 +2221,7 @@ def _ward_told_as_shown(conn, n: dict, shown: str) -> str:
     return told
 
 
+@lab_facility.audit_refusals
 def acknowledge(
     notification_id: str,
     *,
@@ -2215,6 +2235,7 @@ def acknowledge(
     note: Any = None,
     dept: str | None = None,
     request_meta: dict | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Close a critical with the ward's own read-back acknowledgement (ruling
     LIS-R3, closure (ii)), in ONE immediate transaction: who was told (a
@@ -2275,7 +2296,7 @@ def acknowledge(
     text = _clean(note, limit=NOTE_MAX) or None
     actor_id = actor["id"]
     with db_session(immediate=True) as conn:
-        n = _open_notification(conn, notification_id, dept)
+        n = _open_notification(conn, notification_id, dept, facilities)
         told = _ward_told_as_shown(conn, n, shown)
         now = utc_iso_now()
         moved = conn.execute(
@@ -2885,7 +2906,13 @@ def _ward_views(conn, ids: list[str]) -> list[dict]:
     return [_ward_view(rows[i], events.get(i, []), since.get(i)) for i in ids if i in rows]
 
 
-def list_for_ward(conn, *, dept: str | None, limit: int = WARD_LIST_CAP) -> dict:
+def list_for_ward(
+    conn: Any,
+    *,
+    dept: str | None,
+    limit: int = WARD_LIST_CAP,
+    facilities: frozenset[int] | None = None,
+) -> dict:
     """The ward card (lis-16): every open critical of a patient in `dept`,
     the caller's department_scope (required keyword; None only for an
     account with no department, which reads hospital-wide by the existing
@@ -2893,7 +2920,9 @@ def list_for_ward(conn, *, dept: str | None, limit: int = WARD_LIST_CAP) -> dict
     PATIENT_DEPARTMENT_SQL's: the active admission first, else the latest,
     so a transferred patient's critical is on the new ward and a discharged
     patient's on the last one. The most overdue first, as the laboratory
-    sees them. A read: the route audits the patients returned."""
+    sees them. A read: the route audits the patients returned. `facilities`
+    (the caller's facility_scope) keeps the card to the caller's facilities
+    (lab_facility; None changes nothing)."""
     from permissions import scope_patient_ids_sql
 
     empty = {"open": [], "methods": WARD_ACK_METHODS, "recipient_roles": RECIPIENT_ROLES}
@@ -2901,14 +2930,20 @@ def list_for_ward(conn, *, dept: str | None, limit: int = WARD_LIST_CAP) -> dict
         return empty
     limit = max(1, min(int(limit or WARD_LIST_CAP), WARD_LIST_CAP))
     scope_sql, params = scope_patient_ids_sql(dept)
+    facility_where, facility_params = lab_facility.list_clause(
+        dept=dept,
+        facilities=facilities,
+        patient_col="n.patient_id",
+        facility_sql=lab_facility.critical_facility_sql("n.result_id", "n.patient_id"),
+    )
     ids = [
         r[0]
         for r in conn.execute(
             f"""SELECT n.id FROM lab_critical_notifications n
-            WHERE n.status = 'open' AND n.patient_id IN ({scope_sql})
+            WHERE n.status = 'open' AND n.patient_id IN ({scope_sql}){facility_where}
             ORDER BY julianday({_DUE_SQL}) ASC, julianday(n.raised_at) ASC, n.id
             LIMIT ?""",
-            (*tuple(params), limit),
+            (*tuple(params), *facility_params, limit),
         ).fetchall()
     ]
     return {**empty, "open": _ward_views(conn, ids)}
@@ -2929,7 +2964,13 @@ _DUE_SQL = f"""COALESCE(n.tier_due_at,
         n.raised_at)"""
 
 
-def list_for_lab(conn, *, dept: str | None, limit: int = LIST_CAP) -> dict:
+def list_for_lab(
+    conn: Any,
+    *,
+    dept: str | None,
+    limit: int = LIST_CAP,
+    facilities: frozenset[int] | None = None,
+) -> dict:
     """The Critical results screen: every open critical, the most overdue
     first (by the time its tier fell due; the last tier is due from when it
     was reached, so a critical that climbed the whole ladder unconfirmed
@@ -2939,7 +2980,9 @@ def list_for_lab(conn, *, dept: str | None, limit: int = LIST_CAP) -> dict:
     laboratory roles, hospital-wide; a department keeps its own patients,
     filtered in SQL before the LIMIT. A read: the route audits the patients
     returned. A discharged patient's critical stays here until it is
-    closed."""
+    closed. `facilities` (the caller's facility_scope) keeps the screen to
+    the criticals of its facilities' laboratories: the performing facility
+    of the result's sample, else (an interfaced critical) the patient's."""
     from permissions import scope_patient_ids_sql
 
     policy = policy_snapshot()
@@ -2959,6 +3002,14 @@ def list_for_lab(conn, *, dept: str | None, limit: int = LIST_CAP) -> dict:
         scope_sql, params = scope_patient_ids_sql(dept)
         scope_where = f" AND n.patient_id IN ({scope_sql})"
         scope_params = tuple(params)
+    facility_where, facility_params = lab_facility.list_clause(
+        dept=dept,
+        facilities=facilities,
+        patient_col="n.patient_id",
+        facility_sql=lab_facility.critical_facility_sql("n.result_id", "n.patient_id"),
+    )
+    scope_where += facility_where
+    scope_params += tuple(facility_params)
     now = utc_iso_now()
     open_ids = [
         r[0]

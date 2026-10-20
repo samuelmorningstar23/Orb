@@ -5,6 +5,8 @@ import { useIdleTimer } from './hooks/useIdleTimer'
 import { clearNurseDrafts } from './lib/nurseDrafts'
 import { clearOfflineCache } from './lib/offline/phiCache'
 import { useOfflineSession } from './hooks/useOfflineSession'
+import { reloadPage } from './lib/pageReload'
+import { isFacilitySwitchSignal } from './lib/facilitySwitchSignal'
 import Login from './pages/Login'
 import ClinicianShell from './pages/ClinicianShell'
 import PatientShell from './pages/PatientShell'
@@ -38,6 +40,24 @@ import './App.css'
  * a short expiry of their own, so a tampered client cannot hold one open. */
 const IDLE_LOCK_MS = 15 * 60_000
 const SHARED_DEVICE_IDLE_MS = 2 * 60_000
+
+/** True when the stored sign-in is the same person as `shown`, the user this
+ *  screen was opened for, at a DIFFERENT facility (multisite-19).
+ *
+ *  Re-entering a password signs in where the account works, and every tab of
+ *  this browser shares one sign-in cookie. A visiting consultant's screen
+ *  belongs to the facility they were visiting, so after such a sign-in the
+ *  server answers for one facility while the panels, polls, socket rooms and
+ *  header on screen belong to another. Orb reloads then instead of carrying
+ *  on in place. With one facility on record both are facility 1 and this is
+ *  never true; nor when either facility is unknown. */
+function signedInElsewhere(shown: User | null): boolean {
+  const stored = getUser() as User | null
+  if (!shown || !stored || stored.id !== shown.id) return false
+  const was = shown.facility?.id
+  const now = stored.facility?.id
+  return was != null && now != null && was !== now
+}
 
 try {
   // bootTheme reads BOTH storage keys — see lib/theme. Reading only 'orb_theme'
@@ -114,10 +134,44 @@ function App() {
   useIdleTimer(
     isSharedDevice ? SHARED_DEVICE_IDLE_MS : IDLE_LOCK_MS,
     // A shared tablet SIGNS OUT (back to the PIN pad for whoever is next); a
-    // personal workstation locks for the same person to re-open.
-    () => { if (isSharedDevice) logout(); else setIdleLocked(true) },
+    // personal workstation locks for the same person to re-open. The lock
+    // asks first ("orb:idle-lock", cancelable): a visiting consultant's
+    // sign-in (multisite-19) cannot re-open in place, because the password
+    // prompt signs in at the account's own facility, so the shell cancels the
+    // lock and signs out instead.
+    () => {
+      if (isSharedDevice) logout()
+      else if (window.dispatchEvent(new CustomEvent('orb:idle-lock', { cancelable: true }))) setIdleLocked(true)
+    },
     idleEnabled,
   )
+
+  // After a re-entered password: carry on in place only at the same facility.
+  // Otherwise the prompt stays up until the reload, so nothing the new
+  // sign-in answers is drawn under the old facility's screens.
+  const afterReauth = (carryOn: () => void) => {
+    if (signedInElsewhere(user)) reloadPage()
+    else carryOn()
+  }
+
+  // Another tab moved the shared sign-in to another facility: this tab
+  // reloads under it too. A switch says so outright (the shell's signal),
+  // whatever this tab's stored sign-in holds; a password sign-in after a
+  // visit shows as the same person at another facility.
+  useEffect(() => {
+    if (!user) return
+    const shown = user
+    let reloading = false
+    const handleStorage = (event: StorageEvent) => {
+      if (reloading) return
+      if (isFacilitySwitchSignal(event) || signedInElsewhere(shown)) {
+        reloading = true
+        reloadPage()
+      }
+    }
+    window.addEventListener('storage', handleStorage)
+    return () => window.removeEventListener('storage', handleStorage)
+  }, [user])
 
   // Bind the offline PHI cache to whoever is signed in: wiped on sign-out, on a
   // switch to a different clinician, and on a cold boot that finds a cache from
@@ -155,7 +209,7 @@ function App() {
         // A real 401 outranks an idle lock — resolve the expiry first.
         <SessionExpiredModal
           user={user}
-          onReauthed={() => setSessionExpired(false)}
+          onReauthed={() => afterReauth(() => setSessionExpired(false))}
           onSignOut={() => {
             setSessionExpired(false)
             setIdleLocked(false)
@@ -167,7 +221,7 @@ function App() {
         <SessionExpiredModal
           user={user}
           reason="idle"
-          onReauthed={() => setIdleLocked(false)}
+          onReauthed={() => afterReauth(() => setIdleLocked(false))}
           onSignOut={() => {
             setIdleLocked(false)
             // Clears token/user + realtime auth; routes then redirect to login.

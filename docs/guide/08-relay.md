@@ -63,7 +63,7 @@ Channel ids double as socket room names. Department channels are seeded with fix
 
 ### Flow 1: opening Relay (channel list)
 
-1. `ClinicianShell` lazy-loads `RelayPanel` into the shell (`src/pages/ClinicianShell.tsx:231`, `478`; guide 01-app-shell).
+1. `ClinicianShell` lazy-loads `RelayPanel` into the shell (`src/pages/ClinicianShell.tsx:397`, `478`; guide 01-app-shell).
 2. On mount, `loadChannels()` calls `GET /api/relay/channels` (`RelayPanel.tsx:61`, `147-149` → `src/api/client.ts:429-431`).
 3. The route (`relay_routes.py:21-24`) requires `relay.read` and delegates to `get_channels_for_user`, which runs one SQL query enriching each channel with patient info, latest risk score, unread count, last message, 24-hour alert count, and last activity (`relay_service.py:17-56`), then filters out orphaned/discharged case rooms and non-matching department channels in Python (`relay_service.py:58-85`).
 4. The panel splits the result into `caseRooms` and `deptChannels` memos, applies the search filter and the Recency/Urgency sort (`RelayPanel.tsx:213-250`), and renders `AlertsSection`, `RelaySearch`, and two `CaseList`s (`RelayPanel.tsx:277-295`).

@@ -4,6 +4,7 @@ Strict state machine, idempotent transitions, and atomic inventory operations.
 """
 
 import json
+import typing
 import uuid
 from collections.abc import Callable
 from datetime import datetime
@@ -178,8 +179,14 @@ def get_medication_catalog(*, orderable_only: bool = False):
         return [dict(row) for row in rows]
 
 
-def get_inventory():
+def get_inventory(*, facilities: frozenset[int] | None = None) -> list[dict]:
     """The lots on the dispensing shelf, across all medications.
+
+    `facilities` is the caller's permissions.facility_scope (multisite-14,
+    ruling MS-R9 (a)): None, which is every install with one facility on
+    record, lists every shelf lot as before; a set keeps the lots at those
+    facilities (services/pharmacy_facility.lot_sql), so the formulary's on-hand
+    figure is the stock of the caller's own facility.
 
     `in_date` is the dispense rule's own date verdict on each lot (a recorded
     expiry on or after the hospital's date, pharmacy_stock_service.site_today),
@@ -195,6 +202,9 @@ def get_inventory():
     pharmacy store module off every lot is a legacy lot, so the list is the
     whole inventory exactly as before.
     """
+    from services.pharmacy_facility import lot_sql
+
+    facility_sql = lot_sql("l", facilities)
     with db_session() as conn:
         rows = conn.execute(
             f"""
@@ -202,7 +212,7 @@ def get_inventory():
                    CASE WHEN date(l.expiration_date) >= ? THEN 1 ELSE 0 END AS in_date
             FROM helix_inventory_lots l
             JOIN helix_medication_master m ON l.medication_id = m.id
-            WHERE {stock.shelf_lot_sql("l")}
+            WHERE {stock.shelf_lot_sql("l")}{facility_sql}
         """,
             (_expiry_cutoff(),),
         ).fetchall()
@@ -310,8 +320,24 @@ def get_order(order_id: str) -> dict | None:
         return _with_linked_orders(conn, [dict(row)])[0] if row else None
 
 
-def get_stock_movements():
-    """Retrieve all stock movements for audit."""
+def get_stock_movements(*, facilities: frozenset[int] | None = None) -> list[dict]:
+    """Retrieve all stock movements for audit. `facilities` as in
+    get_inventory (multisite-14): a set keeps the movements at those
+    facilities (each movement carries its lot's facility); None changes
+    nothing."""
+    if facilities is not None:
+        from services.pharmacy_facility import column_sql
+
+        with db_session() as conn:
+            rows = conn.execute(
+                "SELECT sm.*, m.name as medication_name, l.lot_number "
+                "FROM helix_stock_movements sm "
+                "LEFT JOIN helix_medication_master m ON sm.medication_id = m.id "
+                "LEFT JOIN helix_inventory_lots l ON sm.lot_id = l.id "
+                f"WHERE 1 = 1{column_sql('sm.facility_id', facilities)} "
+                "ORDER BY sm.timestamp DESC"
+            ).fetchall()
+            return [dict(row) for row in rows]
     with db_session() as conn:
         rows = conn.execute("""
             SELECT sm.*, m.name as medication_name, l.lot_number
@@ -436,12 +462,14 @@ def dispense_options(order_id: str) -> dict | None:
     dispense is one unit, earliest expiry first. With it on, `max_units` is
     ORB_PHARMACY_MAX_DISPENSE_UNITS and `lots` are the dispensable batches of
     the EFFECTIVE drug (the substitute when one is set), earliest expiry
-    first, which is the only drug a batch may be chosen from."""
+    first, which is the only drug a batch may be chosen from. Once more than
+    one facility is on record, only the batches at the facility of the
+    order's patient (multisite-14): the only ones a dispense may take."""
     import config
 
     with db_session() as conn:
         order = conn.execute(
-            "SELECT id, medication_id, substitute_medication_id "
+            "SELECT id, patient_id, medication_id, substitute_medication_id "
             "FROM helix_patient_med_orders WHERE id = ?",
             (order_id,),
         ).fetchone()
@@ -459,7 +487,12 @@ def dispense_options(order_id: str) -> dict | None:
                     "quantity": int(lot["quantity"] or 0),
                     "store_name": lot["store_name"],
                 }
-                for lot in stock.dispensable_lots(conn, effective, today=_expiry_cutoff())
+                for lot in stock.dispensable_lots(
+                    conn,
+                    effective,
+                    today=_expiry_cutoff(),
+                    facility_id=_dispense_facility(conn, order["patient_id"]),
+                )
             ]
         return {
             "order_id": order["id"],
@@ -1162,11 +1195,32 @@ def _expiry_cutoff() -> str:
     return stock.site_today()
 
 
-def _in_date_stock(conn, medication_id: str) -> int:
+def _in_date_stock(conn: object, medication_id: str, facility_id: int | None = None) -> int:
     """Units of a drug a dispense could take today: the shared dispensable
     predicate (pharmacy_stock_service.dispensable_lot_sql), so pre-flight, the
-    formulary and the dispense can never disagree about what is on the shelf."""
-    return stock.dispensable_units(conn, medication_id, today=_expiry_cutoff())
+    formulary and the dispense can never disagree about what is on the shelf.
+    `facility_id` counts that facility's shelf only (multisite-14)."""
+    return stock.dispensable_units(
+        conn, medication_id, today=_expiry_cutoff(), facility_id=facility_id
+    )
+
+
+def _dispense_facility(conn: object, patient_id: str | None) -> int | None:
+    """The facility whose shelf a dispense for this patient draws from
+    (multisite-14, ruling MS-R9 (a)): the active admission's facility, else
+    the latest encounter's (services/pharmacy_facility.patient_facility).
+    None with one facility on record, which keeps every pick exactly as
+    before."""
+    from services import pharmacy_facility
+
+    return pharmacy_facility.patient_facility(conn, patient_id)
+
+
+def pharmacy_facility_words(conn: object, facility_id: int) -> str:
+    """The facility's name for a refusal the pharmacist reads."""
+    from services import pharmacy_facility
+
+    return pharmacy_facility.facility_words(facility_id, db=conn)
 
 
 def _shaped_dispense(dispense_quantity_units, lot_id) -> dict | None:
@@ -1216,7 +1270,7 @@ def _shaped_dispense(dispense_quantity_units, lot_id) -> dict | None:
 
 
 def _atomic_dispense(
-    conn,
+    conn: typing.Any,
     order_id: str,
     medication_id: str,
     actor_id: str,
@@ -1235,6 +1289,13 @@ def _atomic_dispense(
     `medication_id` (the effective drug) holding enough units, or else the
     earliest-expiry lot holding them all. Never split between lots.
 
+    STOCK PER FACILITY (multisite-14, ruling MS-R9 (a)). Once more than one
+    facility is on record the dispense takes only lots at the facility of the
+    order's patient (the active admission's, else the latest encounter's),
+    keeping the in-date, earliest-expiry rule. With no such stock there the
+    dispense is refused, never drawn from another facility. With one facility
+    on record the pick is exactly as before.
+
     Returns: stock_movement_id
     Raises: ValueError if there is no dispensable stock; DispenseRefused for a
     shaped dispense the shelf refuses.
@@ -1246,16 +1307,25 @@ def _atomic_dispense(
     if not getattr(conn, "in_transaction", False) and conn.isolation_level is not None:
         conn.execute("BEGIN IMMEDIATE")
 
+    facility_id = None
+    if stock._multi_facility(conn):
+        owner = conn.execute(
+            "SELECT patient_id FROM helix_patient_med_orders WHERE id = ?", (order_id,)
+        ).fetchone()
+        facility_id = _dispense_facility(conn, owner["patient_id"] if owner else None)
+
     # Earliest-expiring lot that is still in date. This used to pick the
     # earliest expiry with no date filter at all, so an expired lot was always
     # the FIRST one dispensed, and a lot with no expiry (NULL sorts first in
     # SQLite) went ahead of everything.
     today = _expiry_cutoff()
     if units == 1 and lot_id is None:
-        lot = stock.pick_fefo_lot(conn, medication_id, 1, today=today)
+        lot = stock.pick_fefo_lot(conn, medication_id, 1, today=today, facility_id=facility_id)
     else:
         try:
-            lot = stock.choose_dispense_lot(conn, medication_id, units, lot_id=lot_id, today=today)
+            lot = stock.choose_dispense_lot(
+                conn, medication_id, units, lot_id=lot_id, today=today, facility_id=facility_id
+            )
         except stock.StockError as e:
             status = stock.DISPENSE_REFUSAL_STATUS.get(e.code)
             if status is None:
@@ -1264,7 +1334,9 @@ def _atomic_dispense(
         if not lot and units > 1:
             # No single batch holds them all. Never split: say what there is.
             drug = _drug_name(conn, medication_id)
-            total = stock.dispensable_units(conn, medication_id, today=today)
+            total = stock.dispensable_units(
+                conn, medication_id, today=today, facility_id=facility_id
+            )
             if total >= units:
                 raise DispenseRefused(
                     f"No single batch of {drug} holds {units} units ({total} in stock across "
@@ -1288,7 +1360,13 @@ def _atomic_dispense(
         # Named by drug, never by row id, and pointing at the two ways on that
         # exist from here (Orb has no restock step to send them to).
         drug = _drug_name(conn, medication_id)
-        units = stock.undispensable_shelf_units(conn, medication_id, today=today)
+        units = stock.undispensable_shelf_units(
+            conn, medication_id, today=today, facility_id=facility_id
+        )
+        # With more than one facility on record the words name the
+        # facility whose shelf was read: another facility's stock is never
+        # offered, and never said to exist.
+        where = "" if facility_id is None else f" at {pharmacy_facility_words(conn, facility_id)}"
         if units:
             on_hand = (
                 "1 unit on hand is expired or has"
@@ -1296,11 +1374,11 @@ def _atomic_dispense(
                 else f"{units} units on hand are expired or have"
             )
             raise ValueError(
-                f"No in-date stock of {drug}: {on_hand} no expiry date recorded and "
+                f"No in-date stock of {drug}{where}: {on_hand} no expiry date recorded and "
                 f"cannot be dispensed. Quarantine {'it' if units == 1 else 'them'}, then "
                 f"return to review to substitute, or reject."
             )
-        raise ValueError(f"No stock of {drug}. Return to review to substitute, or reject.")
+        raise ValueError(f"No stock of {drug}{where}. Return to review to substitute, or reject.")
 
     # One unit (or the pharmacist's bounded quantity, grn-14), a real decrement
     # against a real lot, recorded as a dispense movement. The key makes a
@@ -1396,17 +1474,20 @@ def _audit_dispense(
     )
 
 
-def pre_flight_inventory_check(medication_id: str) -> dict:
+def pre_flight_inventory_check(medication_id: str, *, patient_id: str | None = None) -> dict:
     """Checks lot stock levels synchronously for a medication.
 
     Counts dispensable lots only (in date, available, on the dispensing shelf),
     the same rule `_atomic_dispense` applies, so a pre-flight never promises
-    stock the dispense would then refuse.
+    stock the dispense would then refuse. With `patient_id` and more than one
+    facility on record, only the shelf of that patient's facility counts
+    (multisite-14), which is the shelf the dispense will take from.
 
     Returns {"medication_id": str, "in_stock": bool, "total_quantity": int}
     """
     with db_session() as conn:
-        total = _in_date_stock(conn, medication_id)
+        facility_id = _dispense_facility(conn, patient_id) if patient_id else None
+        total = _in_date_stock(conn, medication_id, facility_id)
         return {"medication_id": medication_id, "in_stock": total > 0, "total_quantity": total}
 
 
@@ -1415,8 +1496,13 @@ def _norm(value) -> str:
     return "".join((value or "").lower().split())
 
 
-def pre_flight_alternative_suggestion(medication_id: str) -> dict | None:
+def pre_flight_alternative_suggestion(
+    medication_id: str, *, patient_id: str | None = None
+) -> dict | None:
     """An in-stock EQUIVALENT of a drug that is out of stock, or None.
+
+    With `patient_id` and more than one facility on record, "in stock" means
+    on the shelf of that patient's facility (multisite-14).
 
     Equivalent means the same molecule, strength and form: another brand or
     pack of the same thing, nothing else. It is returned as a SUGGESTION for
@@ -1453,6 +1539,7 @@ def pre_flight_alternative_suggestion(medication_id: str) -> dict | None:
             "ORDER BY name",
             (medication_id, ORDERABLE_IDENTITY),
         ).fetchall()
+        facility_id = _dispense_facility(conn, patient_id) if patient_id else None
         for cand in candidates:
             if (_norm(cand["generic_name"]), _norm(cand["strength"]), _norm(cand["form"])) != (
                 molecule,
@@ -1460,7 +1547,7 @@ def pre_flight_alternative_suggestion(medication_id: str) -> dict | None:
                 form,
             ):
                 continue
-            total = _in_date_stock(conn, cand["id"])
+            total = _in_date_stock(conn, cand["id"], facility_id)
             if total > 0:
                 cand_dict = dict(cand)
                 cand_dict["stock_status"] = {"in_stock": True, "total_quantity": total}

@@ -22,6 +22,14 @@ Errors: a field that may not change, or a value outside its set, is 422; an
 unknown id is 404; the same person deciding their own request is 403; a
 pending, stale or stock-blocked change is 409.
 
+PER FACILITY (multisite-8h3, ruling MS-R9 (a)). With more than one facility on
+record, the stores, par levels and legacy-lot count are the caller's
+facilities' only; a store or par level of another facility is 404 after an
+authorization 'facility_document_denied' row (services/pharmacy_facility.gate);
+a store the caller would create at another facility is 403 facility_scope.
+The drug master and vendors stay group-wide. With one facility on record the
+caller's scope is None and nothing here changes.
+
 DRUG IDENTITY (grn-6, ruling GRN-RS1 option (b)). Adding a drug, asking for an
 identity correction, retiring a drug and the second pharmacist's decision are
 all the WRITE tier: identity is a pharmacist's call, never the approve tier's.
@@ -39,11 +47,13 @@ from permissions import (
     PHARMACY_STORE_APPROVE,
     PHARMACY_STORE_READ,
     PHARMACY_STORE_WRITE,
+    facility_scope,
     require_permission,
 )
 from pydantic import BaseModel, Field
 from services.audit_service import AuditWriteError
 
+from services import pharmacy_facility
 from services import pharmacy_master_service as masters
 
 router = APIRouter()
@@ -65,6 +75,7 @@ _STATUS = {
     "dispensing_store_exists": 409,
     "store_kind_fixed": 409,
     "store_holds_stock": 409,
+    "facility_scope": 403,
 }
 
 
@@ -457,10 +468,13 @@ _LIST_STORES_USER_DEFAULT = Depends(_PS_READ)
 
 
 @router.get("/stores")
-def list_stores(include_inactive: bool = True, user: dict = _LIST_STORES_USER_DEFAULT):
+def list_stores(include_inactive: bool = True, user: dict = _LIST_STORES_USER_DEFAULT) -> dict:
+    """The pharmacy stores (the caller's facilities' only, once more than one
+    facility is on record) and the legacy lots still waiting for a store."""
+    facilities = facility_scope(user)
     return {
-        "stores": masters.list_stores(include_inactive=include_inactive),
-        "legacy_lots": masters.legacy_lot_count(),
+        "stores": masters.list_stores(include_inactive=include_inactive, facilities=facilities),
+        "legacy_lots": masters.legacy_lot_count(facilities=facilities),
     }
 
 
@@ -477,9 +491,10 @@ _CREATE_STORE_USER_DEFAULT = Depends(_PS_APPROVE)
 
 
 @router.post("/stores")
-def create_store(body: StoreIn, request: Request, user: dict = _CREATE_STORE_USER_DEFAULT):
+def create_store(body: StoreIn, request: Request, user: dict = _CREATE_STORE_USER_DEFAULT) -> dict:
     """Create a pharmacy store. The dispensing store adopts every legacy lot
-    in the same transaction."""
+    (of its own facility) in the same transaction. A store the caller would
+    create at another facility is 403 facility_scope."""
     try:
         return masters.create_store(
             code=body.code,
@@ -490,6 +505,7 @@ def create_store(body: StoreIn, request: Request, user: dict = _CREATE_STORE_USE
             incharge_user_id=body.incharge_user_id,
             actor=user,
             audit_ctx=_ctx(request),
+            facilities=facility_scope(user),
         )
     except masters.MasterError as exc:
         raise _fail(exc) from exc
@@ -509,7 +525,9 @@ _UPDATE_STORE_USER_DEFAULT = Depends(_PS_APPROVE)
 @router.put("/stores/{code}")
 def update_store(
     code: str, body: StoreUpdateIn, request: Request, user: dict = _UPDATE_STORE_USER_DEFAULT
-):
+) -> dict:
+    """Edit a pharmacy store; a store of another facility is 404."""
+    pharmacy_facility.gate(user, "store_code", code, request, message=f"no pharmacy store {code}")
     try:
         return masters.update_store(
             code,
@@ -532,8 +550,18 @@ _LIST_PAR_LEVELS_USER_DEFAULT = Depends(_PS_READ)
 
 
 @router.get("/par-levels")
-def list_par_levels(store_id: int | None = None, user: dict = _LIST_PAR_LEVELS_USER_DEFAULT):
-    return {"par_levels": masters.list_par_levels(store_id=store_id)}
+def list_par_levels(
+    request: Request, store_id: int | None = None, user: dict = _LIST_PAR_LEVELS_USER_DEFAULT
+) -> dict:
+    """Par levels of the caller's facilities' stores; a named store of
+    another facility is 404."""
+    if store_id is not None:
+        pharmacy_facility.gate(
+            user, "store", store_id, request, message=f"no pharmacy store {store_id}"
+        )
+    return {
+        "par_levels": masters.list_par_levels(store_id=store_id, facilities=facility_scope(user))
+    }
 
 
 class ParLevelIn(BaseModel):
@@ -551,7 +579,11 @@ _UPSERT_PAR_LEVEL_USER_DEFAULT = Depends(_PS_WRITE)
 @router.put("/par-levels")
 def upsert_par_level(
     body: ParLevelIn, request: Request, user: dict = _UPSERT_PAR_LEVEL_USER_DEFAULT
-):
+) -> dict:
+    """Set one drug's levels in one store; a store of another facility is 404."""
+    pharmacy_facility.gate(
+        user, "store", body.store_id, request, message=f"no pharmacy store {body.store_id}"
+    )
     try:
         return {
             "par_level": masters.upsert_par_level(

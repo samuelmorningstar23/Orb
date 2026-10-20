@@ -1,8 +1,14 @@
-import { useState, useEffect, useCallback, useSyncExternalStore, lazy, Suspense, Component, type ReactNode } from 'react'
+import { useState, useEffect, useCallback, useRef, useSyncExternalStore, lazy, Suspense, Component, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuth, type UserFacility } from '../App'
 import { apiFetch, getVitalsFeed } from '../api/client'
 import { canSeeWardList } from '../lib/roles'
+import { clearOfflineCache } from '../lib/offline/phiCache'
+import { clearNurseDrafts } from '../lib/nurseDrafts'
+import { reloadPage } from '../lib/pageReload'
+import { announceFacilitySwitch } from '../lib/facilitySwitchSignal'
+import { useFocusTrap } from '../hooks/useFocusTrap'
 import AdmitPatientModal from '../components/AdmitPatientModal'
 import OrbLogo from '../components/OrbLogo'
 import PulseWidget from '../components/PulseWidget'
@@ -188,6 +194,166 @@ function useFacilityLabel(
   return facility.name || facility.code || null
 }
 
+/* Visiting consultants (multisite-19, ruling MS-R7 (a)): one account, one
+   facility per sign-in. GET /api/auth/facilities says where this session works
+   and where it may move; it is asked only while ORB_MULTI_SITE is on and more
+   than one facility is on record, so on every site today nothing is fetched
+   and nothing is drawn. The server decides on every request; this only offers
+   the move. */
+interface SessionFacilityOption {
+  facility: UserFacility | null
+  department: string | null
+  kind: 'home' | 'visiting'
+  active: boolean
+}
+
+interface SessionFacilities {
+  visiting: boolean
+  can_switch: boolean
+  reason: string | null
+  options: SessionFacilityOption[]
+}
+
+interface SwitchedUser {
+  department?: string | null
+  facility?: UserFacility | null
+}
+
+function useSessionFacilities(userId: string | undefined, enabled: boolean): SessionFacilities | null {
+  const [fetched, setFetched] = useState<{ userId: string, value: SessionFacilities | null } | null>(null)
+  useEffect(() => {
+    if (!enabled || !userId) return
+    let cancelled = false
+    apiFetch<SessionFacilities>('/auth/facilities')
+      .then(body => {
+        if (cancelled) return
+        setFetched({ userId, value: body && Array.isArray(body.options) ? body : null })
+      })
+      .catch(() => { /* nothing is offered; the session stays where it is */ })
+    return () => { cancelled = true }
+  }, [userId, enabled])
+  if (!enabled || !fetched || fetched.userId !== userId) return null
+  return fetched.value
+}
+
+function facilityWords(option: SessionFacilityOption): string {
+  const name = option.facility?.name || option.facility?.code
+  if (name) return name
+  return option.kind === 'home' ? 'Your own facility' : 'Another facility'
+}
+
+/** The move itself. Switching ends the account's other sign-ins and reloads
+ *  Orb, so nothing from the facility being left stays on screen or in this
+ *  browser's offline copy. Refused while offline changes wait to sync: they
+ *  belong to the facility being left. */
+function FacilitySwitchDialog({ options, waitingToSync, onBusy, onClose, onSwitched }: {
+  options: SessionFacilityOption[]
+  waitingToSync: boolean
+  onBusy: (busy: boolean) => void
+  onClose: () => void
+  onSwitched: (user: SwitchedUser) => void
+}) {
+  const [choice, setChoice] = useState<SessionFacilityOption | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const dialogRef = useFocusTrap<HTMLDivElement>(useCallback(() => { if (!busy) onClose() }, [busy, onClose]))
+
+  const switchNow = async () => {
+    if (!choice || busy || waitingToSync) return
+    setBusy(true)
+    setError('')
+    // The move ends this sign-in's old session the moment it commits, so the
+    // shell must not read a request caught in between as an ended session.
+    onBusy(true)
+    try {
+      const body = await apiFetch<{ user?: SwitchedUser }>('/auth/facility', {
+        method: 'POST',
+        body: JSON.stringify({ facility_id: choice.kind === 'home' ? null : choice.facility?.id ?? null }),
+      })
+      onSwitched(body?.user ?? {})
+    } catch (e) {
+      onBusy(false)
+      setError(e instanceof Error && e.message ? e.message : 'The switch did not go through. Try again.')
+      setBusy(false)
+    }
+  }
+
+  return createPortal(
+    <div
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center',
+        justifyContent: 'center', padding: 16, background: 'var(--scrim)',
+      }}
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="facility-switch-title"
+        className="glass-strong"
+        style={{ width: '100%', maxWidth: 440, padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}
+      >
+        <h2 id="facility-switch-title" style={{ margin: 0, fontSize: '1.05rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+          Work at another facility
+        </h2>
+        <p style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
+          Each sign-in works at one facility at a time. Switching signs you out on your other devices and reloads Orb.
+        </p>
+        {choice === null ? (
+          <>
+            <ul aria-label="Facilities" style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {options.map(option => (
+                <li key={`${option.kind}-${option.facility?.id ?? 'none'}`}>
+                  <button
+                    type="button"
+                    className="btn-glass"
+                    disabled={option.active}
+                    aria-current={option.active ? 'true' : undefined}
+                    onClick={() => setChoice(option)}
+                    style={{ width: '100%', justifyContent: 'space-between', textAlign: 'left' }}
+                  >
+                    <span>
+                      {facilityWords(option)}
+                      {option.department ? ` · ${option.department}` : ''}
+                    </span>
+                    {option.active && <span>Current</span>}
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>
+              Switch to {facilityWords(choice)}{choice.department ? `, ${choice.department}` : ''}?
+            </p>
+            {waitingToSync && (
+              <p role="status" style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
+                Changes saved while offline are still waiting to sync. Switch once they have synced.
+              </p>
+            )}
+            {error && (
+              <p role="alert" style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--status-danger-text)' }}>
+                {error}
+              </p>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button type="button" className="btn-ghost" onClick={() => setChoice(null)} disabled={busy}>Back</button>
+              <button type="button" className="btn-primary" onClick={switchNow} disabled={busy || waitingToSync}>
+                {busy ? 'Switching...' : 'Switch facility'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
 /** Publishes the shell's active tab into ActiveViewContext so every Sage
  *  surface knows what screen the clinician is on, and clears any stale panel
  *  selection when the tab changes. */
@@ -211,7 +377,7 @@ export default function ClinicianShell() {
 }
 
 function ClinicianShellBody() {
-  const { user, logout } = useAuth()
+  const { user, logout, login } = useAuth()
   const { t, i18n } = useTranslation()
   /* The rail is derived from the module and feature flags, which /api/health
      settles once per sign-in. Subscribing here is what lets an answer that
@@ -383,9 +549,76 @@ function ClinicianShellBody() {
   // A hospital-wide account has no department: the chip read "Administrator ·"
   // and its tooltip "Administrator · null". With more than one facility on
   // record the facility follows (multisite-6); with one, nothing changes.
-  const { multiFacilityData } = usePlatformFlags()
+  const { multiSite, multiFacilityData } = usePlatformFlags()
   const facilityLabel = useFacilityLabel(user?.id, user?.facility, multiFacilityData)
-  const roleLine = [roleLabel, user?.department, facilityLabel].filter(Boolean).join(' · ')
+  // A visiting consultant's sign-in (multisite-19) says so after the facility.
+  const sessionFacilities = useSessionFacilities(user?.id, multiSite && multiFacilityData)
+  const visitingSession = !!sessionFacilities?.visiting
+  const roleLine = [roleLabel, user?.department, facilityLabel, visitingSession ? 'Visiting' : null]
+    .filter(Boolean)
+    .join(' · ')
+  const [isSwitchingFacility, setIsSwitchingFacility] = useState(false)
+  const facilitySwitchBusy = useRef(false)
+  // Set when a visiting sign-in is seen to end while a switch is in flight.
+  // The listener below stands aside then (a switch that commits ends the old
+  // session by design), so a switch that fails instead has no session left
+  // to carry on in, and signs out.
+  const endedDuringSwitch = useRef(false)
+  // A visiting sign-in that ends (access revoked, ORB_MULTI_SITE turned off)
+  // or idles goes back to the sign-in screen rather than re-opening in place:
+  // signing in again lands at the account's own facility, and the visiting
+  // facility's screens must not stay open under it. The reload also clears
+  // the expired-session prompt, which would otherwise open again over the
+  // next sign-in.
+  const endVisitingSession = useCallback(() => {
+    logout()
+    reloadPage()
+  }, [logout])
+  const markFacilitySwitchBusy = useCallback((busy: boolean) => {
+    facilitySwitchBusy.current = busy
+    if (busy) {
+      endedDuringSwitch.current = false
+    } else if (endedDuringSwitch.current) {
+      endedDuringSwitch.current = false
+      endVisitingSession()
+    }
+  }, [endVisitingSession])
+  const closeFacilitySwitch = useCallback(() => setIsSwitchingFacility(false), [])
+  // The new facility's details go into the stored sign-in, the facility being
+  // left is cleared out of this browser, and Orb reloads: every panel, poll
+  // and socket then starts again under the new session. This browser's other
+  // tabs share the sign-in cookie, so they are told to reload too.
+  const handleFacilitySwitched = (next: SwitchedUser) => {
+    facilitySwitchBusy.current = true
+    clearOfflineCache()
+    clearNurseDrafts()
+    if (user) login({ ...user, department: next.department ?? undefined, facility: next.facility ?? null })
+    announceFacilitySwitch()
+    reloadPage()
+  }
+  useEffect(() => {
+    if (!visitingSession) return
+    const handleSessionEnded = () => {
+      if (facilitySwitchBusy.current) {
+        endedDuringSwitch.current = true
+        return
+      }
+      endVisitingSession()
+    }
+    // The idle lock asks before it locks (AppRoot, "orb:idle-lock"): its
+    // password prompt would sign in at the account's own facility, so a
+    // visiting sign-in cancels the lock and signs out instead.
+    const handleIdleLock = (event: Event) => {
+      event.preventDefault()
+      endVisitingSession()
+    }
+    window.addEventListener('orb:session-expired', handleSessionEnded)
+    window.addEventListener('orb:idle-lock', handleIdleLock)
+    return () => {
+      window.removeEventListener('orb:session-expired', handleSessionEnded)
+      window.removeEventListener('orb:idle-lock', handleIdleLock)
+    }
+  }, [visitingSession, endVisitingSession])
 
   const toggleLanguage = () => {
     i18n.changeLanguage(i18n.language === 'hi' ? 'en' : 'hi')
@@ -553,6 +786,24 @@ function ClinicianShellBody() {
               </svg>
             </button>
           </div>
+          {/* Visiting consultants (multisite-19): offered only when the
+              server says this sign-in may move to another facility. */}
+          {sessionFacilities?.can_switch && (
+            <button
+              type="button"
+              className="btn-ghost"
+              id="btn-switch-facility"
+              onClick={() => setIsSwitchingFacility(true)}
+              title="Switch facility"
+              aria-label="Switch facility"
+              style={{ width: '100%' }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M3 21h18"/><path d="M5 21V8l7-5 7 5v13"/><path d="M10 21v-5h4v5"/>
+              </svg>
+              <span className="shell__nav-label">Switch facility</span>
+            </button>
+          )}
           <button className="shell__logout" onClick={logout} id="btn-logout" title={t('shell.signOutTitle')} aria-label={t('shell.signOutTitle')}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
@@ -845,6 +1096,16 @@ function ClinicianShellBody() {
       )}
 
       {isEnrollingMfa && <MfaEnrollmentModal onClose={() => setIsEnrollingMfa(false)} />}
+
+      {isSwitchingFacility && sessionFacilities && (
+        <FacilitySwitchDialog
+          options={sessionFacilities.options}
+          waitingToSync={isOffline || pendingCount > 0}
+          onBusy={markFacilitySwitchBusy}
+          onClose={closeFacilitySwitch}
+          onSwitched={handleFacilitySwitched}
+        />
+      )}
 
       {/* Global Cmd/Ctrl-K patient search — registers its own key listener. */}
       <CommandPalette />

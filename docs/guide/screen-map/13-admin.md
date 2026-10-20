@@ -94,12 +94,12 @@ and correct for the same reason, no ingestion, so no ingestion-driven alerts.
 ## How you get here
 
 The **Admin** item in the left sidebar of the clinician shell. It is a role-gated
-tab: `getAccessibleTabs()` in `src/pages/ClinicianShell.tsx:228` returns
+tab: `getAccessibleTabs()` in `src/pages/ClinicianShell.tsx:394` returns
 `'admin'` **only** for `case 'admin'`. A doctor, nurse or pharmacist has no
 Admin item in the sidebar at all, it is not greyed out, it does not exist.
 
-The panel itself is lazy-loaded (`src/pages/ClinicianShell.tsx:318`) and mounted
-inside a per-panel error boundary at `src/pages/ClinicianShell.tsx:605-609`. If
+The panel itself is lazy-loaded (`src/pages/ClinicianShell.tsx:484`) and mounted
+inside a per-panel error boundary at `src/pages/ClinicianShell.tsx:856-860`. If
 `AdminPanel` throws during render, the boundary labelled `"admin"` replaces the
 whole screen rather than blanking the app.
 
@@ -166,9 +166,9 @@ instant but keep stale data on screen.
 
 `src/pages/panels/admin/AdminOverview.tsx`. Single fetch on mount
 (`:20`) → `getAdminOverview()` (`src/api/client.ts:1829-1831`) → `GET
-/api/admin/overview` → `server/routes/admin_routes.py:28-133`
+/api/admin/overview` → `server/routes/admin_routes.py:29-147`
 (`admin_overview`). All figures are a rolling **24 hours** from
-`cutoff_24h` (`server/routes/admin_routes.py:33`).
+`cutoff_24h` (`server/routes/admin_routes.py:34`).
 
 ### "Ingestion Mode" stat card
 **Where:** first card, top-left of the six-card responsive grid
@@ -179,7 +179,7 @@ instant but keep stale data on screen.
 anything else → **Simulation**. Colour from `:27`: amber `--status-warn` for
 hybrid, green `--status-ok` for ingestion, grey `--text-muted` otherwise.
 **API:** `GET /api/admin/overview`.
-**Server:** `admin_routes.py:113` returns `INGESTION_MODE`, read from
+**Server:** `admin_routes.py:127` returns `INGESTION_MODE`, read from
 `server/config.py`.
 **Change this →** Set the mode env to `ingestion` and this card's word turns
 green and reads "Ingestion"; leave it unset and it reads a grey "Simulation".
@@ -189,7 +189,7 @@ Nothing else on the screen changes with it.
 **Where:** small grey line under the Ingestion Mode word.
 **Rendered by:** `AdminOverview.tsx:36-38`.
 **Data from:** `data.audit_simulation_enabled` ← `AUDIT_SIMULATION_EVENTS`
-(`admin_routes.py:114`).
+(`admin_routes.py:128`).
 **Change this →** Flipping it to On means simulator-generated activity also
 writes audit rows, which inflates the "Audit Events (24h)" number on the card
 next to it and adds rows to the Audit Logs tab.
@@ -198,7 +198,7 @@ next to it and adds rows to the Audit Logs tab.
 **Where:** second card in the grid.
 **Rendered by:** `AdminOverview.tsx:41-49`; the number at `:43`.
 **Data from:** `data.audit_total_24h`, summed server-side at
-`admin_routes.py:44`.
+`admin_routes.py:45`.
 **Change this →** The number is a plain locale-formatted count with no colour
 rule, it never goes red. It reads 0 only on a genuinely silent appliance.
 
@@ -208,7 +208,7 @@ rule, it never goes red. It reads 0 only on a genuinely silent appliance.
 per category, printed as `category: count` with the **raw** snake_case enum
 (this card does *not* use `humaniseEnum`, unlike the Audit Logs table).
 **Data from:** `data.audit_categories`, from the `GROUP BY event_category`
-at `admin_routes.py:37-45`.
+at `admin_routes.py:38-46`.
 **Change this →** Add a new `event_category` anywhere in the server and a new
 chip appears here the next day with no frontend change. This is the fastest way
 to confirm a category name, the Security tab's three-category filter
@@ -218,7 +218,7 @@ to confirm a category name, the Security tab's three-category filter
 **Where:** third card.
 **Rendered by:** `AdminOverview.tsx:51-59`; total at `:53`, chips at `:55-57`.
 **Data from:** `data.ingestion.{total,parsed,failed,duplicates}` from the single
-aggregate query at `admin_routes.py:57-68`.
+aggregate query at `admin_routes.py:58-69`.
 **Change this →** The green "N parsed" chip is always shown. The red "N failed"
 and amber "N dupes" chips appear **only when non-zero** (`:56`, `:57`), so a
 clean hour shows one chip, not three. A failure also populates the "Recent Parse
@@ -229,7 +229,7 @@ Failures" table lower on this same tab.
 **Rendered by:** `AdminOverview.tsx:61-73`. The headline is a count of distinct
 sources at `:63-65` ("2 sources"), rendered smaller than the other cards
 (inline `fontSize: '1.3rem'`).
-**Data from:** `data.source_mix` (`admin_routes.py:71-77`).
+**Data from:** `data.source_mix` (`admin_routes.py:72-78`).
 **Server:** `GROUP BY source_type` over `ingestion_events`.
 **Change this →** Each source renders as a coloured `SourceBadge` followed by
 its count (`:69`). Badge labels/colours are in
@@ -243,7 +243,7 @@ is your signal that a new source type shipped without a badge.
 **Where:** fifth card.
 **Rendered by:** `AdminOverview.tsx:75-84`. Number at `:78`.
 **Data from:** `data.alerts.vigil + data.alerts.relay`, counted at
-`admin_routes.py:80-88` from `action_type IN ('vigil_alert_generated',
+`admin_routes.py:81-89` from `action_type IN ('vigil_alert_generated',
 'relay_alert_generated')`.
 **Change this →** This is the only stat card with a conditional colour: the
 number turns **red** (`--status-danger`) the moment the sum is greater than zero
@@ -253,7 +253,7 @@ and is grey at zero (`:77`). Split counts appear as two chips below (`:81-82`).
 **Where:** sixth card.
 **Rendered by:** `AdminOverview.tsx:86-93`.
 **Data from:** `data.ingestion.total_vitals + data.ingestion.total_observations`
-(`admin_routes.py:63-64`, `SUM(COALESCE(...))`).
+(`admin_routes.py:64-65`, `SUM(COALESCE(...))`).
 **Change this →** Two chips below break it into vitals and observations. If
 payloads are arriving (card 3) but this stays at 0, parsing is succeeding and
 writing is not.
@@ -264,7 +264,7 @@ writing is not.
 `data.recent_failures.length > 0` at `:97`. Columns: **Time · Source · Error ·
 Correlation** (`:104-107`).
 **Data from:** `data.recent_failures`, the last **5** failed rows,
-`admin_routes.py:91-96` (`ORDER BY received_at DESC LIMIT 5`).
+`admin_routes.py:92-97` (`ORDER BY received_at DESC LIMIT 5`).
 **Change this →** Time is a bare local *time* (no date, `:113`). The correlation
 cell is truncated to 12 characters plus an ellipsis (`:116`) and is **not**
 clickable here, unlike the Audit Logs tab, there is no trace link. Fix a parser
@@ -275,10 +275,10 @@ and this whole section vanishes on the next load.
 **Rendered by:** `AdminOverview.tsx:126-139`, guarded at `:126`. One glass chip
 per (action, outcome) pair: the action with underscores replaced by spaces, an
 `OutcomeBadge`, then the count (`:131-135`).
-**Data from:** `data.auth_events`, `admin_routes.py:102-110`, 
+**Data from:** `data.auth_events`, `admin_routes.py:508-519`, 
 `GROUP BY action_type, outcome` restricted to
 `event_category IN ('authentication','authorization')`.
-**Change this →** This is the fix-scar noted at `admin_routes.py:99-101`: the
+**Change this →** This is the fix-scar noted at `admin_routes.py:504-507`: the
 filter used to be the single value `'auth'`, which matches nothing, so this
 section was permanently absent. If it disappears again, check that filter first.
 
@@ -1126,7 +1126,7 @@ status rail, name, evidence and remediation (`:193-210`); and **"MFA adoption"**
 (`:212-236`), a per-role bar with `enrolled/total · pct`, a "required" tag on
 mandated roles, and the header line `N/M users (P%)`.
 **API:** `GET /api/admin/compliance/` (`:88`) →
-`server/routes/compliance_routes.py:125-128` →
+`server/routes/compliance_routes.py:160-163` →
 `server/services/compliance_service.py::compliance_report`.
 **Change this →** This is the aggregate counterpart to the Users tab's per-user
 MFA chip. Enrol one user in TOTP and their row's chip flips to green **and** the
@@ -1153,15 +1153,15 @@ to be forgotten", an explanatory paragraph, a Patient ID input and a red
 **API:** `GET /api/admin/backups` (`:375`) and `POST /api/admin/backups`
 (`:396`) → `server/routes/backup_routes.py:113-114` and `:207-208`;
 `POST /api/admin/patients/{id}/erase` with an `Idempotency-Key` header
-(`:232-236`) → `server/routes/admin_routes.py:265-266` (`erase_patient`), whose
+(`:232-236`) → `server/routes/admin_routes.py:889-890` (`erase_patient`), whose
 deletion plan is derived from the live schema by `_build_erase_plan`
-(`server/routes/admin_routes.py:171`).
+(`server/routes/admin_routes.py:791`).
 **Change this →** Both destructive actions go through their own confirm dialogs
 (`:53`, `:90`). The erase result renders as a green status block reading either
 "Patient P001 erased, N clinical record(s) removed." or "Patient P001 was
 already erased." (`:296-298`); a failure renders as a red inline error (`:281`).
 `audit_logs` is deliberately **kept** during erasure
-(`server/routes/admin_routes.py:148-153`), the audit trail is what makes the
+(`server/routes/admin_routes.py:162-167`), the audit trail is what makes the
 erasure provable and it is hash-chained.
 
 ---
@@ -1191,7 +1191,7 @@ checklist, the Data & Backups tab's backup list, and the Scorecard's
 | Empty | Optional icon, a title, an optional message | `AdminEmptyState.tsx:1-9` |
 | No permission | Arrives as a 403 → the error state's message slot shows the server's "Insufficient permissions" text (`server/permissions.py:439`) | `src/api/client.ts:210-225`, `server/permissions.py:405-443` |
 | Session expired | A 401 fires `notifySessionExpired()` globally rather than rendering here | `src/api/client.ts:204-206` |
-| Panel crash | The `"admin"` error boundary replaces the screen | `src/pages/ClinicianShell.tsx:606-608` |
+| Panel crash | The `"admin"` error boundary replaces the screen | `src/pages/ClinicianShell.tsx:857-859` |
 
 ---
 

@@ -382,7 +382,7 @@ Jargon: a **React hook** is a function starting with `use` that lets a component
 6. Render: a sticky toolbar (Reload / Capture-or-Re-capture / Print) that is hidden when printing, then the printable document, banner, demographics grid, **allergies section (red when present, green "NKDA" when empty)**, latest vitals + NEWS2 badge, problems, meds table, recent signed notes, and a footer stamping the snapshot id and "may not reflect changes after <time>".
 **Why it exists:** to be the ward's safe fallback view: paper-like, high-contrast, one-tap print, no live data / streaming / LLM.
 **Data in/out:** consumes a `DowntimeSnapshotEnvelope`; produces DOM + a print job.
-**Talks to:** `getLatestSnapshot`, `captureSnapshot` from `src/api/downtime.ts`. Mounted by the router at `/downtime/:patientId`, gated to non-patient roles (`src/AppRoot.tsx:185`).
+**Talks to:** `getLatestSnapshot`, `captureSnapshot` from `src/api/downtime.ts`. Mounted by the router at `/downtime/:patientId`, gated to non-patient roles (`src/AppRoot.tsx:239`).
 **Change guide:** To surface snapshot history, call `listSnapshots` and add a picker that sets `env`; knock-on: none server-side, the contract already exists. To show a staleness warning, compare `env.created_at` to `Date.now()` and render a banner when older than, say, 2 hours. Watch out: the page never auto-polls, it is intentionally static; do not add a socket subscription or you reintroduce a network dependency into the one screen that must work offline.
 **Gotchas:** The "Print" button is disabled until `env` exists (`src/pages/DowntimeMode.tsx:112`). If the backend itself is down (not just the EHR/LLM), `getLatestSnapshot` will fail and the page shows an error, the app-shell loads offline via the PWA, but the snapshot *data* still needs the backend reachable; the true "network fully gone" fallback is the already-printed paper.
 
@@ -438,7 +438,7 @@ Mounts the `/api/downtime` routes onto the app. Without this line the endpoints 
 
 **Consumes from other subsystems (contracts, not owned here):** `compute_news2` (Vigil, `server/services/vigil_service.py:227`), `patient_bundle` (FHIR export, `server/services/fhir_export_service.py:502`), `log_audit_event` (audit), `require_permission` (RBAC, `server/permissions.py:165`), `db_session` (DB). Reads from tables `patients`, `patient_allergies`, `problem_list`, `medications`, `vitals`, `scribe_notes`, `risk_scores`, `users`.
 
-**Frontend contract:** router mounts `DowntimeMode` at `/downtime/:patientId` for non-patient roles (`src/AppRoot.tsx:185`). PWA precache config lives at `vite.config.ts:26`. The offline write queue key is `localStorage['orb_offline_queue']`, replayed on `window 'online'` (`src/api/client.ts:567`).
+**Frontend contract:** router mounts `DowntimeMode` at `/downtime/:patientId` for non-patient roles (`src/AppRoot.tsx:239`). PWA precache config lives at `vite.config.ts:26`. The offline write queue key is `localStorage['orb_offline_queue']`, replayed on `window 'online'` (`src/api/client.ts:567`).
 
 ---
 

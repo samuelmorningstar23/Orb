@@ -17,19 +17,32 @@ scope and returns 404 (never 403) when out of scope — a 403 confirms the patie
 exists, which is itself a disclosure. The data-principal export is the largest
 PHI disclosure Orb can perform, so it carries an explicit, fail-closed
 ``phi_access`` audit row naming the sections and row counts it produced.
+
+FACILITIES (multisite-9b). With more than one facility of a group on the
+appliance, an account bound to one facility (permissions.facility_scope) sees
+the erasure requests of its facility's patients only, and only its facility's
+patients among a breach's affected people (the breach itself is the legal
+entity's and stays visible, with the number withheld stated). The retention
+review counts every facility's records, so it is answered for a named
+patient, or to an account with group-wide access (403 group_wide_only
+otherwise). One facility on record: the scope is None and nothing changes.
 """
 
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterable
 
+from database import db_session
 from fastapi import APIRouter, Depends, HTTPException, Request
 from permissions import (
     CONSENT_RECORD,
     department_scope,
     enforce_patient_scope,
+    facility_scope,
     require_patient_access,
     require_permission,
+    scope_patient_ids_sql,
 )
 from pydantic import BaseModel, Field
 from services.audit_service import log_audit_event
@@ -96,6 +109,28 @@ class BreachNotificationBody(BaseModel):
     reference: str | None = None
     content_summary: str | None = None
     notified_at: str | None = None
+
+
+def _patients_at(ids: Iterable[str | None], facilities: frozenset[int]) -> set[str]:
+    """The patient ids among `ids` whose latest encounter is at `facilities`
+    (the one scope derivation, permissions.scope_patient_ids_sql)."""
+    wanted = sorted({str(i) for i in ids if i})
+    if not wanted:
+        return set()
+    scope_sql, scope_params = scope_patient_ids_sql(None, facilities=facilities)
+    out: set[str] = set()
+    with db_session() as db:
+        for i in range(0, len(wanted), 500):
+            chunk = wanted[i : i + 500]
+            marks = ", ".join("?" for _ in chunk)
+            out |= {
+                str(r[0])
+                for r in db.execute(
+                    f"SELECT id FROM ({scope_sql}) WHERE id IN ({marks})",
+                    (*scope_params, *chunk),
+                ).fetchall()
+            }
+    return out
 
 
 def _audit(
@@ -352,15 +387,31 @@ def export_data_principal(
 _GET_RETENTION_USER_DEFAULT = Depends(require_permission("admin.overview"))
 
 
-@router.get("/retention")
+@router.get("/retention", response_model=None)
 def get_retention(
     request: Request,
     patient_id: str | None = None,
     user: dict = _GET_RETENTION_USER_DEFAULT,
-):
-    """The retention matrix plus what is past it. Deletes nothing, ever."""
+) -> dict:
+    """The retention matrix plus what is past it. Deletes nothing, ever.
+
+    Without a patient the review counts every facility's records, so a
+    facility-bound account gets it only for a patient it names (multisite-9b).
+    """
     if patient_id:
         enforce_patient_scope(user, patient_id)
+    elif facility_scope(user) is not None:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "group_wide_only",
+                "message": (
+                    "The retention review counts the records of every facility of the "
+                    "group, so it needs an account with group-wide access. Name a "
+                    "patient to see theirs."
+                ),
+            },
+        )
     return {
         "policies": consent.list_retention_policies(),
         "review": consent.retention_review(patient_id=patient_id),
@@ -410,22 +461,31 @@ def create_erasure_request(
 _LIST_ERASURE_USER_DEFAULT = Depends(require_permission("admin.overview"))
 
 
-@router.get("/erasure")
+@router.get("/erasure", response_model=None)
 def list_erasure(
     patient_id: str | None = None,
     status: str | None = None,
     user: dict = _LIST_ERASURE_USER_DEFAULT,
-):
+) -> dict:
     if patient_id:
         enforce_patient_scope(user, patient_id)
     # Every row names a patient, so the LISTING is ward-scoped too — not just
     # the by-id lookups. department_scope() returns None for a genuinely
     # unscoped governance account, which the service reads as "no filter".
-    return {
-        "requests": consent.list_erasure_requests(
-            patient_id=patient_id, status=status, department=department_scope(user)
-        )
-    }
+    facilities = facility_scope(user)
+    if facilities is None:
+        return {
+            "requests": consent.list_erasure_requests(
+                patient_id=patient_id, status=status, department=department_scope(user)
+            )
+        }
+    # And to the caller's facilities' patients (multisite-9b), the limit
+    # applied after that filter.
+    rows = consent.list_erasure_requests(
+        patient_id=patient_id, status=status, department=department_scope(user), limit=2000
+    )
+    mine = _patients_at((r.get("patient_id") for r in rows), facilities)
+    return {"requests": [r for r in rows if r.get("patient_id") in mine][:200]}
 
 
 _GET_ERASURE_USER_DEFAULT = Depends(require_permission("admin.overview"))
@@ -612,17 +672,44 @@ def get_breaches(user: dict = _GET_BREACHES_USER_DEFAULT):
     return {"breaches": consent.list_breaches()}
 
 
+def _withhold_other_facilities(breach: dict, facilities: frozenset[int]) -> None:
+    """Keep a breach's affected patients to the caller's facilities, in
+    place, and add the rest to the number withheld."""
+    import json
+
+    raw = breach.get("affected_patient_ids")
+    if raw is None and breach.get("affected_patient_ids_json"):
+        try:
+            raw = json.loads(breach["affected_patient_ids_json"])
+        except (TypeError, ValueError):
+            raw = []
+    affected = [str(p) for p in (raw or [])]
+    mine = _patients_at(affected, facilities)
+    visible = [p for p in affected if p in mine]
+    breach["affected_patient_ids_withheld"] = int(
+        breach.get("affected_patient_ids_withheld") or 0
+    ) + (len(affected) - len(visible))
+    breach["affected_patient_ids"] = visible
+    if "affected_patient_ids_json" in breach:
+        breach["affected_patient_ids_json"] = json.dumps(visible)
+
+
 _GET_BREACH_DETAIL_USER_DEFAULT = Depends(require_permission("admin.overview"))
 
 
-@router.get("/breaches/{breach_id}")
-def get_breach_detail(breach_id: str, user: dict = _GET_BREACH_DETAIL_USER_DEFAULT):
+@router.get("/breaches/{breach_id}", response_model=None)
+def get_breach_detail(breach_id: str, user: dict = _GET_BREACH_DETAIL_USER_DEFAULT) -> dict:
     """One breach. The incident is visible hospital-wide; the list of affected
-    PATIENTS is filtered to the caller's ward, with the withheld count stated."""
+    PATIENTS is filtered to the caller's ward (and facility, multisite-9b),
+    with the withheld count stated."""
     try:
-        return consent.get_breach(breach_id, department=department_scope(user))
+        breach = consent.get_breach(breach_id, department=department_scope(user))
     except ValueError:
         raise HTTPException(status_code=404, detail="Breach record not found") from None
+    facilities = facility_scope(user)
+    if facilities is not None:
+        _withhold_other_facilities(breach, facilities)
+    return breach
 
 
 _CREATE_BREACH_NOTIFICATION_USER_DEFAULT = Depends(require_permission("admin.overview"))

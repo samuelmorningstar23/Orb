@@ -66,6 +66,7 @@ from typing import Any
 
 from permissions import scope_patient_ids_sql
 
+from services import lab_facility
 from services import lab_master_service as lm
 from services.clinical_time import parse_to_utc
 from services.hospital_time import (
@@ -235,11 +236,23 @@ def _marks(values) -> str:
     return ", ".join("?" for _ in values)
 
 
-def _scope_clause(column: str, dept: str | None) -> tuple[str, tuple]:
+def _scope_clause(
+    column: str,
+    dept: str | None,
+    facilities: frozenset[int] | None = None,
+    facility_sql: str | None = None,
+) -> tuple[str, tuple]:
+    """The department clause on `column` (a patient id), then the facility
+    clause for the caller's facility_scope (lab_facility.list_clause: the
+    performing facility `facility_sql` names for a department-less account,
+    the patient's facility for a ward); both empty with no limit."""
+    facility_where, facility_params = lab_facility.list_clause(
+        dept=dept, facilities=facilities, patient_col=column, facility_sql=facility_sql
+    )
     if dept is None:
-        return "", ()
+        return facility_where, tuple(facility_params)
     sql, params = scope_patient_ids_sql(dept)
-    return f" AND {column} IN ({sql})", tuple(params)
+    return f" AND {column} IN ({sql})" + facility_where, (*params, *facility_params)
 
 
 def _ward_clause(column: str, ward_key: str | None) -> tuple[str, tuple]:
@@ -257,14 +270,27 @@ def _ward_clause(column: str, ward_key: str | None) -> tuple[str, tuple]:
 
 
 def reported_tests(
-    conn, start: datetime, end: datetime, *, dept: str | None = None, ward_key: str | None = None
+    conn: Any,
+    start: datetime,
+    end: datetime,
+    *,
+    dept: str | None = None,
+    ward_key: str | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> list[dict]:
     """One dict per test first reported in [start, end): its instants, its
     four intervals in minutes (None where unreadable or out of order), its
-    target and whether it was within it. Oldest report first."""
+    target and whether it was within it. Oldest report first. `facilities`
+    (the caller's facility_scope) keeps it to the samples its facilities'
+    laboratories perform (a ward: its patients there)."""
     if not tables_present(conn):
         return []
-    scope_sql, scope_params = _scope_clause("r.patient_id", dept)
+    scope_sql, scope_params = _scope_clause(
+        "r.patient_id",
+        dept,
+        facilities,
+        lab_facility.specimen_facility_sql("r.specimen_id", "r.patient_id"),
+    )
     ward_sql, ward_params = _ward_clause("r.patient_id", ward_key)
     # Candidates: any test with a release inside the window (julianday reads
     # every spelling Orb writes). Its FIRST release is decided below in Python,
@@ -471,18 +497,35 @@ def aggregate(rows: list[dict], first: date, last: date) -> dict:
 
 
 def critical_times(
-    conn, start: datetime, end: datetime, *, dept: str | None = None, ward_key: str | None = None
+    conn: Any,
+    start: datetime,
+    end: datetime,
+    *,
+    dept: str | None = None,
+    ward_key: str | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> list[dict]:
     """One dict per critical result raised in [start, end): raised_at, the
     first 'acknowledged' event after it, how it was closed ('phone_log' for
     the laboratory's callback with a read-back, 'ward_read_back' otherwise)
-    and the minutes between, None while it is still open."""
+    and the minutes between, None while it is still open. `facilities` (the
+    caller's facility_scope) keeps it to the criticals of its facilities'
+    laboratories (a ward: its patients there)."""
     present = conn.execute(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'lab_critical_events'"
     ).fetchone()[0]
     if not present:
         return []
-    scope_sql, scope_params = _scope_clause("e.patient_id", dept)
+    scope_sql, scope_params = _scope_clause(
+        "e.patient_id",
+        dept,
+        facilities,
+        lab_facility.critical_facility_sql(
+            "(SELECT lf_n.result_id FROM lab_critical_notifications lf_n "
+            "WHERE lf_n.id = e.notification_id)",
+            "e.patient_id",
+        ),
+    )
     ward_sql, ward_params = _ward_clause("e.patient_id", ward_key)
     raised = [
         dict(r)
@@ -573,15 +616,22 @@ def critical_summary(rows: list[dict], *, now: datetime | None = None) -> dict:
 
 
 def overdue_tests(
-    conn, *, dept: str | None, now: datetime | None = None, limit: int = OVERDUE_CAP
+    conn: Any,
+    *,
+    dept: str | None,
+    now: datetime | None = None,
+    limit: int = OVERDUE_CAP,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Tests in the laboratory (received, not released) whose receipt-to-report
     target has passed, STAT first, then the most overdue. Also counts the
-    tests in the laboratory that have no target, which can never be overdue."""
+    tests in the laboratory that have no target, which can never be overdue.
+    `facilities` (the caller's facility_scope) keeps it to the samples its
+    facilities' laboratories perform (a ward: its patients there)."""
     if not tables_present(conn):
         return {"items": [], "total": 0, "in_lab": 0, "in_lab_without_target": 0}
     now = now or datetime.now(UTC)
-    scope_sql, scope_params = _scope_clause("i.patient_id", dept)
+    scope_sql, scope_params = _scope_clause("i.patient_id", dept, facilities, "s.facility_id")
     rows = [
         dict(r)
         for r in conn.execute(
@@ -651,11 +701,14 @@ def overdue_tests(
     }
 
 
-def open_exception_counts(conn, *, dept: str | None) -> dict:
+def open_exception_counts(
+    conn: Any, *, dept: str | None, facilities: frozenset[int] | None = None
+) -> dict:
     """Open laboratory exceptions by kind, counts only. A department account
     counts only rows whose order's patient is in its department, by the same
     predicate as the exceptions list (lab_order_service.list_open_exceptions):
-    a row with no order is not counted for it."""
+    a row with no order is not counted for it. `facilities` counts only the
+    caller's facilities' rows, by the same rule as that list."""
     present = conn.execute(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'lab_exceptions'"
     ).fetchone()[0]
@@ -667,6 +720,14 @@ def open_exception_counts(conn, *, dept: str | None) -> dict:
         scope_sql, scope_params = scope_patient_ids_sql(dept)
         where += f" AND o.patient_id IN ({scope_sql})"
         params = tuple(scope_params)
+    facility_where, facility_params = lab_facility.list_clause(
+        dept=dept,
+        facilities=facilities,
+        patient_col="o.patient_id",
+        facility_sql=lab_facility.specimen_facility_sql("x.specimen_id", "o.patient_id"),
+    )
+    where += facility_where
+    params += tuple(facility_params)
     rows = conn.execute(
         f"SELECT x.kind, COUNT(*) AS n FROM lab_exceptions x "
         f"LEFT JOIN orders o ON o.id = x.order_id WHERE {where} GROUP BY x.kind",
@@ -690,12 +751,21 @@ def open_exception_counts(conn, *, dept: str | None) -> dict:
 
 
 def dashboard(
-    conn, *, first: date, last: date, dept: str | None, now: datetime | None = None
+    conn: Any,
+    *,
+    first: date,
+    last: date,
+    dept: str | None,
+    now: datetime | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
+    """The turnaround screen for one period: figures, criticals, the live
+    overdue list and the open exceptions, all inside the caller's department
+    and `facilities` (the caller's facility_scope; None changes nothing)."""
     start, end = period_bounds(first, last)
-    rows = reported_tests(conn, start, end, dept=dept)
+    rows = reported_tests(conn, start, end, dept=dept, facilities=facilities)
     figures = aggregate(rows, first, last)
-    crit = critical_times(conn, start, end, dept=dept)
+    crit = critical_times(conn, start, end, dept=dept, facilities=facilities)
     local_now = hospital_now()
     return {
         "period": {
@@ -710,8 +780,8 @@ def dashboard(
         "target_interval": TARGET_INTERVAL,
         **figures,
         "critical": critical_summary(crit, now=now),
-        "overdue": overdue_tests(conn, dept=dept, now=now),
-        "exceptions": open_exception_counts(conn, dept=dept),
+        "overdue": overdue_tests(conn, dept=dept, now=now, facilities=facilities),
+        "exceptions": open_exception_counts(conn, dept=dept, facilities=facilities),
         "limits": {"max_period_days": MAX_PERIOD_DAYS, "overdue_cap": OVERDUE_CAP},
     }
 
@@ -756,12 +826,20 @@ def _num(value: float | None) -> str:
     return "" if value is None else f"{value:.1f}"
 
 
-def export_csv(conn, *, first: date, last: date, dept: str | None) -> dict:
+def export_csv(
+    conn: Any,
+    *,
+    first: date,
+    last: date,
+    dept: str | None,
+    facilities: frozenset[int] | None = None,
+) -> dict:
     """Every test first reported in the period, one CSV row each, oldest
     first. No patient name or UHID: the accession links a row to the record
-    for anyone entitled to open it."""
+    for anyone entitled to open it. `facilities` (the caller's
+    facility_scope) keeps it to the caller's facilities."""
     start, end = period_bounds(first, last)
-    rows = reported_tests(conn, start, end, dept=dept)
+    rows = reported_tests(conn, start, end, dept=dept, facilities=facilities)
     buffer = io.StringIO()
     writer = csv.writer(buffer, lineterminator="\r\n")
     writer.writerow(EXPORT_COLUMNS)

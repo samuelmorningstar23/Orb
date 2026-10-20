@@ -14,7 +14,7 @@ has already told it:
 On top of any of those, an **authenticator-code step** can take over the form,
 and a full-screen **MFA enrolment modal** can cover the whole page.
 
-**Route:** `/login/:mode`, `src/AppRoot.tsx:181`. If a user is already in context the
+**Route:** `/login/:mode`, `src/AppRoot.tsx:235`. If a user is already in context the
 route redirects instead of rendering (same line), so a signed-in person can never
 see this screen.
 **Component:** `src/pages/Login.tsx` (whole file is one default-exported
@@ -51,7 +51,7 @@ same elements.
 ## The page canvas
 
 **Where:** everything. The full viewport behind the card.
-**Rendered by:** `src/pages/Login.tsx:255`, `<div className="login">`.
+**Rendered by:** `src/pages/Login.tsx:260`, `<div className="login">`.
 **Data from:** nothing. Static wrapper.
 **API:** none.
 **Server:** none.
@@ -65,7 +65,7 @@ its own.
 ## The card
 
 **Where:** the single panel in the middle of the screen, max 440px wide.
-**Rendered by:** `src/pages/Login.tsx:258`, 
+**Rendered by:** `src/pages/Login.tsx:263`, 
 `<div className="login__card glass-card animate-slide-up">`.
 **Data from:** none.
 **API:** none.
@@ -84,7 +84,7 @@ card simply appears.
 
 **Where:** top-centre of the card, above the title. A 40px circle with a
 rotating arc around a glowing core.
-**Rendered by:** `src/pages/Login.tsx:260`, `<OrbLogo size={40} />`, which is
+**Rendered by:** `src/pages/Login.tsx:265`, `<OrbLogo size={40} />`, which is
 `src/components/OrbLogo.tsx:3-10` (a `.orb-logo` box with a `__ring` and a
 `__core` div).
 **Data from:** the literal `size={40}` prop. Nothing dynamic.
@@ -93,7 +93,7 @@ rotating arc around a glowing core.
 **Change this →** `src/components/OrbLogo.css:8-16` spins the ring (`orb-spin`,
 3s linear infinite, coloured `--accent-gold` on top and `--orb-ring-2` on the
 right). `:18-24` pulses the core with a radial gradient from `--accent-warm` to
-`--accent-deep`. Change `size={40}` at `Login.tsx:260` and both halves scale
+`--accent-deep`. Change `size={40}` at `Login.tsx:265` and both halves scale
 together (the core is `50%` of the box). This is the only moving thing on the
 screen; killing the two `animation:` lines makes the login screen completely
 static.
@@ -101,7 +101,7 @@ static.
 ## Card title: "Clinician Login" / "Patient Access"
 
 **Where:** directly under the logo, centred, 1.5rem.
-**Rendered by:** `src/pages/Login.tsx:261-263`, 
+**Rendered by:** `src/pages/Login.tsx:266-268`, 
 `{isPatient ? t('login.patientAccess') : t('login.clinicianLogin')}`.
 **Data from:** `isPatient`, set once at `Login.tsx:16` from the URL:
 `const isPatient = mode === 'patient'`, where `mode` is the `:mode` route param
@@ -120,7 +120,7 @@ switched language from inside the app. Note the URL is the only switch: visiting
 ## Card subtitle: "Orb Clinical Platform" / "Orb Bridge"
 
 **Where:** one line under the title, small and muted.
-**Rendered by:** `src/pages/Login.tsx:264-266`, 
+**Rendered by:** `src/pages/Login.tsx:269-271`, 
 `{isPatient ? t('login.bridge') : t('login.clinicalPlatform')}`.
 **Data from:** same `isPatient` flag; strings at
 `src/i18n/locales/en.json:74-75`.
@@ -134,7 +134,7 @@ before a patient signs in.
 
 **Where:** a small pill under the subtitle, e.g. "Ward GM-1 trolley". **Only on
 a bound ward tablet.**
-**Rendered by:** `src/pages/Login.tsx:269-271`, 
+**Rendered by:** `src/pages/Login.tsx:274-276`, 
 `{device?.enrolled && !isPatient && (<p className="login__device-badge">{device.label}</p>)}`.
 **Data from:** `device` state (`Login.tsx:30`), set by the effect at
 `Login.tsx:42-51` which calls `getDeviceStatus()` on mount and never runs for
@@ -142,17 +142,17 @@ a bound ward tablet.**
 **API:** `GET /api/auth/device`, `src/api/deviceAuth.ts:36-42`. That helper
 **swallows its own errors** and returns `{ enrolled: false }`, so a server that
 cannot answer produces no badge and no error banner.
-**Server:** `server/routes/auth_routes.py:1199` `device_status()`. It reads the
+**Server:** `server/routes/auth_routes.py:1449` `device_status()`. It reads the
 HttpOnly `orb_device` cookie via `auth.extract_device_token`
-(`server/auth.py:270-285`), resolves it with `auth.load_active_device`
-(`server/auth.py:299-321`, a single SHA-256 index probe against
+(`server/auth.py:271-286`), resolves it with `auth.load_active_device`
+(`server/auth.py:300-322`, a single SHA-256 index probe against
 `enrolled_devices WHERE secret_hash = ? AND revoked_at IS NULL`), and returns
 `{enrolled, device_id, label, department, session_minutes}`. The `label` you see
 is the `enrolled_devices.label` column. A cookie that no longer resolves is
-actively *deleted* (`auth_routes.py:1216-1217`) so a revoked tablet stops
+actively *deleted* (`auth_routes.py:1466-1467`) so a revoked tablet stops
 re-sending a dead credential.
 **Change this →** revoke the tablet in admin (`POST /api/auth/devices/{id}/revoke`,
-`auth_routes.py:1042`) and on the next page load the badge vanishes, the PIN pad
+`auth_routes.py:1047`) and on the next page load the badge vanishes, the PIN pad
 is replaced by the password form, and the "Set up this tablet for PIN sign-in"
 link reappears. Rename the device and the badge text changes with no frontend
 change at all. `session_minutes` is returned by the server but **never rendered**
@@ -166,10 +166,10 @@ Styling: `.login__device-badge` (`Login.css:197-204`) is a pill, hairline border
 
 **Where:** between the card header and the first field. A red-tinted strip the
 full width of the card. Absent until something fails.
-**Rendered by:** `src/pages/Login.tsx:274`, 
+**Rendered by:** `src/pages/Login.tsx:279`, 
 `{error && <div className="login__error">{error}</div>}`.
 **Data from:** the `error` string state (`Login.tsx:21`). It is set in eleven
-places and cleared at the start of every submit (`Login.tsx:110`, `135`, `150`).
+places and cleared at the start of every submit (`Login.tsx:115`, `135`, `150`).
 **API:** whichever call failed.
 **Server:** see the error table below.
 **Change this →** `.login__error` (`Login.css:136-145`) is a
@@ -178,33 +178,33 @@ type, the no-opacity house rule, so it stays legible in both themes. It has **no
 `role="alert"`**, so a screen reader is not told when it appears (the MFA modal's
 equivalent at `MfaEnrollmentModal.tsx:186` does have one). It disappears the
 moment any submit starts, or when you tap either of the toggle links (which call
-`setError('')` at `Login.tsx:443` and `:466`).
+`setError('')` at `Login.tsx:448` and `:471`).
 
 ### Which server response produces which message
 
 Every message below travels the same path: FastAPI raises `HTTPException`, the
 body is `{"detail": "..."}`, and `apiFetch` (`src/api/client.ts:195-268`) turns
 `detail` into `new Error(detail).message`. `handleLogin`'s catch
-(`Login.tsx:168-204`) then either branches on the exact string or shows it raw.
+(`Login.tsx:173-209`) then either branches on the exact string or shows it raw.
 
 | Seen in the banner | HTTP | Server line | Cause |
 |---|---|---|---|
-| `Invalid credentials` | 401 | `auth_routes.py:436` | Unknown employee ID **or** wrong password, one message for both, on purpose |
-| `Account temporarily locked after too many failed attempts. Try again later.` | 429 | `auth_routes.py:410` | 8 failures on this account (`ACCOUNT_MAX_FAILURES`, `:83`), 15-min lock |
-| `Too many login attempts. Please try again in 15 minutes.` | 429 | `auth_routes.py:388` | 5 attempts from this IP in 15 min (`MAX_LOGIN_ATTEMPTS`, `:40`) |
-| `Account deactivated. Contact an administrator.` | 403 | `auth_routes.py:451` | `users.is_active = 0`. Checked **after** the password is verified |
-| `Invalid authenticator code, check the 6-digit code and try again.` | 401 | `auth_routes.py:522` (`Invalid MFA code`) | Rewritten client-side at `Login.tsx:177-178` |
-| *(no banner, the code field appears instead)* | 401 | `auth_routes.py:497` (`mfa_required`) | Password right, TOTP not supplied |
-| *(no banner, the enrolment modal opens)* | 403 | `auth_routes.py:485-489` (`mfa_enrollment_required`) | Role in `ORB_MFA_REQUIRED_ROLES` with no TOTP factor yet |
-| `This account needs an authenticator app before signing in, but the enrolment ticket did not reach the browser…` | 403 | same, but the `X-MFA-Enrollment-Ticket` header was stripped | `Login.tsx:194-198` |
-| `Enter your staff ID.` / `Enter your 4-digit PIN.` / `Enter the 6-digit code…` / `Please enter your password.` / `Paste the full setup code from the administrator.` | n/a | n/a | Client-side guards, `Login.tsx:214, 222, 226, 235, 245`, no request is sent |
-| `Invalid staff ID or PIN` | 401 | `auth_routes.py:1351` | Unknown staff ID **or** wrong PIN, one message for both, on purpose |
-| `This tablet is not set up for PIN sign-in. Use your password.` | 401 | `auth_routes.py:1270-1274` | Rewritten at `Login.tsx:123`; also flips the form back to password |
-| `This tablet is temporarily locked after too many failed PINs. Sign in with your password, or ask an administrator to clear it.` | 429 | `auth_routes.py:1292-1296` | 15 failed PINs on this **device** (`DEVICE_SWEEP_MAX_FAILURES`, `:157`) |
-| `Your PIN is temporarily locked after too many failed attempts. Sign in with your password, or ask an administrator to clear it.` | 429 | `auth_routes.py:1328-1332` | 5 failed PINs on this **account** (`DEVICE_PIN_MAX_FAILURES`, `:155`) |
-| `PIN sign-in is not available for this account. Use your password.` | 403 | `auth_routes.py:1381-1384` | Role is `patient` or is in `ORB_MFA_REQUIRED_ROLES` |
-| `This device credential is not valid.` | 401 | `auth_routes.py:1176` | Bad/revoked tablet setup code |
-| `Too many attempts. Please try again in 15 minutes.` | 429 | `auth_routes.py:1160` | IP limiter on the bind endpoint |
+| `Invalid credentials` | 401 | `auth_routes.py:441` | Unknown employee ID **or** wrong password, one message for both, on purpose |
+| `Account temporarily locked after too many failed attempts. Try again later.` | 429 | `auth_routes.py:415` | 8 failures on this account (`ACCOUNT_MAX_FAILURES`, `:83`), 15-min lock |
+| `Too many login attempts. Please try again in 15 minutes.` | 429 | `auth_routes.py:393` | 5 attempts from this IP in 15 min (`MAX_LOGIN_ATTEMPTS`, `:40`) |
+| `Account deactivated. Contact an administrator.` | 403 | `auth_routes.py:456` | `users.is_active = 0`. Checked **after** the password is verified |
+| `Invalid authenticator code, check the 6-digit code and try again.` | 401 | `auth_routes.py:527` (`Invalid MFA code`) | Rewritten client-side at `Login.tsx:182-183` |
+| *(no banner, the code field appears instead)* | 401 | `auth_routes.py:502` (`mfa_required`) | Password right, TOTP not supplied |
+| *(no banner, the enrolment modal opens)* | 403 | `auth_routes.py:490-494` (`mfa_enrollment_required`) | Role in `ORB_MFA_REQUIRED_ROLES` with no TOTP factor yet |
+| `This account needs an authenticator app before signing in, but the enrolment ticket did not reach the browser…` | 403 | same, but the `X-MFA-Enrollment-Ticket` header was stripped | `Login.tsx:199-203` |
+| `Enter your staff ID.` / `Enter your 4-digit PIN.` / `Enter the 6-digit code…` / `Please enter your password.` / `Paste the full setup code from the administrator.` | n/a | n/a | Client-side guards, `Login.tsx:219, 227, 231, 240, 250`, no request is sent |
+| `Invalid staff ID or PIN` | 401 | `auth_routes.py:1601` | Unknown staff ID **or** wrong PIN, one message for both, on purpose |
+| `This tablet is not set up for PIN sign-in. Use your password.` | 401 | `auth_routes.py:1520-1524` | Rewritten at `Login.tsx:128`; also flips the form back to password |
+| `This tablet is temporarily locked after too many failed PINs. Sign in with your password, or ask an administrator to clear it.` | 429 | `auth_routes.py:1542-1546` | 15 failed PINs on this **device** (`DEVICE_SWEEP_MAX_FAILURES`, `:157`) |
+| `Your PIN is temporarily locked after too many failed attempts. Sign in with your password, or ask an administrator to clear it.` | 429 | `auth_routes.py:1578-1582` | 5 failed PINs on this **account** (`DEVICE_PIN_MAX_FAILURES`, `:155`) |
+| `PIN sign-in is not available for this account. Use your password.` | 403 | `auth_routes.py:1631-1634` | Role is `patient` or is in `ORB_MFA_REQUIRED_ROLES` |
+| `This device credential is not valid.` | 401 | `auth_routes.py:1426` | Bad/revoked tablet setup code |
+| `Too many attempts. Please try again in 15 minutes.` | 429 | `auth_routes.py:1410` | IP limiter on the bind endpoint |
 
 ### The identical-by-design messages: do not "improve" these
 
@@ -212,25 +212,25 @@ Four deliberate ambiguities are load-bearing security properties. Making any of
 them more specific would turn this screen into a staff-roster oracle.
 
 1. **`Invalid credentials` covers both "no such employee ID" and "wrong
-   password"**, `auth_routes.py:420` is a single branch
-   (`if not user or not password_ok`) producing one 401 at `:436`. Splitting it
+   password"**, `auth_routes.py:425` is a single branch
+   (`if not user or not password_ok`) producing one 401 at `:441`. Splitting it
    into "unknown user" and "wrong password" would let anyone with a browser
    enumerate every employee ID in the hospital.
 
-2. **The *timing* is equalised too.** `auth_routes.py:419` calls
+2. **The *timing* is equalised too.** `auth_routes.py:424` calls
    `verify_password_ct(credentials.password, user["password_hash"] if user else None)`
    note it runs *before* the `if not user` test, deliberately. `verify_password_ct`
-   (`server/auth.py:185-210`) always performs one bcrypt op, hashing against
+   (`server/auth.py:186-211`) always performs one bcrypt op, hashing against
    `_DUMMY_BCRYPT_HASH` when there is no user. The docstring records the measured
    leak this closed: real ≈223 ms vs fake ≈2.5 ms, a 90x fully-separable gap.
    Restoring the "obvious" short-circuit (`if not user: raise`) re-opens it while
    leaving the visible message unchanged, the bug would be invisible on screen.
 
 3. **`Invalid staff ID or PIN` covers both cases on the PIN path**, 
-   `auth_routes.py:1334-1351`, with the same constant-work treatment via
-   `verify_device_pin_ct` (`server/auth.py:214-246`), which burns a bcrypt for
+   `auth_routes.py:1584-1601`, with the same constant-work treatment via
+   `verify_device_pin_ct` (`server/auth.py:215-247`), which burns a bcrypt for
    an unknown user, a user with no PIN set, *and* a corrupt hash. The ordering
-   comment at `auth_routes.py:1232-1237` is explicit: the constant-work check at
+   comment at `auth_routes.py:1482-1487` is explicit: the constant-work check at
    `:1309` runs **before** the account-lock branch at `:1312`, because returning
    "locked" early would both confirm the account exists and skip the bcrypt,
    re-opening the oracle through a side door.
@@ -242,7 +242,7 @@ them more specific would turn this screen into a staff-roster oracle.
    (comments at `:438-441` and `:1353-1355`).
 
 **One documented asymmetry.** On the password path the per-account lockout is
-checked at `auth_routes.py:402`, *before* `verify_password_ct` at `:419`. A locked
+checked at `auth_routes.py:407`, *before* `verify_password_ct` at `:424`. A locked
 account therefore returns 429 quickly, while an unknown ID returns 401 after a
 full bcrypt, so lockout state is distinguishable from non-existence on
 `/auth/login` in a way it is not on `/auth/pin-login` (where the lock check is
@@ -250,7 +250,7 @@ deliberately after verification). Recorded here as a fact about the two paths, n
 as a change to make.
 
 Also worth knowing: `GET /api/auth/device` returns only the tablet's *own* label,
-never the staff list. The comment at `auth_routes.py:1204-1207` says why, a
+never the staff list. The comment at `auth_routes.py:1454-1457` says why, a
 name-picker would be friendlier, but a stolen tablet would then hand over the
 ward's roster. That is why staff type their own ID even on the PIN pad.
 
@@ -260,12 +260,12 @@ ward's roster. That is why staff type their own ID even on the PIN pad.
 
 Shown when: not `/login/patient`, no bound tablet (or the user tapped "Use my
 password instead"), not mid-MFA, not in tablet setup. The `else` arm at
-`Login.tsx:362-389`.
+`Login.tsx:367-394`.
 
 ### "EMPLOYEE ID" label
 
 **Where:** first label in the form, uppercase, small, muted.
-**Rendered by:** `src/pages/Login.tsx:365`, `{t('login.employeeId')}`.
+**Rendered by:** `src/pages/Login.tsx:370`, `{t('login.employeeId')}`.
 **Data from:** `src/i18n/locales/en.json:76` → `"Employee ID"`.
 **API/Server:** none.
 **Change this →** `.login__label` (`Login.css:79-85`) forces
@@ -277,13 +277,13 @@ input and `getByLabelText` will not find it in tests.
 ### Employee ID input
 
 **Where:** directly under that label. Placeholder `DOC001`.
-**Rendered by:** `src/pages/Login.tsx:366-374`, `id="input-employee-id"`,
+**Rendered by:** `src/pages/Login.tsx:371-379`, `id="input-employee-id"`,
 `type="text"`, `placeholder="DOC001"`.
 **Data from:** `identifier` state (`Login.tsx:18`), written by the inline
-`onChange` at `:371`.
+`onChange` at `:376`.
 **API:** sent as `employee_id` in the `POST /api/auth/login` body
-(`Login.tsx:160`).
-**Server:** `auth_routes.py:393-395`, a bare
+(`Login.tsx:165`).
+**Server:** `auth_routes.py:398-400`, a bare
 `SELECT * FROM users WHERE id = ?`. The employee ID **is** the `users.id`
 primary key.
 **Change this →** it goes grey and unclickable when `disabled={mfaRequired}`
@@ -296,12 +296,12 @@ fill this pair.
 ### "PASSWORD" label + password input
 
 **Where:** the second field.
-**Rendered by:** `src/pages/Login.tsx:377` (label, `t('login.password')`) and
-`:378-386` (input, `id="input-password"`, `type="password"`, placeholder from
+**Rendered by:** `src/pages/Login.tsx:382` (label, `t('login.password')`) and
+`:383-391` (input, `id="input-password"`, `type="password"`, placeholder from
 `t('login.passwordPlaceholder')` = "Enter your password").
-**Data from:** `password` state (`Login.tsx:19`), written at `:383`.
-**API:** `POST /api/auth/login` → `password` (`Login.tsx:161`).
-**Server:** `auth_routes.py:419` `verify_password_ct` → `server/auth.py:185`.
+**Data from:** `password` state (`Login.tsx:19`), written at `:388`.
+**API:** `POST /api/auth/login` → `password` (`Login.tsx:166`).
+**Server:** `auth_routes.py:424` `verify_password_ct` → `server/auth.py:186`.
 On success, if the stored hash is not bcrypt (`:530`), it is silently rehashed
 and upgraded in place (`:531-539`), invisible on screen, but it means the first
 login after a legacy import writes to the DB.
@@ -314,32 +314,32 @@ border. Focus (`:103-106`) swaps the border to `--border-focus` and adds a 3px
 
 ## Face 2: Patient form
 
-Shown when the URL is `/login/patient`. `Login.tsx:335-361`.
+Shown when the URL is `/login/patient`. `Login.tsx:340-366`.
 
 ### "PATIENT ID" label + input
 
 **Where:** first field. Placeholder `P001`.
-**Rendered by:** `src/pages/Login.tsx:338` (label, `t('login.patientId')` →
+**Rendered by:** `src/pages/Login.tsx:343` (label, `t('login.patientId')` →
 `en.json:77` "Patient ID") and `:339-347` (input, `id="input-registration"`).
 **Data from:** the same `identifier` state as the staff form.
 **API:** `POST /api/auth/login`, `employee_id` field, patients and staff share
 one endpoint (`models/user.py:10-12` documents this: "`employee_id` is the
 clinician employee ID or, for patients, their patient ID").
-**Server:** `auth_routes.py:361` `login()`, same handler.
+**Server:** `auth_routes.py:366` `login()`, same handler.
 **Change this →** identical styling to the staff field; only the label, the
 placeholder and the element `id` differ.
 
 ### Patient password input
 
 **Where:** second field, masked.
-**Rendered by:** `src/pages/Login.tsx:351-359`, `id="input-dob"`,
+**Rendered by:** `src/pages/Login.tsx:356-364`, `id="input-dob"`,
 `type="password"`.
 **Data from:** the `dob` state (`Login.tsx:20`). The name is a fossil: this was
 once a date-of-birth field, and `Login.css:109-111` still carries a
 `input[type="date"]` calendar-icon fix for a date input that no longer exists.
-**API:** submitted as the `password` at `Login.tsx:248`, `handleLogin(identifier, dob)`.
-**Server:** same `auth_routes.py:361`.
-**Change this →** the guard at `Login.tsx:243-247` refuses to submit an empty
+**API:** submitted as the `password` at `Login.tsx:253`, `handleLogin(identifier, dob)`.
+**Server:** same `auth_routes.py:366`.
+**Change this →** the guard at `Login.tsx:248-252` refuses to submit an empty
 value with "Please enter your password." The comment above it records why that
 guard exists: the field used to default-fill the literal `'patient123'`, which
 was a server-valid shared secret and therefore a PHI auth bypass. Removing the
@@ -364,13 +364,13 @@ setup form.
 ### "EMPLOYEE ID" label + staff-ID input (PIN variant)
 
 **Where:** first field on the PIN pad. Placeholder `NUR001`.
-**Rendered by:** `src/pages/Login.tsx:300-302` (label, `htmlFor="input-pin-id"`)
-and `:303-312` (input, `id="input-pin-id"`, `autoComplete="username"`,
+**Rendered by:** `src/pages/Login.tsx:305-307` (label, `htmlFor="input-pin-id"`)
+and `:308-317` (input, `id="input-pin-id"`, `autoComplete="username"`,
 `autoFocus`).
 **Data from:** `identifier` state, shared with the other two forms.
 **API:** `POST /api/auth/pin-login` → `employee_id`
 (`src/api/deviceAuth.ts:70-73`).
-**Server:** `auth_routes.py:1228` `pin_login()`, lookup at `:1300-1302`.
+**Server:** `auth_routes.py:1478` `pin_login()`, lookup at `:1550-1552`.
 **Change this →** this variant *does* have `htmlFor` and `autoFocus`, so the
 cursor lands here on load and a tap on the label focuses the box. Removing
 `autoFocus` costs a tap on every sign-in, on the screen the whole PIN feature
@@ -380,10 +380,10 @@ exists to make fast.
 
 **Where:** second field. Masked, placeholder `••••`, big centred monospace
 digits.
-**Rendered by:** `src/pages/Login.tsx:315` (label, a hardcoded English `PIN`,
-**not** translated) and `:316-328` (input, `id="input-pin"`, `type="password"`,
+**Rendered by:** `src/pages/Login.tsx:320` (label, a hardcoded English `PIN`,
+**not** translated) and `:321-333` (input, `id="input-pin"`, `type="password"`,
 `inputMode="numeric"`, `maxLength={8}`).
-**Data from:** `pin` state (`Login.tsx:32`). The `onChange` at `:324` strips
+**Data from:** `pin` state (`Login.tsx:32`). The `onChange` at `:329` strips
 every non-digit and truncates to 8, 
 `e.target.value.replace(/\D/g, '').slice(0, 8)`, so typing `a1b2c3` leaves
 `123` on screen before anything is sent (asserted by
@@ -391,27 +391,27 @@ every non-digit and truncates to 8,
 **API:** `POST /api/auth/pin-login` → `pin`. The device credential is **not** in
 this body; it rides as the HttpOnly `orb_device` cookie
 (`src/api/deviceAuth.ts:64-67`, `models/user.py:20-29`).
-**Server:** `auth_routes.py:1229`. In order: IP limiter (`:1243`), device must
+**Server:** `auth_routes.py:1479`. In order: IP limiter (`:1243`), device must
 resolve (`:1254-1274`), device-wide sweep lock (`:1277-1296`), constant-work
 `verify_device_pin_ct` (`:1309`), per-account PIN lock (`:1312-1332`), verdict
 (`:1334-1351`), then the deactivated (`:1356`) and role (`:1372`) gates. Success
 mints a short session, `create_token(..., auth_method="pin", expires_in_minutes=DEVICE_PIN_SESSION_MINUTES)`
 at `:1392-1396`, cookie max-age matched at `:1397-1400`.
-`DEVICE_PIN_SESSION_MINUTES` defaults to 15 (`server/auth.py:65`,
+`DEVICE_PIN_SESSION_MINUTES` defaults to 15 (`server/auth.py:66`,
 `ORB_DEVICE_PIN_SESSION_MINUTES`).
 **Change this →** `.login__code-input` (`Login.css:152-161`) is what makes this
 look like a PIN pad rather than a text box: centred, `0.55em` letter-spacing,
 1.35rem, tabular monospace, with the left padding nudged by `calc(16px + 0.55em)`
 so the trailing letter-space does not push the digits off-centre. Raise
-`maxLength` past 8 and the server's `_PIN_FORMAT` (`auth_routes.py:162`, `^\d{4,8}$`)
+`maxLength` past 8 and the server's `_PIN_FORMAT` (`auth_routes.py:167`, `^\d{4,8}$`)
 still refuses it at PIN-set time. Note the same class is shared with the
 authenticator-code field.
 
 ### PIN hint: "Your PIN identifies you personally…"
 
 **Where:** small muted text under the PIN box.
-**Rendered by:** `src/pages/Login.tsx:329-332`, wired to the input by
-`aria-describedby="pin-hint"` (`:327`).
+**Rendered by:** `src/pages/Login.tsx:334-337`, wired to the input by
+`aria-describedby="pin-hint"` (`:332`).
 **Data from:** hardcoded English in the JSX.
 **API/Server:** none.
 **Change this →** `.login__hint` (`Login.css:206-210`). This sentence is the
@@ -425,48 +425,48 @@ stays English on a Hindi tablet.
 ## Face 4: Tablet setup form
 
 Shown when `showDeviceSetup` is true (`Login.tsx:36`, toggled by the button at
-`:459-473`). It takes over the whole field area, `Login.tsx:277-296`.
+`:464-478`). It takes over the whole field area, `Login.tsx:282-301`.
 
 ### "Tablet setup code" label
 
 **Where:** the only label in this face.
-**Rendered by:** `src/pages/Login.tsx:279-281`, `htmlFor="input-device-secret"`.
+**Rendered by:** `src/pages/Login.tsx:284-286`, `htmlFor="input-device-secret"`.
 Hardcoded English, sentence case in source but rendered uppercase by
 `.login__label`.
 
 ### Setup-code paste box
 
 **Where:** a 3-row textarea, monospace, resizable.
-**Rendered by:** `src/pages/Login.tsx:282-291`, `id="input-device-secret"`,
+**Rendered by:** `src/pages/Login.tsx:287-296`, `id="input-device-secret"`,
 `rows={3}`, `autoFocus`, placeholder "Paste the one-time code from the
 administrator".
 **Data from:** `deviceSecret` state (`Login.tsx:37`), component state only, 
 never persisted (asserted by `src/pages/Login.pin.test.tsx:158-179`, which checks
 the raw secret never appears in `localStorage`).
 **API:** `POST /api/auth/device/bind`, `src/api/deviceAuth.ts:49-55`.
-**Server:** `auth_routes.py:1143` `bind_device()`. Unauthenticated on purpose
+**Server:** `auth_routes.py:1156` `bind_device()`. Unauthenticated on purpose
 (`:1147-1150`: the secret *is* the credential, and this runs on a tablet before
 any person signs in), rate-limited by the same per-IP limiter, resolved through
 `load_active_device`, and on success `set_device_cookie`
-(`server/auth.py:288-292`) writes the HttpOnly `orb_device` cookie.
+(`server/auth.py:289-293`) writes the HttpOnly `orb_device` cookie.
 **Change this →** it is a `<textarea>`, not an `<input>`, and
 `Login.css:212-221` says why: the secret is a 43-character token
-(`generate_device_secret` = `secrets.token_urlsafe(32)`, `server/auth.py:251-253`)
+(`generate_device_secret` = `secrets.token_urlsafe(32)`, `server/auth.py:252-254`)
 and a single-line field truncates it out of sight, which is how it gets pasted
 half-copied. Swap it to an `<input>` and you reintroduce that failure. The client
-guard at `Login.tsx:213-216` refuses anything under 16 characters with "Paste the
+guard at `Login.tsx:218-221` refuses anything under 16 characters with "Paste the
 full setup code from the administrator.", matching `DeviceBindBody`'s
 `min_length=16` (`models/user.py:42`).
 
 ### Setup hint: "An administrator enrols this tablet once…"
 
 **Where:** under the paste box.
-**Rendered by:** `src/pages/Login.tsx:292-295`, tied in by
-`aria-describedby="device-setup-hint"` (`:290`).
+**Rendered by:** `src/pages/Login.tsx:297-300`, tied in by
+`aria-describedby="device-setup-hint"` (`:295`).
 **Change this →** same `.login__hint` style. It is the only place the screen
 explains that the code is exchanged and not kept.
 
-**On success** (`handleBindDevice`, `Login.tsx:132-146`): `device` is replaced,
+**On success** (`handleBindDevice`, `Login.tsx:137-151`): `device` is replaced,
 the secret is wiped from state, the setup form closes and `usePin` flips true, 
 so the screen lands directly on the PIN pad with the new tablet badge showing.
 
@@ -478,9 +478,9 @@ so the screen lands directly on the PIN pad with the new tablet badge showing.
 
 `handleLogin` posts to `/api/auth/login`. If the account has `totp_enabled` and
 no code was supplied, the server raises **401 `mfa_required`**
-(`auth_routes.py:491-497`). Note the comment at `:494-496`: this deliberately
+(`auth_routes.py:496-502`). Note the comment at `:499-501`: this deliberately
 does **not** count toward the IP lockout, it is a normal two-step flow, not a
-guess. The catch at `Login.tsx:170-176` matches that exact string, stashes the
+guess. The catch at `Login.tsx:175-181` matches that exact string, stashes the
 credentials in `mfaCreds` and sets `mfaRequired`, which reveals the field and
 disables the ID/password inputs.
 
@@ -492,16 +492,16 @@ verified (comment at `:53-57`).
 
 **Where:** appears below the (now greyed) credential fields, above the submit
 button.
-**Rendered by:** `src/pages/Login.tsx:391-412`. Label at `:393`
-(`htmlFor="input-totp"`), input at `:394-407`, `id="input-totp"`,
+**Rendered by:** `src/pages/Login.tsx:396-417`. Label at `:398`
+(`htmlFor="input-totp"`), input at `:399-412`, `id="input-totp"`,
 `inputMode="numeric"`, `autoComplete="one-time-code"`, `maxLength={6}`,
 placeholder `000000`, `autoFocus`.
-**Data from:** `totpCode` state (`Login.tsx:59`); `onChange` at `:403` strips
+**Data from:** `totpCode` state (`Login.tsx:59`); `onChange` at `:408` strips
 non-digits and caps at 6.
-**API:** the *same* `POST /api/auth/login`, resubmitted at `Login.tsx:238` as
+**API:** the *same* `POST /api/auth/login`, resubmitted at `Login.tsx:243` as
 `handleLogin(mfaCreds.id, mfaCreds.pw, code)`, which adds `totp_code` to the body
-(`:162`).
-**Server:** `auth_routes.py:498`, `consume_totp(user["id"], user["totp_secret"], code)`.
+(`:167`).
+**Server:** `auth_routes.py:503`, `consume_totp(user["id"], user["totp_secret"], code)`.
 That function (`:275-300`) is not a plain TOTP check: it verifies the code via
 `services/mfa_service.py:69` `verify_code_step` **and** enforces single use by
 requiring the time-step to be strictly greater than `users.totp_last_step`
@@ -515,14 +515,14 @@ instantly rather than sliding in.
 ### MFA hint: "Enter the 6-digit code from your authenticator app to finish signing in."
 
 **Where:** under the code box.
-**Rendered by:** `src/pages/Login.tsx:408-410`, `aria-describedby="mfa-hint"`.
+**Rendered by:** `src/pages/Login.tsx:413-415`, `aria-describedby="mfa-hint"`.
 **Change this →** `.login__mfa-hint` (`Login.css:163-167`), 0.78rem muted.
 
 ### "Use a different account" link
 
 **Where:** centred under the submit button, underlined, link-styled. Only during
 the code step.
-**Rendered by:** `src/pages/Login.tsx:424-433`, `onClick` calls `resetMfa()`
+**Rendered by:** `src/pages/Login.tsx:429-438`, `onClick` calls `resetMfa()`
 (`:73-79`) then clears the error.
 **Data from:** `mfaRequired`.
 **API/Server:** none, purely local.
@@ -535,13 +535,13 @@ expires on its own.
 
 ### A wrong code
 
-**Server:** `auth_routes.py:498-522`. A bad code calls `record_login_attempt`
-*and* `_record_account_failure` (`:508`), the comment at `:500-507` records why:
+**Server:** `auth_routes.py:503-527`. A bad code calls `record_login_attempt`
+*and* `_record_account_failure` (`:513`), the comment at `:505-512` records why:
 without it, an attacker holding a phished password could brute-force the 6-digit
 code forever by rotating IPs, since only the per-IP limiter fired. Eight wrong
 codes now lock the account exactly like eight wrong passwords.
 **On screen:** the banner reads "Invalid authenticator code, check the 6-digit
-code and try again." (`Login.tsx:178`), the code field stays up with its previous
+code and try again." (`Login.tsx:183`), the code field stays up with its previous
 value, and after eight tries the message switches to the account-lockout 429.
 
 ---
@@ -553,16 +553,16 @@ value, and after eight tries the message switches to the account-lockout 429.
 A password that is **correct** on an account whose role is in
 `ORB_MFA_REQUIRED_ROLES` (`server/config.py:63-65`) but which has no TOTP factor.
 The server refuses the session with **403 `mfa_enrollment_required`**
-(`auth_routes.py:485-489`) and attaches a short-lived enrolment ticket in the
+(`auth_routes.py:490-494`) and attaches a short-lived enrolment ticket in the
 `X-MFA-Enrollment-Ticket` response header (`:316`, minted at `:328-343`, 10-minute
 TTL, signed with a key *derived from* `JWT_SECRET` so `decode_token` rejects it
 everywhere else, `:321-325`).
 
 `apiFetch` lifts that header onto the thrown error at `src/api/client.ts:222-223`
-(`(permError as any).mfaEnrollTicket`). `Login.tsx:179-199` reads it into
+(`(permError as any).mfaEnrollTicket`). `Login.tsx:184-204` reads it into
 `enrollTicket`, which mounts the modal at `:480-503`.
 
-The reason this path exists is written at `Login.tsx:180-183`: "Contact your
+The reason this path exists is written at `Login.tsx:185-188`: "Contact your
 administrator" was a dead end on a fresh appliance, where this **is** the only
 administrator.
 
@@ -592,7 +592,7 @@ accessible name.
 **Where:** top-right corner.
 **Rendered by:** `src/components/MfaEnrollmentModal.tsx:182`, 
 `aria-label="Close"`, `onClick={onClose}`.
-**Change this →** `onClose` (`Login.tsx:487-501`) is where the flow branches: if
+**Change this →** `onClose` (`Login.tsx:492-506`) is where the flow branches: if
 `enrolled` was latched it clears the ticket and drops you onto the **code step**
 with your credentials intact, so you only type the next code; if not, it clears
 `mfaCreds` and returns you to a clean password step.
@@ -603,7 +603,7 @@ with your credentials intact, so you only type the next code; if not, it clears
 **Rendered by:** `src/components/MfaEnrollmentModal.tsx:188-190`, `view === 'loading'`.
 **API:** `POST /api/auth/mfa/enroll/begin`, fired by the effect at `:75-104` with
 `Authorization: Bearer <ticket>` (`:56-58`, `:81`).
-**Server:** `auth_routes.py:635` `mfa_enroll_begin()`, behind
+**Server:** `auth_routes.py:640` `mfa_enroll_begin()`, behind
 `_enrolment_principal` (`:599-632`), the only dependency in the app that accepts
 an enrolment ticket, and it re-checks the live `users` row for existence,
 `is_active` and `token_version`, so deactivating a user revokes their outstanding
@@ -643,7 +643,7 @@ nothing changes on screen, and the value stays selectable by hand.
 **Rendered by:** `src/components/MfaEnrollmentModal.tsx:220-230`.
 **Data from:** `enroll.otpauth_uri`, built by
 `services/mfa_service.py:103` `provisioning_uri(secret, account, issuer)`. The
-account name is `registration_number ?? name ?? id` (`auth_routes.py:658`).
+account name is `registration_number ?? name ?? id` (`auth_routes.py:663`).
 
 ### Issuer line: "Account: … · algorithm SHA1 · 6 digits · 30s period."
 
@@ -663,14 +663,14 @@ starts lying.
 `id="mfa-confirm-code"`, 6 digits, `autoFocus`. The primary button reads
 "Verifying…" while `busy` (`:257`).
 **API:** `POST /api/auth/mfa/enroll/confirm` (`:126-130`) with the same ticket.
-**Server:** `auth_routes.py:663` `mfa_enroll_confirm()`, rejects if already
+**Server:** `auth_routes.py:668` `mfa_enroll_confirm()`, rejects if already
 enabled (`:668`), if no secret was staged (`:671`), or if `consume_totp` fails
 (`:673`, → 400 "Invalid code"), then flips `totp_enabled = 1` (`:677`) and writes
 an `mfa_enrolled` audit event (`:681-692`).
 **Change this →** a failure sets the modal's own error strip (`:186`, which
 *does* carry `role="alert"`) and leaves the form up. Success flips to the
 `enrolled` view and fires `onEnrolled` → `setEnrolled(true)` on the login screen
-(`Login.tsx:486`).
+(`Login.tsx:491`).
 
 ### Success view + the "wait for the next code" warning
 
@@ -685,7 +685,7 @@ used to confirm enrolment, so reusing it to sign in fails with "Invalid MFA code
 which reads like broken setup rather than working anti-replay (`:270-273`).
 Deleting the warning does not change any behaviour; it changes whether the first
 sign-in after enrolment looks like a bug. Equally load-bearing is
-`Login.tsx:483-486`: `onEnrolled` only *records* success, because clearing the
+`Login.tsx:488-491`: `onEnrolled` only *records* success, because clearing the
 ticket there would unmount the modal instantly and this whole screen would never
 be seen.
 
@@ -694,9 +694,9 @@ be seen.
 ## Submit button
 
 **Where:** full-width, below the fields. The only filled button on the screen.
-**Rendered by:** `src/pages/Login.tsx:414-422`, `id="btn-login"`,
+**Rendered by:** `src/pages/Login.tsx:419-427`, `id="btn-login"`,
 `type="submit"`, `disabled={loading}`.
-**Data from:** four-way label, in this precedence (`:415-421`):
+**Data from:** four-way label, in this precedence (`:420-426`):
 
 | Label | Condition | i18n |
 |---|---|---|
@@ -705,13 +705,13 @@ be seen.
 | `Verify code` | `mfaRequired` | hardcoded |
 | `Sign In` | otherwise | `login.signIn`, `en.json:80` |
 
-**API:** `onSubmit` → `handleSubmit` (`Login.tsx:210-252`), which routes to
+**API:** `onSubmit` → `handleSubmit` (`Login.tsx:215-257`), which routes to
 `handleBindDevice`, `handlePinLogin`, or `handleLogin` depending on the same four
 faces, running its client-side guard for each first.
 **Server:** `/api/auth/device/bind`, `/api/auth/pin-login`, or `/api/auth/login`.
 **Change this →** `loading` (`Login.tsx:22`) is set true at the top of all three
-handlers and false in their `finally` blocks (`:127-129`, `:143-145`,
-`:205-207`), so the button re-enables even when the request throws. Styling:
+handlers and false in their `finally` blocks (`:132-134`, `:148-150`,
+`:210-212`), so the button re-enables even when the request throws. Styling:
 `.login__submit` (`Login.css:113-134`), solid `--accent-deep`,
 `--btn-primary-text`, no border; hover swaps to `--btn-gradient-hover`; active is
 a `brightness(0.96)` press. There is **no spinner**, the changed label is the
@@ -721,15 +721,15 @@ that anything is happening during a ~200ms bcrypt.
 ## "Use my password instead" / "Use my PIN" toggle
 
 **Where:** centred link under the submit button. **Only on a bound tablet.**
-**Rendered by:** `src/pages/Login.tsx:439-449`, guarded by
+**Rendered by:** `src/pages/Login.tsx:444-454`, guarded by
 `!isPatient && !mfaRequired && !showDeviceSetup && device?.enrolled`. Label
-flips at `:447`.
-**Data from:** `usePin` (`Login.tsx:31`). The click handler (`:443`) toggles it
+flips at `:452`.
+**Data from:** `usePin` (`Login.tsx:31`). The click handler (`:448`) toggles it
 and clears `pin`, `password` and `error` together, so switching modes never
 carries a half-typed credential across.
 **API/Server:** none.
 **Change this →** this link is the whole reason a PIN lockout is survivable. The
-comment at `:435-438` states the rule: a locked PIN must degrade to "use your
+comment at `:440-443` states the rule: a locked PIN must degrade to "use your
 password", never to "you are out of the record mid-shift". Tightening its
 condition (say, hiding it while a PIN lock is active) would strand a nurse. It
 disappears entirely on a browser that is not an enrolled tablet, because there is
@@ -738,14 +738,14 @@ no PIN to toggle to. `src/pages/Login.pin.test.tsx:94-102` pins this behaviour.
 ## "Set up this tablet for PIN sign-in" / "Back to sign in" toggle
 
 **Where:** the lowest link on the card.
-**Rendered by:** `src/pages/Login.tsx:459-473`, guarded by
+**Rendered by:** `src/pages/Login.tsx:464-478`, guarded by
 `!isPatient && !mfaRequired && (showDeviceSetup || !device?.enrolled)`. Label
-flips at `:471`.
-**Data from:** `showDeviceSetup` (`Login.tsx:36`); the click handler (`:463-467`)
+flips at `:476`.
+**Data from:** `showDeviceSetup` (`Login.tsx:36`); the click handler (`:468-472`)
 toggles it and clears both the pasted secret and the error.
 **API/Server:** none directly.
 **Change this →** the `showDeviceSetup ||` half of that condition is load-bearing
-and is documented as such at `:451-458`. The device-status fetch is async, so a
+and is documented as such at `:456-463`. The device-status fetch is async, so a
 tap on this button *before* it resolves opens the setup form on a browser that
 then turns out to be enrolled; gating purely on `!device?.enrolled` made the way
 back vanish at that moment and stranded the user in the setup form with only a
@@ -781,15 +781,15 @@ together on the next load, and the setup link reappears.
 
 The error banner appears above the form and the fields keep their values, with
 two exceptions: `handlePinLogin` clears the PIN box on any failure
-(`Login.tsx:115`, `setPin('')`), and a "not enrolled" failure additionally
-rewrites `device` to `{enrolled: false}` and turns `usePin` off (`:121-123`), so
+(`Login.tsx:120`, `setPin('')`), and a "not enrolled" failure additionally
+rewrites `device` to `{enrolled: false}` and turns `usePin` off (`:126-128`), so
 the screen falls back to the password form in the same tick.
 
 ### When the network is down
 
 `apiFetch` does not catch a thrown `fetch`, the rejection surfaces as
 `err.message` (typically "Failed to fetch") and lands in the generic `else` at
-`Login.tsx:200-204`, so the banner shows the browser's own wording. The device
+`Login.tsx:205-209`, so the banner shows the browser's own wording. The device
 check is the exception: `getDeviceStatus` catches everything and returns
 `{ enrolled: false }` (`src/api/deviceAuth.ts:39-41`), so an appliance that
 cannot answer shows an ordinary login rather than an error.
@@ -810,7 +810,7 @@ instead of a message it could act on.
 
 There is no RBAC on this screen, it is the pre-auth surface. The nearest thing
 is the PIN role gate (403 "PIN sign-in is not available for this account. Use your
-password.", `auth_routes.py:1381-1384`): a PIN must not become the back door
+password.", `auth_routes.py:1631-1634`): a PIN must not become the back door
 around a TOTP mandate, and patients never use ward tablets. The banner says
 exactly what to do, and the password link is right there.
 
@@ -820,11 +820,11 @@ exactly what to do, and the password link is right there.
 `surgeon` becomes `doctor` with department defaulted to `Surgery` (`:88-92`), so
 an unmapped role cannot fall through to a stripped-down tab set in
 `ClinicianShell`. It then calls `login(user)` from `AuthContext`
-(`src/AppRoot.tsx:73-79`) and navigates to `/bridge` for patients, `/dashboard` for
+(`src/AppRoot.tsx:93-99`) and navigates to `/bridge` for patients, `/dashboard` for
 everyone else (`Login.tsx:103`). The screen unmounts.
 `authMethod: 'pin'` (`:83`, `:113`) is the flag that shortens the idle timer from
 15 minutes to 2 and makes a tablet **sign out** rather than lock
-(`src/AppRoot.tsx:39-40`, `:111-120`), asserted by
+(`src/AppRoot.tsx:41-42`, `:131-147`), asserted by
 `src/pages/Login.pin.test.tsx:104-125`.
 
 ### Dead style worth knowing about
@@ -833,7 +833,7 @@ everyone else (`Login.tsx:103`). The screen unmounts.
 button at the top-left. **Nothing renders it**, no `login__back` appears
 anywhere in `src/`. Likewise `Login.css:109-111` patches the calendar icon of an
 `input[type="date"]` that no longer exists (the patient field is now
-`type="password"`, `Login.tsx:353`).
+`type="password"`, `Login.tsx:358`).
 
 ---
 

@@ -20,10 +20,10 @@ Two shared leaves are covered where they appear inside these surfaces:
 patient cards, the tab strip, handover, is a different screen and is not documented here beyond
 the two buttons that open these sheets and the success flash they write back to.
 
-**How you get to these surfaces.** Left nav → **My Shift** (`src/pages/ClinicianShell.tsx:27`,
-`id: 'shift', label: 'My Shift', pillar: 'Nurse Mode'`; panel lazily imported at `:275`, mounted
-at `:715-717`). For a nurse this is the **landing screen**, the per-role tab list at
-`ClinicianShell.tsx:227` puts `'shift'` first and the shell opens `accessibleTabs[0]`. From
+**How you get to these surfaces.** Left nav → **My Shift** (`src/pages/ClinicianShell.tsx:33`,
+`id: 'shift', label: 'My Shift', pillar: 'Nurse Mode'`; panel lazily imported at `:441`, mounted
+at `:966-968`). For a nurse this is the **landing screen**, the per-role tab list at
+`ClinicianShell.tsx:393` puts `'shift'` first and the shell opens `accessibleTabs[0]`. From
 there, four different taps open the two sheets:
 
 - a task row whose kind is `obs` → `setObsFor(task.patient)` (`NursePanel.tsx:174`);

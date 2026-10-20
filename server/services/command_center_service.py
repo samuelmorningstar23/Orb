@@ -16,19 +16,31 @@ Design contract:
     forecast_service.WARD_CAPACITY (discovered per site at startup), and ward
     normalization uses forecast_service._normalize_ward, so census/occupancy here
     always agree with the Forecast pillar.
+  * ONE FACILITY AT A TIME (multisite-12). With more than one facility of a
+    hospital group on the appliance, house_snapshot(facility_ids) keeps every
+    section to those facilities: the patients whose latest encounter is there
+    (an admitted patient's is their active admission), the beds of the wards
+    placed there (forecast_service.capacity_for, from Bed setup), their bundles,
+    forecast and operating lists. None is the whole appliance, as before, and
+    group_tiles=True adds one tile per facility for a group-wide reader, built
+    from the same patient list so the tiles add up to the group's figures.
 """
 
 from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from database import db_session
 
+from services.facility_filter import column_clause, patient_clause
 from services.forecast_service import (
     WARD_CAPACITY,
     _normalize_ward,
+    capacity_for,
     capacity_source_summary,
+    ward_facilities,
 )
 
 logger = logging.getLogger("orb.command_center")
@@ -48,9 +60,10 @@ logger = logging.getLogger("orb.command_center")
 # the same snapshot. Summing the live dict cannot drift.
 
 
-def _total_capacity() -> int:
-    """Live total bed capacity. Always read through this, never a cached int."""
-    return sum(WARD_CAPACITY.values())
+def _total_capacity(capacity: dict[str, int] | None = None) -> int:
+    """Live total bed capacity. Always read through this, never a cached int.
+    `capacity` is one facility's wards (capacity_for); None is every ward."""
+    return sum((WARD_CAPACITY if capacity is None else capacity).values())
 
 
 # A snapshot is considered "downtime-ready" if it was captured within this window.
@@ -77,9 +90,16 @@ def _parse_ts(ts) -> datetime | None:
         return None
 
 
-def _admitted_with_acuity() -> list[dict]:
+def _admitted_with_acuity(
+    facility_ids: frozenset[int] | None = None, *, with_facility: bool = False
+) -> list[dict]:
     """All admitted patients, each banded by the NEWS2 of their LATEST VITALS
     row, in the Vigil board's order.
+
+    `facility_ids` keeps the list to the patients whose latest encounter is at
+    those facilities (services.facility_filter.patient_clause, the rule a chart
+    is opened by); None lists every admitted patient. `with_facility` adds each
+    patient's facility_id (that same rule) for the group tiles.
 
     The band came off risk_scores, which the Vigil board stopped reading on 3
     October (the simulator and the Scribe lane write vitals with no risk row,
@@ -93,6 +113,8 @@ def _admitted_with_acuity() -> list[dict]:
     Every admitted patient is listed (the census counts them all), including
     one with no active admission row, which the board's own query would drop.
     """
+    from permissions import FACILITY_PATIENT_SQL
+
     from services.vigil_service import (
         board_order,
         score_vitals_row,
@@ -100,24 +122,28 @@ def _admitted_with_acuity() -> list[dict]:
         ward_bed_order,
     )
 
+    fac_sql, fac_args = patient_clause(facility_ids)
+    facility_col = f", {FACILITY_PATIENT_SQL} AS facility_id" if with_facility else ""
     with db_session() as db:
         rows = db.execute(
-            """SELECT p.id, p.name, p.ward, p.bed, p.on_scale_2
+            f"""SELECT p.id, p.name, p.ward, p.bed, p.on_scale_2{facility_col}
                FROM patients p
-               WHERE p.status = 'admitted'"""
+               WHERE p.status = 'admitted'{fac_sql}""",
+            fac_args,
         ).fetchall()
         # The latest row per patient, id DESC breaking a timestamp tie: the
         # same moment the board scores.
         latest = {
             v["patient_id"]: dict(v)
             for v in db.execute(
-                """SELECT v.* FROM patients p
+                f"""SELECT v.* FROM patients p
                    JOIN vitals v ON v.id = (
                        SELECT v2.id FROM vitals v2 WHERE v2.patient_id = p.id
                          AND v2.voided_at IS NULL
                        ORDER BY v2.timestamp DESC, v2.id DESC LIMIT 1
                    )
-                   WHERE p.status = 'admitted'"""
+                   WHERE p.status = 'admitted'{fac_sql}""",
+                fac_args,
             ).fetchall()
         }
 
@@ -163,14 +189,16 @@ def _admitted_with_acuity() -> list[dict]:
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def _census_and_acuity(patients: list[dict]) -> tuple[dict, dict]:
+def _census_and_acuity(
+    patients: list[dict], capacity: dict[str, int] | None = None
+) -> tuple[dict, dict]:
     """Build both the census (occupancy vs capacity) and acuity (counts + heatmap)
-    sections from a single pass over the admitted-patient list."""
+    sections from a single pass over the admitted-patient list. `capacity` is
+    one facility's wards (capacity_for); None is every ward of WARD_CAPACITY."""
+    wards = WARD_CAPACITY if capacity is None else capacity
     # Per-ward tallies keyed by the canonical WARD_CAPACITY wards.
-    ward_occ = {w: 0 for w in WARD_CAPACITY}
-    ward_acuity = {
-        w: {"critical": 0, "elevated": 0, "stable": 0, "not_scored": 0} for w in WARD_CAPACITY
-    }
+    ward_occ = {w: 0 for w in wards}
+    ward_acuity = {w: {"critical": 0, "elevated": 0, "stable": 0, "not_scored": 0} for w in wards}
     totals = {"critical": 0, "elevated": 0, "stable": 0, "not_scored": 0}
 
     for p in patients:
@@ -185,7 +213,7 @@ def _census_and_acuity(patients: list[dict]) -> tuple[dict, dict]:
 
     by_ward = []
     heatmap = []
-    for w, cap in WARD_CAPACITY.items():
+    for w, cap in wards.items():
         occ = ward_occ[w]
         by_ward.append(
             {
@@ -208,15 +236,15 @@ def _census_and_acuity(patients: list[dict]) -> tuple[dict, dict]:
     total_admitted = len(patients)
     census = {
         "total_admitted": total_admitted,
-        "total_capacity": _total_capacity(),
-        "occupancy_pct": round(total_admitted / _total_capacity() * 100, 1)
-        if _total_capacity()
+        "total_capacity": _total_capacity(capacity),
+        "occupancy_pct": round(total_admitted / _total_capacity(capacity) * 100, 1)
+        if _total_capacity(capacity)
         else 0.0,
         "by_ward": by_ward,
     }
     # Where the bed counts came from (adt-14): 'from bed register' or 'site
     # setting', only while Beds and admissions is on (None, nothing added, off).
-    source = capacity_source_summary()
+    source = capacity_source_summary(wards=None if capacity is None else list(capacity))
     if source is not None:
         census["capacity_source"] = {k: source[k] for k in ("source", "words")}
         for row in by_ward:
@@ -263,11 +291,16 @@ def _deteriorations(patients: list[dict]) -> list[dict]:
     return out
 
 
-def _bundles() -> dict:
-    """Active sepsis/deterioration bundles and their 1-hour compliance."""
+def _bundles(facility_ids: frozenset[int] | None = None) -> dict:
+    """Active sepsis/deterioration bundles and their 1-hour compliance, at
+    `facility_ids` (None: every facility)."""
     from services.sepsis_bundle_service import get_active_bundles
 
-    active_bundles = get_active_bundles()
+    active_bundles = (
+        get_active_bundles()
+        if facility_ids is None
+        else get_active_bundles(facilities=facility_ids)
+    )
     active = len(active_bundles)
     # A bundle is "compliant" when nothing has breached its 1-hour target.
     compliant = sum(1 for b in active_bundles if b.get("on_track"))
@@ -279,12 +312,17 @@ def _bundles() -> dict:
     }
 
 
-def _forecast() -> dict:
+def _forecast(facility_ids: frozenset[int] | None = None) -> dict:
     """Next-24h admission + occupancy projection, reusing the Forecast pillar's
-    hospital-flow model (which itself uses WARD_CAPACITY)."""
+    hospital-flow model (which itself uses WARD_CAPACITY), at `facility_ids`
+    (None: every facility)."""
     from services import forecast_service
 
-    flow = forecast_service.predict_hospital_flow(days_ahead=1)
+    flow = (
+        forecast_service.predict_hospital_flow(days_ahead=1)
+        if facility_ids is None
+        else forecast_service.predict_hospital_flow(days_ahead=1, facilities=facility_ids)
+    )
     days = flow.get("daily_forecasts") or []
     first = days[0] if days else {}
     return {
@@ -333,19 +371,21 @@ def _downtime_readiness(patients: list[dict]) -> dict:
     }
 
 
-def _or_today() -> dict:
-    """Today's operating-room load (UTC calendar day)."""
+def _or_today(facility_ids: frozenset[int] | None = None) -> dict:
+    """Today's operating-room load (UTC calendar day), at `facility_ids` (the
+    case's own surgeries.facility_id; None: every facility)."""
     today = _now().date().isoformat()
+    fac_sql, fac_args = column_clause("s.facility_id", facility_ids)
     with db_session() as db:
         rows = db.execute(
-            """SELECT s.id, s.procedure_name, s.operating_room, s.scheduled_time,
+            f"""SELECT s.id, s.procedure_name, s.operating_room, s.scheduled_time,
                       s.status, s.estimated_duration_min,
                       p.name AS patient_name, p.ward AS ward
                FROM surgeries s
                LEFT JOIN patients p ON p.id = s.patient_id
-               WHERE s.scheduled_date = ?
+               WHERE s.scheduled_date = ?{fac_sql}
                ORDER BY s.scheduled_time ASC""",
-            (today,),
+            (today, *fac_args),
         ).fetchall()
     cases = [
         {
@@ -369,37 +409,76 @@ def _or_today() -> dict:
 
 
 # Empty-DB / failure fallbacks per section (used when a builder raises).
-def _empty_census() -> dict:
+def _empty_census(capacity: dict[str, int] | None = None) -> dict:
+    wards = WARD_CAPACITY if capacity is None else capacity
     return {
         "total_admitted": 0,
-        "total_capacity": _total_capacity(),
+        "total_capacity": _total_capacity(capacity),
         "occupancy_pct": 0.0,
         "by_ward": [
             {"ward": w, "occupied": 0, "capacity": cap, "occupancy_pct": 0.0}
-            for w, cap in WARD_CAPACITY.items()
+            for w, cap in wards.items()
         ],
     }
 
 
-def _empty_acuity() -> dict:
+def _empty_acuity(capacity: dict[str, int] | None = None) -> dict:
+    wards = WARD_CAPACITY if capacity is None else capacity
     return {
         "critical": 0,
         "elevated": 0,
         "stable": 0,
         "not_scored": 0,
         "heatmap": [
-            {"ward": w, "critical": 0, "elevated": 0, "stable": 0, "not_scored": 0}
-            for w in WARD_CAPACITY
+            {"ward": w, "critical": 0, "elevated": 0, "stable": 0, "not_scored": 0} for w in wards
         ],
     }
 
 
-def house_snapshot() -> dict:
+def _facility_tiles(patients: list[dict]) -> dict:
+    """One tile per facility on record, for a reader who sees the whole group:
+    its census, beds and bands, from the same patient list and ward map as the
+    group's own figures, so the tiles add up to them. The beds of a ward no
+    facility can be told for are counted apart (unplaced_capacity), never
+    given to one facility."""
+    from services import facility_service
+
+    placed = ward_facilities()
+    facility_ids = sorted(int(f["id"]) for f in facility_service.list_facilities())
+    tiles: list[dict[str, Any]] = []
+    for fid in facility_ids:
+        own = [p for p in patients if p.get("facility_id") is not None and p["facility_id"] == fid]
+        beds = sum(cap for w, cap in list(WARD_CAPACITY.items()) if placed.get(w) == fid)
+        bands = {"critical": 0, "elevated": 0, "stable": 0, "not_scored": 0}
+        for p in own:
+            level = p["level"] if p["level"] in ("critical", "elevated", "stable") else "not_scored"
+            bands[level] += 1
+        tiles.append(
+            {
+                "facility": facility_service.facility_identity(fid),
+                "total_admitted": len(own),
+                "total_capacity": beds,
+                "occupancy_pct": round(len(own) / beds * 100, 1) if beds else 0.0,
+                **bands,
+            }
+        )
+    unplaced = sum(cap for w, cap in list(WARD_CAPACITY.items()) if placed.get(w) is None)
+    return {"tiles": tiles, "unplaced_capacity": unplaced}
+
+
+def house_snapshot(
+    facility_ids: frozenset[int] | None = None, *, group_tiles: bool = False
+) -> dict:
     """Assemble the full house-wide command-center snapshot.
 
     Each section is independently guarded: a failure in one subsystem yields that
     section's empty/zero shape plus an `error` note, while every other section
     still renders. Never raises.
+
+    `facility_ids` keeps every section to those facilities (multisite-12);
+    None is the whole appliance. `group_tiles` (a group-wide reader, with
+    more than one facility on record) adds `facility_tiles`, one per
+    facility, and `unplaced_capacity`.
     """
     snapshot: dict = {"generated_at": _now_iso()}
     # The screen hides the acuity bands and the highest-scores list when this
@@ -411,21 +490,48 @@ def house_snapshot() -> dict:
     # Admitted-patient list feeds census, acuity, deteriorations and downtime.
     # If even this base read fails, everything patient-derived degrades to zeros.
     try:
-        patients = _admitted_with_acuity()
+        if facility_ids is None and not group_tiles:
+            patients = _admitted_with_acuity()
+        else:
+            patients = _admitted_with_acuity(facility_ids, with_facility=group_tiles)
     except Exception as e:
         logger.error("command-center: base patient read failed: %s", e)
         patients = []
         snapshot["patients_error"] = str(e)
 
+    # One facility's wards (read after the patients, whose wards may have
+    # joined the map); None is every ward.
+    capacity: dict[str, int] | None = None
+    if facility_ids is not None:
+        try:
+            capacity = capacity_for(facility_ids)
+        except Exception as e:
+            # A facility whose wards cannot be told shows no beds, never the
+            # whole group's.
+            logger.error("command-center: facility capacity read failed: %s", e)
+            capacity = {}
+            snapshot["capacity_error"] = str(e)
+
     # ── census + acuity (single pass) ──
     try:
-        census, acuity = _census_and_acuity(patients)
+        census, acuity = _census_and_acuity(patients, capacity)
     except Exception as e:
         logger.error("command-center census/acuity failed: %s", e)
-        census, acuity = _empty_census(), _empty_acuity()
+        census, acuity = _empty_census(capacity), _empty_acuity(capacity)
         census["error"] = acuity["error"] = str(e)
     snapshot["census"] = census
     snapshot["acuity"] = acuity
+
+    # ── one tile per facility (a group-wide reader only) ──
+    if group_tiles:
+        try:
+            tiles = _facility_tiles(patients)
+            snapshot["facility_tiles"] = tiles["tiles"]
+            snapshot["unplaced_capacity"] = tiles["unplaced_capacity"]
+        except Exception as e:
+            logger.error("command-center facility tiles failed: %s", e)
+            snapshot["facility_tiles"] = []
+            snapshot["facility_tiles_error"] = str(e)
 
     # ── deteriorations ──
     try:
@@ -437,14 +543,14 @@ def house_snapshot() -> dict:
 
     # ── bundles ──
     try:
-        snapshot["bundles"] = _bundles()
+        snapshot["bundles"] = _bundles() if facility_ids is None else _bundles(facility_ids)
     except Exception as e:
         logger.error("command-center bundles failed: %s", e)
         snapshot["bundles"] = {"active": 0, "compliant": 0, "compliance_pct": 100, "error": str(e)}
 
     # ── forecast ──
     try:
-        snapshot["forecast"] = _forecast()
+        snapshot["forecast"] = _forecast() if facility_ids is None else _forecast(facility_ids)
     except Exception as e:
         logger.error("command-center forecast failed: %s", e)
         snapshot["forecast"] = {
@@ -452,7 +558,7 @@ def house_snapshot() -> dict:
             "projected_occupancy": 0,
             "projected_occupancy_pct": 0.0,
             "current_occupancy": census.get("total_admitted", 0),
-            "total_capacity": _total_capacity(),
+            "total_capacity": _total_capacity(capacity),
             "error": str(e),
         }
 
@@ -471,7 +577,7 @@ def house_snapshot() -> dict:
 
     # ── OR today ──
     try:
-        snapshot["or_today"] = _or_today()
+        snapshot["or_today"] = _or_today() if facility_ids is None else _or_today(facility_ids)
     except Exception as e:
         logger.error("command-center OR-today failed: %s", e)
         snapshot["or_today"] = {"count": 0, "cases": [], "error": str(e)}

@@ -513,9 +513,9 @@ holding an older printout of a screen file still needs the translation.
 
 | Screen file | It said | The code says | Evidence |
 |---|---|---|---|
-| `06-vigil-board.md` | `src/pages/ClinicianShell.tsx::navItems` | **`TABS`** | `ClinicianShell.tsx:25`, `const TABS: { id: Tab; label: string; pillar: string; icon: ReactNode }[] = [` |
+| `06-vigil-board.md` | `src/pages/ClinicianShell.tsx::navItems` | **`TABS`** | `ClinicianShell.tsx:31`, `const TABS: { id: Tab; label: string; pillar: string; icon: ReactNode }[] = [` |
 | `12-orders.md` | `src/pages/ClinicianShell.tsx::NAV_ITEMS` | **`TABS`** | same line; there is no `NAV_ITEMS` anywhere in the file |
-| `12-orders.md` | `src/pages/ClinicianShell.tsx::accessibleTabsFor` | **`getAccessibleTabs`** | `ClinicianShell.tsx:209`, `function getAccessibleTabs(role, department): Tab[]`, called at `:308` |
+| `12-orders.md` | `src/pages/ClinicianShell.tsx::accessibleTabsFor` | **`getAccessibleTabs`** | `ClinicianShell.tsx:375`, `function getAccessibleTabs(role, department): Tab[]`, called at `:474` |
 | `15-…-bridge.md` | `server/ws/scribe_stream.py::start_session` | **`handle_start_session`** | `scribe_stream.py:168-169`, `@sio.on("scribe:start_session")` then `async def handle_start_session(sid, data=None)`. The screen file named the socket **event**, not the handler |
 | `15-…-bridge.md` | `server/ws/scribe_stream.py::audio_chunk` | **`handle_audio_chunk`** | `scribe_stream.py:195-196`, event `scribe:audio_chunk` |
 | `15-…-bridge.md` | `server/ws/scribe_stream.py::end_utterance` | **`handle_end_utterance`** | `scribe_stream.py:209-210`, event `scribe:end_utterance` |

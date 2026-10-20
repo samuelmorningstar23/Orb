@@ -273,22 +273,26 @@ SITES = {
         ['admissions', 'appointments', 'patients'], 3,
         ("Bookings are kept, in the query, to the caller's department rule and to bookings "
          "at the caller's facilities (appointments.facility_id, multisite-8).")),
-    ('services/forecast_service.py', 'get_bed_capacity_forecast'): blind(
-        'multisite-12',
-        'Ward bed counts for every facility; per-facility capacity is multisite-12.'),
+    ('services/forecast_service.py', 'get_bed_capacity_forecast'): facility(
+        ['patients'], 2,
+        ("Ward bed counts and occupancy at the caller's facilities: the wards placed there "
+         '(capacity_for) and their patients (facility_filter.patient_clause, multisite-12).')),
     ('services/forecast_service.py', 'get_discharge_board'): facility(
         ['patients'], 1,
         ("The board is kept, in the query, to permissions.scope_patient_ids_sql(department, "
          "facilities=) for the caller's department and facilities (multisite-8).")),
-    ('services/forecast_service.py', 'predict_hospital_flow'): blind(
-        'multisite-12',
-        'The house-wide flow forecast; per-facility capacity is multisite-12.'),
+    ('services/forecast_service.py', 'predict_hospital_flow'): facility(
+        ['admissions', 'patients'], 3,
+        ("The flow forecast at the caller's facilities: their patients, the beds of their "
+         "wards, their wards' admission history and their stays' admissions today "
+         '(multisite-12). Counts, no patient named.')),
     ('services/forecast_service.py', 'refresh_all_predictions'): appliance(
         ('The bot\'s periodic prediction refresh, a lifespan task no route or socket handler '
          'reaches: it writes the prediction cache and answers no request.')),
-    ('services/forecast_service.py', 'refresh_ward_capacity'): blind(
-        'multisite-12',
-        'Ward capacity for every facility; per-facility capacity is multisite-12.'),
+    ('services/forecast_service.py', 'refresh_ward_capacity'): appliance(
+        ("Discovers the site's ward names from admitted patients for the one capacity map, at "
+         'boot and after Bed setup writes; it names no patient and answers no request '
+         '(capacity_for keeps each facility to its own wards).')),
     # services/ipass_service.py
     ('services/ipass_service.py', '_get_active_meds'): patient_keyed(
         ['medications'], 1,

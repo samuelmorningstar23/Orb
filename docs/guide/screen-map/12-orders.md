@@ -22,12 +22,12 @@ print portal. Styling comes from `src/components/orders/Orders.module.css` (CSS 
 `styles.x`) and `src/components/orders/OrderSets.css` (plain BEM, `order-sets__x`).
 
 **How you get there.** Left nav → **Orders**. The nav entry is defined at
-`src/pages/ClinicianShell.tsx:70` (`id: 'orders', label: 'Orders', pillar: 'Orders'`, with a
-document-with-two-rules icon at `:70-74`); the panel is lazily imported at `:278` and mounted at
-`:740-744` inside `<PanelErrorBoundary label="orders">`. The tab exists only for roles whose list
-includes `'orders'`: **doctor** (`:195-196`) and **nurse** (`:200`). Admin (`:201`), pharmacist
-(`:202`) and the raw `'surgeon'` fallback (`:188-189`) have no Orders tab at all, for them this whole
-screen is unreachable through the shell. `shouldRenderPanel` (`:325`) means the panel is not even
+`src/pages/ClinicianShell.tsx:76` (`id: 'orders', label: 'Orders', pillar: 'Orders'`, with a
+document-with-two-rules icon at `:76-80`); the panel is lazily imported at `:444` and mounted at
+`:991-995` inside `<PanelErrorBoundary label="orders">`. The tab exists only for roles whose list
+includes `'orders'`: **doctor** (`:361-362`) and **nurse** (`:366`). Admin (`:367`), pharmacist
+(`:368`) and the raw `'surgeon'` fallback (`:194-195`) have no Orders tab at all, for them this whole
+screen is unreachable through the shell. `shouldRenderPanel` (`:491`) means the panel is not even
 mounted until the tab has been visited once, so first paint of this screen always starts from
 `loading = false`, `orders = []`, `patientId = ''`.
 
@@ -114,8 +114,8 @@ protocols…</div>}>`.
 **Server:** static asset.
 **Change this →** appears for the fraction of a second the first time you press **Order sets** in a
 session, and never again (the chunk is cached). If the chunk 404s after a deploy the
-`PanelErrorBoundary` at `ClinicianShell.tsx:552` takes over and shows the shell's own
-updating/reload affordance (`ClinicianShell.tsx:263-267`) instead of this panel.
+`PanelErrorBoundary` at `ClinicianShell.tsx:785` takes over and shows the shell's own
+updating/reload affordance (`ClinicianShell.tsx:429-433`) instead of this panel.
 
 ---
 
@@ -171,7 +171,7 @@ create-order form card *only if a patient is selected*, the render guard at `:24
 **Where:** full-width row directly under the header.
 **Rendered by:** `OrdersPanel.tsx:230-239`, the whole block is wrapped in `{!patientIdProp && …}`
 at `:230`, so it is present whenever the panel is mounted from the shell (which passes no props,
-`ClinicianShell.tsx:552`) and absent when the panel is embedded in a chart that fixes the patient.
+`ClinicianShell.tsx:785`) and absent when the panel is embedded in a chart that fixes the patient.
 The control itself is `<PatientPicker value={patientId} onChange={setPatientId} label="Patient"
 hint="Pick the patient whose orders you want to see." />` at `:232-237`; its markup is
 `PatientPicker.tsx:88-197`.

@@ -342,6 +342,10 @@ def test_every_route_is_gated_on_its_own_tier():
         ("POST", "/api/billing/tariff-plans"),
         ("POST", "/api/billing/tariff-rates"),
         ("POST", "/api/billing/packages"),
+        # Price lists per facility (multisite-13): where a list applies and a
+        # facility's default change every future bill there, the tariff pen.
+        ("PUT", "/api/billing/facilities/{facility_id}/default-price-list"),
+        ("PUT", "/api/billing/tariff-plans/{tariff_plan_id}/applies-to"),
     }
     ADVISORY = "/api/billing/patients/{patient_id}/discharge-advisory"
 

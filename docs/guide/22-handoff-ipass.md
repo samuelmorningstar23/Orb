@@ -60,7 +60,7 @@ Neighbour guides referenced below: **07-vigil** (`get_patient_risk`, `get_vitals
 ### Flow A: the I-PASS shift handoff (the subsystem this guide is named for)
 
 1. In the Vigil patient panel the clinician clicks **HANDOFF**, which does `window.open('/handoff/<patientId>', '_blank')` (`src/pages/panels/VigilPanel.tsx:887`), a new browser tab, not an in-app print.
-2. The router matches `/handoff/:patientId`, gated so `role !== 'patient'` (`src/AppRoot.tsx:186`), and renders `HandoffPage` → `IpassHandoffView`.
+2. The router matches `/handoff/:patientId`, gated so `role !== 'patient'` (`src/AppRoot.tsx:240`), and renders `HandoffPage` → `IpassHandoffView`.
 3. On mount, `IpassHandoffView` calls `getIpassDraft(patientId)` → `GET /api/ipass/<id>/draft` (`src/components/handoff/IpassHandoffView.tsx:77`).
 4. The route handler `get_draft` runs `build_ipass(patient_id)` (`server/routes/ipass_routes.py:31`).
 5. `build_ipass` reads six clinical tables inside one DB session, then scores the vitals row it will print with Vigil's `risk_for_row`, calls `get_vitals_trend` and the bundle service, reads Sage's stored reasoned assessment if one is recent enough (`get_reasoned_assessment`, reused, never generated), then runs five section builders, renders a plain-text version, and returns one JSON object (`server/services/ipass_service.py:1294`, returned at `:1377`). **No LLM is called.**
@@ -288,7 +288,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Why it exists:** the read endpoint the panel loads on open.
 **Data in/out:** path id → full draft JSON. No body.
 **Talks to:** `build_ipass`; RBAC `require_permission` (guide 03-auth-rbac). Called by `getIpassDraft` (`src/api/ipass.ts:216`).
-**Gotchas:** requires `vitals.read`, not a bespoke handoff permission, reusing an existing capability. A `patient`-role JWT would be rejected both here (no permission) and at the route guard in `AppRoot.tsx:186`.
+**Gotchas:** requires `vitals.read`, not a bespoke handoff permission, reusing an existing capability. A `patient`-role JWT would be rejected both here (no permission) and at the route guard in `AppRoot.tsx:240`.
 
 #### `save_draft`: `server/routes/ipass_routes.py:83`
 **Signature:** `POST /api/ipass/{patient_id}/save`, body `{content}`, `Depends(require_permission("scribe.create_draft"))` → `{id,status,note_format}`
@@ -333,7 +333,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **How it works:** `useParams()` (React Router hook that returns URL path params); guards missing id.
 **Why it exists:** a route needs a component; this adapts URL→prop.
 **Data in/out:** URL param → `<IpassHandoffView patientId=…/>`.
-**Talks to:** mounted by the `/handoff/:patientId` route (`src/AppRoot.tsx:186`).
+**Talks to:** mounted by the `/handoff/:patientId` route (`src/AppRoot.tsx:240`).
 **Gotchas:** the route itself enforces `role !== 'patient'`; this component does no auth of its own.
 
 ### src/components/handoff/IpassHandoffView.tsx

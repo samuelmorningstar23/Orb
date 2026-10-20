@@ -415,7 +415,7 @@ Two module-level constants set the state machine at the edge: `_STARTABLE_STATUS
 
 ### File: `src/pages/panels/SurgicalSuitePanel.tsx`
 
-This one file is the entire client. It is lazy-loaded and error-boundaried in the clinician shell (`src/pages/ClinicianShell.tsx:317`, rendered at `:792`).
+This one file is the entire client. It is lazy-loaded and error-boundaried in the clinician shell (`src/pages/ClinicianShell.tsx:483`, rendered at `:1043`).
 
 **Pure helpers (module scope):** `formatTime` (`:69`, 24h→12h AM/PM), `formatDuration` (`:76`, mins→"1h 30m"), `riskColor` (`:82`, maps `critical`/`elevated`/else to danger/warn/ok CSS vars), `formatDate` (`:88`, `en-IN` month-short + day, e.g. "7 Jul"). None noteworthy except `formatDate` parses `dateStr + 'T00:00:00'` as **local** time to avoid the UTC-midnight-rolls-back-a-day trap.
 

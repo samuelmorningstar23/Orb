@@ -49,20 +49,45 @@ follow-ups rather than papered over:
 All handlers are plain `def`, so FastAPI runs them in a threadpool: everything
 below opens SQLite, and blocking the event loop is the failure mode this repo
 has shipped three production freezes from.
+
+════════════════════════════════════════════════════════════════════════════════
+ ONE FACILITY AT A TIME (multisite-9b)
+════════════════════════════════════════════════════════════════════════════════
+With more than one facility of a group on the appliance an administrator bound
+to one facility works with that facility's staff. An employee belongs to the
+facility of their department in the departments master, else of the Orb login
+they are linked to; one neither places belongs to no facility and is shown
+only to a group-wide account. So, for a facility-bound account:
+
+  * the employee and attendance lists keep to their facility's staff, and an
+    employee, roster entry or attendance day of another facility's staff
+    answers 404 like one that does not exist;
+  * a department named on a read must be one of their facility's (404
+    otherwise), and the views built over a whole department (the roster, its
+    conflicts, the monthly muster and the payroll export) need one named
+    (422 department_required) rather than adding up another facility's staff;
+  * the shift types and holidays are one list for the whole group, so only a
+    group-wide account changes them (403 group_setting).
+
+With one facility on record the caller's facility scope is None and nothing
+here runs.
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
+from typing import Any
 
 import config
+from database import db_session
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
-from permissions import ADMIN_OVERVIEW, require_permission
+from permissions import ADMIN_OVERVIEW, facility_scope, require_permission
 from pydantic import BaseModel
 from services.audit_service import log_audit_event
 
+from services import facility_stamp
 from services import workforce_service as svc
 
 logger = logging.getLogger("orb.workforce_routes")
@@ -119,6 +144,88 @@ def _fail(exc: svc.WorkforceError) -> HTTPException:
     if isinstance(exc, svc.RosterConflict):
         detail["conflicts"] = exc.conflicts
     return HTTPException(status_code=status, detail=detail)
+
+
+# ── Facilities (multisite-9b; see the module docstring) ─────────────────────
+
+
+def _employee_facilities() -> dict[str, int | None]:
+    """employee code -> the facility they belong to (None when nothing
+    places them). Read only for a facility-limited caller."""
+    out: dict[str, int | None] = {}
+    with db_session() as db:
+        rows = db.execute(
+            "SELECT employee_code, department, user_id FROM staff_employment"
+        ).fetchall()
+        for code, department, user_id in rows:
+            fid = facility_stamp.department_facility(db, department) if department else None
+            if fid is None and user_id:
+                fid = facility_stamp.account_facility(db, user_id)
+            out[str(code).upper()] = fid
+    return out
+
+
+def _employee_ok(code: Any, facilities: frozenset[int], placed: dict[str, int | None]) -> bool:
+    fid = placed.get(str(code or "").strip().upper())
+    return fid is not None and fid in facilities
+
+
+def _require_employee(facilities: frozenset[int] | None, code: str | None) -> None:
+    """404 for an employee of another facility (or one no facility places)."""
+    if facilities is None or not code:
+        return
+    if not _employee_ok(code, facilities, _employee_facilities()):
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "not_found", "message": f"No employee {code.strip().upper()}"},
+        )
+
+
+def _require_department(facilities: frozenset[int] | None, department: str | None) -> None:
+    """A department a facility-limited caller names must be one of their
+    facility's: 404 otherwise, as for a department that does not exist."""
+    if facilities is None or not department:
+        return
+    with db_session() as db:
+        fid = facility_stamp.department_facility(db, department)
+    if fid is None or fid not in facilities:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "not_found", "message": f"No department {department.strip()}"},
+        )
+
+
+def _department_required(facilities: frozenset[int] | None, department: str | None) -> None:
+    """A whole-department view for a facility-limited caller needs a
+    department of their facility named (it would otherwise add up another
+    facility's staff)."""
+    if facilities is None:
+        return
+    if not department:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "department_required",
+                "message": "Choose one of your facility's departments.",
+            },
+        )
+    _require_department(facilities, department)
+
+
+def _group_setting(facilities: frozenset[int] | None, what: str) -> None:
+    """403 for a facility-limited caller changing a list the whole group shares."""
+    if facilities is None:
+        return
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "error": "group_setting",
+            "message": (
+                f"The {what} are one list for every facility of the group, so only an "
+                "account with group-wide access changes them."
+            ),
+        },
+    )
 
 
 def _audit(
@@ -281,31 +388,36 @@ _LIST_EMPLOYEES_MODULE_DEFAULT = Depends(require_module)
 _LIST_EMPLOYEES_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
-@router.get("/employees")
+@router.get("/employees", response_model=None)
 def list_employees(
     department: str | None = _LIST_EMPLOYEES_DEPARTMENT_DEFAULT,
     include_inactive: bool = _LIST_EMPLOYEES_INCLUDE_INACTIVE_DEFAULT,
     search: str | None = _LIST_EMPLOYEES_SEARCH_DEFAULT,
-    _module=_LIST_EMPLOYEES_MODULE_DEFAULT,
-    user=_LIST_EMPLOYEES_USER_DEFAULT,
-):
-    return {
-        "employees": svc.list_employees(
-            department=department, include_inactive=include_inactive, search=search
-        )
-    }
+    _module: None = _LIST_EMPLOYEES_MODULE_DEFAULT,
+    user: dict = _LIST_EMPLOYEES_USER_DEFAULT,
+) -> dict:
+    facilities = facility_scope(user)
+    _require_department(facilities, department)
+    rows = svc.list_employees(
+        department=department, include_inactive=include_inactive, search=search
+    )
+    if facilities is not None:
+        placed = _employee_facilities()
+        rows = [r for r in rows if _employee_ok(r.get("employee_code"), facilities, placed)]
+    return {"employees": rows}
 
 
 _GET_EMPLOYEE_MODULE_DEFAULT = Depends(require_module)
 _GET_EMPLOYEE_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
-@router.get("/employees/{employee_code}")
+@router.get("/employees/{employee_code}", response_model=None)
 def get_employee(
     employee_code: str,
-    _module=_GET_EMPLOYEE_MODULE_DEFAULT,
-    user=_GET_EMPLOYEE_USER_DEFAULT,
-):
+    _module: None = _GET_EMPLOYEE_MODULE_DEFAULT,
+    user: dict = _GET_EMPLOYEE_USER_DEFAULT,
+) -> dict:
+    _require_employee(facility_scope(user), employee_code)
     try:
         return svc.get_employee(employee_code)
     except svc.WorkforceError as exc:
@@ -316,13 +428,38 @@ _UPSERT_EMPLOYEE_MODULE_DEFAULT = Depends(require_module)
 _UPSERT_EMPLOYEE_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
-@router.post("/employees")
+@router.post("/employees", response_model=None)
 def upsert_employee(
     payload: EmployeeIn,
     request: Request,
-    _module=_UPSERT_EMPLOYEE_MODULE_DEFAULT,
-    user=_UPSERT_EMPLOYEE_USER_DEFAULT,
-):
+    _module: None = _UPSERT_EMPLOYEE_MODULE_DEFAULT,
+    user: dict = _UPSERT_EMPLOYEE_USER_DEFAULT,
+) -> dict:
+    facilities = facility_scope(user)
+    if facilities is not None:
+        placed = _employee_facilities()
+        code = payload.employee_code.strip().upper()
+        if code in placed and not _employee_ok(code, facilities, placed):
+            raise HTTPException(
+                status_code=404, detail={"error": "not_found", "message": f"No employee {code}"}
+            )
+        _require_department(facilities, payload.department)
+        if not payload.department:
+            # Placed by the linked login: it must be one of this facility's.
+            with db_session() as db:
+                fid = (
+                    facility_stamp.account_facility(db, payload.user_id)
+                    if payload.user_id
+                    else None
+                )
+            if fid is None or fid not in facilities:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "error": "department_required",
+                        "message": "Give the employee one of your facility's departments.",
+                    },
+                )
     try:
         employee = svc.upsert_employee(**payload.model_dump(), created_by=user.get("id"))
     except svc.WorkforceError as exc:
@@ -361,13 +498,14 @@ _UPSERT_SHIFT_MODULE_DEFAULT = Depends(require_module)
 _UPSERT_SHIFT_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
-@router.post("/shifts")
+@router.post("/shifts", response_model=None)
 def upsert_shift(
     payload: ShiftTypeIn,
     request: Request,
-    _module=_UPSERT_SHIFT_MODULE_DEFAULT,
-    user=_UPSERT_SHIFT_USER_DEFAULT,
-):
+    _module: None = _UPSERT_SHIFT_MODULE_DEFAULT,
+    user: dict = _UPSERT_SHIFT_USER_DEFAULT,
+) -> dict:
+    _group_setting(facility_scope(user), "shift types")
     try:
         shift = svc.upsert_shift_type(**payload.model_dump())
     except svc.WorkforceError as exc:
@@ -409,13 +547,14 @@ _UPSERT_HOLIDAY_MODULE_DEFAULT = Depends(require_module)
 _UPSERT_HOLIDAY_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
-@router.post("/holidays")
+@router.post("/holidays", response_model=None)
 def upsert_holiday(
     payload: HolidayIn,
     request: Request,
-    _module=_UPSERT_HOLIDAY_MODULE_DEFAULT,
-    user=_UPSERT_HOLIDAY_USER_DEFAULT,
-):
+    _module: None = _UPSERT_HOLIDAY_MODULE_DEFAULT,
+    user: dict = _UPSERT_HOLIDAY_USER_DEFAULT,
+) -> dict:
+    _group_setting(facility_scope(user), "holidays")
     try:
         holiday = svc.upsert_holiday(**payload.model_dump(), created_by=user.get("id"))
     except svc.WorkforceError as exc:
@@ -435,13 +574,14 @@ _DELETE_HOLIDAY_MODULE_DEFAULT = Depends(require_module)
 _DELETE_HOLIDAY_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
-@router.delete("/holidays/{holiday_date}")
+@router.delete("/holidays/{holiday_date}", response_model=None)
 def delete_holiday(
     holiday_date: str,
     request: Request,
-    _module=_DELETE_HOLIDAY_MODULE_DEFAULT,
-    user=_DELETE_HOLIDAY_USER_DEFAULT,
-):
+    _module: None = _DELETE_HOLIDAY_MODULE_DEFAULT,
+    user: dict = _DELETE_HOLIDAY_USER_DEFAULT,
+) -> dict:
+    _group_setting(facility_scope(user), "holidays")
     try:
         removed = svc.delete_holiday(holiday_date)
     except svc.WorkforceError as exc:
@@ -474,15 +614,16 @@ _GET_ROSTER_MODULE_DEFAULT = Depends(require_module)
 _GET_ROSTER_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
-@router.get("/roster")
+@router.get("/roster", response_model=None)
 def get_roster(
     date_from: str = _GET_ROSTER_DATE_FROM_DEFAULT,
     date_to: str = _GET_ROSTER_DATE_TO_DEFAULT,
     department: str | None = _GET_ROSTER_DEPARTMENT_DEFAULT,
-    _module=_GET_ROSTER_MODULE_DEFAULT,
-    user=_GET_ROSTER_USER_DEFAULT,
-):
+    _module: None = _GET_ROSTER_MODULE_DEFAULT,
+    user: dict = _GET_ROSTER_USER_DEFAULT,
+) -> dict:
     """Who is on, by date and shift, with what actually happened beside it."""
+    _department_required(facility_scope(user), department)
     try:
         return svc.get_roster(date_from=date_from, date_to=date_to, department=department)
     except svc.WorkforceError as exc:
@@ -496,19 +637,20 @@ _ROSTER_CONFLICTS_MODULE_DEFAULT = Depends(require_module)
 _ROSTER_CONFLICTS_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
-@router.get("/roster/conflicts")
+@router.get("/roster/conflicts", response_model=None)
 def roster_conflicts(
     date_from: str = _ROSTER_CONFLICTS_DATE_FROM_DEFAULT,
     date_to: str = _ROSTER_CONFLICTS_DATE_TO_DEFAULT,
     department: str | None = _ROSTER_CONFLICTS_DEPARTMENT_DEFAULT,
-    _module=_ROSTER_CONFLICTS_MODULE_DEFAULT,
-    user=_ROSTER_CONFLICTS_USER_DEFAULT,
-):
+    _module: None = _ROSTER_CONFLICTS_MODULE_DEFAULT,
+    user: dict = _ROSTER_CONFLICTS_USER_DEFAULT,
+) -> dict:
     """Overlapping assignments already on the roster.
 
     `assign_roster` refuses to create one, so a hit here means the roster was
     written before this module existed, arrived by import, or a shift's hours
     were edited underneath existing assignments — the realistic case."""
+    _department_required(facility_scope(user), department)
     try:
         conflicts = svc.find_conflicts(date_from=date_from, date_to=date_to, department=department)
     except svc.WorkforceError as exc:
@@ -520,13 +662,24 @@ _ASSIGN_ROSTER_MODULE_DEFAULT = Depends(require_module)
 _ASSIGN_ROSTER_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
-@router.post("/roster")
+@router.post("/roster", response_model=None)
 def assign_roster(
     payload: RosterIn,
     request: Request,
-    _module=_ASSIGN_ROSTER_MODULE_DEFAULT,
-    user=_ASSIGN_ROSTER_USER_DEFAULT,
-):
+    _module: None = _ASSIGN_ROSTER_MODULE_DEFAULT,
+    user: dict = _ASSIGN_ROSTER_USER_DEFAULT,
+) -> dict:
+    facilities = facility_scope(user)
+    _require_employee(facilities, payload.employee_code)
+    _require_department(facilities, payload.department)
+    if facilities is not None and payload.ward:
+        with db_session() as db:
+            ward_at = facility_stamp.ward_facility(db, ward=payload.ward)
+        if ward_at is not None and ward_at not in facilities:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "not_found", "message": f"No ward {payload.ward.strip()}"},
+            )
     try:
         entry = svc.assign_roster(**payload.model_dump(), created_by=user.get("id"))
     except svc.WorkforceError as exc:
@@ -549,13 +702,24 @@ _CANCEL_ROSTER_MODULE_DEFAULT = Depends(require_module)
 _CANCEL_ROSTER_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
-@router.post("/roster/{roster_id}/cancel")
+@router.post("/roster/{roster_id}/cancel", response_model=None)
 def cancel_roster(
     roster_id: int,
     request: Request,
-    _module=_CANCEL_ROSTER_MODULE_DEFAULT,
-    user=_CANCEL_ROSTER_USER_DEFAULT,
-):
+    _module: None = _CANCEL_ROSTER_MODULE_DEFAULT,
+    user: dict = _CANCEL_ROSTER_USER_DEFAULT,
+) -> dict:
+    facilities = facility_scope(user)
+    if facilities is not None:
+        with db_session() as db:
+            row = db.execute(
+                "SELECT employee_code FROM duty_roster WHERE id = ?", (int(roster_id),)
+            ).fetchone()
+        if row is None or not _employee_ok(row[0], facilities, _employee_facilities()):
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "not_found", "message": f"No roster entry {roster_id}"},
+            )
     try:
         entry = svc.cancel_roster_entry(roster_id, actor=user.get("id"))
     except svc.WorkforceError as exc:
@@ -586,21 +750,27 @@ _LIST_ATTENDANCE_MODULE_DEFAULT = Depends(require_module)
 _LIST_ATTENDANCE_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
-@router.get("/attendance")
+@router.get("/attendance", response_model=None)
 def list_attendance(
     date_from: str = _LIST_ATTENDANCE_DATE_FROM_DEFAULT,
     date_to: str = _LIST_ATTENDANCE_DATE_TO_DEFAULT,
     department: str | None = _LIST_ATTENDANCE_DEPARTMENT_DEFAULT,
     employee_code: str | None = _LIST_ATTENDANCE_EMPLOYEE_CODE_DEFAULT,
-    _module=_LIST_ATTENDANCE_MODULE_DEFAULT,
-    user=_LIST_ATTENDANCE_USER_DEFAULT,
-):
+    _module: None = _LIST_ATTENDANCE_MODULE_DEFAULT,
+    user: dict = _LIST_ATTENDANCE_USER_DEFAULT,
+) -> dict:
+    facilities = facility_scope(user)
+    _require_department(facilities, department)
+    _require_employee(facilities, employee_code)
     try:
         rows = svc.list_attendance(
             date_from=date_from, date_to=date_to, department=department, employee_code=employee_code
         )
     except svc.WorkforceError as exc:
         raise _fail(exc) from exc
+    if facilities is not None:
+        placed = _employee_facilities()
+        rows = [r for r in rows if _employee_ok(r.get("employee_code"), facilities, placed)]
     return {"attendance": rows, "count": len(rows)}
 
 
@@ -608,19 +778,20 @@ _RECORD_ATTENDANCE_MODULE_DEFAULT = Depends(require_module)
 _RECORD_ATTENDANCE_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
-@router.post("/attendance")
+@router.post("/attendance", response_model=None)
 def record_attendance(
     payload: AttendanceIn,
     request: Request,
-    _module=_RECORD_ATTENDANCE_MODULE_DEFAULT,
-    user=_RECORD_ATTENDANCE_USER_DEFAULT,
-):
+    _module: None = _RECORD_ATTENDANCE_MODULE_DEFAULT,
+    user: dict = _RECORD_ATTENDANCE_USER_DEFAULT,
+) -> dict:
     """Record or CORRECT one employee's one day.
 
     A correction replaces the day rather than adding a second row — two rows for
     one day would break the summing identity the monthly summary rests on. The
     previous values are not lost: the audit trail carries the write, and the
     schema's unique index is what makes the replacement the only possibility."""
+    _require_employee(facility_scope(user), payload.employee_code)
     try:
         row = svc.record_attendance(**payload.model_dump(), recorded_by=user.get("id"))
     except svc.WorkforceError as exc:
@@ -650,21 +821,26 @@ _ATTENDANCE_SUMMARY_MODULE_DEFAULT = Depends(require_module)
 _ATTENDANCE_SUMMARY_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
-@router.get("/attendance/summary")
+@router.get("/attendance/summary", response_model=None)
 def attendance_summary(
     year: int = _ATTENDANCE_SUMMARY_YEAR_DEFAULT,
     month: int = _ATTENDANCE_SUMMARY_MONTH_DEFAULT,
     employee_code: str | None = _ATTENDANCE_SUMMARY_EMPLOYEE_CODE_DEFAULT,
     department: str | None = _ATTENDANCE_SUMMARY_DEPARTMENT_DEFAULT,
-    _module=_ATTENDANCE_SUMMARY_MODULE_DEFAULT,
-    user=_ATTENDANCE_SUMMARY_USER_DEFAULT,
-):
+    _module: None = _ATTENDANCE_SUMMARY_MODULE_DEFAULT,
+    user: dict = _ATTENDANCE_SUMMARY_USER_DEFAULT,
+) -> dict:
     """The monthly muster. One employee when `employee_code` is given, otherwise
     everybody (optionally in one department).
 
     Every row carries its own `identity` block — the bucket sum against the days
     in the period — so the screen can show that the arithmetic closes rather
     than asking anyone to assume it."""
+    facilities = facility_scope(user)
+    if employee_code:
+        _require_employee(facilities, employee_code)
+    else:
+        _department_required(facilities, department)
     try:
         if employee_code:
             return {
@@ -689,19 +865,20 @@ _PREVIEW_PAYROLL_EXPORT_MODULE_DEFAULT = Depends(require_module)
 _PREVIEW_PAYROLL_EXPORT_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
-@router.get("/payroll-export")
+@router.get("/payroll-export", response_model=None)
 def preview_payroll_export(
     year: int = _PREVIEW_PAYROLL_EXPORT_YEAR_DEFAULT,
     month: int = _PREVIEW_PAYROLL_EXPORT_MONTH_DEFAULT,
     department: str | None = _PREVIEW_PAYROLL_EXPORT_DEPARTMENT_DEFAULT,
-    _module=_PREVIEW_PAYROLL_EXPORT_MODULE_DEFAULT,
-    user=_PREVIEW_PAYROLL_EXPORT_USER_DEFAULT,
-):
+    _module: None = _PREVIEW_PAYROLL_EXPORT_MODULE_DEFAULT,
+    user: dict = _PREVIEW_PAYROLL_EXPORT_USER_DEFAULT,
+) -> dict:
     """Preview the file WITHOUT recording a run.
 
     Deliberately side-effect free: `payroll_export_runs` is the record of what
     was actually sent to the bureau, and a GET that somebody refreshed three
     times would put three sends in it. Generating the real file is a POST."""
+    _department_required(facility_scope(user), department)
     try:
         return svc.build_payroll_export(year=year, month=month, department=department)
     except svc.WorkforceError as exc:
@@ -712,18 +889,19 @@ _GENERATE_PAYROLL_EXPORT_MODULE_DEFAULT = Depends(require_module)
 _GENERATE_PAYROLL_EXPORT_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
-@router.post("/payroll-export")
+@router.post("/payroll-export", response_model=None)
 def generate_payroll_export(
     payload: ExportIn,
     request: Request,
-    _module=_GENERATE_PAYROLL_EXPORT_MODULE_DEFAULT,
-    user=_GENERATE_PAYROLL_EXPORT_USER_DEFAULT,
-):
+    _module: None = _GENERATE_PAYROLL_EXPORT_MODULE_DEFAULT,
+    user: dict = _GENERATE_PAYROLL_EXPORT_USER_DEFAULT,
+) -> dict:
     """Generate the CSV and RECORD the run (checksum, header order, row count).
 
     Returns the text rather than a file stream so the caller gets the checksum
     and the warnings in the same response it saves — a browser that downloaded
     a stream would have the file and no way to prove which run it was."""
+    _department_required(facility_scope(user), payload.department)
     try:
         export = svc.build_payroll_export(
             year=payload.year, month=payload.month, department=payload.department
@@ -769,15 +947,27 @@ _PAYROLL_EXPORT_RUNS_MODULE_DEFAULT = Depends(require_module)
 _PAYROLL_EXPORT_RUNS_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
-@router.get("/payroll-export/runs")
+@router.get("/payroll-export/runs", response_model=None)
 def payroll_export_runs(
     limit: int = _PAYROLL_EXPORT_RUNS_LIMIT_DEFAULT,
-    _module=_PAYROLL_EXPORT_RUNS_MODULE_DEFAULT,
-    user=_PAYROLL_EXPORT_RUNS_USER_DEFAULT,
-):
+    _module: None = _PAYROLL_EXPORT_RUNS_MODULE_DEFAULT,
+    user: dict = _PAYROLL_EXPORT_RUNS_USER_DEFAULT,
+) -> dict:
     """What has been sent, and the checksum of each file. A payroll dispute
-    three months later is answered from here."""
-    return {"runs": svc.list_export_runs(limit=limit)}
+    three months later is answered from here. A facility-limited reader sees
+    the runs of their facility's departments; a run over the whole group is
+    shown only to a group-wide account."""
+    facilities = facility_scope(user)
+    runs = svc.list_export_runs(limit=limit if facilities is None else 200)
+    if facilities is not None:
+        with db_session() as db:
+            runs = [
+                r
+                for r in runs
+                if r.get("department")
+                and facility_stamp.department_facility(db, r["department"]) in facilities
+            ][:limit]
+    return {"runs": runs}
 
 
 _DOWNLOAD_PAYROLL_EXPORT_YEAR_DEFAULT = Query(...)
@@ -792,14 +982,15 @@ def download_payroll_export(
     year: int = _DOWNLOAD_PAYROLL_EXPORT_YEAR_DEFAULT,
     month: int = _DOWNLOAD_PAYROLL_EXPORT_MONTH_DEFAULT,
     department: str | None = _DOWNLOAD_PAYROLL_EXPORT_DEPARTMENT_DEFAULT,
-    _module=_DOWNLOAD_PAYROLL_EXPORT_MODULE_DEFAULT,
-    user=_DOWNLOAD_PAYROLL_EXPORT_USER_DEFAULT,
-):
+    _module: None = _DOWNLOAD_PAYROLL_EXPORT_MODULE_DEFAULT,
+    user: dict = _DOWNLOAD_PAYROLL_EXPORT_USER_DEFAULT,
+) -> PlainTextResponse:
     """The file, as a download, for an operator with curl and no browser.
 
     Like the JSON preview this does NOT record a run — the same reason, and the
     same consequence: use POST /payroll-export for the copy that goes to the
     bureau, so the checksum of what was sent exists."""
+    _department_required(facility_scope(user), department)
     try:
         export = svc.build_payroll_export(year=year, month=month, department=department)
         csv_text = svc.render_payroll_csv(export)

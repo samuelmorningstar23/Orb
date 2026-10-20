@@ -33,6 +33,13 @@ Errors: an unknown order id is 404; the creator approving, or a cancel past
 approval without the approve tier, is 403; a move the order's status does not
 allow is 409; anything the request must correct is 422; an audit outage is
 503 audit_unavailable, and nothing was changed.
+
+PER FACILITY (multisite-8h3, ruling MS-R9 (a)). With more than one facility on
+record, an order, receipt or store of another facility is 404 (the same answer
+as one that does not exist) after an authorization 'facility_document_denied'
+row (services/pharmacy_facility.gate), before anything is read or written,
+and the lists, options, receivable orders and suggestions are the caller's
+facilities' only. With one facility on record nothing here changes.
 """
 
 from typing import Any
@@ -42,12 +49,14 @@ from permissions import (
     PHARMACY_STORE_APPROVE,
     PHARMACY_STORE_READ,
     PHARMACY_STORE_WRITE,
+    facility_scope,
     has_permission,
     require_permission,
 )
 from pydantic import BaseModel, Field
 from services.audit_service import AuditWriteError
 
+from services import pharmacy_facility
 from services import pharmacy_purchasing_service as purchasing
 
 router = APIRouter()
@@ -98,6 +107,27 @@ def _ctx(request: Request) -> dict:
         "http_method": request.method,
         "ip_address": request.client.host if request.client else None,
     }
+
+
+def _order_gate(user: dict, po_id: Any, request: Request) -> None:
+    """404 for an order of another facility (multisite-8h3)."""
+    pharmacy_facility.gate(
+        user, "purchase_order", po_id, request, message=f"No purchase order {po_id}"
+    )
+
+
+def _receipt_gate(user: dict, grn_id: Any, request: Request) -> None:
+    """404 for a goods receipt of another facility (multisite-8h3)."""
+    pharmacy_facility.gate(
+        user, "goods_receipt", grn_id, request, message=f"No goods receipt {grn_id}"
+    )
+
+
+def _store_gate(user: dict, store_code: Any, request: Request) -> None:
+    """404 for a store of another facility named in a body (multisite-8h3)."""
+    pharmacy_facility.gate(
+        user, "store_code", store_code, request, message=f"no pharmacy store {store_code!r}"
+    )
 
 
 _CANCEL_TIER_USER_DEFAULT = Depends(_PS_READ)
@@ -163,9 +193,14 @@ def list_purchase_orders(
     status: str | None = _LIST_PURCHASE_ORDERS_STATUS_DEFAULT,
     limit: int = _LIST_PURCHASE_ORDERS_LIMIT_DEFAULT,
     user: dict = _LIST_PURCHASE_ORDERS_USER_DEFAULT,
-):
+) -> dict:
+    """Pharmacy orders, newest first (the caller's facilities only)."""
     try:
-        return {"purchase_orders": purchasing.list_purchase_orders(status=status, limit=limit)}
+        return {
+            "purchase_orders": purchasing.list_purchase_orders(
+                status=status, limit=limit, facilities=facility_scope(user)
+            )
+        }
     except purchasing.PurchasingError as exc:
         raise _fail(exc) from exc
 
@@ -174,10 +209,11 @@ _PURCHASE_ORDER_OPTIONS_USER_DEFAULT = Depends(_PS_READ)
 
 
 @router.get("/purchase-orders/options")
-def purchase_order_options(user: dict = _PURCHASE_ORDER_OPTIONS_USER_DEFAULT):
-    """Vendors with their drug licence state, the stores an order may go to,
-    and every active drug with whether it can be ordered, and why not."""
-    return purchasing.options()
+def purchase_order_options(user: dict = _PURCHASE_ORDER_OPTIONS_USER_DEFAULT) -> dict:
+    """Vendors with their drug licence state, the stores an order may go to
+    (the caller's facilities' only), and every active drug with whether it
+    can be ordered, and why not."""
+    return purchasing.options(facilities=facility_scope(user))
 
 
 _REORDER_SUGGESTIONS_STORE_ID_DEFAULT = Query(None, ge=1)
@@ -186,19 +222,33 @@ _REORDER_SUGGESTIONS_USER_DEFAULT = Depends(_PS_READ)
 
 @router.get("/purchase-orders/reorder-suggestions")
 def reorder_suggestions(
+    request: Request,
     store_id: int | None = _REORDER_SUGGESTIONS_STORE_ID_DEFAULT,
     user: dict = _REORDER_SUGGESTIONS_USER_DEFAULT,
-):
+) -> dict:
     """Drugs at or below their reorder level, with the suggested packs, the
-    last rate paid and whether each can be ordered."""
-    return {"suggestions": purchasing.reorder_suggestions(store_id=store_id)}
+    last rate paid and whether each can be ordered (the caller's facilities'
+    stores; a named store of another facility is 404)."""
+    if store_id is not None:
+        pharmacy_facility.gate(
+            user, "store", store_id, request, message=f"no pharmacy store {store_id}"
+        )
+    return {
+        "suggestions": purchasing.reorder_suggestions(
+            store_id=store_id, facilities=facility_scope(user)
+        )
+    }
 
 
 _GET_PURCHASE_ORDER_USER_DEFAULT = Depends(_PS_READ)
 
 
 @router.get("/purchase-orders/{po_id}")
-def get_purchase_order(po_id: int, user: dict = _GET_PURCHASE_ORDER_USER_DEFAULT):
+def get_purchase_order(
+    po_id: int, request: Request, user: dict = _GET_PURCHASE_ORDER_USER_DEFAULT
+) -> dict:
+    """One order; an order of another facility is 404."""
+    _order_gate(user, po_id, request)
     doc = purchasing.get_purchase_order(po_id)
     if doc is None:
         raise HTTPException(
@@ -236,9 +286,11 @@ _CREATE_PURCHASE_ORDER_USER_DEFAULT = Depends(_PS_WRITE)
 @router.post("/purchase-orders")
 def create_purchase_order(
     body: PurchaseOrderIn, request: Request, user: dict = _CREATE_PURCHASE_ORDER_USER_DEFAULT
-):
+) -> dict:
     """Raise a draft. Refused for an unlicensed vendor, an unclassified drug,
-    a drug with no pack size or GST rate, or an NDPS drug outside the vault."""
+    a drug with no pack size or GST rate, or an NDPS drug outside the vault;
+    a store of another facility is 404."""
+    _store_gate(user, body.store_code, request)
     try:
         return purchasing.create_purchase_order(
             vendor_code=body.vendor_code,
@@ -282,9 +334,11 @@ _CREATE_FROM_SUGGESTIONS_USER_DEFAULT = Depends(_PS_WRITE)
 @router.post("/purchase-orders/from-suggestions")
 def create_from_suggestions(
     body: FromSuggestionsIn, request: Request, user: dict = _CREATE_FROM_SUGGESTIONS_USER_DEFAULT
-):
+) -> dict:
     """Turn reorder suggestions into a draft. The quantity is the server's
-    current suggestion unless packs are given; the rate is always typed."""
+    current suggestion unless packs are given; the rate is always typed. A
+    store of another facility is 404."""
+    _store_gate(user, body.store_code, request)
     try:
         return purchasing.create_from_suggestions(
             vendor_code=body.vendor_code,
@@ -308,7 +362,9 @@ _SUBMIT_PURCHASE_ORDER_USER_DEFAULT = Depends(_PS_WRITE)
 @router.post("/purchase-orders/{po_id}/submit")
 def submit_purchase_order(
     po_id: int, request: Request, user: dict = _SUBMIT_PURCHASE_ORDER_USER_DEFAULT
-):
+) -> dict:
+    """Send a draft for approval; an order of another facility is 404."""
+    _order_gate(user, po_id, request)
     try:
         return purchasing.submit_purchase_order(po_id, actor=user, audit_ctx=_ctx(request))
     except purchasing.PurchasingError as exc:
@@ -323,8 +379,10 @@ _APPROVE_PURCHASE_ORDER_USER_DEFAULT = Depends(_PS_APPROVE)
 @router.post("/purchase-orders/{po_id}/approve")
 def approve_purchase_order(
     po_id: int, request: Request, user: dict = _APPROVE_PURCHASE_ORDER_USER_DEFAULT
-):
-    """Never by the person who raised the order (403 same_person)."""
+) -> dict:
+    """Never by the person who raised the order (403 same_person). An order
+    of another facility is 404."""
+    _order_gate(user, po_id, request)
     try:
         return purchasing.approve_purchase_order(po_id, actor=user, audit_ctx=_ctx(request))
     except purchasing.PurchasingError as exc:
@@ -339,8 +397,10 @@ _ISSUE_PURCHASE_ORDER_USER_DEFAULT = Depends(_PS_APPROVE)
 @router.post("/purchase-orders/{po_id}/issue")
 def issue_purchase_order(
     po_id: int, request: Request, user: dict = _ISSUE_PURCHASE_ORDER_USER_DEFAULT
-):
-    """Send the order to the vendor. Its PHPO number is drawn after commit."""
+) -> dict:
+    """Send the order to the vendor. Its PHPO number is drawn after commit.
+    An order of another facility is 404."""
+    _order_gate(user, po_id, request)
     try:
         return purchasing.issue_purchase_order(po_id, actor=user, audit_ctx=_ctx(request))
     except purchasing.PurchasingError as exc:
@@ -359,7 +419,9 @@ _CANCEL_PURCHASE_ORDER_USER_DEFAULT = Depends(_cancel_tier)
 @router.post("/purchase-orders/{po_id}/cancel")
 def cancel_purchase_order(
     po_id: int, body: CancelIn, request: Request, user: dict = _CANCEL_PURCHASE_ORDER_USER_DEFAULT
-):
+) -> dict:
+    """Cancel an order, with a reason; an order of another facility is 404."""
+    _order_gate(user, po_id, request)
     try:
         return purchasing.cancel_purchase_order(
             po_id,
@@ -389,11 +451,15 @@ def list_goods_receipts(
     purchase_order_id: int | None = _LIST_GOODS_RECEIPTS_PURCHASE_ORDER_ID_DEFAULT,
     limit: int = _LIST_GOODS_RECEIPTS_LIMIT_DEFAULT,
     user: dict = _LIST_GOODS_RECEIPTS_USER_DEFAULT,
-):
+) -> dict:
+    """Goods receipts, newest first (the caller's facilities only)."""
     try:
         return {
             "goods_receipts": purchasing.list_goods_receipts(
-                status=status, purchase_order_id=purchase_order_id, limit=limit
+                status=status,
+                purchase_order_id=purchase_order_id,
+                limit=limit,
+                facilities=facility_scope(user),
             )
         }
     except purchasing.PurchasingError as exc:
@@ -404,17 +470,22 @@ _RECEIVABLE_ORDERS_USER_DEFAULT = Depends(_PS_READ)
 
 
 @router.get("/goods-receipts/receivable")
-def receivable_orders(user: dict = _RECEIVABLE_ORDERS_USER_DEFAULT):
+def receivable_orders(user: dict = _RECEIVABLE_ORDERS_USER_DEFAULT) -> dict:
     """Orders sent to a vendor with packs still to come, line by line, and
-    the hospital's minimum shelf life at receipt."""
-    return purchasing.receivable_orders()
+    the hospital's minimum shelf life at receipt (the caller's facilities'
+    orders only)."""
+    return purchasing.receivable_orders(facilities=facility_scope(user))
 
 
 _GET_GOODS_RECEIPT_USER_DEFAULT = Depends(_PS_READ)
 
 
 @router.get("/goods-receipts/{grn_id}")
-def get_goods_receipt(grn_id: int, user: dict = _GET_GOODS_RECEIPT_USER_DEFAULT):
+def get_goods_receipt(
+    grn_id: int, request: Request, user: dict = _GET_GOODS_RECEIPT_USER_DEFAULT
+) -> dict:
+    """One goods receipt; a receipt of another facility is 404."""
+    _receipt_gate(user, grn_id, request)
     doc = purchasing.get_goods_receipt(grn_id)
     if doc is None:
         raise HTTPException(
@@ -461,11 +532,16 @@ def create_goods_receipt(
     request: Request,
     idempotency_key: str | None = _CREATE_GOODS_RECEIPT_IDEMPOTENCY_KEY_DEFAULT,
     user: dict = _CREATE_GOODS_RECEIPT_USER_DEFAULT,
-):
+) -> dict:
     """Record a delivery as a draft. Batch, MRP and an expiry typed twice on
     every line received; nothing moves into stock until it is posted. The
     Idempotency-Key header (or body field) makes a retry return the same
-    draft."""
+    draft. An order or store of another facility is 404; procurement's core
+    refuses a store of another facility than the order's."""
+    if body.purchase_order_id is not None:
+        _order_gate(user, body.purchase_order_id, request)
+    if body.store_code:
+        _store_gate(user, body.store_code, request)
     try:
         return purchasing.create_goods_receipt(
             purchase_order_id=body.purchase_order_id,
@@ -498,10 +574,12 @@ def post_goods_receipt(
     body: PostReceiptIn,
     request: Request,
     user: dict = _POST_GOODS_RECEIPT_USER_DEFAULT,
-):
+) -> dict:
     """Put the receipt on the shelf in one transaction. A short-dated batch
     needs the approve tier, someone other than the receiver, and a reason.
-    Posting twice answers the posted receipt and moves nothing again."""
+    Posting twice answers the posted receipt and moves nothing again. A
+    receipt of another facility is 404; its lots take its store's facility."""
+    _receipt_gate(user, grn_id, request)
     role = user.get("role", "")
     try:
         return purchasing.post_goods_receipt(
@@ -524,8 +602,10 @@ _CANCEL_GOODS_RECEIPT_USER_DEFAULT = Depends(_PS_WRITE)
 @router.post("/goods-receipts/{grn_id}/cancel")
 def cancel_goods_receipt(
     grn_id: int, body: CancelIn, request: Request, user: dict = _CANCEL_GOODS_RECEIPT_USER_DEFAULT
-):
-    """Cancel a draft, with a reason. A posted receipt is never cancelled."""
+) -> dict:
+    """Cancel a draft, with a reason. A posted receipt is never cancelled. A
+    receipt of another facility is 404."""
+    _receipt_gate(user, grn_id, request)
     try:
         return purchasing.cancel_goods_receipt(
             grn_id, reason=body.reason, actor=user, audit_ctx=_ctx(request)

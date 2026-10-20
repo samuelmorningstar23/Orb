@@ -81,9 +81,9 @@ trend but not the "if SpO2 falls below 92%…" plan, even though that plan is in
 
 ## How you get here
 
-Left nav → **My Shift** (`src/pages/ClinicianShell.tsx:27`, `id: 'shift', label: 'My Shift',
-pillar: 'Nurse Mode'`; mounted at `:715-717` inside a `PanelErrorBoundary`). For a nurse this is
-the landing screen: the per-role tab list at `ClinicianShell.tsx:227` puts `'shift'` first and the
+Left nav → **My Shift** (`src/pages/ClinicianShell.tsx:33`, `id: 'shift', label: 'My Shift',
+pillar: 'Nurse Mode'`; mounted at `:966-968` inside a `PanelErrorBoundary`). For a nurse this is
+the landing screen: the per-role tab list at `ClinicianShell.tsx:393` puts `'shift'` first and the
 shell opens `accessibleTabs[0]`.
 
 Inside that panel, the third tab in the strip, **Handover**, switches `view` to `'handover'`
@@ -102,7 +102,7 @@ with a cached board the handover list is built from a copy that the banner above
 
 The full-page sheet at `/handoff/:patientId` is reached from a **different** screen: the `HANDOFF`
 button on the Vigil patient command bar (`src/pages/panels/VigilPanel.tsx:1262`, 
-`window.open('/handoff/' + patientId, '_blank')`). The route is registered at `src/AppRoot.tsx:186` and
+`window.open('/handoff/' + patientId, '_blank')`). The route is registered at `src/AppRoot.tsx:240` and
 is open to every signed-in non-patient role. **Nothing in Nurse Mode links to it.**
 
 **Layout in one sentence.** The Handover tab is a header row (title + hint on the left, a pill
@@ -596,7 +596,7 @@ card's left edge turns green, the header pill increments, and the button's resti
 # B. The full-page I-PASS sheet: `/handoff/:patientId`
 
 Reached from Vigil's `HANDOFF` button (`src/pages/panels/VigilPanel.tsx:1262`), which opens a **new
-browser tab**. The route is `src/AppRoot.tsx:186`, gated only on "signed in and not a patient";
+browser tab**. The route is `src/AppRoot.tsx:240`, gated only on "signed in and not a patient";
 `src/pages/HandoffPage.tsx:5-9` pulls `patientId` from the URL and renders
 `<IpassHandoffView patientId={patientId} />`, or the bare text **"No patient specified."** (`:7`) if
 the param is missing. This page is **outside `ClinicianShell`**, no sidebar, no top bar, no theme
@@ -859,7 +859,7 @@ drafts, which are cached per patient in `drafts` and only ever fetched on first 
 
 ### Permission-denied
 Reaching this tab at all requires the shell to grant the `shift` tab, which it does for `nurse`
-(`ClinicianShell.tsx:227`). Within it: `GET /draft` needs `vitals.read` and `POST /save` needs
+(`ClinicianShell.tsx:393`). Within it: `GET /draft` needs `vitals.read` and `POST /save` needs
 `scribe.create_draft`. The gap that matters is `admin`, which has the first and not the second
 (`server/permissions.py:142-143`), an administrator sees every document and is refused at Save.
 Every denial writes a `permission_denied` audit row before the 403 is raised

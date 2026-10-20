@@ -1021,8 +1021,15 @@ def attach(
                                   (services/ingestion_service
                                   .later_correction_for_attach).
     Every refusal is audited and committed. Raises QuarantineError otherwise.
+
+    The patient must be inside the reconciler's department and facilities
+    (permissions.facility_scope, multisite-8h2): a record whose latest
+    encounter is at another facility reads exactly as no such patient, so a
+    result is never attached across a facility boundary (ruling MS-R14 (a)).
+    The two wrong-patient guards below still look across the whole appliance:
+    a patient at another facility is still somebody else.
     """
-    from permissions import department_scope, patient_in_scope
+    from permissions import department_scope, facility_scope, patient_in_scope
 
     from services import ingestion_service
     from services.ingestion_adapters import canonical_event_from_dict
@@ -1035,6 +1042,7 @@ def attach(
         raise QuarantineInvalid("bad_date_of_birth", "Write the date of birth as a calendar date.")
     correlation_id = str(uuid.uuid4())
     actor = _actor_fields(user, request_meta)
+    facilities = facility_scope(user)
 
     with db_session(immediate=True) as db:
         if not queue_reachable(db):
@@ -1046,7 +1054,9 @@ def attach(
         row = _open_row(db, qid)
         payload = _payload(row)
         record = _find_patient(db, str(hospital_number))
-        if record is not None and not patient_in_scope(db, record["id"], department_scope(user)):
+        if record is not None and not patient_in_scope(
+            db, record["id"], department_scope(user), facilities=facilities
+        ):
             record = None  # out of scope reads exactly as no such patient
         message = _message_identity(row, payload)
         other_patient = (

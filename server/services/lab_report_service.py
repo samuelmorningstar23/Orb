@@ -67,6 +67,7 @@ from typing import Any
 
 from permissions import PATIENT_DEPARTMENT_SQL, patient_in_scope, scope_patient_ids_sql
 
+from services import lab_facility
 from services import lab_master_service as lm
 from services import lab_order_service as los
 from services.clinical_time import parse_to_utc
@@ -694,12 +695,29 @@ def _reports(conn, specimen_ids: list[str]) -> list[dict]:
 # ════════════════════════════════════════════════════════════════════════════
 
 
-def report_for(conn, accession: Any, *, dept: str | None) -> dict:
+@lab_facility.audit_refusals
+def report_for(
+    conn: Any,
+    accession: Any,
+    *,
+    dept: str | None,
+    facilities: frozenset[int] | None = None,
+    actor: dict | None = None,
+    request_meta: dict | None = None,
+) -> dict:
     """The report of one sample. Raises LabReportError: 'bad_accession' (422)
     for a number whose check digit is wrong (a misread digit is never looked
     up), 'not_found' (404) for an unknown sample or one outside the caller's
     department (the same answer, so a scoped caller learns nothing), and
-    'not_reported' (409) when nothing on it has been released."""
+    'not_reported' (409) when nothing on it has been released.
+
+    `facilities` is the caller's facility_scope. A released report is part of
+    the patient's chart (MS-R2 (a)), so the laboratory reads it when either
+    the sample's performing facility or the patient (the patient's latest
+    encounter) is in scope, the same patients the report lists show; a ward
+    reads it by its patient. A sample outside both is the same 404, and the
+    refusal is audited for `actor` (lab_facility); the department refusal
+    keeps its out_of_scope_patient_id for the route."""
     try:
         accession = los.checked_accession(accession)
     except los.LabOrderError as err:
@@ -709,10 +727,19 @@ def report_for(conn, accession: Any, *, dept: str | None) -> dict:
     row = conn.execute("SELECT patient_id FROM lab_specimens WHERE id = ?", (accession,)).fetchone()
     if row is None:
         raise LabReportError("not_found", "Sample not found", status=404)
-    if not patient_in_scope(conn, row["patient_id"], dept):
-        raise LabReportError(
+    lab_facility.require_in_scope(
+        conn,
+        patient_id=row["patient_id"],
+        specimen_id=accession,
+        dept=dept,
+        facilities=facilities,
+        helper="lab_report",
+        not_found=LabReportError(
             "not_found", "Sample not found", status=404, out_of_scope_patient_id=row["patient_id"]
-        )
+        ),
+        facility_not_found=LabReportError("not_found", "Sample not found", status=404),
+        chart_read=True,
+    )
     reports = _reports(conn, [accession])
     if not reports:
         raise LabReportError(
@@ -755,11 +782,18 @@ def reports_for_patient(conn, patient_id: str, *, limit: int = REPORT_LIST_CAP) 
 
 
 def reports_for_day(
-    conn, day: date, *, dept: str | None, limit: int = REPORT_LIST_CAP
+    conn: Any,
+    day: date,
+    *,
+    dept: str | None,
+    limit: int = REPORT_LIST_CAP,
+    facilities: frozenset[int] | None = None,
 ) -> list[dict]:
     """The reports with any result released (or amended) on one hospital-local
     day, newest collection first (at most REPORT_LIST_CAP), inside the caller's
-    department (None is the laboratory's hospital-wide list)."""
+    department (None is the laboratory's hospital-wide list). `facilities`
+    (the caller's facility_scope) keeps the list to the samples its
+    facilities' laboratories perform (a ward: its patients there)."""
     if not tables_present(conn):
         return []
     start, end = local_day_bounds_utc(day)
@@ -769,13 +803,22 @@ def reports_for_day(
         scope_sql, scope_params = scope_patient_ids_sql(dept)
         where += f" AND r.patient_id IN ({scope_sql})"
         params += tuple(scope_params)
+    facility_where, facility_params = lab_facility.list_clause(
+        dept=dept, facilities=facilities, patient_col="r.patient_id", facility_sql="s.facility_id"
+    )
+    where += facility_where
+    params += tuple(facility_params)
     ids = _released_specimen_ids(conn, where, params, _cap(limit))
     return [_summary(r) for r in _reports(conn, ids)]
 
 
-def patient_by_uhid(conn, uhid: str, *, dept: str | None) -> dict | None:
+def patient_by_uhid(
+    conn: Any, uhid: str, *, dept: str | None, facilities: frozenset[int] | None = None
+) -> dict | None:
     """The one patient whose UHID is exactly `uhid` (spaces and case ignored),
-    inside the caller's department, or None."""
+    inside the caller's department, or None. With `facilities` (the caller's
+    facility_scope) the patient's latest encounter must also be at one of
+    them; a patient elsewhere reads exactly like no such UHID."""
     text = str(uhid or "").strip()
     if not text:
         return None
@@ -785,6 +828,6 @@ def patient_by_uhid(conn, uhid: str, *, dept: str | None) -> dict | None:
     if len(rows) != 1:
         return None
     pid = rows[0][0]
-    if not patient_in_scope(conn, pid, dept):
+    if not patient_in_scope(conn, pid, dept, facilities=facilities):
         return None
     return {"id": pid}

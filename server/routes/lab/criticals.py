@@ -80,6 +80,7 @@ from permissions import (
     LAB_CRITICAL_LOG,
     LAB_READ,
     department_scope,
+    facility_scope,
     has_permission,
     log_phi_read,
     require_permission,
@@ -149,13 +150,14 @@ def _write(call):
 _LIST_CRITICALS_USER_DEFAULT = Depends(require_permission(LAB_READ))
 
 
-@router.get("/criticals")
-def list_criticals(request: Request, user: dict = _LIST_CRITICALS_USER_DEFAULT):
-    """The laboratory's Critical results screen. The audit row records the
-    patients actually returned."""
+@router.get("/criticals", response_model=None)
+def list_criticals(request: Request, user: dict = _LIST_CRITICALS_USER_DEFAULT) -> dict:
+    """The laboratory's Critical results screen, inside the caller's
+    department and facilities. The audit row records the patients actually
+    returned."""
     dept = department_scope(user)
     with db_session() as db:
-        body = lab_critical_service.list_for_lab(db, dept=dept)
+        body = lab_critical_service.list_for_lab(db, dept=dept, facilities=facility_scope(user))
     shown = body["open"] + body["recent"]
     patient_ids = sorted({n["patient"]["id"] for n in shown})
     log_phi_read(
@@ -185,13 +187,13 @@ def list_criticals(request: Request, user: dict = _LIST_CRITICALS_USER_DEFAULT):
 _LOG_CALLBACK_USER_DEFAULT = Depends(require_permission(LAB_CRITICAL_LOG))
 
 
-@router.post("/criticals/{notification_id}/callback")
+@router.post("/criticals/{notification_id}/callback", response_model=None)
 def log_callback(
     notification_id: str,
     body: CallbackBody,
     request: Request,
     user: dict = _LOG_CALLBACK_USER_DEFAULT,
-):
+) -> dict:
     return _write(
         lambda: lab_critical_service.log_callback(
             notification_id,
@@ -204,6 +206,7 @@ def log_callback(
             value_told=body.value_told,
             dept=department_scope(user),
             request_meta=request_meta(request),
+            facilities=facility_scope(user),
         )
     )
 
@@ -211,13 +214,13 @@ def log_callback(
 _LOG_ATTEMPT_USER_DEFAULT = Depends(require_permission(LAB_CRITICAL_LOG))
 
 
-@router.post("/criticals/{notification_id}/attempt")
+@router.post("/criticals/{notification_id}/attempt", response_model=None)
 def log_attempt(
     notification_id: str,
     body: AttemptBody,
     request: Request,
     user: dict = _LOG_ATTEMPT_USER_DEFAULT,
-):
+) -> dict:
     return _write(
         lambda: lab_critical_service.log_attempt(
             notification_id,
@@ -227,6 +230,7 @@ def log_attempt(
             value_told=body.value_told,
             dept=department_scope(user),
             request_meta=request_meta(request),
+            facilities=facility_scope(user),
         )
     )
 
@@ -234,15 +238,15 @@ def log_attempt(
 _WARD_CRITICALS_USER_DEFAULT = Depends(require_permission(LAB_CRITICAL_ACK))
 
 
-@router.get("/criticals/ward")
-def ward_criticals(request: Request, user: dict = _WARD_CRITICALS_USER_DEFAULT):
+@router.get("/criticals/ward", response_model=None)
+def ward_criticals(request: Request, user: dict = _WARD_CRITICALS_USER_DEFAULT) -> dict:
     """The ward card: open criticals of the patients on the caller's ward,
-    scoped from the signed-in account, never from the request. The audit row
-    records the patients returned; an empty card discloses nothing and
-    writes none."""
+    scoped from the signed-in account (department and facilities), never
+    from the request. The audit row records the patients returned; an empty
+    card discloses nothing and writes none."""
     dept = department_scope(user)
     with db_session() as db:
-        body = lab_critical_service.list_for_ward(db, dept=dept)
+        body = lab_critical_service.list_for_ward(db, dept=dept, facilities=facility_scope(user))
     patient_ids = sorted({n["patient"]["id"] for n in body["open"]})
     if patient_ids:
         try:
@@ -270,13 +274,13 @@ def ward_criticals(request: Request, user: dict = _WARD_CRITICALS_USER_DEFAULT):
 _ACKNOWLEDGE_USER_DEFAULT = Depends(require_permission(LAB_CRITICAL_ACK))
 
 
-@router.post("/criticals/{notification_id}/acknowledge")
+@router.post("/criticals/{notification_id}/acknowledge", response_model=None)
 def acknowledge(
     notification_id: str,
     body: AcknowledgeBody,
     request: Request,
     user: dict = _ACKNOWLEDGE_USER_DEFAULT,
-):
+) -> dict:
     return _write(
         lambda: lab_critical_service.acknowledge(
             notification_id,
@@ -290,5 +294,6 @@ def acknowledge(
             value_told=body.value_told,
             dept=department_scope(user),
             request_meta=request_meta(request),
+            facilities=facility_scope(user),
         )
     )

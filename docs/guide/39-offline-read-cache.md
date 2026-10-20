@@ -20,7 +20,7 @@ A ward tablet loses wi-fi in a corridor, a lift lobby, a side room with thick wa
 
 **And the one that matters most: THE CACHE MUST CLEAR ON LOGOUT AND ON USER SWITCH.** A shared ward tablet that keeps the previous nurse's patients hands one clinician another clinician's PHI, names, diagnoses, NEWS2 scores, the whole drug chart. That is a leak wearing a performance feature's clothes. It is enforced in three independent places, because there are three different ways a device changes hands and only one of them runs a clean sign-out:
 
-1. **Sign-out**, `App.logout` clears synchronously (`src/AppRoot.tsx:104`).
+1. **Sign-out**, `App.logout` clears synchronously (`src/AppRoot.tsx:124`).
 2. **User switch and sign-out again**, `useOfflineSession` watches the user ID, not the call site (`src/hooks/useOfflineSession.ts:78-81`).
 3. **Crash recovery**, the battery died mid-round and no logout ever ran; the next mount asks whether anything on the device belongs to the person now holding it (`useOfflineSession.ts:59-61`).
 
@@ -63,7 +63,7 @@ graph TD
   GUARD -->|online| API[api/client mutation]
 ```
 
-**Neighbors:** guide 28-offline-pwa-downtime (the service worker, the app shell, downtime procedure), guide 02-api-client (`apiFetch`, `getUser`, `offlineMutate` and the write queue), guide 01-app-shell (`ClinicianShell`'s pending/sync-failed chips), guide 33-pin-on-device-identity (why a shared tablet signs *out* on idle rather than locking, `src/AppRoot.tsx:113-120`), guide 07-vigil (the board and chart that consume the snapshot), guide 22-handoff-ipass (the handover write that refuses), guide 27-design-system (`OfflineBanner.css`).
+**Neighbors:** guide 28-offline-pwa-downtime (the service worker, the app shell, downtime procedure), guide 02-api-client (`apiFetch`, `getUser`, `offlineMutate` and the write queue), guide 01-app-shell (`ClinicianShell`'s pending/sync-failed chips), guide 33-pin-on-device-identity (why a shared tablet signs *out* on idle rather than locking, `src/AppRoot.tsx:133-147`), guide 07-vigil (the board and chart that consume the snapshot), guide 22-handoff-ipass (the handover write that refuses), guide 27-design-system (`OfflineBanner.css`).
 
 ![Nurse shift board](../screenshots/nurse-01-mypatients-dark.png)
 
@@ -244,7 +244,7 @@ sequenceDiagram
 **Does:** Removes every entry this module owns. Nothing else.
 **On screen:** nothing visible, which is the point. The next thing the arriving nurse sees is her own empty state, not somebody else's ward.
 **Why it exists:** the docstring is unambiguous, *"MUST be called on logout and on user switch, that is the difference between a shared tablet and a PHI leak"* (`:178-181`).
-**Called from:** `App.logout` (`src/AppRoot.tsx:104`), `useOfflineSession` on switch/sign-out (`useOfflineSession.ts:79`), `useOfflineSession` on a crash boot (`:60`), and `readCache` itself on a foreign entry (`phiCache.ts:163`). **Four call sites, three of them proactive and one reactive**, because a single call site is a single thing to forget.
+**Called from:** `App.logout` (`src/AppRoot.tsx:124`), `useOfflineSession` on switch/sign-out (`useOfflineSession.ts:79`), `useOfflineSession` on a crash boot (`:60`), and `readCache` itself on a foreign entry (`phiCache.ts:163`). **Four call sites, three of them proactive and one reactive**, because a single call site is a single thing to forget.
 **Breaks if you change it:** widening the key filter takes the nurse's obs draft and the theme with it (`phiCache.test.ts:110-123` fails). Narrowing it, or adding a "keep the current user's entries" optimisation, reintroduces the leak the whole hook exists to close, because on a switch the "current user" at the moment of the call is ambiguous by definition.
 
 #### `cacheEntryCount` / `cacheBytes`: `phiCache.ts:192` / `:196`
@@ -385,7 +385,7 @@ sequenceDiagram
 **Signature:** `(userId: string | null | undefined) -> void`
 **Does:** Ties **both** on-device PHI stores, the read cache and the write queue, to one clinician's session.
 **On screen:** **nothing, ever.** It is invisible by design. Its entire output is the absence of the previous nurse's patients on the next nurse's screen.
-**Mounted at:** `src/AppRoot.tsx:125`, once, with `user?.id ?? null`.
+**Mounted at:** `src/AppRoot.tsx:179`, once, with `user?.id ?? null`.
 **How it works:** a `previous` ref (`:43`) distinguishes three cases.
 - **First run** (`prior === undefined`, `:50`), a mount, which is **also every page refresh and every cold boot after a crash**. There is no previous ID in memory to compare against, so it asks the *cache* instead: `cacheEntryCount() > 0 && (!current || newestCachedAt(current) === null)` → wipe (`:59-61`). Entries present but none of them this user's fresh data means the device is carrying somebody else's PHI, or expired PHI. Either way it goes.
 - Then `clearForeignOfflineQueue(current)` (`:68`), the queue carries its own author per entry, so it is judged **exactly** rather than all-or-nothing: this user's pending writes survive a page refresh mid-shift, anybody else's do not survive the boot.
@@ -443,14 +443,14 @@ This is not part of the read cache, but `useOfflineSession` imports two function
 #### `clearOfflineQueue`: `src/api/client.ts:642`
 **Signature:** `() -> number`
 **Does:** Drops every queued write.
-**Called from:** `App.logout` (`src/AppRoot.tsx:108`) and `useOfflineSession` on switch/sign-out (`useOfflineSession.ts:80`).
-**On screen:** the pending-count chip in the shell (`src/pages/ClinicianShell.tsx:493`, `:499`) drops to zero on its next two-second poll (`:342`).
+**Called from:** `App.logout` (`src/AppRoot.tsx:128`) and `useOfflineSession` on switch/sign-out (`useOfflineSession.ts:80`).
+**On screen:** the pending-count chip in the shell (`src/pages/ClinicianShell.tsx:726`, `:732`) drops to zero on its next two-second poll (`:508`).
 
 #### `clearForeignOfflineQueue`: `src/api/client.ts:659`
 **Signature:** `(userId: string | null) -> OfflineRequest[]`
 **Does:** Drops queued writes that do **not** belong to `userId`; `null` drops all. Returns them, so the caller decides whether anyone needs telling.
 **Why:** a replay is sent on the **current** session's cookie, so a write queued by the last nurse would be filed against this one, *her name on another clinician's note or dose, with nothing on screen to reveal it* (`src/api/client.ts:631-635`). Same rule `phiCache` applies to reads: **a queued write is replayed for its author or not at all.**
-**On screen:** when called from `processOfflineQueue` (`:650`) it dispatches `orb:offline-sync-failed` (`:654`), which the shell renders as a `role="alert"` badge, "N queued action(s) failed to sync. Please re-enter" (`src/pages/ClinicianShell.tsx:475-479`). When called from `useOfflineSession` on a boot it is silent, deliberately.
+**On screen:** when called from `processOfflineQueue` (`:650`) it dispatches `orb:offline-sync-failed` (`:654`), which the shell renders as a `role="alert"` badge, "N queued action(s) failed to sync. Please re-enter" (`src/pages/ClinicianShell.tsx:708-712`). When called from `useOfflineSession` on a boot it is silent, deliberately.
 
 #### `offlineMutate`: `src/api/client.ts:704`
 **Signature:** `(path, body, offlineResult, method, key?) -> Promise<T>`
@@ -467,11 +467,11 @@ This is not part of the read cache, but `useOfflineSession` imports two function
 | `OfflineSnapshot` shape | `useOfflineSnapshot.ts:45` | `OfflineBanner.tsx:65`, `MedRoundSheet.tsx:40`, `ObsEntrySheet.tsx:67` | a renamed `source` value silently stops the banner rendering; the cached view then looks live |
 | `orb:offline:` key prefix | `phiCache.ts:25` | `clearOfflineCache` (`:184`), and every other localStorage user in Orb | widen it and sign-out deletes the nurse's in-progress obs draft |
 | Envelope `userId` stamp | `writeCache` (`phiCache.ts:106`) | `readCache` (`phiCache.ts:162`), `newestCachedAt` (`phiCache.ts:213`), `useOfflineSession.ts:59` | stop stamping and all three ownership checks fail open at once |
-| `getUser()?.id` | `src/api/client.ts:159` | `useOfflineSnapshot.ts:74`, `OfflineBanner.tsx:87`, `src/AppRoot.tsx:125` | a user object without a stable `id` makes every entry unreadable on the next mount |
-| `orb_offline_queue` + `userId` per entry | `queueRequest` (`src/api/client.ts:552`) | `clearForeignOfflineQueue` (`:543`), `useOfflineSession.ts:68`, `readOfflineQueueCount` (`src/pages/ClinicianShell.tsx:41`) | an unstamped entry is dropped rather than misattributed |
-| `orb:offline-sync-failed` event | `src/api/client.ts:654`, `:719` | `src/pages/ClinicianShell.tsx:366` | rename it and a permanently-failed replay stops being reported to anyone |
+| `getUser()?.id` | `src/api/client.ts:159` | `useOfflineSnapshot.ts:74`, `OfflineBanner.tsx:87`, `src/AppRoot.tsx:179` | a user object without a stable `id` makes every entry unreadable on the next mount |
+| `orb_offline_queue` + `userId` per entry | `queueRequest` (`src/api/client.ts:552`) | `clearForeignOfflineQueue` (`:543`), `useOfflineSession.ts:68`, `readOfflineQueueCount` (`src/pages/ClinicianShell.tsx:47`) | an unstamped entry is dropped rather than misattributed |
+| `orb:offline-sync-failed` event | `src/api/client.ts:654`, `:719` | `src/pages/ClinicianShell.tsx:532` | rename it and a permanently-failed replay stops being reported to anyone |
 | `navigator.onLine` semantics | the browser | `writeGuard.ts:80`, `useOfflineStatus.ts:32`, `src/api/client.ts:596` | three independent readers; a change in interpretation must land in all three |
-| `SHARED_DEVICE_IDLE_MS` sign-out | `src/AppRoot.tsx:40`, `:113-120` (guide 33) | the whole queue-lifetime argument | lengthen it and "the queue dies before the wi-fi returns" stops being true, but the refusals are still correct |
+| `SHARED_DEVICE_IDLE_MS` sign-out | `src/AppRoot.tsx:42`, `:133-147` (guide 33) | the whole queue-lifetime argument | lengthen it and "the queue dies before the wi-fi returns" stops being true, but the refusals are still correct |
 
 ---
 

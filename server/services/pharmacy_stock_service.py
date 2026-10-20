@@ -44,6 +44,15 @@ module off after use can never make quarantined, sub-store or ward stock
 dispensable. For a site that never turns the module on every lot is a legacy,
 available lot and the rule is exactly the one F064 shipped: in date, FEFO.
 
+STOCK IS PER FACILITY (multisite-14, ruling MS-R9 (a)). Once more than one
+facility is on record, a new lot takes its store's facility, a movement takes
+its lot's, legacy stock is adopted only by the dispensing store of its own
+facility, and a dispense passes the facility of the patient's admission
+(facility_id=) so it takes only that facility's lots, still in date and
+earliest expiry first; with none there it is refused, never drawn from
+another facility (services/pharmacy_facility has the rule for where a lot
+is). With one facility on record nothing here reads or writes anything new.
+
 THE MOVEMENT HOOKS. post_movement calls, after its row is written and in the
 same transaction:
   1. the NDPS register leg (grn-13, _ndps_register_leg), which is not in the
@@ -247,12 +256,17 @@ def _alias(alias: str) -> str:
     return alias
 
 
-def shelf_lot_sql(alias: str = "l") -> str:
+def shelf_lot_sql(alias: str = "l", *, facility_id: int | None = None) -> str:
     """SQL condition: the lot is 'available' and sits on the dispensing shelf
     (see the module docstring). No placeholders. `alias` names the
-    helix_inventory_lots row in the caller's query."""
+    helix_inventory_lots row in the caller's query.
+
+    With `facility_id` (multisite-14) the shelf is that facility's only: the
+    lot's own facility and, for a lot in a store, its store's facility must
+    both be it (the id is inlined as an integer, so there is still no
+    placeholder). None, the default, is the condition exactly as before."""
     a = _alias(alias)
-    return (
+    sql = (
         f"{a}.status = 'available' AND ("
         f"{a}.store_id IS NULL OR EXISTS ("
         "SELECT 1 FROM stores ps_store "
@@ -263,30 +277,49 @@ def shelf_lot_sql(alias: str = "l") -> str:
         f"WHERE ps_drug.id = {a}.medication_id "
         "AND ps_drug.ndps_category IN ('narcotic', 'psychotropic'))))))"
     )
+    if facility_id is None:
+        return sql
+    fid = int(facility_id)
+    return (
+        f"{sql} AND {a}.facility_id = {fid} AND ({a}.store_id IS NULL OR EXISTS ("
+        f"SELECT 1 FROM stores ps_fac WHERE ps_fac.id = {a}.store_id "
+        f"AND ps_fac.facility_id = {fid}))"
+    )
 
 
-def dispensable_lot_sql(alias: str = "l") -> str:
+def dispensable_lot_sql(alias: str = "l", *, facility_id: int | None = None) -> str:
     """SQL condition: the lot can be dispensed today. ONE placeholder, the
     hospital's date (pass site_today()). A lot with no recorded expiry fails
     the date test (date(NULL) is NULL), so it is refused rather than sorted
-    anywhere."""
+    anywhere. `facility_id` keeps it to one facility's shelf (shelf_lot_sql)
+    and adds no placeholder."""
     a = _alias(alias)
-    return f"{a}.quantity > 0 AND date({a}.expiration_date) >= ? AND {shelf_lot_sql(a)}"
+    return (
+        f"{a}.quantity > 0 AND date({a}.expiration_date) >= ? "
+        f"AND {shelf_lot_sql(a, facility_id=facility_id)}"
+    )
 
 
 def pick_fefo_lot(
-    conn, medication_id: str, units: int = 1, *, lot_id: str | None = None, today: str | None = None
+    conn: Any,
+    medication_id: str,
+    units: int = 1,
+    *,
+    lot_id: str | None = None,
+    today: str | None = None,
+    facility_id: int | None = None,
 ) -> dict | None:
     """The dispensable lot a dispense of `units` takes: the earliest expiry
     first, among lots holding at least `units` (a dispense is never split
     across lots). With `lot_id`, that lot only, and only if it qualifies.
-    None when nothing qualifies."""
+    With `facility_id`, that facility's shelf only (multisite-14). None when
+    nothing qualifies."""
     units = _whole(units, "units")
     if units < 1:
         raise StockError("a dispense takes at least one unit", code="bad_quantity")
     sql = (
         f"SELECT l.* FROM helix_inventory_lots l WHERE l.medication_id = ? "
-        f"AND {dispensable_lot_sql('l')} AND l.quantity >= ?"
+        f"AND {dispensable_lot_sql('l', facility_id=facility_id)} AND l.quantity >= ?"
     )
     params: list[Any] = [medication_id, today or site_today(), units]
     if lot_id is not None:
@@ -385,8 +418,23 @@ def _not_dispensable_words(conn, lot: Any, today: str) -> str:
     return f"{label} cannot be dispensed today. Choose another batch."
 
 
+def _at_facility(conn: Any, lot: Any, facility_id: int) -> bool:
+    """Is this lot at `facility_id` (its own facility and, in a store, its
+    store's: services/pharmacy_facility.lot_facility)?"""
+    from services import pharmacy_facility
+
+    found = pharmacy_facility.lot_facility(conn, lot["id"])
+    return found is not None and int(found) == int(facility_id)
+
+
 def choose_dispense_lot(
-    conn, medication_id: str, units: int, *, lot_id: str | None = None, today: str | None = None
+    conn: Any,
+    medication_id: str,
+    units: int,
+    *,
+    lot_id: str | None = None,
+    today: str | None = None,
+    facility_id: int | None = None,
 ) -> dict | None:
     """The lot a dispense of `units` of `medication_id` takes, chosen on the
     caller's connection under its write lock (grn-14). Writes nothing.
@@ -408,15 +456,19 @@ def choose_dispense_lot(
     Without `lot_id`: the earliest-expiry dispensable lot holding at least
     `units` (pick_fefo_lot), or None. Either way a dispense is NEVER split
     between lots.
+
+    With `facility_id` (multisite-14) only that facility's shelf counts: a
+    batch the pharmacist names that is at another facility is refused as
+    lot_not_found, the same answer as a batch that is not on file.
     """
     units = _whole(units, "units")
     if units < 1:
         raise StockError("A dispense takes at least one unit.", code="bad_quantity")
     today = today or site_today()
     if lot_id is None:
-        return pick_fefo_lot(conn, medication_id, units, today=today)
+        return pick_fefo_lot(conn, medication_id, units, today=today, facility_id=facility_id)
     lot = conn.execute("SELECT * FROM helix_inventory_lots WHERE id = ?", (lot_id,)).fetchone()
-    if lot is None:
+    if lot is None or (facility_id is not None and not _at_facility(conn, lot, facility_id)):
         raise StockError(
             "That batch is not in the pharmacy's stock. Reload the batches and choose again.",
             code="lot_not_found",
@@ -429,7 +481,7 @@ def choose_dispense_lot(
         )
     on_date_and_shelf = conn.execute(
         f"SELECT 1 FROM helix_inventory_lots l WHERE l.id = ? "
-        f"AND date(l.expiration_date) >= ? AND {shelf_lot_sql('l')}",
+        f"AND date(l.expiration_date) >= ? AND {shelf_lot_sql('l', facility_id=facility_id)}",
         (lot_id, today),
     ).fetchone()
     if on_date_and_shelf is None:
@@ -445,39 +497,49 @@ def choose_dispense_lot(
     return dict(lot)
 
 
-def dispensable_lots(conn, medication_id: str, *, today: str | None = None) -> list[dict]:
+def dispensable_lots(
+    conn: Any, medication_id: str, *, today: str | None = None, facility_id: int | None = None
+) -> list[dict]:
     """Every lot of one drug a dispense could take today, earliest expiry
     first (the order pick_fefo_lot reads them in), for the pharmacist's batch
-    picker. Lot fields and the store's name only: no patient data."""
+    picker; with `facility_id`, that facility's shelf only. Lot fields and
+    the store's name only: no patient data."""
     rows = conn.execute(
         f"SELECT l.id, l.lot_number, l.expiration_date, l.quantity, l.store_id, "
         f"s.name AS store_name FROM helix_inventory_lots l "
         f"LEFT JOIN stores s ON s.id = l.store_id "
-        f"WHERE l.medication_id = ? AND {dispensable_lot_sql('l')} "
+        f"WHERE l.medication_id = ? AND {dispensable_lot_sql('l', facility_id=facility_id)} "
         f"ORDER BY date(l.expiration_date) ASC, l.rowid ASC",
         (medication_id, today or site_today()),
     ).fetchall()
     return [dict(r) for r in rows]
 
 
-def dispensable_units(conn, medication_id: str, *, today: str | None = None) -> int:
-    """Units of one drug a dispense could take today, across all its lots."""
+def dispensable_units(
+    conn: Any, medication_id: str, *, today: str | None = None, facility_id: int | None = None
+) -> int:
+    """Units of one drug a dispense could take today, across all its lots
+    (with `facility_id`, that facility's lots only)."""
     row = conn.execute(
         f"SELECT SUM(l.quantity) AS total FROM helix_inventory_lots l "
-        f"WHERE l.medication_id = ? AND {dispensable_lot_sql('l')}",
+        f"WHERE l.medication_id = ? AND {dispensable_lot_sql('l', facility_id=facility_id)}",
         (medication_id, today or site_today()),
     ).fetchone()
     total = row["total"] if row else None
     return int(total) if total is not None else 0
 
 
-def undispensable_shelf_units(conn, medication_id: str, *, today: str | None = None) -> int:
+def undispensable_shelf_units(
+    conn: Any, medication_id: str, *, today: str | None = None, facility_id: int | None = None
+) -> int:
     """Units of one drug on the dispensing shelf that cannot be dispensed
     because they are expired or carry no expiry. Stock elsewhere (a sub-store,
-    quarantine, another status) is not counted: it is not on the shelf."""
+    quarantine, another status, another facility's shelf when `facility_id`
+    is given) is not counted: it is not on the shelf."""
     row = conn.execute(
         f"SELECT SUM(l.quantity) AS total FROM helix_inventory_lots l "
-        f"WHERE l.medication_id = ? AND l.quantity > 0 AND {shelf_lot_sql('l')} "
+        f"WHERE l.medication_id = ? AND l.quantity > 0 "
+        f"AND {shelf_lot_sql('l', facility_id=facility_id)} "
         f"AND (l.expiration_date IS NULL OR date(l.expiration_date) IS NULL "
         f"     OR date(l.expiration_date) < ?)",
         (medication_id, today or site_today()),
@@ -500,6 +562,15 @@ def _require_transaction(conn) -> None:
             "pharmacy_stock_service writes only inside the caller's transaction: "
             "open db_session(immediate=True) and pass its connection."
         )
+
+
+def _multi_facility(conn: Any) -> bool:
+    """More than one facility on record (multisite-14), read from the cached
+    count on the caller's own connection, so it never opens a second session
+    inside the caller's transaction."""
+    from services import pharmacy_facility
+
+    return pharmacy_facility.multi(conn)
 
 
 def _whole(value: object, name: str) -> int:
@@ -580,7 +651,7 @@ def registered_movement_hooks() -> tuple[str, ...]:
 
 
 def post_movement(
-    conn,
+    conn: Any,
     *,
     lot_id: str,
     movement_type: str,
@@ -710,6 +781,14 @@ def post_movement(
             seq,
         ),
     )
+    if _multi_facility(conn):
+        # multisite-14: a movement is at its lot's facility. One facility on
+        # record keeps the column's default and runs no extra statement.
+        conn.execute(
+            "UPDATE helix_stock_movements SET facility_id = COALESCE((SELECT l.facility_id "
+            "FROM helix_inventory_lots l WHERE l.id = ?), facility_id) WHERE id = ?",
+            (lot_id, movement_id),
+        )
     movement = dict(
         conn.execute("SELECT * FROM helix_stock_movements WHERE id = ?", (movement_id,)).fetchone()
     )
@@ -781,7 +860,7 @@ def _same_identity_lot(
 
 
 def open_or_merge_lot(
-    conn,
+    conn: Any,
     *,
     medication_id: str,
     lot_number: str,
@@ -927,6 +1006,15 @@ def open_or_merge_lot(
                 created,
             ),
         )
+        if store_id is not None and _multi_facility(conn):
+            # multisite-14: a lot is at its store's facility (a goods receipt
+            # into a facility store, a transfer or a ward return landing
+            # there). A lot opened in no store keeps facility 1's default.
+            conn.execute(
+                "UPDATE helix_inventory_lots SET facility_id = COALESCE((SELECT s.facility_id "
+                "FROM stores s WHERE s.id = ?), facility_id) WHERE id = ?",
+                (store_id, target_id),
+            )
 
     movement = None
     if units > 0:
@@ -1340,7 +1428,7 @@ def awaiting_adoption_sql(alias: str = "l") -> str:
     )
 
 
-def adopt_legacy_lots(conn, dispensing_store_id: int, *, actor_id: str) -> dict:
+def adopt_legacy_lots(conn: Any, dispensing_store_id: int, *, actor_id: str) -> dict:
     """Put every legacy lot (store NULL) into the active dispensing store, in
     the caller's transaction. Returns {"store_id", "adopted": [lot ids],
     "merged": [{"from", "into", "units"}], "conflicts": [{...}]}.
@@ -1352,7 +1440,11 @@ def adopt_legacy_lots(conn, dispensing_store_id: int, *, actor_id: str) -> dict:
     held in two statuses is left exactly as it is and reported as a conflict:
     merging it would release quarantined units or quarantine good ones. A
     duplicate merged by an earlier adoption is not merged again
-    (awaiting_adoption_sql), so a second adoption writes nothing for it."""
+    (awaiting_adoption_sql), so a second adoption writes nothing for it.
+
+    Once more than one facility is on record (multisite-14), a dispensing
+    store adopts only the legacy lots at its own facility: legacy stock is
+    facility 1's, so a second facility's dispensing store adopts nothing."""
     _require_transaction(conn)
     actor = _text(actor_id)
     if not actor:
@@ -1363,10 +1455,19 @@ def adopt_legacy_lots(conn, dispensing_store_id: int, *, actor_id: str) -> dict:
             "legacy stock is adopted only by the active dispensing store",
             code="not_dispensing_store",
         )
+    facility_sql = ""
+    if _multi_facility(conn):
+        from services import pharmacy_facility
+
+        home = pharmacy_facility.store_facility(conn, dispensing_store_id)
+        facility_sql = pharmacy_facility.column_sql(
+            "l.facility_id", frozenset() if home is None else frozenset({home})
+        )
 
     groups: dict[tuple, list] = {}
     for lot in conn.execute(
-        f"SELECT * FROM helix_inventory_lots l WHERE {awaiting_adoption_sql('l')} ORDER BY l.rowid"
+        f"SELECT * FROM helix_inventory_lots l WHERE {awaiting_adoption_sql('l')}{facility_sql} "
+        "ORDER BY l.rowid"
     ).fetchall():
         groups.setdefault(
             (lot["medication_id"], lot["lot_number"], lot["expiration_date"]), []
@@ -1472,7 +1573,7 @@ def _in_clause(values: Iterable[str]) -> tuple[str, list]:
     return ",".join("?" for _ in items), items
 
 
-def reconcile(conn, *, lot_ids: Iterable[str] | None = None) -> dict:
+def reconcile(conn: Any, *, lot_ids: Iterable[str] | None = None) -> dict:
     """Check the ledger against the shelf. Read-only. `clean` is True only when
     every lot's quantity equals the sum of its movements, no lot is negative,
     every running balance is right, every movement is typed and sequenced,
@@ -1578,6 +1679,30 @@ def reconcile(conn, *, lot_ids: Iterable[str] | None = None) -> dict:
         ).fetchall():
             bad_master.append({"medication_id": r["id"], "field": column, "value": r["value"]})
 
+    # multisite-14: once more than one facility is on record, a lot whose own
+    # facility is not its store's, or a movement not at its lot's facility, is
+    # at no facility (services/pharmacy_facility) and is reported here.
+    facility_mismatches: list[dict] | None = None
+    if _multi_facility(conn):
+        facility_mismatches = [
+            {"kind": "lot", **dict(r)}
+            for r in conn.execute(
+                "SELECT l.id AS lot_id, l.facility_id, s.facility_id AS store_facility_id "
+                f"FROM helix_inventory_lots l JOIN stores s ON s.id = l.store_id{lot_filter}"
+                f"{' AND' if lot_filter else ' WHERE'} l.facility_id IS NOT s.facility_id",
+                lot_params,
+            ).fetchall()
+        ] + [
+            {"kind": "movement", **dict(r)}
+            for r in conn.execute(
+                "SELECT mv.id AS movement_id, mv.lot_id, mv.facility_id, "
+                "l.facility_id AS lot_facility_id FROM helix_stock_movements mv "
+                "JOIN helix_inventory_lots l ON l.id = mv.lot_id "
+                f"WHERE mv.facility_id IS NOT l.facility_id{move_filter}",
+                lot_params,
+            ).fetchall()
+        ]
+
     lots_checked = int(
         conn.execute(
             f"SELECT COUNT(*) FROM helix_inventory_lots l{lot_filter}", lot_params
@@ -1592,8 +1717,9 @@ def reconcile(conn, *, lot_ids: Iterable[str] | None = None) -> dict:
         or unsequenced
         or breaks
         or bad_master
+        or facility_mismatches
     )
-    return {
+    out: dict[str, Any] = {
         "clean": clean,
         "lots_checked": lots_checked,
         "mismatched_lots": mismatched,
@@ -1605,6 +1731,9 @@ def reconcile(conn, *, lot_ids: Iterable[str] | None = None) -> dict:
         "balance_breaks": breaks,
         "bad_master_values": bad_master,
     }
+    if facility_mismatches is not None:
+        out["facility_mismatches"] = facility_mismatches
+    return out
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1710,18 +1839,21 @@ def _patient_location(conn, patient_id: str) -> tuple[str | None, str | None]:
 
 
 def _ward_store_for(
-    conn, department: str, ward: str | None, drug_id: str
+    conn: Any, department: str, ward: str | None, drug_id: str, *, facility_id: int | None = None
 ) -> tuple[dict | None, str | None]:
     """The patient's ward imprest store that holds this drug: (store, None),
     or (None, reason). A store holds the drug when the drug is on its list (an
     active par level above zero) or it has available units of it. Departments
     are compared as department scope compares them (case and outer spaces
     ignored). With two such stores in the department, the patient's ward
-    decides; when it does not, nothing is guessed."""
+    decides; when it does not, nothing is guessed. With `facility_id`
+    (multisite-14) only a store at the patient's facility counts."""
     kind_and_dept = (
         "s.pharmacy_kind = ? AND s.is_active = 1 "
         "AND lower(trim(COALESCE(s.department, ''))) = lower(trim(?))"
     )
+    if facility_id is not None:
+        kind_and_dept += f" AND s.facility_id = {int(facility_id)}"
     stores = [
         dict(r)
         for r in conn.execute(
@@ -1781,7 +1913,7 @@ def _consumption_lot(
 
 
 def plan_ward_consumption(
-    conn, administration_id: Any, *, med_order_id: str | None, today: str | None = None
+    conn: Any, administration_id: Any, *, med_order_id: str | None, today: str | None = None
 ) -> dict:
     """What one given dose takes off the ward's books, decided on the caller's
     connection. Writes nothing. Returns {status: 'consume', ...} with the
@@ -1818,7 +1950,15 @@ def plan_ward_consumption(
     department, ward = _patient_location(conn, adm["patient_id"])
     if not department:
         return _skip("no_department")
-    store, reason = _ward_store_for(conn, department, ward, drug_id)
+    from services import pharmacy_facility
+
+    store, reason = _ward_store_for(
+        conn,
+        department,
+        ward,
+        drug_id,
+        facility_id=pharmacy_facility.patient_facility(conn, adm["patient_id"]),
+    )
     if store is None:
         return _skip(reason or "not_ward_stock")
     units = CONSUMPTION_UNITS_PER_DOSE

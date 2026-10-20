@@ -36,21 +36,21 @@ Four rules follow from that, and they are the whole design:
 
 ```mermaid
 graph TD
-  UP[admin uploads CSV] --> SPOOL[_spool_upload<br/>admin_routes.py:873<br/>streamed to a 0600 temp file]
-  SPOOL --> P1[POST /history-import/preview<br/>admin_routes.py:977]
+  UP[admin uploads CSV] --> SPOOL[_spool_upload<br/>admin_routes.py:921<br/>streamed to a 0600 temp file]
+  SPOOL --> P1[POST /history-import/preview<br/>admin_routes.py:1025]
   P1 --> SNIFF[sniff :2178<br/>headers, candidates, suggested mapping]
   SNIFF --> ADMIN{admin confirms<br/>the mapping}
-  ADMIN --> P2[POST /history-import/dry-run<br/>admin_routes.py:1008]
+  ADMIN --> P2[POST /history-import/dry-run<br/>admin_routes.py:1056]
   P2 --> PLAN[plan :1630 → _execute write=False]
   PLAN --> REPORT[exact counts + capped detail<br/>+ EVERY failure reason]
   REPORT --> ADMIN2{admin reads<br/>the failures}
-  ADMIN2 --> P3[POST /history-import/commit<br/>admin_routes.py:1049]
+  ADMIN2 --> P3[POST /history-import/commit<br/>admin_routes.py:1097]
   P3 --> APPLY[apply_import :1651 → _execute write=True<br/>ONE transaction]
   APPLY --> ROWS[(target table<br/>+ 3 provenance columns)]
   APPLY --> XREF[(history_import_patient_xref)]
   APPLY --> RUNS[(history_import_runs)]
   APPLY --> REJ[(history_import_rejects<br/>COMPLETE, never capped)]
-  REJ --> P4[GET /runs/:id/rejects<br/>admin_routes.py:1114, paged]
+  REJ --> P4[GET /runs/:id/rejects<br/>admin_routes.py:1162, paged]
   UI[no React component calls these] -.->|MISSING| P1
 ```
 
@@ -78,7 +78,7 @@ graph TD
 ### Flow 1: preview
 
 1. The admin uploads a CSV to `POST /api/admin/history-import/preview` with a record type.
-2. `_spool_upload` (`server/routes/admin_routes.py:873`) streams it in 1 MB chunks to a **0600 temp file** under `_spool_dir()` (`:864`), by default a `.import-spool` directory beside the database, **not** `/tmp`, because the upload is PHI in clear text and the operator has secured the database volume, not the system temp directory.
+2. `_spool_upload` (`server/routes/admin_routes.py:921`) streams it in 1 MB chunks to a **0600 temp file** under `_spool_dir()` (`:912`), by default a `.import-spool` directory beside the database, **not** `/tmp`, because the upload is PHI in clear text and the operator has secured the database volume, not the system temp directory.
 3. `sniff` (`:2178`) builds a `_Source` (which computes the SHA-256 and picks an encoding from the first 64 KB), locates the header row, suggests a mapping from header synonyms, and returns up to five sample rows.
 4. If the header could not be identified, `sniff` **still answers** with `header_confident: false` plus the candidate lines. It is the tool the admin uses to *pick* the header line.
 5. The temp file is deleted in a `finally`. An audit row records the filename, record type, byte count and SHA-256.
@@ -98,7 +98,7 @@ graph TD
 2. `apply_import` (`:1651`) → the **same** `_execute` with `write=True`. One code path, so the plan the admin approved and the plan that executes cannot drift. The plan is recomputed server-side from the uploaded bytes rather than taken from the client, so a commit can never write something a dry run of the same file and mapping did not show.
 3. Everything happens inside **one** `db_session` transaction. The run ledger row is opened first with zero counts (`_open_run`, `:2106`) so rejects can be flushed against its foreign key as they are found; it is finalised by `_record_run` (`:2150`) in the same transaction. A run that never completes leaves nothing at all.
 4. Every rejected row goes to `history_import_rejects`, **complete, never capped**.
-5. A `DBIntegrityError` becomes a **409** naming the constraint, with the honest sentence "and NOTHING was written" (`server/routes/admin_routes.py:1079-1087`).
+5. A `DBIntegrityError` becomes a **409** naming the constraint, with the honest sentence "and NOTHING was written" (`server/routes/admin_routes.py:1127-1135`).
 
 ```mermaid
 sequenceDiagram
@@ -138,7 +138,7 @@ sequenceDiagram
 #### Limits: `history_import_service.py:200-210`
 **Signature:** `MAX_BYTES = 200 MB` (`:200`), `MAX_ROWS = 200_000` (`:201`), `BATCH_SIZE = 500` (`:202`), `DEFAULT_DETAIL_LIMIT = 200` (`:205`), `DEFAULT_REJECT_LIMIT = 2_000` (`:206`), `_HEADER_SEARCH_LINES = 100` (`:209`), `_MIN_HEADER_HITS = 2` (`:210`)
 **Does:** The size and shape envelope. Both file limits are checked before any DB work.
-**On screen:** `MAX_BYTES` and `MAX_ROWS` are returned by `GET /history-import/record-types` (`server/routes/admin_routes.py:961-962`) so a wizard could show them. Nothing renders them. `MAX_BYTES` is also enforced *during the upload* (`server/routes/admin_routes.py:892`) with a 413, so an oversized file is rejected mid-stream rather than after being fully spooled.
+**On screen:** `MAX_BYTES` and `MAX_ROWS` are returned by `GET /history-import/record-types` (`server/routes/admin_routes.py:1009-1010`) so a wizard could show them. Nothing renders them. `MAX_BYTES` is also enforced *during the upload* (`server/routes/admin_routes.py:940`) with a 413, so an oversized file is rejected mid-stream rather than after being fully spooled.
 **Why these numbers:** far larger than roster import's, because this is a one-off migration of years of history rather than a daily ward census. `BATCH_SIZE` is what keeps peak memory at one batch instead of one file.
 **Breaks if you change it:** raising `MAX_ROWS` raises the one thing in the module that is proportional to row count, the `seen_external` dict (`:1747`) that makes an in-file duplicate reportable. At 200 000 rows that is tens of megabytes; at two million it is not. Lowering `BATCH_SIZE` costs a round of prefetch queries per batch; raising it re-inflates the `_Resolver` maps this module deliberately clears (see `_Resolver`).
 
@@ -166,8 +166,8 @@ sequenceDiagram
 #### `TargetField` / `_f` / `_PATIENT_LINK_FIELDS`: `:251` / `:260` / `:266`
 **Signature:** frozen dataclass `(name, label, required, kind, synonyms, note)`; a positional constructor; a two-field tuple
 **Does:** One mappable Orb field, its human label, whether it is required, its parse kind, the CSV header synonyms that auto-suggest it, and a note explaining the semantics.
-**On screen:** `GET /history-import/fields?record_type=…` (`server/routes/admin_routes.py:966`) serialises `name`, `label`, `required`, `kind` and `note` for a mapping UI. Nothing renders it, which means the `note` strings, which are where most of the clinical reasoning is written ("Missing → UNKNOWN. Oral and IV are not interchangeable, so no default."), are currently invisible.
-**`_PATIENT_LINK_FIELDS` (`:266`)** is the two identity fields every **child** record type shares: `external_patient_id` and `mrn`. At least one must be mapped; both may be, and then they must agree.
+**On screen:** `GET /history-import/fields?record_type=…` (`server/routes/admin_routes.py:1014`) serialises `name`, `label`, `required`, `kind` and `note` for a mapping UI. Nothing renders it, which means the `note` strings, which are where most of the clinical reasoning is written ("Missing → UNKNOWN. Oral and IV are not interchangeable, so no default."), are currently invisible.
+**`_PATIENT_LINK_FIELDS` (`:287`)** is the two identity fields every **child** record type shares: `external_patient_id` and `mrn`. At least one must be mapped; both may be, and then they must agree.
 **Breaks if you change it:** adding a synonym that already belongs to another field is harmless, `suggest_mapping` offers each CSV header to at most one Orb field, in catalogue order. **Reordering the fields inside a record type is not harmless**: order decides which field claims an ambiguous header, which is why `external_id` is listed before `mrn` and therefore claims a "Patient ID" column.
 
 #### `RecordType`: `history_import_service.py:314`, registered at `:308` / `:347` / `:390` / `:418` / `:452` / `:489`
@@ -191,7 +191,7 @@ sequenceDiagram
 **Signature:** `() -> list[dict]` / `(record_type: str) -> list[dict]` / `(name: str) -> RecordType`
 **Does:** Serialisable catalogues for the two GET endpoints, and the lookup that raises a `ValueError` naming every valid option.
 **On screen:** would drive the wizard's first two steps. Nothing calls them.
-**Breaks if you change it:** `_record_type`'s error message lists the valid names; the routes turn it into a **422** (`server/routes/admin_routes.py:973-974`). Raising a bare `KeyError` instead would produce a 500 for a user typo.
+**Breaks if you change it:** `_record_type`'s error message lists the valid names; the routes turn it into a **422** (`server/routes/admin_routes.py:1021-1022`). Raising a bare `KeyError` instead would produce a 500 for a user typo.
 
 #### `_HONORIFICS` and the status vocabularies: `:549`, `:552`, `:562`, `:574`, `:586`
 **Signature:** five module-level sets/dicts
@@ -502,25 +502,25 @@ Copying the tolerance in either direction produces a bug: give `_detect_encoding
 **Does:** The **complete, durable** list of rows a run did not import, **paged** rather than capped, plus a `by_code` histogram.
 **On screen:** would be the work list the hospital gets back from a migration. Nothing renders it.
 **Why paged and not capped:** nothing here is unreachable however large the file. Limits are clamped (1–5000) rather than trusted.
-**Returns `{}` for an unknown run**, which the route turns into a 404 (`server/routes/admin_routes.py:1133-1134`).
+**Returns `{}` for an unknown run**, which the route turns into a 404 (`server/routes/admin_routes.py:1181-1182`).
 **Breaks if you change it:** capping this instead of paging makes part of the work list permanently unreachable, which reduces the reject ledger to a sample.
 
 ---
 
 ### File: `server/routes/admin_routes.py`: the seven endpoints
 
-The section header (`:883-916`) states the auth and event-loop posture: every endpoint is gated on `ADMIN_OVERVIEW`, the permission held only by the `admin` role, so **a doctor cannot bulk-write clinical history from a spreadsheet**, and every endpoint that touches PHI writes an audit row. Handlers are `async def` because reading a multipart upload is async, but **all** parsing and DB work goes through `database.run_db` onto the private DB pool: a 200 MB import must not stall the ward's screens.
+The section header (`:931-964`) states the auth and event-loop posture: every endpoint is gated on `ADMIN_OVERVIEW`, the permission held only by the `admin` role, so **a doctor cannot bulk-write clinical history from a spreadsheet**, and every endpoint that touches PHI writes an audit row. Handlers are `async def` because reading a multipart upload is async, but **all** parsing and DB work goes through `database.run_db` onto the private DB pool: a 200 MB import must not stall the ward's screens.
 
-It also states the one thing the four-step flow cannot enforce (`:904-908`): **dry run is not optional in practice.** The commit path recomputes the plan server-side rather than trusting a plan posted back by the client, so commit can never write something a dry run of the same file and mapping did not show, but an admin who skips the dry run has skipped their only chance to read the failure list before the write.
+It also states the one thing the four-step flow cannot enforce (`:952-956`): **dry run is not optional in practice.** The commit path recomputes the plan server-side rather than trusting a plan posted back by the client, so commit can never write something a dry run of the same file and mapping did not show, but an admin who skips the dry run has skipped their only chance to read the failure list before the write.
 
-#### `_spool_dir`: `server/routes/admin_routes.py:923`
+#### `_spool_dir`: `server/routes/admin_routes.py:971`
 **Signature:** `() -> str`
 **Does:** Returns the directory uploads are spooled to, `$ORB_IMPORT_SPOOL_DIR`, or a `.import-spool` directory beside the database, created `0700`.
 **On screen:** nothing.
-**Why not the system temp dir (`:860-863`):** the upload is **PHI in clear text**, and the operator has secured the volume the database lives on, encryption at rest, backup policy, disk disposal, not `/tmp`. Overridable for operators who mount something better.
+**Why not the system temp dir (`:908-911`):** the upload is **PHI in clear text**, and the operator has secured the volume the database lives on, encryption at rest, backup policy, disk disposal, not `/tmp`. Overridable for operators who mount something better.
 **Breaks if you change it:** defaulting to `/tmp` puts an unencrypted copy of the hospital's clinical history on a volume nobody in the deployment runbook has thought about.
 
-#### `_spool_upload` / `_discard`: `server/routes/admin_routes.py:934` / `:908`
+#### `_spool_upload` / `_discard`: `server/routes/admin_routes.py:982` / `:956`
 **Signature:** `async (file: UploadFile) -> tuple[path, bytes]` / `(path: str) -> None`
 **Does:** Streams the upload to a private `mkstemp` file in 1 MB chunks, enforcing `MAX_BYTES` **during** the write (413) and rejecting an empty upload (400). `_discard` unlinks it.
 **On screen:** nothing.
@@ -528,52 +528,52 @@ It also states the one thing the four-step flow cannot enforce (`:904-908`): **d
 **`mkstemp` creates the file 0600**, so it is not world-readable while it exists; the caller **must** delete it in a `finally`, and all three upload endpoints do.
 **Breaks if you change it:** removing a `finally` leaves clear-text PHI on disk after every import. Reading the file whole reintroduces the memory blow-up at the HTTP layer, where the service's streaming cannot help.
 
-#### `_parse_mapping`: `admin_routes.py:975`
+#### `_parse_mapping`: `admin_routes.py:1023`
 **Signature:** `(mapping: str) -> dict[str, str]`
 **Does:** Parses the JSON `mapping` form field, dropping empty values and rejecting non-string keys or values with a **422**.
 **On screen:** nothing.
 **Breaks if you change it:** accepting non-string values lets a `null` or a number reach `_execute`'s `mapping` and produce a confusing "column not present in the file" error rather than a clear 422.
 
-#### `_history_audit`: `admin_routes.py:997`
+#### `_history_audit`: `admin_routes.py:1045`
 **Signature:** `(request, user, action_type, summary, metadata, target_id=None) -> None`
 **Does:** One audit row on the `data_management` category, `target_type="history_import"`.
 **On screen:** the audit log; `target_id` is the run id on a commit, which is what makes an import traceable from the audit trail to the ledger to the rejects.
 **Breaks if you change it:** dropping `target_id` on the commit audit breaks the link from "somebody imported something" to "here is exactly what".
 
-#### `GET /api/admin/history-import/record-types`: `server/routes/admin_routes.py:955`
+#### `GET /api/admin/history-import/record-types`: `server/routes/admin_routes.py:1003`
 **Signature:** `(user = Depends(require_permission(ADMIN_OVERVIEW)))`
 **Does:** The catalogue, the three date orders, and both limits.
 **On screen:** nothing.
 
-#### `GET /api/admin/history-import/fields`: `server/routes/admin_routes.py:966`
+#### `GET /api/admin/history-import/fields`: `server/routes/admin_routes.py:1014`
 **Signature:** `(record_type: str, user = …)`
-**Does:** The target fields for one record type. An unknown type is a **422** carrying the list of valid names (`:974`).
+**Does:** The target fields for one record type. An unknown type is a **422** carrying the list of valid names (`:1022`).
 **On screen:** nothing.
 
-#### `POST /api/admin/history-import/preview`: `server/routes/admin_routes.py:977`
+#### `POST /api/admin/history-import/preview`: `server/routes/admin_routes.py:1025`
 **Signature:** `async (request, file: UploadFile, record_type: Form, header_line: Form | None, user = …)`
 **Does:** Spools, sniffs, discards, audits. Reads nothing from the clinical tables and writes nothing anywhere.
 **On screen:** nothing.
 **Breaks if you change it:** it is the only endpoint that answers on an ambiguous header; making it refuse leaves the admin with no way to find the right line.
 
-#### `POST /api/admin/history-import/dry-run`: `server/routes/admin_routes.py:1008`
+#### `POST /api/admin/history-import/dry-run`: `server/routes/admin_routes.py:1056`
 **Signature:** `async (request, file, record_type, source_system, mapping, date_order='auto', header_line=None, user = …)`
 **Does:** The full plan, no writes. Audits the counts and the issue summary, so **the dry run's own numbers are in the audit trail**, which is what lets somebody later ask whether the admin was shown the failures before committing.
 **On screen:** nothing.
 **Breaks if you change it:** dropping `issue_summary` from the audit metadata loses the record of what the admin was told.
 
-#### `POST /api/admin/history-import/commit`: `server/routes/admin_routes.py:1049`
+#### `POST /api/admin/history-import/commit`: `server/routes/admin_routes.py:1097`
 **Signature:** `async (request, file, record_type, source_system, mapping, date_order='auto', header_line=None, note=None, user = …)`
 **Does:** Applies in one transaction, then audits with the summary, the issue summary, the mapping, the SHA-256 and the run id.
 **On screen:** nothing.
-**The `DBIntegrityError` branch (`:1079-1087`)** is worth reading: the whole import is one transaction, so **nothing was written**, and the 409 says exactly that rather than returning a bare 500. It is almost always a duplicate external id or MRN that appeared between the dry run and the commit.
+**The `DBIntegrityError` branch (`:1127-1135`)** is worth reading: the whole import is one transaction, so **nothing was written**, and the 409 says exactly that rather than returning a bare 500. It is almost always a duplicate external id or MRN that appeared between the dry run and the commit.
 **Breaks if you change it:** letting the `DBIntegrityError` become a 500 leaves an admin unsure whether a partial import landed, and the honest answer, which the current message gives, is that it did not.
 
-#### `GET /api/admin/history-import/runs`: `server/routes/admin_routes.py:1104`
+#### `GET /api/admin/history-import/runs`: `server/routes/admin_routes.py:1152`
 **Does:** Applied-import history.
 **On screen:** nothing.
 
-#### `GET /api/admin/history-import/runs/{run_id}/rejects`: `server/routes/admin_routes.py:1114`
+#### `GET /api/admin/history-import/runs/{run_id}/rejects`: `server/routes/admin_routes.py:1162`
 **Does:** Every row a run did not import, paged, with its line number and reason. 404 on an unknown run. Audited on **every read**.
 **On screen:** nothing.
 **Why it is audited:** the rows quote the offending source line verbatim, **so this is PHI**.
@@ -619,9 +619,9 @@ It also states the one thing the four-step flow cannot enforce (`:904-908`): **d
 | `patients.status = 'discharged'` | `:1218` and `:2066` | Vigil's patient board, the nurse shift board, capacity | flip it and a five-year export floods every ward board |
 | `problem_list.status = 'inactive'` | `:1311` | the problem list, Sage's picture of current problems | flip it and every historical diagnosis becomes a current one |
 | `SOURCE_TAG` ∉ `_UNVERIFIED_SOURCES` | `:220` vs `pharmacy_verification_service.py:29` | the pharmacist verification queue | make them overlap and the whole imported pharmacy lands in the queue |
-| Partial `UNIQUE(import_source_system, import_external_id)` | `migrations.py:1441` | the `existing` lookup (`:1555`) and the 409 branch (`server/routes/admin_routes.py:1079`) | drop it and a double commit duplicates everything; the 409 branch becomes dead code |
+| Partial `UNIQUE(import_source_system, import_external_id)` | `migrations.py:1441` | the `existing` lookup (`:1555`) and the 409 branch (`server/routes/admin_routes.py:1127`) | drop it and a double commit duplicates everything; the 409 branch becomes dead code |
 | `history_import_patient_xref` shape | `migrations.py:1454` | `_Resolver.prefetch` (`:1534`), `_write_patient` (`:2092`), and `consent_service._patient_tables` (guide 35) | it is the table the DPDP export names as the "second patient column that is legitimately the same person"; renaming its columns changes that refusal message |
-| `history_import_rejects.patient_id` | `migrations.py:1515` | `_build_erase_plan` (`server/routes/admin_routes.py:689`) | remove it and verbatim PHI in the reject ledger stops being reachable by patient erasure |
+| `history_import_rejects.patient_id` | `migrations.py:1515` | `_build_erase_plan` (`server/routes/admin_routes.py:737`) | remove it and verbatim PHI in the reject ledger stops being reachable by patient erasure |
 | `database.run_db` | guide 04 | all seven route handlers | call the service directly from an `async def` and a 200 MB import stalls the event loop for the whole hospital |
 
 ---

@@ -40,6 +40,7 @@ released is 'Pending' with no value, whatever the bench has entered.
 
 import uuid
 from datetime import date
+from typing import Any
 
 from database import db_session
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -47,6 +48,7 @@ from permissions import (
     LAB_READ,
     ORDER_READ,
     department_scope,
+    facility_scope,
     log_phi_read,
     require_any_permission,
     require_patient_access,
@@ -56,6 +58,7 @@ from services.audit_service import AuditWriteError, log_audit_event
 from services.clinical_time import utc_iso_now
 from services.hospital_time import hospital_today
 
+from routes.lab.orders import request_meta
 from routes.opt_in_gates import require_lab_module
 from services import lab_report_service
 
@@ -105,10 +108,20 @@ def _scope_denied(request: Request, user: dict, patient_id: str, accession: str)
 
 
 def _one_report(accession: str, request: Request, user: dict) -> dict:
+    """One sample's report inside the caller's department and facilities. A
+    department refusal is audited here; a facility refusal is audited by
+    lab_report_service.report_for (scope_cause 'facility')."""
     dept = department_scope(user)
     try:
         with db_session() as db:
-            return lab_report_service.report_for(db, accession, dept=dept)
+            return lab_report_service.report_for(
+                db,
+                accession,
+                dept=dept,
+                facilities=facility_scope(user),
+                actor=user,
+                request_meta=request_meta(request),
+            )
     except lab_report_service.LabReportError as err:
         out_of_scope = err.extra.get("out_of_scope_patient_id")
         if out_of_scope:
@@ -161,24 +174,30 @@ _LIST_REPORTS_UHID_DEFAULT = Query(None, max_length=64)
 _LIST_REPORTS_USER_DEFAULT = Depends(require_permission(LAB_READ))
 
 
-@router.get("/reports")
+@router.get("/reports", response_model=None)
 def list_reports(
     request: Request,
     day: str | None = _LIST_REPORTS_DAY_DEFAULT,
     uhid: str | None = _LIST_REPORTS_UHID_DEFAULT,
     user: dict = _LIST_REPORTS_USER_DEFAULT,
-):
+) -> dict:
     """The laboratory's report list: one hospital-local day, or one patient by
-    exact UHID. The audit row records the patients actually returned."""
+    exact UHID, inside the caller's department and facilities (a patient
+    found by UHID must be at one of them; that patient's reports are then
+    listed whole, ruling MS-R2 (a)). The audit row records the patients
+    actually returned."""
     dept = department_scope(user)
+    facilities = facility_scope(user)
     wanted = _parse_day(day) if not uhid else None
     with db_session() as db:
         if uhid:
-            patient = lab_report_service.patient_by_uhid(db, uhid, dept=dept)
+            patient = lab_report_service.patient_by_uhid(db, uhid, dept=dept, facilities=facilities)
             reports = lab_report_service.reports_for_patient(db, patient["id"]) if patient else []
         else:
             assert wanted is not None
-            reports = lab_report_service.reports_for_day(db, wanted, dept=dept)
+            reports = lab_report_service.reports_for_day(
+                db, wanted, dept=dept, facilities=facilities
+            )
     patient_ids = sorted({r["patient"]["id"] for r in reports})
     if reports:
         try:
@@ -258,13 +277,14 @@ def get_report(
 _PRINT_REPORT_USER_DEFAULT = Depends(require_any_permission(LAB_READ, ORDER_READ))
 
 
-@router.get("/reports/{accession}/print")
+@router.get("/reports/{accession}/print", response_model=None)
 def print_report(
     accession: str,
     request: Request,
     user: dict = _PRINT_REPORT_USER_DEFAULT,
-):
-    """The report as it is printed: the same content, with when and by whom.
+) -> dict:
+    """The report as it is printed: the same content, with when and by whom,
+    and the name of the hospital whose laboratory performed the sample.
     Audited as a print, fail-closed, before the body leaves."""
     report = _one_report(accession, request, user)
     printed_at = utc_iso_now()
@@ -277,7 +297,7 @@ def print_report(
         extra={"printed_at": printed_at},
     )
     with db_session() as db:
-        site_name = _site_name()
+        site_name = _performing_hospital_name(db, report["accession"])
         printer = db.execute("SELECT name FROM users WHERE id = ?", (user.get("id"),)).fetchone()
     return {
         "report": {
@@ -301,3 +321,17 @@ def _site_name() -> str | None:
         return current_site_config().site_name or None
     except Exception:  # the settings file is optional
         return None
+
+
+def _performing_hospital_name(db: Any, accession: str) -> str | None:
+    """The hospital name a printed laboratory report carries. With one
+    facility on record, the site settings' name exactly as before. With more
+    (multisite-8h2), the configured name of the facility whose laboratory
+    performed the sample (lab_specimens.facility_id), or nothing when nobody
+    set one: a satellite's report never prints another facility's name."""
+    from services import facility_identity, facility_service, lab_facility
+
+    if not facility_service.multi_facility_data(db=db):
+        return _site_name()
+    fid = lab_facility.specimen_facility_on(db, accession) or facility_service.MAIN_FACILITY_ID
+    return facility_identity.identity_block(fid, db=db).get("configured_name")

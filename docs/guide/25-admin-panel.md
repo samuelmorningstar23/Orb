@@ -51,8 +51,8 @@ Neighbors referenced throughout: **guide 03** (auth + RBAC, `require_permission`
 
 | File | Lines (approx) | Role |
 |---|---|---|
-| `server/routes/admin_routes.py` | 702 | Eight endpoints: the pre-aggregated 24h governance snapshot for the Overview tab (`:372`), patient erasure (`:841`), and the six history-import endpoints (`:1035-1307`, documented in guide 36). |
-| `server/routes/compliance_routes.py` | 511 | Twelve endpoints: the live compliance posture report (`:146`) plus the DPDP data-rights surface, subject export, retention, the erasure request/adjudicate/execute chain and the breach register (`:240-662`, documented in guide 35). |
+| `server/routes/admin_routes.py` | 702 | Eight endpoints: the pre-aggregated 24h governance snapshot for the Overview tab (`:393`), patient erasure (`:889`), and the six history-import endpoints (`:1083-1355`, documented in guide 36). |
+| `server/routes/compliance_routes.py` | 511 | Twelve endpoints: the live compliance posture report (`:181`) plus the DPDP data-rights surface, subject export, retention, the erasure request/adjudicate/execute chain and the breach register (`:275-749`, documented in guide 35). |
 | `server/routes/impact_routes.py` | 68 | Two endpoints: the ROI model (with query-param overrides) and the assumptions catalogue. |
 | `server/routes/model_governance_routes.py` | 43 | Three endpoints: full model registry, compact provenance chips, reseed. |
 | `server/routes/metrics_routes.py` | 51 | One endpoint: Prometheus `/metrics` (optional bearer-token gate). |
@@ -135,13 +135,13 @@ The Impact tab is the only tab that sends user input back to the server (as quer
 
 ### `server/routes/admin_routes.py`
 
-#### admin_overview: `server/routes/admin_routes.py:29`
+#### admin_overview: `server/routes/admin_routes.py:30`
 **Signature:** `admin_overview(user = Depends(require_permission("admin.overview"))) -> dict`
 **Does:** Returns a single pre-aggregated 24-hour governance snapshot for the Overview tab.
 **How it works:**
-1. Computes `now` (UTC) and a `cutoff_24h` ISO timestamp 24h earlier (`:33`).
-2. Opens one `db_session()` and runs seven aggregate queries: audit counts by `event_category` (`:37`), audit counts by `outcome` (`:48`), an ingestion summary (total/parsed/failed/duplicate + summed `vitals_inserted`/`observations_inserted`) (`:57`), source mix by `source_type` (`:71`), alert counts filtered to `vigil_alert_generated`/`relay_alert_generated` action types (`:80`), the five most recent parse failures (`:91`), and an auth-events breakdown grouped by action+outcome (`:102`).
-3. Assembles a flat dict, coalescing every possibly-`NULL` SUM to `0`, and stamps `ingestion_mode` and `audit_simulation_enabled` from `config` (`:113`).
+1. Computes `now` (UTC) and a `cutoff_24h` ISO timestamp 24h earlier (`:34`).
+2. Opens one `db_session()` and runs seven aggregate queries: audit counts by `event_category` (`:38`), audit counts by `outcome` (`:49`), an ingestion summary (total/parsed/failed/duplicate + summed `vitals_inserted`/`observations_inserted`) (`:58`), source mix by `source_type` (`:72`), alert counts filtered to `vigil_alert_generated`/`relay_alert_generated` action types (`:81`), the five most recent parse failures (`:92`), and an auth-events breakdown grouped by action+outcome (`:103`).
+3. Assembles a flat dict, coalescing every possibly-`NULL` SUM to `0`, and stamps `ingestion_mode` and `audit_simulation_enabled` from `config` (`:127`).
 **Why it exists:** The Overview tab must load instantly and show "system pulse" without the browser issuing seven queries; one gated endpoint does the fan-out server-side.
 **Data in/out:** In: JWT. Out: `{ingestion_mode, audit_simulation_enabled, audit_total_24h, audit_categories{}, audit_outcomes{}, ingestion{total,parsed,failed,duplicates,total_vitals,total_observations}, source_mix{}, alerts{vigil,relay}, recent_failures[], auth_events[]}`.
 **Talks to:** Reads `audit_logs` and `ingestion_events`. Called by `getAdminOverview()` → `AdminOverview.tsx`. Depends on `permissions.require_permission` (guide 03) and `config.INGESTION_MODE` / `AUDIT_SIMULATION_EVENTS`.
@@ -152,7 +152,7 @@ The Impact tab is the only tab that sends user input back to the server (as quer
 
 ### `server/routes/compliance_routes.py`
 
-#### get_compliance_report: `server/routes/compliance_routes.py:126`
+#### get_compliance_report: `server/routes/compliance_routes.py:161`
 **Signature:** `get_compliance_report(user = Depends(require_permission("admin.overview"))) -> dict`
 **Does:** Returns the aggregated live compliance posture (delegates entirely to the service).
 **How it works:** One line: `return compliance_report()`. All logic is in `compliance_service`.
@@ -543,7 +543,7 @@ The Impact tab is the only tab that sends user input back to the server (as quer
 4. The content region conditionally renders exactly one tab component (`:174-189`). Six are owned by this guide; `AuditLogTable`/`CorrelationTrace`/`FlightRecorder` are guide 05 (only their tab wiring lives here). Four more, `ScorecardView`, `UsersPanel`, `RosterImport`, `DataPanel`, were added after this chapter was written and are not documented here yet.
 **Why it exists:** One lazy-loaded governance console with cheap client-side tab switching (no routing, no refetch on tab change except the tab's own mount effect).
 **Data in/out:** No props. Internal state only.
-**Talks to:** Imports all fourteen tab components; mounted by `ClinicianShell.tsx:607` inside a `PanelErrorBoundary` and lazy-loaded (`ClinicianShell.tsx:132`). The shell decides who sees the Admin nav (app-shell guide).
+**Talks to:** Imports all fourteen tab components; mounted by `ClinicianShell.tsx:858` inside a `PanelErrorBoundary` and lazy-loaded (`ClinicianShell.tsx:138`). The shell decides who sees the Admin nav (app-shell guide).
 **Change guide:** To add a tab, add an entry to `ADMIN_TABS`, extend the `AdminTab` union at `:22`, and add a `{activeTab === 'x' && <X />}` line in the content region at `:174-189`. Worked example: adding a "Metrics" tab that iframes `/metrics` needs all three edits. Footgun: the union type and the render switch are *not* generated from `ADMIN_TABS`, forget one and TypeScript won't catch a new string id used only in the array.
 **Gotchas:** Switching tabs unmounts the previous tab, so each revisit refetches (state is not cached across tab switches).
 
@@ -786,7 +786,7 @@ None. This subsystem is pure request/response; there are no socket.io emissions 
 
 2. **Throughput metric's `value` is inconsistent with the other metrics.** For metrics 1–3, `value` is the estimated *saved/prevented* quantity (minutes, ICU-days, ADEs). For throughput, `value` is the *measured average length of stay* (`avg_los`, `server/services/impact_service.py:287`), a level, not a saving, and it is computed over *all* discharged admissions, not the reporting window, so it does not respond to `period_days`. The dollars/evidence for throughput are correctly period-scoped; only the displayed `value` is out of step. Not a correctness bug (throughput's `value` has no figure of its own in `totals`), but a reader comparing the four cards will find the fourth "value" means something different.
 
-3. **Alerts tab category assumption vs. Overview.** `AlertOperations` fetches only `event_category: 'ingestion'` audit rows (`src/pages/panels/admin/AlertOperations.tsx:24`), while `admin_overview` counts the same `vigil_alert_generated`/`relay_alert_generated` action types with **no** category filter (`server/routes/admin_routes.py:68`). If those alerts are ever logged under a category other than `ingestion`, the Alerts tab will show nothing while the Overview "Alert Activity" count remains correct, the two surfaces would silently disagree. I did not read where these alert audit events are written (outside this scope), so whether they are in fact under `ingestion` is unverified here; worth confirming against the Vigil/Relay logging code.
+3. **Alerts tab category assumption vs. Overview.** `AlertOperations` fetches only `event_category: 'ingestion'` audit rows (`src/pages/panels/admin/AlertOperations.tsx:24`), while `admin_overview` counts the same `vigil_alert_generated`/`relay_alert_generated` action types with **no** category filter (`server/routes/admin_routes.py:69`). If those alerts are ever logged under a category other than `ingestion`, the Alerts tab will show nothing while the Overview "Alert Activity" count remains correct, the two surfaces would silently disagree. I did not read where these alert audit events are written (outside this scope), so whether they are in fact under `ingestion` is unverified here; worth confirming against the Vigil/Relay logging code.
 
 4. **`/api/admin/impact/assumptions` appears unused by the shipped UI.** `ImpactDashboard` reads assumptions off the main `/impact/` response's echoed `assumptions` block (`src/pages/panels/admin/ImpactDashboard.tsx:86`) and never calls `getAssumptions`. The endpoint is a valid, tested-adjacent contract but currently has no frontend caller, either dead or intended for an external methodology page.
 

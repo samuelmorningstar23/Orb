@@ -6,6 +6,17 @@ only through routes/pharmacy_store/purchasing.py, behind ORB_PHARMACY_STORE
 connection-taking cores directly, with domain 'pharmacy', and never a public
 procurement wrapper or route.
 
+PER FACILITY (multisite-8h3, ruling MS-R9 (a)). Procurement's cores stamp each
+order and receipt with its store's facility and refuse a receipt into a store
+of another facility than its order (multisite-7b), and the receipt's lots
+take that store's facility (pharmacy_stock_service). Once more than one
+facility is on record the lists, the form's stores, the receivable orders,
+the reorder suggestions and the vendor returns read here take the caller's
+facilities (facilities=, from permissions.facility_scope); the routes check a
+named order, receipt, return or store against them first. The drug master,
+the vendors and the last rate paid stay group-wide. With one facility on
+record nothing here reads anything new.
+
 ONE TRANSACTION PER ACTION. Create, submit, approve, issue and cancel each run
 in one db_session(immediate=True): the checks below, the procurement core and
 the 'security' audit row (written with db=conn, fail-closed) commit together or
@@ -511,12 +522,35 @@ def get_purchase_order(po_id: int) -> dict | None:
         return _decorate(conn, doc) if doc else None
 
 
-def list_purchase_orders(*, status: str | None = None, limit: int = 100) -> list[dict]:
+def list_purchase_orders(
+    *, status: str | None = None, limit: int = 100, facilities: frozenset[int] | None = None
+) -> list[dict]:
+    """Pharmacy purchase orders, newest first. With `facilities`
+    (multisite-8h3) only the orders at those facilities, in the statement, so
+    the limit never hides one of them; the rows are procurement's own shape."""
     if status is not None and status not in procurement.PO_TRANSITIONS:
         raise PurchasingError(f"unknown purchase order status {status!r}", code="bad_value")
-    return procurement.list_purchase_orders(
-        status=status, limit=max(1, min(int(limit), 500)), domain=DOMAIN
+    if facilities is None:
+        return procurement.list_purchase_orders(
+            status=status, limit=max(1, min(int(limit), 500)), domain=DOMAIN
+        )
+    from services.pharmacy_facility import column_sql
+
+    sql = (
+        "SELECT p.*, v.code AS vendor_code, v.name AS vendor_name, "
+        "s.code AS store_code "
+        "FROM purchase_orders p LEFT JOIN vendors v ON v.id = p.vendor_id "
+        "LEFT JOIN stores s ON s.id = p.store_id WHERE p.domain = ?"
+        + column_sql("p.facility_id", facilities)
     )
+    params: list[Any] = [DOMAIN]
+    if status:
+        sql += " AND p.status = ?"
+        params.append(status)
+    sql += " ORDER BY p.order_date DESC, p.id DESC LIMIT ?"
+    params.append(max(1, min(int(limit), 500)))
+    with db_session() as conn:
+        return [procurement._row(r) for r in conn.execute(sql, params).fetchall()]
 
 
 def _load(conn, po_id: int, *, moving_to: str | None = None) -> dict:
@@ -800,12 +834,17 @@ def _last_rates(conn) -> dict[str, dict]:
     return out
 
 
-def reorder_suggestions(*, store_id: int | None = None) -> list[dict]:
+def reorder_suggestions(
+    *, store_id: int | None = None, facilities: frozenset[int] | None = None
+) -> list[dict]:
     """The drugs that need ordering now, each with whether it can be ordered
     (and why not), and the last rate paid. No rate is ever invented: a drug
-    never bought before has none."""
+    never bought before has none. With `facilities`, the caller's
+    facilities' stores and shelves only (multisite-8h3)."""
     with db_session() as conn:
-        rows = reports.reorder_report(conn, store_id=store_id, needs_only=True)["rows"]
+        rows = reports.reorder_report(
+            conn, store_id=store_id, needs_only=True, facilities=facilities
+        )["rows"]
         rates = _last_rates(conn)
         out = []
         for row in rows:
@@ -903,9 +942,12 @@ def create_from_suggestions(
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-def options() -> dict:
-    """Vendors with their licence state, the stores an order may go to, and
+def options(*, facilities: frozenset[int] | None = None) -> dict:
+    """Vendors with their licence state, the stores an order may go to (with
+    `facilities`, the caller's facilities' stores only: multisite-8h3), and
     every active drug with whether it can be ordered and why not."""
+    from services.pharmacy_facility import column_sql
+
     today = stock.site_today()
     with db_session() as conn:
         vendors = []
@@ -934,7 +976,8 @@ def options() -> dict:
             }
             for s in conn.execute(
                 "SELECT code, name, pharmacy_kind FROM stores WHERE is_active = 1 AND "
-                f"pharmacy_kind IN ({','.join('?' for _ in ORDERABLE_STORE_KINDS)}) "
+                f"pharmacy_kind IN ({','.join('?' for _ in ORDERABLE_STORE_KINDS)})"
+                f"{column_sql('facility_id', facilities)} "
                 "ORDER BY name",
                 ORDERABLE_STORE_KINDS,
             ).fetchall()
@@ -1307,28 +1350,59 @@ def get_goods_receipt(grn_id: int) -> dict | None:
 
 
 def list_goods_receipts(
-    *, status: str | None = None, purchase_order_id: int | None = None, limit: int = 100
+    *,
+    status: str | None = None,
+    purchase_order_id: int | None = None,
+    limit: int = 100,
+    facilities: frozenset[int] | None = None,
 ) -> list[dict]:
+    """Pharmacy goods receipts, newest first. With `facilities`
+    (multisite-8h3) only the receipts at those facilities, in the statement."""
     if status is not None and status not in GRN_STATUSES:
         raise PurchasingError(f"unknown goods receipt status {status!r}", code="bad_value")
-    return procurement.list_goods_receipts(
-        status=status,
-        purchase_order_id=purchase_order_id,
-        limit=max(1, min(int(limit), 500)),
-        domain=DOMAIN,
+    if facilities is None:
+        return procurement.list_goods_receipts(
+            status=status,
+            purchase_order_id=purchase_order_id,
+            limit=max(1, min(int(limit), 500)),
+            domain=DOMAIN,
+        )
+    from services.pharmacy_facility import column_sql
+
+    sql = (
+        "SELECT g.*, v.name AS vendor_name, s.code AS store_code, p.po_number "
+        "FROM goods_receipts g LEFT JOIN vendors v ON v.id = g.vendor_id "
+        "LEFT JOIN stores s ON s.id = g.store_id "
+        "LEFT JOIN purchase_orders p ON p.id = g.purchase_order_id WHERE g.domain = ?"
+        + column_sql("g.facility_id", facilities)
     )
+    params: list[Any] = [DOMAIN]
+    if purchase_order_id is not None:
+        sql += " AND g.purchase_order_id = ?"
+        params.append(purchase_order_id)
+    if status:
+        sql += " AND g.status = ?"
+        params.append(status)
+    sql += " ORDER BY g.received_at DESC, g.id DESC LIMIT ?"
+    params.append(max(1, min(int(limit), 500)))
+    with db_session() as conn:
+        return [procurement._row(r) for r in conn.execute(sql, params).fetchall()]
 
 
-def receivable_orders() -> dict:
+def receivable_orders(*, facilities: frozenset[int] | None = None) -> dict:
     """Pharmacy orders sent to a vendor that still have packs to come, each
-    line with what is outstanding, for the receipt form. No patient data."""
+    line with what is outstanding, for the receipt form. No patient data.
+    With `facilities`, the orders at those facilities only (multisite-8h3)."""
+    from services.pharmacy_facility import column_sql
+
     today = stock.site_today()
     with db_session() as conn:
         ids = [
             r["id"]
             for r in conn.execute(
                 "SELECT id FROM purchase_orders WHERE domain = ? AND status IN "
-                f"({','.join('?' for _ in procurement.RECEIVABLE_PO_STATUSES)}) "
+                f"({','.join('?' for _ in procurement.RECEIVABLE_PO_STATUSES)})"
+                f"{column_sql('facility_id', facilities)} "
                 "ORDER BY order_date, id LIMIT 200",
                 (DOMAIN, *sorted(procurement.RECEIVABLE_PO_STATUSES)),
             ).fetchall()
@@ -2220,7 +2294,13 @@ def _vr_decorate(conn, row: Mapping, *, with_lines: bool = True) -> dict:
     return doc
 
 
-def list_vendor_returns(*, status: str | None = None, limit: int = 100) -> list[dict]:
+def list_vendor_returns(
+    *, status: str | None = None, limit: int = 100, facilities: frozenset[int] | None = None
+) -> list[dict]:
+    """Returns to vendor, newest first; with `facilities` (multisite-8h3),
+    those from stores at the caller's facilities only."""
+    from services.pharmacy_facility import store_ids_sql
+
     if status is not None and status not in VR_STATUSES:
         raise PurchasingError(f"unknown return status {status!r}", code="bad_value")
     sql = "SELECT * FROM pharmacy_vendor_returns"
@@ -2228,6 +2308,8 @@ def list_vendor_returns(*, status: str | None = None, limit: int = 100) -> list[
     if status:
         sql += " WHERE status = ?"
         params.append(status)
+    if facilities is not None:
+        sql += (" AND 1 = 1" if status else " WHERE 1 = 1") + store_ids_sql("store_id", facilities)
     sql += " ORDER BY id DESC LIMIT ?"
     params.append(max(1, min(int(limit), 500)))
     with db_session() as conn:
@@ -2244,11 +2326,15 @@ def get_vendor_return(return_id: Any) -> dict | None:
 
 def vendor_return_options(actor: Mapping) -> dict:
     """The stores stock goes back from, the vendors, who may witness a
-    controlled return (never the caller) and the site's near-expiry window."""
+    controlled return (never the caller) and the site's near-expiry window.
+    Once more than one facility is on record, the stores are the caller's
+    facilities' only (multisite-8h3)."""
     from services import ndps_service
     from services import pharmacy_store_service as store_rules
+    from services.pharmacy_facility import column_sql, scope
 
     me = str(actor.get("id") or "")
+    facility_sql = column_sql("facility_id", scope(actor))
     with db_session() as conn:
         marks = ",".join("?" for _ in store_rules.RETURN_STORE_KINDS)
         stores = [
@@ -2260,7 +2346,7 @@ def vendor_return_options(actor: Mapping) -> dict:
             }
             for s in conn.execute(
                 f"SELECT id, code, name, pharmacy_kind FROM stores WHERE is_active = 1 "
-                f"AND pharmacy_kind IN ({marks}) ORDER BY name, code",
+                f"AND pharmacy_kind IN ({marks}){facility_sql} ORDER BY name, code",
                 store_rules.RETURN_STORE_KINDS,
             ).fetchall()
         ]

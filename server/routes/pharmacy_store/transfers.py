@@ -30,6 +30,13 @@ permission or a witness refusal is 403; a locked witness PIN is 429; a move
 the status does not allow, a stale plan or short stock is 409; an audit
 outage is 503 audit_unavailable and nothing was changed; anything the request
 must correct is 422. No patient data is read or returned.
+
+PER FACILITY (multisite-8h3, ruling MS-R9 (a)). With more than one facility on
+record, a transfer or store of another facility is 404 after an authorization
+'facility_document_denied' row (services/pharmacy_facility.gate), the list is
+the caller's facilities' only, and two stores at different facilities are
+refused (409 cross_facility_transfer): stock never moves between facilities
+by transfer. With one facility on record nothing here changes.
 """
 
 import uuid
@@ -40,11 +47,13 @@ from permissions import (
     PHARMACY_STORE_NDPS,
     PHARMACY_STORE_READ,
     PHARMACY_STORE_WRITE,
+    facility_scope,
     require_permission,
 )
 from pydantic import BaseModel, Field
 from services.audit_service import AuditWriteError
 
+from services import pharmacy_facility
 from services import pharmacy_transfer_service as transfers
 
 router = APIRouter()
@@ -69,7 +78,22 @@ _STATUS = {
     "idempotency_conflict": 409,
     "lot_changed": 409,
     "store_inactive": 409,
+    "cross_facility_transfer": 409,
 }
+
+
+def _transfer_gate(user: dict, transfer_id: Any, request: Request) -> None:
+    """404 for a transfer of another facility (multisite-8h3)."""
+    pharmacy_facility.gate(
+        user, "transfer", transfer_id, request, message=f"No transfer {transfer_id}"
+    )
+
+
+def _store_gate(user: dict, store_code: Any, request: Request) -> None:
+    """404 for a store of another facility named in the request."""
+    pharmacy_facility.gate(
+        user, "store_code", store_code, request, message=f"no pharmacy store {store_code!r}"
+    )
 
 
 def _fail(exc: transfers.TransferError, request: Request, user: dict) -> HTTPException:
@@ -148,10 +172,13 @@ def list_transfers(
     store_id: int | None = _LIST_TRANSFERS_STORE_ID_DEFAULT,
     limit: int = _LIST_TRANSFERS_LIMIT_DEFAULT,
     user: dict = _LIST_TRANSFERS_USER_DEFAULT,
-):
+) -> dict:
+    """Transfers, newest first (the caller's facilities only)."""
     try:
         return {
-            "transfers": transfers.list_transfers(status=status, store_id=store_id, limit=limit)
+            "transfers": transfers.list_transfers(
+                status=status, store_id=store_id, limit=limit, facilities=facility_scope(user)
+            )
         }
     except transfers.TransferError as exc:
         raise _fail(exc, request, user) from exc
@@ -161,9 +188,10 @@ _TRANSFER_OPTIONS_USER_DEFAULT = Depends(_PS_READ)
 
 
 @router.get("/transfers/options")
-def transfer_options(user: dict = _TRANSFER_OPTIONS_USER_DEFAULT):
-    """The stores a transfer may run between, who may witness a controlled
-    one (never the caller), and the site's settings for the screen."""
+def transfer_options(user: dict = _TRANSFER_OPTIONS_USER_DEFAULT) -> dict:
+    """The stores a transfer may run between (the caller's facilities'),
+    who may witness a controlled one (never the caller), and the site's
+    settings for the screen."""
     return transfers.options(user)
 
 
@@ -176,8 +204,10 @@ def transfer_store_stock(
     request: Request,
     store_code: str = _TRANSFER_STORE_STOCK_STORE_CODE_DEFAULT,
     user: dict = _TRANSFER_STORE_STOCK_USER_DEFAULT,
-):
-    """Each drug a store holds usable units of now, for the transfer form."""
+) -> dict:
+    """Each drug a store holds usable units of now, for the transfer form. A
+    store of another facility is 404."""
+    _store_gate(user, store_code, request)
     try:
         return transfers.store_stock(store_code)
     except transfers.TransferError as exc:
@@ -188,7 +218,11 @@ _GET_TRANSFER_USER_DEFAULT = Depends(_PS_READ)
 
 
 @router.get("/transfers/{transfer_id}")
-def get_transfer(transfer_id: int, user: dict = _GET_TRANSFER_USER_DEFAULT):
+def get_transfer(
+    transfer_id: int, request: Request, user: dict = _GET_TRANSFER_USER_DEFAULT
+) -> dict:
+    """One transfer with its lines; a transfer of another facility is 404."""
+    _transfer_gate(user, transfer_id, request)
     doc = transfers.get_transfer(transfer_id)
     if doc is None:
         raise HTTPException(
@@ -217,9 +251,14 @@ _CREATE_TRANSFER_USER_DEFAULT = Depends(_PS_WRITE)
 
 
 @router.post("/transfers")
-def create_transfer(body: TransferIn, request: Request, user: dict = _CREATE_TRANSFER_USER_DEFAULT):
+def create_transfer(
+    body: TransferIn, request: Request, user: dict = _CREATE_TRANSFER_USER_DEFAULT
+) -> dict:
     """Raise a draft. The plan takes the sending store's usable lots, earliest
-    expiry first. Nothing moves until dispatch."""
+    expiry first. Nothing moves until dispatch. A store of another facility
+    is 404; two stores at different facilities are 409."""
+    _store_gate(user, body.from_store_code, request)
+    _store_gate(user, body.to_store_code, request)
     try:
         return transfers.create_transfer(
             from_store_code=body.from_store_code,
@@ -240,7 +279,11 @@ _REPLAN_TRANSFER_USER_DEFAULT = Depends(_PS_WRITE)
 
 
 @router.post("/transfers/{transfer_id}/replan")
-def replan_transfer(transfer_id: int, request: Request, user: dict = _REPLAN_TRANSFER_USER_DEFAULT):
+def replan_transfer(
+    transfer_id: int, request: Request, user: dict = _REPLAN_TRANSFER_USER_DEFAULT
+) -> dict:
+    """Plan a draft again; a transfer of another facility is 404."""
+    _transfer_gate(user, transfer_id, request)
     try:
         return transfers.replan_transfer(transfer_id, actor=user, audit_ctx=_ctx(request))
     except transfers.TransferError as exc:
@@ -263,8 +306,10 @@ def dispatch_transfer(
     body: WitnessIn,
     request: Request,
     user: dict = _DISPATCH_TRANSFER_USER_DEFAULT,
-):
-    """Send it. A dispatch already made posts nothing again."""
+) -> dict:
+    """Send it. A dispatch already made posts nothing again. A transfer of
+    another facility is 404."""
+    _transfer_gate(user, transfer_id, request)
     try:
         return transfers.dispatch_transfer(
             transfer_id,
@@ -295,8 +340,10 @@ _RECEIVE_TRANSFER_USER_DEFAULT = Depends(_PS_WRITE)
 @router.post("/transfers/{transfer_id}/receive")
 def receive_transfer(
     transfer_id: int, body: ReceiptIn, request: Request, user: dict = _RECEIVE_TRANSFER_USER_DEFAULT
-):
-    """Receive some or all lines. Never by the person who dispatched it."""
+) -> dict:
+    """Receive some or all lines. Never by the person who dispatched it. A
+    transfer of another facility is 404."""
+    _transfer_gate(user, transfer_id, request)
     try:
         return transfers.receive_transfer(
             transfer_id,
@@ -322,7 +369,9 @@ _CANCEL_TRANSFER_USER_DEFAULT = Depends(_PS_WRITE)
 @router.post("/transfers/{transfer_id}/cancel")
 def cancel_transfer(
     transfer_id: int, body: CancelIn, request: Request, user: dict = _CANCEL_TRANSFER_USER_DEFAULT
-):
+) -> dict:
+    """Give up a draft, with a reason; a transfer of another facility is 404."""
+    _transfer_gate(user, transfer_id, request)
     try:
         return transfers.cancel_transfer(
             transfer_id, reason=body.reason, actor=user, audit_ctx=_ctx(request)

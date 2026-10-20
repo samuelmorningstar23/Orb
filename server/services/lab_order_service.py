@@ -158,7 +158,7 @@ from typing import Any
 
 from database import db_session
 
-from services import lab_accession, lab_module, orders_service
+from services import lab_accession, lab_facility, lab_module, orders_service
 from services.audit_service import log_audit_event
 from services.clinical_time import parse_to_utc, to_utc_iso, utc_iso_now
 
@@ -334,7 +334,13 @@ def record_exception(kind: str, order_id: str | None, detail: str) -> int | None
         return None
 
 
-def list_open_exceptions(conn, *, dept: str | None, limit: int = 200) -> list[dict]:
+def list_open_exceptions(
+    conn: Any,
+    *,
+    dept: str | None,
+    limit: int = 200,
+    facilities: frozenset[int] | None = None,
+) -> list[dict]:
     """The laboratory's open exceptions, oldest first, with the order and the
     patient they concern.
 
@@ -346,7 +352,12 @@ def list_open_exceptions(conn, *, dept: str | None, limit: int = 200) -> list[di
     (permissions.scope_patient_ids_sql). That is fail-closed: a row with no
     order, or an order whose patient no ward owns, is not shown to a
     department account. The filter runs in SQL, before the LIMIT, so another
-    ward's rows can never push this ward's own rows off the page."""
+    ward's rows can never push this ward's own rows off the page.
+
+    `facilities` is the caller's permissions.facility_scope(user) (multisite-8h2,
+    services/lab_facility): None changes nothing; otherwise a row is kept to
+    the caller's facilities by its sample's performing facility, else its
+    order's patient's facility (a department account: its patient's)."""
     if not _tables_present(conn):
         return []
     from permissions import scope_patient_ids_sql
@@ -358,6 +369,14 @@ def list_open_exceptions(conn, *, dept: str | None, limit: int = 200) -> list[di
         scope_sql, scope_params = scope_patient_ids_sql(dept)
         where += f" AND o.patient_id IN ({scope_sql})"
         params = tuple(scope_params)
+    facility_where, facility_params = lab_facility.list_clause(
+        dept=dept,
+        facilities=facilities,
+        patient_col="o.patient_id",
+        facility_sql=lab_facility.specimen_facility_sql("x.specimen_id", "o.patient_id"),
+    )
+    where += facility_where
+    params += tuple(facility_params)
     rows = conn.execute(
         f"""SELECT x.id, x.kind, x.order_id, x.specimen_id, x.detail, x.created_at,
                   o.patient_id, o.code, o.code_system, o.description, o.priority,
@@ -450,29 +469,43 @@ def _requisition(conn, order: dict) -> tuple[dict | None, list[dict]]:
 
 
 def _mergeable_specimen(
-    conn,
+    conn: Any,
     patient_id: str,
     specimen_type_code: str,
     container: str | None,
     priority: str,
     test_ids: list[str],
+    *,
+    facility_id: int = 1,
 ) -> str | None:
-    """An existing planned, unlabelled specimen this group can join, or None."""
+    """An existing planned, unlabelled specimen this group can join, or None.
+    With more than one facility on record the tube must also be performed at
+    `facility_id` (lab_facility.merge_clause): a tube never takes another
+    facility's tests."""
     test_marks = ", ".join("?" for _ in test_ids)
     dead_marks = ", ".join("?" for _ in _DEAD_ITEM_STATUSES)
+    facility_sql, facility_params = lab_facility.merge_clause(conn, facility_id)
     row = conn.execute(
         f"""SELECT s.id FROM lab_specimens s
             WHERE s.patient_id = ? AND s.specimen_type_code = ?
               AND COALESCE(s.container, '') = COALESCE(?, '')
               AND s.priority = ? AND s.status = 'planned'
-              AND s.label_print_count = 0 AND s.label_printed_at IS NULL
+              AND s.label_print_count = 0 AND s.label_printed_at IS NULL{facility_sql}
               AND NOT EXISTS (
                   SELECT 1 FROM lab_order_items i
                   WHERE i.specimen_id = s.id AND i.test_id IN ({test_marks})
                     AND i.status NOT IN ({dead_marks}))
             ORDER BY julianday(s.created_at) DESC, s.id DESC
             LIMIT 1""",
-        (patient_id, specimen_type_code, container, priority, *test_ids, *_DEAD_ITEM_STATUSES),
+        (
+            patient_id,
+            specimen_type_code,
+            container,
+            priority,
+            *facility_params,
+            *test_ids,
+            *_DEAD_ITEM_STATUSES,
+        ),
     ).fetchone()
     return row[0] if row else None
 
@@ -515,23 +548,40 @@ def _specimen_event(
 
 
 def _plan_specimens(
-    conn, order: dict, lines: list[dict], *, actor_id: str | None, actor_role: str | None, now: str
+    conn: Any,
+    order: dict,
+    lines: list[dict],
+    *,
+    actor_id: str | None,
+    actor_role: str | None,
+    now: str,
 ) -> list[dict]:
     """Assign each line a specimen (merged or new). Returns one entry per
-    specimen touched: {id, new, specimen_type_code, container, test_ids}."""
+    specimen touched: {id, new, specimen_type_code, container, test_ids}.
+
+    A new specimen is stamped with the facility that performs it
+    (lab_specimens.facility_id, multisite-8h2): the patient's facility,
+    which is facility 1 while one facility is on record."""
     priority = (
         order["priority"] if order.get("priority") in ("stat", "urgent", "routine") else "routine"
     )
     groups: dict[tuple, list[dict]] = {}
     for line in lines:
         groups.setdefault((line["specimen_type_code"], line["container"] or ""), []).append(line)
+    facility_id = lab_facility.performing_facility_on(conn, order["patient_id"])
 
     touched = []
     for (specimen_code, _container_key), group in groups.items():
         container = group[0]["container"]
         test_ids = [g["test_id"] for g in group]
         specimen_id = _mergeable_specimen(
-            conn, order["patient_id"], specimen_code, container, priority, test_ids
+            conn,
+            order["patient_id"],
+            specimen_code,
+            container,
+            priority,
+            test_ids,
+            facility_id=facility_id,
         )
         new = specimen_id is None
         if new:
@@ -539,8 +589,8 @@ def _plan_specimens(
             conn.execute(
                 """INSERT INTO lab_specimens
                    (id, patient_id, specimen_type_code, container, priority, status,
-                    planned_at, label_print_count, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, 'planned', ?, 0, ?, ?)""",
+                    planned_at, label_print_count, created_at, updated_at, facility_id)
+                   VALUES (?, ?, ?, ?, ?, 'planned', ?, 0, ?, ?, ?)""",
                 (
                     specimen_id,
                     order["patient_id"],
@@ -550,6 +600,7 @@ def _plan_specimens(
                     now,
                     now,
                     now,
+                    facility_id,
                 ),
             )
             _specimen_event(
@@ -1067,9 +1118,10 @@ def _audit(
     )
 
 
-def _scope_metadata(dept: str | None) -> dict:
-    """What permissions.log_phi_read records about the reader's scope."""
-    return {"department": dept, "hospital_wide": dept is None, "scope_source": "authenticated_user"}
+def _scope_metadata(dept: str | None, facilities: frozenset[int] | None = None) -> dict:
+    """What permissions.log_phi_read records about the reader's scope, with
+    the facility scope when one applies (lab_facility.scope_metadata)."""
+    return lab_facility.scope_metadata(dept, facilities)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1409,8 +1461,15 @@ def sync_specimen_progress(
     return target
 
 
+@lab_facility.audit_refusals
 def cancel_order(
-    order_id: str, *, actor: dict, reason: str, dept: str | None, request_meta: dict | None = None
+    order_id: str,
+    *,
+    actor: dict,
+    reason: str,
+    dept: str | None,
+    request_meta: dict | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Cancel an order the laboratory manages, whoever asks (the ward with
     order.write, or the laboratory with lab.receive), in ONE immediate
@@ -1426,9 +1485,10 @@ def cancel_order(
       * the clinical_access audit row lands in the same transaction.
     Served while the module drains (ruling LIS-R21): finishing work includes
     cancelling it. `dept` is the caller's department_scope (None means
-    hospital-wide); an order outside it is 'not found'."""
-    from permissions import patient_in_scope
-
+    hospital-wide); an order outside it is 'not found'. `facilities` is the
+    caller's facility_scope: an order outside it (its sample's performing
+    facility for the laboratory, its patient's for a ward) is the same 'not
+    found', with an audited facility refusal (lab_facility)."""
     reason = (reason or "").strip()
     if not reason:
         raise LabOrderError(
@@ -1446,8 +1506,19 @@ def cancel_order(
             "SELECT id, patient_id, order_type, description, status FROM orders WHERE id = ?",
             (order_id,),
         ).fetchone()
-        if order is None or not patient_in_scope(conn, order["patient_id"], dept):
+        if order is None:
             raise _not_found("Order")
+        lab_facility.require_in_scope(
+            conn,
+            patient_id=order["patient_id"],
+            specimen_id=lab_facility.order_specimen_on(conn, order_id)
+            if facilities is not None and dept is None
+            else None,
+            dept=dept,
+            facilities=facilities,
+            helper="lab_order_cancel",
+            not_found=_not_found("Order"),
+        )
         order = dict(order)
         items = [
             dict(r)
@@ -1906,7 +1977,13 @@ def _collection_entry(row: dict, tests: list[dict]) -> dict:
     }
 
 
-def list_collection(conn, *, dept: str | None, limit: int = COLLECTION_LIST_CAP) -> list[dict]:
+def list_collection(
+    conn: Any,
+    *,
+    dept: str | None,
+    limit: int = COLLECTION_LIST_CAP,
+    facilities: frozenset[int] | None = None,
+) -> list[dict]:
     """Specimens waiting to be collected, STAT first, then by ward, bed and
     patient, plus rejected specimens whose tests wait for the laboratory's
     decision ('Recollection needed': the laboratory recollects, which plans a
@@ -1916,7 +1993,9 @@ def list_collection(conn, *, dept: str | None, limit: int = COLLECTION_LIST_CAP)
     a department account (a ward nurse or doctor) sees only patients in its
     department, by the same predicate as patient_in_scope, filtered in SQL
     before the LIMIT; None (the laboratory and phlebotomy roles) is the
-    hospital-wide phlebotomy list."""
+    hospital-wide phlebotomy list. `facilities` (the caller's facility_scope)
+    keeps the list to the caller's facilities: the sample's performing
+    facility for the laboratory, the patient's for a ward (lab_facility)."""
     if not _tables_present(conn):
         return []
     from permissions import scope_patient_ids_sql
@@ -1933,16 +2012,26 @@ def list_collection(conn, *, dept: str | None, limit: int = COLLECTION_LIST_CAP)
         scope_sql, scope_params = scope_patient_ids_sql(dept)
         where += f" AND s.patient_id IN ({scope_sql})"
         params = tuple(scope_params)
+    facility_where, facility_params = lab_facility.list_clause(
+        dept=dept, facilities=facilities, patient_col="s.patient_id", facility_sql="s.facility_id"
+    )
+    where += facility_where
+    params += tuple(facility_params)
     rows = _collection_rows(conn, where, params, limit=limit)
     tests = _specimen_tests(conn, [r["id"] for r in rows], ("awaiting_collection", "rejected"))
     return [_collection_entry(r, tests.get(r["id"], [])) for r in rows]
 
 
-def _scoped_specimens(conn, specimen_ids: list[str], dept: str | None) -> list[dict]:
+def _scoped_specimens(
+    conn: Any,
+    specimen_ids: list[str],
+    dept: str | None,
+    facilities: frozenset[int] | None = None,
+) -> list[dict]:
     """The named specimens with their patient, or 404 when any is missing or
-    outside the caller's department (one answer for both)."""
-    from permissions import patient_in_scope
-
+    outside the caller's department (one answer for both). Outside the
+    caller's facilities raises lab_facility.FacilityRefusal, which the
+    calling step audits and answers with the same 404."""
     rows = _collection_rows(
         conn,
         f"s.id IN ({_placeholders(specimen_ids)})",
@@ -1953,8 +2042,17 @@ def _scoped_specimens(conn, specimen_ids: list[str], dept: str | None) -> list[d
     out = []
     for specimen_id in specimen_ids:
         row = found.get(specimen_id)
-        if row is None or not patient_in_scope(conn, row["patient_id"], dept):
+        if row is None:
             raise _not_found()
+        lab_facility.require_in_scope(
+            conn,
+            patient_id=row["patient_id"],
+            specimen_id=row["id"],
+            dept=dept,
+            facilities=facilities,
+            helper="lab_specimen",
+            not_found=_not_found(),
+        )
         out.append(row)
     return out
 
@@ -1963,6 +2061,7 @@ def _awaiting(conn, specimen_id: str) -> list[dict]:
     return _specimen_tests(conn, [specimen_id], ("awaiting_collection",)).get(specimen_id, [])
 
 
+@lab_facility.audit_refusals
 def print_labels(
     specimen_ids: list,
     *,
@@ -1970,6 +2069,7 @@ def print_labels(
     identity: Any,
     dept: str | None,
     request_meta: dict | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Print the labels for one patient's planned specimens, after the two
     identifiers match (ruling LIS-R6, strictest option: confirm on screen
@@ -1999,7 +2099,7 @@ def print_labels(
         with db_session(immediate=True) as conn:
             if not _tables_present(conn):
                 raise _not_found()
-            rows = _scoped_specimens(conn, ids, dept)
+            rows = _scoped_specimens(conn, ids, dept, facilities)
             patients = {r["patient_id"] for r in rows}
             if len(patients) != 1:
                 raise LabOrderError(
@@ -2082,7 +2182,7 @@ def print_labels(
                 target_id=",".join(ids)[:200],
                 patient_id=rows[0]["patient_id"],
                 metadata={
-                    **_scope_metadata(dept),
+                    **_scope_metadata(dept, facilities),
                     "specimens": ids,
                     "print_numbers": {
                         left_item["specimen_id"]: left_item["print_number"] for left_item in labels
@@ -2157,6 +2257,7 @@ def _collection_instant(
     return to_utc_iso(when), minutes, reason
 
 
+@lab_facility.audit_refusals
 def collect_specimen(
     specimen_id: str,
     *,
@@ -2167,6 +2268,7 @@ def collect_specimen(
     backdate_reason: Any = None,
     collection_location: Any = None,
     request_meta: dict | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Record a specimen as collected, in ONE immediate transaction: the
     specimen, its waiting tests, each order's move to in_progress (through
@@ -2183,7 +2285,7 @@ def collect_specimen(
         with db_session(immediate=True) as conn:
             if not _tables_present(conn):
                 raise _not_found()
-            row = _scoped_specimens(conn, [str(specimen_id or "").strip()], dept)[0]
+            row = _scoped_specimens(conn, [str(specimen_id or "").strip()], dept, facilities)[0]
             if row["status"] != "planned":
                 raise LabOrderError(
                     "specimen_not_planned",
@@ -2433,14 +2535,25 @@ def _lab_specimen_select() -> str:
     return _LAB_SPECIMEN_SELECT.format(department_sql=PATIENT_DEPARTMENT_SQL)
 
 
-def _lab_specimen_row(conn, specimen_id: str, dept: str | None) -> dict:
+def _lab_specimen_row(
+    conn: Any, specimen_id: str, dept: str | None, facilities: frozenset[int] | None = None
+) -> dict:
     """One specimen with its patient, type and the people who handled it; 404
-    when it is missing or outside the caller's department (one answer)."""
-    from permissions import patient_in_scope
-
+    when it is missing or outside the caller's department (one answer).
+    Outside the caller's facilities raises lab_facility.FacilityRefusal,
+    which the calling step audits and answers with the same 404."""
     row = conn.execute(_lab_specimen_select() + " WHERE s.id = ?", (specimen_id,)).fetchone()
-    if row is None or not patient_in_scope(conn, row["patient_id"], dept):
+    if row is None:
         raise _not_found()
+    lab_facility.require_in_scope(
+        conn,
+        patient_id=row["patient_id"],
+        specimen_id=row["id"],
+        dept=dept,
+        facilities=facilities,
+        helper="lab_specimen",
+        not_found=_not_found(),
+    )
     return dict(row)
 
 
@@ -2556,15 +2669,25 @@ def _specimen_detail(conn, row: dict, *, now_dt: datetime | None = None) -> dict
     }
 
 
-def scan_specimen(conn, code: Any, *, dept: str | None) -> dict:
+@lab_facility.audit_refusals
+def scan_specimen(
+    conn: Any,
+    code: Any,
+    *,
+    dept: str | None,
+    facilities: frozenset[int] | None = None,
+    actor: dict | None = None,
+    request_meta: dict | None = None,
+) -> dict:
     """Look up a scanned or typed accession number for receipt. The check
     digit is checked first (422 'bad_accession'); a number Orb never issued,
-    or one outside the caller's department, is 404. A read: the route audits
-    it as phi_access."""
+    or one outside the caller's department or facilities, is 404 (a facility
+    refusal is audited for `actor`). A read: the route audits it as
+    phi_access."""
     accession = checked_accession(code)
     if not _tables_present(conn):
         raise _not_found()
-    return _specimen_detail(conn, _lab_specimen_row(conn, accession, dept))
+    return _specimen_detail(conn, _lab_specimen_row(conn, accession, dept, facilities))
 
 
 def _receiving_entry(row: dict, tests: list[dict], now_dt: datetime) -> dict:
@@ -2592,7 +2715,13 @@ def _receiving_entry(row: dict, tests: list[dict], now_dt: datetime) -> dict:
     }
 
 
-def list_receiving(conn, *, dept: str | None, limit: int = RECEIVING_LIST_CAP) -> dict:
+def list_receiving(
+    conn: Any,
+    *,
+    dept: str | None,
+    limit: int = RECEIVING_LIST_CAP,
+    facilities: frozenset[int] | None = None,
+) -> dict:
     """The laboratory's two receiving lists, plus its rejection reasons.
 
     in_transit: samples collected on a ward and not yet received, STAT first,
@@ -2606,7 +2735,9 @@ def list_receiving(conn, *, dept: str | None, limit: int = RECEIVING_LIST_CAP) -
 
     `dept` is the caller's department_scope and is required: None (the
     laboratory roles) is hospital-wide; a department keeps only its own
-    patients, filtered in SQL before the LIMIT."""
+    patients, filtered in SQL before the LIMIT. `facilities` (the caller's
+    facility_scope) keeps both lists to the caller's facilities: the sample's
+    performing facility for the laboratory, the patient's for a ward."""
     empty: dict[str, Any]
     empty = {"in_transit": [], "rejected": [], "rejection_reasons": []}
     if not _tables_present(conn):
@@ -2619,6 +2750,11 @@ def list_receiving(conn, *, dept: str | None, limit: int = RECEIVING_LIST_CAP) -
         scope_sql, params = scope_patient_ids_sql(dept)
         scope_where = f" AND s.patient_id IN ({scope_sql})"
         scope_params = tuple(params)
+    facility_where, facility_params = lab_facility.list_clause(
+        dept=dept, facilities=facilities, patient_col="s.patient_id", facility_sql="s.facility_id"
+    )
+    scope_where += facility_where
+    scope_params += tuple(facility_params)
     now_dt = datetime.now(UTC)
     select = _lab_specimen_select()
     transit_rows = [
@@ -2668,6 +2804,7 @@ def list_receiving(conn, *, dept: str | None, limit: int = RECEIVING_LIST_CAP) -
     }
 
 
+@lab_facility.audit_refusals
 def receive_specimen(
     specimen_id: Any,
     *,
@@ -2676,6 +2813,7 @@ def receive_specimen(
     receipt_note: Any = None,
     accept_past_stability: bool = False,
     request_meta: dict | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Receive a collected sample in the laboratory, in ONE immediate
     transaction: the specimen, its tests (to 'received', which puts them on
@@ -2693,7 +2831,7 @@ def receive_specimen(
     with db_session(immediate=True) as conn:
         if not _tables_present(conn):
             raise _not_found()
-        row = _lab_specimen_row(conn, accession, dept)
+        row = _lab_specimen_row(conn, accession, dept, facilities)
         status = row["status"]
         if status == "planned":
             raise LabOrderError(
@@ -2844,6 +2982,7 @@ def _withdraw_unreleased(
     return [r["id"] for r in rows]
 
 
+@lab_facility.audit_refusals
 def reject_specimen(
     specimen_id: Any,
     *,
@@ -2852,6 +2991,7 @@ def reject_specimen(
     reason_code: Any,
     note: Any = None,
     request_meta: dict | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Reject a collected or received sample, in ONE immediate transaction:
     every test on it not yet reported becomes 'rejected' (waiting for the
@@ -2892,7 +3032,7 @@ def reject_specimen(
             )
         if code in _REASON_NEEDS_NOTE and not note:
             raise LabOrderError("note_required", "Say what was wrong with the sample.", status=422)
-        row = _lab_specimen_row(conn, accession, dept)
+        row = _lab_specimen_row(conn, accession, dept, facilities)
         status = row["status"]
         if status == "planned":
             raise LabOrderError(
@@ -3181,6 +3321,7 @@ def _rejected_items(conn, specimen_id: str) -> list[dict]:
     return [i for i in _specimen_items(conn, specimen_id) if i["status"] == "rejected"]
 
 
+@lab_facility.audit_refusals
 def recollect_specimen(
     specimen_id: Any,
     *,
@@ -3188,6 +3329,7 @@ def recollect_specimen(
     dept: str | None,
     note: Any = None,
     request_meta: dict | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """The recollect decision, in ONE immediate transaction: every rejected
     test on the sample moves to a NEW planned specimen with a new accession
@@ -3196,7 +3338,8 @@ def recollect_specimen(
     keeps its record and events; each order is reconciled (the
     'rejected_no_decision' entry closes) and the clinical_access audit row
     lands with it. The new tube is never merged into another: its label must
-    say it is a recollection.
+    say it is a recollection. It is performed at the rejected sample's own
+    facility (lab_facility.copied_facility_on).
 
     New work, so the route refuses it while the module drains; cancelling the
     rejected tests stays open then."""
@@ -3206,7 +3349,7 @@ def recollect_specimen(
     with db_session(immediate=True) as conn:
         if not _tables_present(conn):
             raise _not_found()
-        row = _lab_specimen_row(conn, accession, dept)
+        row = _lab_specimen_row(conn, accession, dept, facilities)
         if row["status"] != "rejected":
             raise LabOrderError(
                 "not_rejected",
@@ -3228,8 +3371,8 @@ def recollect_specimen(
         conn.execute(
             """INSERT INTO lab_specimens
                (id, patient_id, specimen_type_code, container, priority, status, planned_at,
-                label_print_count, recollect_of, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, 'planned', ?, 0, ?, ?, ?)""",
+                label_print_count, recollect_of, created_at, updated_at, facility_id)
+               VALUES (?, ?, ?, ?, ?, 'planned', ?, 0, ?, ?, ?, ?)""",
             (
                 new_id,
                 row["patient_id"],
@@ -3240,6 +3383,7 @@ def recollect_specimen(
                 accession,
                 now,
                 now,
+                lab_facility.copied_facility_on(conn, accession),
             ),
         )
         item_ids = [i["item_id"] for i in items]
@@ -3305,6 +3449,7 @@ def recollect_specimen(
     }
 
 
+@lab_facility.audit_refusals
 def cancel_rejected_tests(
     specimen_id: Any,
     *,
@@ -3312,6 +3457,7 @@ def cancel_rejected_tests(
     dept: str | None,
     reason: Any,
     request_meta: dict | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """The cancel decision for a rejected sample, in ONE immediate
     transaction: its rejected tests are cancelled with the reason and who,
@@ -3329,7 +3475,7 @@ def cancel_rejected_tests(
     with db_session(immediate=True) as conn:
         if not _tables_present(conn):
             raise _not_found()
-        row = _lab_specimen_row(conn, accession, dept)
+        row = _lab_specimen_row(conn, accession, dept, facilities)
         if row["status"] != "rejected":
             raise LabOrderError(
                 "not_rejected",

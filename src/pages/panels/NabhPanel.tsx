@@ -28,6 +28,14 @@
  * first paint and still there if every request fails. A promise of anonymity
  * that only appears when the network is up is not a promise. It also admits
  * what it cannot guarantee, which is why it is long.
+ *
+ * FACILITIES (multisite-12). With more than one facility of a hospital group on
+ * the appliance the server keeps the indicators, the register and the packs to
+ * the reader's facility and names it (`facility`), and lists the facilities the
+ * reader may choose (`facilities`). A reader with group-wide access gets a
+ * facility filter: the indicators and the register for the whole group or one
+ * facility, and a pack always for one facility, because NABH accredits each
+ * hospital on its own. With one facility none of this is drawn.
  */
 import { type ReactNode, useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -58,6 +66,25 @@ const ANONYMITY_FALLBACK =
   + 'use one outside this system.'
 
 type View = 'indicators' | 'register' | 'report' | 'pack'
+
+/** A facility as the NABH answers name it (multisite-12). */
+interface NabhFacility { id: number; code: string | null; name: string | null }
+
+/** The facility keys an answer carries while more than one facility is on record. */
+interface FacilityFields { facility?: NabhFacility | null; facilities?: NabhFacility[] }
+
+/** The facility in words, for the filter and the headings. */
+function facilityName(facility: NabhFacility | null | undefined): string {
+  if (!facility) return 'All facilities'
+  const name = facility.name || facility.code || `Facility ${facility.id}`
+  return facility.code && facility.name ? `${name} (${facility.code})` : name
+}
+
+/** The facility the reader chose, as the request key the server reads. The
+ *  NABH client sends every key of a query or a body as given. */
+function withFacility<T extends object>(params: T, facility: number | undefined): T {
+  return facility === undefined ? params : { ...params, facility }
+}
 
 const VIEWS: { id: View; label: string }[] = [
   { id: 'indicators', label: 'Quality indicators' },
@@ -212,8 +239,13 @@ export default function NabhPanel() {
   const [periodStart, setPeriodStart] = useState(isoDaysAgo(90))
   const [periodEnd, setPeriodEnd] = useState(today())
   const [ward, setWard] = useState('')
+  // multisite-12: the facility a group-wide reader chose (undefined: all of
+  // them for the indicators and register), and the ones the server lists.
+  const [facility, setFacility] = useState<number | undefined>(undefined)
+  const [facilities, setFacilities] = useState<NabhFacility[]>([])
+  const chooseFacility = facilities.length > 1
 
-  const [dashboard, setDashboard] = useState<IndicatorDashboard | null>(null)
+  const [dashboard, setDashboard] = useState<(IndicatorDashboard & FacilityFields) | null>(null)
   const [incidents, setIncidents] = useState<Incident[]>([])
   const [selected, setSelected] = useState<Incident | null>(null)
   const [exports, setExports] = useState<ExportRow[]>([])
@@ -246,15 +278,24 @@ export default function NabhPanel() {
     let live = true
     const params = { period_start: periodStart, period_end: periodEnd, ward: ward || undefined }
     if (view === 'indicators') {
-      getIndicators(params).then((d) => { if (live) setDashboard(d) }).catch(handle)
+      getIndicators(withFacility(params, facility)).then((d) => {
+        if (!live) return
+        const scoped = d as IndicatorDashboard & FacilityFields
+        setDashboard(scoped)
+        setFacilities(scoped.facilities ?? [])
+      }).catch(handle)
     } else if (view === 'register') {
-      getIncidents({ ...params, include_void: true, limit: 200 })
-        .then((r) => { if (live) setIncidents(r.incidents) }).catch(handle)
+      getIncidents(withFacility({ ...params, include_void: true, limit: 200 }, facility))
+        .then((r) => {
+          if (!live) return
+          setIncidents(r.incidents)
+          setFacilities((r as typeof r & FacilityFields).facilities ?? [])
+        }).catch(handle)
     } else if (view === 'pack') {
       getExports().then((r) => { if (live) setExports(r.exports) }).catch(handle)
     }
     return () => { live = false }
-  }, [view, periodStart, periodEnd, ward, reloadToken, moduleOff, readDenied, handle])
+  }, [view, periodStart, periodEnd, ward, facility, reloadToken, moduleOff, readDenied, handle])
 
   const anonymityStatement = meta?.anonymity_statement ?? ANONYMITY_FALLBACK
 
@@ -309,8 +350,22 @@ export default function NabhPanel() {
             <WardSelect wards={meta?.wards} value={ward} onChange={setWard}
                         emptyLabel="All wards" />
           </Field>
+          {chooseFacility ? (
+            <Field label="Facility">
+              <select className="nabh-input" value={facility === undefined ? '' : String(facility)}
+                      onChange={(e) => setFacility(e.target.value ? Number(e.target.value) : undefined)}>
+                <option value="">All facilities</option>
+                {facilities.map((f) => (
+                  <option key={f.id} value={String(f.id)}>{facilityName(f)}</option>
+                ))}
+              </select>
+            </Field>
+          ) : null}
         </div>
       </header>
+      {dashboard?.facility && !chooseFacility ? (
+        <p className="nabh-sub">Figures for {facilityName(dashboard.facility)}.</p>
+      ) : null}
 
       <nav className="nabh-tabs" role="tablist">
         {VIEWS.map((v) => (
@@ -354,14 +409,17 @@ export default function NabhPanel() {
         <PackView exports={exports} pack={pack} denied={!!readDenied}
                   periodStart={periodStart} periodEnd={periodEnd} ward={ward}
                   busy={busy}
+                  facilityLabel={chooseFacility && facility !== undefined
+                    ? facilityName(facilities.find((f) => f.id === facility)) : null}
+                  needsFacility={chooseFacility && facility === undefined}
                   onGenerate={async (includeIdentifiers) => {
                     setBusy(true); setError(null)
                     try {
-                      const generated = await generatePack({
+                      const generated = await generatePack(withFacility({
                         period_start: periodStart, period_end: periodEnd,
                         ward: ward || undefined,
                         include_patient_identifiers: includeIdentifiers,
-                      })
+                      }, facility))
                       setPack(generated)
                       setFlash(`Pack ${generated.reference} generated.`)
                       reload()
@@ -370,11 +428,11 @@ export default function NabhPanel() {
                   onDownloadMarkdown={async (includeIdentifiers) => {
                     setBusy(true); setError(null)
                     try {
-                      const text = await generatePackMarkdown({
+                      const text = await generatePackMarkdown(withFacility({
                         period_start: periodStart, period_end: periodEnd,
                         ward: ward || undefined,
                         include_patient_identifiers: includeIdentifiers,
-                      })
+                      }, facility))
                       const blob = new Blob([text], { type: 'text/markdown' })
                       const url = URL.createObjectURL(blob)
                       const link = document.createElement('a')
@@ -696,9 +754,14 @@ function ReportView({ meta, anonymityStatement, defaultWard, onDone, onError }: 
 /* ── Evidence pack ───────────────────────────────────────────────────────── */
 
 function PackView({ exports, pack, denied, periodStart, periodEnd, ward, busy,
+                    facilityLabel = null, needsFacility = false,
                     onGenerate, onDownloadMarkdown }: {
   exports: ExportRow[]; pack: EvidencePack | null; denied: boolean
   periodStart: string; periodEnd: string; ward: string; busy: boolean
+  /** The facility a group-wide reader chose (multisite-12), for the heading. */
+  facilityLabel?: string | null
+  /** A group-wide reader has to choose the facility a pack is for. */
+  needsFacility?: boolean
   onGenerate: (includeIdentifiers: boolean) => void
   onDownloadMarkdown: (includeIdentifiers: boolean) => void
 }) {
@@ -715,7 +778,14 @@ function PackView({ exports, pack, denied, periodStart, periodEnd, ward, busy,
         <h2 className="nabh-section__title">
           Produce the pack for {periodStart} to {periodEnd}
           {ward ? ` (${ward})` : ''}
+          {facilityLabel ? ` at ${facilityLabel}` : ''}
         </h2>
+        {needsFacility ? (
+          <p className="nabh-section__lead">
+            Choose the facility the pack is for. NABH accredits each hospital of
+            the group on its own, so a pack covers one facility.
+          </p>
+        ) : null}
         <label className="nabh-checkbox">
           <input type="checkbox" checked={includeIdentifiers}
                  onChange={(e) => setIncludeIdentifiers(e.target.checked)} />
@@ -728,11 +798,12 @@ function PackView({ exports, pack, denied, periodStart, periodEnd, ward, busy,
         </p>
         <div className="nabh-actions">
           <button type="button" className="nabh-button nabh-button--primary"
-                  disabled={busy} onClick={() => onGenerate(includeIdentifiers)}>
+                  disabled={busy || needsFacility} onClick={() => onGenerate(includeIdentifiers)}>
             Generate pack
           </button>
           <button type="button" className="nabh-button"
-                  disabled={busy} onClick={() => onDownloadMarkdown(includeIdentifiers)}>
+                  disabled={busy || needsFacility}
+                  onClick={() => onDownloadMarkdown(includeIdentifiers)}>
             Download as a document
           </button>
         </div>

@@ -40,6 +40,14 @@ is refused a place on it, and the list is frozen while ward stock is off.
 EVERY WRITE runs in one db_session(immediate=True) and writes its 'security'
 audit row with db=conn in that transaction (fail-closed): the change and its
 record commit together or not at all. Audit target ids are strings.
+
+PER FACILITY (multisite-8h3, ruling MS-R9 (a)). Once more than one facility is
+on record, the store and par-level lists are the caller's facilities' only
+(facilities=, from permissions.facility_scope), a store is created only at a
+facility the caller works at (403 facility_scope, nothing written), and the
+legacy-lot count is of the caller's facilities. The drug master, its
+classification and identity requests, and the vendors stay group-wide: one
+drug master and one vendor list for the hospital group.
 """
 
 from __future__ import annotations
@@ -1595,12 +1603,19 @@ def _decorate_store(row: Mapping, units: int | None = None) -> dict:
     return out
 
 
-def list_stores(*, include_inactive: bool = True) -> list[dict]:
+def list_stores(
+    *, include_inactive: bool = True, facilities: frozenset[int] | None = None
+) -> list[dict]:
+    """The pharmacy stores; with `facilities` (multisite-8h3), only those at
+    the caller's facilities. None lists every store, as before."""
+    from services.pharmacy_facility import column_sql
+
     sql = (
         "SELECT s.*, COALESCE((SELECT SUM(l.quantity) FROM helix_inventory_lots l "
         "WHERE l.store_id = s.id AND l.quantity > 0), 0) AS units_on_hand "
         "FROM stores s WHERE s.pharmacy_kind IS NOT NULL"
     )
+    sql += column_sql("s.facility_id", facilities)
     if not include_inactive:
         sql += " AND s.is_active = 1"
     sql += " ORDER BY s.is_active DESC, s.name"
@@ -1608,15 +1623,18 @@ def list_stores(*, include_inactive: bool = True) -> list[dict]:
         return [_decorate_store(r) for r in conn.execute(sql).fetchall()]
 
 
-def legacy_lot_count() -> int:
+def legacy_lot_count(*, facilities: frozenset[int] | None = None) -> int:
     """Lots not yet in any store: what creating the dispensing store adopts.
     An emptied duplicate already merged into its batch is history, not stock
-    waiting for a store, so it is not counted."""
+    waiting for a store, so it is not counted. With `facilities`, the legacy
+    lots at those facilities only (legacy stock is facility 1's)."""
+    from services.pharmacy_facility import lot_sql
+
     with db_session() as conn:
         return int(
             conn.execute(
                 f"SELECT COUNT(*) FROM helix_inventory_lots l "
-                f"WHERE {stock.awaiting_adoption_sql('l')}"
+                f"WHERE {stock.awaiting_adoption_sql('l')}{lot_sql('l', facilities)}"
             ).fetchone()[0]
         )
 
@@ -1664,10 +1682,17 @@ def create_store(
     ward: str | None = None,
     incharge_user_id: str | None = None,
     audit_ctx: Mapping | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Create a pharmacy store (the approve tier). Creating the dispensing
     store adopts every legacy lot in the same transaction. Returns
-    {"store", "adoption": dict or None}."""
+    {"store", "adoption": dict or None}.
+
+    `facilities` is the caller's facility scope (multisite-8h3): a store the
+    store core places at a facility outside it (by its department, ward or
+    the person in charge) is refused with facility_scope and nothing is
+    written. None (one facility on record, a group-wide account) checks
+    nothing new."""
     kind = (pharmacy_kind or "").strip().lower()
     if kind not in procurement.PHARMACY_STORE_KINDS:
         raise MasterError(
@@ -1702,6 +1727,14 @@ def create_store(
             )
         except procurement.ProcurementError as exc:
             raise _procurement_error(exc) from exc
+        from services.pharmacy_facility import in_scope
+
+        if not in_scope(row.get("facility_id"), facilities):
+            raise MasterError(
+                "this store would be at a facility you do not work at, so it was not "
+                "created. Nothing was changed.",
+                code="facility_scope",
+            )
         _audit(
             conn,
             actor,
@@ -1817,12 +1850,19 @@ def update_store(
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-def list_par_levels(*, store_id: int | None = None) -> list[dict]:
+def list_par_levels(
+    *, store_id: int | None = None, facilities: frozenset[int] | None = None
+) -> list[dict]:
+    """Par levels; with `facilities` (multisite-8h3), only those of stores at
+    the caller's facilities."""
+    from services.pharmacy_facility import column_sql
+
     sql = (
         "SELECT p.*, s.code AS store_code, s.name AS store_name, m.name AS drug_name "
         "FROM pharmacy_par_levels p JOIN stores s ON s.id = p.store_id "
         "LEFT JOIN helix_medication_master m ON m.id = p.helix_medication_id WHERE 1 = 1"
     )
+    sql += column_sql("s.facility_id", facilities)
     params: list[Any] = []
     if store_id is not None:
         sql += " AND p.store_id = ?"

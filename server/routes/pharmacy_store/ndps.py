@@ -27,15 +27,36 @@ witness refusal is 403; a locked witness PIN is 429; the register off, a
 variance already reconciled or reported, or nothing to open is 409; an audit
 outage is 503 audit_unavailable and nothing was returned or changed; anything
 the request must correct is 422.
+
+PER FACILITY (multisite-8h3, ruling MS-R9 (a)). With more than one facility on
+record, every read and action covers the caller's facilities' stores only, and
+a store or variance of another facility is 404 after an authorization
+'facility_document_denied' row. With one facility on record nothing here
+changes.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
-from permissions import PHARMACY_STORE_NDPS, PHARMACY_STORE_READ, require_permission
+from permissions import (
+    PHARMACY_STORE_NDPS,
+    PHARMACY_STORE_READ,
+    facility_scope,
+    require_permission,
+)
 from pydantic import BaseModel, Field
 from services.audit_service import AuditWriteError
 
 from services import ndps_service as ndps
+from services import pharmacy_facility
+
+
+def _store_gate(user: dict, store_id: int | None, request: Request) -> None:
+    """404 for a named store of another facility (multisite-8h3)."""
+    if store_id is not None:
+        pharmacy_facility.gate(
+            user, "store", store_id, request, message=f"no pharmacy store {store_id}"
+        )
+
 
 router = APIRouter()
 
@@ -101,12 +122,17 @@ _NDPS_BALANCES_USER_DEFAULT = Depends(_PS_NDPS)
 
 @router.get("/ndps/balances")
 def ndps_balances(
+    request: Request,
     store_id: int | None = _NDPS_BALANCES_STORE_ID_DEFAULT,
     drug_id: str | None = _NDPS_BALANCES_DRUG_ID_DEFAULT,
     user: dict = _NDPS_BALANCES_USER_DEFAULT,
-):
-    """No patient data: drug, store, the register's balance and the shelf's."""
-    return ndps.balances(store_id=store_id, drug_id=drug_id or None)
+) -> dict:
+    """No patient data: drug, store, the register's balance and the shelf's
+    (the caller's facilities' stores)."""
+    _store_gate(user, store_id, request)
+    return ndps.balances(
+        store_id=store_id, drug_id=drug_id or None, facilities=facility_scope(user)
+    )
 
 
 _NDPS_REGISTER_STORE_ID_DEFAULT = Query(None, ge=1)
@@ -124,7 +150,9 @@ def ndps_register(
     before_id: int | None = _NDPS_REGISTER_BEFORE_ID_DEFAULT,
     limit: int = _NDPS_REGISTER_LIMIT_DEFAULT,
     user: dict = _NDPS_REGISTER_USER_DEFAULT,
-):
+) -> dict:
+    """Register entries, newest first (the caller's facilities' stores)."""
+    _store_gate(user, store_id, request)
     try:
         return ndps.register_page(
             actor=user,
@@ -150,9 +178,10 @@ def ndps_variances(
     status: str | None = _NDPS_VARIANCES_STATUS_DEFAULT,
     limit: int = _NDPS_VARIANCES_LIMIT_DEFAULT,
     user: dict = _NDPS_VARIANCES_USER_DEFAULT,
-):
+) -> dict:
+    """Variances, newest first (the caller's facilities' stores)."""
     try:
-        return ndps.list_variances(status=status, limit=limit)
+        return ndps.list_variances(status=status, limit=limit, facilities=facility_scope(user))
     except ndps.NdpsError as exc:
         raise _fail(exc) from exc
 
@@ -172,9 +201,10 @@ def ndps_export(
     date_from: str | None = _NDPS_EXPORT_DATE_FROM_DEFAULT,
     date_to: str | None = _NDPS_EXPORT_DATE_TO_DEFAULT,
     user: dict = _NDPS_EXPORT_USER_DEFAULT,
-):
+) -> Response:
     """The register as CSV. Audited ('security', fail-closed) before the file
-    is sent: no audit row, no file."""
+    is sent: no audit row, no file. A store of another facility is 404."""
+    _store_gate(user, store_id, request)
     try:
         filename, text = ndps.export_csv(
             actor=user,

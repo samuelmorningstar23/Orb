@@ -7,6 +7,7 @@ import time
 import uuid
 from collections import defaultdict
 from datetime import UTC
+from typing import Any
 
 from auth import (
     DEVICE_COOKIE,
@@ -29,7 +30,7 @@ from auth import (
     verify_password,
     verify_password_ct,
 )
-from database import get_db, run_db
+from database import db_session, get_db, run_db
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from models.user import (
     AdminDevicePinBody,
@@ -44,7 +45,11 @@ from models.user import (
     UserOut,
 )
 from permissions import require_permission
-from services.audit_service import log_audit_event
+from pydantic import BaseModel, ConfigDict, Field
+from services.audit_service import AuditWriteError, log_audit_event
+
+from routes.opt_in_gates import feature_gate
+from services import facility_service
 
 logger = logging.getLogger("orb.auth")
 
@@ -1109,7 +1114,9 @@ _REFRESH_USER_DEFAULT = Depends(get_current_user)
 
 
 @router.post("/refresh", response_model=TokenResponse)
-def refresh(request: Request, response: Response, user: dict = _REFRESH_USER_DEFAULT):
+def refresh(
+    request: Request, response: Response, user: dict = _REFRESH_USER_DEFAULT
+) -> TokenResponse:
     """Slide the session forward: re-mint the JWT at the CURRENT token_version and
     re-set the session + CSRF cookies, extending expiry without a re-login. Runs
     behind get_current_user, so a revoked/expired/deactivated session cannot be
@@ -1121,6 +1128,11 @@ def refresh(request: Request, response: Response, user: dict = _REFRESH_USER_DEF
     would make the short window theatre — one /refresh from a tablet on a trolley
     and it is holding a day-long session again — and dropping `did` would quietly
     un-bind it from the tablet, so revoking that device would no longer kill it.
+
+    A visiting session (multisite-19) refreshes as a visiting session at the
+    same facility: get_current_user has just checked its access row, and
+    dropping the claim would quietly move the session home under a screen that
+    still shows the visiting facility.
     """
     _tv = (
         user["token_version"]
@@ -1135,6 +1147,7 @@ def refresh(request: Request, response: Response, user: dict = _REFRESH_USER_DEF
         device_id=device_id,
         auth_method=user.get("auth_method") if device_id else None,
         expires_in_minutes=DEVICE_PIN_SESSION_MINUTES if device_id else None,
+        facility_id=facility_service.session_facility_id(user),
     )
     set_session_cookies(
         response,
@@ -1147,6 +1160,243 @@ def refresh(request: Request, response: Response, user: dict = _REFRESH_USER_DEF
         token=token,
         user=user_out(user),
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SESSION FACILITY (visiting consultants, multisite-19, ruling MS-R7 (a))
+# ══════════════════════════════════════════════════════════════════════════════
+# One account, one facility per session. A doctor with a live 'visiting'
+# user_facilities row may move a session to that facility and back home:
+#
+#   * GET  /api/auth/facilities  where this session may work, and where it is;
+#   * POST /api/auth/facility    move it ({facility_id}, or null for home).
+#
+# Both need ORB_MULTI_SITE on (404 feature_disabled otherwise). A move bumps
+# users.token_version, so every other session of the account ends at its next
+# request (its socket included): the account works at one facility at a time,
+# never two at once on two devices (MS-R7 (c) was not chosen). The new token
+# carries the claim 'fac' for a visiting facility and none for home; the move
+# and its security row commit together (fail-closed: an unwritable row moves
+# nothing). Refusals write an authorization row. Shared ward tablets (PIN
+# sessions) never move: a tablet belongs to its own ward.
+
+
+class SessionFacilityBody(BaseModel):
+    """POST /api/auth/facility: the facility to work at; null for home."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    facility_id: int | None = Field(default=None, ge=1)
+
+
+class _SwitchRefusal(Exception):
+    """A refused move, answered after the transaction has rolled back."""
+
+    def __init__(self, status: int, code: str, message: str) -> None:
+        super().__init__(code)
+        self.status = status
+        self.code = code
+        self.message = message
+
+
+_SWITCH_WORDS = {
+    "shared_device": (
+        "A shared ward tablet stays at its own ward. Sign in with your password "
+        "on another computer to work at another facility."
+    ),
+    "visiting_role": "Only a doctor with visiting access can work at another facility.",
+    "already_active": "This session is already working at that facility.",
+    "no_access": "Your account has no live visiting access at that facility.",
+    "session_ended": "This session has ended. Sign in again.",
+}
+
+_SESSION_FACILITY_USER_DEFAULT = Depends(get_current_user)
+_MULTI_SITE_GATE = Depends(feature_gate("multi_site"))
+
+
+def _option(facility_id: int | None, department: str | None, kind: str, active: bool) -> dict:
+    return {
+        "facility": facility_service.facility_identity(facility_id),
+        "department": department,
+        "kind": kind,
+        "active": active,
+    }
+
+
+@router.get("/facilities", dependencies=[_MULTI_SITE_GATE])
+def session_facilities(user: dict = _SESSION_FACILITY_USER_DEFAULT) -> dict[str, Any]:
+    """Where this session works and where it may move: the account's own
+    facility first, then each live visiting row that passes every check.
+    Facility labels and department names only; nothing about any patient."""
+    with db_session() as db:
+        row = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=401, detail="User not found")
+        options = facility_service.switch_options_on(db, row)
+    current = facility_service.session_facility_id(user)
+    home = options["home_facility_id"]
+    choices = [_option(home, options["home_department"], "home", current is None)]
+    for access in options["visiting"]:
+        fid = int(access["facility_id"])
+        choices.append(_option(fid, access["department"], "visiting", current == fid))
+    reason = None
+    if user.get("device_id"):
+        reason = _SWITCH_WORDS["shared_device"]
+    elif user.get("role") not in facility_service.VISITING_ROLES:
+        reason = _SWITCH_WORDS["visiting_role"]
+    elif len(choices) < 2:
+        reason = "Your account has no visiting access at another facility."
+    return {
+        "active_facility": facility_service.facility_identity(current if current else home),
+        "visiting": current is not None,
+        "can_switch": reason is None,
+        "reason": reason,
+        "options": choices,
+    }
+
+
+def _switch_refused(
+    request: Request, user: dict, refusal: _SwitchRefusal, requested: int | None
+) -> None:
+    """The authorization row for a refused move. Fail-soft, like every other
+    authorization row: the refusal stands whether or not it is written."""
+    log_audit_event(
+        correlation_id=str(uuid.uuid4()),
+        event_category="authorization",
+        action_type="session_facility_switch_refused",
+        outcome="denied",
+        summary_message=f"Session facility move refused: {refusal.code}",
+        actor_user_id=user.get("id"),
+        actor_role=user.get("role"),
+        target_type="user",
+        target_id=user.get("id"),
+        request_path=request.url.path,
+        http_method=request.method,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        metadata={
+            "requested_facility_id": requested,
+            "reason": refusal.code,
+            **facility_service.session_audit_fields(user),
+        },
+    )
+
+
+def _switch_in_transaction(
+    request: Request, user: dict, requested: int | None
+) -> tuple[dict, int | None, str]:
+    """Move the session, inside one IMMEDIATE transaction: re-read the account
+    and its rows, bump token_version, write the security row. Returns (the new
+    session's user dict, the facility it works at, 'home' or 'visiting')."""
+    if user.get("device_id"):
+        raise _SwitchRefusal(403, "shared_device", _SWITCH_WORDS["shared_device"])
+    if user.get("role") not in facility_service.VISITING_ROLES:
+        raise _SwitchRefusal(403, "visiting_role", _SWITCH_WORDS["visiting_role"])
+    current = facility_service.session_facility_id(user)
+    with db_session(immediate=True) as db:
+        row = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
+        active = None if row is None else row["is_active"]
+        if row is None or (active is not None and not active):
+            raise _SwitchRefusal(401, "session_ended", _SWITCH_WORDS["session_ended"])
+        if int(row["token_version"] or 0) != int(user.get("token_version") or 0):
+            raise _SwitchRefusal(401, "session_ended", _SWITCH_WORDS["session_ended"])
+        options = facility_service.switch_options_on(db, row)
+        home = options["home_facility_id"]
+        access = None
+        if requested is None or requested == home:
+            if current is None:
+                raise _SwitchRefusal(409, "already_active", _SWITCH_WORDS["already_active"])
+            kind, target = "home", home
+        else:
+            access = next(
+                (a for a in options["visiting"] if int(a["facility_id"]) == requested), None
+            )
+            if access is None:
+                raise _SwitchRefusal(404, "no_access", _SWITCH_WORDS["no_access"])
+            if current == requested:
+                raise _SwitchRefusal(409, "already_active", _SWITCH_WORDS["already_active"])
+            kind, target = "visiting", requested
+        db.execute(
+            "UPDATE users SET token_version = COALESCE(token_version, 0) + 1 WHERE id = ?",
+            (row["id"],),
+        )
+        fresh = dict(row)
+        fresh["token_version"] = int(row["token_version"] or 0) + 1
+        moved = facility_service.visiting_session_user(fresh, access) if access else fresh
+        log_audit_event(
+            correlation_id=str(uuid.uuid4()),
+            event_category="security",
+            action_type="session_facility_switched",
+            outcome="success",
+            db=db,
+            summary_message=(
+                f"Session moved to {'visiting access at ' if access else 'its own '}"
+                f"facility {target if target is not None else '(not listed)'}; "
+                "the account's other sessions were ended"
+            ),
+            actor_user_id=row["id"],
+            actor_role=row["role"],
+            target_type="user",
+            target_id=row["id"],
+            request_path=request.url.path,
+            http_method=request.method,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            metadata={
+                "from_facility_id": current if current is not None else home,
+                "to_facility_id": target,
+                "kind": kind,
+                "user_facility_id": int(access["id"]) if access else None,
+                "department": moved.get("department"),
+                "home_department": options["home_department"],
+                "other_sessions_ended": True,
+            },
+            facility_id=target,
+        )
+    return moved, target, kind
+
+
+_SWITCH_USER_DEFAULT = Depends(get_current_user)
+
+
+@router.post("/facility", response_model=TokenResponse, dependencies=[_MULTI_SITE_GATE])
+def switch_session_facility(
+    body: SessionFacilityBody,
+    request: Request,
+    response: Response,
+    user: dict = _SWITCH_USER_DEFAULT,
+) -> TokenResponse:
+    """Move this session to a facility where the account has live visiting
+    access, or back to its own (facility_id null). Every other session of the
+    account ends; this one gets a new token and cookies."""
+    requested = body.facility_id
+    try:
+        moved, target, kind = _switch_in_transaction(request, user, requested)
+    except _SwitchRefusal as refusal:
+        _switch_refused(request, user, refusal, requested)
+        raise HTTPException(
+            status_code=refusal.status,
+            detail={"error": refusal.code, "message": refusal.message},
+        ) from None
+    except AuditWriteError:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "audit_unavailable",
+                "message": (
+                    "Nothing was changed, because the audit trail is not available. "
+                    "Try again in a moment."
+                ),
+            },
+        ) from None
+    token = create_token(
+        moved["id"],
+        moved["role"],
+        token_version=int(moved["token_version"]),
+        facility_id=target if kind == "visiting" else None,
+    )
+    set_session_cookies(response, request, token, generate_csrf_token())
+    return TokenResponse(token=token, user=user_out(moved))
 
 
 # ══════════════════════════════════════════════════════════════════════════════

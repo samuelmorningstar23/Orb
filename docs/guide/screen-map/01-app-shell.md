@@ -6,7 +6,7 @@ overlays that float above all of it (Sage orb, command palette, shortcut sheet,
 the two shell modals).
 
 **Entry point:** `src/pages/ClinicianShell.tsx` (830 lines). It is mounted by
-`src/AppRoot.tsx:182` for the route `/dashboard/*`, and only when
+`src/AppRoot.tsx:236` for the route `/dashboard/*`, and only when
 `user && user.role !== 'patient'`, a patient is redirected to `/bridge`
 (`PatientShell`), which is a different frame entirely and is not covered here.
 
@@ -14,7 +14,7 @@ the two shell modals).
 frame *and* the AI-status chip; module styles live elsewhere by rule
 (`ClinicianShell.css:13-18`).
 
-**Three providers wrap the whole shell** (`ClinicianShell.tsx:566-568`):
+**Three providers wrap the whole shell** (`ClinicianShell.tsx:817-819`):
 `ActivePatientProvider`, `ActiveViewProvider`, `SageRuntimeProvider`. Anything
 below reading "from context" reads from one of these.
 
@@ -38,7 +38,7 @@ than inside it, which is why it survives every tab change. Dark twin:
 
 **Notice** that a pharmacist gets **three** nav items, Pharmacy, Verify Queue, Sage, and
 no Admit Patient button at all. Nothing is greyed out; the other nine items do not exist.
-That is `getAccessibleTabs()` (`ClinicianShell.tsx:216-229`) rendered.
+That is `getAccessibleTabs()` (`ClinicianShell.tsx:382-395`) rendered.
 
 ![Surgeon shell, light theme](../../screenshots/doc004-01-after-login-light.png)
 
@@ -69,7 +69,7 @@ which screen you arrive on, not only what you can reach.
 
 ## How the frame is laid out
 
-`ClinicianShell.tsx:570` renders `<div className="shell">`, a flex row
+`ClinicianShell.tsx:821` renders `<div className="shell">`, a flex row
 (`ClinicianShell.css:21-27`) with two children:
 
 | Region | Element | CSS | Geometry |
@@ -110,12 +110,12 @@ The sidebar itself is `justify-content: space-between` with two stacked groups:
 ## Which nav items each role sees (RBAC)
 
 **The decision is made in exactly one function:**
-`getAccessibleTabs(role, department)`, `src/pages/ClinicianShell.tsx:209-232`.
+`getAccessibleTabs(role, department)`, `src/pages/ClinicianShell.tsx:375-398`.
 
 It returns an ordered `Tab[]`. Two things flow from that array:
 
 1. `visibleTabs = TABS.filter(tab => accessibleTabs.includes(tab.id))`
-   (`:309`), what the rail renders. **Order on screen comes from `TABS`
+   (`:402-405`), what the rail renders. **Order on screen comes from `TABS`
    (`:25-180`), not from `getAccessibleTabs`.** The role array only decides
    *membership*; the visual order is always the `TABS` declaration order
    (shift, helix, pharmacy-verify, vigil, round, orders, relay, sage, scribe,
@@ -140,7 +140,7 @@ Consequences you can see:
 - A **nurse never sees** Ward Round, Command, Simulator, Surgical Suite, Admin,
   Pharmacy, or Verify Queue.
 - A **pharmacist sees three items only**, and additionally loses the Admit
-  Patient button (`:572`, the one explicitly role-gated control in the sidebar).
+  Patient button (`:760-761`, the one explicitly role-gated control in the sidebar).
 - **Admin cannot see** My Shift, Ward Round, Orders, Scribe, Lens, Pharmacy or
   Verify Queue. Admin is the only role that sees the shield-icon **Admin** item.
 - A blank/unknown role degrades to a two-item rail rather than an empty one.
@@ -164,7 +164,7 @@ a Sage jump cannot open a tab the rail is hiding.
 ### Orb logo mark
 
 **Where:** very top-left of the sidebar, above the nav rail.
-**Rendered by:** `src/pages/ClinicianShell.tsx:573`, 
+**Rendered by:** `src/pages/ClinicianShell.tsx:824`, 
 `<div className="shell__logo"><OrbLogo size={32} /></div>`; the mark itself is
 `src/components/OrbLogo.tsx:4-9`, two divs (`orb-logo__ring`, `orb-logo__core`).
 **Data from:** nothing, `size` is the only prop, hard-coded to 32.
@@ -182,13 +182,13 @@ rail. It never disappears, it has no conditional.
 ### Pillar navigation rail
 
 **Where:** the vertical stack of icon+label buttons filling the upper sidebar.
-**Rendered by:** `src/pages/ClinicianShell.tsx:574-598`, a `<nav
+**Rendered by:** `src/pages/ClinicianShell.tsx:825-849`, a `<nav
 className="shell__nav" role="tablist" aria-label="Orb pillars"
 aria-orientation="vertical">` mapping `visibleTabs`.
-**Data from:** `visibleTabs` (`:309`) ← `TABS` (`:25-180`) filtered by
-`accessibleTabs` (`:308`) ← `getAccessibleTabs(user?.role, user?.department)`;
-`user` comes from `useAuth()` (`:306`), which reads `AuthContext` in
-`src/App.tsx:44-50`, restored from localStorage on boot (`AppRoot.tsx:53-56`).
+**Data from:** `visibleTabs` (`:475`) ← `TABS` (`:31-186`) filtered by
+`accessibleTabs` (`:474`) ← `getAccessibleTabs(user?.role, user?.department)`;
+`user` comes from `useAuth()` (`:472`), which reads `AuthContext` in
+`src/App.tsx:44-50`, restored from localStorage on boot (`AppRoot.tsx:73-76`).
 **API:** none, the rail is computed entirely client-side from the stored user.
 **Server:** none directly. The user object was minted at login and the role
 inside it is what the server also enforces against.
@@ -204,16 +204,16 @@ scrollbar hidden.
 ### Nav item (one per pillar)
 
 **Where:** each row in the rail, an 18px line icon then a label, left-aligned.
-**Rendered by:** `src/pages/ClinicianShell.tsx:581-597`, `<button role="tab"
+**Rendered by:** `src/pages/ClinicianShell.tsx:832-848`, `<button role="tab"
 aria-selected aria-controls={`panel-${tab.id}`} id={`nav-${tab.id}`}>` with
-`{tab.icon}` (`:564`) and `<span className="shell__nav-label">{t(`nav.${tab.id}`)}</span>`
-(`:565`).
+`{tab.icon}` (`:815`) and `<span className="shell__nav-label">{t(`nav.${tab.id}`)}</span>`
+(`:816`).
 **Data from:** `tab.icon` is inline JSX SVG defined per-tab in `TABS`
-(`:28-32` for My Shift, `:36-40` Pharmacy, `:45-47` Verify Queue, `:53-55`
-Patients, `:62-65` Ward Round, `:71-73` Orders, `:79-81` Messages, `:87-90`
-Sage, `:96-101` Scribe, `:107-111` Lens, `:117-120` Forecast, `:126-128`
-Command, `:134-136` Simulator, `:142-144` Revenue, `:150-156` Appointments,
-`:162-169` Surgical Suite, `:176` Admin). The label text is the i18n key
+(`:34-38` for My Shift, `:42-46` Pharmacy, `:51-53` Verify Queue, `:59-61`
+Patients, `:68-71` Ward Round, `:77-79` Orders, `:85-87` Messages, `:93-96`
+Sage, `:102-107` Scribe, `:113-117` Lens, `:123-126` Forecast, `:132-134`
+Command, `:140-142` Simulator, `:148-150` Revenue, `:156-162` Appointments,
+`:168-175` Surgical Suite, `:182` Admin). The label text is the i18n key
 `nav.<id>` from `src/i18n/locales/en.json` (`nav` block) and `hi.json`.
 **API:** none.
 **Server:** none.
@@ -229,12 +229,12 @@ leaving a centred icon in a 44px square.
 ### Active nav item indicator
 
 **Where:** the one nav row that is currently selected.
-**Rendered by:** `src/pages/ClinicianShell.tsx:588`, 
+**Rendered by:** `src/pages/ClinicianShell.tsx:839`, 
 `` className={`shell__nav-item ${activeTab === tab.id ? 'shell__nav-item--active' : ''}`} ``;
-paired with `aria-selected={activeTab === tab.id}` (`:555`) and
-`tabIndex={activeTab === tab.id ? 0 : -1}` (`:557`).
-**Data from:** `activeTab` state (`:312`). It is set from five places:
-direct click (`:559`), arrow-key roving focus (`:446-451` →
+paired with `aria-selected={activeTab === tab.id}` (`:788`) and
+`tabIndex={activeTab === tab.id ? 0 : -1}` (`:808`).
+**Data from:** `activeTab` state (`:478`). It is set from five places:
+direct click (`:810`), arrow-key roving focus (`:679-684` →
 `src/lib/tablist.ts:19-42`), the `orb:goto-tab` window event
 (`:337-339` and again via `onGotoTab` at `:455-460`), and `useEffect`-driven
 initial value.
@@ -254,25 +254,25 @@ exactly once; Arrow/Home/End then move *and activate* (`tablist.ts:38-41` calls
 ### Nav item hover tooltip
 
 **Where:** native browser tooltip on hovering any nav row.
-**Rendered by:** `src/pages/ClinicianShell.tsx:592`, 
+**Rendered by:** `src/pages/ClinicianShell.tsx:843`, 
 `` title={`${t(`nav.${tab.id}`)} · Orb ${tab.pillar}`} ``.
 **Data from:** the i18n label plus the untranslated `pillar` string from `TABS`.
 **API:** none. **Server:** none.
 **Change this →** Hovering "Patients" shows `Patients · Orb Vigil`. Edit
-`pillar: 'Vigil'` at `:51` and both this tooltip **and the page title in the top
-bar** change, because `:614` reads the same field. The tooltip is the only way
-to read a nav item's name on the ≤1024px icon rail. `aria-label` (`:561`) is the
+`pillar: 'Vigil'` at `:57` and both this tooltip **and the page title in the top
+bar** change, because `:865` reads the same field. The tooltip is the only way
+to read a nav item's name on the ≤1024px icon rail. `aria-label` (`:812`) is the
 translated label only, screen readers do not hear the pillar name.
 
 ### Admit Patient button
 
 **Where:** bottom section of the sidebar, directly above the user card. Full
 width, filled with the accent colour, the only solid-filled control in the rail.
-**Rendered by:** `src/pages/ClinicianShell.tsx:602-610`, guarded by
-`{user?.role !== 'pharmacist' && (...)}`; a `+` icon (`:574-577`) plus
-`<span>{t('shell.admitPatient')}</span>` (`:578`). `id="btn-admit-patient"`.
+**Rendered by:** `src/pages/ClinicianShell.tsx:853-861`, guarded by
+`{user?.role !== 'pharmacist' && (...)}`; a `+` icon (`:825-828`) plus
+`<span>{t('shell.admitPatient')}</span>` (`:829`). `id="btn-admit-patient"`.
 **Data from:** `user.role` from `useAuth()`; label from `shell.admitPatient`
-("Admit Patient"). Clicking sets `isAdmittingPatient` (`:326`, `:573`).
+("Admit Patient"). Clicking sets `isAdmittingPatient` (`:492`, `:824`).
 **API:** none until submitted, then `POST /api/admissions/admit` via
 `admitPatient()` (`src/api/client.ts:647-652`) called from
 `src/components/AdmitPatientModal.tsx:190`.
@@ -294,7 +294,7 @@ the server's message in its error strip rather than admitting anyone.
 
 **Where:** bottom of the sidebar, left of the name. A 32px circle with one
 letter.
-**Rendered by:** `src/pages/ClinicianShell.tsx:612`, 
+**Rendered by:** `src/pages/ClinicianShell.tsx:863`, 
 `<div className="shell__user-avatar">{user?.name?.charAt(0)}</div>`.
 **Data from:** `user.name` from `AuthContext`.
 **API:** none. **Server:** none.
@@ -308,10 +308,10 @@ card at ≤768px (`css:809-811`).
 ### User name
 
 **Where:** bottom of the sidebar, first line of the two-line user block.
-**Rendered by:** `src/pages/ClinicianShell.tsx:614`, 
+**Rendered by:** `src/pages/ClinicianShell.tsx:865`, 
 `<span className="shell__user-name">{user?.name}</span>`.
 **Data from:** `user.name` from `AuthContext` ← localStorage via
-`getUser()` (`src/AppRoot.tsx:53-56`, `src/api/client.ts`).
+`getUser()` (`src/AppRoot.tsx:73-76`, `src/api/client.ts`).
 **API:** none at render time; the value was set at login.
 **Server:** the login route that minted the user object (out of scope here).
 **Change this →** Truncates with an ellipsis rather than wrapping
@@ -323,11 +323,11 @@ is `display:none`, `css:712`) and the whole card is gone at ≤768px.
 
 **Where:** bottom of the sidebar, second line under the name, e.g.
 "Physician · Cardiology".
-**Rendered by:** `src/pages/ClinicianShell.tsx:615`, 
+**Rendered by:** `src/pages/ClinicianShell.tsx:866`, 
 `<span className="shell__user-role">{roleLabel} · {user?.department}</span>`.
-**Data from:** `roleLabel` is computed at `:431-435`: `surgeon` is first
-normalised to `doctor` (`:431`), then only `doctor|nurse|admin|pharmacist` map
-to their own key and everything else falls to `staff` (`:432-434`), then
+**Data from:** `roleLabel` is computed at `:664-668`: `surgeon` is first
+normalised to `doctor` (`:664`), then only `doctor|nurse|admin|pharmacist` map
+to their own key and everything else falls to `staff` (`:665-667`), then
 `t('role.<key>')` resolves through `en.json` `role` (`doctor: "Physician"`,
 `nurse: "Nurse"`, `admin: "Administrator"`, `pharmacist: "Pharmacist"`,
 `staff: "Staff"`). `user.department` is printed raw.
@@ -342,16 +342,16 @@ and same responsive disappearance as the name.
 
 **Where:** bottom of the sidebar, at the right edge of the user card, a small
 28px padlock, no border.
-**Rendered by:** `src/pages/ClinicianShell.tsx:617-627`, `<button
+**Rendered by:** `src/pages/ClinicianShell.tsx:868-878`, `<button
 className="shell__user-security" id="btn-mfa-enroll" title={t('shell.security')}>`
-with a padlock SVG (`:594-596`).
+with a padlock SVG (`:845-847`).
 **Data from:** label from `shell.security` ("Security & MFA"). Click sets
-`isEnrollingMfa` (`:327`, `:589`), which mounts `MfaEnrollmentModal` at `:811`.
+`isEnrollingMfa` (`:493`, `:840`), which mounts `MfaEnrollmentModal` at `:1062`.
 **API:** on open, `POST /api/auth/mfa/enroll/begin`
 (`src/components/MfaEnrollmentModal.tsx:79-82`); then `POST
 /api/auth/mfa/enroll/confirm` (`:126-130`) or `POST /api/auth/mfa/disable`
 (`:154-157`).
-**Server:** `server/routes/auth_routes.py:635-660` `mfa_enroll_begin`,
+**Server:** `server/routes/auth_routes.py:640-665` `mfa_enroll_begin`,
 `:663` `mfa_enroll_confirm`, `:696` MFA disable.
 **Change this →** It has **no icon state**, it looks identical whether or not
 MFA is enrolled; the only way to find out is to press it and see which view the
@@ -363,15 +363,15 @@ deliberate to hold 4.5:1 contrast). The button survives the ≤1024px collapse
 ### Sign Out button
 
 **Where:** the very bottom of the sidebar, full width, outlined.
-**Rendered by:** `src/pages/ClinicianShell.tsx:629-636`, `<button
+**Rendered by:** `src/pages/ClinicianShell.tsx:880-887`, `<button
 className="shell__logout" onClick={logout} id="btn-logout">` with a
 door/arrow SVG and `<span>{t('shell.signOut')}</span>`.
-**Data from:** `logout` from `useAuth()` → `src/AppRoot.tsx:81-109`.
+**Data from:** `logout` from `useAuth()` → `src/AppRoot.tsx:101-129`.
 **API:** none directly; `logout` calls `clearToken()`, `deauthenticateSocket()`,
 `clearNurseDrafts()`, `clearOfflineCache()` and `clearOfflineQueue()`.
 **Server:** none synchronously, the session cookie is simply no longer sent.
 **Change this →** Pressing it wipes four client-side stores in one go, then
-`user` becomes null and `AppRoot.tsx:182` redirects to `/login/staff`, so the whole
+`user` becomes null and `AppRoot.tsx:236` redirects to `/login/staff`, so the whole
 shell unmounts. Visible side effects beyond the redirect: any queued offline
 writes are discarded (see the sync badges below, a pending count is destroyed,
 not flushed), and any half-typed nurse observation draft is gone. Hover turns
@@ -391,7 +391,7 @@ language → theme.
 ### Page title
 
 **Where:** top-left of the top bar, the large line.
-**Rendered by:** `src/pages/ClinicianShell.tsx:643-645`, 
+**Rendered by:** `src/pages/ClinicianShell.tsx:894-896`, 
 `<h1 className="shell__page-title">Orb {TABS.find(t => t.id === activeTab)?.pillar}</h1>`.
 **Data from:** `activeTab` state, looked up against `TABS[].pillar`.
 **API:** none. **Server:** none.
@@ -400,7 +400,7 @@ so on, **the pillar name, not the nav label**, so the rail can say "Patients"
 while the title says "Orb Vigil". This is intentional and is the same string as
 the nav tooltip. It is **not translated**: the literal `Orb ` prefix and the
 `pillar` field are English regardless of the language toggle (note that the
-arrow parameter `t` at `:614` shadows the i18n `t`, so translating it here would
+arrow parameter `t` at `:865` shadows the i18n `t`, so translating it here would
 need renaming that parameter). Edit `pillar` on a `TABS` entry and both the
 title and the tooltip change. Long titles clip with an ellipsis
 (`css:307-309`); the font is `--font-display` at 1.15rem/560 with variable-font
@@ -409,7 +409,7 @@ settings `'SOFT' 0, 'WONK' 0, 'opsz' 22` (`css:299-306`).
 ### Page subtitle
 
 **Where:** directly under the title, small and muted.
-**Rendered by:** `src/pages/ClinicianShell.tsx:646`, 
+**Rendered by:** `src/pages/ClinicianShell.tsx:897`, 
 `<span className="shell__page-subtitle">{t(`subtitle.${activeTab}`)}</span>`.
 **Data from:** the `subtitle` block of `src/i18n/locales/en.json` /
 `hi.json`, keyed by tab id, e.g. `vigil: "Patient monitoring & risk scoring"`,
@@ -425,12 +425,12 @@ key string `subtitle.newtab` prints on screen. Clips with an ellipsis
 
 **Where:** leftmost item of the right-hand header cluster, a pill with a pulsing
 amber dot.
-**Rendered by:** `src/pages/ClinicianShell.tsx:662-668`, the second branch of
+**Rendered by:** `src/pages/ClinicianShell.tsx:913-919`, the second branch of
 the four-way badge chain, `<div className="shell__offline-badge" role="status"
 aria-live="polite">` with `<span className="shell__offline-dot" />` and
 `t('status.offlineCaching')`.
-**Data from:** `isOffline` state (`:469`), initialised from `!navigator.onLine`
-and updated by `window` `online`/`offline` listeners (`:510-511`, `:519-520`);
+**Data from:** `isOffline` state (`:702`), initialised from `!navigator.onLine`
+and updated by `window` `online`/`offline` listeners (`:743-744`, `:752-753`);
 `pendingCount` must be 0 for this wording.
 **API:** none, pure browser connectivity.
 **Server:** none.
@@ -444,11 +444,11 @@ renders, the next one wins.
 ### Offline badge: "Offline · N pending"
 
 **Where:** same slot.
-**Rendered by:** `src/pages/ClinicianShell.tsx:665-667`, the ternary inside the
+**Rendered by:** `src/pages/ClinicianShell.tsx:916-918`, the ternary inside the
 offline branch selecting `t('status.offlinePending', { count: pendingCount })`.
-**Data from:** `pendingCount` (`:472`), read from `localStorage['orb_offline_queue']`
-by `readQueueCount()` (`:483-491`) and refreshed by a **2-second poll**
-(`:524`) plus the online/offline handlers. The queue itself is written by
+**Data from:** `pendingCount` (`:705`), read from `localStorage['orb_offline_queue']`
+by `readQueueCount()` (`:716-724`) and refreshed by a **2-second poll**
+(`:757`) plus the online/offline handlers. The queue itself is written by
 `src/api/client.ts:391-399` `queueRequest` under the same key
 (`client.ts:346`).
 **API:** none for the badge; the queued entries are replayed later against their
@@ -457,12 +457,12 @@ original endpoints.
 **Change this →** Chart something while offline and this number ticks up within
 2 seconds. Change `CHECK` interval at `:524` and the number lags accordingly.
 Sign out and the count vanishes because `logout` calls `clearOfflineQueue`
-(`AppRoot.tsx:108` → `client.ts:365-369`), the writes are destroyed, not sent.
+(`AppRoot.tsx:128` → `client.ts:365-369`), the writes are destroyed, not sent.
 
 ### Syncing badge: "Syncing · N pending"
 
 **Where:** same slot, amber.
-**Rendered by:** `src/pages/ClinicianShell.tsx:669-673`, 
+**Rendered by:** `src/pages/ClinicianShell.tsx:920-924`, 
 `shell__offline-badge shell__offline-badge--syncing`, shown when **online** but
 `pendingCount > 0`.
 **Data from:** same `pendingCount` poll. The drain is driven by
@@ -481,29 +481,29 @@ Its colour class currently only re-states `--status-warn-text`
 ### Synced badge: "✓ Synced"
 
 **Where:** same slot, green, briefly.
-**Rendered by:** `src/pages/ClinicianShell.tsx:474-478`, 
+**Rendered by:** `src/pages/ClinicianShell.tsx:707-711`, 
 `shell__offline-badge--synced` with `<span className="shell__synced-check">✓</span>`.
-**Data from:** `justSynced` (`:473`), set true in `refresh()` when the count
-transitions from >0 to 0 (`:500-504`) and cleared by a **3000 ms** timer
-(`:503`), or immediately if new items queue (`:505`) or the browser goes offline
-(`:511`).
+**Data from:** `justSynced` (`:706`), set true in `refresh()` when the count
+transitions from >0 to 0 (`:733-737`) and cleared by a **3000 ms** timer
+(`:736`), or immediately if new items queue (`:738`) or the browser goes offline
+(`:744`).
 **API:** none. **Server:** none.
 **Change this →** It is a three-second confirmation, then it is gone and the
 header shows no badge at all. It flips the pill to `--status-ok-text` on an
 `--status-ok` tint, **stops the dot animating** (`css:371-374`), and fades in
-over 300ms (`css:368`). Change the `3000` at `:503` to hold it longer.
+over 300ms (`css:368`). Change the `3000` at `:736` to hold it longer.
 
 ### Sync-failed badge
 
 **Where:** same slot, and it **outranks all three above** (it is the first
 branch of the chain).
-**Rendered by:** `src/pages/ClinicianShell.tsx:649-661`, 
+**Rendered by:** `src/pages/ClinicianShell.tsx:900-912`, 
 `shell__offline-badge shell__offline-badge--failed`, `role="alert"`,
 `aria-live="assertive"`, text `t('status.syncFailed', { count: syncFailed })` →
 "N queued action(s) failed to sync, please re-enter".
-**Data from:** `syncFailed` counter (`:479`), incremented by the
-`orb:offline-sync-failed` window event handler (`:513-517`, listener registered
-at `:521`). That event is dispatched from `src/api/client.ts:562` when a replay
+**Data from:** `syncFailed` counter (`:712`), incremented by the
+`orb:offline-sync-failed` window event handler (`:746-750`, listener registered
+at `:754`). That event is dispatched from `src/api/client.ts:562` when a replay
 fails permanently (a 4xx that will never succeed, `client.ts:530-537`) and from
 `client.ts:494` when the queue held writes belonging to a **different** signed-in
 user and they were dropped (`client.ts:485-495`).
@@ -517,7 +517,7 @@ below removes it. Its `aria-live="assertive"` makes a screen reader interrupt.
 ### Sync-failed dismiss ✕
 
 **Where:** inside the red failure pill, at its right end.
-**Rendered by:** `src/pages/ClinicianShell.tsx:653-660`, `<button
+**Rendered by:** `src/pages/ClinicianShell.tsx:904-911`, `<button
 className="shell__offline-dismiss" onClick={() => setSyncFailed(0)}>` with the
 literal glyph `✕`, `title`/`aria-label` from `status.syncFailedDismiss`.
 **Data from:** sets `syncFailed` back to 0.
@@ -532,7 +532,7 @@ localStorage. 18×18, hover lifts it (`css:395-417`).
 **Where:** right-hand header cluster, left half of the clock chip.
 **Rendered by:** `src/components/ClockWidget.tsx:37`, 
 `<span className="clock-widget__date">{formatDate(time)}</span>`, mounted at
-`ClinicianShell.tsx:480`.
+`ClinicianShell.tsx:713`.
 **Data from:** `time` state (`ClockWidget.tsx:5`) advanced by a **1-second**
 `setInterval` (`:7-12`); formatted with
 `toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' })`
@@ -566,7 +566,7 @@ then a `▾` caret.
 **Rendered by:** `src/components/AiStatusChip.tsx:120-141`, a button whose
 class is `ai-status-chip--warm` or `--cold` (`:121`), with `__label` "AI"
 (`:127`), one `__model` span per model (`:129-134`), and `__caret` `▾` (`:140`).
-Mounted at `ClinicianShell.tsx:481`.
+Mounted at `ClinicianShell.tsx:714`.
 **Data from:** `health` state (`:30`), from `GET {API_BASE}/health/models`
 polled **every 60 s** (`:37-57`). `allWarm` (`:112`) requires the engine
 reachable *and* every model warm. `shortTag()` (`:111`) takes the text after the
@@ -646,7 +646,7 @@ with a heartbeat-line polyline.
 **Rendered by:** `src/components/PulseWidget.tsx::PulseWidget`,
 `` className={`pulse-trigger ${isOpen ? 'pulse-trigger--active' : ''}`} ``,
 `id="btn-pulse"`, `title="Pulse: season and conditions"`. Mounted at
-`ClinicianShell.tsx:571`.
+`ClinicianShell.tsx:822`.
 **Data from:** local `isOpen`.
 **API:** none on the button itself.
 **Server:** none.
@@ -699,7 +699,7 @@ theme toggle.
 **Rendered by:** `src/components/AlertPermissionButton.tsx:111-129`, one
 button, `className={`shell__icon-toggle${active ? ' shell__icon-toggle--on' : ''}`}`,
 rendering `<BellOn />` (`:27-33`) or `<BellOff />` (a bell with a diagonal
-slash, `:35-44`). Mounted at `ClinicianShell.tsx:483`.
+slash, `:35-44`). Mounted at `ClinicianShell.tsx:716`.
 **Data from:** `perm` (`:56`) read from `Notification.permission` and re-read on
 window focus (`:62-66`); `muted` (`:57`) from
 `isAlertSoundMuted()` → `localStorage['orb-alert-sound'] === 'muted'`
@@ -718,7 +718,7 @@ flag.
 **The whole button disappears** when the browser has no Notification API at all
 (`:68`, `if (perm === 'unsupported') return null`).
 What it actually governs: `initCriticalAlerts()` (called once at
-`ClinicianShell.tsx:391`, defined at
+`ClinicianShell.tsx:624`, defined at
 `src/services/criticalAlerts.ts:293-309`) subscribes to `surgery:emergency_intake`,
 `message:new` and `vitals:update` on the shared socket. When one arrives **and
 the tab is hidden or unfocused** (`criticalAlerts.ts:210-223`) it raises a browser
@@ -731,7 +731,7 @@ continue.
 ### Keyboard shortcuts button
 
 **Where:** right-hand header cluster, after the bell, a small keyboard glyph.
-**Rendered by:** `src/pages/ClinicianShell.tsx:487-500`, `<button
+**Rendered by:** `src/pages/ClinicianShell.tsx:720-733`, `<button
 className="shell__icon-toggle" onClick={showShortcuts} id="btn-shortcuts"
 title="Keyboard shortcuts (?)">`.
 **Data from:** none. `showShortcuts` is `src/lib/orbBus.ts:29-31`, which
@@ -748,11 +748,11 @@ i18n.
 
 **Where:** right-hand header cluster, second from the right, a text button
 reading `हि` or `EN`.
-**Rendered by:** `src/pages/ClinicianShell.tsx:501-509`, `<button
+**Rendered by:** `src/pages/ClinicianShell.tsx:734-742`, `<button
 className="shell__lang-toggle" id="btn-lang-toggle">` whose child is
-`{i18n.language === 'hi' ? 'EN' : 'हि'}` (`:478`).
-**Data from:** `i18n.language` from `useTranslation()` (`:307`). The click
-handler `toggleLanguage` (`:437-439`) calls `i18n.changeLanguage`, flipping
+`{i18n.language === 'hi' ? 'EN' : 'हि'}` (`:711`).
+**Data from:** `i18n.language` from `useTranslation()` (`:473`). The click
+handler `toggleLanguage` (`:670-672`) calls `i18n.changeLanguage`, flipping
 between `hi` and `en`.
 **API:** none. **Server:** none, the bundles are
 `src/i18n/locales/en.json` and `hi.json`, shipped with the app.
@@ -767,7 +767,7 @@ grows with its text (`css:489-506`).
 
 **Where:** the rightmost control in the top bar.
 **Rendered by:** `src/components/ThemeToggle.tsx:14-43`, a component (mounted
-at `src/pages/ClinicianShell.tsx:510`) that computes
+at `src/pages/ClinicianShell.tsx:743`) that computes
 the next theme in the cycle, then renders `<button className="shell__theme-toggle"
 id="btn-theme-toggle">` containing one of three SVGs: a **sun** when currently
 dark (`ThemeToggle.tsx:23-29`), a **moon** when currently light
@@ -802,17 +802,17 @@ else changes.
 ### Panel region (the tabpanel wrappers)
 
 **Where:** the whole area below the top bar and right of the sidebar.
-**Rendered by:** `src/pages/ClinicianShell.tsx:514-642`, 
+**Rendered by:** `src/pages/ClinicianShell.tsx:747-893`, 
 `<section className="shell__body">` containing one `<Suspense>` and, inside it,
 eighteen fixed conditional wrappers (plus one per installed hospital module,
-`:596-610`) of the shape
+`:847-861`) of the shape
 `<div id={`panel-<id>`} role="tabpanel" aria-labelledby={`nav-<id>`}
 style={{ display: activeTab === '<id>' ? 'contents' : 'none' }}>` around
 `<PanelErrorBoundary label="<id>"><XPanel /></PanelErrorBoundary>`
-(`:490-610`).
-**Data from:** `shouldRenderPanel(tab)` (`:305`) = `accessibleTabs.includes(tab)
-&& visitedTabs.has(tab)`. `visitedTabs` starts as a one-element set (`:248`) and
-grows on every tab change (`:270-274`).
+(`:723-861`).
+**Data from:** `shouldRenderPanel(tab)` (`:471`) = `accessibleTabs.includes(tab)
+&& visitedTabs.has(tab)`. `visitedTabs` starts as a one-element set (`:414`) and
+grows on every tab change (`:436-440`).
 **API / Server:** each panel owns its own; the shell makes no request here.
 **Change this →** Two behaviours you can observe:
 1. **Mount-on-first-view.** A panel's subtree does not exist until its tab has
@@ -831,10 +831,10 @@ from x=260 to x=292 between tabs).
 ### "Loading panel..."
 
 **Where:** fills the panel region while a lazily-imported panel chunk downloads.
-**Rendered by:** `src/pages/ClinicianShell.tsx:515`, the `<Suspense
+**Rendered by:** `src/pages/ClinicianShell.tsx:748`, the `<Suspense
 fallback={<div className="orb-panel-loading">Loading panel...</div>}>`.
 **Data from:** React Suspense; the panels are `lazy()` imports declared at
-`:115-131`.
+`:121-137`.
 **API:** the browser's fetch of the JS chunk. **Server:** the static file server.
 **Change this →** Visible for a moment on the first visit to each tab on a cold
 cache, and essentially never afterwards. **`.orb-panel-loading` has no CSS rule
@@ -845,31 +845,31 @@ the region rather than the individual tab.
 ### Panel error state
 
 **Where:** centred in the panel region, replacing whatever panel threw.
-**Rendered by:** `src/pages/ClinicianShell.tsx:288-296`, inside
+**Rendered by:** `src/pages/ClinicianShell.tsx:454-462`, inside
 `PanelErrorBoundary.render`: `<div className="orb-panel-error" role="alert"
 style={{ padding: '2rem', textAlign: 'center' }}>` with the sentence
 "This panel hit an error and couldn't be shown." and a **Reload panel** button
-(`:265-267`) that calls `this.reset` (`:255`).
-**Data from:** `state.hasError`, set by `getDerivedStateFromError` (`:238-243`).
+(`:431-433`) that calls `this.reset` (`:421`).
+**Data from:** `state.hasError`, set by `getDerivedStateFromError` (`:404-409`).
 **API:** none. **Server:** none.
-**Change this →** Because each panel has its own boundary (`:717`, `:722`, …
+**Change this →** Because each panel has its own boundary (`:968`, `:973`, …
 one per tab) a bad payload in a **hidden background panel** fails in place
 instead of blanking the whole shell, which matters here specifically because
 panels stay mounted after their first visit. "Reload panel" only clears the
 error flag and re-renders; it does not refetch anything itself. The class
 `.orb-panel-error` also has no stylesheet rule, the padding and centring are the
-inline style at `:263`.
+inline style at `:429`.
 
 ### "Updating to the latest version..."
 
 **Where:** same place as the loading fallback.
-**Rendered by:** `src/pages/ClinicianShell.tsx:284-287`, the `state.updating`
+**Rendered by:** `src/pages/ClinicianShell.tsx:450-453`, the `state.updating`
 branch of the same boundary.
-**Data from:** `isStaleChunkError(error) && chunkReloadAllowed()` (`:242`).
-`STALE_CHUNK_RE` (`:220`) matches Chrome/Edge, Firefox and Safari phrasings of a
+**Data from:** `isStaleChunkError(error) && chunkReloadAllowed()` (`:408`).
+`STALE_CHUNK_RE` (`:386`) matches Chrome/Edge, Firefox and Safari phrasings of a
 failed dynamic import plus Vite's CSS-preload failure.
-`chunkReloadAllowed()` (`:231-234`) checks the `orb:chunk-reload-at` sessionStorage
-timestamp against a 30-second window (`:225`).
+`chunkReloadAllowed()` (`:397-400`) checks the `orb:chunk-reload-at` sessionStorage
+timestamp against a 30-second window (`:391`).
 **API:** none. **Server:** the static asset server that no longer has the old
 hashed chunk.
 **Change this →** After a deploy, a tab still running the old `index.html` asks
@@ -882,7 +882,7 @@ guard stops the loop and the normal error card above is shown instead.
 
 ## Global floating surfaces
 
-These four siblings sit outside `<main>` (`ClinicianShell.tsx:645-663`) and are
+These four siblings sit outside `<main>` (`ClinicianShell.tsx:896-914`) and are
 present on every tab.
 
 ### Sage floating orb
@@ -920,7 +920,7 @@ flag were removed. Browser speech is not supported and cannot be switched on.
 **Where:** a modal overlay centred over the whole screen; nothing on screen
 until summoned.
 **Rendered by:** `src/components/CommandPalette.tsx:161-261`, mounted once at
-`ClinicianShell.tsx:655`. `:156` is `if (!open) return null`, so it contributes
+`ClinicianShell.tsx:906`. `:156` is `if (!open) return null`, so it contributes
 nothing until opened. Parts:
 - search icon + input with placeholder **"Search patients by name, MRN, bed, or
   diagnosis…"** (`:177-204`);
@@ -959,7 +959,7 @@ always-empty palette, since `patient.read_all` is not in their set.
 **Where:** a centred dialog over a full-screen backdrop, portalled to
 `document.body`.
 **Rendered by:** `src/components/KeyboardShortcuts.tsx:142-210` (via
-`createPortal`), mounted at `ClinicianShell.tsx:661` with
+`createPortal`), mounted at `ClinicianShell.tsx:912` with
 `accessibleTabs={accessibleTabs}` and `onGoto={handleShortcutGoto}`. `:140` is
 `if (!open) return null`. Parts:
 - title **"Keyboard shortcuts"** and the subtitle "Press `g` then a letter.
@@ -997,7 +997,7 @@ same time). The prefix disarms after 1500 ms (`shortcuts.ts:40`).
 
 **Where:** full-screen backdrop with a large centred card.
 **Rendered by:** `src/components/AdmitPatientModal.tsx:247-...`, mounted at
-`ClinicianShell.tsx:645-650` when `isAdmittingPatient` is true. Visible parts:
+`ClinicianShell.tsx:896-901` when `isAdmittingPatient` is true. Visible parts:
 - header "Admit Patient" with subtitle "Create clinical admission record across
   Orb modules" and a `×` close (`:725-731`);
 - a **seven-tab strip**, Identity, Admission, Clinical, History, Vitals, Notes,
@@ -1019,7 +1019,7 @@ same time). The prefix disarms after 1500 ms (`shortcuts.ts:40`).
 (`require_permission("patient.write")`) → `server/services/admission_service.py:11`
 `admit_patient`.
 **Change this →** On success the shell's `onSuccess` handler at
-`ClinicianShell.tsx:648` calls **`window.location.reload()`**, the whole app
+`ClinicianShell.tsx:899` calls **`window.location.reload()`**, the whole app
 reloads, every panel remounts, and any unsaved state elsewhere is lost. That is
 the most visible consequence of pressing Submit. Editing the required-field sets
 at `:141-145` changes which tab indicators go green and whether Submit is
@@ -1031,7 +1031,7 @@ and the modal stays open.
 
 **Where:** full-screen backdrop with a centred card.
 **Rendered by:** `src/components/MfaEnrollmentModal.tsx:166-...`, mounted at
-`ClinicianShell.tsx:652` when `isEnrollingMfa` is true. It has six views
+`ClinicianShell.tsx:903` when `isEnrollingMfa` is true. It has six views
 (`:31`) and picks its title from them (`:177-181`): "Set up two-factor
 authentication", or "Two-factor authentication" for the disable path.
 - **loading:** "Preparing your authenticator setup…" (`:188-190`);
@@ -1056,7 +1056,7 @@ undefined (`:56-58`) and the normal session cookie is used.
 **API:** `POST /api/auth/mfa/enroll/begin` (`:79-82`), `POST
 /api/auth/mfa/enroll/confirm` (`:126-130`), `POST /api/auth/mfa/disable`
 (`:154-157`).
-**Server:** `server/routes/auth_routes.py:635-660` `mfa_enroll_begin` (rotates a
+**Server:** `server/routes/auth_routes.py:640-665` `mfa_enroll_begin` (rotates a
 pending secret, leaves `totp_enabled = 0`), `:663` `mfa_enroll_confirm` (verifies
 one live code and flips the flag; `consume_totp` burns it), `:696` disable.
 **Change this →** Which view you land on is decided by the server's answer to
@@ -1072,17 +1072,17 @@ secret plus the `otpauth://` URI, avoiding a new npm dependency.
 
 **The navigation bus.** `src/lib/orbBus.ts` defines three window CustomEvents:
 `orb:goto-tab` (`:12`), `orb:open-patient` (`:13`), `orb:show-shortcuts` (`:18`).
-The shell listens for the first two at `ClinicianShell.tsx:318-341` and again for
-goto-tab through `onGotoTab` at `:408-413`. **Both listeners re-check
-`accessibleTabs`** (`:321`, `:410`), so RBAC is enforced once, in one place, no
+The shell listens for the first two at `ClinicianShell.tsx:484-507` and again for
+goto-tab through `onGotoTab` at `:641-646`. **Both listeners re-check
+`accessibleTabs`** (`:487`, `:643`), so RBAC is enforced once, in one place, no
 matter who is driving. Keyboard chords deliberately go through the same bus
-rather than calling `setActiveTab` (`:420` and the comment at `:415-419`) so a
+rather than calling `setActiveTab` (`:653` and the comment at `:648-652`) so a
 shortcut cannot become a second door into a tab.
 
 **The open-patient replay.** When the command palette jumps to a patient it
 fires goto-tab then open-patient synchronously, but on the very first jump
-VigilPanel has not mounted yet. `:342-350` re-dispatches `orb:open-patient` after
-200 ms, with a re-entrancy guard (`:341`, `:343`) so the replay cannot loop.
+VigilPanel has not mounted yet. `:492-500` re-dispatches `orb:open-patient` after
+200 ms, with a re-entrancy guard (`:491`, `:493`) so the replay cannot loop.
 Visible symptom if you remove it: the first Cmd-K jump lands on the Patients tab
 with no chart open, the second works.
 
@@ -1125,11 +1125,11 @@ lift on the Sage tab; it no longer sends questions).
    system-preference listener used to read the legacy `orb_theme` alone, which
    the shell deletes after its first theme press, so the listener overrode an
    explicit choice. Both now read through `storedTheme()` (`theme.ts:27`), which
-   reads `orb-theme` and falls back to `orb_theme` (`AppRoot.tsx:46`, `:143`).
+   reads `orb-theme` and falls back to `orb_theme` (`AppRoot.tsx:66`, `:197`).
 9. **The offline queue is polled, not evented** (`:524`, 2 s) because
    `client.ts` mutates localStorage in the same tab and the `storage` event only
    fires for other tabs. Counts can lag reality by up to two seconds.
-10. **Sign-out destroys queued offline writes** (`AppRoot.tsx:108`), and the count in
+10. **Sign-out destroys queued offline writes** (`AppRoot.tsx:128`), and the count in
     the header disappears without ever syncing.
 
 ---

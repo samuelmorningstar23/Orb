@@ -754,13 +754,43 @@ def _require_patient(db, patient_id: str) -> dict:
     return _row(row)
 
 
-def _clash_patient_line(db, patient_id: str, department: str | None) -> str | None:
+def _patient_scope_clause(
+    column: str, department: str | None, facilities: frozenset[int] | None
+) -> tuple[str, tuple]:
+    """(' AND <column> IN (the caller's patients)', params): the caller's ward
+    (`department`) and facilities (`facilities`, multisite-9b) through the one
+    scoped-ids subquery, permissions.scope_patient_ids_sql. ('', ()) when
+    neither limits, so the statement is what it always was."""
+    if department is None and facilities is None:
+        return "", ()
+    from permissions import scope_patient_ids_sql
+
+    scope_sql, scope_params = scope_patient_ids_sql(department, facilities=facilities)
+    return f" AND {column} IN ({scope_sql})", tuple(scope_params)
+
+
+#: A caller that did not say which facilities it may see (multisite-9b). While
+#: more than one facility is on record such a caller is told nothing about a
+#: patient, because "no limit" and "not said" cannot be told apart.
+SCOPE_NOT_GIVEN: Any = object()
+
+
+def _clash_patient_line(
+    db: Any, patient_id: str, department: str | None, facilities: Any = SCOPE_NOT_GIVEN
+) -> str | None:
     """'Kavitha Menon, MRN-CC002, CCU' for the patient a duplicate ABHA already
     belongs to, or None when that patient is outside the caller's scope (or has
-    no name on record), so the refusal never discloses another ward's patient."""
+    no name on record), so the refusal never discloses another ward's patient.
+    `facilities` is the caller's facility scope (multisite-9b): the patient must
+    be at one of them too; a caller that did not give one learns no name while
+    more than one facility is on record."""
     from permissions import patient_in_scope
 
-    if not patient_in_scope(db, patient_id, department):
+    if facilities is SCOPE_NOT_GIVEN:
+        if facility_stamp.multi_facility(db):
+            return None
+        facilities = None
+    if not patient_in_scope(db, patient_id, department, facilities=facilities):
         return None
     row = db.execute("SELECT name, mrn, ward FROM patients WHERE id = ?", (patient_id,)).fetchone()
     if row is None or not _clean(row["name"]):
@@ -820,6 +850,7 @@ def record_abha(
     notes: str | None = None,
     is_primary: bool = True,
     department: str | None = None,
+    facilities: Any = SCOPE_NOT_GIVEN,
 ) -> dict:
     """Record an ABHA a patient presented. IT IS UNVERIFIED. ALWAYS.
 
@@ -834,7 +865,9 @@ def record_abha(
 
     `department` is the CALLER'S scope (permissions.department_scope), used only
     to decide whether a duplicate refusal may name the other patient. None is
-    the hospital-wide convention, as in ``list_abha``.
+    the hospital-wide convention, as in ``list_abha``. `facilities` is the
+    caller's facility scope (permissions.facility_scope), used the same way
+    (multisite-9b; see _clash_patient_line).
 
     Opens its own session; ``record_abha_on`` is the same write on a caller's
     connection.
@@ -850,11 +883,12 @@ def record_abha(
             notes=notes,
             is_primary=is_primary,
             department=department,
+            facilities=facilities,
         )
 
 
 def record_abha_on(
-    db,
+    db: Any,
     *,
     patient_id: str,
     abha_number: str | None = None,
@@ -864,6 +898,7 @@ def record_abha_on(
     notes: str | None = None,
     is_primary: bool = True,
     department: str | None = None,
+    facilities: Any = SCOPE_NOT_GIVEN,
 ) -> dict:
     """``record_abha`` on the CALLER'S connection, inside the caller's
     transaction. It never opens, commits or rolls back a session, so the
@@ -919,7 +954,7 @@ def record_abha_on(
             # Only inside the caller's own scope: naming a patient on a ward
             # the caller cannot see would be a disclosure, so out of scope
             # the refusal stays anonymous.
-            other = _clash_patient_line(db, clash["patient_id"], department)
+            other = _clash_patient_line(db, clash["patient_id"], department, facilities)
             where = f"{other}; record #{clash['id']}" if other else f"record #{clash['id']}"
             # The desk has no correct or withdraw control yet, so the
             # refusal names what a person can do today, not an edit the
@@ -1283,13 +1318,16 @@ def list_abha(
     department: str | None = None,
     active_only: bool = True,
     limit: int = 200,
+    facilities: frozenset[int] | None = None,
 ) -> list[dict]:
     """ABHA records, newest first.
 
     `department` is the CALLER'S scope, resolved from the authenticated user by
     the route — never from the request. None means an account with no department
     (the hospital-wide governance convention in permissions.department_scope),
-    not "show me everything".
+    not "show me everything". `facilities` is the caller's facility scope
+    (multisite-9b): only patients whose latest encounter is at those
+    facilities; None is no facility limit.
     """
     sql = [
         "SELECT i.*, p.name AS patient_name, p.mrn AS patient_mrn, p.ward AS patient_ward",
@@ -1306,12 +1344,9 @@ def list_abha(
         params.append(verification_status)
     if active_only:
         sql.append(" AND i.status = 'active'")
-    if department is not None:
-        from permissions import scope_patient_ids_sql
-
-        scope_sql, scope_params = scope_patient_ids_sql(department)
-        sql.append(f" AND i.patient_id IN ({scope_sql})")
-        params.extend(scope_params)
+    scope_clause, scope_args = _patient_scope_clause("i.patient_id", department, facilities)
+    sql.append(scope_clause)
+    params.extend(scope_args)
     sql.append(" ORDER BY i.id DESC LIMIT ?")
     params.append(max(1, min(int(limit), 1000)))
 
@@ -1495,8 +1530,11 @@ def unlink_care_context(
     reason: str,
     actor_id: str,
     unlinked_at: str | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
-    """RECORD that a human unlinked this care context, elsewhere.
+    """RECORD that a human unlinked this care context, elsewhere. A care
+    context of another facility than the caller's `facilities` (its own
+    facility_id, migration 75) is not found (multisite-9b).
 
     A LINKED CARE CONTEXT CANNOT SILENTLY UNLINK. Three things enforce that, and
     all three are load-bearing:
@@ -1523,7 +1561,9 @@ def unlink_care_context(
         row = db.execute(
             "SELECT * FROM abdm_care_contexts WHERE id = ?", (int(care_context_id),)
         ).fetchone()
-        if row is None:
+        if row is None or (
+            facilities is not None and facility_stamp.row_facility(row) not in facilities
+        ):
             raise CareContextError(f"care context {care_context_id} not found")
         if row["status"] != "linked":
             raise CareContextError(
@@ -1566,12 +1606,14 @@ def list_care_contexts(
     status: str | None = None,
     department: str | None = None,
     limit: int = 200,
+    facilities: frozenset[int] | None = None,
 ) -> list[dict]:
     """Care-context records. UNLINKED ONES ARE INCLUDED BY DEFAULT.
 
     That default is deliberate: a list that silently hides unlinked rows is a
     list in which an unlink looks like a deletion, which is the failure this
-    table's whole design is against.
+    table's whole design is against. `facilities` keeps it to the patients of
+    the caller's facilities (multisite-9b).
     """
     sql = [
         "SELECT c.*, p.name AS patient_name, p.mrn AS patient_mrn,",
@@ -1591,12 +1633,9 @@ def list_care_contexts(
     if status:
         sql.append(" AND c.status = ?")
         params.append(status)
-    if department is not None:
-        from permissions import scope_patient_ids_sql
-
-        scope_sql, scope_params = scope_patient_ids_sql(department)
-        sql.append(f" AND c.patient_id IN ({scope_sql})")
-        params.extend(scope_params)
+    scope_clause, scope_args = _patient_scope_clause("c.patient_id", department, facilities)
+    sql.append(scope_clause)
+    params.extend(scope_args)
     sql.append(" ORDER BY c.id DESC LIMIT ?")
     params.append(max(1, min(int(limit), 1000)))
 
@@ -2022,7 +2061,10 @@ def list_consents(
     status: str | None = None,
     department: str | None = None,
     limit: int = 200,
+    facilities: frozenset[int] | None = None,
 ) -> list[dict]:
+    """Consent artefacts, newest first, within the caller's ward and
+    facilities (multisite-9b)."""
     sql = [
         "SELECT c.*, p.name AS patient_name, p.mrn AS patient_mrn",
         "  FROM abdm_consent_artefacts c",
@@ -2036,12 +2078,9 @@ def list_consents(
     if status:
         sql.append(" AND c.status = ?")
         params.append(status)
-    if department is not None:
-        from permissions import scope_patient_ids_sql
-
-        scope_sql, scope_params = scope_patient_ids_sql(department)
-        sql.append(f" AND c.patient_id IN ({scope_sql})")
-        params.extend(scope_params)
+    scope_clause, scope_args = _patient_scope_clause("c.patient_id", department, facilities)
+    sql.append(scope_clause)
+    params.extend(scope_args)
     sql.append(" ORDER BY c.id DESC LIMIT ?")
     params.append(max(1, min(int(limit), 1000)))
 
@@ -2072,6 +2111,7 @@ def unlinked_encounter_queue(
     include_discharged: bool = True,
     limit: int = 200,
     now: datetime | None = None,
+    facilities: frozenset[int] | None = None,
 ) -> dict:
     """Encounters with no live care-context link, oldest first.
 
@@ -2083,6 +2123,10 @@ def unlinked_encounter_queue(
 
     `department` is the CALLER'S scope, resolved from the authenticated user by
     the route — never accepted from the request.
+    `facilities` (multisite-9b) keeps the queue to encounters AT the caller's
+    facilities (the admission's own facility_id: a care context is linked by
+    the facility the stay was at) and to patients inside the caller's facility
+    scope.
     """
     now = now or datetime.now(UTC)
     if bucket is not None and bucket not in {b for b, _ in QUEUE_BUCKETS}:
@@ -2105,12 +2149,15 @@ def unlinked_encounter_queue(
     params: list[Any] = []
     if not include_discharged:
         sql.append(" AND a.status = 'active'")
-    if department is not None:
-        from permissions import scope_patient_ids_sql
+    scope_clause, scope_args = _patient_scope_clause("a.patient_id", department, facilities)
+    sql.append(scope_clause)
+    params.extend(scope_args)
+    if facilities is not None:
+        from services.facility_filter import column_clause
 
-        scope_sql, scope_params = scope_patient_ids_sql(department)
-        sql.append(f" AND a.patient_id IN ({scope_sql})")
-        params.extend(scope_params)
+        stay_clause, stay_args = column_clause("a.facility_id", facilities)
+        sql.append(stay_clause)
+        params.extend(stay_args)
     sql.append(" ORDER BY a.created_at ASC, a.rowid ASC LIMIT ?")
     params.append(max(1, min(int(limit), 1000)))
 
@@ -2171,18 +2218,18 @@ def unlinked_encounter_queue(
     }
 
 
-def abdm_summary(*, department: str | None = None, now: datetime | None = None) -> dict:
+def abdm_summary(
+    *,
+    department: str | None = None,
+    now: datetime | None = None,
+    facilities: frozenset[int] | None = None,
+) -> dict:
     """The board a CIO reads: how much ABHA coverage exists, how much of it is
-    actually verified, and what is waiting."""
+    actually verified, and what is waiting (the caller's facilities' patients
+    and encounters, multisite-9b)."""
     now = now or datetime.now(UTC)
-    scope_clause = ""
-    scope_params: list[Any] = []
-    if department is not None:
-        from permissions import scope_patient_ids_sql
-
-        scope_sql, params = scope_patient_ids_sql(department)
-        scope_clause = f" AND patient_id IN ({scope_sql})"
-        scope_params = list(params)
+    scope_clause, scope_args = _patient_scope_clause("patient_id", department, facilities)
+    scope_params: list[Any] = list(scope_args)
 
     with db_session() as db:
         identity_counts = {
@@ -2219,7 +2266,9 @@ def abdm_summary(*, department: str | None = None, now: datetime | None = None) 
         eff = _consent_effective(row, now=now)["effective_status"]
         consents[eff] = consents.get(eff, 0) + 1
 
-    queue = unlinked_encounter_queue(department=department, limit=1000, now=now)
+    queue = unlinked_encounter_queue(
+        department=department, limit=1000, now=now, facilities=facilities
+    )
 
     verified = int(identity_counts.get("verified", 0))
     total_identities = sum(int(v) for v in identity_counts.values())

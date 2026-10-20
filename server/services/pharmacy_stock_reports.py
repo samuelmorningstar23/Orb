@@ -41,6 +41,14 @@ NO PATIENT DATA. The ledger names the kind of reference a movement carries; a
 movement tied to a patient's medicine order (a dispense, a ward return) shows
 neither the order id nor its remarks, so these screens never widen who can
 link stock to a patient.
+
+PER FACILITY (multisite-14 and multisite-8h3, ruling MS-R9 (a)). Every report
+takes `facilities` (permissions.facility_scope of the caller). None, which is
+every install with one facility on record, reads exactly what it always read.
+A set keeps the lots at those facilities (services/pharmacy_facility.lot_sql),
+the movements, transfers and orders of their stores, and judges a drug's own
+reorder level against each facility's own shelf (its dispensing store or NDPS
+vault), so one facility's stock never covers another's need.
 """
 
 from __future__ import annotations
@@ -52,6 +60,7 @@ from typing import Any
 
 from database import db_session
 
+from services import pharmacy_facility as facility
 from services import pharmacy_stock_service as stock
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -193,9 +202,10 @@ def _drug_fields(row: dict) -> dict:
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-def in_transit_units(conn) -> dict[tuple[int, str], int]:
+def in_transit_units(conn: Any, facilities: Any = None) -> dict[tuple[int, str], int]:
     """{(to_store_id, drug_id): units} on dispatched transfer lines that have
-    not been received. Those units are counted in neither store."""
+    not been received. Those units are counted in neither store. With
+    `facilities`, transfers to stores at those facilities only."""
     out: dict[tuple[int, str], int] = {}
     for r in conn.execute(
         "SELECT t.to_store_id AS store_id, tl.helix_medication_id AS drug_id, "
@@ -203,17 +213,18 @@ def in_transit_units(conn) -> dict[tuple[int, str], int]:
         "FROM pharmacy_transfer_lines tl "
         "JOIN pharmacy_transfers t ON t.id = tl.pharmacy_transfer_id "
         "WHERE t.status IN ('dispatched', 'partially_received') "
-        "AND tl.received_units IS NULL "
+        f"AND tl.received_units IS NULL{facility.store_ids_sql('t.to_store_id', facilities)} "
         "GROUP BY t.to_store_id, tl.helix_medication_id"
     ).fetchall():
         out[(int(r["store_id"]), r["drug_id"])] = int(r["units"] or 0)
     return out
 
 
-def on_order_units(conn) -> dict[tuple[int | None, str], int]:
+def on_order_units(conn: Any, facilities: Any = None) -> dict[tuple[int | None, str], int]:
     """{(store_id, drug_id): units} still outstanding on open pharmacy
     purchase order lines, drafts included. Units are whole packs times the
-    pack size snapshotted on the line."""
+    pack size snapshotted on the line. With `facilities`, the orders at those
+    facilities only."""
     out: dict[tuple[int | None, str], int] = {}
     rows = conn.execute(
         "SELECT p.store_id AS store_id, pl.helix_medication_id AS drug_id, "
@@ -221,7 +232,8 @@ def on_order_units(conn) -> dict[tuple[int | None, str], int]:
         "FROM purchase_order_lines pl JOIN purchase_orders p ON p.id = pl.purchase_order_id "
         f"WHERE p.domain = 'pharmacy' AND p.status IN ({_marks(ON_ORDER_PO_STATUSES)}) "
         f"AND pl.status IN ({_marks(ON_ORDER_LINE_STATUSES)}) "
-        "AND pl.helix_medication_id IS NOT NULL AND pl.units_per_pack IS NOT NULL",
+        "AND pl.helix_medication_id IS NOT NULL AND pl.units_per_pack IS NOT NULL"
+        + facility.column_sql("p.facility_id", facilities),
         (*ON_ORDER_PO_STATUSES, *ON_ORDER_LINE_STATUSES),
     ).fetchall()
     for r in rows:
@@ -240,17 +252,19 @@ def on_order_units(conn) -> dict[tuple[int | None, str], int]:
 
 
 def stock_by_store(
-    conn=None,
+    conn: Any = None,
     *,
     store_id: int | None = None,
     drug_id: str | None = None,
     search: str | None = None,
     today: str | None = None,
     limit: int = 1000,
+    facilities: Any = None,
 ) -> dict:
     """Stock per store and drug, split into the buckets in the module note.
     Returns {"today", "rows", "totals"}. A drug with nothing on a shelf but
-    units in transit to a store still has a row."""
+    units in transit to a store still has a row. With `facilities`, the
+    lots and transfers at those facilities only."""
     today = today or stock.site_today()
     held = HELD_STATUSES
     sql = (
@@ -274,7 +288,7 @@ def stock_by_store(
         "FROM helix_inventory_lots l "
         "LEFT JOIN stores s ON s.id = l.store_id "
         "LEFT JOIN helix_medication_master m ON m.id = l.medication_id "
-        "WHERE l.quantity > 0"
+        "WHERE l.quantity > 0" + facility.lot_sql("l", facilities)
     )
     params: list[Any] = [today, today, today, *held]
     if store_id is not None:
@@ -291,7 +305,7 @@ def stock_by_store(
 
     with _reading(conn) as db:
         rows = [dict(r) for r in db.execute(sql, params).fetchall()]
-        transit = in_transit_units(db)
+        transit = in_transit_units(db, facilities)
         seen = {(r["store_id"], r["drug_id"]) for r in rows}
         missing = [
             (sid, did)
@@ -387,7 +401,7 @@ def stock_by_store(
 
 
 def list_lots(
-    conn=None,
+    conn: Any = None,
     *,
     drug_id: str | None = None,
     store_id: int | None = None,
@@ -396,12 +410,14 @@ def list_lots(
     near_days: int | None = None,
     available_by: str | None = None,
     limit: int = 500,
+    facilities: Any = None,
 ) -> dict:
     """Lots, earliest expiry first (the order a dispense takes them), with
     their status, expiry state and value. Returns {"today", "lots"}.
 
     `available_by` (YYYY-MM-DD) keeps only available lots holding units whose
-    expiry is on or before that date or not recorded: the near-expiry query."""
+    expiry is on or before that date or not recorded: the near-expiry query.
+    `facilities` keeps the lots at those facilities only."""
     import config
 
     today = today or stock.site_today()
@@ -421,6 +437,7 @@ def list_lots(
         "FROM helix_inventory_lots l "
         "LEFT JOIN stores s ON s.id = l.store_id "
         "LEFT JOIN helix_medication_master m ON m.id = l.medication_id WHERE 1 = 1"
+        + facility.lot_sql("l", facilities)
     )
     params: list[Any] = [today, today, cutoff]
     if not include_empty:
@@ -474,18 +491,20 @@ def list_lots(
 
 
 def ledger_page(
-    conn=None,
+    conn: Any = None,
     *,
     drug_id: str | None = None,
     store_id: int | None = None,
     lot_id: str | None = None,
     before_seq: int | None = None,
     limit: int = 50,
+    facilities: Any = None,
 ) -> dict:
     """One page of the drug ledger, newest first by seq (the ledger's own
     ordering key, stable under VACUUM and under new rows arriving while a
     reader pages back). Pass the returned next_before_seq to read the next
-    older page. Returns {"movements", "next_before_seq", "has_more"}."""
+    older page. Returns {"movements", "next_before_seq", "has_more"}.
+    `facilities` keeps the movements at those facilities only."""
     size = max(1, min(int(limit), MAX_LEDGER_PAGE))
     sql = (
         "SELECT mv.id, mv.seq, mv.occurred_at, mv.timestamp, mv.movement_type, mv.reason, "
@@ -500,7 +519,7 @@ def ledger_page(
         "LEFT JOIN stores s ON s.id = mv.store_id "
         "LEFT JOIN helix_medication_master m ON m.id = mv.medication_id "
         "LEFT JOIN users u ON u.id = mv.actor_id "
-        "WHERE mv.seq IS NOT NULL"
+        "WHERE mv.seq IS NOT NULL" + facility.column_sql("mv.facility_id", facilities)
     )
     params: list[Any] = []
     if drug_id:
@@ -578,29 +597,52 @@ def _ceil_div(a: int, b: int) -> int:
     return -(-a // b)
 
 
-def _shelf_stores(conn) -> dict[str, dict | None]:
+def _shelf_stores(conn: Any, facility_id: int | None = None) -> dict[str, dict | None]:
     """The active dispensing store and the first active NDPS vault, where a
-    drug's hospital reorder level is ordered into."""
+    drug's hospital reorder level is ordered into; with `facility_id`, that
+    facility's (multisite-14: each facility has its own shelf)."""
     out: dict[str, dict | None] = {"dispensing": None, "ndps_vault": None}
+    at = "" if facility_id is None else f" AND facility_id = {int(facility_id)}"
     for kind in out:
         row = conn.execute(
             "SELECT id, code, name, pharmacy_kind FROM stores WHERE pharmacy_kind = ? "
-            "AND is_active = 1 ORDER BY id LIMIT 1",
+            f"AND is_active = 1{at} ORDER BY id LIMIT 1",
             (kind,),
         ).fetchone()
         out[kind] = dict(row) if row else None
     return out
 
 
+def _shelf_groups(conn: Any, facilities: Any, store_id: int | None) -> list[int | None]:
+    """The facilities whose shelves a reorder report judges a drug's own
+    level against, one group each. [None] with one facility on record: the
+    one shelf, exactly as before. Otherwise the caller's facilities (every
+    facility for a group-wide caller), narrowed to the named store's."""
+    if not facility.multi(conn):
+        return [None]
+    ids = facility.facility_ids(conn) if facilities is None else sorted(int(f) for f in facilities)
+    if store_id is not None:
+        home = facility.store_facility(conn, store_id)
+        ids = [f for f in ids if f == home]
+    return list(ids)
+
+
 def reorder_report(
-    conn=None,
+    conn: Any = None,
     *,
     store_id: int | None = None,
     include_unset: bool = False,
     needs_only: bool = False,
     today: str | None = None,
+    facilities: Any = None,
 ) -> dict:
     """What needs ordering. Returns {"today", "rows"}.
+
+    With more than one facility on record (multisite-14) every figure is per
+    facility: `facilities` keeps the caller's stores, lots, transfers and
+    orders, and a drug's own reorder level is judged once per facility
+    against that facility's shelf (one 'drug_default' row each). With one
+    facility on record the report is exactly as before.
 
     Each row is one of:
       * basis 'par': a store's active par level. Its trigger is the store's
@@ -622,21 +664,37 @@ def reorder_report(
         for r in db.execute(
             "SELECT l.store_id, l.medication_id, SUM(l.quantity) AS units "
             "FROM helix_inventory_lots l WHERE l.quantity > 0 AND l.store_id IS NOT NULL "
-            "AND l.status = 'available' AND date(l.expiration_date) >= ? "
+            "AND l.status = 'available' AND date(l.expiration_date) >= ?"
+            f"{facility.lot_sql('l', facilities)} "
             "GROUP BY l.store_id, l.medication_id",
             (today,),
         ).fetchall():
             usable[(int(r["store_id"]), r["medication_id"])] = int(r["units"] or 0)
-        dispensable: dict[str, int] = {}
-        for r in db.execute(
-            f"SELECT l.medication_id, SUM(l.quantity) AS units FROM helix_inventory_lots l "
-            f"WHERE {stock.dispensable_lot_sql('l')} GROUP BY l.medication_id",
-            (today,),
-        ).fetchall():
-            dispensable[r["medication_id"]] = int(r["units"] or 0)
-        transit = in_transit_units(db)
-        ordered = on_order_units(db)
-        shelves = _shelf_stores(db)
+        groups = _shelf_groups(db, facilities, store_id)
+        # One shelf per facility group: {group: {drug: dispensable units}}.
+        dispensable_by: dict[int | None, dict[str, int]] = {}
+        shelves_by: dict[int | None, dict[str, dict | None]] = {}
+        for group in groups:
+            found: dict[str, int] = {}
+            for r in db.execute(
+                f"SELECT l.medication_id, SUM(l.quantity) AS units FROM helix_inventory_lots l "
+                f"WHERE {stock.dispensable_lot_sql('l', facility_id=group)} "
+                "GROUP BY l.medication_id",
+                (today,),
+            ).fetchall():
+                found[r["medication_id"]] = int(r["units"] or 0)
+            dispensable_by[group] = found
+            shelves_by[group] = _shelf_stores(db, group)
+        transit = in_transit_units(db, facilities)
+        ordered = on_order_units(db, facilities)
+        store_facility: dict[int, int | None] = {}
+        if groups != [None]:
+            store_facility = {
+                int(r["id"]): r["facility_id"]
+                for r in db.execute(
+                    "SELECT id, facility_id FROM stores WHERE pharmacy_kind IS NOT NULL"
+                ).fetchall()
+            }
         pars = [
             dict(r)
             for r in db.execute(
@@ -645,6 +703,7 @@ def reorder_report(
                 "s.pharmacy_kind AS store_kind "
                 "FROM pharmacy_par_levels p JOIN stores s ON s.id = p.store_id "
                 "WHERE p.is_active = 1 AND s.is_active = 1 AND s.pharmacy_kind IS NOT NULL"
+                + facility.column_sql("s.facility_id", facilities)
             ).fetchall()
         ]
         drugs = {
@@ -720,77 +779,95 @@ def reorder_report(
             }
         )
 
-    for did, d in drugs.items():
-        ndps = d.get("ndps_category") in stock.NDPS_CONTROLLED
-        shelf = shelves["ndps_vault" if ndps else "dispensing"]
-        sid = int(shelf["id"]) if shelf else None
-        if sid is not None and (sid, did) in par_keys:
-            continue
-        if d.get("reorder_level_units") is None:
-            if include_unset and not any(k[1] == did for k in par_keys):
-                rows.append(
-                    {
-                        "store_id": sid,
-                        "store_code": shelf["code"] if shelf else None,
-                        "store_label": (shelf["name"] if shelf else LEGACY_STORE_LABEL),
-                        "store_kind": shelf["pharmacy_kind"] if shelf else None,
-                        **drug_info(did),
-                        "basis": "none",
-                        "basis_label": NO_LEVEL_LABEL,
-                        "reorder_level_units": None,
-                        "level_label": NO_LEVEL_LABEL,
-                        "target_units": None,
-                        "stock_units": dispensable.get(did, 0),
-                        "in_transit_units": transit.get((sid, did), 0) if sid is not None else 0,
-                        "on_order_units": sum(u for (s, x), u in ordered.items() if x == did),
-                        "position_units": None,
-                        "needs_reorder": False,
-                        "suggested_units": None,
-                        "suggested_packs": None,
-                        "note": None,
-                    }
-                )
-            continue
-        level = int(d["reorder_level_units"])
-        on_shelf = dispensable.get(did, 0)
-        moving = transit.get((sid, did), 0) if sid is not None else 0
-        coming = sum(u for (s, x), u in ordered.items() if x == did)
-        position = on_shelf + moving + coming
-        triggered = position <= level
-        qty = d.get("reorder_qty_units")
-        note = None
-        if triggered and qty is None:
-            note = "Reorder quantity not set"
-        if sid is None:
-            note = (
-                "Set up the NDPS vault before ordering this drug"
-                if ndps
-                else "Set up the dispensing store before ordering"
-            )
-        rows.append(
-            {
-                "store_id": sid,
-                "store_code": shelf["code"] if shelf else None,
-                "store_label": (shelf["name"] if shelf else LEGACY_STORE_LABEL),
-                "store_kind": shelf["pharmacy_kind"] if shelf else None,
-                **drug_info(did),
-                "basis": "drug_default",
-                "basis_label": "Drug reorder level",
-                "reorder_level_units": level,
-                "level_label": f"Reorder at {level}",
-                "target_units": None,
-                "stock_units": on_shelf,
-                "in_transit_units": moving,
-                "on_order_units": coming,
-                "position_units": position,
-                "needs_reorder": bool(triggered),
-                "suggested_units": int(qty) if triggered and qty is not None else None,
-                "suggested_packs": packs_for(int(qty), did)
-                if triggered and qty is not None
-                else None,
-                "note": note,
+    for group in groups:
+        # One pass per facility's shelf (a single pass, [None], with one
+        # facility on record: the figures are exactly as before).
+        shelves = shelves_by[group]
+        dispensable = dispensable_by[group]
+        group_pars = par_keys
+        group_ordered = ordered
+        if group is not None:
+            group_pars = {k for k in par_keys if store_facility.get(k[0]) == group}
+            group_ordered = {
+                k: u
+                for k, u in ordered.items()
+                if k[0] is not None and store_facility.get(int(k[0])) == group
             }
-        )
+        for did, d in drugs.items():
+            ndps = d.get("ndps_category") in stock.NDPS_CONTROLLED
+            shelf = shelves["ndps_vault" if ndps else "dispensing"]
+            sid = int(shelf["id"]) if shelf else None
+            if sid is not None and (sid, did) in group_pars:
+                continue
+            if d.get("reorder_level_units") is None:
+                if include_unset and not any(k[1] == did for k in group_pars):
+                    rows.append(
+                        {
+                            "store_id": sid,
+                            "store_code": shelf["code"] if shelf else None,
+                            "store_label": (shelf["name"] if shelf else LEGACY_STORE_LABEL),
+                            "store_kind": shelf["pharmacy_kind"] if shelf else None,
+                            **drug_info(did),
+                            "basis": "none",
+                            "basis_label": NO_LEVEL_LABEL,
+                            "reorder_level_units": None,
+                            "level_label": NO_LEVEL_LABEL,
+                            "target_units": None,
+                            "stock_units": dispensable.get(did, 0),
+                            "in_transit_units": transit.get((sid, did), 0)
+                            if sid is not None
+                            else 0,
+                            "on_order_units": sum(
+                                u for (s, x), u in group_ordered.items() if x == did
+                            ),
+                            "position_units": None,
+                            "needs_reorder": False,
+                            "suggested_units": None,
+                            "suggested_packs": None,
+                            "note": None,
+                        }
+                    )
+                continue
+            level = int(d["reorder_level_units"])
+            on_shelf = dispensable.get(did, 0)
+            moving = transit.get((sid, did), 0) if sid is not None else 0
+            coming = sum(u for (s, x), u in group_ordered.items() if x == did)
+            position = on_shelf + moving + coming
+            triggered = position <= level
+            qty = d.get("reorder_qty_units")
+            note = None
+            if triggered and qty is None:
+                note = "Reorder quantity not set"
+            if sid is None:
+                note = (
+                    "Set up the NDPS vault before ordering this drug"
+                    if ndps
+                    else "Set up the dispensing store before ordering"
+                )
+            rows.append(
+                {
+                    "store_id": sid,
+                    "store_code": shelf["code"] if shelf else None,
+                    "store_label": (shelf["name"] if shelf else LEGACY_STORE_LABEL),
+                    "store_kind": shelf["pharmacy_kind"] if shelf else None,
+                    **drug_info(did),
+                    "basis": "drug_default",
+                    "basis_label": "Drug reorder level",
+                    "reorder_level_units": level,
+                    "level_label": f"Reorder at {level}",
+                    "target_units": None,
+                    "stock_units": on_shelf,
+                    "in_transit_units": moving,
+                    "on_order_units": coming,
+                    "position_units": position,
+                    "needs_reorder": bool(triggered),
+                    "suggested_units": int(qty) if triggered and qty is not None else None,
+                    "suggested_packs": packs_for(int(qty), did)
+                    if triggered and qty is not None
+                    else None,
+                    "note": note,
+                }
+            )
 
     if store_id is not None:
         rows = [r for r in rows if r["store_id"] == int(store_id)]
@@ -824,18 +901,30 @@ def _clamp_days(days: int | None) -> int:
 
 
 def near_expiry(
-    conn=None, *, days: int | None = None, store_id: int | None = None, today: str | None = None
+    conn: Any = None,
+    *,
+    days: int | None = None,
+    store_id: int | None = None,
+    today: str | None = None,
+    facilities: Any = None,
 ) -> dict:
     """Available lots holding units that expire within `days` (default
     ORB_PHARMACY_NEAR_EXPIRY_DAYS), soonest first, valued at cost and at MRP,
     and the available lots already past expiry or undated that are still on a
     shelf. A lot with no units left is not listed. Returns {"today", "days",
-    "cutoff", "lots", "expired", "totals"}."""
+    "cutoff", "lots", "expired", "totals"}. `facilities` keeps the lots at
+    those facilities only."""
     window = _clamp_days(days)
     today = today or stock.site_today()
     cutoff = (date.fromisoformat(today) + timedelta(days=window)).isoformat()
     listing = list_lots(
-        conn, store_id=store_id, today=today, near_days=window, available_by=cutoff, limit=5000
+        conn,
+        store_id=store_id,
+        today=today,
+        near_days=window,
+        available_by=cutoff,
+        limit=5000,
+        facilities=facilities,
     )
     soon = [
         lot
@@ -881,26 +970,30 @@ def near_expiry(
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-def overview(conn=None) -> dict:
-    """The numbers the Stock screen leads with."""
+def overview(conn: Any = None, *, facilities: Any = None) -> dict:
+    """The numbers the Stock screen leads with (the caller's facilities'
+    only, with `facilities`)."""
     import config
 
     today = stock.site_today()
     with _reading(conn) as db:
-        summary = stock_by_store(db, today=today, limit=5000)
-        reorder = reorder_report(db, include_unset=True, today=today)
-        expiry = near_expiry(db, days=int(config.PHARMACY_NEAR_EXPIRY_DAYS), today=today)
+        summary = stock_by_store(db, today=today, limit=5000, facilities=facilities)
+        reorder = reorder_report(db, include_unset=True, today=today, facilities=facilities)
+        expiry = near_expiry(
+            db, days=int(config.PHARMACY_NEAR_EXPIRY_DAYS), today=today, facilities=facilities
+        )
         po_counts = {
             r["status"]: int(r["n"])
             for r in db.execute(
-                "SELECT status, COUNT(*) AS n FROM purchase_orders WHERE domain = 'pharmacy' "
+                "SELECT status, COUNT(*) AS n FROM purchase_orders WHERE domain = 'pharmacy'"
+                f"{facility.column_sql('facility_id', facilities)} "
                 "GROUP BY status"
             ).fetchall()
         }
         legacy = int(
             db.execute(
                 f"SELECT COUNT(*) FROM helix_inventory_lots l WHERE l.quantity > 0 AND "
-                f"{stock.awaiting_adoption_sql('l')}"
+                f"{stock.awaiting_adoption_sql('l')}{facility.lot_sql('l', facilities)}"
             ).fetchone()[0]
         )
     rows = reorder["rows"]
@@ -925,8 +1018,23 @@ def overview(conn=None) -> dict:
     }
 
 
-def reconcile_report(conn=None) -> dict:
+def reconcile_report(conn: Any = None, *, facilities: Any = None) -> dict:
     """pharmacy_stock_service.reconcile, read-only: does every lot's quantity
-    equal the sum of its ledger?"""
+    equal the sum of its ledger? With `facilities`, the lots stamped at those
+    facilities or held in their stores (so a lot whose two disagree is still
+    reported to the facility that holds it); the drug-master check always
+    covers the whole master."""
     with _reading(conn) as db:
-        return stock.reconcile(db)
+        if facilities is None:
+            return stock.reconcile(db)
+        lot_ids: list[str] = []
+        if facilities:
+            marks = facility.ids_sql(facilities)
+            lot_ids = [
+                r[0]
+                for r in db.execute(
+                    f"SELECT l.id FROM helix_inventory_lots l WHERE l.facility_id IN ({marks}) "
+                    f"OR l.store_id IN (SELECT s.id FROM stores s WHERE s.facility_id IN ({marks}))"
+                ).fetchall()
+            ]
+        return stock.reconcile(db, lot_ids=lot_ids)

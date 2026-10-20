@@ -6,6 +6,7 @@ import os
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import bcrypt
 import jwt
@@ -388,6 +389,7 @@ def create_token(
     device_id: str | None = None,
     auth_method: str | None = None,
     expires_in_minutes: int | None = None,
+    facility_id: int | None = None,
 ) -> str:
     # Include a unique jti so tokens are individually identifiable, plus the
     # user's token_version so all outstanding sessions can be revoked at once by
@@ -423,6 +425,12 @@ def create_token(
         # the audit trail can tell a PIN unlock from a full password sign-in.
         payload["did"] = device_id
         payload["amr"] = auth_method or "pin"
+    if facility_id is not None:
+        # `fac` (multisite-19): the facility a VISITING session works at,
+        # minted only by POST /api/auth/facility and by /refresh of such a
+        # session. authenticate_session_token checks it on every request. A
+        # token without it is a home session, as every earlier token was.
+        payload["fac"] = int(facility_id)
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
@@ -439,7 +447,31 @@ def decode_token(token: str) -> dict:
         raise HTTPException(status_code=401, detail="Invalid token") from None
 
 
-def _load_session_context(user_id: str, device_id: str | None):
+def _load_session_context(user_id: str, device_id: str | None) -> tuple[Any, Any, Any]:
+    """(users row, enrolled-device row, patient portal verdict): the snapshot
+    _load_session_snapshot reads, for a session with no visiting claim."""
+    row, device, portal, _visiting = _load_session_snapshot(user_id, device_id, None)
+    return row, device, portal
+
+
+def _visiting_verdict(db: Any, row: Any, facility_id: int) -> dict[str, Any]:
+    """{access, problem} for a visiting claim (multisite-19), judged on the
+    snapshot's own connection: the live visiting row at that facility (or
+    None) and facility_service.visiting_access_problem's code (None when the
+    session may work there). A read that fails is a problem: fail closed."""
+    from services import facility_service
+
+    try:
+        access = facility_service.visiting_access_on(db, row["id"], facility_id)
+        problem = facility_service.visiting_access_problem(row, access, facility_id, db=db)
+    except Exception:
+        return {"access": None, "problem": "unreadable"}
+    return {"access": access, "problem": problem}
+
+
+def _load_session_snapshot(
+    user_id: str, device_id: str | None, facility_id: int | None
+) -> tuple[Any, Any, Any, dict[str, Any] | None]:
     """Blocking read of the authoritative users row, plus the enrolled-device row
     when the session is bound to a tablet. Always call via run_db().
 
@@ -461,6 +493,11 @@ def _load_session_context(user_id: str, device_id: str | None):
     A patient login also gets its portal verdict here, in the same session
     (services/patient_portal_access, ruling R029: Bridge is for the admission
     only). Staff sessions pay nothing for it.
+
+    A visiting session (`facility_id`, the token's 'fac' claim, multisite-19)
+    also gets its access row's verdict here, in the same session, so a revoke
+    and the row's checks are judged against the same picture as the users row
+    (_visiting_verdict). A home session (None) reads nothing more.
     """
     with db_session() as db:
         row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -480,7 +517,33 @@ def _load_session_context(user_id: str, device_id: str | None):
             from services.patient_portal_access import portal_access
 
             portal = portal_access(db, row["id"])
-        return row, device, portal
+        visiting = None
+        if facility_id is not None and row is not None:
+            visiting = _visiting_verdict(db, row, facility_id)
+        return row, device, portal, visiting
+
+
+def _visiting_claim(payload: dict) -> int | None:
+    """The token's 'fac' claim (multisite-19): None for a home session, else
+    the facility id. Anything but a whole number from 1 up is a bad token."""
+    if "fac" not in payload:
+        return None
+    value = payload["fac"]
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+    return value
+
+
+def _visiting_session(user: dict, device_id: Any, visiting: dict[str, Any] | None) -> dict:
+    """The session's user dict for a valid visiting claim, with the access
+    row's department overlaid (facility_service.visiting_session_user). Any
+    doubt ends the session: 401, so the app's re-sign-in path takes over. A
+    shared tablet's PIN session never carries the claim."""
+    from services import facility_service
+
+    if device_id or not visiting or visiting["problem"] is not None or not visiting["access"]:
+        raise HTTPException(status_code=401, detail=facility_service.VISITING_ENDED_MESSAGE)
+    return facility_service.visiting_session_user(user, visiting["access"])
 
 
 def authenticate_session_token(token: str) -> dict:
@@ -490,7 +553,8 @@ def authenticate_session_token(token: str) -> dict:
     if not user_id or user_id == "discharge_access":
         raise HTTPException(status_code=401, detail="Invalid token payload")
     device_id = payload.get("did")
-    row, device_row, portal = _load_session_context(user_id, device_id)
+    facility_claim = _visiting_claim(payload)
+    row, device_row, portal, visiting = _load_session_snapshot(user_id, device_id, facility_claim)
     if not row:
         raise HTTPException(status_code=401, detail="User not found")
 
@@ -540,6 +604,14 @@ def authenticate_session_token(token: str) -> dict:
         matches = False
     if not matches:
         raise HTTPException(status_code=401, detail="Session revoked; please log in again")
+
+    # A visiting session (claim 'fac', multisite-19, ruling MS-R7 (a)) works
+    # at another facility of the group through a live visiting row, checked
+    # here on every request: the row's department stands in for the account's
+    # own, so every scope helper answers for that facility. A row revoked, a
+    # department moved, the switch turned off: the next request is a 401.
+    if facility_claim is not None:
+        user = _visiting_session(user, device_id, visiting)
 
     # A patient's portal closes at the end of their discharge day (ruling R029).
     # 401, not 403: the session is over, so the app's session-expiry path takes

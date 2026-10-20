@@ -114,7 +114,7 @@ Every account: clinicians, admins, pharmacists, and patient portal logins. Consu
 | `role` | TEXT NOT NULL, CHECK in (`doctor`,`nurse`,`admin`,`patient`,`pharmacist`) | Drives RBAC (*role-based access control*, permissions granted by role) |
 | `department` | TEXT | e.g. `Cardiology` |
 | `registration_number` | TEXT | Medical council registration |
-| `password_hash` | TEXT NOT NULL | Seeded as unsalted SHA-256; auth upgrades to bcrypt on first login (`server/routes/auth_routes.py:562-572`) |
+| `password_hash` | TEXT NOT NULL | Seeded as unsalted SHA-256; auth upgrades to bcrypt on first login (`server/routes/auth_routes.py:567-577`) |
 | `pin_hash` | TEXT | Per-user PIN hash for agentic co-sign. **The universal default is gone (schema v5).** Boot used to seed `sha256("1234")` for every clinician without a PIN, one well-known 4-digit code as the sole human gate on medication dispatch. `init_db` now *revokes* that hash instead, once, ledger-gated on `schema_version >= 5` (`server/database.py:1498-1520`). A NULL `pin_hash` means co-sign is unavailable for that user, fail closed. |
 | `created_at` | TIMESTAMP default now | n/a |
 | `totp_secret`, `totp_enabled` | TEXT / INTEGER (migration, `server/database.py:1838-1840`) | MFA, TOTP is the 6-digit rotating code from an authenticator app |
@@ -685,7 +685,7 @@ certifying a schema-v4 backup. See `stale-backups/README.md`.
 
 ### h: `server/scripts/seed_clinical_data.py:18`
 **Signature:** `(pw: str) → str` (sha256 hexdigest)
-**Does:** Hashes demo passwords. Auth treats non-`$2` hashes as legacy and transparently upgrades to bcrypt on first successful login (`server/routes/auth_routes.py:187-191`, guide 03-auth-rbac).
+**Does:** Hashes demo passwords. Auth treats non-`$2` hashes as legacy and transparently upgrades to bcrypt on first successful login (`server/routes/auth_routes.py:192-196`, guide 03-auth-rbac).
 **Gotchas:** Unsalted SHA-256, acceptable only because these are fixed demo credentials.
 
 ### USERS: `server/scripts/seed_clinical_data.py:20`

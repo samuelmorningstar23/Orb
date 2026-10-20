@@ -61,7 +61,7 @@ Also referenced (owned elsewhere, contracts described here): `src/print.css` (gu
 
 ### Flow A: Admission (client → server, one transaction)
 
-1. A clinician clicks the "Admit Patient" CTA in `ClinicianShell` (`src/pages/ClinicianShell.tsx:401`, `id="btn-admit-patient"`), which sets `isAdmittingPatient` and mounts `AdmitPatientModal` (`ClinicianShell.tsx:646`, imported at `:6`).
+1. A clinician clicks the "Admit Patient" CTA in `ClinicianShell` (`src/pages/ClinicianShell.tsx:634`, `id="btn-admit-patient"`), which sets `isAdmittingPatient` and mounts `AdmitPatientModal` (`ClinicianShell.tsx:897`, imported at `:12`).
 2. The clinician fills a 7-tab wizard (Identity → Admission → Clinical → History → Vitals → Notes → Review) and confirms. One `admitPatient(payload)` call fires `POST /api/admissions/admit`.
 3. `process_admission` (`server/routes/admission_routes.py:59`) RBAC-gates on `patient.write`, then calls `admit_patient(data, user)`.
 4. `admit_patient` opens **one `db_session()` transaction** (`admission_service.py:33`) and writes, in order: the patient's Bridge login user, the `patients` identity row, the `admissions` event row, the `patient_profiles` longitudinal row, optional initial `vitals` + a seeded `risk_scores` row, a Relay `case_room` channel + system message, and a `sage_room_memory` row. Either all succeed or all roll back, a patient is never half-admitted.
@@ -329,7 +329,7 @@ This module is the **security boundary** for patient self-service. It never trus
 **Why it exists:** Admission captures a lot of structured data; tabs + a live summary keep it navigable, and surfacing the one-time credential exactly once (never retrievable) is the only moment the clinician can hand the patient their portal login.
 **On screen:** the modal that opens from "Admit Patient" in the clinician shell. The seven tabs are Identity, Admission, Clinical, History, Vitals, Notes, Review. The Vitals tab carries a line of copy (`:1027`) telling the clinician that entering initial vitals immediately computes risk scores and puts the patient on the Vigil board, that is the visible link between this modal and guide 07.
 **Data in/out:** Props `{onClose, onSuccess}`. Emits the `admitPatient` payload; consumes `{patient_login_id, temporary_password, …}`.
-**Talks to:** `admitPatient` (`src/api/client.ts:712`), `useAuth` (`src/App.tsx`), `useFocusTrap`. Rendered by `ClinicianShell` (`src/pages/ClinicianShell.tsx:646`, imported at `:6`), whose `onSuccess` does `window.location.reload()` to refresh all panels.
+**Talks to:** `admitPatient` (`src/api/client.ts:712`), `useAuth` (`src/App.tsx`), `useFocusTrap`. Rendered by `ClinicianShell` (`src/pages/ClinicianShell.tsx:897`, imported at `:12`), whose `onSuccess` does `window.location.reload()` to refresh all panels.
 **Change guide:** *To capture DOB at admission* (fixing discharge access), add a `date_of_birth: ''` field to `formData` (`:71`), an `<input type="date">` in the Identity tab, include it in the payload built at `:158`, and add it server-side (see `admit_patient` change guide).
 **Note, the `ChipInput` remount footgun described in earlier editions of this chapter is fixed.** `ChipInput` is now declared at **module scope** (`:25`), not inside `AdmitPatientModal`, so it keeps its React identity across renders and a chip input no longer loses focus while you type. The comment at `:15` records why. If you refactor it back inside the component, the focus bug returns.
 **Gotchas:** `age`/`triage_severity` use `parseInt(...) || undefined` (`:158-159`), so a legitimate `0` becomes `undefined`, harmless for age, but be aware. The vitals object is only sent if HR/BP-sys/SpO2 is present (`:440`); temperature-only vitals are dropped.
@@ -361,7 +361,7 @@ Scoped, BEM-style styling for the modal. The backdrop uses a 16px `backdrop-filt
 5. Else, if verified but the patient payload is empty, show "Record Unavailable" (`:85-96`); otherwise render the DOB verification form, disabled while loading or locked (`:98-139`).
 **Why it exists:** It is the entire patient-facing surface, deliberately a standalone route with no app shell and its own light theme, because the person using it is a patient on their phone, not a clinician.
 **Data in/out:** In: URL token + typed DOB. Out: rendered summary.
-**Talks to:** `verifyDischargeAccess`, `getVerifiedDischargeSummary` (`client.ts`), `DischargePrintView`. Routed at `AppRoot.tsx:184` (`/discharge/:token`) with **no auth guard**.
+**Talks to:** `verifyDischargeAccess`, `getVerifiedDischargeSummary` (`client.ts`), `DischargePrintView`. Routed at `AppRoot.tsx:238` (`/discharge/:token`) with **no auth guard**.
 **Gotchas:** The `invalid_dob` branch renders `detail.attempts_remaining` (`:38`), but the server deliberately stopped returning that field (`discharge_access_service.py:164-166`), so the message reads "You have undefined attempts remaining" (see Discrepancies). `verifyDischargeAccess` throws the *parsed body* (`{detail: {...}}`) on non-OK, which is why the handler reads `err?.detail`.
 
 ### DischargeAccess.css: `src/pages/DischargeAccess.css:1`

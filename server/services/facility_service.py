@@ -39,6 +39,9 @@ This module answers the questions the rest of Orb asks about that state:
     facilities= argument of the scope helpers are built on it.
   * user_facility: the facility an account works at, for UserOut and
     /api/auth/me.
+  * visiting access (multisite-19, W13-E): a doctor's live 'visiting' row
+    lets one session work at another facility, checked on every request
+    (visiting_access_problem, visiting_session_user, switch_options_on).
 
 The identity editor arrives in multisite-2.
 """
@@ -667,3 +670,225 @@ def user_facility(user, *, db=None) -> dict | None:
     department the master does not list, or a patient login with no record).
     BLOCKING on a cache miss."""
     return facility_identity(user_facility_id(user, db=db), db=db)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Visiting access: one account, one facility per session (multisite-19)
+# ═════════════════════════════════════════════════════════════════════════════
+# Ruling MS-R7 (a), 3 October 2026: a consultant who works at two facilities
+# of the group keeps ONE account, and each session works at ONE facility at a
+# time; the switch is audited. Separate accounts stay the option for the first
+# go-live. Built behind ORB_MULTI_SITE, and it does nothing until a live
+# 'visiting' user_facilities row exists (no screen writes one yet).
+#
+#   * A visiting row names a facility and the department the consultant works
+#     in there. That department must be listed in the departments master at
+#     that same facility (MS-R4 (a): names are unique across the group).
+#   * POST /api/auth/facility moves a session there. The new session token
+#     carries the claim 'fac' (the facility id). A token without it is a home
+#     session, exactly as every token minted before this change.
+#   * auth.authenticate_session_token checks the claim on EVERY request, in
+#     the same database session as the users row, with an uncached read of the
+#     row (visiting_access_problem): anything short of a live, valid row is a
+#     401, so a revoked row ends the session at its next request, socket
+#     deliveries included.
+#   * While the claim holds, the session's user dict carries the row's
+#     department in place of the account's own (visiting_session_user), so
+#     permissions.department_scope, facility_scope_for and every scope helper
+#     answer for the visiting facility without being edited. The account's own
+#     department rides along under HOME_DEPARTMENT_KEY, for audit only.
+#   * Strict defaults: doctors only (VISITING_ROLES), never on a shared ward
+#     tablet's PIN session, never while ORB_MULTI_SITE is off or one facility
+#     is on record, never at the account's own facility. Any of these ends a
+#     visiting session at its next request.
+#
+# Lanes that read an account's department from the users table by its id,
+# rather than from the session's user dict (relay_service, the facility_lanes
+# and facility_stamp account helpers, audit_facility.actor_facility and a few
+# others), still answer for the account's own department in a visiting
+# session. Each of them fails closed for the visiting facility.
+
+#: Roles that may hold a visiting session. MS-R7 names visiting consultants;
+#: the builder's strict default is doctors only.
+VISITING_ROLES = frozenset({"doctor"})
+
+#: Keys a visiting session adds to its user dict (visiting_session_user).
+SESSION_FACILITY_KEY = "session_facility_id"
+HOME_DEPARTMENT_KEY = "home_department"
+VISITING_ACCESS_KEY = "visiting_access_id"
+
+#: What a session hears when its visiting access no longer holds.
+VISITING_ENDED_MESSAGE = "Your visiting access has ended. Sign in again."
+
+_UNSET: Any = object()
+
+_VISITING_ROWS_SQL = (
+    "SELECT uf.id AS id, uf.facility_id AS facility_id, "
+    "TRIM(uf.department) AS department, f.is_active AS facility_active, "
+    "d.facility_id AS department_facility_id, d.is_active AS department_active "
+    "FROM user_facilities uf "
+    "LEFT JOIN facilities f ON f.id = uf.facility_id "
+    "LEFT JOIN departments d ON d.name = TRIM(uf.department) COLLATE NOCASE "
+    "WHERE uf.user_id = ? AND uf.kind = 'visiting' AND uf.revoked_at IS NULL"
+)
+
+
+def visiting_switch_on() -> bool:
+    """Is ORB_MULTI_SITE on right now? A visiting session needs it: the switch
+    gates growth, so turning it off ends every visiting session at its next
+    request, while isolation keeps following the data. Read at call time."""
+    import config
+
+    try:
+        return bool(config.feature_enabled("multi_site"))
+    except Exception:
+        return False
+
+
+def visiting_rows_on(db: Any, user_id: Any, facility_id: int | None = None) -> list[dict]:
+    """The account's live visiting rows, read on the caller's connection, each
+    {id, facility_id, department, facility_active, department_facility_id,
+    department_active}. Never cached: a revoke must hold at the next request."""
+    if user_id is None or not _table_exists(db, "user_facilities"):
+        return []
+    sql = _VISITING_ROWS_SQL
+    params: tuple = (str(user_id),)
+    if facility_id is not None:
+        sql += " AND uf.facility_id = ?"
+        params = (*params, int(facility_id))
+    rows = db.execute(sql + " ORDER BY uf.facility_id, uf.id", params).fetchall()
+    return [_row_dict(r) for r in rows]
+
+
+def visiting_access_on(db: Any, user_id: Any, facility_id: int) -> dict | None:
+    """The account's live visiting row at one facility, or None. The partial
+    unique index on user_facilities allows at most one."""
+    rows = visiting_rows_on(db, user_id, facility_id)
+    return rows[0] if rows else None
+
+
+def visiting_access_problem(
+    account: Any,
+    access: dict | None,
+    facility_id: int,
+    *,
+    db: Any = None,
+    home_facility_id: Any = _UNSET,
+) -> str | None:
+    """None when `access` (a live visiting row) lets a session of `account`
+    (its users row, never a session dict) work at `facility_id`; otherwise
+    why not, as a short code:
+
+      switch_off             ORB_MULTI_SITE is off
+      single_facility        one facility on record
+      role                   not a doctor (VISITING_ROLES), or a system account
+      inactive               the account is deactivated
+      no_access              no live visiting row at that facility
+      facility_inactive      the facility is closed, or not on record
+      department_not_listed  the row's department is not in the master at
+                             that facility
+      department_inactive    the master marks the department inactive
+      home_facility          the account's own facility is that facility
+    """
+    if not visiting_switch_on():
+        return "switch_off"
+    if not multi_facility_data(db=db):
+        return "single_facility"
+    uid = _field(account, "id")
+    if _field(account, "role") not in VISITING_ROLES or uid is None or _service_account(uid):
+        return "role"
+    active = _field(account, "is_active")
+    if active is not None and not active:
+        return "inactive"
+    if access is None or int(access["facility_id"]) != int(facility_id):
+        return "no_access"
+    if not access.get("facility_active"):
+        return "facility_inactive"
+    dept_facility = access.get("department_facility_id")
+    if not access.get("department") or dept_facility is None:
+        return "department_not_listed"
+    if int(dept_facility) != int(facility_id):
+        return "department_not_listed"
+    if not access.get("department_active"):
+        return "department_inactive"
+    home = user_facility_id(account, db=db) if home_facility_id is _UNSET else home_facility_id
+    if home is not None and int(home) == int(facility_id):
+        return "home_facility"
+    return None
+
+
+def visiting_session_user(user: dict, access: dict) -> dict:
+    """The session's user dict while a visiting claim holds: the row's
+    department in place of the account's own, so department_scope and the
+    facility scope answer for the visiting facility; the account's own
+    department under HOME_DEPARTMENT_KEY; the facility and row ids."""
+    overlaid = dict(user)
+    overlaid[HOME_DEPARTMENT_KEY] = user.get("department")
+    overlaid["department"] = access["department"]
+    overlaid[SESSION_FACILITY_KEY] = int(access["facility_id"])
+    overlaid[VISITING_ACCESS_KEY] = int(access["id"])
+    return overlaid
+
+
+def session_facility_id(user: Any) -> int | None:
+    """The facility a visiting session works at, or None for a home session."""
+    value = _field(user, SESSION_FACILITY_KEY)
+    return None if value is None else int(value)
+
+
+def session_audit_fields(user: Any) -> dict:
+    """Audit metadata naming a visiting session's facility, access row and the
+    account's own department. {} for a home session, so every row a home
+    session writes stays exactly as it was."""
+    fid = session_facility_id(user)
+    if fid is None:
+        return {}
+    return {
+        SESSION_FACILITY_KEY: fid,
+        VISITING_ACCESS_KEY: _field(user, VISITING_ACCESS_KEY),
+        HOME_DEPARTMENT_KEY: _field(user, HOME_DEPARTMENT_KEY),
+    }
+
+
+def switch_options_on(db: Any, account: Any) -> dict:
+    """Where a session of `account` (its users row) may work, read on the
+    caller's connection: {home_facility_id (None for a department the master
+    does not list), home_department, visiting: [live rows that pass
+    visiting_access_problem]}. The visiting list is empty unless the switch is
+    on, more than one facility is on record and the account is a doctor."""
+    home = user_facility_id(account, db=db)
+    visiting: list[dict] = []
+    if (
+        visiting_switch_on()
+        and multi_facility_data(db=db)
+        and _field(account, "role") in VISITING_ROLES
+    ):
+        for access in visiting_rows_on(db, _field(account, "id")):
+            fid = int(access["facility_id"])
+            if visiting_access_problem(account, access, fid, db=db, home_facility_id=home) is None:
+                visiting.append(access)
+    return {
+        "home_facility_id": home,
+        "home_department": _department_of(account),
+        "visiting": visiting,
+    }
+
+
+def reachable_facilities_for(account: Any, *, db: Any = None) -> frozenset | None:
+    """The facilities whose patients `account` (a users row: id, role,
+    department) can open in some session: its facility scope plus the
+    facility of each live, valid visiting row. For deciding whether a named
+    attending can be paged (escalation_service), never for what a session
+    sees: a session sees its own facility only (facility_scope_for). Equal to
+    facility_scope_for while the switch is off or for any role but doctor."""
+    scope = facility_scope_for(account, db=db)
+    if scope is None or _field(account, "role") not in VISITING_ROLES:
+        return scope
+    if not visiting_switch_on():
+        return scope
+    if db is None:
+        with _db_session() as own:
+            options = switch_options_on(own, account)
+    else:
+        options = switch_options_on(db, account)
+    return scope | frozenset(int(a["facility_id"]) for a in options["visiting"])

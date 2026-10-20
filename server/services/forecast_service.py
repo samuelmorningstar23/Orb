@@ -17,16 +17,18 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
-from typing import NotRequired, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 import numpy as np
 import torch
 from database import db_session
 from models.forecast_lstm import INPUT_DIM, OrbForecastLSTM, load_model
 
+from services.facility_filter import column_clause, patient_clause
 from services.hospital_time import hospital_today, local_day_bounds_utc
-from services.stay_times import count_summary_less_ends, stay_start_sql
+from services.stay_times import count_summary_less_ends, stay_start_sql, summary_less_ends
 
 logger = logging.getLogger("orb.forecast")
 
@@ -191,14 +193,16 @@ def capacity_source_for(ward: str) -> dict | None:
     return {"source": source, "words": CAPACITY_SOURCE_WORDS[source]}
 
 
-def capacity_source_summary() -> dict | None:
+def capacity_source_summary(*, wards: Iterable[str] | None = None) -> dict | None:
     """Where the hospital's bed counts came from, for a figure that adds wards
     up, or None while Beds and admissions is off. 'bed_register' when every
     ward's count is from the register, 'site_setting' when none is, else
-    'mixed', with words that say how many."""
+    'mixed', with words that say how many. `wards` limits it to those wards
+    (one facility's, multisite-12); None is every ward."""
     if not _bed_register_on():
         return None
-    by_ward = {w: WARD_CAPACITY_SOURCE.get(w, "site_setting") for w in list(WARD_CAPACITY)}
+    counted = list(WARD_CAPACITY) if wards is None else list(wards)
+    by_ward = {w: WARD_CAPACITY_SOURCE.get(w, "site_setting") for w in counted}
     register = sum(1 for s in by_ward.values() if s == "bed_register")
     total = len(by_ward)
     if total and register == total:
@@ -338,6 +342,90 @@ def refresh_ward_capacity() -> dict[str, int]:
             ", ".join(sorted(WARD_CAPACITY)),
         )
         return WARD_CAPACITY
+
+
+# ── Capacity per facility (multisite-12) ──────────────────────────────────────
+# One appliance may hold the wards of several facilities of one hospital group
+# (ruling MS-R1 (a)), and a ward belongs to one facility (ruling MS-R4 (a)).
+# WARD_CAPACITY stays the one map of the building's wards; a facility's
+# capacity is the part of it on that facility's wards. A ward's facility is the
+# one Bed setup records for it (wards.facility_id, stamped from the department's
+# master row), else the facility of the stays open on it when they all sit at
+# one facility. A ward neither places is at no facility: its beds count in the
+# group's total and in no single facility's, and the group view says how many.
+#
+# With one facility on record (every install today) every ward is facility 1
+# and nothing is read.
+
+MAIN_FACILITY_ID = 1
+
+
+def ward_facility_lookup(db: Any) -> Callable[[Any], int | None]:
+    """A function from any ward text to the facility it is at, or None when
+    neither Bed setup nor the open stays place it at exactly one facility.
+    Read once on the caller's connection, with more than one facility on
+    record only."""
+    placed: dict[str, set[int]] = {}
+    has_wards = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'wards'"
+    ).fetchone()
+    cols = {r[1] for r in db.execute("PRAGMA table_info(wards)").fetchall()} if has_wards else set()
+    if "facility_id" in cols:
+        for row in db.execute("SELECT code, name, facility_id FROM wards").fetchall():
+            if row[2] is None:
+                continue
+            for label in (row[0], row[1]):
+                key = _ward_text_key(label)
+                if key:
+                    placed.setdefault(key, set()).add(int(row[2]))
+    held: dict[str, set[int]] = {}
+    for row in db.execute(
+        "SELECT a.ward, a.facility_id FROM admissions a "
+        "WHERE a.status = 'active' AND a.ward IS NOT NULL"
+    ).fetchall():
+        key = _ward_text_key(row[0])
+        if key and row[1] is not None:
+            held.setdefault(key, set()).add(int(row[1]))
+
+    def lookup(ward: Any) -> int | None:
+        key = _ward_text_key(ward)
+        found = placed.get(key) or held.get(key) or set()
+        return next(iter(found)) if len(found) == 1 else None
+
+    return lookup
+
+
+def ward_facilities(*, db: Any = None) -> dict[str, int | None]:
+    """Each ward of WARD_CAPACITY and the facility it is at (None when it
+    cannot be told). Every ward is facility 1, with nothing read, while one
+    facility is on record."""
+    from services import facility_service
+
+    wards = list(WARD_CAPACITY)
+    if not facility_service.multi_facility_data(db=db):
+        return dict.fromkeys(wards, MAIN_FACILITY_ID)
+    if db is not None:
+        lookup = ward_facility_lookup(db)
+    else:
+        with db_session() as own:
+            lookup = ward_facility_lookup(own)
+    return {w: lookup(w) for w in wards}
+
+
+def capacity_for(facilities: frozenset[int] | None, *, db: Any = None) -> dict[str, int]:
+    """WARD_CAPACITY kept to the wards at `facilities`, in the same order;
+    every ward for None (no facility limit). A ward at no facility is in no
+    facility's capacity."""
+    if facilities is None:
+        return dict(WARD_CAPACITY)
+    placed = ward_facilities(db=db)
+    return {w: cap for w, cap in list(WARD_CAPACITY.items()) if placed.get(w) in facilities}
+
+
+def _occupancy_pct(occupied: float, capacity: int) -> float:
+    """Occupied over capacity as a percentage to one place; 0.0 for a
+    facility with no ward placed at it."""
+    return round(occupied / capacity * 100, 1) if capacity else 0.0
 
 
 # Day-of-week admission multipliers (Indian hospital patterns)
@@ -606,7 +694,12 @@ def _day_label(d) -> str:
     return f"{d.strftime('%a')} {d.day} {d.strftime('%b')}"
 
 
-def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False) -> dict:
+def predict_hospital_flow(
+    days_ahead: int = 7,
+    include_current_day: bool = False,
+    *,
+    facilities: frozenset[int] | None = None,
+) -> dict:
     """
     Aggregate per-patient predictions into hospital-level flow forecasts.
 
@@ -626,18 +719,39 @@ def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False
     All day keys are HOSPITAL-LOCAL (services/hospital_time.py). They were UTC,
     which in a UTC+05:30 hospital names the wrong day until 05:30 every morning
     and never matches the date key the browser computes for itself.
+
+    `facilities` (multisite-12) keeps the forecast to those facilities: the
+    patients whose latest encounter is there (an admitted patient's is their
+    active admission), the capacity of the wards placed there (capacity_for),
+    the admission history of those wards, and today's admissions and
+    discharges of their stays. None is the whole appliance, exactly as before.
     """
     today_local = hospital_today()
-    cache_key = (days_ahead, include_current_day, today_local.strftime("%Y-%m-%d"))
+    cache_key: tuple = (days_ahead, include_current_day, today_local.strftime("%Y-%m-%d"))
+    if facilities is not None:
+        cache_key = (*cache_key, tuple(sorted(int(f) for f in facilities)))
 
     # Return cached result if still fresh
     hit = _hospital_flow_cache.get(cache_key)
     if hit is not None and (time.time() - hit[0]) < HOSPITAL_FLOW_CACHE_TTL:
         return hit[1]
 
-    # Get all admitted patients
+    # Get all admitted patients (those at `facilities` when it is given)
     with db_session() as db:
-        patients = db.execute("SELECT id, ward FROM patients WHERE status = 'admitted'").fetchall()
+        if facilities is None:
+            patients = db.execute(
+                "SELECT id, ward FROM patients WHERE status = 'admitted'"
+            ).fetchall()
+            capacity = WARD_CAPACITY
+            total_capacity = TOTAL_CAPACITY
+        else:
+            fac_sql, fac_args = patient_clause(facilities)
+            patients = db.execute(
+                "SELECT p.id, p.ward FROM patients p WHERE p.status = 'admitted'" + fac_sql,
+                fac_args,
+            ).fetchall()
+            capacity = capacity_for(facilities, db=db)
+            total_capacity = sum(capacity.values())
 
         # Current occupancy by ward, keyed the SAME WAY the breakdown below reads
         # it — through `_normalize_ward`, which is the one derivation.
@@ -659,12 +773,29 @@ def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False
             ward_counts[w] = ward_counts.get(w, 0) + 1
 
         # Get admission history for Poisson rate estimation
-        history = db.execute(
-            """SELECT admission_date, COUNT(*) as cnt
-               FROM admission_history
-               WHERE admission_date >= date('now', '-30 days')
-               GROUP BY admission_date"""
-        ).fetchall()
+        history: list[Any]
+        if facilities is None:
+            history = db.execute(
+                """SELECT admission_date, COUNT(*) as cnt
+                   FROM admission_history
+                   WHERE admission_date >= date('now', '-30 days')
+                   GROUP BY admission_date"""
+            ).fetchall()
+        else:
+            # The history rows carry a ward, so a facility's rate is fitted
+            # from its own wards' admissions only.
+            lookup = ward_facility_lookup(db)
+            per_day: dict[str, int] = {}
+            for row in db.execute(
+                """SELECT admission_date, ward, COUNT(*) AS cnt
+                   FROM admission_history
+                   WHERE admission_date >= date('now', '-30 days')
+                   GROUP BY admission_date, ward"""
+            ).fetchall():
+                if lookup(row["ward"]) in facilities:
+                    day_key = str(row["admission_date"])
+                    per_day[day_key] = per_day.get(day_key, 0) + int(row["cnt"] or 0)
+            history = [{"admission_date": d, "cnt": n} for d, n in sorted(per_day.items())]
 
         # What has actually happened so far TODAY — the day-0 row reports
         # observations, never model output.
@@ -683,22 +814,26 @@ def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False
             # beds and admissions module may back-time) else when the row was
             # written (services/stay_times.py). With ORB_ADT off admitted_at is
             # always NULL, so this counts exactly what it always counted.
+            stay_sql, stay_args = column_clause("a.facility_id", facilities)
             admissions_today = db.execute(
                 "SELECT COUNT(*) AS c FROM admissions a "
                 f"WHERE datetime({stay_start_sql('a')}) >= ? "
-                f"AND datetime({stay_start_sql('a')}) < ?",
-                (start_s, end_s),
+                f"AND datetime({stay_start_sql('a')}) < ?" + stay_sql,
+                (start_s, end_s, *stay_args),
             ).fetchone()["c"]
             # discharge_summaries is the Orb-native discharge EVENT record:
             # patients.status carries no timestamp. Ends the beds and
             # admissions module recorded with no summary (a death, a LAMA, an
             # absconded closure) are discharge events too, and only
             # stay_times knows them (none exist with ORB_ADT off).
-            discharges_today = db.execute(
-                "SELECT COUNT(*) AS c FROM discharge_summaries "
-                "WHERE datetime(discharged_at) >= ? AND datetime(discharged_at) < ?",
-                (start_s, end_s),
-            ).fetchone()["c"] + count_summary_less_ends(db, since=start_s, until=end_s)
+            if facilities is None:
+                discharges_today = db.execute(
+                    "SELECT COUNT(*) AS c FROM discharge_summaries "
+                    "WHERE datetime(discharged_at) >= ? AND datetime(discharged_at) < ?",
+                    (start_s, end_s),
+                ).fetchone()["c"] + count_summary_less_ends(db, since=start_s, until=end_s)
+            else:
+                discharges_today = _discharges_at(db, start_s, end_s, facilities)
 
     n_patients = len(patients)
 
@@ -761,11 +896,11 @@ def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False
         # exactly, except where the capacity clamp below deliberately bites.
         predicted_admissions = int(round(predicted_admissions))
         running_occupancy = int(running_occupancy) - predicted_discharges + predicted_admissions
-        running_occupancy = max(0, min(running_occupancy, TOTAL_CAPACITY + 5))
+        running_occupancy = max(0, min(running_occupancy, total_capacity + 5))
 
         # Ward breakdown (proportional to current distribution)
         ward_breakdown = {}
-        for w, cap in WARD_CAPACITY.items():
+        for w, cap in capacity.items():
             current = ward_counts.get(w, 0)
             ratio = current / max(1, n_patients)
             projected = round(running_occupancy * ratio)
@@ -778,7 +913,7 @@ def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False
                 "predicted_admissions": predicted_admissions,
                 "predicted_discharges": predicted_discharges,
                 "predicted_occupancy": running_occupancy,
-                "occupancy_pct": round(running_occupancy / TOTAL_CAPACITY * 100, 1),
+                "occupancy_pct": _occupancy_pct(running_occupancy, total_capacity),
                 "ward_breakdown": ward_breakdown,
             }
         )
@@ -806,8 +941,8 @@ def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False
                 "predicted_admissions": admissions_today,
                 "predicted_discharges": discharges_today,
                 "predicted_occupancy": n_patients,
-                "occupancy_pct": round(n_patients / TOTAL_CAPACITY * 100, 1),
-                "ward_breakdown": {w: ward_counts.get(w, 0) for w in WARD_CAPACITY},
+                "occupancy_pct": _occupancy_pct(n_patients, total_capacity),
+                "ward_breakdown": {w: ward_counts.get(w, 0) for w in capacity},
             },
             *daily_forecasts,
         ]
@@ -821,8 +956,8 @@ def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False
 
     result = {
         "current_occupancy": n_patients,
-        "total_capacity": TOTAL_CAPACITY,
-        "current_occupancy_pct": round(n_patients / TOTAL_CAPACITY * 100, 1),
+        "total_capacity": total_capacity,
+        "current_occupancy_pct": _occupancy_pct(n_patients, total_capacity),
         "daily_forecasts": series,
         # Today's entries from Pulse's seasonal calendar for this hospital's
         # state: CONTEXT for the reader, never an input to any number above.
@@ -837,7 +972,7 @@ def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False
                 d["predicted_admissions"] for d in daily_forecasts
             ),
             "beds_available_in_48h": max(
-                0, TOTAL_CAPACITY - daily_forecasts[1]["predicted_occupancy"]
+                0, total_capacity - daily_forecasts[1]["predicted_occupancy"]
             )
             if len(daily_forecasts) > 1
             else 0,
@@ -845,7 +980,7 @@ def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False
     }
     # Where the bed count came from (adt-14), only while Beds and admissions
     # is on; with it off the answer is exactly what it was.
-    source = capacity_source_summary()
+    source = capacity_source_summary(wards=None if facilities is None else list(capacity))
     if source is not None:
         result["capacity_source"] = {k: source[k] for k in ("source", "words")}
 
@@ -860,14 +995,58 @@ def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False
     return result
 
 
-def get_bed_capacity_forecast() -> dict:
-    """Current + projected bed utilization by ward."""
+def _discharges_at(db: Any, start_s: str, end_s: str, facilities: frozenset[int]) -> int:
+    """Today's discharge events at `facilities`: the discharge summaries of
+    patients whose latest encounter is there, and the summary-less ends of
+    stays at those facilities (admissions.facility_id never changes)."""
+    fac_sql, fac_args = patient_clause(facilities)
+    summaries = db.execute(
+        "SELECT COUNT(*) AS c FROM discharge_summaries s JOIN patients p ON p.id = s.patient_id "
+        "WHERE datetime(s.discharged_at) >= ? AND datetime(s.discharged_at) < ?" + fac_sql,
+        (start_s, end_s, *fac_args),
+    ).fetchone()["c"]
+    ends = summary_less_ends(db, since=start_s, until=end_s)
+    if not ends:
+        return int(summaries)
+    ids = sorted({str(e["admission_id"]) for e in ends})
+    marks = ", ".join("?" for _ in ids)
+    at = {
+        str(r[0]): r[1]
+        for r in db.execute(
+            f"SELECT id, facility_id FROM admissions WHERE id IN ({marks})", ids
+        ).fetchall()
+    }
+    wanted = {int(f) for f in facilities}
+    stays = [at.get(str(e["admission_id"])) for e in ends]
+    kept = sum(1 for fid in stays if fid is not None and int(fid) in wanted)
+    return int(summaries) + kept
+
+
+def get_bed_capacity_forecast(*, facilities: frozenset[int] | None = None) -> dict:
+    """Current + projected bed utilization by ward.
+
+    `facilities` (multisite-12) keeps it to the wards placed at those
+    facilities and the patients whose latest encounter is there; None is
+    every ward, exactly as before."""
     with db_session() as db:
-        patients = db.execute("SELECT id, ward FROM patients WHERE status = 'admitted'").fetchall()
+        if facilities is None:
+            patients = db.execute(
+                "SELECT id, ward FROM patients WHERE status = 'admitted'"
+            ).fetchall()
+            capacity = WARD_CAPACITY
+            total_capacity = TOTAL_CAPACITY
+        else:
+            fac_sql, fac_args = patient_clause(facilities)
+            patients = db.execute(
+                "SELECT p.id, p.ward FROM patients p WHERE p.status = 'admitted'" + fac_sql,
+                fac_args,
+            ).fetchall()
+            capacity = capacity_for(facilities, db=db)
+            total_capacity = sum(capacity.values())
 
     # Current occupancy
     current = {}
-    for w, cap in WARD_CAPACITY.items():
+    for w, cap in capacity.items():
         count = sum(1 for p in patients if _normalize_ward(p["ward"]) == w)
         current[w] = {
             "total": cap,
@@ -887,7 +1066,7 @@ def get_bed_capacity_forecast() -> dict:
         if pred.get("predicted_los_days", 10) <= 2.0:
             discharge_count_by_ward[w] = discharge_count_by_ward.get(w, 0) + 1
 
-    for w, cap in WARD_CAPACITY.items():
+    for w, cap in capacity.items():
         curr = current[w]["occupied"]
         discharges = discharge_count_by_ward.get(w, 0)
         projected = max(0, curr - discharges)
@@ -901,7 +1080,7 @@ def get_bed_capacity_forecast() -> dict:
         "current": current,
         "projected_48h": projected_48h,
         "total": {
-            "capacity": TOTAL_CAPACITY,
+            "capacity": total_capacity,
             "occupied": sum(c["occupied"] for c in current.values()),
             "available": sum(c["available"] for c in current.values()),
         },
@@ -909,7 +1088,7 @@ def get_bed_capacity_forecast() -> dict:
     # Where each bed count came from (adt-14), only while Beds and admissions
     # is on: 'from bed register' or 'site setting' beside every ward and the
     # total. With it off the answer is exactly what it was.
-    source = capacity_source_summary()
+    source = capacity_source_summary(wards=None if facilities is None else list(capacity))
     if source is not None:
         for w, row in current.items():
             row["capacity_source"] = source["by_ward"].get(

@@ -62,6 +62,13 @@ ward store: the indent, issue and receipt routes above fill it. Its own:
 helix.receive (the ward's receipt of a patient's dispensed order) reaches none
 of these. No patient data is read or returned.
 
+PER FACILITY (multisite-8h3, ruling MS-R9 (a)). With more than one facility on
+record the ward account and the pharmacy desk alike see only the ward stores,
+indents, transfers and crash-cart checks at their own facilities
+(pharmacy_transfer_service._ward_scope_sql), another facility's id is 404 as
+another ward's is, a ward is issued only from its own facility's dispensing
+store, and the batch trace lists the carts at the caller's facilities.
+
 Errors: an unknown, another ward's or another desk's id is 404; the dispatcher
 receiving, the raiser deciding, a missing grant or a refused witness is 403 (a
 locked witness PIN is 429); a move the status
@@ -81,6 +88,7 @@ from permissions import (
     WARD_INDENT_RAISE,
     WARD_STOCK_READ,
     WARD_STOCK_RECEIVE,
+    facility_scope,
     require_any_permission,
     require_permission,
 )
@@ -89,6 +97,7 @@ from services.audit_service import AuditWriteError
 
 from routes.opt_in_gates import feature_gate
 from services import pharmacy_crash_cart_service as carts
+from services import pharmacy_facility
 from services import pharmacy_transfer_service as transfers
 
 require_pharmacy_ward_stock_feature = feature_gate("pharmacy_ward_stock")
@@ -154,6 +163,14 @@ def _ctx(request: Request) -> dict:
         "http_method": request.method,
         "ip_address": request.client.host if request.client else None,
     }
+
+
+def _facility_gate(user: dict, kind: str, doc_id: Any, request: Request, message: str) -> None:
+    """404 after an authorization 'facility_document_denied' row for a ward
+    store, indent, transfer or cart check of another facility
+    (multisite-8h3). The ward scope answers the same 404 without the row;
+    this gate records it."""
+    pharmacy_facility.gate(user, kind, doc_id, request, message=message)
 
 
 # ── Reads ─────────────────────────────────────────────────────────────────────
@@ -251,8 +268,12 @@ _RAISE_WARD_INDENT_USER_DEFAULT = Depends(_WARD_RAISE)
 @router.post("/ward/indents")
 def raise_ward_indent(
     body: IndentIn, request: Request, user: dict = _RAISE_WARD_INDENT_USER_DEFAULT
-):
-    """Ask the dispensing pharmacy for drugs on a ward store's list."""
+) -> dict:
+    """Ask the dispensing pharmacy for drugs on a ward store's list. A store
+    of another facility is 404."""
+    _facility_gate(
+        user, "store_code", body.store_code, request, f"no ward store {body.store_code!r}"
+    )
     try:
         return transfers.raise_ward_indent(
             store_code=body.store_code,
@@ -288,8 +309,10 @@ def decide_ward_indent(
     body: DecisionIn,
     request: Request,
     user: dict = _DECIDE_WARD_INDENT_USER_DEFAULT,
-):
-    """Approve (in whole or in part) or refuse a ward indent."""
+) -> dict:
+    """Approve (in whole or in part) or refuse a ward indent. An indent of
+    another facility is 404."""
+    _facility_gate(user, "indent", indent_id, request, f"no indent {indent_id}")
     try:
         return transfers.decide_ward_indent(
             indent_id,
@@ -315,7 +338,9 @@ _CANCEL_WARD_INDENT_USER_DEFAULT = Depends(_WARD_RAISE)
 @router.post("/ward/indents/{indent_id}/cancel")
 def cancel_ward_indent(
     indent_id: int, body: CancelIn, request: Request, user: dict = _CANCEL_WARD_INDENT_USER_DEFAULT
-):
+) -> dict:
+    """Withdraw an indent, with a reason; one of another facility is 404."""
+    _facility_gate(user, "indent", indent_id, request, f"no indent {indent_id}")
     try:
         return transfers.cancel_ward_indent(
             indent_id, actor=user, reason=body.reason, audit_ctx=_ctx(request)
@@ -343,9 +368,12 @@ _ISSUE_WARD_INDENT_USER_DEFAULT = Depends(_PS_WRITE)
 @router.post("/ward/indents/{indent_id}/issue")
 def issue_ward_indent(
     indent_id: int, body: IssueIn, request: Request, user: dict = _ISSUE_WARD_INDENT_USER_DEFAULT
-):
+) -> dict:
     """A transfer draft from the dispensing pharmacy with its FEFO plan.
-    Nothing moves until it is sent with POST /transfers/{id}/dispatch."""
+    Nothing moves until it is sent with POST /transfers/{id}/dispatch. An
+    indent of another facility is 404; the issue is always from the ward
+    store's own facility's dispensing pharmacy."""
+    _facility_gate(user, "indent", indent_id, request, f"no indent {indent_id}")
     try:
         return transfers.issue_ward_indent(
             indent_id,
@@ -382,9 +410,11 @@ def receive_ward_transfer(
     body: WardReceiptIn,
     request: Request,
     user: dict = _RECEIVE_WARD_TRANSFER_USER_DEFAULT,
-):
+) -> dict:
     """Receive a transfer on the ward. Never by the person who sent it. A
-    transfer that became controlled on its way is received with a witness."""
+    transfer that became controlled on its way is received with a witness.
+    A transfer of another facility is 404."""
+    _facility_gate(user, "transfer", transfer_id, request, f"no transfer {transfer_id}")
     try:
         return transfers.receive_ward_transfer(
             transfer_id,
@@ -464,13 +494,35 @@ def crash_cart_batch(
     drug_id: str = _CRASH_CART_BATCH_DRUG_ID_DEFAULT,
     batch_no: str = _CRASH_CART_BATCH_BATCH_NO_DEFAULT,
     user: dict = _CRASH_CART_BATCH_USER_DEFAULT,
-):
+) -> dict:
     """Every crash cart a batch was sent to, with what is still in the cart
-    and what left it with no patient recorded."""
+    and what left it with no patient recorded. Once more than one facility is
+    on record, the carts at the caller's facilities only (multisite-8h3), with
+    the totals counted again over those carts."""
     try:
-        return carts.batch_in_carts(drug_id, batch_no)
+        out = carts.batch_in_carts(drug_id, batch_no)
     except transfers.TransferError as exc:
         raise _fail(exc) from exc
+    return _carts_at_facilities(out, facility_scope(user))
+
+
+def _carts_at_facilities(trace: dict, facilities: frozenset[int] | None) -> dict:
+    """The batch trace kept to carts at the caller's facilities. Unchanged
+    with no facility limit."""
+    if facilities is None:
+        return trace
+    from database import db_session
+
+    with db_session() as db:
+        kept = [
+            c
+            for c in trace.get("carts", [])
+            if pharmacy_facility.in_scope(
+                pharmacy_facility.store_facility(db, c.get("store_id")), facilities
+            )
+        ]
+    totals = {k: sum(int(c.get(k) or 0) for c in kept) for k in (trace.get("totals") or {})}
+    return {**trace, "carts": kept, "totals": totals}
 
 
 class CartCountIn(BaseModel):
@@ -505,8 +557,10 @@ def record_crash_cart_check(
     body: CartCheckIn,
     request: Request,
     user: dict = _RECORD_CRASH_CART_CHECK_USER_DEFAULT,
-):
-    """A seal check, or a full check of every batch in the cart with a new seal."""
+) -> dict:
+    """A seal check, or a full check of every batch in the cart with a new seal.
+    A cart of another facility is 404."""
+    _facility_gate(user, "store_code", store_code, request, f"no ward store {store_code!r}")
     try:
         return carts.record_check(
             store_code,
@@ -541,9 +595,11 @@ def decide_crash_cart_check(
     body: CartDecisionIn,
     request: Request,
     user: dict = _DECIDE_CRASH_CART_CHECK_USER_DEFAULT,
-):
+) -> dict:
     """Confirm a check that found a difference (units found short leave the
-    cart's lots), or refuse it with a reason (count again)."""
+    cart's lots), or refuse it with a reason (count again). A check of
+    another facility's cart is 404."""
+    _facility_gate(user, "stock_count", check_id, request, f"no cart check {check_id}")
     try:
         return carts.decide_check(
             check_id, actor=user, confirm=body.confirm, reason=body.reason, audit_ctx=_ctx(request)
@@ -568,8 +624,10 @@ def request_crash_cart_top_up(
     body: CartTopUpIn,
     request: Request,
     user: dict = _REQUEST_CRASH_CART_TOP_UP_USER_DEFAULT,
-):
-    """One ward indent for what the cart's list is short of, urgent by default."""
+) -> dict:
+    """One ward indent for what the cart's list is short of, urgent by default.
+    A cart of another facility is 404."""
+    _facility_gate(user, "store_code", store_code, request, f"no ward store {store_code!r}")
     try:
         return carts.request_top_up(
             store_code,

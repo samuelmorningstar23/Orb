@@ -395,7 +395,9 @@ def _outside_patient_facility(db: Any, account: Any, patient_id: str) -> bool:
 
     if not facility_service.multi_facility_data(db=db):
         return False
-    scope = facility_service.facility_scope_for(account, db=db)
+    # A doctor with live visiting access at the patient's facility can open the
+    # chart there (multisite-19), so a named attending visiting there is paged.
+    scope = facility_service.reachable_facilities_for(account, db=db)
     denied, _ = facility_denial(db, patient_id, scope)
     return denied
 
