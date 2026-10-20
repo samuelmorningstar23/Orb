@@ -126,6 +126,39 @@ def test_an_informational_give_beside_ward_wording(query, order):
     assert detect_mutation_intent(query) is order
 
 
+@pytest.mark.parametrize("query,order", [
+    # Decided 20 October 2026: a "Plan:" or "Rx:"
+    # line that names a medicine action is an order, as it would be without the
+    # header. On a ward the plan is the day's order list, and the costs are
+    # lopsided: gated, Sage says no chart change was made or drafts a request
+    # for approval; ungated, the model can say the drug was started. A plan with
+    # no medicine action, and a plan asked as a question, stay reads.
+    ("Plan: start inj ceftriaxone 2 g iv od", True),
+    ("Plan: inj ceftriaxone 2 g iv od", True),
+    ("plan: lasix 40 iv bd", True),
+    ("plan - inj pan 40 iv od, tab doxy 100 bd", True),
+    ("Plan: stop metformin", True),
+    ("plan: switch to oral antibiotics tomorrow", True),
+    ("Plan: bed 12 lasix 40 iv stat", True),
+    ("Rx: inj monocef 1 g iv bd", True),
+    ("rx: tab dolo 650 sos", True),
+    ("orders: ns 100 ml/hr", True),
+    ("Plan: continue same", False),
+    ("plan: continue current meds", False),
+    ("Plan: review in the evening", False),
+    ("plan: discharge tomorrow", False),
+    ("plan: repeat cbc and rft", False),
+    ("Plan: ct head today", False),
+    ("rx: as before", False),
+    ("Plan: start inj ceftriaxone 2 g iv od?", False),
+    ("plan to start insulin if sugars stay high", False),
+    ("plan for her?", False),
+    ("home meds: metformin 500 bd, amlodipine 5 od", False),
+])
+def test_a_plan_line_is_read_like_the_order_under_it(query, order):
+    assert detect_mutation_intent(query) is order
+
+
 # ── Cost ──────────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("text", [

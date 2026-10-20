@@ -1082,7 +1082,10 @@ def detect_mutation_intent(query: str) -> bool:
     # line readers only: the verb-led patterns already read the preamble, and
     # pattern 4 would make every "please give ..." an order.
     plain = order_wording.without_request(q)
-    for text in dict.fromkeys((q, plain)):
+    # A plan line is read as the order under it ("Plan: inj ceftriaxone 2 g iv
+    # od"), decided 20 October 2026; see order_wording.PLAN_HEADER.
+    planned = order_wording.after_plan_header(q)
+    for text in dict.fromkeys(t for t in (q, plain, planned) if t):
         text_rest = order_wording.after_patient_reference(text)
         if (
             order_wording.line_signals(text, _is_gate_drug)

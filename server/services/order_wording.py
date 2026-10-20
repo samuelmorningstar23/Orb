@@ -1125,6 +1125,21 @@ def after_patient_reference(q: str) -> str:
     return q[m.end() :] if m else ""
 
 
+#: "Plan:", "plan -", "Rx:", "Orders:". Decided 20 October 2026: on a ward the
+#: plan is the day's order list, so a plan line that names a medicine action is
+#: read as the order under it ("Plan: inj ceftriaxone 2 g iv od"). Only a header
+#: followed by a colon or a dash: "plan to start insulin" and "the plan is ..."
+#: are prose, and a plan with no medicine action reads nothing the line readers
+#: accept ("Plan: review in the evening").
+PLAN_HEADER = re.compile(r"^(?:plan|rx|orders?)\s*(?:for\s+today\s*)?[:\-–—]\s*")
+
+
+def after_plan_header(q: str) -> str:
+    """What follows a leading plan header, or "" when there is none."""
+    m = PLAN_HEADER.match(q)
+    return q[m.end() :] if m else ""
+
+
 # ── Spelling the gate repairs before it reads anything ──
 _GLUED_VERB = re.compile(r"\b(give|start|stop|hold|add)([a-z]{4,})\b")
 

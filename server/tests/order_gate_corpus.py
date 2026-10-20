@@ -3004,8 +3004,10 @@ KNOWN_MISSES_HELDOUT4 = [
 # about the transfusion": pattern 4 reads any message opening with "start" or
 # "give" as an order. The old gate tripped all five. "OHA: glimepiride 2 mg +
 # metformin 1 g bd": a bare prescription line, an order under ruling 2. "plan:
-# switch to oral antibiotics tomorrow": a written plan; the blind authors split
-# on "Plan:" lines (set 2 labelled "Plan: start inj. Ceftriaxone ..." an order).
+# switch to oral antibiotics tomorrow": the blind authors split on "Plan:" lines
+# (set 2 labelled "Plan: start inj. Ceftriaxone ..." an order); decided on 20
+# October 2026 that a plan line naming a medicine action is an order, so this
+# trip is the decided behaviour (test_a_plan_line_is_read_like_the_order_under_it).
 KNOWN_TRIPS_HELDOUT1 = [
     'stop lasix? uo only 200',
 ]
