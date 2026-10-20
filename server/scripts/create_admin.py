@@ -53,6 +53,7 @@ Exit codes:
        a wall of output, which is how an appliance reaches a hospital with no
        administrator at all.)
 """
+
 import argparse
 import getpass
 import os
@@ -60,6 +61,7 @@ import sys
 
 # Ensure server root is in path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 
 from auth import hash_password  # noqa: E402
 from database import db_session, init_db  # noqa: E402
@@ -96,19 +98,30 @@ def resolve_facility(db, code: str | None, department: str | None) -> tuple[int 
     needs ORB_MULTI_SITE on, must exist and be open, and is refused for an
     account with a department (it works at its department's facility)."""
     import config
+
     wanted = (code or MAIN_FACILITY_CODE).strip().upper()
     if wanted == MAIN_FACILITY_CODE:
         return None, None
     if department:
-        return None, ("A home facility is only for an admin without a department. "
-                      "Leave --department out, or leave --facility at MAIN.")
+        return None, (
+            "A home facility is only for an admin without a department. "
+            "Leave --department out, or leave --facility at MAIN."
+        )
     if not config.feature_enabled("multi_site"):
-        return None, ("Multi-site is switched off (ORB_MULTI_SITE), so the first admin "
-                      "works at facility MAIN.")
-    has_table = db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' "
-                           "AND name = 'facilities'").fetchone()
-    row = db.execute("SELECT id, is_active FROM facilities WHERE code = ? COLLATE NOCASE",
-                     (wanted,)).fetchone() if has_table else None
+        return None, (
+            "Multi-site is switched off (ORB_MULTI_SITE), so the first admin "
+            "works at facility MAIN."
+        )
+    has_table = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'facilities'"
+    ).fetchone()
+    row = (
+        db.execute(
+            "SELECT id, is_active FROM facilities WHERE code = ? COLLATE NOCASE", (wanted,)
+        ).fetchone()
+        if has_table
+        else None
+    )
     if row is None:
         return None, f"There is no facility with the code {wanted}."
     if not row["is_active"]:
@@ -120,27 +133,41 @@ def _write_home_row(db, user_id: str, facility_id: int, code: str) -> None:
     """The home row and its security audit row, inside the caller's
     transaction. Fail-closed: a failed audit write raises AuditWriteError and
     the account is rolled back with it."""
-    import uuid
     import getpass as _getpass
+    import uuid
+
     from services.audit_service import log_audit_event
+
     reason = "Home facility chosen when the first admin was created at the console"
     cur = db.execute(
         "INSERT INTO user_facilities (user_id, facility_id, kind, granted_by, granted_at, reason) "
         "VALUES (?, ?, 'home', ?, CURRENT_TIMESTAMP, ?)",
-        (user_id, facility_id, "console", reason))
+        (user_id, facility_id, "console", reason),
+    )
     try:
         operator = _getpass.getuser()
     except Exception:
         operator = None
     log_audit_event(
-        correlation_id=str(uuid.uuid4()), event_category="security",
-        action_type="user_facility_assigned", outcome="success", db=db,
+        correlation_id=str(uuid.uuid4()),
+        event_category="security",
+        action_type="user_facility_assigned",
+        outcome="success",
+        db=db,
         summary_message=f"Home facility {code} set for user {user_id} at the console",
-        actor_user_id=None, actor_role="console", source_type="console",
-        target_type="user", target_id=user_id,
-        metadata={"facility_id": facility_id, "user_facility_id": cur.lastrowid,
-                  "reason": reason, "operator": operator,
-                  "script": "create_admin.py"})
+        actor_user_id=None,
+        actor_role="console",
+        source_type="console",
+        target_type="user",
+        target_id=user_id,
+        metadata={
+            "facility_id": facility_id,
+            "user_facility_id": cur.lastrowid,
+            "reason": reason,
+            "operator": operator,
+            "script": "create_admin.py",
+        },
+    )
 
 
 def enroll_mfa(user_id: str, *, account_label: str | None = None) -> bool:
@@ -153,11 +180,14 @@ def enroll_mfa(user_id: str, *, account_label: str | None = None) -> bool:
     over SSH has no screen to show a QR code on.
     """
     from config import MFA_ISSUER
+
     from services import mfa_service
 
     if not sys.stdin.isatty():
-        print("[warn] --enroll-mfa needs an interactive terminal; skipping enrolment.",
-              file=sys.stderr)
+        print(
+            "[warn] --enroll-mfa needs an interactive terminal; skipping enrolment.",
+            file=sys.stderr,
+        )
         return False
 
     with db_session() as db:
@@ -194,10 +224,14 @@ def enroll_mfa(user_id: str, *, account_label: str | None = None) -> bool:
     for attempt in range(3):
         code = input("  Code from your authenticator (blank to skip): ").strip()
         if not code:
-            print("[warn] MFA enrolment skipped. The account exists but has ONE factor.",
-                  file=sys.stderr)
-            print("       Re-run: python server/scripts/create_admin.py --id "
-                  f"{user_id} --enroll-mfa", file=sys.stderr)
+            print(
+                "[warn] MFA enrolment skipped. The account exists but has ONE factor.",
+                file=sys.stderr,
+            )
+            print(
+                f"       Re-run: python server/scripts/create_admin.py --id {user_id} --enroll-mfa",
+                file=sys.stderr,
+            )
             return False
         step = mfa_service.verify_code_step(secret, code)
         if step is not None:
@@ -213,8 +247,10 @@ def enroll_mfa(user_id: str, *, account_label: str | None = None) -> bool:
             print("       if the authenticator is lost, another admin must run")
             print("       POST /api/auth/mfa/reset/{user_id} to clear the factor.")
             return True
-        print(f"  Code did not verify ({2 - attempt} attempt(s) left). "
-              "Check the device clock is correct.")
+        print(
+            f"  Code did not verify ({2 - attempt} attempt(s) left). "
+            "Check the device clock is correct."
+        )
 
     print("[fail] MFA enrolment not confirmed; totp_enabled left OFF.", file=sys.stderr)
     return False
@@ -222,9 +258,15 @@ def enroll_mfa(user_id: str, *, account_label: str | None = None) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Create the first Orb admin account.")
-    parser.add_argument("--id", default=os.getenv("ORB_ADMIN_ID"), help="Staff ID used to sign in (e.g. ADM001)")
-    parser.add_argument("--name", default=os.getenv("ORB_ADMIN_NAME"), help="Full name shown in the UI")
-    parser.add_argument("--department", default=os.getenv("ORB_ADMIN_DEPARTMENT"), help="Optional department")
+    parser.add_argument(
+        "--id", default=os.getenv("ORB_ADMIN_ID"), help="Staff ID used to sign in (e.g. ADM001)"
+    )
+    parser.add_argument(
+        "--name", default=os.getenv("ORB_ADMIN_NAME"), help="Full name shown in the UI"
+    )
+    parser.add_argument(
+        "--department", default=os.getenv("ORB_ADMIN_DEPARTMENT"), help="Optional department"
+    )
     parser.add_argument(
         "--facility",
         default=os.getenv("ORB_ADMIN_FACILITY") or MAIN_FACILITY_CODE,
@@ -293,8 +335,10 @@ def main() -> int:
     policy_error = password_policy_error(password, user_id=user_id, name=name)
     if policy_error:
         print(f"[fail] {policy_error}", file=sys.stderr)
-        print("       This account administers an appliance holding patient records on a",
-              file=sys.stderr)
+        print(
+            "       This account administers an appliance holding patient records on a",
+            file=sys.stderr,
+        )
         print("       hospital LAN. Pick a password worth that.", file=sys.stderr)
         return 1
 
@@ -307,6 +351,7 @@ def main() -> int:
     password_hash = hash_password(password)
 
     from services.audit_service import AuditWriteError
+
     try:
         with db_session() as db:
             # Re-check inside the transaction so two concurrent runs cannot both
@@ -325,13 +370,17 @@ def main() -> int:
         print(f"[fail] A user with id '{user_id}' already exists.", file=sys.stderr)
         return 1
     except AuditWriteError as e:
-        print(f"[fail] The audit trail could not record the home facility, so nothing "
-              f"was saved: {e}", file=sys.stderr)
+        print(
+            f"[fail] The audit trail could not record the home facility, so nothing was saved: {e}",
+            file=sys.stderr,
+        )
         return 1
     if facility_id is not None:
         print(f"[ ok ] Home facility {args.facility.strip().upper()} set for '{user_id}'.")
 
-    print(f"[ ok ] Admin account '{user_id}' created. Sign in with that ID and the password you set.")
+    print(
+        f"[ ok ] Admin account '{user_id}' created. Sign in with that ID and the password you set."
+    )
 
     if args.enroll_mfa:
         if not enroll_mfa(user_id, account_label=name):

@@ -25,6 +25,7 @@ Usage (from server/):
     .venv/bin/python scripts/restore_dev_accounts.py --check     # report only
     .venv/bin/python scripts/restore_dev_accounts.py             # re-activate
 """
+
 from __future__ import annotations
 
 import argparse
@@ -36,25 +37,40 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # The seeded demo staff. Deliberately a literal list: this script must never be
 # able to re-activate an account it was not written to re-activate.
 SEEDED_DEMO_ACCOUNTS = (
-    "ADM001", "DOC001", "DOC002", "DOC004", "DOC005", "DOC006", "DOC007",
-    "NUR001", "PHA001", "anesthetist_1", "anesthetist_2", "dr_rathore",
+    "ADM001",
+    "DOC001",
+    "DOC002",
+    "DOC004",
+    "DOC005",
+    "DOC006",
+    "DOC007",
+    "NUR001",
+    "PHA001",
+    "anesthetist_1",
+    "anesthetist_2",
+    "dr_rathore",
 )
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--check", action="store_true",
-                    help="report activation state and exit without writing")
+    ap.add_argument(
+        "--check", action="store_true", help="report activation state and exit without writing"
+    )
     args = ap.parse_args()
 
     from config import DEPLOYMENT_PROFILE
+
     if DEPLOYMENT_PROFILE == "prod" and not args.check:
-        print("REFUSING: ORB_DEPLOYMENT_PROFILE=prod. These accounts hold "
-              "default passwords; re-activating them on a prod-profile install "
-              "would undo a credential control. Use scripts/create_admin.py.")
+        print(
+            "REFUSING: ORB_DEPLOYMENT_PROFILE=prod. These accounts hold "
+            "default passwords; re-activating them on a prod-profile install "
+            "would undo a credential control. Use scripts/create_admin.py."
+        )
         return 2
 
     from database import _open_raw_connection
+
     placeholders = ",".join("?" * len(SEEDED_DEMO_ACCOUNTS))
     db = _open_raw_connection()
     try:
@@ -67,8 +83,10 @@ def main() -> int:
         if args.check:
             for uid, active in sorted(rows):
                 print(f"  {uid:<16} {'active' if active else 'INACTIVE'}")
-            print(f"\n{len(inactive)} inactive of {len(rows)} found "
-                  f"({len(SEEDED_DEMO_ACCOUNTS)} known).")
+            print(
+                f"\n{len(inactive)} inactive of {len(rows)} found "
+                f"({len(SEEDED_DEMO_ACCOUNTS)} known)."
+            )
             return 0
 
         if not inactive:
@@ -82,8 +100,10 @@ def main() -> int:
         )
         db.commit()
         print(f"Re-activated {cur.rowcount}: {', '.join(sorted(inactive))}")
-        print("\nThese accounts still hold the default password. A prod-profile "
-              "boot will deactivate them again, by design.")
+        print(
+            "\nThese accounts still hold the default password. A prod-profile "
+            "boot will deactivate them again, by design."
+        )
         return 0
     finally:
         db.close()

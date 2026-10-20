@@ -3,29 +3,28 @@
 Exposes Scribe pipeline endpoints: transcription, structuring (with optional
 async verification), note retrieval, retry, and pipeline configuration.
 """
+
 import asyncio
 import importlib.util
-import os
 import json
 import logging
-from contextlib import aclosing
+import os
 import time
 import uuid
-from typing import Optional
-from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query, Request
+from contextlib import aclosing
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+from config import SCRIBE, UPLOAD_DIR
+from database import run_db
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
-from permissions import department_scope, enforce_patient_scope, log_phi_read, require_permission
-from services.scribe_service import (
-    transcribe_audio, structure_transcript, structure_transcript_stream,
-    save_scribe_note, get_scribe_notes, build_whisper_hints,
-    verify_note, build_pipeline_meta,
-    update_scribe_note_verification, get_scribe_note_by_id,
-    update_scribe_note_content, sign_scribe_note, reject_scribe_note,
-    create_revision_from_signed, record_unverified_ack, WORKER_SCRIPT,
+from permissions import (
+    department_scope,
+    enforce_patient_scope,
+    log_phi_read,
+    require_permission,
 )
-from services.scribe_providers import StageTimer
-from services.audit_service import AuditWriteError, log_audit_event
 from services.admission_service import (
     DOOR_SCRIBE_QUICK_ADMIT,
     AdmissionInputError,
@@ -35,16 +34,33 @@ from services.admission_service import (
     attending_doctors,
     resolve_admission_department,
 )
+from services.audit_service import AuditWriteError, log_audit_event
 from services.clinical_records_service import allergy_entries
-from services.patient_name_rule import PatientNameError
-from database import run_db
-from config import UPLOAD_DIR, SCRIBE
 
 # Scribe's model routes (transcription, drafting and the second pass, and the
 # speech engine's status) answer 404 "Switched off on this computer" while the
 # models are switched off (ORB_MODELS_ENABLED, or the Orb Ward Record). Reading,
 # editing and signing a note stay open.
 from services.model_switch import require_models_on
+from services.patient_name_rule import PatientNameError
+from services.scribe_providers import StageTimer
+from services.scribe_service import (
+    WORKER_SCRIPT,
+    build_pipeline_meta,
+    build_whisper_hints,
+    create_revision_from_signed,
+    get_scribe_note_by_id,
+    get_scribe_notes,
+    record_unverified_ack,
+    reject_scribe_note,
+    save_scribe_note,
+    sign_scribe_note,
+    structure_transcript_stream,
+    transcribe_audio,
+    update_scribe_note_content,
+    update_scribe_note_verification,
+    verify_note,
+)
 
 router = APIRouter(prefix="/api/scribe", tags=["scribe"])
 logger = logging.getLogger("orb.scribe")
@@ -105,6 +121,7 @@ def _register_verification_task(note_id: int, task: asyncio.Task):
 # Background Verification Task
 # ═══════════════════════════════════════════════════
 
+
 async def _run_verification_async(
     note_id: int,
     transcript: str,
@@ -120,10 +137,10 @@ async def _run_verification_async(
     """
     correlation_id = f"scribe-verify-{note_id}"
     verify_start = time.time()
-    started_at = datetime.now(timezone.utc).isoformat()
+    started_at = datetime.now(UTC).isoformat()
 
     # Audit: verification_started
-    await run_db(          # off the loop; background task, so awaiting costs no response latency
+    await run_db(  # off the loop; background task, so awaiting costs no response latency
         log_audit_event,
         correlation_id=correlation_id,
         event_category="scribe",
@@ -142,10 +159,11 @@ async def _run_verification_async(
     )
 
     try:
-        verification = await verify_note(transcript, structured_note,
-                                         patient_id=patient_id, user_id=actor_id)
+        verification = await verify_note(
+            transcript, structured_note, patient_id=patient_id, user_id=actor_id
+        )
         elapsed = round(time.time() - verify_start, 3)
-        completed_at = datetime.now(timezone.utc).isoformat()
+        completed_at = datetime.now(UTC).isoformat()
 
         if verification is not None:
             verification["status"] = VERIFY_COMPLETE
@@ -157,7 +175,7 @@ async def _run_verification_async(
             draft_timer.timings["verify"] = elapsed
             meta = build_pipeline_meta(draft_timer)
 
-            await run_db(          # off the loop; background task, so awaiting costs no response latency
+            await run_db(  # off the loop; background task, so awaiting costs no response latency
                 update_scribe_note_verification,
                 note_id=note_id,
                 verification_json=json.dumps(verification),
@@ -165,7 +183,7 @@ async def _run_verification_async(
             )
 
             # Audit: verification_completed
-            await run_db(          # off the loop; background task, so awaiting costs no response latency
+            await run_db(  # off the loop; background task, so awaiting costs no response latency
                 log_audit_event,
                 correlation_id=correlation_id,
                 event_category="scribe",
@@ -193,16 +211,16 @@ async def _run_verification_async(
                 "status": VERIFY_FAILED,
                 "error": "Verification model returned empty or unparseable output",
                 "started_at": started_at,
-                "failed_at": datetime.now(timezone.utc).isoformat(),
+                "failed_at": datetime.now(UTC).isoformat(),
                 "elapsed_s": elapsed,
             }
-            await run_db(          # off the loop; background task, so awaiting costs no response latency
+            await run_db(  # off the loop; background task, so awaiting costs no response latency
                 update_scribe_note_verification,
                 note_id=note_id,
                 verification_json=json.dumps(failed_payload),
             )
 
-            await run_db(          # off the loop; background task, so awaiting costs no response latency
+            await run_db(  # off the loop; background task, so awaiting costs no response latency
                 log_audit_event,
                 correlation_id=correlation_id,
                 event_category="scribe",
@@ -213,28 +231,34 @@ async def _run_verification_async(
                 patient_id=patient_id,
                 target_type="scribe_note",
                 target_id=str(note_id),
-                metadata={"note_id": note_id, "elapsed_s": elapsed, "model": SCRIBE["verify"]["model"]},
+                metadata={
+                    "note_id": note_id,
+                    "elapsed_s": elapsed,
+                    "model": SCRIBE["verify"]["model"],
+                },
             )
 
     except Exception as e:
         elapsed = round(time.time() - verify_start, 3)
-        logger.exception("Scribe verification failed", extra={"event": "scribe_verification_failed"})
+        logger.exception(
+            "Scribe verification failed", extra={"event": "scribe_verification_failed"}
+        )
         failed_payload = {
             "status": VERIFY_FAILED,
             "error": "Verification could not be completed. Please retry.",
             "code": "scribe_verification_failed",
             "started_at": started_at,
-            "failed_at": datetime.now(timezone.utc).isoformat(),
+            "failed_at": datetime.now(UTC).isoformat(),
             "elapsed_s": elapsed,
         }
-        await run_db(          # off the loop; background task, so awaiting costs no response latency
+        await run_db(  # off the loop; background task, so awaiting costs no response latency
             update_scribe_note_verification,
             note_id=note_id,
             verification_json=json.dumps(failed_payload),
         )
 
         # Audit: verification_failed
-        await run_db(          # off the loop; background task, so awaiting costs no response latency
+        await run_db(  # off the loop; background task, so awaiting costs no response latency
             log_audit_event,
             correlation_id=correlation_id,
             event_category="scribe",
@@ -245,13 +269,19 @@ async def _run_verification_async(
             patient_id=patient_id,
             target_type="scribe_note",
             target_id=str(note_id),
-            metadata={"note_id": note_id, "elapsed_s": elapsed, "error_type": type(e).__name__, "model": SCRIBE["verify"]["model"]},
+            metadata={
+                "note_id": note_id,
+                "elapsed_s": elapsed,
+                "error_type": type(e).__name__,
+                "model": SCRIBE["verify"]["model"],
+            },
         )
 
 
 # ═══════════════════════════════════════════════════
 # Startup Recovery: Reconcile Orphaned Pending Notes
 # ═══════════════════════════════════════════════════
+
 
 def reconcile_stale_pending_verifications():
     """Mark notes stuck in 'pending' as 'failed' on server startup.
@@ -264,6 +294,7 @@ def reconcile_stale_pending_verifications():
     Called once during app lifespan startup (non-async, synchronous DB).
     """
     from database import get_db
+
     try:
         db = get_db()
         # SQLite JSON: look for verification_json containing "pending"
@@ -278,7 +309,7 @@ def reconcile_stale_pending_verifications():
             return 0
 
         reconciled = 0
-        threshold = datetime.now(timezone.utc) - timedelta(minutes=STALE_PENDING_THRESHOLD_MINUTES)
+        threshold = datetime.now(UTC) - timedelta(minutes=STALE_PENDING_THRESHOLD_MINUTES)
 
         for row in rows:
             try:
@@ -296,18 +327,20 @@ def reconcile_stale_pending_verifications():
                     # SQLite CURRENT_TIMESTAMP is UTC without timezone info
                     created = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
                     if created.tzinfo is None:
-                        created = created.replace(tzinfo=timezone.utc)
+                        created = created.replace(tzinfo=UTC)
                     if created > threshold:
                         # Too recent — might still be in flight from a previous process
                         continue
                 except (ValueError, TypeError):
                     pass  # Can't parse timestamp — mark as stale
 
-            failed_payload = json.dumps({
-                "status": VERIFY_FAILED,
-                "error": "Server restarted before verification completed (orphaned pending)",
-                "failed_at": datetime.now(timezone.utc).isoformat(),
-            })
+            failed_payload = json.dumps(
+                {
+                    "status": VERIFY_FAILED,
+                    "error": "Server restarted before verification completed (orphaned pending)",
+                    "failed_at": datetime.now(UTC).isoformat(),
+                }
+            )
             update_scribe_note_verification(note_id=row["id"], verification_json=failed_payload)
             reconciled += 1
 
@@ -334,14 +367,23 @@ def reconcile_stale_pending_verifications():
 # Transcription Endpoints
 # ═══════════════════════════════════════════════════
 
+
+_TRANSCRIBE_AUDIO_DEFAULT = File(...)
+_TRANSCRIBE_HINTS_DEFAULT = Form(default="")
+_TRANSCRIBE_SKIP_CORRECTION_DEFAULT = Form(default="")
+_TRANSCRIBE_PATIENT_ID_DEFAULT = Form(default="")
+_TRANSCRIBE_LANGUAGE_DEFAULT = Form(default="")
+_TRANSCRIBE_USER_DEFAULT = Depends(require_permission("scribe.create_draft"))
+
+
 @router.post("/transcribe", dependencies=[Depends(require_models_on)])
 async def transcribe(
-    audio: UploadFile = File(...),
-    hints: str = Form(default=""),
-    skip_correction: str = Form(default=""),
-    patient_id: str = Form(default=""),
-    language: str = Form(default=""),
-    user: dict = Depends(require_permission("scribe.create_draft")),
+    audio: UploadFile = _TRANSCRIBE_AUDIO_DEFAULT,
+    hints: str = _TRANSCRIBE_HINTS_DEFAULT,
+    skip_correction: str = _TRANSCRIBE_SKIP_CORRECTION_DEFAULT,
+    patient_id: str = _TRANSCRIBE_PATIENT_ID_DEFAULT,
+    language: str = _TRANSCRIBE_LANGUAGE_DEFAULT,
+    user: dict = _TRANSCRIBE_USER_DEFAULT,
 ):
     """Upload audio file and get transcription. `language` selects the Whisper
     transcription language (e.g. 'en', 'hi', 'auto'); blank uses the configured default."""
@@ -384,39 +426,51 @@ async def transcribe(
             detail=f"Audio exceeds maximum size of {MAX_AUDIO_BYTES // (1024 * 1024)} MB.",
         )
     # Encrypt the persisted PHI audio at rest (passthrough if encryption is off).
-    from services.crypto_service import write_encrypted, materialize_plaintext
+    from services.crypto_service import materialize_plaintext, write_encrypted
+
     write_encrypted(file_path, content)
 
     try:
         should_correct = skip_correction != "true"
+
         # Offload the blocking ASR call off the event loop so one transcription
         # doesn't stall every other request on the server. Whisper reads a path,
         # so decrypt to a temp file for the duration of the ASR call.
         def _run_asr():
             with materialize_plaintext(file_path) as read_path:
                 return transcribe_audio(
-                    read_path, apply_correction=should_correct,
-                    hints=hints, language=(language or None),
+                    read_path,
+                    apply_correction=should_correct,
+                    hints=hints,
+                    language=(language or None),
                 )
+
         transcript = await asyncio.to_thread(_run_asr)
         return {
             "transcript": transcript,
             "audio_path": file_path,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}") from e
+
+
+_TRANSCRIBE_CHUNK_AUDIO_DEFAULT = File(...)
+_TRANSCRIBE_CHUNK_CHUNK_INDEX_DEFAULT = Form(default=0)
+_TRANSCRIBE_CHUNK_HINTS_DEFAULT = Form(default="")
+_TRANSCRIBE_CHUNK_PATIENT_ID_DEFAULT = Form(default="")
+_TRANSCRIBE_CHUNK_USER_DEFAULT = Depends(require_permission("scribe.create_draft"))
 
 
 @router.post("/transcribe-chunk", dependencies=[Depends(require_models_on)])
 async def transcribe_chunk(
-    audio: UploadFile = File(...),
-    chunk_index: int = Form(default=0),
-    hints: str = Form(default=""),
-    patient_id: str = Form(default=""),
-    user: dict = Depends(require_permission("scribe.create_draft")),
+    audio: UploadFile = _TRANSCRIBE_CHUNK_AUDIO_DEFAULT,
+    chunk_index: int = _TRANSCRIBE_CHUNK_CHUNK_INDEX_DEFAULT,
+    hints: str = _TRANSCRIBE_CHUNK_HINTS_DEFAULT,
+    patient_id: str = _TRANSCRIBE_CHUNK_PATIENT_ID_DEFAULT,
+    user: dict = _TRANSCRIBE_CHUNK_USER_DEFAULT,
 ):
     """Transcribe a short audio chunk for real-time display.
-    
+
     The frontend sends audio segments (e.g., every 3-5 seconds).
     Each chunk is transcribed independently and the frontend
     accumulates the results.
@@ -447,9 +501,10 @@ async def transcribe_chunk(
     # Encrypt the PHI audio chunk at rest too (0o600), consistent with /transcribe
     # — even though the chunk is deleted immediately, a crash mid-transcription
     # must not orphan cleartext PHI in uploads/. ASR reads via a decrypted temp.
-    from services.crypto_service import write_encrypted, materialize_plaintext
+    from services.crypto_service import materialize_plaintext, write_encrypted
 
     try:
+
         def _run_chunk_asr():
             # Own the entire file lifetime on the worker. Cancelling the await
             # does not stop its thread: cleanup on the event loop could run
@@ -463,6 +518,7 @@ async def transcribe_chunk(
                     os.remove(file_path)
                 except OSError:
                     pass
+
         text = await asyncio.to_thread(_run_chunk_asr)
         return {"text": text.strip(), "chunk_index": chunk_index}
     except Exception:
@@ -474,13 +530,17 @@ async def transcribe_chunk(
 # Structuring Endpoint (with async verification)
 # ═══════════════════════════════════════════════════
 
+
+_STRUCTURE_USER_DEFAULT = Depends(require_permission("scribe.create_draft"))
+
+
 @router.post("/structure", dependencies=[Depends(require_models_on)])
 async def structure(
     data: dict,
-    user: dict = Depends(require_permission("scribe.create_draft")),
+    user: dict = _STRUCTURE_USER_DEFAULT,
 ):
     """Structure a transcript into a formatted clinical note (SSE streaming).
-    
+
     Verification runs asynchronously after the draft is delivered.
     The client receives the done event immediately with verification_status="pending"
     and can poll GET /api/scribe/notes/{note_id}/verification for updates.
@@ -506,9 +566,14 @@ async def structure(
         try:
             # ── Stage 3: Drafting (streaming) ──
             timer.start("draft")
-            async with aclosing(structure_transcript_stream(
-                transcript, format_type, patient_id=patient_id, user_id=actor_id,
-            )) as tokens:
+            async with aclosing(
+                structure_transcript_stream(
+                    transcript,
+                    format_type,
+                    patient_id=patient_id,
+                    user_id=actor_id,
+                )
+            ) as tokens:
                 async for token in tokens:
                     full_response += token
                     yield f"data: {json.dumps({'content': token})}\n\n"
@@ -573,7 +638,9 @@ async def structure(
                     _register_verification_task(note_id, task)
 
         except Exception:
-            logger.exception("Scribe drafting stream failed", extra={"event": "scribe_stream_failed"})
+            logger.exception(
+                "Scribe drafting stream failed", extra={"event": "scribe_stream_failed"}
+            )
             yield f"data: {json.dumps({'error': 'Note drafting failed. Please retry.', 'code': 'scribe_stream_failed', 'terminal': True})}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
@@ -582,6 +649,7 @@ async def structure(
 # ═══════════════════════════════════════════════════
 # Note Retrieval Endpoints
 # ═══════════════════════════════════════════════════
+
 
 def _note_in_scope_or_404(note_id: int, user: dict) -> dict:
     """Load a note and refuse it unless its patient is on the caller's ward.
@@ -608,12 +676,15 @@ def _note_in_scope_or_404(note_id: int, user: dict) -> dict:
     return note
 
 
+_LIST_NOTES_USER_DEFAULT = Depends(require_permission("scribe.read_all"))
+
+
 @router.get("/notes")
 def list_notes(
     request: Request,
-    patient_id: str = None,
-    status: str = None,
-    user: dict = Depends(require_permission("scribe.read_all")),
+    patient_id: str | None = None,
+    status: str | None = None,
+    user: dict = _LIST_NOTES_USER_DEFAULT,
 ):
     """Get scribe notes, optionally filtered by patient_id and/or status.
 
@@ -653,8 +724,11 @@ def list_notes(
     return get_scribe_notes(author_id=user["id"], status=status)
 
 
+_GET_NOTE_USER_DEFAULT = Depends(require_permission("scribe.read_all"))
+
+
 @router.get("/notes/{note_id}")
-def get_note(note_id: int, request: Request, user: dict = Depends(require_permission("scribe.read_all"))):
+def get_note(note_id: int, request: Request, user: dict = _GET_NOTE_USER_DEFAULT):
     """Get a specific scribe note — the note's own ward only.
 
     Serves the verbatim consultation transcript, so the read is recorded on the
@@ -675,8 +749,11 @@ def get_note(note_id: int, request: Request, user: dict = Depends(require_permis
     return note
 
 
+_GET_NOTE_VERIFICATION_USER_DEFAULT = Depends(require_permission("scribe.read_all"))
+
+
 @router.get("/notes/{note_id}/verification")
-def get_note_verification(note_id: int, user: dict = Depends(require_permission("scribe.read_all"))):
+def get_note_verification(note_id: int, user: dict = _GET_NOTE_VERIFICATION_USER_DEFAULT):
     """Get verification status for a specific note.
 
     Lightweight polling endpoint for the frontend to check async verification progress.
@@ -704,10 +781,14 @@ def get_note_verification(note_id: int, user: dict = Depends(require_permission(
 # Retry Verification Endpoint
 # ═══════════════════════════════════════════════════
 
+
+_RETRY_VERIFICATION_USER_DEFAULT = Depends(require_permission("scribe.edit_draft"))
+
+
 @router.post("/notes/{note_id}/verify", dependencies=[Depends(require_models_on)])
 async def retry_verification(
     note_id: int,
-    user: dict = Depends(require_permission("scribe.edit_draft")),
+    user: dict = _RETRY_VERIFICATION_USER_DEFAULT,
 ):
     """Manually retry verification for a note in 'failed' state.
 
@@ -761,7 +842,7 @@ async def retry_verification(
     )
     _register_verification_task(note_id, task)
 
-    await run_db(          # off the loop; background task, so awaiting costs no response latency
+    await run_db(  # off the loop; background task, so awaiting costs no response latency
         log_audit_event,
         correlation_id=f"scribe-verify-retry-{note_id}",
         event_category="scribe",
@@ -781,11 +862,15 @@ async def retry_verification(
 # Note Lifecycle Endpoints
 # ═══════════════════════════════════════════════════
 
+
+_EDIT_NOTE_USER_DEFAULT = Depends(require_permission("scribe.edit_draft"))
+
+
 @router.patch("/notes/{note_id}")
 def edit_note(
     note_id: int,
     data: dict,
-    user: dict = Depends(require_permission("scribe.edit_draft")),
+    user: dict = _EDIT_NOTE_USER_DEFAULT,
 ):
     """Edit draft note content. Only drafts can be edited."""
     structured_note = data.get("structured_note")
@@ -834,18 +919,21 @@ def _verification_verdict(note: dict) -> dict:
     if status == "unverifiable":
         reasons.append("verification could not complete")
     for bucket in ("warnings", "omissions"):
-        for item in (v.get(bucket) or []):
+        for item in v.get(bucket) or []:
             sev = str((item or {}).get("severity", "")).lower() if isinstance(item, dict) else ""
             if sev in ("high", "critical"):
                 reasons.append(f"{bucket[:-1]}: {(item or {}).get('type', sev)}")
     return {"blocking": bool(reasons), "status": status, "reasons": reasons}
 
 
+_SIGN_NOTE_USER_DEFAULT = Depends(require_permission("scribe.sign"))
+
+
 @router.post("/notes/{note_id}/sign")
 def sign_note(
     note_id: int,
-    body: Optional[dict] = None,
-    user: dict = Depends(require_permission("scribe.sign")),
+    body: dict | None = None,
+    user: dict = _SIGN_NOTE_USER_DEFAULT,
 ):
     """Sign/finalize a draft note. Doctor-only. Transitions draft → signed.
 
@@ -867,7 +955,7 @@ def sign_note(
             detail={
                 "error": "verification_unconfirmed",
                 "message": "This note did not pass automated hallucination verification. "
-                           "Re-signing requires explicit acknowledgement.",
+                "Re-signing requires explicit acknowledgement.",
                 "verification_status": verdict["status"],
                 "reasons": verdict["reasons"],
                 "requires": "acknowledge_unverified",
@@ -886,7 +974,7 @@ def sign_note(
         # erased or inherited. `reasons` goes on the hash chain below, which is
         # where an immutable record of WHY the override was needed belongs.
         if not record_unverified_ack(
-            note_id, user["id"], datetime.now(timezone.utc).isoformat(), scope_user=user
+            note_id, user["id"], datetime.now(UTC).isoformat(), scope_user=user
         ):
             raise HTTPException(
                 status_code=500,
@@ -945,11 +1033,14 @@ def sign_note(
     return {"ok": True, "note_id": note_id, "status": "signed", "superseded_note_id": superseded_id}
 
 
+_REJECT_NOTE_USER_DEFAULT = Depends(require_permission("scribe.reject"))
+
+
 @router.post("/notes/{note_id}/reject")
 def reject_note(
     note_id: int,
     data: dict,
-    user: dict = Depends(require_permission("scribe.reject")),
+    user: dict = _REJECT_NOTE_USER_DEFAULT,
 ):
     """Reject a draft note. Doctor-only. Requires a rejection reason."""
     reason = data.get("reason", "").strip()
@@ -984,10 +1075,13 @@ def reject_note(
     return {"ok": True, "note_id": note_id, "status": "rejected"}
 
 
+_REVISE_NOTE_USER_DEFAULT = Depends(require_permission("scribe.edit_draft"))
+
+
 @router.post("/notes/{note_id}/revise")
 def revise_note(
     note_id: int,
-    user: dict = Depends(require_permission("scribe.edit_draft")),
+    user: dict = _REVISE_NOTE_USER_DEFAULT,
 ):
     """Create a revised draft from a signed note. Original remains signed until revision is signed."""
     note = _note_in_scope_or_404(note_id, user)
@@ -1024,12 +1118,16 @@ def revise_note(
 # Config Endpoint
 # ═══════════════════════════════════════════════════
 
+
+_GET_SCRIBE_CONFIG_USER_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.get("/config")
 def get_scribe_config(
-    user: dict = Depends(require_permission("admin.overview")),
+    user: dict = _GET_SCRIBE_CONFIG_USER_DEFAULT,
 ):
     """Return active Scribe pipeline configuration (admin-only).
-    
+
     Exposes model names, enabled stages, and non-secret parameters.
     """
     return {
@@ -1059,6 +1157,7 @@ def get_scribe_config(
 # ASR Availability Probe
 # ═══════════════════════════════════════════════════
 
+
 def _asr_runtime_importable() -> bool:
     """Can the subprocess worker's ASR runtime import at all? The worker runs on
     sys.executable — this venv — so a spec lookup here answers for it without
@@ -1070,6 +1169,7 @@ def _asr_model_installed() -> bool:
     """Are the worker's Whisper weights on this appliance? Nothing downloads
     them (Orb is offline), so a runtime without its weights cannot transcribe."""
     from services.asr_model_files import is_installed
+
     return is_installed(SCRIBE["asr"]["model"], SCRIBE["asr"].get("quant"))
 
 
@@ -1079,9 +1179,11 @@ def _asr_daemon_responds() -> bool:
     transcription even when the runtime is absent from this venv."""
     try:
         from config import VOICE
+
         if not VOICE["daemon"]["enabled"]:
             return False
         import zmq
+
         context = zmq.Context()
         sock = context.socket(zmq.REQ)
         sock.setsockopt(zmq.RCVTIMEO, 1000)
@@ -1101,8 +1203,11 @@ def _asr_daemon_responds() -> bool:
         return False
 
 
+_ASR_STATUS_USER_DEFAULT = Depends(require_permission("scribe.create_draft"))
+
+
 @router.get("/asr/status", dependencies=[Depends(require_models_on)])
-def asr_status(user: dict = Depends(require_permission("scribe.create_draft"))):
+def asr_status(user: dict = _ASR_STATUS_USER_DEFAULT):
     """Honest availability of the transcription engine on THIS appliance.
 
     The Scribe UI calls this once on mount so an appliance without the ASR
@@ -1152,8 +1257,11 @@ def asr_status(user: dict = Depends(require_permission("scribe.create_draft"))):
 _QUICK_ADMIT_SOURCES = ("er", "clinic", "transfer", "direct")
 
 
+_QUICK_ADMISSION_OPTIONS_USER_DEFAULT = Depends(require_permission("patient.write"))
+
+
 @router.get("/admission-options")
-def quick_admission_options(user: dict = Depends(require_permission("patient.write"))):
+def quick_admission_options(user: dict = _QUICK_ADMISSION_OPTIONS_USER_DEFAULT):
     """Who a quick admission may name as attending, the departments it may
     admit to, and the caller's department as the default. The same lists as
     the full admission form (admission_service.admission_choices), so the
@@ -1167,8 +1275,11 @@ def quick_admission_options(user: dict = Depends(require_permission("patient.wri
     }
 
 
+_QUICK_ADMIT_USER_DEFAULT = Depends(require_permission("patient.write"))
+
+
 @router.post("/quick-admit")
-def quick_admit(data: dict, user: dict = Depends(require_permission("patient.write"))):
+def quick_admit(data: dict, user: dict = _QUICK_ADMIT_USER_DEFAULT):
     """Admit a patient from a structured note through admit_patient.
 
     Plain def: admit_patient is a multi-insert transaction and must stay off
@@ -1188,10 +1299,17 @@ def quick_admit(data: dict, user: dict = Depends(require_permission("patient.wri
     complaint = text("chief_complaint")
     attending = text("attending_doctor_id")
     source = text("admission_source") or "direct"
-    missing = [label for label, value in (("patient name", text("name")),
-                                          ("department", department), ("ward", ward),
-                                          ("presenting complaint", complaint),
-                                          ("attending doctor", attending)) if not value]
+    missing = [
+        label
+        for label, value in (
+            ("patient name", text("name")),
+            ("department", department),
+            ("ward", ward),
+            ("presenting complaint", complaint),
+            ("attending doctor", attending),
+        )
+        if not value
+    ]
     if missing:
         raise HTTPException(status_code=422, detail=f"Required: {', '.join(missing)}.")
     if source not in _QUICK_ADMIT_SOURCES:
@@ -1207,18 +1325,18 @@ def quick_admit(data: dict, user: dict = Depends(require_permission("patient.wri
     try:
         department = resolve_admission_department(department)
     except AdmissionInputError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
 
     age = data.get("age")
     try:
         age = int(age) if age not in (None, "") else None
     except (TypeError, ValueError):
-        raise HTTPException(status_code=422, detail="Age must be a whole number.")
+        raise HTTPException(status_code=422, detail="Age must be a whole number.") from None
     sex = text("sex").upper() or None
     if sex not in (None, "M", "F", "O"):
         raise HTTPException(status_code=422, detail="Sex must be M, F or O.")
 
-    payload = {
+    payload: dict[str, Any] = {
         "name": data.get("name"),
         "age": age,
         "sex": sex,
@@ -1235,6 +1353,7 @@ def quick_admit(data: dict, user: dict = Depends(require_permission("patient.wri
         "allergies": allergy_entries(data.get("allergies")),
     }
     import config
+
     if config.feature_enabled("registration"):
         # The patient index (opd-5b, ORB_REGISTRATION): this door honours
         # ORB_UHID_SOURCE and the duplicate rule exactly as the admission form
@@ -1246,28 +1365,32 @@ def quick_admit(data: dict, user: dict = Depends(require_permission("patient.wri
     try:
         result = admit_patient(payload, user, door=DOOR_SCRIBE_QUICK_ADMIT)
     except PatientNameError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except AdmissionRefused as e:
         # The patient index or the hospital number rule refused the admission
         # (ORB_REGISTRATION), or the number is already on another record.
         # Nothing was written.
-        raise HTTPException(status_code=e.status, detail=e.detail())
+        raise HTTPException(status_code=e.status, detail=e.detail()) from e
     except ValueError as e:
         # Only with ORB_ADT on (adt-5): the bed master refused the typed place
         # (an occupied bed, a bed not recorded clean, a boarder this lane
         # cannot acknowledge), in words, with nothing written.
         from services.adt.core import AdtError, http_detail
+
         if not isinstance(e, AdtError):
             raise
-        raise HTTPException(status_code=e.http_status, detail=http_detail(e))
+        raise HTTPException(status_code=e.http_status, detail=http_detail(e)) from e
     except AuditWriteError:
         # Only with ORB_ADT on: the fail-closed patient_movement record could
         # not be written, so the whole admission was rolled back.
-        raise HTTPException(status_code=503, detail={
-            "error": "audit_unavailable",
-            "message": "The record of this admission could not be written, so the patient "
-                       "was not admitted. Try again in a moment.",
-        })
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "audit_unavailable",
+                "message": "The record of this admission could not be written, so the patient "
+                "was not admitted. Try again in a moment.",
+            },
+        ) from None
 
     log_audit_event(
         correlation_id=f"quick-admit-{result['admission_id']}",
@@ -1279,29 +1402,39 @@ def quick_admit(data: dict, user: dict = Depends(require_permission("patient.wri
         patient_id=result["patient_id"],
         target_type="admission",
         target_id=result["admission_id"],
-        metadata={"surface": "scribe_quick_admit", "department": department, "ward": ward,
-                  "attending_doctor_id": attending,
-                  "allergies_charted": len(payload["allergies"])},
+        metadata={
+            "surface": "scribe_quick_admit",
+            "department": department,
+            "ward": ward,
+            "attending_doctor_id": attending,
+            "allergies_charted": len(payload["allergies"]),
+        },
     )
     if result.get("movement_id") and not result.get("replayed"):
         # Only with ORB_ADT on (adt-19): the admission was placed through the
         # bed master and has committed, so the bed boards refetch.
         from services.adt.live import notify_adt_changed
+
         notify_adt_changed(answer=result, departments=[department])
     return result
 
 
+_DAEMON_STATUS_USER_DEFAULT = Depends(require_permission("scribe.read_all"))
+
+
 @router.get("/daemon/status", dependencies=[Depends(require_models_on)])
 async def daemon_status(
-    user: dict = Depends(require_permission("scribe.read_all")),
+    user: dict = _DAEMON_STATUS_USER_DEFAULT,
 ):
     """Check if the Whisper warm daemon is running and responsive."""
     try:
         from config import VOICE
+
         if not VOICE["daemon"]["enabled"]:
             return {"status": "disabled", "daemon_enabled": False}
 
         import zmq
+
         context = zmq.Context()
         sock = context.socket(zmq.REQ)
         sock.setsockopt(zmq.RCVTIMEO, 1000)
@@ -1313,7 +1446,11 @@ async def daemon_status(
             response = sock.recv_string()
             return {"status": "running", "daemon_enabled": True, "response": json.loads(response)}
         except zmq.Again:
-            return {"status": "not_running", "daemon_enabled": True, "error": "Daemon not responding"}
+            return {
+                "status": "not_running",
+                "daemon_enabled": True,
+                "error": "Daemon not responding",
+            }
         except zmq.ZMQError as e:
             return {"status": "error", "daemon_enabled": True, "error": str(e)}
         finally:
@@ -1321,4 +1458,3 @@ async def daemon_status(
             context.term()
     except ImportError:
         return {"status": "error", "error": "pyzmq not installed"}
-

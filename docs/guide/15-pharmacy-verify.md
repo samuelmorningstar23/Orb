@@ -139,7 +139,7 @@ Module constant: `_UNVERIFIED_SOURCES = ("llm_extracted", "agentic")` (`server/s
 
 ---
 
-#### `_now`: `server/services/pharmacy_verification_service.py:61`
+#### `_now`: `server/services/pharmacy_verification_service.py:72`
 **Signature:** `() -> str`
 **Does:** Returns the current UTC time as an ISO-8601 string.
 **How it works:** `datetime.now(timezone.utc).isoformat()`.
@@ -151,7 +151,7 @@ Module constant: `_UNVERIFIED_SOURCES = ("llm_extracted", "agentic")` (`server/s
 
 ---
 
-#### `_safety_alerts`: `server/services/pharmacy_verification_service.py:65`
+#### `_safety_alerts`: `server/services/pharmacy_verification_service.py:76`
 **Signature:** `(patient_id: str, drug_name: str, med_id: int | None = None) -> dict`
 **Does:** Runs the order-time drug-safety screen for one drug on one patient and returns the full safety dict plus a flattened `alerts` list. It never raises, but when the screen fails it reports that failure loudly rather than returning silence.
 **How it works:**
@@ -166,13 +166,13 @@ Module constant: `_UNVERIFIED_SOURCES = ("llm_extracted", "agentic")` (`server/s
 
 ---
 
-#### `_is_placeholder` / `_corrected` / `_actor_role` / `_with_dose_check`: `server/services/pharmacy_verification_service.py:45` / `:55` / `:92` / `:105`
+#### `_is_placeholder` / `_corrected` / `_actor_role` / `_with_dose_check`: `server/services/pharmacy_verification_service.py:52` / `:55` / `:92` / `:105`
 **Does:** The small helpers behind verify. `_is_placeholder` is true for a blank value or one containing "review" (the charting placeholders `REVIEW REQUIRED` and route `Review`). `_corrected(value, stored)` is the pharmacist's entry if non-blank, else the stored value. `_actor_role` reads the acting account's role from `users` (the route passes only the id). `_with_dose_check` runs the pharmacist's corrected dose through the shared dose guard (`medication_safety_gate.screen_order_dose`) and appends any findings to `alerts` as `type: "dose check"` rows (severe for a block, moderate otherwise, plus a moderate "could not run" row when the guard is unavailable), sets `blocking` on a block, and attaches a `dose_check` summary.
 **Why they exist:** verifying used to keep the stored value when the pharmacist left a field empty, so `REVIEW REQUIRED` became the verified dose of an active order (`:48-49`); and the corrected dose used to be stored unchecked (the comment at `:261-266`).
 
 ---
 
-#### `_serialize_med`: `server/services/pharmacy_verification_service.py:151`
+#### `_serialize_med`: `server/services/pharmacy_verification_service.py:184`
 **Signature:** `(row) -> dict`
 **Does:** Maps a raw `medications` DB row (joined with `patient_name`) into the pharmacist-facing JSON shape.
 **How it works:** Wraps the sqlite row in `dict(row)` then hand-picks/renames fields, note the column renames: DB `dosage` → JSON `dose`, DB `patient_name` → JSON `patient`, DB `prescriber_name` → JSON `prescriber` (`:144`, `:142`, `:157`).
@@ -184,7 +184,7 @@ Module constant: `_UNVERIFIED_SOURCES = ("llm_extracted", "agentic")` (`server/s
 
 ---
 
-#### `list_pending_verification`: `server/services/pharmacy_verification_service.py:188`
+#### `list_pending_verification`: `server/services/pharmacy_verification_service.py:221`
 **Signature:** `() -> list[dict]`
 **Does:** Returns every AI/agentic med still awaiting verification, each annotated with its drug-safety alerts, worst severity and screening coverage.
 **How it works:**
@@ -199,7 +199,7 @@ Module constant: `_UNVERIFIED_SOURCES = ("llm_extracted", "agentic")` (`server/s
 
 ---
 
-#### `_fetch_med`: `server/services/pharmacy_verification_service.py:270`
+#### `_fetch_med`: `server/services/pharmacy_verification_service.py:304`
 **Signature:** `(db, med_id: int) -> Row | None`
 **Does:** Reads a single med by id (with `m.*` and the joined `patient_name`) on a caller-supplied connection.
 **How it works:** One parameterised SELECT `WHERE m.id = ?`, returns `fetchone()` (a row or `None`).
@@ -211,7 +211,7 @@ Module constant: `_UNVERIFIED_SOURCES = ("llm_extracted", "agentic")` (`server/s
 
 ---
 
-#### `verify_medication`: `server/services/pharmacy_verification_service.py:305`
+#### `verify_medication`: `server/services/pharmacy_verification_service.py:353`
 **Signature:** `(med_id: int, pharmacist_id: str, dosage: str|None=None, route: str|None=None, frequency: str|None=None, ack_reason: str|None=None) -> dict`
 **Does:** A pharmacist verifies an AI/agentic med, optionally correcting dose/route/frequency, and stamps who/when, **behind fail-closed safety gates**: the corrected dose goes through the dose guard, and a severe alert, or a screen that failed to run, blocks verification until the pharmacist supplies an `ack_reason`.
 **How it works:**
@@ -241,7 +241,7 @@ Module constant: `_UNVERIFIED_SOURCES = ("llm_extracted", "agentic")` (`server/s
 
 ---
 
-#### `reject_medication`: `server/services/pharmacy_verification_service.py:517`
+#### `reject_medication`: `server/services/pharmacy_verification_service.py:583`
 **Signature:** `(med_id: int, pharmacist_id: str, reason: str) -> dict`
 **Does:** A pharmacist rejects an AI/agentic med: discontinue it and record who rejected it and why.
 **How it works:**
@@ -262,7 +262,7 @@ Module constant: `_UNVERIFIED_SOURCES = ("llm_extracted", "agentic")` (`server/s
 
 Router declared with `prefix="/api/pharmacy"` and tag `"Pharmacy Verification"` (`server/routes/pharmacy_routes.py:21`). Registered in `server/main.py` via `from routes.pharmacy_routes import router as pharmacy_router` (`server/main.py:74`) and `app.include_router(pharmacy_router)` (`server/main.py:1009`), no extra prefix at include time, so the full paths are exactly `/api/pharmacy/...`.
 
-#### `VerifyRequest` / `RejectRequest`: `server/routes/pharmacy_routes.py:24`, `:33`
+#### `VerifyRequest` / `RejectRequest`: `server/routes/pharmacy_routes.py:32`, `:33`
 **Signature:** Pydantic models. `VerifyRequest{ dosage?: str, route?: str, frequency?: str, ack_reason?: str }`; `RejectRequest{ reason: str }`.
 **Does:** Declare and validate the JSON request bodies.
 **How it works:** FastAPI parses the request body into these models; all `VerifyRequest` fields are `Optional` (default `None`), so an empty `{}` is a valid verify body, and the service keeps each stored value it was not given (then refuses with 422 if any of them is still a placeholder). `ack_reason` is the pharmacist's reason for verifying across a severe or failed screen. `RejectRequest.reason` is required, a missing `reason` yields FastAPI's own 422 before the handler runs.
@@ -273,7 +273,7 @@ Router declared with `prefix="/api/pharmacy"` and tag `"Pharmacy Verification"` 
 
 ---
 
-#### `get_pending`: `server/routes/pharmacy_routes.py:43`
+#### `get_pending`: `server/routes/pharmacy_routes.py:49`
 **Signature:** `GET /api/pharmacy/pending`, dep `require_permission("helix.read")` → `{ "pending": [...] }`
 **Does:** Returns the verification queue.
 **How it works:** The `Depends(require_permission("helix.read"))` runs first: it resolves the JWT to a user, checks the user's role grants `helix.read`, and 403s otherwise (`server/permissions.py:828-836`). On success it returns the authenticated `user` dict, and the handler returns `{"pending": pharmacy.list_pending_verification()}`.
@@ -285,7 +285,7 @@ Router declared with `prefix="/api/pharmacy"` and tag `"Pharmacy Verification"` 
 
 ---
 
-#### `verify`: `server/routes/pharmacy_routes.py:82`
+#### `verify`: `server/routes/pharmacy_routes.py:103`
 **Signature:** `POST /api/pharmacy/{med_id}/verify`, body `VerifyRequest`, dep `require_permission("helix.write")` → `VerifyResult`
 **Does:** Verifies a med and audits the action.
 **How it works:**
@@ -301,7 +301,7 @@ Router declared with `prefix="/api/pharmacy"` and tag `"Pharmacy Verification"` 
 
 ---
 
-#### `reject`: `server/routes/pharmacy_routes.py:145`
+#### `reject`: `server/routes/pharmacy_routes.py:173`
 **Signature:** `POST /api/pharmacy/{med_id}/reject`, body `RejectRequest`, dep `require_permission("helix.write")` → `RejectResult`
 **Does:** Rejects a med and audits it.
 **How it works:** Mirror of `verify`: RBAC `helix.write`, call `reject_medication(med_id, pharmacist_id, reason)` with `ValueError`→400, then `log_audit_event(action_type="medication_reject", ...)` whose metadata carries the `reason`, `max_severity`, `safety_alert_count` (`:130-148`).

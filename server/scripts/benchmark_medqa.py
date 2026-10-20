@@ -30,6 +30,7 @@ Examples
 Answers are parsed leniently (leading letter, "Answer: C", or matching the option
 text). Runs are checkpointed to the output JSON so an interrupted run resumes.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -37,7 +38,6 @@ import json
 import math
 import os
 import re
-import sys
 import time
 from pathlib import Path
 
@@ -57,7 +57,7 @@ SYSTEM_PROMPT_LETTER = (
 )
 
 # GBNF grammar that forces a single answer letter (llama.cpp backend, --letter-only).
-LETTER_GRAMMAR = 'root ::= [A-E]'
+LETTER_GRAMMAR = "root ::= [A-E]"
 
 
 # ----------------------------------------------------------------------------- data
@@ -65,7 +65,7 @@ def _norm_options(raw) -> list[str]:
     """Return options as an ordered list of strings from the many MedQA schemas."""
     if isinstance(raw, dict):
         # {"A": "...", "B": "..."} or {"0": "...", ...}
-        keys = sorted(raw.keys(), key=lambda k: (LETTERS.index(k) if k in LETTERS else int(k)))
+        keys = sorted(raw.keys(), key=lambda k: LETTERS.index(k) if k in LETTERS else int(k))
         return [str(raw[k]) for k in keys]
     if isinstance(raw, (list, tuple)):
         # list of strings, or list of {"key","value"} dicts
@@ -109,7 +109,11 @@ def load_dataset(kind: str, path: str, limit: int | None) -> list[dict]:
 
         rows = pq.read_table(path).to_pylist()
     elif path.endswith(".jsonl"):
-        rows = [json.loads(l) for l in Path(path).read_text().splitlines() if l.strip()]
+        rows = [
+            json.loads(left_item)
+            for left_item in Path(path).read_text().splitlines()
+            if left_item.strip()
+        ]
     elif path.endswith(".json"):
         rows = json.loads(Path(path).read_text())
     else:
@@ -117,7 +121,9 @@ def load_dataset(kind: str, path: str, limit: int | None) -> list[dict]:
 
     items = []
     for r in rows:
-        opt_field = next((k for k in ("options", "choices", "opa_opb_opc_opd", "opts") if k in r), None)
+        opt_field = next(
+            (k for k in ("options", "choices", "opa_opb_opc_opd", "opts") if k in r), None
+        )
         if opt_field:
             options = _norm_options(r[opt_field])
         elif all(k in r for k in ("opa", "opb", "opc", "opd")):  # MedMCQA flat
@@ -183,7 +189,11 @@ class OllamaBackend:
                 ],
                 "stream": False,
                 "keep_alive": "30m",
-                "options": {"temperature": self.temperature, "num_predict": self.num_predict, "num_ctx": 4096},
+                "options": {
+                    "temperature": self.temperature,
+                    "num_predict": self.num_predict,
+                    "num_ctx": 4096,
+                },
             },
             timeout=self._httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0),
             # Loopback Ollama — skip httpx's proxy discovery (see
@@ -201,9 +211,15 @@ class LlamaCppBackend:
         from llama_cpp.llama_grammar import LlamaGrammar
 
         self.temperature, self.num_predict, self.system = temperature, num_predict, system
-        self.grammar = LlamaGrammar.from_string(LETTER_GRAMMAR, verbose=False) if letter_only else None
+        self.grammar = (
+            LlamaGrammar.from_string(LETTER_GRAMMAR, verbose=False) if letter_only else None
+        )
         self.llm = Llama(
-            model_path=model, n_ctx=n_ctx, n_threads=n_threads, n_batch=512, verbose=False,
+            model_path=model,
+            n_ctx=n_ctx,
+            n_threads=n_threads,
+            n_batch=512,
+            verbose=False,
         )  # use the GGUF's embedded chat template (correct for MedGemma/Gemma-3)
 
     def ask(self, prompt: str) -> str:
@@ -212,7 +228,9 @@ class LlamaCppBackend:
                 {"role": "system", "content": self.system},
                 {"role": "user", "content": prompt},
             ],
-            temperature=self.temperature, max_tokens=self.num_predict, grammar=self.grammar,
+            temperature=self.temperature,
+            max_tokens=self.num_predict,
+            grammar=self.grammar,
         )
         return out["choices"][0]["message"]["content"]
 
@@ -230,21 +248,35 @@ def wilson_ci(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
 
 # ------------------------------------------------------------------------------ main
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--backend", choices=["ollama", "llamacpp"], required=True)
     ap.add_argument("--model", required=True, help="ollama tag (medgemma:27b) or path to .gguf")
     ap.add_argument("--dataset", default="medqa", choices=["medqa", "medmcqa", "pubmedqa", "jsonl"])
-    ap.add_argument("--data", required=True, help="path to the dataset file (.parquet/.jsonl/.json)")
+    ap.add_argument(
+        "--data", required=True, help="path to the dataset file (.parquet/.jsonl/.json)"
+    )
     ap.add_argument("--limit", type=int, default=None, help="only the first N questions")
     ap.add_argument("--temperature", type=float, default=0.0)
-    ap.add_argument("--letter-only", action="store_true",
-                    help="direct-answer mode: force a single answer letter (fast, CPU-friendly). "
-                         "llama.cpp uses a GBNF grammar; omit for chain-of-thought.")
-    ap.add_argument("--num-predict", type=int, default=512, help="max new tokens (auto-lowered to 4 for --letter-only)")
+    ap.add_argument(
+        "--letter-only",
+        action="store_true",
+        help="direct-answer mode: force a single answer letter (fast, CPU-friendly). "
+        "llama.cpp uses a GBNF grammar; omit for chain-of-thought.",
+    )
+    ap.add_argument(
+        "--num-predict",
+        type=int,
+        default=512,
+        help="max new tokens (auto-lowered to 4 for --letter-only)",
+    )
     ap.add_argument("--base-url", default=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
     ap.add_argument("--threads", type=int, default=os.cpu_count() or 4)
     ap.add_argument("--n-ctx", type=int, default=4096)
-    ap.add_argument("--out", default=None, help="results JSON (default: results/medqa_<model>_<ts>.json)")
+    ap.add_argument(
+        "--out", default=None, help="results JSON (default: results/medqa_<model>_<ts>.json)"
+    )
     args = ap.parse_args()
 
     items = load_dataset(args.dataset, args.data, args.limit)
@@ -255,11 +287,19 @@ def main() -> int:
     mode = "letter-only (direct answer)" if args.letter_only else "chain-of-thought"
     print(f"Mode: {mode} | backend={args.backend} | num_predict={num_predict}", flush=True)
 
+    backend: OllamaBackend | LlamaCppBackend
     if args.backend == "ollama":
         backend = OllamaBackend(args.model, args.base_url, args.temperature, num_predict, system)
     else:
-        backend = LlamaCppBackend(args.model, args.temperature, num_predict, args.threads,
-                                  args.n_ctx, system, args.letter_only)
+        backend = LlamaCppBackend(
+            args.model,
+            args.temperature,
+            num_predict,
+            args.threads,
+            args.n_ctx,
+            system,
+            args.letter_only,
+        )
 
     model_slug = re.sub(r"[^\w.-]", "_", Path(args.model).name)
     out_path = Path(args.out) if args.out else Path("results") / f"{args.dataset}_{model_slug}.json"
@@ -288,8 +328,13 @@ def main() -> int:
         is_correct = pred == item["gold"]
         correct += int(is_correct)
         unparsed += int(pred is None)
-        rec = {"i": i, "gold": item["gold"], "pred": pred, "is_correct": is_correct,
-               "raw": raw[:600]}
+        rec = {
+            "i": i,
+            "gold": item["gold"],
+            "pred": pred,
+            "is_correct": is_correct,
+            "raw": raw[:600],
+        }
         details.append(rec)
 
         n = len(details)
@@ -297,13 +342,27 @@ def main() -> int:
             acc = correct / n
             rate = n / max(1e-9, time.time() - t0)
             lo, hi = wilson_ci(correct, n)
-            print(f"[{n}/{len(items)}] acc={acc:.3f} ({correct}/{n}) "
-                  f"95%CI[{lo:.3f},{hi:.3f}] unparsed={unparsed} {rate:.2f} q/s", flush=True)
-            out_path.write_text(json.dumps({
-                "model": args.model, "backend": args.backend, "dataset": args.dataset,
-                "n": n, "correct": correct, "accuracy": acc, "ci95": [lo, hi],
-                "unparsed": unparsed, "details": sorted(details, key=lambda d: d["i"]),
-            }, indent=2))
+            print(
+                f"[{n}/{len(items)}] acc={acc:.3f} ({correct}/{n}) "
+                f"95%CI[{lo:.3f},{hi:.3f}] unparsed={unparsed} {rate:.2f} q/s",
+                flush=True,
+            )
+            out_path.write_text(
+                json.dumps(
+                    {
+                        "model": args.model,
+                        "backend": args.backend,
+                        "dataset": args.dataset,
+                        "n": n,
+                        "correct": correct,
+                        "accuracy": acc,
+                        "ci95": [lo, hi],
+                        "unparsed": unparsed,
+                        "details": sorted(details, key=lambda d: d["i"]),
+                    },
+                    indent=2,
+                )
+            )
 
     n = len(details)
     acc = correct / max(1, n)

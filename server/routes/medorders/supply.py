@@ -26,17 +26,21 @@ this explicit request.
       order_not_live, supply_open (a pharmacy supply is still open and the
       choice moves away from pharmacy), stale_version.
 """
-from typing import Literal, Optional
+
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, ConfigDict
-
 from permissions import (
     MEDICATION_PRESCRIBE,
     MEDICATION_VERIFY,
     require_any_permission,
     require_permission,
 )
+from pydantic import BaseModel, ConfigDict
+from services.medorders import core as store
+from services.medorders import queries
+from services.medorders import supply as supply_service
+
 from routes.medorders import require_med_order_lifecycle
 from routes.medorders.core import (
     ORDER_NOT_FOUND,
@@ -45,9 +49,6 @@ from routes.medorders.core import (
     _refusal,
     _request_meta,
 )
-from services.medorders import core as store
-from services.medorders import queries
-from services.medorders import supply as supply_service
 
 router = APIRouter(dependencies=[Depends(require_med_order_lifecycle)])
 
@@ -55,25 +56,44 @@ router = APIRouter(dependencies=[Depends(require_med_order_lifecycle)])
 def _supply_view(row: dict) -> dict:
     """The supply row as the order screen needs it: ids, state and what was
     asked for. The pharmacy's own notes stay on the pharmacy screens."""
-    keys = ("id", "patient_id", "medication_id", "dosage", "route", "frequency", "status",
-            "created_at", "med_order_id")
+    keys = (
+        "id",
+        "patient_id",
+        "medication_id",
+        "dosage",
+        "route",
+        "frequency",
+        "status",
+        "created_at",
+        "med_order_id",
+    )
     return {k: row.get(k) for k in keys}
 
 
+_REQUEST_SUPPLY_USER_DEFAULT = Depends(
+    require_any_permission(MEDICATION_PRESCRIBE, MEDICATION_VERIFY)
+)
+
+
 @router.post("/orders/{order_id}/request-supply")
-def request_supply(order_id: str, request: Request,
-                   user: dict = Depends(require_any_permission(MEDICATION_PRESCRIBE,
-                                                               MEDICATION_VERIFY))):
+def request_supply(
+    order_id: str,
+    request: Request,
+    user: dict = _REQUEST_SUPPLY_USER_DEFAULT,
+):
     """Ask pharmacy to supply this order. Answers {order, supply, replayed}."""
     _med_order_patient_in_scope_or_404(order_id, user, request)
     try:
         result = supply_service.request_supply(
-            order_id, actor_id=user["id"], actor_role=user.get("role"),
-            request_meta=_request_meta(request))
+            order_id,
+            actor_id=user["id"],
+            actor_role=user.get("role"),
+            request_meta=_request_meta(request),
+        )
     except store.MedOrderNotFound:
-        raise HTTPException(status_code=404, detail=ORDER_NOT_FOUND)
+        raise HTTPException(status_code=404, detail=ORDER_NOT_FOUND) from None
     except store.MedOrderError as e:
-        raise _refusal(e, user, request)
+        raise _refusal(e, user, request) from e
     if not result["replayed"]:
         _emit(result["order"])
     return {
@@ -87,23 +107,35 @@ class SupplySourceRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     supply_source: Literal["pharmacy", "ward_stock", "patient_own"]
-    expected_version: Optional[int] = None
+    expected_version: int | None = None
+
+
+_SET_SUPPLY_SOURCE_USER_DEFAULT = Depends(require_permission(MEDICATION_PRESCRIBE))
 
 
 @router.post("/orders/{order_id}/supply-source")
-def set_supply_source(order_id: str, req: SupplySourceRequest, request: Request,
-                      user: dict = Depends(require_permission(MEDICATION_PRESCRIBE))):
+def set_supply_source(
+    order_id: str,
+    req: SupplySourceRequest,
+    request: Request,
+    user: dict = _SET_SUPPLY_SOURCE_USER_DEFAULT,
+):
     """The prescriber says where this order's medicine comes from (ruling
     MO-R12 (a)). Answers {order, replayed}."""
     _med_order_patient_in_scope_or_404(order_id, user, request)
     try:
         result = supply_service.set_supply_source(
-            order_id, req.supply_source, actor_id=user["id"], actor_role=user.get("role"),
-            expected_version=req.expected_version, request_meta=_request_meta(request))
+            order_id,
+            req.supply_source,
+            actor_id=user["id"],
+            actor_role=user.get("role"),
+            expected_version=req.expected_version,
+            request_meta=_request_meta(request),
+        )
     except store.MedOrderNotFound:
-        raise HTTPException(status_code=404, detail=ORDER_NOT_FOUND)
+        raise HTTPException(status_code=404, detail=ORDER_NOT_FOUND) from None
     except store.MedOrderError as e:
-        raise _refusal(e, user, request)
+        raise _refusal(e, user, request) from e
     if not result["replayed"]:
         _emit(result["order"])
     return {"order": queries.serialize_order(result["order"]), "replayed": result["replayed"]}

@@ -15,18 +15,20 @@ Usage in route handlers:
     async def patient_status(user=Depends(require_patient_self())):
         ...
 """
+
 from __future__ import annotations
 
 import uuid
-from typing import Optional
+from collections.abc import Mapping
+from typing import Any, Never
 
-from fastapi import Depends, HTTPException, Request
 import config
 from auth import get_current_user
 from database import db_session, run_db
-from services import facility_service
+from fastapi import Depends, HTTPException, Request
 from services.audit_service import log_audit_event
 
+from services import facility_service
 
 # ════════════════════════════════════════════════════════════════
 #  Permission Constants
@@ -34,18 +36,18 @@ from services.audit_service import log_audit_event
 # Organized by domain for readability and future scoping.
 
 # Clinical
-PATIENT_READ_ALL = "patient.read_all"          # View any patient record
-PATIENT_WRITE = "patient.write"                # Create/edit patient records
-VITALS_READ = "vitals.read"                    # View vital signs for any patient
-VITALS_WRITE = "vitals.write"                  # Record a bedside observation set (nurse/doctor)
+PATIENT_READ_ALL = "patient.read_all"  # View any patient record
+PATIENT_WRITE = "patient.write"  # Create/edit patient records
+VITALS_READ = "vitals.read"  # View vital signs for any patient
+VITALS_WRITE = "vitals.write"  # Record a bedside observation set (nurse/doctor)
 # Copy an observation set from the paper sheet (the Orb Ward Record's ward
 # clerk). Reaches the same observations route as VITALS_WRITE, but the set is
 # stored with source 'clerk_transcribed' and its time is the time written on the
 # sheet. It is NOT vitals.write: the clerk cannot mark a set entered in error,
 # and holds no vitals.read, so no score preview and no chart.
 VITALS_TRANSCRIBE = "vitals.transcribe"
-ALERT_READ = "alert.read"                      # View clinical alerts
-MEDICATION_WRITE = "medication.write"          # Chart / modify a medication order, and record a dose
+ALERT_READ = "alert.read"  # View clinical alerts
+MEDICATION_WRITE = "medication.write"  # Chart / modify a medication order, and record a dose
 
 # THE PRESCRIBER'S OWN AUTHORITY, SPLIT OUT FROM MEDICATION_WRITE (2026-08-15).
 #
@@ -76,7 +78,7 @@ MEDICATION_WRITE = "medication.write"          # Chart / modify a medication ord
 # A site that licenses nurse prescribers or clinical pharmacists grants them
 # THIS permission (and, for a pharmacist, `medication.write` alongside it); it
 # does not need a code change, which is the point of expressing it here.
-MEDICATION_PRESCRIBE = "medication.prescribe"   # Make the prescribing decision itself
+MEDICATION_PRESCRIBE = "medication.prescribe"  # Make the prescribing decision itself
 
 # THE PHARMACIST'S CHECK OF A MEDICATION ORDER (medication-order store, W5-E).
 # Verifying or rejecting an order in the store's own verification queue
@@ -86,43 +88,43 @@ MEDICATION_PRESCRIBE = "medication.prescribe"   # Make the prescribing decision 
 # administrator verify on the Helix and Verify Queue screens as before; this
 # grant changes nothing that exists today. A site that wants another role to
 # verify grants it this permission.
-MEDICATION_VERIFY = "medication.verify"         # Verify or reject a medication order (pharmacist)
+MEDICATION_VERIFY = "medication.verify"  # Verify or reject a medication order (pharmacist)
 
 # Scribe
-SCRIBE_CREATE_DRAFT = "scribe.create_draft"    # Transcribe + structure notes
-SCRIBE_READ_ALL = "scribe.read_all"            # Read any scribe note (future: team-scoped)
-SCRIBE_EDIT_DRAFT = "scribe.edit_draft"        # Edit draft note content
-SCRIBE_SIGN = "scribe.sign"                    # Sign/finalize a draft (doctor only)
-SCRIBE_REJECT = "scribe.reject"                # Reject a draft (doctor only)
+SCRIBE_CREATE_DRAFT = "scribe.create_draft"  # Transcribe + structure notes
+SCRIBE_READ_ALL = "scribe.read_all"  # Read any scribe note (future: team-scoped)
+SCRIBE_EDIT_DRAFT = "scribe.edit_draft"  # Edit draft note content
+SCRIBE_SIGN = "scribe.sign"  # Sign/finalize a draft (doctor only)
+SCRIBE_REJECT = "scribe.reject"  # Reject a draft (doctor only)
 
 # AI Modules
-SAGE_QUERY = "sage.query"                      # Query Sage AI assistant
-LENS_ANALYZE = "lens.analyze"                  # Upload + analyze medical images
-LENS_READ = "lens.read"                        # View existing Lens analyses
+SAGE_QUERY = "sage.query"  # Query Sage AI assistant
+LENS_ANALYZE = "lens.analyze"  # Upload + analyze medical images
+LENS_READ = "lens.read"  # View existing Lens analyses
 
 # Discharge
-DISCHARGE_READ = "discharge.read"              # View discharge summaries
-DISCHARGE_GENERATE = "discharge.generate"      # Trigger discharge workflow
-DISCHARGE_PUBLISH = "discharge.publish"        # Finalize / sign a discharge
+DISCHARGE_READ = "discharge.read"  # View discharge summaries
+DISCHARGE_GENERATE = "discharge.generate"  # Trigger discharge workflow
+DISCHARGE_PUBLISH = "discharge.publish"  # Finalize / sign a discharge
 
 # Relay
-RELAY_READ = "relay.read"                      # Read channels + messages
-RELAY_SEND = "relay.send"                      # Send messages
+RELAY_READ = "relay.read"  # Read channels + messages
+RELAY_SEND = "relay.send"  # Send messages
 RELAY_EXECUTE_ACTION = "relay.execute_action"  # Execute ambient action cards
 
 # Forecast & Surgery
-FORECAST_READ = "forecast.read"                # View hospital/patient forecasts
-SURGERY_READ = "surgery.read"                  # View surgical schedule
-SURGERY_PREP = "surgery.prep"                  # Trigger surgery prep alerts
-SURGERY_WRITE = "surgery.write"                # Manage surgical cases, team alerts, start/complete
+FORECAST_READ = "forecast.read"  # View hospital/patient forecasts
+SURGERY_READ = "surgery.read"  # View surgical schedule
+SURGERY_PREP = "surgery.prep"  # Trigger surgery prep alerts
+SURGERY_WRITE = "surgery.write"  # Manage surgical cases, team alerts, start/complete
 
 # Bridge (Patient Portal)
-BRIDGE_READ_OWN = "bridge.read_own"            # Patient: read own status/vitals
-BRIDGE_ASK = "bridge.ask"                      # Patient: ask questions
+BRIDGE_READ_OWN = "bridge.read_own"  # Patient: read own status/vitals
+BRIDGE_ASK = "bridge.ask"  # Patient: ask questions
 
 # Helix Pharmacy
-HELIX_READ = "helix.read"                    # View inventory and pending orders
-HELIX_WRITE = "helix.write"                  # Verify orders, adjust stock
+HELIX_READ = "helix.read"  # View inventory and pending orders
+HELIX_WRITE = "helix.write"  # Verify orders, adjust stock
 
 # Confirming that a dispensed drug PHYSICALLY ARRIVED on the ward. Deliberately
 # NOT HELIX_WRITE, and deliberately not granted to the pharmacist.
@@ -136,11 +138,11 @@ HELIX_WRITE = "helix.write"                  # Verify orders, adjust stock
 # Receipt is the ward's attestation, so it is the ward's permission: the nurse
 # who took delivery says so in their own name. The pharmacist cannot close the
 # loop on their own dispatch, which is the entire point of the step.
-HELIX_RECEIVE = "helix.receive"              # Ward: confirm a dispensed drug arrived
+HELIX_RECEIVE = "helix.receive"  # Ward: confirm a dispensed drug arrived
 
 # Orders / CPOE
-ORDER_READ = "order.read"                    # View lab/imaging/procedure orders
-ORDER_WRITE = "order.write"                  # Create orders, drive the order state machine
+ORDER_READ = "order.read"  # View lab/imaging/procedure orders
+ORDER_WRITE = "order.write"  # Create orders, drive the order state machine
 
 # Insurance / TPA desk
 # DELIBERATELY NOT ADMIN_OVERVIEW. Until 2026-08-12 every route in
@@ -158,8 +160,8 @@ ORDER_WRITE = "order.write"                  # Create orders, drive the order st
 # recording a settlement or closing a claim moves money in the hospital's books
 # and is what a clerk does. A site that wants the first without the second can
 # now express it.
-PAYER_READ = "payer.read"                    # View payers, policies, claims, aging, denials
-PAYER_WRITE = "payer.write"                  # Capture cover, drive the claim lifecycle
+PAYER_READ = "payer.read"  # View payers, policies, claims, aging, denials
+PAYER_WRITE = "payer.write"  # Capture cover, drive the claim lifecycle
 
 # Billing desk — same shape as the payer split above, same reason: until
 # 2026-08-18 every billing route borrowed `admin.overview`, so capturing a
@@ -168,9 +170,9 @@ PAYER_WRITE = "payer.write"                  # Capture cover, drive the claim li
 # because the tariff master is a different AUTHORITY from capturing a charge:
 # a clerk records what happened to one patient; whoever edits the price list
 # changes what every future invoice in the hospital says. One desk, two pens.
-BILLING_READ = "billing.read"                # View invoices, charges, GST summaries, the tariff
-BILLING_WRITE = "billing.write"              # Capture charges, raise/adjust/settle invoices
-BILLING_TARIFF = "billing.tariff"            # Edit the tariff master / price list itself
+BILLING_READ = "billing.read"  # View invoices, charges, GST summaries, the tariff
+BILLING_WRITE = "billing.write"  # Capture charges, raise/adjust/settle invoices
+BILLING_TARIFF = "billing.tariff"  # Edit the tariff master / price list itself
 
 # Cash counter. Split OUT of `admin.overview` for the same reason as the payer
 # desk, but with more tiers because the module already enforces segregation of
@@ -180,9 +182,9 @@ BILLING_TARIFF = "billing.tariff"            # Edit the tariff master / price li
 # the supervisor authorising a refund/void/waiver (real money leaving the
 # hospital); CLOSE_COUNTER is the end-of-shift reconciliation. A site that
 # wants one person doing all three grants all three — but it now has to SAY so.
-PAYMENTS_READ = "payments.read"              # View receipts, deposits, counter status
-PAYMENTS_RECORD = "payments.record"          # Record a payment / deposit at the counter
-PAYMENTS_APPROVE = "payments.approve"        # Approve refunds, voids, waivers (supervisor)
+PAYMENTS_READ = "payments.read"  # View receipts, deposits, counter status
+PAYMENTS_RECORD = "payments.record"  # Record a payment / deposit at the counter
+PAYMENTS_APPROVE = "payments.approve"  # Approve refunds, voids, waivers (supervisor)
 PAYMENTS_CLOSE_COUNTER = "payments.close_counter"  # Close and reconcile a counter/shift
 
 # Front desk. The smallest split: registration/transfer/discharge-paperwork
@@ -191,7 +193,7 @@ PAYMENTS_CLOSE_COUNTER = "payments.close_counter"  # Close and reconcile a count
 # over-granted — a clerk who files admissions had to hold the audit log to do
 # it. One write permission fixes that; front-desk READS are patient-register
 # reads and stay on the clinical read permissions they already use.
-FRONTDESK_WRITE = "frontdesk.write"          # Register/transfer paperwork at the front desk
+FRONTDESK_WRITE = "frontdesk.write"  # Register/transfer paperwork at the front desk
 
 # Procurement. Three-way, not two, because raise-vs-approve is already
 # load-bearing IN the module (raising an indent needed `helix.write`; approving
@@ -200,8 +202,8 @@ FRONTDESK_WRITE = "frontdesk.write"          # Register/transfer paperwork at th
 # surgical-consumables indent and a storekeeper needed an admin account.
 # APPROVE is money and vendor standing; WRITE is the day's indents; READ is the
 # catalogue and ledgers.
-PROCUREMENT_READ = "procurement.read"        # View catalogue, indents, POs, stock ledgers
-PROCUREMENT_WRITE = "procurement.write"      # Raise/edit indents and purchase orders
+PROCUREMENT_READ = "procurement.read"  # View catalogue, indents, POs, stock ledgers
+PROCUREMENT_WRITE = "procurement.write"  # Raise/edit indents and purchase orders
 PROCUREMENT_APPROVE = "procurement.approve"  # Approve/issue POs, blacklist vendors, write off stock
 
 # Pilot instrument (shadow mode)
@@ -241,41 +243,45 @@ CONSENT_RECORD = "consent.record"
 # to who holds one is a deliberate, reviewed edit.
 
 # Registration and outpatients (OPD epic, ruling OPD-N3).
-REGISTRATION_READ = "registration.read"      # Registration desk reads, minimal-field patient search
-REGISTRATION_WRITE = "registration.write"    # Register a patient, correct demographics
-OPD_CONSULT = "opd.consult"                  # Run an outpatient consultation
-SCHEDULE_MANAGE = "schedule.manage"          # Clinic sessions, display boards (configuration, no PHI)
+REGISTRATION_READ = "registration.read"  # Registration desk reads, minimal-field patient search
+REGISTRATION_WRITE = "registration.write"  # Register a patient, correct demographics
+OPD_CONSULT = "opd.consult"  # Run an outpatient consultation
+SCHEDULE_MANAGE = "schedule.manage"  # Clinic sessions, display boards (configuration, no PHI)
 
 # Beds and admissions (ADT epic). No ADT permission ends a stay: end of stay
 # keeps discharge.generate plus scope. Doctors reach moves and presence through
 # the patient.write arm of each route, not through these grants.
-ADT_READ = "adt.read"                        # Bed board, availability, census, movement history
-ADT_BED = "adt.bed"                          # Assign, change, swap or reserve a bed; never changes the treating department
-ADT_TRANSFER = "adt.transfer"                # Change the treating department (a scope change)
-ADT_PRESENCE = "adt.presence"                # Record leave, absconded and return
-BED_MASTER = "bed.master"                    # Bed setup, reconciliation link, register complete
+ADT_READ = "adt.read"  # Bed board, availability, census, movement history
+ADT_BED = "adt.bed"  # Assign, change, swap or reserve a bed; never changes the treating department
+ADT_TRANSFER = "adt.transfer"  # Change the treating department (a scope change)
+ADT_PRESENCE = "adt.presence"  # Record leave, absconded and return
+BED_MASTER = "bed.master"  # Bed setup, reconciliation link, register complete
 
 # Pharmacy store (GRN epic, rulings GRN-R7 and GRN-R8). helix.receive keeps its
 # meaning: ward receipt of a patient's dispensed drug, nothing else.
-PHARMACY_STORE_READ = "pharmacy_store.read"        # Drug stock, lots, ledgers, documents
-PHARMACY_STORE_WRITE = "pharmacy_store.write"      # Raise purchase orders, receive goods, transfers, counts
-PHARMACY_STORE_APPROVE = "pharmacy_store.approve"  # Approve orders, adjustments, write-offs, downgrades
-PHARMACY_STORE_NDPS = "pharmacy_store.ndps"        # The NDPS register and its witness steps
-WARD_STOCK_READ = "ward_stock.read"                # A ward's own imprest stock (department-scoped)
-WARD_STOCK_RECEIVE = "ward_stock.receive"          # Receive a pharmacy transfer on the ward
-WARD_RETURN_RECORD = "ward_return.record"          # Record a medicine returned from the ward
-WARD_INDENT_RAISE = "ward_indent.raise"            # Raise a ward indent to the pharmacy
+PHARMACY_STORE_READ = "pharmacy_store.read"  # Drug stock, lots, ledgers, documents
+PHARMACY_STORE_WRITE = (
+    "pharmacy_store.write"  # Raise purchase orders, receive goods, transfers, counts
+)
+PHARMACY_STORE_APPROVE = (
+    "pharmacy_store.approve"  # Approve orders, adjustments, write-offs, downgrades
+)
+PHARMACY_STORE_NDPS = "pharmacy_store.ndps"  # The NDPS register and its witness steps
+WARD_STOCK_READ = "ward_stock.read"  # A ward's own imprest stock (department-scoped)
+WARD_STOCK_RECEIVE = "ward_stock.receive"  # Receive a pharmacy transfer on the ward
+WARD_RETURN_RECORD = "ward_return.record"  # Record a medicine returned from the ward
+WARD_INDENT_RAISE = "ward_indent.raise"  # Raise a ward indent to the pharmacy
 
 # Laboratory (LIS epic, rulings LIS-R12 and LIS-R17).
-LAB_READ = "lab.read"                        # Laboratory views, reports, worklists
-LAB_COLLECT = "lab.collect"                  # Collect a specimen (two-identifier check)
-LAB_RECEIVE = "lab.receive"                  # Receive or reject a specimen in the laboratory
-LAB_RESULT = "lab.result"                    # Enter and technically validate a result
-LAB_AUTHORISE = "lab.authorise"              # Authorise and release, amend or withdraw a result
-LAB_MASTER = "lab.master"                    # Test catalogue, reference ranges, critical limits
-LAB_CRITICAL_LOG = "lab.critical_log"        # Log a critical-result phone callback
-LAB_CRITICAL_ACK = "lab.critical_ack"        # Acknowledge a critical result on the ward, with read-back
-LAB_INTERFACE = "lab.interface"              # Analyser registry and credentials
+LAB_READ = "lab.read"  # Laboratory views, reports, worklists
+LAB_COLLECT = "lab.collect"  # Collect a specimen (two-identifier check)
+LAB_RECEIVE = "lab.receive"  # Receive or reject a specimen in the laboratory
+LAB_RESULT = "lab.result"  # Enter and technically validate a result
+LAB_AUTHORISE = "lab.authorise"  # Authorise and release, amend or withdraw a result
+LAB_MASTER = "lab.master"  # Test catalogue, reference ranges, critical limits
+LAB_CRITICAL_LOG = "lab.critical_log"  # Log a critical-result phone callback
+LAB_CRITICAL_ACK = "lab.critical_ack"  # Acknowledge a critical result on the ward, with read-back
+LAB_INTERFACE = "lab.interface"  # Analyser registry and credentials
 # Attach an unmatched result to a patient, or discard it. A wrong-patient
 # decision that feeds the chart and Tier 1, so laboratory roles only (LIS-R17),
 # never admin and never a department-scoped role: the queue shows raw
@@ -288,14 +294,14 @@ INGEST_RECONCILE = "ingest.reconcile"
 # ORB_MULTI_SITE and a group-wide grant besides facility.manage (multisite-2's
 # create gate), so holding it alone never splits a hospital. Group-wide reach
 # is a named, audited grant (ruling MS-R6), never a permission here.
-FACILITY_READ = "facility.read"              # Facility identity and the facilities list
-FACILITY_MANAGE = "facility.manage"          # Edit facility identity, departments and series
+FACILITY_READ = "facility.read"  # Facility identity and the facilities list
+FACILITY_MANAGE = "facility.manage"  # Edit facility identity, departments and series
 
 # Governance
-AUDIT_READ = "audit.read"                      # Read audit log entries
-AUDIT_TRACE = "audit.trace"                    # Trace correlation IDs
-INGEST_MONITOR = "ingest.monitor"              # View ingestion status/events
-ADMIN_OVERVIEW = "admin.overview"              # View admin governance dashboard
+AUDIT_READ = "audit.read"  # Read audit log entries
+AUDIT_TRACE = "audit.trace"  # Trace correlation IDs
+INGEST_MONITOR = "ingest.monitor"  # View ingestion status/events
+ADMIN_OVERVIEW = "admin.overview"  # View admin governance dashboard
 
 
 # ════════════════════════════════════════════════════════════════
@@ -306,18 +312,37 @@ ADMIN_OVERVIEW = "admin.overview"              # View admin governance dashboard
 
 ROLE_PERMISSIONS: dict[str, set[str]] = {
     "doctor": {
-        PATIENT_READ_ALL, PATIENT_WRITE, VITALS_READ, VITALS_WRITE, ALERT_READ, MEDICATION_WRITE,
+        PATIENT_READ_ALL,
+        PATIENT_WRITE,
+        VITALS_READ,
+        VITALS_WRITE,
+        ALERT_READ,
+        MEDICATION_WRITE,
         # The prescribing decision itself — held by the doctor and by nobody
         # else in this table. Gates the allergy override at administration
         # (services/allergy_interlock.py). See the constant's note above for why
         # this is a separate permission rather than a re-used one.
         MEDICATION_PRESCRIBE,
-        SCRIBE_CREATE_DRAFT, SCRIBE_READ_ALL, SCRIBE_EDIT_DRAFT, SCRIBE_SIGN, SCRIBE_REJECT,
-        SAGE_QUERY, LENS_ANALYZE, LENS_READ,
-        DISCHARGE_READ, DISCHARGE_GENERATE, DISCHARGE_PUBLISH,
-        RELAY_READ, RELAY_SEND, RELAY_EXECUTE_ACTION,
-        FORECAST_READ, SURGERY_READ, SURGERY_PREP, SURGERY_WRITE,
-        ORDER_READ, ORDER_WRITE,
+        SCRIBE_CREATE_DRAFT,
+        SCRIBE_READ_ALL,
+        SCRIBE_EDIT_DRAFT,
+        SCRIBE_SIGN,
+        SCRIBE_REJECT,
+        SAGE_QUERY,
+        LENS_ANALYZE,
+        LENS_READ,
+        DISCHARGE_READ,
+        DISCHARGE_GENERATE,
+        DISCHARGE_PUBLISH,
+        RELAY_READ,
+        RELAY_SEND,
+        RELAY_EXECUTE_ACTION,
+        FORECAST_READ,
+        SURGERY_READ,
+        SURGERY_PREP,
+        SURGERY_WRITE,
+        ORDER_READ,
+        ORDER_WRITE,
         # The charge nurse records outcomes (Decision 2). A doctor holds it too,
         # for the site that names the ward doctor as the shift's one person.
         OUTCOME_RECORD,
@@ -325,12 +350,15 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         CONSENT_RECORD,
         # Hospital-system build, all inert until their switches are on.
         # Registration and outpatients (OPD-N3).
-        REGISTRATION_READ, REGISTRATION_WRITE, OPD_CONSULT,
+        REGISTRATION_READ,
+        REGISTRATION_WRITE,
+        OPD_CONSULT,
         # The bed board. Moves, transfers and presence come through the
         # patient.write arm of each ADT route, not through a grant here.
         ADT_READ,
         # Specimen collection and the ward critical-result acknowledgement.
-        LAB_COLLECT, LAB_CRITICAL_ACK,
+        LAB_COLLECT,
+        LAB_CRITICAL_ACK,
     },
     "nurse": {
         # VITALS_WRITE (recording a bedside observation set) is a nurse's core
@@ -342,13 +370,26 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         # allergy. She is the LAST independent check on the prescriber's
         # decision, and an account that can both question and overrule it is one
         # check wearing two hats.
-        PATIENT_READ_ALL, VITALS_READ, VITALS_WRITE, ALERT_READ, MEDICATION_WRITE,
-        SCRIBE_CREATE_DRAFT, SCRIBE_READ_ALL, SCRIBE_EDIT_DRAFT,
-        SAGE_QUERY, LENS_ANALYZE, LENS_READ,
+        PATIENT_READ_ALL,
+        VITALS_READ,
+        VITALS_WRITE,
+        ALERT_READ,
+        MEDICATION_WRITE,
+        SCRIBE_CREATE_DRAFT,
+        SCRIBE_READ_ALL,
+        SCRIBE_EDIT_DRAFT,
+        SAGE_QUERY,
+        LENS_ANALYZE,
+        LENS_READ,
         DISCHARGE_READ,
-        RELAY_READ, RELAY_SEND,
-        FORECAST_READ, SURGERY_READ, SURGERY_PREP, SURGERY_WRITE,
-        ORDER_READ, ORDER_WRITE,
+        RELAY_READ,
+        RELAY_SEND,
+        FORECAST_READ,
+        SURGERY_READ,
+        SURGERY_PREP,
+        SURGERY_WRITE,
+        ORDER_READ,
+        ORDER_WRITE,
         # THE PILOT'S GROUND TRUTH. The charge nurse is the one named person per
         # shift who records a deterioration event and confirms the shifts with
         # none (docs/OUTCOME_CAPTURE.md §4, §6). Without this grant the decision
@@ -363,9 +404,13 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         HELIX_RECEIVE,
         # Hospital-system build, all inert until their switches are on.
         # Ward stock, indents and returns for her own department (GRN-R8).
-        WARD_STOCK_READ, WARD_STOCK_RECEIVE, WARD_INDENT_RAISE, WARD_RETURN_RECORD,
+        WARD_STOCK_READ,
+        WARD_STOCK_RECEIVE,
+        WARD_INDENT_RAISE,
+        WARD_RETURN_RECORD,
         # Specimen collection and the ward critical-result acknowledgement.
-        LAB_COLLECT, LAB_CRITICAL_ACK,
+        LAB_COLLECT,
+        LAB_CRITICAL_ACK,
         # NO ADT permission, deliberately. Ruling ADT-S7 (who records leave and
         # absconded, and whether nurses see the bed board) is held for Samuel,
         # and the strictest option is "nurses get nothing new".
@@ -373,14 +418,16 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
     "pharmacist": {
         # Limited to pharmacy workflow + Sage for clinical context
         SAGE_QUERY,
-        HELIX_READ, HELIX_WRITE,
+        HELIX_READ,
+        HELIX_WRITE,
         # Raising an indent was reachable through HELIX_WRITE while procurement
         # borrowed helix permissions; now that procurement has its own family,
         # these two keep the pharmacist's existing reach EXPRESSED rather than
         # borrowed. Deliberately NOT procurement.approve — approving a PO,
         # issuing to a vendor or writing off stock was admin-only before the
         # split and stays that way.
-        PROCUREMENT_READ, PROCUREMENT_WRITE,
+        PROCUREMENT_READ,
+        PROCUREMENT_WRITE,
         # NOT HELIX_RECEIVE, and this omission is load-bearing. The pharmacist
         # dispenses; the ward receives. An account holding both would be able to
         # walk an order from "scheduled" to "delivered" without the drug ever
@@ -390,20 +437,29 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         # The pharmacy store desk (GRN-R7), inert until ORB_PHARMACY_STORE is on.
         # NOT approve: approving a purchase order, an adjustment or a write-off
         # stays with a second person, the same split as procurement above.
-        PHARMACY_STORE_READ, PHARMACY_STORE_WRITE, PHARMACY_STORE_NDPS,
+        PHARMACY_STORE_READ,
+        PHARMACY_STORE_WRITE,
+        PHARMACY_STORE_NDPS,
         # The pharmacist's check of a medication order in the store (MO-R4 (a):
         # the pharmacist only). Inert until ORB_MED_ORDER_STORE is on.
         MEDICATION_VERIFY,
     },
     "admin": {
         # Governance + read-only clinical + pharmacy access
-        PATIENT_READ_ALL, VITALS_READ, ALERT_READ,
+        PATIENT_READ_ALL,
+        VITALS_READ,
+        ALERT_READ,
         SCRIBE_READ_ALL,
-        SAGE_QUERY, LENS_READ,
+        SAGE_QUERY,
+        LENS_READ,
         DISCHARGE_READ,
-        RELAY_READ, RELAY_SEND,
-        FORECAST_READ, SURGERY_READ, SURGERY_WRITE,
-        HELIX_READ, HELIX_WRITE,
+        RELAY_READ,
+        RELAY_SEND,
+        FORECAST_READ,
+        SURGERY_READ,
+        SURGERY_WRITE,
+        HELIX_READ,
+        HELIX_WRITE,
         ORDER_READ,
         # The insurance / TPA desk. Granted to `admin` because that is who runs
         # it today — a TPA clerk is seeded as an `admin` account, which is why
@@ -412,16 +468,24 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         # runs the other way: the desk no longer DEPENDS on ADMIN_OVERVIEW, so
         # the day a `tpa_clerk` role exists it can be given exactly these two and
         # not the audit log.
-        PAYER_READ, PAYER_WRITE,
+        PAYER_READ,
+        PAYER_WRITE,
         # The back-office desks, split out of ADMIN_OVERVIEW on 2026-08-18 the
         # same way (see each constant's note). All granted to `admin` because
         # admin runs every desk today, so — like the payer split — this changes
         # nothing about who can reach them. What it changes is what a future
         # billing clerk, cashier or storekeeper account has to be handed.
-        BILLING_READ, BILLING_WRITE, BILLING_TARIFF,
-        PAYMENTS_READ, PAYMENTS_RECORD, PAYMENTS_APPROVE, PAYMENTS_CLOSE_COUNTER,
+        BILLING_READ,
+        BILLING_WRITE,
+        BILLING_TARIFF,
+        PAYMENTS_READ,
+        PAYMENTS_RECORD,
+        PAYMENTS_APPROVE,
+        PAYMENTS_CLOSE_COUNTER,
         FRONTDESK_WRITE,
-        PROCUREMENT_READ, PROCUREMENT_WRITE, PROCUREMENT_APPROVE,
+        PROCUREMENT_READ,
+        PROCUREMENT_WRITE,
+        PROCUREMENT_APPROVE,
         # Kept so the administrator can still backfill an outcome or a shift
         # confirmation on the nurse's behalf. The charge nurse records these
         # through the end-of-shift capture screen in the nurse panel
@@ -431,26 +495,38 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         # ability today.
         OUTCOME_RECORD,
         # Governance-specific
-        AUDIT_READ, AUDIT_TRACE, INGEST_MONITOR, ADMIN_OVERVIEW,
+        AUDIT_READ,
+        AUDIT_TRACE,
+        INGEST_MONITOR,
+        ADMIN_OVERVIEW,
         # Hospital-system build, all inert until their switches are on.
         # Registration reads and clinic configuration, NOT registration.write:
         # registering patients is the desk's and the doctor's job (OPD-N3).
-        REGISTRATION_READ, SCHEDULE_MANAGE,
+        REGISTRATION_READ,
+        SCHEDULE_MANAGE,
         # The bed manager's set: board, moves, transfers, presence, bed setup.
-        ADT_READ, ADT_BED, ADT_TRANSFER, ADT_PRESENCE, BED_MASTER,
+        ADT_READ,
+        ADT_BED,
+        ADT_TRANSFER,
+        ADT_PRESENCE,
+        BED_MASTER,
         # Pharmacy store read and approve, NOT write (GRN-R7): the pharmacist
         # raises and receives, the administrator approves.
-        PHARMACY_STORE_READ, PHARMACY_STORE_APPROVE,
+        PHARMACY_STORE_READ,
+        PHARMACY_STORE_APPROVE,
         # Laboratory views and the analyser registry. NOT ingest.reconcile:
         # attaching a result to a patient is a wrong-patient decision (LIS-R17).
-        LAB_READ, LAB_INTERFACE,
+        LAB_READ,
+        LAB_INTERFACE,
         # Facility identity (multi-site). Facility 1's identity works with
         # ORB_MULTI_SITE off; a second facility needs the switch and a grant.
-        FACILITY_READ, FACILITY_MANAGE,
+        FACILITY_READ,
+        FACILITY_MANAGE,
     },
     "patient": {
         # Self-only access through Bridge
-        BRIDGE_READ_OWN, BRIDGE_ASK,
+        BRIDGE_READ_OWN,
+        BRIDGE_ASK,
     },
     # The cash counter, as its own account type. No seeded user holds this role
     # yet — it exists so a site can staff a counter without handing the cashier
@@ -459,7 +535,9 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
     # now agrees — the person taking money cannot authorise it leaving.
     # CLOSE_COUNTER because reconciling their own shift is the cashier's job.
     "cashier": {
-        PAYMENTS_READ, PAYMENTS_RECORD, PAYMENTS_CLOSE_COUNTER,
+        PAYMENTS_READ,
+        PAYMENTS_RECORD,
+        PAYMENTS_CLOSE_COUNTER,
     },
     # ── Roles added by migration 48 (users_role_batch). Each can only be
     # created while its switch is on (roles.ROLE_FEATURE), and every grant
@@ -468,14 +546,16 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
     # The registration desk (OPD-N3). No chart, no money, no consent capture
     # (consent.record waits for counsel), no transfers.
     "receptionist": {
-        REGISTRATION_READ, REGISTRATION_WRITE,
+        REGISTRATION_READ,
+        REGISTRATION_WRITE,
     },
     # The ward clerk (adt-17): the board and same-department bed moves only.
     # No patient.read_all (no chart), no adt.transfer (ADT-S8 held: a clerk
     # never changes who can read the chart), no adt.presence (ADT-S7 held), and
     # no admission or end of stay (ADT-S3, ADT-S5 held). Department required.
     "ward_clerk": {
-        ADT_READ, ADT_BED,
+        ADT_READ,
+        ADT_BED,
         # The Orb Ward Record (6 October 2026): the clerk keys each round from
         # the paper observation sheet. Transcribe only, never vitals.write.
         VITALS_TRANSCRIBE,
@@ -484,16 +564,26 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
     # patient.read_all, relay.* or sage.query. A technician never authorises
     # (LIS-R5); only the pathologist (any authorised signatory) does.
     "phlebotomist": {
-        LAB_READ, LAB_COLLECT,
+        LAB_READ,
+        LAB_COLLECT,
     },
     "lab_technician": {
-        LAB_READ, LAB_COLLECT, LAB_RECEIVE, LAB_RESULT, LAB_CRITICAL_LOG,
+        LAB_READ,
+        LAB_COLLECT,
+        LAB_RECEIVE,
+        LAB_RESULT,
+        LAB_CRITICAL_LOG,
         INGEST_RECONCILE,
     },
     "pathologist": {
-        LAB_READ, LAB_COLLECT, LAB_RECEIVE, LAB_RESULT, LAB_CRITICAL_LOG,
+        LAB_READ,
+        LAB_COLLECT,
+        LAB_RECEIVE,
+        LAB_RESULT,
+        LAB_CRITICAL_LOG,
         INGEST_RECONCILE,
-        LAB_AUTHORISE, LAB_MASTER,
+        LAB_AUTHORISE,
+        LAB_MASTER,
     },
 }
 
@@ -504,6 +594,7 @@ ROLE_PERMISSIONS["clinician"] = ROLE_PERMISSIONS["doctor"]
 # ════════════════════════════════════════════════════════════════
 #  Permission Check Helpers
 # ════════════════════════════════════════════════════════════════
+
 
 def has_permission(role: str, permission: str) -> bool:
     """Check whether a role has a specific permission."""
@@ -525,7 +616,8 @@ def get_permissions_for_role(role: str) -> set[str]:
 #  Ward/department scoping — ONE derivation, server-side only
 # ════════════════════════════════════════════════════════════════
 
-def department_scope(user: dict) -> str | None:
+
+def department_scope(user: Mapping) -> str | None:
     """The department a request may see PHI for, derived from the AUTHENTICATED user.
 
     This is the single source of truth for ward scoping. Every patient-list
@@ -658,8 +750,9 @@ def _facility_params(facilities) -> tuple[str, tuple]:
     return ", ".join("?" for _ in ids), ids
 
 
-def scope_patient_ids_sql(dept: str | None, *,
-                          facilities: frozenset[int] | None = None) -> tuple[str, tuple]:
+def scope_patient_ids_sql(
+    dept: str | None, *, facilities: frozenset[int] | None = None
+) -> tuple[str, tuple]:
     """A subquery yielding every patient id inside `dept`.
 
     Returns (sql, params) so it can be embedded as ``... IN (<sql>)``. A `dept`
@@ -680,12 +773,16 @@ def scope_patient_ids_sql(dept: str | None, *,
     marks, ids = _facility_params(facilities)
     if dept is None:
         return f"SELECT p.id FROM patients p WHERE {FACILITY_PATIENT_SQL} IN ({marks})", ids
-    return (f"SELECT p.id FROM patients p WHERE {PATIENT_DEPARTMENT_SQL} = ? "
-            f"AND {FACILITY_PATIENT_SQL} IN ({marks})", (dept, *ids))
+    return (
+        f"SELECT p.id FROM patients p WHERE {PATIENT_DEPARTMENT_SQL} = ? "
+        f"AND {FACILITY_PATIENT_SQL} IN ({marks})",
+        (dept, *ids),
+    )
 
 
-def patient_in_scope(db, patient_id: str, dept: str | None, *,
-                     facilities: frozenset[int] | None = None) -> bool:
+def patient_in_scope(
+    db, patient_id: str, dept: str | None, *, facilities: frozenset[int] | None = None
+) -> bool:
     """Is this ONE patient inside the caller's department?
 
     Vets a patient_id that arrived from the REQUEST, which is exactly the kind
@@ -709,27 +806,37 @@ def patient_in_scope(db, patient_id: str, dept: str | None, *,
             return True
         if not patient_id:
             return False
-        return db.execute(
-            f"SELECT 1 FROM patients p WHERE p.id = ? AND {PATIENT_DEPARTMENT_SQL} = ?",
-            (patient_id, dept),
-        ).fetchone() is not None
+        return (
+            db.execute(
+                f"SELECT 1 FROM patients p WHERE p.id = ? AND {PATIENT_DEPARTMENT_SQL} = ?",
+                (patient_id, dept),
+            ).fetchone()
+            is not None
+        )
     if not facilities or not patient_id:
         return False
     marks, ids = _facility_params(facilities)
     if dept is None:
-        return db.execute(
-            f"SELECT 1 FROM patients p WHERE p.id = ? AND {FACILITY_PATIENT_SQL} IN ({marks})",
-            (patient_id, *ids),
-        ).fetchone() is not None
-    return db.execute(
-        f"SELECT 1 FROM patients p WHERE p.id = ? AND {PATIENT_DEPARTMENT_SQL} = ? "
-        f"AND {FACILITY_PATIENT_SQL} IN ({marks})",
-        (patient_id, dept, *ids),
-    ).fetchone() is not None
+        return (
+            db.execute(
+                f"SELECT 1 FROM patients p WHERE p.id = ? AND {FACILITY_PATIENT_SQL} IN ({marks})",
+                (patient_id, *ids),
+            ).fetchone()
+            is not None
+        )
+    return (
+        db.execute(
+            f"SELECT 1 FROM patients p WHERE p.id = ? AND {PATIENT_DEPARTMENT_SQL} = ? "
+            f"AND {FACILITY_PATIENT_SQL} IN ({marks})",
+            (patient_id, dept, *ids),
+        ).fetchone()
+        is not None
+    )
 
 
-def patient_in_scope_blocking(patient_id: str, dept: str | None, *,
-                              facilities: frozenset[int] | None = None) -> bool:
+def patient_in_scope_blocking(
+    patient_id: str, dept: str | None, *, facilities: frozenset[int] | None = None
+) -> bool:
     """patient_in_scope on its own connection — for run_db() from async routes."""
     if dept is None and facilities is None:
         return True
@@ -737,8 +844,9 @@ def patient_in_scope_blocking(patient_id: str, dept: str | None, *,
         return patient_in_scope(db, patient_id, dept, facilities=facilities)
 
 
-def facility_denial(db, patient_id: str | None,
-                    facilities: frozenset[int] | None) -> tuple[bool, int | None]:
+def facility_denial(
+    db, patient_id: str | None, facilities: frozenset[int] | None
+) -> tuple[bool, int | None]:
     """(denied, the patient's facility) for the facility half of the scope.
 
     Not denied when `facilities` is None (no facility limit) or when the id
@@ -764,19 +872,28 @@ def facility_denial(db, patient_id: str | None,
     return fid not in facilities, fid
 
 
-def _facility_denial_blocking(patient_id: str | None,
-                              facilities: frozenset[int] | None) -> tuple[bool, int | None]:
+def _facility_denial_blocking(
+    patient_id: str | None, facilities: frozenset[int] | None
+) -> tuple[bool, int | None]:
     """facility_denial on its own connection, for run_db()."""
     with db_session() as db:
         return facility_denial(db, patient_id, facilities)
 
 
-def _audit_facility_denial(*, user: dict, patient_id: str | None, dept: str | None,
-                           facilities: frozenset[int], patient_facility_id: int | None,
-                           helper: str, opd_arm: bool = False,
-                           request_path: str | None = None, http_method: str | None = None,
-                           ip_address: str | None = None,
-                           user_agent: str | None = None) -> None:
+def _audit_facility_denial(
+    *,
+    user: dict,
+    patient_id: str | None,
+    dept: str | None,
+    facilities: frozenset[int],
+    patient_facility_id: int | None,
+    helper: str,
+    opd_arm: bool = False,
+    request_path: str | None = None,
+    http_method: str | None = None,
+    ip_address: str | None = None,
+    user_agent: str | None = None,
+) -> None:
     """The patient_scope_denied row for a facility-caused denial. BLOCKING.
 
     Same category and action as the department denial in
@@ -785,8 +902,10 @@ def _audit_facility_denial(*, user: dict, patient_id: str | None, dept: str | No
     if facilities:
         summary = f"Patient {patient_id} is outside the caller's facility scope"
     else:
-        summary = (f"Patient {patient_id} is out of scope: the caller's department "
-                   f"({dept}) belongs to no facility on record")
+        summary = (
+            f"Patient {patient_id} is out of scope: the caller's department "
+            f"({dept}) belongs to no facility on record"
+        )
     metadata = {
         "department": dept,
         "scope_source": "authenticated_user",
@@ -850,6 +969,7 @@ def _audit_facility_denial(*, user: dict, patient_id: str | None, dept: str | No
 #   * an active admission anywhere closes the arm completely, so a visit can
 #     never launder an inpatient of another ward onto a clinic's record view.
 
+
 def opd_scope_window(today=None) -> tuple[str, str]:
     """(first_day, last_day) of the OPD scope window, hospital-local YYYY-MM-DD.
 
@@ -857,6 +977,7 @@ def opd_scope_window(today=None) -> tuple[str, str]:
     restart) sees the current setting. 0 means the visit's own day only.
     """
     from datetime import timedelta
+
     from services.hospital_time import hospital_today
 
     last = today or hospital_today()
@@ -871,10 +992,13 @@ def opd_scope_open() -> bool:
 
 
 def _patient_has_active_admission(db, patient_id: str) -> bool:
-    return db.execute(
-        "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' LIMIT 1",
-        (patient_id,),
-    ).fetchone() is not None
+    return (
+        db.execute(
+            "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' LIMIT 1",
+            (patient_id,),
+        ).fetchone()
+        is not None
+    )
 
 
 def _opd_scope_visit(db, patient_id: str, dept: str) -> dict | None:
@@ -926,6 +1050,7 @@ def opd_scope_decision(db, patient_id: str, dept: str | None) -> dict | None:
     if visit is None:
         return None
     from datetime import date, timedelta
+
     days = max(0, int(getattr(config, "OPD_SCOPE_DAYS", 7) or 0))
     until = date.fromisoformat(visit["visit_date"]) + timedelta(days=days)
     return {"arm": "opd_visit", **visit, "scope_until": until.isoformat()}
@@ -998,13 +1123,21 @@ def enforce_patient_scope(user: dict, patient_id: str | None, *, opd_arm: bool =
         if facilities is not None:
             denied, patient_facility = facility_denial(db, patient_id, facilities)
         if not denied and dept is not None:
-            allowed = (patient_in_opd_scope(db, patient_id, dept) if opd_arm
-                       else patient_in_scope(db, patient_id, dept))
+            allowed = (
+                patient_in_opd_scope(db, patient_id, dept)
+                if opd_arm
+                else patient_in_scope(db, patient_id, dept)
+            )
     if denied:
+        assert facilities is not None
         # Written after the read session closed, before the 404.
         _audit_facility_denial(
-            user=user, patient_id=patient_id, dept=dept, facilities=facilities,
-            patient_facility_id=patient_facility, helper="enforce_patient_scope",
+            user=user,
+            patient_id=patient_id,
+            dept=dept,
+            facilities=facilities,
+            patient_facility_id=patient_facility,
+            helper="enforce_patient_scope",
             opd_arm=opd_arm,
         )
         raise HTTPException(status_code=404, detail="Patient not found")
@@ -1044,7 +1177,7 @@ def log_phi_read(
     absent and the row is exactly as before.
     """
     dept = department_scope(user)
-    meta = {
+    meta: dict[str, Any] = {
         "department": dept,
         # True only for an account with no department on record — an
         # admin-settable property of the USER ROW, never a request parameter.
@@ -1058,7 +1191,7 @@ def log_phi_read(
         meta["facility_scope"] = None if facilities is None else sorted(facilities)
     log_audit_event(
         correlation_id=str(uuid.uuid4()),
-        event_category="phi_access",          # fail-closed
+        event_category="phi_access",  # fail-closed
         action_type=action_type,
         outcome=outcome,
         summary_message=summary_message,
@@ -1075,9 +1208,14 @@ def log_phi_read(
     )
 
 
-def _log_patient_read_blocking(*, request: Request, user: dict,
-                               action_type: str, patient_id: str | None,
-                               metadata: dict | None = None) -> None:
+def _log_patient_read_blocking(
+    *,
+    request: Request,
+    user: dict,
+    action_type: str,
+    patient_id: str | None,
+    metadata: dict | None = None,
+) -> None:
     """require_patient_access's read audit, written only once the patient is known.
 
     Writing "success" before the handler had looked the patient up put a
@@ -1091,20 +1229,26 @@ def _log_patient_read_blocking(*, request: Request, user: dict,
     """
     if patient_id:
         with db_session() as db:
-            exists = db.execute("SELECT 1 FROM patients WHERE id = ?",
-                                (patient_id,)).fetchone() is not None
+            exists = (
+                db.execute("SELECT 1 FROM patients WHERE id = ?", (patient_id,)).fetchone()
+                is not None
+            )
         if not exists:
             log_phi_read(
-                request=request, user=user, action_type=action_type,
+                request=request,
+                user=user,
+                action_type=action_type,
                 summary_message=f"{action_type} for patient {patient_id}: no such patient",
-                patient_id=patient_id, outcome="failure",
+                patient_id=patient_id,
+                outcome="failure",
                 metadata={"reason": "not_found", **(metadata or {})},
             )
             return
     log_phi_read(
-        request=request, user=user, action_type=action_type,
-        summary_message=(f"{action_type} for patient {patient_id}"
-                         if patient_id else action_type),
+        request=request,
+        user=user,
+        action_type=action_type,
+        summary_message=(f"{action_type} for patient {patient_id}" if patient_id else action_type),
         patient_id=patient_id,
         metadata=metadata,
     )
@@ -1113,6 +1257,7 @@ def _log_patient_read_blocking(*, request: Request, user: dict,
 # ════════════════════════════════════════════════════════════════
 #  FastAPI Dependency: require_permission
 # ════════════════════════════════════════════════════════════════
+
 
 def require_permission(*permissions: str):
     """Dependency factory: require the user to have ALL listed permissions.
@@ -1126,9 +1271,12 @@ def require_permission(*permissions: str):
         async def overview(user=Depends(require_permission("admin.overview"))):
             ...
     """
+
+    _CHECKER_USER_DEFAULT = Depends(get_current_user)
+
     async def _checker(
         request: Request,
-        user: dict = Depends(get_current_user),
+        user: dict = _CHECKER_USER_DEFAULT,
     ) -> dict:
         role = user.get("role", "")
         user_perms = ROLE_PERMISSIONS.get(role, set())
@@ -1168,7 +1316,7 @@ def require_permission(*permissions: str):
                 status_code=403,
                 detail={
                     "error": "permission_denied",
-                    "message": f"Insufficient permissions",
+                    "message": "Insufficient permissions",
                     "required": list(permissions),
                     "missing": missing,
                 },
@@ -1188,9 +1336,12 @@ def require_any_permission(*permissions: str):
     reasons: the observations route takes vitals.write (a nurse or doctor at
     the bedside) OR vitals.transcribe (the ward clerk copying the paper sheet).
     """
+
+    _CHECKER_USER_DEFAULT = Depends(get_current_user)
+
     async def _checker(
         request: Request,
-        user: dict = Depends(get_current_user),
+        user: dict = _CHECKER_USER_DEFAULT,
     ) -> dict:
         role = user.get("role", "")
         user_perms = ROLE_PERMISSIONS.get(role, set())
@@ -1231,8 +1382,10 @@ def require_any_permission(*permissions: str):
 #  FastAPI Dependency: require_patient_access
 # ════════════════════════════════════════════════════════════════
 
-def require_patient_access(*permissions: str, audit_action: str | None = None,
-                           opd_arm: bool = False, any_of: bool = False):
+
+def require_patient_access(
+    *permissions: str, audit_action: str | None = None, opd_arm: bool = False, any_of: bool = False
+):
     """require_permission + "…and this patient is on your ward" + a read audit.
 
     ONE guard hung off every ``/{patient_id}`` route rather than N copies of the
@@ -1274,12 +1427,15 @@ def require_patient_access(*permissions: str, audit_action: str | None = None,
     department checks below then run exactly as before. With one facility and
     a warm cache this adds no executor hop and no statement.
     """
-    permission_checker = (require_any_permission(*permissions) if any_of
-                          else require_permission(*permissions))
+    permission_checker = (
+        require_any_permission(*permissions) if any_of else require_permission(*permissions)
+    )
+
+    _CHECKER_USER_DEFAULT = Depends(permission_checker)
 
     async def _checker(
         request: Request,
-        user: dict = Depends(permission_checker),
+        user: dict = _CHECKER_USER_DEFAULT,
     ) -> dict:
         patient_id = request.path_params.get("patient_id")
         dept = department_scope(user)
@@ -1288,7 +1444,8 @@ def require_patient_access(*permissions: str, audit_action: str | None = None,
         facilities = await facility_scope_async(user)
         if facilities is not None and patient_id:
             denied, patient_facility = await run_db(
-                _facility_denial_blocking, patient_id, facilities)
+                _facility_denial_blocking, patient_id, facilities
+            )
             if denied:
                 await run_db(
                     _audit_facility_denial,
@@ -1333,19 +1490,24 @@ def require_patient_access(*permissions: str, audit_action: str | None = None,
                     http_method=request.method,
                     ip_address=request.client.host if request.client else None,
                     user_agent=request.headers.get("user-agent"),
-                    metadata={"department": dept, "scope_source": "authenticated_user",
-                              "opd_arm": True},
+                    metadata={
+                        "department": dept,
+                        "scope_source": "authenticated_user",
+                        "opd_arm": True,
+                    },
                 )
                 raise HTTPException(status_code=404, detail="Patient not found")
             request.state.orb_patient_scope = dict(decision)
             read_metadata = {"scope_arm": decision.get("arm"), "opd_arm": True}
             if decision.get("arm") == "opd_visit":
-                read_metadata.update({
-                    "opd_visit_id": decision.get("visit_id"),
-                    "opd_visit_date": decision.get("visit_date"),
-                    "opd_scope_until": decision.get("scope_until"),
-                    "self_registered": bool(decision.get("self_registered")),
-                })
+                read_metadata.update(
+                    {
+                        "opd_visit_id": decision.get("visit_id"),
+                        "opd_visit_date": decision.get("visit_date"),
+                        "opd_scope_until": decision.get("scope_until"),
+                        "self_registered": bool(decision.get("self_registered")),
+                    }
+                )
         elif dept is not None and patient_id:
             in_scope = await run_db(patient_in_scope_blocking, patient_id, dept)
             if not in_scope:
@@ -1358,8 +1520,7 @@ def require_patient_access(*permissions: str, audit_action: str | None = None,
                     action_type="patient_scope_denied",
                     outcome="denied",
                     summary_message=(
-                        f"Patient {patient_id} is outside the caller's department "
-                        f"({dept})"
+                        f"Patient {patient_id} is outside the caller's department ({dept})"
                     ),
                     actor_user_id=user.get("id"),
                     actor_role=user.get("role"),
@@ -1395,7 +1556,7 @@ def require_patient_access(*permissions: str, audit_action: str | None = None,
 
     # Read by tests/test_opd_scope_drift.py, which walks every route's
     # dependency tree for this mark and pins each route that carries it.
-    _checker.orb_opd_arm = bool(opd_arm)
+    _checker.__dict__["orb_opd_arm"] = bool(opd_arm)
     return _checker
 
 
@@ -1474,7 +1635,7 @@ def may_use_registration_desk(role: str, mode: str, *, desk_on: bool | None = No
     return any(has_permission(role, p) for p in registration_desk_arms("write", desk_on=on))
 
 
-async def _deny_registration_desk(request: Request, user: dict, mode: str) -> None:
+async def _deny_registration_desk(request: Request, user: dict, mode: str) -> Never:
     """The audited refusal while the feature is on. Raises 403 once the denial
     is on the hash chain (a blocking await, like require_permission's)."""
     role = user.get("role", "")
@@ -1537,7 +1698,9 @@ def require_registration_desk(mode: str, *, gate=None):
     patient_read_all_checker = require_permission(PATIENT_READ_ALL)
     extra_gate = gate or _no_desk_gate
 
-    async def _read_check(request: Request, user: dict = Depends(get_current_user)) -> dict:
+    _READ_CHECK_USER_DEFAULT = Depends(get_current_user)
+
+    async def _read_check(request: Request, user: dict = _READ_CHECK_USER_DEFAULT) -> dict:
         role = user.get("role", "")
         if registration_desk_on():
             if may_use_registration_desk(role, "read", desk_on=True):
@@ -1547,20 +1710,28 @@ def require_registration_desk(mode: str, *, gate=None):
         return await patient_read_all_checker(request, user)
 
     if mode == "read":
-        async def _checker(
-            user: dict = Depends(_read_check),
-            _gate: None = Depends(extra_gate),
+        _CHECKER_USER_DEFAULT = Depends(_read_check)
+        _CHECKER_GATE_DEFAULT = Depends(extra_gate)
+
+        async def _checker_first(
+            user: dict = _CHECKER_USER_DEFAULT,
+            _gate: None = _CHECKER_GATE_DEFAULT,
         ) -> dict:
             return user
     else:
-        async def _checker(
+        _CHECKER_USER_DEFAULT = Depends(_read_check)
+        _CHECKER_GATE_DEFAULT = Depends(extra_gate)
+
+        async def _checker_second(
             request: Request,
-            user: dict = Depends(_read_check),
-            _gate: None = Depends(extra_gate),
+            user: dict = _CHECKER_USER_DEFAULT,
+            _gate: None = _CHECKER_GATE_DEFAULT,
         ) -> dict:
             role = user.get("role", "")
             desk_on = registration_desk_on()
-            if any(has_permission(role, p) for p in registration_desk_arms("write", desk_on=desk_on)):
+            if any(
+                has_permission(role, p) for p in registration_desk_arms("write", desk_on=desk_on)
+            ):
                 return user
             if desk_on:
                 await _deny_registration_desk(request, user, "write")
@@ -1590,6 +1761,8 @@ def require_registration_desk(mode: str, *, gate=None):
                 },
             )
 
+    _checker = _checker_first if mode == "read" else _checker_second
+
     _checker.__name__ = f"require_registration_desk_{mode}"
     return _checker
 
@@ -1597,6 +1770,7 @@ def require_registration_desk(mode: str, *, gate=None):
 # ════════════════════════════════════════════════════════════════
 #  FastAPI Dependency: require_patient_self
 # ════════════════════════════════════════════════════════════════
+
 
 def require_patient_self():
     """Dependency factory: require the user to be a patient AND verify they
@@ -1607,9 +1781,12 @@ def require_patient_self():
 
     Returns the user dict (which includes user_id for self-scoped queries).
     """
+
+    _CHECKER_USER_DEFAULT = Depends(get_current_user)
+
     async def _checker(
         request: Request,
-        user: dict = Depends(get_current_user),
+        user: dict = _CHECKER_USER_DEFAULT,
     ) -> dict:
         role = user.get("role", "")
 

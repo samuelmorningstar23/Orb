@@ -35,6 +35,7 @@ in ``patients.ward``. Scoping ``patients.ward`` therefore fails in both
 directions at once — it lets the cross-ward write through AND blocks the
 legitimate one.
 """
+from tests.source_contract import contract_source
 import inspect
 import uuid
 from datetime import datetime, timezone
@@ -495,7 +496,7 @@ def test_no_new_mutation_route_takes_a_patient_id_without_a_ward_check():
         if endpoint is None:
             continue
         try:
-            src = inspect.getsource(endpoint)
+            src = contract_source(endpoint)
         except (OSError, TypeError):
             continue
         checked += 1
@@ -597,7 +598,7 @@ def _surrogate_write_routes():
             continue
         endpoint = getattr(route, "endpoint", None)
         try:
-            src = inspect.getsource(endpoint)
+            src = contract_source(endpoint)
         except (OSError, TypeError):
             continue
         for m in methods:

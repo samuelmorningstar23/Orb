@@ -74,14 +74,15 @@ CONVENTIONS (same as the rest of server/services)
   * No foreign keys on these tables (migration 23): a dangling id yields
     "unknown", never a failed clinical write.
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import re
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
-from typing import Any, Optional
+from datetime import UTC, date, datetime
+from typing import Any
 
 from database import db_session
 from db_backend import DBIntegrityError
@@ -164,6 +165,7 @@ NO_GATEWAY_SHORT = "Recorded in Orb only: nothing was sent to ABDM."
 #  Errors
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class AbdmError(ValueError):
     """Base for every refusal in this module."""
 
@@ -206,7 +208,10 @@ class IllegalConsentTransition(ConsentError):
 ABHA_NUMBER_DIGITS = 14
 
 VERIFICATION_STATUSES: tuple[str, ...] = (
-    "unverified", "verified", "verification_failed", "deactivated",
+    "unverified",
+    "verified",
+    "verification_failed",
+    "deactivated",
 )
 
 #: How a human verified the ABHA, ELSEWHERE. Every one of these happens outside
@@ -245,8 +250,13 @@ IDENTITY_SOURCES: tuple[tuple[str, str], ...] = (
 #: denial codes in the payer module, which are Orb's own), so the list is fixed
 #: and a value outside it is refused rather than stored verbatim.
 HI_TYPES: tuple[str, ...] = (
-    "OPConsultation", "DischargeSummary", "Prescription", "DiagnosticReport",
-    "ImmunizationRecord", "HealthDocumentRecord", "WellnessRecord",
+    "OPConsultation",
+    "DischargeSummary",
+    "Prescription",
+    "DiagnosticReport",
+    "ImmunizationRecord",
+    "HealthDocumentRecord",
+    "WellnessRecord",
 )
 
 LINK_METHODS: tuple[tuple[str, str], ...] = (
@@ -274,11 +284,19 @@ PURPOSE_CODES: tuple[tuple[str, str], ...] = (
 REQUESTER_TYPES: tuple[str, ...] = ("hiu", "hip", "patient", "other")
 
 RECORDED_PLACES: tuple[str, ...] = (
-    "consent_manager", "abdm_portal", "partner_software", "in_person", "outside_orb",
+    "consent_manager",
+    "abdm_portal",
+    "partner_software",
+    "in_person",
+    "outside_orb",
 )
 
 CONSENT_STATUSES: tuple[str, ...] = (
-    "requested", "granted", "denied", "expired", "revoked",
+    "requested",
+    "granted",
+    "denied",
+    "expired",
+    "revoked",
 )
 
 # ── THE CONSENT LIFECYCLE ────────────────────────────────────────────────────
@@ -320,6 +338,7 @@ STALE_AFTER_DAYS = 7
 #  ABHA format validation — PURE, and deliberately modest about what it proves
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass(frozen=True)
 class AbhaNumberCheck:
     """The result of looking at a candidate ABHA number.
@@ -329,10 +348,11 @@ class AbhaNumberCheck:
     active. Only ABDM can say that, and only through a human, recorded as a
     verification.
     """
+
     valid: bool
-    normalised: Optional[str]
-    formatted: Optional[str]
-    reason: Optional[str]
+    normalised: str | None
+    formatted: str | None
+    reason: str | None
 
     def as_dict(self) -> dict:
         return {
@@ -353,11 +373,11 @@ class AbhaNumberCheck:
 @dataclass(frozen=True)
 class AbhaAddressCheck:
     valid: bool
-    normalised: Optional[str]
-    username: Optional[str]
-    suffix: Optional[str]
+    normalised: str | None
+    username: str | None
+    suffix: str | None
     suffix_recognised: bool
-    reason: Optional[str]
+    reason: str | None
 
     def as_dict(self) -> dict:
         return {
@@ -368,10 +388,7 @@ class AbhaAddressCheck:
             "suffix_recognised": self.suffix_recognised,
             "reason": self.reason,
             "checked_against_abdm": False,
-            "note": (
-                "Structural check only. Orb cannot confirm that this ABHA "
-                "address exists."
-            ),
+            "note": ("Structural check only. Orb cannot confirm that this ABHA address exists."),
         }
 
 
@@ -402,7 +419,7 @@ def format_abha_number(digits: str) -> str:
     return f"{d[0:2]}-{d[2:6]}-{d[6:10]}-{d[10:14]}"
 
 
-def validate_abha_number(raw: Optional[str]) -> AbhaNumberCheck:
+def validate_abha_number(raw: str | None) -> AbhaNumberCheck:
     """Structural validation of an ABHA number. Never a network call.
 
     ACCEPTS the forms a human actually types: ``12-3456-7890-1234``,
@@ -440,26 +457,32 @@ def validate_abha_number(raw: Optional[str]) -> AbhaNumberCheck:
     if not _DIGITS_ONLY.match(stripped):
         bad = sorted({c for c in stripped if not c.isdigit()})
         return AbhaNumberCheck(
-            False, None, None,
+            False,
+            None,
+            None,
             "An ABHA number is digits only. Unexpected character(s): "
-            + ", ".join(repr(c) for c in bad) + ".",
+            + ", ".join(repr(c) for c in bad)
+            + ".",
         )
     if len(stripped) != ABHA_NUMBER_DIGITS:
         return AbhaNumberCheck(
-            False, None, None,
-            f"An ABHA number is {ABHA_NUMBER_DIGITS} digits; this has "
-            f"{len(stripped)}.",
+            False,
+            None,
+            None,
+            f"An ABHA number is {ABHA_NUMBER_DIGITS} digits; this has {len(stripped)}.",
         )
     if len(set(stripped)) == 1:
         return AbhaNumberCheck(
-            False, None, None,
+            False,
+            None,
+            None,
             "That is the same digit fourteen times, which is not an issued ABHA "
             "number. Leave the field empty rather than filling it.",
         )
     return AbhaNumberCheck(True, stripped, format_abha_number(stripped), None)
 
 
-def validate_abha_address(raw: Optional[str]) -> AbhaAddressCheck:
+def validate_abha_address(raw: str | None) -> AbhaAddressCheck:
     """Structural validation of an ABHA (PHR) address — ``username@suffix``.
 
     Normalises to lowercase, because ABHA addresses are case-insensitive and
@@ -483,56 +506,95 @@ def validate_abha_address(raw: Optional[str]) -> AbhaAddressCheck:
         return AbhaAddressCheck(False, None, None, None, False, "No ABHA address was given.")
     if any(ch.isspace() for ch in text):
         return AbhaAddressCheck(
-            False, None, None, None, False,
+            False,
+            None,
+            None,
+            None,
+            False,
             "An ABHA address contains no spaces.",
         )
     if text.count("@") != 1:
         return AbhaAddressCheck(
-            False, None, None, None, False,
+            False,
+            None,
+            None,
+            None,
+            False,
             "An ABHA address looks like username@abdm. It needs exactly one '@'.",
         )
 
     username, suffix = text.split("@", 1)
     if not username:
         return AbhaAddressCheck(
-            False, None, None, suffix or None, False,
+            False,
+            None,
+            None,
+            suffix or None,
+            False,
             "There is nothing before the '@'.",
         )
     if not suffix:
         return AbhaAddressCheck(
-            False, None, username, None, False,
+            False,
+            None,
+            username,
+            None,
+            False,
             "There is nothing after the '@'.",
         )
     if len(username) < _USERNAME_MIN:
         return AbhaAddressCheck(
-            False, None, username, suffix, suffix in RECOGNISED_ABHA_SUFFIXES,
+            False,
+            None,
+            username,
+            suffix,
+            suffix in RECOGNISED_ABHA_SUFFIXES,
             f"The part before the '@' is shorter than {_USERNAME_MIN} characters.",
         )
     if len(username) > _USERNAME_MAX:
         return AbhaAddressCheck(
-            False, None, username, suffix, suffix in RECOGNISED_ABHA_SUFFIXES,
+            False,
+            None,
+            username,
+            suffix,
+            suffix in RECOGNISED_ABHA_SUFFIXES,
             f"The part before the '@' is longer than {_USERNAME_MAX} characters.",
         )
     if not _ADDRESS_USERNAME.match(username):
         return AbhaAddressCheck(
-            False, None, username, suffix, suffix in RECOGNISED_ABHA_SUFFIXES,
+            False,
+            None,
+            username,
+            suffix,
+            suffix in RECOGNISED_ABHA_SUFFIXES,
             "The part before the '@' may use letters, digits, dot, hyphen and "
             "underscore, and must start and end with a letter or digit.",
         )
     if _CONSECUTIVE_SEPARATORS.search(username):
         return AbhaAddressCheck(
-            False, None, username, suffix, suffix in RECOGNISED_ABHA_SUFFIXES,
+            False,
+            None,
+            username,
+            suffix,
+            suffix in RECOGNISED_ABHA_SUFFIXES,
             "The part before the '@' has two separators in a row.",
         )
     if not _ADDRESS_SUFFIX.match(suffix):
         return AbhaAddressCheck(
-            False, None, username, suffix, False,
-            "The part after the '@' does not look like an ABHA suffix "
-            "(for example 'abdm').",
+            False,
+            None,
+            username,
+            suffix,
+            False,
+            "The part after the '@' does not look like an ABHA suffix (for example 'abdm').",
         )
     return AbhaAddressCheck(
-        True, f"{username}@{suffix}", username, suffix,
-        suffix in RECOGNISED_ABHA_SUFFIXES, None,
+        True,
+        f"{username}@{suffix}",
+        username,
+        suffix,
+        suffix in RECOGNISED_ABHA_SUFFIXES,
+        None,
     )
 
 
@@ -540,22 +602,23 @@ def validate_abha_address(raw: Optional[str]) -> AbhaAddressCheck:
 #  Small helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def _utc_now_str() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _row(r) -> dict:
     return {k: r[k] for k in r.keys()}
 
 
-def _clean(value: Optional[str]) -> Optional[str]:
+def _clean(value: str | None) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
     return text or None
 
 
-def _require_reason(value: Optional[str], *, what: str, error: type[AbdmError]) -> str:
+def _require_reason(value: str | None, *, what: str, error: type[AbdmError]) -> str:
     """A reason that is blank, or is punctuation, is not a reason.
 
     Used by every destructive step in this module (unlink, revoke, deactivate).
@@ -571,7 +634,7 @@ def _require_reason(value: Optional[str], *, what: str, error: type[AbdmError]) 
     return text
 
 
-def _parse_ts(value: Any) -> Optional[datetime]:
+def _parse_ts(value: Any) -> datetime | None:
     """Parse a stored/supplied timestamp into an aware UTC datetime, or None.
 
     Tolerant on input (dates, 'T' separators, trailing 'Z', fractional seconds)
@@ -582,9 +645,9 @@ def _parse_ts(value: Any) -> Optional[datetime]:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
     if isinstance(value, date):
-        return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
+        return datetime(value.year, value.month, value.day, tzinfo=UTC)
     text = str(value).strip()
     if not text:
         return None
@@ -593,13 +656,13 @@ def _parse_ts(value: Any) -> Optional[datetime]:
         text = text.split(".", 1)[0]
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
         try:
-            return datetime.strptime(text, fmt).replace(tzinfo=timezone.utc)
+            return datetime.strptime(text, fmt).replace(tzinfo=UTC)
         except ValueError:
             continue
     return None
 
 
-def _norm_ts(value: Optional[str], *, field: str) -> Optional[str]:
+def _norm_ts(value: str | None, *, field: str) -> str | None:
     """Normalise a caller-supplied timestamp for storage, refusing gibberish.
 
     `field` is printed in the refusal, so callers pass the person's word for
@@ -617,21 +680,20 @@ def _norm_ts(value: Optional[str], *, field: str) -> Optional[str]:
     parsed = _parse_ts(value)
     if parsed is None:
         raise AbdmError(
-            f"The {field} is not a date Orb can read. Use YYYY-MM-DD or "
-            "YYYY-MM-DD HH:MM."
+            f"The {field} is not a date Orb can read. Use YYYY-MM-DD or YYYY-MM-DD HH:MM."
         )
     return parsed.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _norm_date(value: Optional[str], *, field: str) -> Optional[str]:
+def _norm_date(value: str | None, *, field: str) -> str | None:
     ts = _norm_ts(value, field=field)
     return ts[:10] if ts else None
 
 
-def _age_days(anchor: Optional[datetime], *, now: Optional[datetime] = None) -> Optional[int]:
+def _age_days(anchor: datetime | None, *, now: datetime | None = None) -> int | None:
     if anchor is None:
         return None
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     return max(0, int((now - anchor).total_seconds() // 86400))
 
 
@@ -641,14 +703,14 @@ def _write_event(
     entity_type: str,
     entity_id: int,
     event_type: str,
-    patient_id: Optional[str] = None,
-    from_status: Optional[str] = None,
-    to_status: Optional[str] = None,
-    detail: Optional[str] = None,
-    reason: Optional[str] = None,
-    actor_id: Optional[str] = None,
-    occurred_at: Optional[str] = None,
-    metadata: Optional[dict] = None,
+    patient_id: str | None = None,
+    from_status: str | None = None,
+    to_status: str | None = None,
+    detail: str | None = None,
+    reason: str | None = None,
+    actor_id: str | None = None,
+    occurred_at: str | None = None,
+    metadata: dict | None = None,
 ) -> None:
     """Append one immutable line to this module's own history.
 
@@ -664,9 +726,17 @@ def _write_event(
               metadata_json)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
-            entity_type, int(entity_id), patient_id, event_type, from_status,
-            to_status, _clean(detail), _clean(reason), actor_id,
-            occurred_at or _utc_now_str(), _utc_now_str(),
+            entity_type,
+            int(entity_id),
+            patient_id,
+            event_type,
+            from_status,
+            to_status,
+            _clean(detail),
+            _clean(reason),
+            actor_id,
+            occurred_at or _utc_now_str(),
+            _utc_now_str(),
             json.dumps(metadata) if metadata else None,
         ),
     )
@@ -676,33 +746,28 @@ def _require_patient(db, patient_id: str) -> dict:
     pid = _clean(patient_id)
     if not pid:
         raise IdentityError("a patient id is required")
-    row = db.execute(
-        "SELECT id, name, mrn, ward FROM patients WHERE id = ?", (pid,)
-    ).fetchone()
+    row = db.execute("SELECT id, name, mrn, ward FROM patients WHERE id = ?", (pid,)).fetchone()
     if row is None:
         raise IdentityError(f"unknown patient {pid}")
     return _row(row)
 
 
-def _clash_patient_line(db, patient_id: str, department: Optional[str]) -> Optional[str]:
+def _clash_patient_line(db, patient_id: str, department: str | None) -> str | None:
     """'Kavitha Menon, MRN-CC002, CCU' for the patient a duplicate ABHA already
     belongs to, or None when that patient is outside the caller's scope (or has
     no name on record), so the refusal never discloses another ward's patient."""
     from permissions import patient_in_scope
+
     if not patient_in_scope(db, patient_id, department):
         return None
-    row = db.execute(
-        "SELECT name, mrn, ward FROM patients WHERE id = ?", (patient_id,)
-    ).fetchone()
+    row = db.execute("SELECT name, mrn, ward FROM patients WHERE id = ?", (patient_id,)).fetchone()
     if row is None or not _clean(row["name"]):
         return None
     return ", ".join(p for p in (_clean(row["name"]), _clean(row["mrn"]), _clean(row["ward"])) if p)
 
 
 def _load_identity(db, identity_id: int):
-    row = db.execute(
-        "SELECT * FROM abha_identities WHERE id = ?", (int(identity_id),)
-    ).fetchone()
+    row = db.execute("SELECT * FROM abha_identities WHERE id = ?", (int(identity_id),)).fetchone()
     if row is None:
         raise IdentityError(f"ABHA record {identity_id} not found")
     return row
@@ -719,7 +784,7 @@ VERIFICATION_LABEL: dict[str, str] = {
 }
 
 
-def _decorate_identity(row: dict, *, verifications: Optional[list[dict]] = None) -> dict:
+def _decorate_identity(row: dict, *, verifications: list[dict] | None = None) -> dict:
     """Add the derived fields every screen needs, so no client invents them."""
     out = dict(row)
     number = out.get("abha_number")
@@ -742,16 +807,17 @@ def _decorate_identity(row: dict, *, verifications: Optional[list[dict]] = None)
 #  ABHA identities
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def record_abha(
     *,
     patient_id: str,
-    abha_number: Optional[str] = None,
-    abha_address: Optional[str] = None,
+    abha_number: str | None = None,
+    abha_address: str | None = None,
     source: str = "counter_keyed",
-    recorded_by: Optional[str] = None,
-    notes: Optional[str] = None,
+    recorded_by: str | None = None,
+    notes: str | None = None,
     is_primary: bool = True,
-    department: Optional[str] = None,
+    department: str | None = None,
 ) -> dict:
     """Record an ABHA a patient presented. IT IS UNVERIFIED. ALWAYS.
 
@@ -789,13 +855,13 @@ def record_abha_on(
     db,
     *,
     patient_id: str,
-    abha_number: Optional[str] = None,
-    abha_address: Optional[str] = None,
+    abha_number: str | None = None,
+    abha_address: str | None = None,
     source: str = "counter_keyed",
-    recorded_by: Optional[str] = None,
-    notes: Optional[str] = None,
+    recorded_by: str | None = None,
+    notes: str | None = None,
     is_primary: bool = True,
-    department: Optional[str] = None,
+    department: str | None = None,
 ) -> dict:
     """``record_abha`` on the CALLER'S connection, inside the caller's
     transaction. It never opens, commits or rolls back a session, so the
@@ -839,15 +905,13 @@ def record_abha_on(
         if not value:
             continue
         clash = db.execute(
-            f"SELECT id, patient_id FROM abha_identities "
-            f"WHERE {column} = ? AND status = 'active'",
+            f"SELECT id, patient_id FROM abha_identities WHERE {column} = ? AND status = 'active'",
             (value,),
         ).fetchone()
         if clash is not None:
             if clash["patient_id"] == patient_id:
                 raise IdentityError(
-                    f"That {label} is already recorded for this patient "
-                    f"(record #{clash['id']})."
+                    f"That {label} is already recorded for this patient (record #{clash['id']})."
                 )
             # Named, so the desk can find the other chart and resolve it.
             # Only inside the caller's own scope: naming a patient on a ward
@@ -881,8 +945,15 @@ def record_abha_on(
                   created_at, updated_at)
                VALUES (?,?,?,'unverified',?,'active',?,?,?,?,?)""",
             (
-                patient_id, number, address, 1 if is_primary else 0, source,
-                _clean(notes), recorded_by, _utc_now_str(), _utc_now_str(),
+                patient_id,
+                number,
+                address,
+                1 if is_primary else 0,
+                source,
+                _clean(notes),
+                recorded_by,
+                _utc_now_str(),
+                _utc_now_str(),
             ),
         )
     except DBIntegrityError as exc:
@@ -912,10 +983,10 @@ def record_abha_on(
 def correct_abha(
     *,
     identity_id: int,
-    abha_number: Optional[str] = None,
-    abha_address: Optional[str] = None,
+    abha_number: str | None = None,
+    abha_address: str | None = None,
     reason: str,
-    actor_id: Optional[str] = None,
+    actor_id: str | None = None,
 ) -> dict:
     """Correct a mis-keyed ABHA. THE VERIFICATION IS RESET.
 
@@ -996,9 +1067,9 @@ def correct_abha(
         )
         fresh = _row(_load_identity(db, identity_id))
         verifications = [
-            _row(r) for r in db.execute(
-                "SELECT * FROM abha_verifications WHERE abha_identity_id = ? "
-                "ORDER BY id DESC",
+            _row(r)
+            for r in db.execute(
+                "SELECT * FROM abha_verifications WHERE abha_identity_id = ? ORDER BY id DESC",
                 (int(identity_id),),
             ).fetchall()
         ]
@@ -1011,12 +1082,12 @@ def record_verification(
     method: str,
     outcome: str,
     performed_by: str,
-    performed_at: Optional[str] = None,
+    performed_at: str | None = None,
     performed_where: str = "outside_orb",
-    reference: Optional[str] = None,
-    failure_reason: Optional[str] = None,
-    notes: Optional[str] = None,
-    recorded_by: Optional[str] = None,
+    reference: str | None = None,
+    failure_reason: str | None = None,
+    notes: str | None = None,
+    recorded_by: str | None = None,
 ) -> dict:
     """Record a verification a human performed ELSEWHERE. Orb verified nothing.
 
@@ -1066,9 +1137,17 @@ def record_verification(
                   failure_reason, notes)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                int(identity_id), row["patient_id"], method, outcome,
-                performed_where, who, when, _utc_now_str(),
-                recorded_by or who, _clean(reference), _clean(failure_reason),
+                int(identity_id),
+                row["patient_id"],
+                method,
+                outcome,
+                performed_where,
+                who,
+                when,
+                _utc_now_str(),
+                recorded_by or who,
+                _clean(reference),
+                _clean(failure_reason),
                 _clean(notes),
             ),
         )
@@ -1121,18 +1200,16 @@ def record_verification(
 
         fresh = _row(_load_identity(db, identity_id))
         verifications = [
-            _row(r) for r in db.execute(
-                "SELECT * FROM abha_verifications WHERE abha_identity_id = ? "
-                "ORDER BY id DESC",
+            _row(r)
+            for r in db.execute(
+                "SELECT * FROM abha_verifications WHERE abha_identity_id = ? ORDER BY id DESC",
                 (int(identity_id),),
             ).fetchall()
         ]
     return _decorate_identity(fresh, verifications=verifications)
 
 
-def record_deactivation(
-    *, identity_id: int, reason: str, actor_id: Optional[str] = None
-) -> dict:
+def record_deactivation(*, identity_id: int, reason: str, actor_id: str | None = None) -> dict:
     """Record that the desk was TOLD (elsewhere) this ABHA is no longer valid.
 
     Orb cannot discover this — there is no gateway to hear it from — so the row
@@ -1168,23 +1245,24 @@ def get_abha(identity_id: int, *, include_events: bool = True) -> dict:
     with db_session() as db:
         row = _row(_load_identity(db, identity_id))
         verifications = [
-            _row(r) for r in db.execute(
-                "SELECT * FROM abha_verifications WHERE abha_identity_id = ? "
-                "ORDER BY id DESC",
+            _row(r)
+            for r in db.execute(
+                "SELECT * FROM abha_verifications WHERE abha_identity_id = ? ORDER BY id DESC",
                 (int(identity_id),),
             ).fetchall()
         ]
         contexts = [
-            _row(r) for r in db.execute(
-                "SELECT * FROM abdm_care_contexts WHERE abha_identity_id = ? "
-                "ORDER BY id DESC",
+            _row(r)
+            for r in db.execute(
+                "SELECT * FROM abdm_care_contexts WHERE abha_identity_id = ? ORDER BY id DESC",
                 (int(identity_id),),
             ).fetchall()
         ]
         events = []
         if include_events:
             events = [
-                _row(r) for r in db.execute(
+                _row(r)
+                for r in db.execute(
                     "SELECT * FROM abdm_events WHERE entity_type = 'abha_identity' "
                     "AND entity_id = ? ORDER BY id DESC",
                     (int(identity_id),),
@@ -1198,9 +1276,9 @@ def get_abha(identity_id: int, *, include_events: bool = True) -> dict:
 
 def list_abha(
     *,
-    patient_id: Optional[str] = None,
-    verification_status: Optional[str] = None,
-    department: Optional[str] = None,
+    patient_id: str | None = None,
+    verification_status: str | None = None,
+    department: str | None = None,
     active_only: bool = True,
     limit: int = 200,
 ) -> list[dict]:
@@ -1228,6 +1306,7 @@ def list_abha(
         sql.append(" AND i.status = 'active'")
     if department is not None:
         from permissions import scope_patient_ids_sql
+
         scope_sql, scope_params = scope_patient_ids_sql(department)
         sql.append(f" AND i.patient_id IN ({scope_sql})")
         params.extend(scope_params)
@@ -1243,12 +1322,13 @@ def list_abha(
 #  Care-context links
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def _decorate_care_context(row: dict) -> dict:
     out = dict(row)
     out["is_linked"] = out.get("status") == "linked"
     out["transmitted_to_abdm"] = False
     method = out.get("link_method")
-    out["link_method_label"] = dict(LINK_METHODS).get(method, method)
+    out["link_method_label"] = dict(LINK_METHODS).get((method or ""), method)
     return out
 
 
@@ -1257,16 +1337,16 @@ def link_care_context(
     identity_id: int,
     care_context_reference: str,
     hi_type: str = "OPConsultation",
-    display: Optional[str] = None,
+    display: str | None = None,
     encounter_type: str = "admission",
-    encounter_ref: Optional[str] = None,
-    encounter_date: Optional[str] = None,
+    encounter_ref: str | None = None,
+    encounter_date: str | None = None,
     linked_by: str,
-    linked_at: Optional[str] = None,
+    linked_at: str | None = None,
     link_method: str = "abdm_portal",
-    link_reference: Optional[str] = None,
-    notes: Optional[str] = None,
-    recorded_by: Optional[str] = None,
+    link_reference: str | None = None,
+    notes: str | None = None,
+    recorded_by: str | None = None,
 ) -> dict:
     """RECORD that a human linked this episode to this ABHA, somewhere else.
 
@@ -1287,8 +1367,7 @@ def link_care_context(
         )
     if encounter_type not in ENCOUNTER_TYPES:
         raise CareContextError(
-            f"unknown encounter type {encounter_type!r}; expected one of "
-            f"{sorted(ENCOUNTER_TYPES)}"
+            f"unknown encounter type {encounter_type!r}; expected one of {sorted(ENCOUNTER_TYPES)}"
         )
     valid_methods = {code for code, _ in LINK_METHODS}
     if link_method not in valid_methods:
@@ -1312,8 +1391,7 @@ def link_care_context(
         identity = _load_identity(db, identity_id)
         if identity["status"] != "active":
             raise CareContextError(
-                f"ABHA record {identity_id} is {identity['status']}; it cannot "
-                "carry new links."
+                f"ABHA record {identity_id} is {identity['status']}; it cannot carry new links."
             )
         if identity["verification_status"] != "verified":
             raise CareContextError(
@@ -1343,10 +1421,22 @@ def link_care_context(
                       recorded_by, created_at, updated_at)
                    VALUES (?,?,?,?,?,?,?,?,'linked',?,?,?,?,?,?,?,?)""",
                 (
-                    int(identity_id), identity["patient_id"], reference, _clean(display),
-                    hi_type, encounter_type, _clean(encounter_ref), enc_date,
-                    when, who, link_method, _clean(link_reference), _clean(notes),
-                    recorded_by or who, _utc_now_str(), _utc_now_str(),
+                    int(identity_id),
+                    identity["patient_id"],
+                    reference,
+                    _clean(display),
+                    hi_type,
+                    encounter_type,
+                    _clean(encounter_ref),
+                    enc_date,
+                    when,
+                    who,
+                    link_method,
+                    _clean(link_reference),
+                    _clean(notes),
+                    recorded_by or who,
+                    _utc_now_str(),
+                    _utc_now_str(),
                 ),
             )
         except DBIntegrityError as exc:
@@ -1370,9 +1460,9 @@ def link_care_context(
             occurred_at=when,
             metadata={"abha_identity_id": int(identity_id), "hi_type": hi_type},
         )
-        row = _row(db.execute(
-            "SELECT * FROM abdm_care_contexts WHERE id = ?", (context_id,)
-        ).fetchone())
+        row = _row(
+            db.execute("SELECT * FROM abdm_care_contexts WHERE id = ?", (context_id,)).fetchone()
+        )
     return _decorate_care_context(row)
 
 
@@ -1381,7 +1471,7 @@ def unlink_care_context(
     care_context_id: int,
     reason: str,
     actor_id: str,
-    unlinked_at: Optional[str] = None,
+    unlinked_at: str | None = None,
 ) -> dict:
     """RECORD that a human unlinked this care context, elsewhere.
 
@@ -1438,18 +1528,20 @@ def unlink_care_context(
             actor_id=who,
             occurred_at=when,
         )
-        fresh = _row(db.execute(
-            "SELECT * FROM abdm_care_contexts WHERE id = ?", (int(care_context_id),)
-        ).fetchone())
+        fresh = _row(
+            db.execute(
+                "SELECT * FROM abdm_care_contexts WHERE id = ?", (int(care_context_id),)
+            ).fetchone()
+        )
     return _decorate_care_context(fresh)
 
 
 def list_care_contexts(
     *,
-    patient_id: Optional[str] = None,
-    identity_id: Optional[int] = None,
-    status: Optional[str] = None,
-    department: Optional[str] = None,
+    patient_id: str | None = None,
+    identity_id: int | None = None,
+    status: str | None = None,
+    department: str | None = None,
     limit: int = 200,
 ) -> list[dict]:
     """Care-context records. UNLINKED ONES ARE INCLUDED BY DEFAULT.
@@ -1478,6 +1570,7 @@ def list_care_contexts(
         params.append(status)
     if department is not None:
         from permissions import scope_patient_ids_sql
+
         scope_sql, scope_params = scope_patient_ids_sql(department)
         sql.append(f" AND c.patient_id IN ({scope_sql})")
         params.extend(scope_params)
@@ -1500,7 +1593,8 @@ def list_care_contexts(
 #  Consent artefacts
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _consent_effective(row: dict, *, now: Optional[datetime] = None) -> dict:
+
+def _consent_effective(row: dict, *, now: datetime | None = None) -> dict:
     """Derive what this artefact means RIGHT NOW, at read time.
 
     WHY EXPIRY IS DERIVED AND NOT TRUSTED FROM THE COLUMN. A stored status of
@@ -1511,7 +1605,7 @@ def _consent_effective(row: dict, *, now: Optional[datetime] = None) -> dict:
     and `status` is reported beside `effective_status` rather than instead of it,
     so a desk can see that the stored row has not been updated yet.
     """
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     status = row.get("status") or "requested"
     expires = _parse_ts(row.get("expires_at"))
     is_expired = bool(expires and expires <= now)
@@ -1540,7 +1634,7 @@ def _consent_effective(row: dict, *, now: Optional[datetime] = None) -> dict:
     }
 
 
-def _decorate_consent(row: dict, *, now: Optional[datetime] = None) -> dict:
+def _decorate_consent(row: dict, *, now: datetime | None = None) -> dict:
     out = dict(row)
     try:
         out["hi_types"] = json.loads(row.get("hi_types_json") or "[]")
@@ -1548,13 +1642,15 @@ def _decorate_consent(row: dict, *, now: Optional[datetime] = None) -> dict:
         out["hi_types"] = []
     out["hi_types_recorded"] = bool(out["hi_types"])
     out.update(_consent_effective(row, now=now))
-    out["purpose_label"] = dict(PURPOSE_CODES).get(row.get("purpose_code"), row.get("purpose_code"))
+    out["purpose_label"] = dict(PURPOSE_CODES).get(
+        (row.get("purpose_code") or ""), row.get("purpose_code")
+    )
     out["transmitted_to_abdm"] = False
     # Said explicitly rather than left to be inferred: a revoked artefact is
     # never coming back, and the screen renders the sentence, not a disabled
     # dropdown the user has to reason about.
     out["can_be_reinstated"] = False
-    out["is_revoked"] = (row.get("status") == "revoked")
+    out["is_revoked"] = row.get("status") == "revoked"
     return out
 
 
@@ -1581,17 +1677,17 @@ def record_consent_request(
     patient_id: str,
     requester_name: str,
     purpose_code: str = "CAREMGT",
-    purpose_text: Optional[str] = None,
-    hi_types: Optional[list[str]] = None,
-    date_range_from: Optional[str] = None,
-    date_range_to: Optional[str] = None,
-    expires_at: Optional[str] = None,
-    request_id: Optional[str] = None,
-    identity_id: Optional[int] = None,
+    purpose_text: str | None = None,
+    hi_types: list[str] | None = None,
+    date_range_from: str | None = None,
+    date_range_to: str | None = None,
+    expires_at: str | None = None,
+    request_id: str | None = None,
+    identity_id: int | None = None,
     requester_type: str = "hiu",
     recorded_where: str = "consent_manager",
-    recorded_by: Optional[str] = None,
-    notes: Optional[str] = None,
+    recorded_by: str | None = None,
+    notes: str | None = None,
 ) -> dict:
     """Record a consent REQUEST that was raised on the consent manager elsewhere.
 
@@ -1606,8 +1702,7 @@ def record_consent_request(
         )
     if requester_type not in REQUESTER_TYPES:
         raise ConsentError(
-            f"unknown requester type {requester_type!r}; expected one of "
-            f"{sorted(REQUESTER_TYPES)}"
+            f"unknown requester type {requester_type!r}; expected one of {sorted(REQUESTER_TYPES)}"
         )
     if recorded_where not in RECORDED_PLACES:
         raise ConsentError(
@@ -1648,11 +1743,23 @@ def record_consent_request(
                   recorded_where, recorded_by, notes, created_at, updated_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,'requested',?,?,?,?,?,?)""",
             (
-                _clean(request_id), patient_id,
-                int(identity_id) if identity_id else None, name, requester_type,
-                purpose_code, _clean(purpose_text), json.dumps(types), frm, to,
-                expiry, _utc_now_str(), recorded_where, recorded_by, _clean(notes),
-                _utc_now_str(), _utc_now_str(),
+                _clean(request_id),
+                patient_id,
+                int(identity_id) if identity_id else None,
+                name,
+                requester_type,
+                purpose_code,
+                _clean(purpose_text),
+                json.dumps(types),
+                frm,
+                to,
+                expiry,
+                _utc_now_str(),
+                recorded_where,
+                recorded_by,
+                _clean(notes),
+                _utc_now_str(),
+                _utc_now_str(),
             ),
         )
         consent_id = int(cur.lastrowid)
@@ -1666,9 +1773,11 @@ def record_consent_request(
             detail=f"{name} requested data for {purpose_code}",
             actor_id=recorded_by,
         )
-        row = _row(db.execute(
-            "SELECT * FROM abdm_consent_artefacts WHERE id = ?", (consent_id,)
-        ).fetchone())
+        row = _row(
+            db.execute(
+                "SELECT * FROM abdm_consent_artefacts WHERE id = ?", (consent_id,)
+            ).fetchone()
+        )
     return _decorate_consent(row)
 
 
@@ -1679,9 +1788,9 @@ def _consent_transition(
     columns: dict[str, Any],
     event_type: str,
     detail: str,
-    reason: Optional[str] = None,
-    actor_id: Optional[str] = None,
-    occurred_at: Optional[str] = None,
+    reason: str | None = None,
+    actor_id: str | None = None,
+    occurred_at: str | None = None,
 ) -> dict:
     """The ONE write path for every consent status change.
 
@@ -1700,8 +1809,7 @@ def _consent_transition(
         sets = ", ".join(f"{k} = ?" for k in columns)
         params = list(columns.values())
         db.execute(
-            f"UPDATE abdm_consent_artefacts SET status = ?, {sets}, updated_at = ? "
-            "WHERE id = ?",
+            f"UPDATE abdm_consent_artefacts SET status = ?, {sets}, updated_at = ? WHERE id = ?",
             [target, *params, _utc_now_str(), int(consent_id)],
         )
         _write_event(
@@ -1717,9 +1825,11 @@ def _consent_transition(
             actor_id=actor_id,
             occurred_at=occurred_at,
         )
-        fresh = _row(db.execute(
-            "SELECT * FROM abdm_consent_artefacts WHERE id = ?", (int(consent_id),)
-        ).fetchone())
+        fresh = _row(
+            db.execute(
+                "SELECT * FROM abdm_consent_artefacts WHERE id = ?", (int(consent_id),)
+            ).fetchone()
+        )
     return _decorate_consent(fresh)
 
 
@@ -1727,10 +1837,10 @@ def record_consent_grant(
     *,
     consent_id: int,
     artefact_id: str,
-    granted_at: Optional[str] = None,
-    expires_at: Optional[str] = None,
-    hi_types: Optional[list[str]] = None,
-    actor_id: Optional[str] = None,
+    granted_at: str | None = None,
+    expires_at: str | None = None,
+    hi_types: list[str] | None = None,
+    actor_id: str | None = None,
 ) -> dict:
     """Record that the patient GRANTED the consent, on their consent manager.
 
@@ -1753,9 +1863,7 @@ def record_consent_grant(
     if hi_types is not None:
         unknown = [t for t in hi_types if t not in HI_TYPES]
         if unknown:
-            raise ConsentError(
-                f"unknown health-information type(s): {', '.join(sorted(unknown))}."
-            )
+            raise ConsentError(f"unknown health-information type(s): {', '.join(sorted(unknown))}.")
         columns["hi_types_json"] = json.dumps(list(hi_types))
 
     try:
@@ -1775,8 +1883,11 @@ def record_consent_grant(
 
 
 def record_consent_denial(
-    *, consent_id: int, reason: str, denied_at: Optional[str] = None,
-    actor_id: Optional[str] = None,
+    *,
+    consent_id: int,
+    reason: str,
+    denied_at: str | None = None,
+    actor_id: str | None = None,
 ) -> dict:
     """Record that the patient REFUSED. Kept forever, like every other answer."""
     reason = _require_reason(reason, what="Recording a refusal", error=ConsentError)
@@ -1794,7 +1905,11 @@ def record_consent_denial(
 
 
 def revoke_consent(
-    *, consent_id: int, reason: str, actor_id: str, revoked_at: Optional[str] = None,
+    *,
+    consent_id: int,
+    reason: str,
+    actor_id: str,
+    revoked_at: str | None = None,
 ) -> dict:
     """Record that the patient WITHDREW the consent. ONE WAY. NO RETURN.
 
@@ -1830,7 +1945,10 @@ def revoke_consent(
 
 
 def expire_consent(
-    *, consent_id: int, actor_id: Optional[str] = None, occurred_at: Optional[str] = None,
+    *,
+    consent_id: int,
+    actor_id: str | None = None,
+    occurred_at: str | None = None,
 ) -> dict:
     """Write down that an artefact's own clock ran out.
 
@@ -1863,7 +1981,8 @@ def get_consent(consent_id: int, *, include_events: bool = True) -> dict:
         events = []
         if include_events:
             events = [
-                _row(r) for r in db.execute(
+                _row(r)
+                for r in db.execute(
                     "SELECT * FROM abdm_events WHERE entity_type = 'consent_artefact' "
                     "AND entity_id = ? ORDER BY id DESC",
                     (int(consent_id),),
@@ -1876,9 +1995,9 @@ def get_consent(consent_id: int, *, include_events: bool = True) -> dict:
 
 def list_consents(
     *,
-    patient_id: Optional[str] = None,
-    status: Optional[str] = None,
-    department: Optional[str] = None,
+    patient_id: str | None = None,
+    status: str | None = None,
+    department: str | None = None,
     limit: int = 200,
 ) -> list[dict]:
     sql = [
@@ -1896,6 +2015,7 @@ def list_consents(
         params.append(status)
     if department is not None:
         from permissions import scope_patient_ids_sql
+
         scope_sql, scope_params = scope_patient_ids_sql(department)
         sql.append(f" AND c.patient_id IN ({scope_sql})")
         params.extend(scope_params)
@@ -1924,11 +2044,11 @@ QUEUE_BUCKETS: tuple[tuple[str, str], ...] = (
 
 def unlinked_encounter_queue(
     *,
-    department: Optional[str] = None,
-    bucket: Optional[str] = None,
+    department: str | None = None,
+    bucket: str | None = None,
     include_discharged: bool = True,
     limit: int = 200,
-    now: Optional[datetime] = None,
+    now: datetime | None = None,
 ) -> dict:
     """Encounters with no live care-context link, oldest first.
 
@@ -1941,7 +2061,7 @@ def unlinked_encounter_queue(
     `department` is the CALLER'S scope, resolved from the authenticated user by
     the route — never accepted from the request.
     """
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     if bucket is not None and bucket not in {b for b, _ in QUEUE_BUCKETS}:
         raise AbdmError(f"unknown bucket {bucket!r}")
 
@@ -1964,6 +2084,7 @@ def unlinked_encounter_queue(
         sql.append(" AND a.status = 'active'")
     if department is not None:
         from permissions import scope_patient_ids_sql
+
         scope_sql, scope_params = scope_patient_ids_sql(department)
         sql.append(f" AND a.patient_id IN ({scope_sql})")
         params.extend(scope_params)
@@ -2004,15 +2125,15 @@ def unlinked_encounter_queue(
         entry["abha_number"] = identity.get("abha_number") if identity else None
         entry["abha_number_formatted"] = (
             format_abha_number(identity["abha_number"])
-            if identity and identity.get("abha_number") else None
+            if identity and identity.get("abha_number")
+            else None
         )
         entry["abha_address"] = identity.get("abha_address") if identity else None
-        entry["verification_status"] = (
-            identity.get("verification_status") if identity else None
-        )
+        entry["verification_status"] = identity.get("verification_status") if identity else None
         entry["verification_label"] = (
-            VERIFICATION_LABEL.get(identity.get("verification_status"), "Not verified")
-            if identity else "No ABHA on record"
+            VERIFICATION_LABEL.get((identity.get("verification_status") or ""), "Not verified")
+            if identity
+            else "No ABHA on record"
         )
         out.append(entry)
 
@@ -2020,26 +2141,30 @@ def unlinked_encounter_queue(
         "encounters": out,
         "total": len(out),
         "counts": counts,
-        "buckets": [{"id": b, "label": l, "count": counts[b]} for b, l in QUEUE_BUCKETS],
+        "buckets": [
+            {"id": b, "label": left_item, "count": counts[b]} for b, left_item in QUEUE_BUCKETS
+        ],
         "stale_after_days": STALE_AFTER_DAYS,
     }
 
 
-def abdm_summary(*, department: Optional[str] = None, now: Optional[datetime] = None) -> dict:
+def abdm_summary(*, department: str | None = None, now: datetime | None = None) -> dict:
     """The board a CIO reads: how much ABHA coverage exists, how much of it is
     actually verified, and what is waiting."""
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     scope_clause = ""
     scope_params: list[Any] = []
     if department is not None:
         from permissions import scope_patient_ids_sql
+
         scope_sql, params = scope_patient_ids_sql(department)
         scope_clause = f" AND patient_id IN ({scope_sql})"
         scope_params = list(params)
 
     with db_session() as db:
         identity_counts = {
-            r["verification_status"]: r["n"] for r in db.execute(
+            r["verification_status"]: r["n"]
+            for r in db.execute(
                 "SELECT verification_status, COUNT(*) AS n FROM abha_identities "
                 f"WHERE status = 'active'{scope_clause} GROUP BY verification_status",
                 scope_params,
@@ -2051,16 +2176,17 @@ def abdm_summary(*, department: Optional[str] = None, now: Optional[datetime] = 
             scope_params,
         ).fetchone()["n"]
         links = {
-            r["status"]: r["n"] for r in db.execute(
+            r["status"]: r["n"]
+            for r in db.execute(
                 "SELECT status, COUNT(*) AS n FROM abdm_care_contexts "
                 f"WHERE 1=1{scope_clause} GROUP BY status",
                 scope_params,
             ).fetchall()
         }
         consent_rows = [
-            _row(r) for r in db.execute(
-                "SELECT * FROM abdm_consent_artefacts "
-                f"WHERE 1=1{scope_clause}",
+            _row(r)
+            for r in db.execute(
+                f"SELECT * FROM abdm_consent_artefacts WHERE 1=1{scope_clause}",
                 scope_params,
             ).fetchall()
         ]

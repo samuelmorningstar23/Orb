@@ -20,10 +20,11 @@ SAFETY GUARDRAIL — suppression is a convenience filter, never a safety valve:
   * Suppression only lowers NEW insight creation; it never dismisses or hides an
     insight a clinician is already looking at.
 """
+
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from database import db_session
 
@@ -38,7 +39,7 @@ SUPPRESSIBLE_SEVERITIES = frozenset({"warning", "info"})
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def pattern_of(insight_type: str, severity: str) -> str:
@@ -48,9 +49,15 @@ def pattern_of(insight_type: str, severity: str) -> str:
     return f"{(insight_type or 'unknown').strip().lower()}:{(severity or 'info').strip().lower()}"
 
 
-def record_feedback(pattern: str, outcome: str, *, insight_id: str = None,
-                    patient_id: str = None, actor_user_id: str = None,
-                    db=None) -> None:
+def record_feedback(
+    pattern: str,
+    outcome: str,
+    *,
+    insight_id: str | None = None,
+    patient_id: str | None = None,
+    actor_user_id: str | None = None,
+    db=None,
+) -> None:
     """Record one graded outcome ('acted' | 'dismissed') for a pattern."""
     if outcome not in ("acted", "dismissed"):
         return
@@ -75,6 +82,7 @@ def record_feedback(pattern: str, outcome: str, *, insight_id: str = None,
 
 def pattern_stats(pattern: str, db=None) -> dict:
     """Return {acted, dismissed, total, acceptance_rate} for a pattern."""
+
     def _do(conn):
         row = conn.execute(
             """SELECT
@@ -123,6 +131,7 @@ def is_pattern_suppressed(insight_type: str, severity: str, db=None) -> bool:
 def acceptance_overview(db=None) -> list:
     """All patterns with their acceptance stats + whether they're suppressed —
     the data behind the trust/governance 'is Sage's advice useful?' surface."""
+
     def _do(conn):
         rows = conn.execute(
             """SELECT pattern,
@@ -142,10 +151,16 @@ def acceptance_overview(db=None) -> list:
                 and rate is not None
                 and rate <= SUPPRESS_ACCEPT_FLOOR
             )
-            out.append({
-                "pattern": r["pattern"], "acted": acted, "dismissed": dismissed,
-                "total": total, "acceptance_rate": rate, "suppressed": suppressed,
-            })
+            out.append(
+                {
+                    "pattern": r["pattern"],
+                    "acted": acted,
+                    "dismissed": dismissed,
+                    "total": total,
+                    "acceptance_rate": rate,
+                    "suppressed": suppressed,
+                }
+            )
         return out
 
     try:

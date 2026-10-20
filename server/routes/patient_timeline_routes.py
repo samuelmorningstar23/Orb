@@ -22,19 +22,17 @@ runs a sync route in its threadpool, so the query and the audit write stay off
 the asyncio event loop — the discipline that ended the 2026-07-30 loop stalls.
 Marking them ``async def`` would silently put both back on the loop.
 """
+
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
-
 from permissions import (
     department_scope,
     log_phi_read,
     require_patient_access,
     require_permission,
 )
+from pydantic import BaseModel
 from services.patient_timeline_service import (
     build_chart_timeline,
     mark_reviewed,
@@ -51,16 +49,21 @@ class ReviewedRequest(BaseModel):
     mark pinned to the newest event it actually RENDERED, so that an event
     landing between the render and the click is not silently marked as read.
     """
-    as_of: Optional[str] = None
+
+    as_of: str | None = None
+
+
+_PATIENT_TIMELINE_LIMIT_DEFAULT = Query(150, ge=1, le=500)
+_PATIENT_TIMELINE_USER_DEFAULT = Depends(
+    require_patient_access("patient.read_all", audit_action="patient_timeline_viewed")
+)
 
 
 @router.get("/patients/{patient_id}/timeline")
 def patient_timeline(
     patient_id: str,
-    limit: int = Query(150, ge=1, le=500),
-    user: dict = Depends(
-        require_patient_access("patient.read_all", audit_action="patient_timeline_viewed")
-    ),
+    limit: int = _PATIENT_TIMELINE_LIMIT_DEFAULT,
+    user: dict = _PATIENT_TIMELINE_USER_DEFAULT,
 ):
     """Everything on this chart, newest first, with this reader's watermark.
 
@@ -68,16 +71,19 @@ def patient_timeline(
     (possibly truncated) list returned here — "6 new" above a capped rail has to
     still be true.
     """
-    return build_chart_timeline(patient_id, user_id=user.get("id"), limit=limit)
+    return build_chart_timeline(patient_id, user_id=user["id"], limit=limit)
+
+
+_MARK_CHART_REVIEWED_USER_DEFAULT = Depends(
+    require_patient_access("patient.read_all", audit_action="patient_timeline_reviewed")
+)
 
 
 @router.post("/patients/{patient_id}/reviewed")
 def mark_chart_reviewed(
     patient_id: str,
     req: ReviewedRequest | None = None,
-    user: dict = Depends(
-        require_patient_access("patient.read_all", audit_action="patient_timeline_reviewed")
-    ),
+    user: dict = _MARK_CHART_REVIEWED_USER_DEFAULT,
 ):
     """Record that this clinician has read this chart up to now.
 
@@ -92,15 +98,18 @@ def mark_chart_reviewed(
         # An unparseable as_of is the client's bug, not a server fault, and it
         # must not be swallowed into "now" — that would mark events read that
         # were never rendered.
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
     return {"patient_id": patient_id, "new_count": 0, **result}
+
+
+_UNSEEN_COUNTS_USER_DEFAULT = Depends(require_permission("patient.read_all"))
 
 
 @router.get("/unseen")
 # Plain def on purpose (no awaits) — see the module docstring.
 def unseen_counts(
     request: Request,
-    user: dict = Depends(require_permission("patient.read_all")),
+    user: dict = _UNSEEN_COUNTS_USER_DEFAULT,
 ):
     """{patient_id: N} for admitted patients this clinician has reviewed before.
 
@@ -114,7 +123,7 @@ def unseen_counts(
     write is the exact shape behind the 2026-07-30 loop stalls.
     """
     dept = department_scope(user)
-    counts = unseen_counts_for_scope(user.get("id"), dept)
+    counts = unseen_counts_for_scope(user["id"], dept)
 
     # Audited only when something was actually disclosed. An empty result names
     # no patient and therefore discloses nothing worth a row.

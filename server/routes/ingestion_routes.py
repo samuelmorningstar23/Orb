@@ -8,25 +8,35 @@ GET  /api/ingest/quarantine                  The unmatched results queue (lis-19
 POST /api/ingest/quarantine/{id}/attach      Attach one to a patient (ingest.reconcile)
 POST /api/ingest/quarantine/{id}/discard     Discard one, with a reason (ingest.reconcile)
 """
+
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ws.realtime import AuthorizedSocketServer
 
 import hmac
 import uuid
-from fastapi import APIRouter, Request, HTTPException, Header, Depends
-from pydantic import BaseModel, Field
-from typing import Optional
 
 import config
 from auth import get_current_user
 from config import INGESTION_API_KEY, INGESTION_MODE
-from services.ingestion_adapters import HL7Adapter, JSONAdapter, CSVAdapter, FHIRAdapter
-from services.ingestion_service import SourceBinding, ingest_payload, IngestionResult
-from services.audit_service import log_audit_event
-from services import result_quarantine_service
-from permissions import (
-    INGEST_MONITOR, INGEST_RECONCILE, ROLE_PERMISSIONS, log_phi_read, require_permission,
-)
 from database import db_session, run_db
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from permissions import (
+    INGEST_MONITOR,
+    INGEST_RECONCILE,
+    ROLE_PERMISSIONS,
+    log_phi_read,
+    require_permission,
+)
+from pydantic import BaseModel, Field
+from services.audit_service import log_audit_event
+from services.ingestion_adapters import FHIRAdapter, HL7Adapter, JSONAdapter
+from services.ingestion_service import IngestionResult, SourceBinding, ingest_payload
+
+from services import result_quarantine_service
 
 router = APIRouter(prefix="/api/ingest", tags=["ingestion"])
 
@@ -39,7 +49,7 @@ router = APIRouter(prefix="/api/ingest", tags=["ingestion"])
 _MAIN_FACILITY_CODE = "MAIN"
 
 
-def _verify_api_key(x_api_key: Optional[str]) -> SourceBinding:
+def _verify_api_key(x_api_key: str | None) -> SourceBinding:
     """Verify the ingestion API key using a constant-time comparison, and
     return the facility it binds the request to (multisite-16).
 
@@ -80,7 +90,7 @@ def _check_ingestion_enabled():
         raise HTTPException(
             status_code=503,
             detail="Ingestion endpoints are disabled in simulation mode. "
-                   "Set ORB_INGESTION_MODE=ingestion or ORB_INGESTION_MODE=hybrid."
+            "Set ORB_INGESTION_MODE=ingestion or ORB_INGESTION_MODE=hybrid.",
         )
 
 
@@ -88,12 +98,18 @@ def _check_ingestion_enabled():
 #  JSON Webhook Endpoint
 # ════════════════════════════════════════════
 
+
+_INGEST_JSON_X_API_KEY_DEFAULT = Header(None)
+_INGEST_JSON_X_CORRELATION_ID_DEFAULT = Header(None)
+_INGEST_JSON_X_MESSAGE_ID_DEFAULT = Header(None)
+
+
 @router.post("/json")
 async def ingest_json(
     request: Request,
-    x_api_key: Optional[str] = Header(None),
-    x_correlation_id: Optional[str] = Header(None),
-    x_message_id: Optional[str] = Header(None),
+    x_api_key: str | None = _INGEST_JSON_X_API_KEY_DEFAULT,
+    x_correlation_id: str | None = _INGEST_JSON_X_CORRELATION_ID_DEFAULT,
+    x_message_id: str | None = _INGEST_JSON_X_MESSAGE_ID_DEFAULT,
 ):
     """Accept a structured JSON webhook payload and ingest into Orb.
 
@@ -105,6 +121,7 @@ async def ingest_json(
     Body:
         See JSONAdapter docstring for expected payload format.
     """
+    realtime_sio: AuthorizedSocketServer | None
     _check_ingestion_enabled()
     binding = _verify_api_key(x_api_key)
 
@@ -118,9 +135,11 @@ async def ingest_json(
 
     # Get Socket.IO for real-time emission
     try:
-        from ws.realtime import sio
+        from ws.realtime import sio as _realtime_sio
+
+        realtime_sio = _realtime_sio
     except ImportError:
-        sio = None
+        realtime_sio = None
 
     result = await ingest_payload(
         raw_payload=raw_payload,
@@ -129,7 +148,7 @@ async def ingest_json(
         content_type="application/json",
         correlation_id=correlation_id,
         external_message_id=x_message_id,
-        sio=sio,
+        sio=realtime_sio,
         source_binding=binding,
     )
 
@@ -141,12 +160,18 @@ async def ingest_json(
 #  HL7 ORU Endpoint
 # ════════════════════════════════════════════
 
+
+_INGEST_HL7_X_API_KEY_DEFAULT = Header(None)
+_INGEST_HL7_X_CORRELATION_ID_DEFAULT = Header(None)
+_INGEST_HL7_X_MESSAGE_ID_DEFAULT = Header(None)
+
+
 @router.post("/hl7")
 async def ingest_hl7(
     request: Request,
-    x_api_key: Optional[str] = Header(None),
-    x_correlation_id: Optional[str] = Header(None),
-    x_message_id: Optional[str] = Header(None),
+    x_api_key: str | None = _INGEST_HL7_X_API_KEY_DEFAULT,
+    x_correlation_id: str | None = _INGEST_HL7_X_CORRELATION_ID_DEFAULT,
+    x_message_id: str | None = _INGEST_HL7_X_MESSAGE_ID_DEFAULT,
 ):
     """Accept a raw HL7 v2 ORU message and ingest into Orb.
 
@@ -156,6 +181,7 @@ async def ingest_hl7(
     Alternatively, send a JSON wrapper:
         { "message": "MSH|^~\\\\&|..." }
     """
+    realtime_sio: AuthorizedSocketServer | None
     _check_ingestion_enabled()
     binding = _verify_api_key(x_api_key)
 
@@ -168,6 +194,7 @@ async def ingest_hl7(
     # Support JSON wrapper for HL7 message
     if raw_payload.strip().startswith("{"):
         import json
+
         try:
             wrapper = json.loads(raw_payload)
             raw_payload = wrapper.get("message", raw_payload)
@@ -177,9 +204,11 @@ async def ingest_hl7(
     correlation_id = x_correlation_id or str(uuid.uuid4())
 
     try:
-        from ws.realtime import sio
+        from ws.realtime import sio as _realtime_sio
+
+        realtime_sio = _realtime_sio
     except ImportError:
-        sio = None
+        realtime_sio = None
 
     result = await ingest_payload(
         raw_payload=raw_payload,
@@ -188,7 +217,7 @@ async def ingest_hl7(
         content_type="text/plain",
         correlation_id=correlation_id,
         external_message_id=x_message_id,
-        sio=sio,
+        sio=realtime_sio,
         source_binding=binding,
     )
 
@@ -200,12 +229,18 @@ async def ingest_hl7(
 #  FHIR R4 Endpoint
 # ════════════════════════════════════════════
 
+
+_INGEST_FHIR_X_API_KEY_DEFAULT = Header(None)
+_INGEST_FHIR_X_CORRELATION_ID_DEFAULT = Header(None)
+_INGEST_FHIR_X_MESSAGE_ID_DEFAULT = Header(None)
+
+
 @router.post("/fhir")
 async def ingest_fhir(
     request: Request,
-    x_api_key: Optional[str] = Header(None),
-    x_correlation_id: Optional[str] = Header(None),
-    x_message_id: Optional[str] = Header(None),
+    x_api_key: str | None = _INGEST_FHIR_X_API_KEY_DEFAULT,
+    x_correlation_id: str | None = _INGEST_FHIR_X_CORRELATION_ID_DEFAULT,
+    x_message_id: str | None = _INGEST_FHIR_X_MESSAGE_ID_DEFAULT,
 ):
     """Accept a FHIR R4 payload and ingest into Orb.
 
@@ -219,6 +254,7 @@ async def ingest_fhir(
         X-Correlation-Id:   Optional. Caller-provided trace ID.
         X-Message-Id:       Optional. Sender-provided dedup key.
     """
+    realtime_sio: AuthorizedSocketServer | None
     _check_ingestion_enabled()
     binding = _verify_api_key(x_api_key)
 
@@ -232,9 +268,11 @@ async def ingest_fhir(
 
     # Get Socket.IO for real-time emission
     try:
-        from ws.realtime import sio
+        from ws.realtime import sio as _realtime_sio
+
+        realtime_sio = _realtime_sio
     except ImportError:
-        sio = None
+        realtime_sio = None
 
     result = await ingest_payload(
         raw_payload=raw_payload,
@@ -243,7 +281,7 @@ async def ingest_fhir(
         content_type="application/fhir+json",
         correlation_id=correlation_id,
         external_message_id=x_message_id,
-        sio=sio,
+        sio=realtime_sio,
         source_binding=binding,
     )
 
@@ -255,11 +293,15 @@ async def ingest_fhir(
 #  Status / Debug Endpoint
 # ════════════════════════════════════════════
 
+
+_INGESTION_STATUS_USER_DEFAULT = Depends(require_permission("ingest.monitor"))
+
+
 @router.get("/status")
 def ingestion_status(
     limit: int = 20,
-    status: Optional[str] = None,
-    user: dict = Depends(require_permission("ingest.monitor")),
+    status: str | None = None,
+    user: dict = _INGESTION_STATUS_USER_DEFAULT,
 ):
     """Query recent ingestion events. Requires ingest.monitor permission.
 
@@ -299,15 +341,20 @@ def ingestion_status(
 #  Dev Replay Endpoint
 # ════════════════════════════════════════════
 
+
+_REPLAY_FIXTURE_X_API_KEY_DEFAULT = Header(None)
+
+
 @router.post("/replay")
 async def replay_fixture(
     request: Request,
-    x_api_key: Optional[str] = Header(None),
+    x_api_key: str | None = _REPLAY_FIXTURE_X_API_KEY_DEFAULT,
 ):
     """Replay a raw payload with auto-detected adapter. Useful for dev testing.
 
     Send any raw payload (JSON, HL7, CSV) and it will be auto-detected and processed.
     """
+    realtime_sio: AuthorizedSocketServer | None
     _check_ingestion_enabled()
     binding = _verify_api_key(x_api_key)
 
@@ -320,16 +367,18 @@ async def replay_fixture(
     correlation_id = f"replay-{uuid.uuid4()}"
 
     try:
-        from ws.realtime import sio
+        from ws.realtime import sio as _realtime_sio
+
+        realtime_sio = _realtime_sio
     except ImportError:
-        sio = None
+        realtime_sio = None
 
     result = await ingest_payload(
         raw_payload=raw_payload,
         adapter=None,  # auto-detect
         source_name="dev_replay",
         correlation_id=correlation_id,
-        sio=sio,
+        sio=realtime_sio,
         source_binding=binding,
     )
 
@@ -357,6 +406,7 @@ async def replay_fixture(
 # ════════════════════════════════════════════
 #  Response Helpers
 # ════════════════════════════════════════════
+
 
 def _http_status_from_result(result: IngestionResult) -> int:
     if result.parse_status == "parsed":
@@ -401,11 +451,15 @@ def _build_response(result: IngestionResult, status_code: int) -> dict:
 # grants to laboratory roles alone (ruling LIS-R17): an administrator gets
 # 403. Plain def handlers, so every database touch runs off the event loop.
 
+
 def _require_any_permission(*permissions: str):
     """Like require_permission, but ANY one of the permissions is enough. A
     denial is audited exactly as require_permission audits one (the same
     shape as routes/lab/master.py)."""
-    async def _checker(request: Request, user: dict = Depends(get_current_user)) -> dict:
+
+    _CHECKER_USER_DEFAULT = Depends(get_current_user)
+
+    async def _checker(request: Request, user: dict = _CHECKER_USER_DEFAULT) -> dict:
         role = user.get("role", "")
         if any(p in ROLE_PERMISSIONS.get(role, set()) for p in permissions):
             return user
@@ -424,9 +478,15 @@ def _require_any_permission(*permissions: str):
             user_agent=request.headers.get("user-agent"),
             metadata={"required_any": list(permissions), "user_role": role},
         )
-        raise HTTPException(status_code=403, detail={
-            "error": "permission_denied", "message": "Insufficient permissions",
-            "required_any": list(permissions)})
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "permission_denied",
+                "message": "Insufficient permissions",
+                "required_any": list(permissions),
+            },
+        )
+
     _checker.__name__ = "require_any_permission"
     return _checker
 
@@ -446,8 +506,8 @@ def _quarantine_http_error(exc: result_quarantine_service.QuarantineError) -> HT
 
 class QuarantineAttachRequest(BaseModel):
     hospital_number: str = Field(..., max_length=64)
-    name: Optional[str] = Field(None, max_length=200)
-    date_of_birth: Optional[str] = Field(None, max_length=32)
+    name: str | None = Field(None, max_length=200)
+    date_of_birth: str | None = Field(None, max_length=32)
     reason: str = Field(..., max_length=1000)
 
 
@@ -455,12 +515,15 @@ class QuarantineDiscardRequest(BaseModel):
     reason: str = Field(..., max_length=1000)
 
 
+_LIST_QUARANTINE_USER_DEFAULT = Depends(_require_any_permission(INGEST_RECONCILE, INGEST_MONITOR))
+
+
 @router.get("/quarantine")
 def list_quarantine(
     request: Request,
     status: str = "open",
     limit: int = 100,
-    user: dict = Depends(_require_any_permission(INGEST_RECONCILE, INGEST_MONITOR)),
+    user: dict = _LIST_QUARANTINE_USER_DEFAULT,
 ):
     """The unmatched results queue with its counts. A reconciler sees the
     identifiers the sender put in the message and the values; the
@@ -469,10 +532,12 @@ def list_quarantine(
     try:
         body = result_quarantine_service.list_queue(status=status, limit=limit, full=full)
     except result_quarantine_service.QuarantineError as exc:
-        raise _quarantine_http_error(exc)
+        raise _quarantine_http_error(exc) from exc
     # Fail-closed phi_access: no row, no list.
     log_phi_read(
-        request=request, user=user, action_type="lab_quarantine_viewed",
+        request=request,
+        user=user,
+        action_type="lab_quarantine_viewed",
         summary_message=f"Unmatched results list viewed ({body['view']}, {status})",
         target_type="result_quarantine",
         metadata={"view": body["view"], "status": status, "rows": len(body["items"])},
@@ -480,12 +545,15 @@ def list_quarantine(
     return body
 
 
+_ATTACH_QUARANTINED_RESULT_USER_DEFAULT = Depends(require_permission(INGEST_RECONCILE))
+
+
 @router.post("/quarantine/{qid}/attach")
 def attach_quarantined_result(
     qid: int,
     payload: QuarantineAttachRequest,
     request: Request,
-    user: dict = Depends(require_permission(INGEST_RECONCILE)),
+    user: dict = _ATTACH_QUARANTINED_RESULT_USER_DEFAULT,
 ):
     """Attach one unmatched result to a patient after the two-identifier check.
     409 identity_not_confirmed, with the outcome of each check, when the
@@ -497,40 +565,59 @@ def attach_quarantined_result(
     it, is on the patient's chart already."""
     try:
         outcome = result_quarantine_service.attach(
-            qid, hospital_number=payload.hospital_number, name=payload.name,
-            date_of_birth=payload.date_of_birth, reason=payload.reason,
-            user=user, request_meta=_request_meta(request))
+            qid,
+            hospital_number=payload.hospital_number,
+            name=payload.name,
+            date_of_birth=payload.date_of_birth,
+            reason=payload.reason,
+            user=user,
+            request_meta=_request_meta(request),
+        )
     except result_quarantine_service.QuarantineError as exc:
-        raise _quarantine_http_error(exc)
+        raise _quarantine_http_error(exc) from exc
     refusal_words = {
         result_quarantine_service.REFUSED_OTHER_PATIENT: (
             "A hospital number in this message now belongs to a different patient's "
             "record, so it cannot be attached to this one. Check that record, or ask "
-            "the sending laboratory which patient the result is for."),
+            "the sending laboratory which patient the result is for."
+        ),
         result_quarantine_service.REFUSED_SHARED_IDENTITY: (
             "Another patient's record has the same name and date of birth, so these two "
             "cannot confirm which patient this result is for. It can be attached only by a "
             "hospital number in the message. Otherwise discard it and ask the sending "
-            "laboratory to resend it with the patient's hospital number."),
+            "laboratory to resend it with the patient's hospital number."
+        ),
         result_quarantine_service.REFUSED_LATER_CORRECTION: (
             "A corrected result for this test and order, sent after this one, is already on "
             "this patient's chart, so this older result cannot go on top of it. Discard it, "
-            "or ask the sending laboratory which result stands."),
+            "or ask the sending laboratory which result stands."
+        ),
     }
     if not outcome.get("attached") and outcome.get("refusal") in refusal_words:
-        raise HTTPException(status_code=409, detail={
-            "error": outcome["refusal"],
-            "message": refusal_words[outcome["refusal"]],
-            "checks": outcome.get("checks", {}),
-        })
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": outcome["refusal"],
+                "message": refusal_words[outcome["refusal"]],
+                "checks": outcome.get("checks", {}),
+            },
+        )
     if not outcome.get("attached"):
-        raise HTTPException(status_code=409, detail={
-            "error": "identity_not_confirmed",
-            "message": ("These identifiers do not confirm the patient. Attaching needs two "
-                        "identifiers that match both this result and the patient's record."),
-            "checks": outcome.get("checks", {}),
-        })
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "identity_not_confirmed",
+                "message": (
+                    "These identifiers do not confirm the patient. Attaching needs two "
+                    "identifiers that match both this result and the patient's record."
+                ),
+                "checks": outcome.get("checks", {}),
+            },
+        )
     return outcome
+
+
+_DISCARD_QUARANTINED_RESULT_USER_DEFAULT = Depends(require_permission(INGEST_RECONCILE))
 
 
 @router.post("/quarantine/{qid}/discard")
@@ -538,11 +625,12 @@ def discard_quarantined_result(
     qid: int,
     payload: QuarantineDiscardRequest,
     request: Request,
-    user: dict = Depends(require_permission(INGEST_RECONCILE)),
+    user: dict = _DISCARD_QUARANTINED_RESULT_USER_DEFAULT,
 ):
     """Discard one unmatched result, with a reason."""
     try:
         return result_quarantine_service.discard(
-            qid, reason=payload.reason, user=user, request_meta=_request_meta(request))
+            qid, reason=payload.reason, user=user, request_meta=_request_meta(request)
+        )
     except result_quarantine_service.QuarantineError as exc:
-        raise _quarantine_http_error(exc)
+        raise _quarantine_http_error(exc) from exc

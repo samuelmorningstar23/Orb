@@ -9,8 +9,8 @@ Endpoints:
   GET /api/forecast/appointments      Booked appointments, caller's department only
 """
 
+from database import db_session
 from fastapi import APIRouter, Depends, HTTPException, Request
-from auth import get_current_user, require_role
 from permissions import (
     department_scope,
     log_phi_read,
@@ -18,23 +18,25 @@ from permissions import (
     require_permission,
     scope_patient_ids_sql,
 )
-from database import db_session
 from services.forecast_service import (
-    predict_patient_los,
-    predict_hospital_flow,
-    get_bed_capacity_forecast,
-    get_discharge_board,
     get_admission_patterns,
     get_appointments,
+    get_bed_capacity_forecast,
+    get_discharge_board,
+    predict_hospital_flow,
+    predict_patient_los,
 )
 
 router = APIRouter(prefix="/api/forecast", tags=["forecast"])
 
 
+_HOSPITAL_FORECAST_USER_DEFAULT = Depends(require_permission("forecast.read"))
+
+
 @router.get("/hospital")
 def hospital_forecast(
     days: int = 7,
-    user: dict = Depends(require_permission("forecast.read")),
+    user: dict = _HOSPITAL_FORECAST_USER_DEFAULT,
 ):
     """Get hospital-level admission/discharge/occupancy forecast.
 
@@ -44,42 +46,50 @@ def hospital_forecast(
     said something else.
     """
     try:
-        return predict_hospital_flow(days_ahead=max(1, min(days, 14)),
-                                     include_current_day=True)
+        return predict_hospital_flow(days_ahead=max(1, min(days, 14)), include_current_day=True)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Forecast error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Forecast error: {str(e)}") from e
+
+
+_PATIENT_FORECAST_USER_DEFAULT = Depends(
+    require_patient_access("forecast.read", audit_action="patient_forecast_viewed")
+)
 
 
 @router.get("/patient/{patient_id}")
 def patient_forecast(
     patient_id: str,
-    user: dict = Depends(
-        require_patient_access("forecast.read", audit_action="patient_forecast_viewed")
-    ),
+    user: dict = _PATIENT_FORECAST_USER_DEFAULT,
 ):
     """Get per-patient LoS prediction and discharge probability."""
     try:
         result = predict_patient_los(patient_id)
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}") from e
+
+
+_CAPACITY_FORECAST_USER_DEFAULT = Depends(require_permission("forecast.read"))
 
 
 @router.get("/capacity")
 def capacity_forecast(
-    user: dict = Depends(require_permission("forecast.read")),
+    user: dict = _CAPACITY_FORECAST_USER_DEFAULT,
 ):
     """Get current + projected bed capacity by ward."""
     try:
         return get_bed_capacity_forecast()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Capacity error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Capacity error: {str(e)}") from e
+
+
+_DISCHARGE_BOARD_USER_DEFAULT = Depends(require_permission("forecast.read"))
 
 
 @router.get("/discharge-board")
 def discharge_board(
     request: Request,
-    user: dict = Depends(require_permission("forecast.read")),
+    user: dict = _DISCHARGE_BOARD_USER_DEFAULT,
 ):
     """Patients sorted by discharge likelihood — the caller's department only.
 
@@ -101,7 +111,7 @@ def discharge_board(
     try:
         board = get_discharge_board()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Board error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Board error: {str(e)}") from e
 
     dept = department_scope(user)
     if dept is not None:
@@ -121,29 +131,37 @@ def discharge_board(
             ),
             target_type="department",
             target_id=dept,
-            metadata={"result_count": len(board),
-                      "patient_ids": [r.get("patient_id") for r in board]},
+            metadata={
+                "result_count": len(board),
+                "patient_ids": [r.get("patient_id") for r in board],
+            },
         )
 
     return board
 
 
+_ADMISSION_PATTERNS_USER_DEFAULT = Depends(require_permission("forecast.read"))
+
+
 @router.get("/admission-patterns")
 def admission_patterns(
-    user: dict = Depends(require_permission("forecast.read")),
+    user: dict = _ADMISSION_PATTERNS_USER_DEFAULT,
 ):
     """Get historical admission pattern analysis."""
     try:
         return get_admission_patterns()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Pattern error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Pattern error: {str(e)}") from e
+
+
+_APPOINTMENTS_SCHEDULE_USER_DEFAULT = Depends(require_permission("forecast.read"))
 
 
 @router.get("/appointments")
 def appointments_schedule(
     request: Request,
     days: int = 7,
-    user: dict = Depends(require_permission("forecast.read")),
+    user: dict = _APPOINTMENTS_SCHEDULE_USER_DEFAULT,
 ):
     """Booked appointments for the next N days, the caller's department only.
 
@@ -156,7 +174,7 @@ def appointments_schedule(
     try:
         rows = get_appointments(days_ahead=max(1, min(days, 14)), department=dept)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Appointments error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Appointments error: {str(e)}") from e
 
     if rows:
         log_phi_read(
@@ -169,7 +187,9 @@ def appointments_schedule(
             ),
             target_type="department",
             target_id=dept,
-            metadata={"result_count": len(rows),
-                      "patient_ids": sorted({r["patient_id"] for r in rows})},
+            metadata={
+                "result_count": len(rows),
+                "patient_ids": sorted({r["patient_id"] for r in rows}),
+            },
         )
     return rows

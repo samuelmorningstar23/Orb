@@ -82,16 +82,19 @@ computes, it never writes, and it is the artefact the Week-13 decision rests on
 All four are `def`. All four accept `db=` so a caller that already holds a
 connection does not open a second one.
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import os
 from collections import defaultdict
-from datetime import datetime, time as dt_time, timedelta, timezone
-from typing import Any, Iterable, Optional
+from datetime import UTC, datetime, timedelta
+from datetime import time as dt_time
+from typing import Any
 
 from database import db_session
+
 from services import shadow_verdicts
 
 logger = logging.getLogger("orb.shadow.scorecard")
@@ -100,10 +103,15 @@ logger = logging.getLogger("orb.shadow.scorecard")
 #: The clinical events that count as a confirmed deterioration. Anything else in
 #: an `outcome.recorded` row is ignored by lead time rather than quietly folded
 #: in — the definition of "escalation" is the champion's, and it is fixed here.
-OUTCOME_EVENT_TYPES = frozenset({
-    "icu_transfer", "rapid_response_call", "code_blue", "death",
-    "unplanned_escalation_of_care",
-})
+OUTCOME_EVENT_TYPES = frozenset(
+    {
+        "icu_transfer",
+        "rapid_response_call",
+        "code_blue",
+        "death",
+        "unplanned_escalation_of_care",
+    }
+)
 
 #: Only these alert levels count as "Orb flagged this patient". A 'stable' row
 #: is not a flag.
@@ -126,12 +134,15 @@ OUTCOME_SOURCES = ("witnessed", "chart_review", "handover")
 #: These names are derived views over that one table, kept because they document
 #: the arithmetic in place. They cannot drift: they are computed from it.
 CANONICAL_VERDICTS = shadow_verdicts.CANONICAL_VERDICTS
-VERDICT_TRUE = frozenset(v for v in shadow_verdicts.ACCEPTED_VERDICTS
-                         if shadow_verdicts.classify(v) == "true")
-VERDICT_FALSE = frozenset(v for v in shadow_verdicts.ACCEPTED_VERDICTS
-                          if shadow_verdicts.classify(v) == "false")
-VERDICT_EXCLUDED = frozenset(v for v in shadow_verdicts.ACCEPTED_VERDICTS
-                             if shadow_verdicts.classify(v) == "excluded")
+VERDICT_TRUE = frozenset(
+    v for v in shadow_verdicts.ACCEPTED_VERDICTS if shadow_verdicts.classify(v) == "true"
+)
+VERDICT_FALSE = frozenset(
+    v for v in shadow_verdicts.ACCEPTED_VERDICTS if shadow_verdicts.classify(v) == "false"
+)
+VERDICT_EXCLUDED = frozenset(
+    v for v in shadow_verdicts.ACCEPTED_VERDICTS if shadow_verdicts.classify(v) == "excluded"
+)
 
 #: A clinician action that can agree with a Sage proposal. `action.declined` is a
 #: pair too — it is simply never a match.
@@ -143,10 +154,10 @@ METRIC_IDS = ("detection_lead_time", "false_alert_rate", "agreement", "time_save
 #: deployment (or a test) can move them explicitly; per-metric env override is
 #: ORB_SCORECARD_MIN_N_<METRIC_ID>.
 MIN_N: dict[str, int] = {
-    "detection_lead_time": 5,    # leads (outcomes matched to an alert)
-    "false_alert_rate": 10,      # adjudicated episodes
-    "agreement": 10,             # proposal/action pairs IN THE HEADLINE PHASE
-    "time_saved": 10,            # timed Sage answers
+    "detection_lead_time": 5,  # leads (outcomes matched to an alert)
+    "false_alert_rate": 10,  # adjudicated episodes
+    "agreement": 10,  # proposal/action pairs IN THE HEADLINE PHASE
+    "time_saved": 10,  # timed Sage answers
 }
 
 PHASE_LABELS = {
@@ -158,20 +169,38 @@ PHASE_LABELS = {
 #: What the export removes. Declared HERE so the scorecard's own statement of
 #: de-identification and `shadow_export_service`'s behaviour cannot drift apart:
 #: the export service must implement exactly this list.
-DEIDENTIFICATION: list[dict[str, Optional[str]]] = [
-    {"field": "patient_id", "treatment": "hashed",
-     "note": "Salted per export; the salt is not exported, so the mapping cannot be reversed off-appliance."},
-    {"field": "phi_json", "treatment": "dropped",
-     "note": "Free clinical text never leaves the appliance in any form."},
-    {"field": "actor_user_id", "treatment": "hashed",
-     "note": "Staff identity is pseudonymised; the adjudicator's ROLE is retained."},
-    {"field": "ward", "treatment": "coarsened",
-     "note": "Two wards in the pilot makes ward a quasi-identifier; exported as ward_1 / ward_2."},
+DEIDENTIFICATION: list[dict[str, str | None]] = [
+    {
+        "field": "patient_id",
+        "treatment": "hashed",
+        "note": "Salted per export; the salt is not exported, so the mapping cannot be reversed off-appliance.",
+    },
+    {
+        "field": "phi_json",
+        "treatment": "dropped",
+        "note": "Free clinical text never leaves the appliance in any form.",
+    },
+    {
+        "field": "actor_user_id",
+        "treatment": "hashed",
+        "note": "Staff identity is pseudonymised; the adjudicator's ROLE is retained.",
+    },
+    {
+        "field": "ward",
+        "treatment": "coarsened",
+        "note": "Two wards in the pilot makes ward a quasi-identifier; exported as ward_1 / ward_2.",
+    },
     {"field": "encounter_id", "treatment": "removed", "note": None},
-    {"field": "source_correlation_id", "treatment": "removed",
-     "note": "Joins back to identified audit rows on the appliance."},
-    {"field": "occurred_at", "treatment": "retained",
-     "note": "Timing IS the finding; retained at millisecond resolution."},
+    {
+        "field": "source_correlation_id",
+        "treatment": "removed",
+        "note": "Joins back to identified audit rows on the appliance.",
+    },
+    {
+        "field": "occurred_at",
+        "treatment": "retained",
+        "note": "Timing IS the finding; retained at millisecond resolution.",
+    },
 ]
 
 METRIC_SPEC: dict[str, dict[str, Any]] = {
@@ -181,12 +210,14 @@ METRIC_SPEC: dict[str, dict[str, Any]] = {
         "definition": (
             "Median interval (with IQR) between Orb first flagging a patient at "
             "elevated or critical and a confirmed deterioration. ICU transfer, "
-            "rapid-response call, code blue, unplanned escalation, or death."),
+            "rapid-response call, code blue, unplanned escalation, or death."
+        ),
         "denominator_label": "confirmed deterioration outcomes",
         "caveat": (
             "It cannot show that acting on the flag would have helped. A flag three "
             "hours before a transfer is evidence Orb saw something; it is not evidence "
-            "that intervening then would have changed the outcome."),
+            "that intervening then would have changed the outcome."
+        ),
         "is_proxy": False,
     },
     "false_alert_rate": {
@@ -199,14 +230,16 @@ METRIC_SPEC: dict[str, dict[str, Any]] = {
             "interruption, which is the thing a nurse actually experiences; an "
             "episode is one clinical concern and may contain dozens of alerts, so "
             "the per-episode figure is reported alongside as an alternative "
-            "denominator and is always the smaller number."),
+            "denominator and is always the smaller number."
+        ),
         "denominator_label": "occupied bed-days (covered ward-shifts only)",
         "caveat": (
             "It cannot show alert fatigue. A tolerable rate on paper can still be "
             "intolerable at 3 a.m. on a short-staffed night. Unadjudicated episodes are "
             "reported as unadjudicated, never as correct. Adjudication is per EPISODE "
             "and the rate is per ALERT: every alert in an episode judged false is "
-            "counted false, which is the conservative reading."),
+            "counted false, which is the conservative reading."
+        ),
         "is_proxy": False,
     },
     "agreement": {
@@ -214,13 +247,15 @@ METRIC_SPEC: dict[str, dict[str, Any]] = {
         "unit": "proportion",
         "definition": (
             "How often the action class Sage proposed matched the action class the "
-            "clinician actually took. Reported per shadow-mode phase and never pooled."),
+            "clinician actually took. Reported per shadow-mode phase and never pooled."
+        ),
         "denominator_label": "proposal/action pairs in the reported phase",
         "caveat": (
             "Agreement is not correctness. A high figure is equally consistent with "
-            "\"Sage is good\" and with \"Sage is a fluent restatement of the obvious\". "
+            '"Sage is good" and with "Sage is a fluent restatement of the obvious". '
             "The disagreements are the informative rows. Phase A and Phase C measure "
-            "different things and are never pooled."),
+            "different things and are never pooled."
+        ),
         "is_proxy": False,
     },
     "time_saved": {
@@ -230,12 +265,14 @@ METRIC_SPEC: dict[str, dict[str, Any]] = {
             "A PROXY: measured Sage answer latency against a stated manual-lookup "
             "baseline, multiplied by the measured number of answers. The genuinely "
             "measured part is the latency; the baseline is an assumption and is printed "
-            "as one."),
+            "as one."
+        ),
         "denominator_label": "timed Sage answers",
         "caveat": (
             "It cannot measure clinical time saved; that needs a controlled comparison "
             "this pilot is not running. It is the figure most likely to be quoted back "
-            "in a fundraising context and the one with the weakest foundation."),
+            "in a fundraising context and the one with the weakest foundation."
+        ),
         "is_proxy": True,
     },
 }
@@ -282,7 +319,12 @@ def _coverage_threshold() -> float:
 
 
 def _include_simulator_default() -> bool:
-    return os.getenv("ORB_SHADOW_SCORECARD_INCLUDE_SIMULATOR", "").strip().lower() in ("1", "true", "yes", "on")
+    return os.getenv("ORB_SHADOW_SCORECARD_INCLUDE_SIMULATOR", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
 
 
 def _min_n(metric_id: str) -> int:
@@ -321,21 +363,23 @@ class PhaseSchedule:
     assuming the *later* phase would quietly relabel clean data as contaminated.
     """
 
-    def __init__(self, entries: Optional[list[tuple[Optional[datetime], str]]] = None):
+    def __init__(self, entries: list[tuple[datetime | None, str]] | None = None):
         cleaned = [(s, p) for (s, p) in (entries or []) if p]
-        cleaned.sort(key=lambda e: (e[0] or datetime.min.replace(tzinfo=timezone.utc)))
+        cleaned.sort(key=lambda e: e[0] or datetime.min.replace(tzinfo=UTC))
         self.entries = cleaned
 
     @classmethod
-    def from_env(cls) -> "PhaseSchedule":
+    def from_env(cls) -> PhaseSchedule:
         raw = (os.getenv("ORB_SHADOW_PHASE_SCHEDULE") or "").strip()
-        entries: list[tuple[Optional[datetime], str]] = []
+        entries: list[tuple[datetime | None, str]] = []
         if raw.startswith("["):
             try:
                 for item in json.loads(raw):
                     entries.append((_dt(item.get("start")), str(item.get("phase") or "").strip()))
             except Exception:
-                logger.warning("scorecard: unparsable ORB_SHADOW_PHASE_SCHEDULE; defaulting", exc_info=True)
+                logger.warning(
+                    "scorecard: unparsable ORB_SHADOW_PHASE_SCHEDULE; defaulting", exc_info=True
+                )
                 entries = []
         elif raw:
             for chunk in raw.split(","):
@@ -346,7 +390,7 @@ class PhaseSchedule:
             entries = [(None, (os.getenv("ORB_SHADOW_PHASE") or "A").strip() or "A")]
         return cls(entries)
 
-    def phase_at(self, ts: Optional[datetime]) -> str:
+    def phase_at(self, ts: datetime | None) -> str:
         if not self.entries:
             return "A"
         current = self.entries[0][1]
@@ -359,8 +403,8 @@ class PhaseSchedule:
                 break
         return current
 
-    def current(self, now: Optional[datetime] = None) -> str:
-        return self.phase_at(now or datetime.now(timezone.utc))
+    def current(self, now: datetime | None = None) -> str:
+        return self.phase_at(now or datetime.now(UTC))
 
     @staticmethod
     def label(phase: str) -> str:
@@ -368,7 +412,7 @@ class PhaseSchedule:
 
 
 # ── Time ─────────────────────────────────────────────────────────────────────
-def _dt(value: Any) -> Optional[datetime]:
+def _dt(value: Any) -> datetime | None:
     """Parse any timestamp Orb writes into an aware UTC datetime.
 
     `shadow_events` is single-format by construction, but `patients`,
@@ -378,7 +422,7 @@ def _dt(value: Any) -> Optional[datetime]:
     if value is None or value == "":
         return None
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
     text = str(value).strip()
     if text.endswith("Z"):
         text = text[:-1] + "+00:00"
@@ -388,14 +432,14 @@ def _dt(value: Any) -> Optional[datetime]:
         parsed = datetime.fromisoformat(text.replace(" ", "T", 1))
     except ValueError:
         return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
-def _iso(value: Optional[datetime]) -> Optional[str]:
+def _iso(value: datetime | None) -> str | None:
     """The one format `shadow_events` uses — so string comparison is valid."""
     if value is None:
         return None
-    return value.astimezone(timezone.utc).isoformat(timespec="milliseconds")
+    return value.astimezone(UTC).isoformat(timespec="milliseconds")
 
 
 def _overlap_hours(a_start: datetime, a_end: datetime, b_start: datetime, b_end: datetime) -> float:
@@ -405,7 +449,7 @@ def _overlap_hours(a_start: datetime, a_end: datetime, b_start: datetime, b_end:
 
 
 # ── Percentiles, in Python, because SQLite has no median ─────────────────────
-def _percentile(values: list[float], q: float) -> Optional[float]:
+def _percentile(values: list[float], q: float) -> float | None:
     """Linear interpolation between closest ranks (the numpy default), so a
     hand-computed expectation in a test is reproducible: idx = (n-1) * q."""
     if not values:
@@ -420,7 +464,7 @@ def _percentile(values: list[float], q: float) -> Optional[float]:
     return float(ordered[lo] + (ordered[hi] - ordered[lo]) * frac)
 
 
-def _spread(values: list[float]) -> Optional[dict[str, Optional[float]]]:
+def _spread(values: list[float]) -> dict[str, float | None] | None:
     if not values:
         return None
     return {
@@ -430,8 +474,8 @@ def _spread(values: list[float]) -> Optional[dict[str, Optional[float]]]:
     }
 
 
-def _fmt_minutes(value: Optional[float]) -> Optional[str]:
-    """"-45 m", "3 h 07 m". The sign survives: a negative lead is a finding."""
+def _fmt_minutes(value: float | None) -> str | None:
+    """ "-45 m", "3 h 07 m". The sign survives: a negative lead is a finding."""
     if value is None:
         return None
     sign = "-" if value < 0 else ""
@@ -442,7 +486,7 @@ def _fmt_minutes(value: Optional[float]) -> Optional[str]:
     return f"{sign}{hours} h {minutes:02d} m"
 
 
-def _fmt_pct(numerator: int, denominator: int) -> Optional[str]:
+def _fmt_pct(numerator: int, denominator: int) -> str | None:
     if denominator <= 0:
         return None
     return f"{100.0 * numerator / denominator:.0f}% ({numerator}/{denominator})"
@@ -475,11 +519,14 @@ def _instrument_present(conn) -> bool:
     return row is not None
 
 
-def _load_events(conn, start: datetime, end: datetime, ward: Optional[str],
-                 include_simulator: bool) -> tuple[list[dict], bool]:
+def _load_events(
+    conn, start: datetime, end: datetime, ward: str | None, include_simulator: bool
+) -> tuple[list[dict], bool]:
     """One bounded scan of the VIEW. Returns (events, truncated)."""
     cap = _max_events()
-    sql = [f"SELECT {_SCAN_COLUMNS} FROM shadow_events_current WHERE occurred_at >= ? AND occurred_at < ?"]
+    sql = [
+        f"SELECT {_SCAN_COLUMNS} FROM shadow_events_current WHERE occurred_at >= ? AND occurred_at < ?"
+    ]
     params: list[Any] = [_iso(start), _iso(end)]
     if not include_simulator:
         sql.append("AND lane <> 'simulator'")
@@ -493,14 +540,17 @@ def _load_events(conn, start: datetime, end: datetime, ward: Optional[str],
     return [_row_to_event(r) for r in rows[:cap]], truncated
 
 
-def _load_late_adjudications(conn, start: datetime, ward: Optional[str],
-                             include_simulator: bool) -> list[dict]:
+def _load_late_adjudications(
+    conn, start: datetime, ward: str | None, include_simulator: bool
+) -> list[dict]:
     """Adjudication happens WEEKLY, after the fact. An episode inside the window
     is routinely adjudicated after the window closes, so the bounded scan above
     would systematically undercount adjudications and make every rate look less
     adjudicated than it is. Fetched separately, with no upper bound."""
-    sql = [f"SELECT {_SCAN_COLUMNS} FROM shadow_events_current "
-           "WHERE kind = 'adjudication.recorded' AND occurred_at >= ?"]
+    sql = [
+        f"SELECT {_SCAN_COLUMNS} FROM shadow_events_current "
+        "WHERE kind = 'adjudication.recorded' AND occurred_at >= ?"
+    ]
     params: list[Any] = [_iso(start)]
     if not include_simulator:
         sql.append("AND lane <> 'simulator'")
@@ -531,31 +581,40 @@ def _ward_shift_windows(start: datetime, end: datetime, wards: list[str]) -> lis
     # and the nurse's confirmations covered the wrong hours. Must stay the same
     # rule as shadow_routes._windows_around, which mints the period strings.
     from services.hospital_time import hospital_timezone
+
     tz = hospital_timezone()
     day = (start - timedelta(days=1)).astimezone(tz).date()
     last = end.astimezone(tz).date()
     while day <= last:
         for shift_start, length in shifts:
-            w_start = datetime.combine(day, shift_start, tzinfo=tz).astimezone(timezone.utc)
+            w_start = datetime.combine(day, shift_start, tzinfo=tz).astimezone(UTC)
             w_end = w_start + timedelta(hours=length)
             if w_end <= start or w_start >= end:
                 continue
             for ward in wards:
-                windows.append({
-                    "ward": ward,
-                    "shift": shift_start.strftime("%H:%M"),
-                    "start": max(w_start, start),
-                    "end": min(w_end, end),
-                    "covered": False,
-                    "evidence": None,
-                })
+                windows.append(
+                    {
+                        "ward": ward,
+                        "shift": shift_start.strftime("%H:%M"),
+                        "start": max(w_start, start),
+                        "end": min(w_end, end),
+                        "covered": False,
+                        "evidence": None,
+                    }
+                )
         day += timedelta(days=1)
     windows.sort(key=lambda w: (w["start"], w["ward"]))
     return windows
 
 
-def _coverage(events: list[dict], start: datetime, end: datetime,
-              wards: list[str], *, census: Optional[dict] = None) -> dict:
+def _coverage(
+    events: list[dict],
+    start: datetime,
+    end: datetime,
+    wards: list[str],
+    *,
+    census: dict | None = None,
+) -> dict:
     """A ward-shift is covered when SOMEONE said something about it: either a
     confirmed outcome, or a charge nurse confirming there wasn't one. Silence is
     not evidence of absence, and uncovered time is excluded, not assumed quiet.
@@ -581,7 +640,8 @@ def _coverage(events: list[dict], start: datetime, end: datetime,
             if p_end is None or p_end <= p_start:
                 p_end = p_start
             if _overlap_hours(p_start, p_end, window["start"], window["end"]) > 0 or (
-                    window["start"] <= p_start < window["end"]):
+                window["start"] <= p_start < window["end"]
+            ):
                 window["covered"] = True
                 window["evidence"] = "outcome.none_confirmed"
                 break
@@ -628,7 +688,9 @@ def _coverage(events: list[dict], start: datetime, end: datetime,
             f"({', '.join(silent)}). They have admitted patients, so they are counted as "
             "wholly uncovered time; a ward with a census and no events means the instrument "
             "is not running there, not that nothing happened."
-        ) if silent else None,
+        )
+        if silent
+        else None,
         "census": census or {},
         "ward_scope_source": (
             "patients census (wards with an admitted or overlapping stay) unioned with wards "
@@ -637,7 +699,12 @@ def _coverage(events: list[dict], start: datetime, end: datetime,
         "covered_hours": round(covered_hours, 2),
         "uncovered_hours": round(uncovered_hours, 2),
         "uncovered_sample": [
-            {"ward": w["ward"], "shift": w["shift"], "start": _iso(w["start"]), "end": _iso(w["end"])}
+            {
+                "ward": w["ward"],
+                "shift": w["shift"],
+                "start": _iso(w["start"]),
+                "end": _iso(w["end"]),
+            }
             for w in uncovered[:50]
         ],
         "shift_definition": ", ".join(f"{s.strftime('%H:%M')}+{int(h)}h" for s, h in _shifts()),
@@ -666,8 +733,9 @@ def _is_covered(event: dict, covered_windows: list[dict]) -> bool:
 _NEVER_ADMITTED_EXCLUDED = " WHERE COALESCE(status, 'admitted') <> 'registered'"
 
 
-def _last_vital_in_stay(conn, patient_id: str, since: datetime,
-                        before: Optional[datetime]) -> Optional[datetime]:
+def _last_vital_in_stay(
+    conn, patient_id: str, since: datetime, before: datetime | None
+) -> datetime | None:
     """The patient's last vital signs at or after `since` and before `before`
     (no upper bound when None), or None. This is where one stay of a patient
     admitted more than once is closed when it records no end and has no
@@ -677,8 +745,10 @@ def _last_vital_in_stay(conn, patient_id: str, since: datetime,
     can only move the end earlier, the direction this instrument may be wrong in.
     julianday() compares any stored spelling as a time; the bounds are
     checked again here, since it keeps only milliseconds."""
-    sql = ("SELECT timestamp FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
-           "AND julianday(timestamp) >= julianday(?)")
+    sql = (
+        "SELECT timestamp FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
+        "AND julianday(timestamp) >= julianday(?)"
+    )
     params: list[Any] = [patient_id, since.isoformat()]
     if before is not None:
         sql += " AND julianday(timestamp) < julianday(?)"
@@ -718,66 +788,86 @@ def _repeat_stays(conn) -> dict[str, list[dict]]:
     try:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(admissions)").fetchall()}
         native = "WHERE a.import_run_id IS NULL" if "import_run_id" in cols else ""
-        repeat = [r[0] for r in conn.execute(
-            f"SELECT a.patient_id FROM admissions a {native} "
-            "GROUP BY a.patient_id HAVING COUNT(*) > 1").fetchall()]
+        repeat = [
+            r[0]
+            for r in conn.execute(
+                f"SELECT a.patient_id FROM admissions a {native} "
+                "GROUP BY a.patient_id HAVING COUNT(*) > 1"
+            ).fetchall()
+        ]
     except Exception:
         logger.debug("scorecard: admissions unavailable for repeat stays", exc_info=True)
         return {}
     if not repeat:
         return {}
     out: dict[str, list[dict]] = {}
-    for chunk in (repeat[i:i + 400] for i in range(0, len(repeat), 400)):
+    for chunk in (repeat[i : i + 400] for i in range(0, len(repeat), 400)):
         marks = ",".join("?" * len(chunk))
         extra = "AND a.import_run_id IS NULL" if native else ""
         rows = conn.execute(
             f"SELECT a.id, a.patient_id, a.ward, a.status, a.admitted_at, a.created_at, "
             f"a.discharged_at FROM admissions a WHERE a.patient_id IN ({marks}) {extra}",
-            chunk).fetchall()
+            chunk,
+        ).fetchall()
         for row in rows:
             r = dict(row)
             start = _dt(r.get("admitted_at")) or _dt(r.get("created_at"))
-            out.setdefault(r["patient_id"], []).append({
-                "id": r["id"], "ward": r.get("ward"), "start": start,
-                "end": _dt(r.get("discharged_at")),
-                "active": (r.get("status") or "active") == "active"})
+            out.setdefault(r["patient_id"], []).append(
+                {
+                    "id": r["id"],
+                    "ward": r.get("ward"),
+                    "start": start,
+                    "end": _dt(r.get("discharged_at")),
+                    "active": (r.get("status") or "active") == "active",
+                }
+            )
     summaries: dict[str, list[tuple[datetime, Any]]] = defaultdict(list)
     try:
         scols = {r[1] for r in conn.execute("PRAGMA table_info(discharge_summaries)").fetchall()}
         keyed = "admission_id" if "admission_id" in scols else "NULL AS admission_id"
-        for chunk in (list(out)[i:i + 400] for i in range(0, len(out), 400)):
+        for chunk in (list(out)[i : i + 400] for i in range(0, len(out), 400)):
             marks = ",".join("?" * len(chunk))
             for row in conn.execute(
                 f"SELECT patient_id, discharged_at, {keyed} FROM discharge_summaries "
-                f"WHERE patient_id IN ({marks})", chunk).fetchall():
+                f"WHERE patient_id IN ({marks})",
+                chunk,
+            ).fetchall():
                 when = _dt(row["discharged_at"])
                 if when:
                     summaries[row["patient_id"]].append((when, row["admission_id"]))
     except Exception:
         logger.debug("scorecard: discharge_summaries unavailable for repeat stays", exc_info=True)
-    far = datetime.max.replace(tzinfo=timezone.utc)
+    far = datetime.max.replace(tzinfo=UTC)
     for pid, stays in out.items():
         stays.sort(key=lambda st: st["start"] or far)
         times = sorted(summaries.get(pid, []), key=lambda t: t[0])
-        for here, after in zip(stays, stays[1:] + [None]):
+        for here, after in zip(stays, stays[1:] + [None], strict=False):
             here["next_start"] = after["start"] if after is not None else None
             here["last_vital"] = None
             if here["end"] is None and not here["active"] and here["start"] is not None:
                 own = [t for t, aid in times if aid == here["id"] and t >= here["start"]]
-                later = own or [t for t, _aid in times if t >= here["start"]
-                                and (here["next_start"] is None or t < here["next_start"])]
+                later = own or [
+                    t
+                    for t, _aid in times
+                    if t >= here["start"] and (here["next_start"] is None or t < here["next_start"])
+                ]
                 here["end"] = later[0] if later else None
                 if here["end"] is None:
                     here["last_vital"] = _last_vital_in_stay(
-                        conn, pid, here["start"], here["next_start"])
-            if (here["end"] is not None and here["next_start"] is not None
-                    and here["start"] is not None and here["next_start"] > here["start"]
-                    and here["end"] > here["next_start"]):
+                        conn, pid, here["start"], here["next_start"]
+                    )
+            if (
+                here["end"] is not None
+                and here["next_start"] is not None
+                and here["start"] is not None
+                and here["next_start"] > here["start"]
+                and here["end"] > here["next_start"]
+            ):
                 here["end"] = here["next_start"]
     return out
 
 
-def _occupied_bed_days(conn, covered_windows: list[dict], ward: Optional[str]) -> dict:
+def _occupied_bed_days(conn, covered_windows: list[dict], ward: str | None) -> dict:
     """Bed-days inside COVERED ward-shift time only.
 
     Census comes from `patients` + `discharge_summaries`. Where a discharged
@@ -786,8 +876,13 @@ def _occupied_bed_days(conn, covered_windows: list[dict], ward: Optional[str]) -
     false-alert rate. The conservative direction is the only defensible one for
     a number a hospital is being asked to accept.
     """
-    empty = {"bed_days": 0.0, "patients": 0, "method": "no covered ward-shift time",
-             "open_stays": 0, "assumed_ends": 0}
+    empty = {
+        "bed_days": 0.0,
+        "patients": 0,
+        "method": "no covered ward-shift time",
+        "open_stays": 0,
+        "assumed_ends": 0,
+    }
     if not covered_windows:
         return empty
     try:
@@ -900,25 +995,29 @@ def _occupied_bed_days(conn, covered_windows: list[dict], ward: Optional[str]) -
                 repeat_counted.add(pid)
                 stays_counted += 1
 
-    result = {
+    result: dict[str, Any] = {
         "bed_days": round(bed_hours / 24.0, 4),
         "patients": len(counted),
         "open_stays": open_stays,
         "assumed_ends": assumed_ends,
-        "method": ("patients.admission_date to discharge_summaries.discharged_at, "
-                   "clipped to covered ward-shift windows; discharged patients with no "
-                   "discharge row are closed at their last recorded vital (under-states "
-                   "bed-days, inflates the rate)"),
+        "method": (
+            "patients.admission_date to discharge_summaries.discharged_at, "
+            "clipped to covered ward-shift windows; discharged patients with no "
+            "discharge row are closed at their last recorded vital (under-states "
+            "bed-days, inflates the rate)"
+        ),
     }
     if repeat_counted:
         # Only when a repeat stay was counted here: otherwise the answer is
         # exactly the one-stay-per-patient answer it always was.
         result["stays"] = stays_counted
         result["repeat_stay_patients"] = len(repeat_counted)
-        result["method"] += ("; a patient admitted more than once is counted stay by stay, "
-                             "each admission to the discharge summary of that stay, else to "
-                             "the last vital recorded in that stay, and never past the start "
-                             "of the next")
+        result["method"] += (
+            "; a patient admitted more than once is counted stay by stay, "
+            "each admission to the discharge summary of that stay, else to "
+            "the last vital recorded in that stay, and never past the start "
+            "of the next"
+        )
     return result
 
 
@@ -989,17 +1088,22 @@ def _detection_lead_time(events: list[dict], start: datetime, end: datetime) -> 
     late = timedelta(hours=_late_window_hours())
 
     outcomes = [
-        e for e in events
+        e
+        for e in events
         if e["kind"] == "outcome.recorded"
-        and e["_t"] is not None and start <= e["_t"] < end
+        and e["_t"] is not None
+        and start <= e["_t"] < end
         and e["payload"].get("event_type") in OUTCOME_EVENT_TYPES
     ]
 
     alerts_by_patient: dict[str, list[dict]] = defaultdict(list)
     for event in events:
-        if (event["kind"] == "alert.fired"
-                and event["payload"].get("level") in ALERT_LEVELS
-                and event.get("patient_id") and event["_t"] is not None):
+        if (
+            event["kind"] == "alert.fired"
+            and event["payload"].get("level") in ALERT_LEVELS
+            and event.get("patient_id")
+            and event["_t"] is not None
+        ):
             alerts_by_patient[event["patient_id"]].append(event)
     for series in alerts_by_patient.values():
         series.sort(key=lambda e: (e["_t"], e["id"]))
@@ -1007,9 +1111,10 @@ def _detection_lead_time(events: list[dict], start: datetime, end: datetime) -> 
     rows: list[dict] = []
     for outcome in outcomes:
         when = outcome["_t"]
-        source = (outcome["payload"].get("source") or "unspecified")
+        source = outcome["payload"].get("source") or "unspecified"
         candidates = [
-            a for a in alerts_by_patient.get(outcome.get("patient_id") or "", [])
+            a
+            for a in alerts_by_patient.get(outcome.get("patient_id") or "", [])
             if when - lookback <= a["_t"] <= when + late
         ]
         row = {
@@ -1026,14 +1131,16 @@ def _detection_lead_time(events: list[dict], start: datetime, end: datetime) -> 
         }
         if candidates:
             first = candidates[0]
-            row.update({
-                "alert_at": first["occurred_at"],
-                "alert_level": first["payload"].get("level"),
-                # POSITIVE = Orb was ahead. NEGATIVE = the clinician was ahead of
-                # the machine. Both are reported; neither is clipped.
-                "lead_minutes": round((when - first["_t"]).total_seconds() / 60.0, 2),
-                "miss": False,
-            })
+            row.update(
+                {
+                    "alert_at": first["occurred_at"],
+                    "alert_level": first["payload"].get("level"),
+                    # POSITIVE = Orb was ahead. NEGATIVE = the clinician was ahead of
+                    # the machine. Both are reported; neither is clipped.
+                    "lead_minutes": round((when - first["_t"]).total_seconds() / 60.0, 2),
+                    "miss": False,
+                }
+            )
         rows.append(row)
 
     leads = [r for r in rows if not r["miss"]]
@@ -1077,14 +1184,26 @@ def _detection_lead_time(events: list[dict], start: datetime, end: datetime) -> 
         "rows": rows,
     }
     metric["alternative_denominators"] = [
-        {"label": "median lead, all sources", "display": _fmt_minutes(_percentile(values, 0.5)),
-         "is_primary": True},
-        {"label": "median lead, witnessed only (conservative)",
-         "display": _fmt_minutes(_percentile(witnessed, 0.5)), "is_primary": False},
-        {"label": "sensitivity (outcomes Orb flagged at all)",
-         "display": _fmt_pct(len(leads), len(rows)), "is_primary": False},
-        {"label": "misses (confirmed deterioration, never flagged)",
-         "display": f"{len(misses)}", "is_primary": False},
+        {
+            "label": "median lead, all sources",
+            "display": _fmt_minutes(_percentile(values, 0.5)),
+            "is_primary": True,
+        },
+        {
+            "label": "median lead, witnessed only (conservative)",
+            "display": _fmt_minutes(_percentile(witnessed, 0.5)),
+            "is_primary": False,
+        },
+        {
+            "label": "sensitivity (outcomes Orb flagged at all)",
+            "display": _fmt_pct(len(leads), len(rows)),
+            "is_primary": False,
+        },
+        {
+            "label": "misses (confirmed deterioration, never flagged)",
+            "display": f"{len(misses)}",
+            "is_primary": False,
+        },
     ]
     metric["caveat"] += (
         f" Negative leads are reported, not clipped: {len(negatives)} of {len(leads)} "
@@ -1110,7 +1229,7 @@ def _detection_lead_time(events: list[dict], start: datetime, end: datetime) -> 
 
 
 # ── Metric 2: false-alert rate ───────────────────────────────────────────────
-def _classify_verdict(verdict: Optional[str]) -> str:
+def _classify_verdict(verdict: str | None) -> str:
     """`true` / `false` / `excluded` / `unrecognised`, via the ONE normaliser.
 
     Delegated, not reimplemented. The previous local copy of this decision is
@@ -1119,13 +1238,20 @@ def _classify_verdict(verdict: Optional[str]) -> str:
     return shadow_verdicts.classify(verdict)
 
 
-def _false_alert_rate(events: list[dict], adjudications: list[dict], start: datetime,
-                      end: datetime, coverage: dict, bed_days: dict) -> dict:
+def _false_alert_rate(
+    events: list[dict],
+    adjudications: list[dict],
+    start: datetime,
+    end: datetime,
+    coverage: dict,
+    bed_days: dict,
+) -> dict:
     metric = _new_metric("false_alert_rate")
     covered_windows = coverage["covered_windows"]
 
     alerts = [
-        e for e in events
+        e
+        for e in events
         if e["kind"] == "alert.fired" and e["_t"] is not None and start <= e["_t"] < end
     ]
     covered_alerts = [a for a in alerts if _is_covered(a, covered_windows)]
@@ -1177,37 +1303,55 @@ def _false_alert_rate(events: list[dict], adjudications: list[dict], start: date
     false_alert_count = sum(episodes[e]["alerts"] for e in false_episodes)
     false_episode_count = len(false_episodes)
     alerts_per_false_episode = (
-        round(false_alert_count / false_episode_count, 2) if false_episode_count else None)
+        round(false_alert_count / false_episode_count, 2) if false_episode_count else None
+    )
 
-    metric["n_observed"] = adjudicated          # the SAMPLE is adjudicated episodes …
-    metric["numerator"] = false_alert_count     # … the NUMERATOR is alerts. Not the same unit.
+    metric["n_observed"] = adjudicated  # the SAMPLE is adjudicated episodes …
+    metric["numerator"] = false_alert_count  # … the NUMERATOR is alerts. Not the same unit.
     metric["denominator"] = days
     metric["adjudication"] = {
         "adjudicated": adjudicated,
         "total": len(episodes),
         "adjudicators": len(adjudicators),
         "blinded": blinded,
-        "sampling": ("Latest current adjudication per episode; artefact and indeterminate "
-                     "verdicts are excluded from both terms and reported separately."),
+        "sampling": (
+            "Latest current adjudication per episode; artefact and indeterminate "
+            "verdicts are excluded from both terms and reported separately."
+        ),
     }
     metric["alternative_denominators"] = [
-        {"label": "false ALERTS per occupied bed-day (interruptions, primary)",
-         "display": (f"{false_alert_count / days:.2f}" if days > 0 else None),
-         "is_primary": True},
-        {"label": "false alert EPISODES per occupied bed-day (clinical concerns)",
-         "display": (f"{false_episode_count / days:.2f}" if days > 0 else None),
-         "is_primary": False},
-        {"label": "false alerts per 100 occupied bed-days",
-         "display": (f"{100.0 * false_alert_count / days:.1f}" if days > 0 else None),
-         "is_primary": False},
-        {"label": "alerts per false episode (why the two figures differ)",
-         "display": (f"{alerts_per_false_episode:.2f}"
-                     if alerts_per_false_episode is not None else None),
-         "is_primary": False},
-        {"label": "episodes adjudicated false, of episodes adjudicated",
-         "display": _fmt_pct(false_episode_count, adjudicated), "is_primary": False},
-        {"label": "share of alerts fired that were false (the flattering framing)",
-         "display": _fmt_pct(false_alert_count, len(covered_alerts)), "is_primary": False},
+        {
+            "label": "false ALERTS per occupied bed-day (interruptions, primary)",
+            "display": (f"{false_alert_count / days:.2f}" if days > 0 else None),
+            "is_primary": True,
+        },
+        {
+            "label": "false alert EPISODES per occupied bed-day (clinical concerns)",
+            "display": (f"{false_episode_count / days:.2f}" if days > 0 else None),
+            "is_primary": False,
+        },
+        {
+            "label": "false alerts per 100 occupied bed-days",
+            "display": (f"{100.0 * false_alert_count / days:.1f}" if days > 0 else None),
+            "is_primary": False,
+        },
+        {
+            "label": "alerts per false episode (why the two figures differ)",
+            "display": (
+                f"{alerts_per_false_episode:.2f}" if alerts_per_false_episode is not None else None
+            ),
+            "is_primary": False,
+        },
+        {
+            "label": "episodes adjudicated false, of episodes adjudicated",
+            "display": _fmt_pct(false_episode_count, adjudicated),
+            "is_primary": False,
+        },
+        {
+            "label": "share of alerts fired that were false (the flattering framing)",
+            "display": _fmt_pct(false_alert_count, len(covered_alerts)),
+            "is_primary": False,
+        },
     ]
     metric["detail"] = {
         "episodes": len(episodes),
@@ -1230,18 +1374,35 @@ def _false_alert_rate(events: list[dict], adjudications: list[dict], start: date
         "coverage": coverage["display"],
     }
     metric["assumptions"] = [
-        {"label": "Occupied bed-days", "value": f"{days:.2f}", "source": bed_days.get("method", "measured")},
-        {"label": "Ward-shift coverage", "value": coverage["display"],
-         "source": "ward-shifts with an outcome recorded, or confirmed as having none"},
-        {"label": "One alert = one interruption",
-         "value": (f"{false_alert_count} alert(s) across {false_episode_count} "
-                   f"false episode(s)"),
-         "source": ("measured, every alert Orb raised, repeats included. If the ward "
-                    "silences repeats within an episode, this OVER-states interruptions "
-                    "and the per-episode alternative is the floor")},
-        {"label": "Adjudication unit", "value": "per episode, not per alert",
-         "source": ("measured, a clinician judges one clinical concern; every alert in "
-                    "an episode judged false is counted false")},
+        {
+            "label": "Occupied bed-days",
+            "value": f"{days:.2f}",
+            "source": bed_days.get("method", "measured"),
+        },
+        {
+            "label": "Ward-shift coverage",
+            "value": coverage["display"],
+            "source": "ward-shifts with an outcome recorded, or confirmed as having none",
+        },
+        {
+            "label": "One alert = one interruption",
+            "value": (
+                f"{false_alert_count} alert(s) across {false_episode_count} false episode(s)"
+            ),
+            "source": (
+                "measured, every alert Orb raised, repeats included. If the ward "
+                "silences repeats within an episode, this OVER-states interruptions "
+                "and the per-episode alternative is the floor"
+            ),
+        },
+        {
+            "label": "Adjudication unit",
+            "value": "per episode, not per alert",
+            "source": (
+                "measured, a clinician judges one clinical concern; every alert in "
+                "an episode judged false is counted false"
+            ),
+        },
     ]
 
     if coverage["total"] and not coverage["complete"]:
@@ -1256,7 +1417,9 @@ def _false_alert_rate(events: list[dict], adjudications: list[dict], start: date
         metric["provisional_reason"] = "No ward-shift period could be established for this window."
     if len(episodes) and adjudicated < len(episodes):
         metric["provisional"] = True
-        metric["provisional_reason"] = ((metric["provisional_reason"] or "") + " " if metric["provisional_reason"] else "") + (
+        metric["provisional_reason"] = (
+            (metric["provisional_reason"] or "") + " " if metric["provisional_reason"] else ""
+        ) + (
             f"{len(episodes) - adjudicated} of {len(episodes)} alert episode(s) are not yet "
             "adjudicated and are excluded, never counted as correct."
         )
@@ -1264,22 +1427,30 @@ def _false_alert_rate(events: list[dict], adjudications: list[dict], start: date
     metric["caveat"] += (
         f" Numerator: {false_alert_count} false ALERT(S) from {false_episode_count} "
         f"episode(s) adjudicated false"
-        + (f" ({alerts_per_false_episode:.2f} alerts per episode)"
-           if alerts_per_false_episode is not None else "")
+        + (
+            f" ({alerts_per_false_episode:.2f} alerts per episode)"
+            if alerts_per_false_episode is not None
+            else ""
+        )
         + f". Denominator: {days:.2f} occupied bed-days over {coverage['display']} covered "
         f"ward-shifts. {counts['excluded']} adjudication(s) were artefact/indeterminate and "
         "are excluded from both terms."
-        + (f" {counts['unrecognised']} adjudication(s) carried a verdict this build does not "
-           "recognise and are excluded from both terms rather than guessed at. See "
-           "services/shadow_verdicts.py."
-           if counts["unrecognised"] else "")
+        + (
+            f" {counts['unrecognised']} adjudication(s) carried a verdict this build does not "
+            "recognise and are excluded from both terms rather than guessed at. See "
+            "services/shadow_verdicts.py."
+            if counts["unrecognised"]
+            else ""
+        )
     )
 
     if counts["unrecognised"]:
         # Not a blocker (the recognised verdicts still count), but the reader is
         # owed the fact that human judgement was recorded and not used.
         metric["provisional"] = True
-        metric["provisional_reason"] = ((metric["provisional_reason"] or "") + " " if metric["provisional_reason"] else "") + (
+        metric["provisional_reason"] = (
+            (metric["provisional_reason"] or "") + " " if metric["provisional_reason"] else ""
+        ) + (
             f"{counts['unrecognised']} recorded adjudication(s) use a verdict outside the "
             "controlled vocabulary and are counted in NEITHER term."
         )
@@ -1291,15 +1462,17 @@ def _false_alert_rate(events: list[dict], adjudications: list[dict], start: date
     else:
         # PER ALERT — the unit the label, the definition and `unit` all state.
         metric["value"] = (false_alert_count / days) if days > 0 else None
-        metric["display"] = (f"{metric['value']:.2f} false alerts per occupied bed-day"
-                             if metric["value"] is not None else None)
+        metric["display"] = (
+            f"{metric['value']:.2f} false alerts per occupied bed-day"
+            if metric["value"] is not None
+            else None
+        )
         metric["state"] = "reported"
     return _finalise(metric)
 
 
 # ── Metric 3: agreement (segmented by phase, NEVER pooled) ───────────────────
-def _agreement(events: list[dict], start: datetime, end: datetime,
-               phases: PhaseSchedule) -> dict:
+def _agreement(events: list[dict], start: datetime, end: datetime, phases: PhaseSchedule) -> dict:
     metric = _new_metric("agreement")
 
     by_episode: dict[str, list[dict]] = defaultdict(list)
@@ -1400,34 +1573,39 @@ def _agreement(events: list[dict], start: datetime, end: datetime,
                 # clinician silently ignored is at least as likely to be one they
                 # disagreed with, so the exclusion runs in Orb's favour and is
                 # reported per phase rather than dropped.
-                unresolved_rows.append({
-                    "episode_id": episode,
-                    "phase": phase,
-                    "proposed_class": proposal["payload"].get("action_class"),
-                    "proposed_at": proposal["occurred_at"],
-                })
+                unresolved_rows.append(
+                    {
+                        "episode_id": episode,
+                        "phase": phase,
+                        "proposed_class": proposal["payload"].get("action_class"),
+                        "proposed_at": proposal["occurred_at"],
+                    }
+                )
                 continue
             proposed_class = proposal["payload"].get("action_class")
             taken_class = resolution["payload"].get("action_class")
             matched = bool(
-                proposed_class and taken_class
+                proposed_class
+                and taken_class
                 and proposed_class == taken_class
                 and resolution["kind"] != "action.declined"
             )
-            pairs.append({
-                "episode_id": episode,
-                "phase": phase,
-                "proposed_class": proposed_class,
-                "taken_class": taken_class,
-                "resolution_kind": resolution["kind"],
-                "matched": matched,
-                "proposed_at": proposal["occurred_at"],
-                "resolved_at": resolution["occurred_at"],
-                # How this pair was established. A reader is owed the difference
-                # between a pair the producers identified and a pair this module
-                # inferred from the clock.
-                "paired_by": link_of.get(proposal["id"], "nearest_preceding"),
-            })
+            pairs.append(
+                {
+                    "episode_id": episode,
+                    "phase": phase,
+                    "proposed_class": proposed_class,
+                    "taken_class": taken_class,
+                    "resolution_kind": resolution["kind"],
+                    "matched": matched,
+                    "proposed_at": proposal["occurred_at"],
+                    "resolved_at": resolution["occurred_at"],
+                    # How this pair was established. A reader is owed the difference
+                    # between a pair the producers identified and a pair this module
+                    # inferred from the clock.
+                    "paired_by": link_of.get(proposal["id"], "nearest_preceding"),
+                }
+            )
 
     # SEGMENT, NEVER POOL. Phase A is Orb; Phase C is Orb-plus-staff. One
     # percentage covering both is a category error that inflates the number, so
@@ -1442,24 +1620,26 @@ def _agreement(events: list[dict], start: datetime, end: datetime,
     # hide it.
     for phase in sorted({p["phase"] for p in pairs} | set(unresolved_by_phase)):
         subset = [p for p in pairs if p["phase"] == phase]
-        matched = sum(1 for p in subset if p["matched"])
+        matched_count = sum(1 for p in subset if p["matched"])
         unresolved = unresolved_by_phase.get(phase, 0)
         proposals_seen = len(subset) + unresolved
         state = "reported" if len(subset) >= floor else "insufficient_data"
-        segments.append({
-            "phase": phase,
-            "phase_label": PhaseSchedule.label(phase),
-            "pairs": len(subset),
-            "matched": matched,
-            "disagreements": len(subset) - matched,
-            "unresolved": unresolved,
-            "proposals": proposals_seen,
-            "resolution_rate": (len(subset) / proposals_seen) if proposals_seen else None,
-            "rate": (matched / len(subset)) if subset else None,
-            "display": (_fmt_pct(matched, len(subset)) if state == "reported" else None),
-            "state": state,
-            "n_required": floor,
-        })
+        segments.append(
+            {
+                "phase": phase,
+                "phase_label": PhaseSchedule.label(phase),
+                "pairs": len(subset),
+                "matched": matched_count,
+                "disagreements": len(subset) - matched_count,
+                "unresolved": unresolved,
+                "proposals": proposals_seen,
+                "resolution_rate": (len(subset) / proposals_seen) if proposals_seen else None,
+                "rate": (matched_count / len(subset)) if subset else None,
+                "display": (_fmt_pct(matched_count, len(subset)) if state == "reported" else None),
+                "state": state,
+                "n_required": floor,
+            }
+        )
 
     # The headline is ONE segment — Phase A when it exists, because the silent
     # phase is the scientifically clean one and it is what the pilot claims.
@@ -1470,9 +1650,11 @@ def _agreement(events: list[dict], start: datetime, end: datetime,
     metric["detail"] = {
         "segments": segments,
         "pooled": None,
-        "pooling_guard": ("Phase A (silent) and Phase C (clinicians can see Orb) measure "
-                          "different things. A pooled figure is not computed anywhere in "
-                          "this module."),
+        "pooling_guard": (
+            "Phase A (silent) and Phase C (clinicians can see Orb) measure "
+            "different things. A pooled figure is not computed anywhere in "
+            "this module."
+        ),
         "headline_phase": headline["phase"] if headline else None,
         "pairs_total_across_phases": len(pairs),
         "unresolved_proposals": len(unresolved_rows),
@@ -1481,7 +1663,8 @@ def _agreement(events: list[dict], start: datetime, end: datetime,
         "actions_without_a_proposal": actions_without_proposal,
         "pairs_by_subject_link": sum(1 for p in pairs if p["paired_by"] == "subject"),
         "pairs_by_nearest_preceding": sum(
-            1 for p in pairs if p["paired_by"] == "nearest_preceding"),
+            1 for p in pairs if p["paired_by"] == "nearest_preceding"
+        ),
         "pairing_rule": (
             "One-to-one. A clinician action resolves the proposal carrying the same "
             "(subject_type, subject_id) where the producers wrote one, the Sage card lane "
@@ -1491,12 +1674,16 @@ def _agreement(events: list[dict], start: datetime, end: datetime,
             "both terms; clinician actions with no proposal to resolve are counted "
             "separately and excluded from both terms. The matching reads ids, subjects and "
             "timestamps, never the proposed or taken action class, so it cannot move the "
-            "match rate."),
+            "match rate."
+        ),
         "rows": pairs,
     }
     metric["alternative_denominators"] = [
-        {"label": f"Phase {s['phase']}", "display": _fmt_pct(s["matched"], s["pairs"]),
-         "is_primary": bool(headline and s["phase"] == headline["phase"])}
+        {
+            "label": f"Phase {s['phase']}",
+            "display": _fmt_pct(s["matched"], s["pairs"]),
+            "is_primary": bool(headline and s["phase"] == headline["phase"]),
+        }
         for s in segments
     ]
     metric["caveat"] += (
@@ -1508,16 +1695,25 @@ def _agreement(events: list[dict], start: datetime, end: datetime,
         f" preceding proposal to be compared against."
     )
     metric["assumptions"] = [
-        {"label": "Pairing", "value": "one action resolves at most one proposal",
-         "source": ("measured, the proposal carrying the same (subject_type, subject_id) "
-                    "where the producers wrote one, else the nearest preceding still-open "
-                    "proposal in the same episode; consumed either way. The rule never "
-                    "reads the action class")},
-        {"label": "Unanswered proposals",
-         "value": f"{len(unresolved_rows)} excluded from both terms",
-         "source": ("assumption: a proposal nobody acted on is neither agreement nor "
-                    "disagreement. Excluding it is the direction that FLATTERS Orb if "
-                    "silence means dissent, so the count is reported per phase")},
+        {
+            "label": "Pairing",
+            "value": "one action resolves at most one proposal",
+            "source": (
+                "measured, the proposal carrying the same (subject_type, subject_id) "
+                "where the producers wrote one, else the nearest preceding still-open "
+                "proposal in the same episode; consumed either way. The rule never "
+                "reads the action class"
+            ),
+        },
+        {
+            "label": "Unanswered proposals",
+            "value": f"{len(unresolved_rows)} excluded from both terms",
+            "source": (
+                "assumption: a proposal nobody acted on is neither agreement nor "
+                "disagreement. Excluding it is the direction that FLATTERS Orb if "
+                "silence means dissent, so the count is reported per phase"
+            ),
+        },
     ]
 
     if headline is not None and headline["unresolved"] > headline["pairs"]:
@@ -1538,11 +1734,11 @@ def _agreement(events: list[dict], start: datetime, end: datetime,
         metric["numerator"] = headline["matched"]
         metric["denominator"] = headline["pairs"]
         metric["disagreements"] = headline["disagreements"]
-        metric["denominator_label"] = (
-            f"proposal/action pairs in Phase {headline['phase']}")
+        metric["denominator_label"] = f"proposal/action pairs in Phase {headline['phase']}"
         metric["value"] = headline["rate"]
-        metric["display"] = (f"{_fmt_pct(headline['matched'], headline['pairs'])}: "
-                             f"Phase {headline['phase']}")
+        metric["display"] = (
+            f"{_fmt_pct(headline['matched'], headline['pairs'])}: Phase {headline['phase']}"
+        )
         metric["state"] = "reported"
     return _finalise(metric)
 
@@ -1552,18 +1748,27 @@ def _time_saved(events: list[dict], start: datetime, end: datetime) -> dict:
     metric = _new_metric("time_saved")
 
     drafts = [
-        e for e in events
-        if e["kind"] == "sage.drafted" and e["_t"] is not None and start <= e["_t"] < end
+        e
+        for e in events
+        if e["kind"] == "sage.drafted"
+        and e["_t"] is not None
+        and start <= e["_t"] < end
         and e["payload"].get("cancelled") is not True
         # Alert drafts are machine-initiated, not a lookup a clinician asked
         # for. Keep their real timings in the log, outside this proxy's count
         # and latency distribution. Legacy interactive rows have no class.
         and not str(e["payload"].get("query_class") or "").startswith("VIGIL_ALERT_")
     ]
-    ttfts = [float(d["payload"]["ttft_ms"]) for d in drafts
-             if isinstance(d["payload"].get("ttft_ms"), (int, float))]
-    totals = [float(d["payload"]["total_ms"]) for d in drafts
-              if isinstance(d["payload"].get("total_ms"), (int, float))]
+    ttfts = [
+        float(d["payload"]["ttft_ms"])
+        for d in drafts
+        if isinstance(d["payload"].get("ttft_ms"), (int, float))
+    ]
+    totals = [
+        float(d["payload"]["total_ms"])
+        for d in drafts
+        if isinstance(d["payload"].get("total_ms"), (int, float))
+    ]
 
     ttft_p50 = _percentile(ttfts, 0.5)
     ttft_p95 = _percentile(ttfts, 0.95)
@@ -1580,21 +1785,39 @@ def _time_saved(events: list[dict], start: datetime, end: datetime) -> dict:
     metric["n_observed"] = timed
     metric["numerator"] = timed
     metric["denominator"] = timed
-    metric["spread"] = ({"p25": _percentile(ttfts, 0.25), "p50": ttft_p50,
-                         "p75": _percentile(ttfts, 0.75)} if ttfts else None)
+    metric["spread"] = (
+        {"p25": _percentile(ttfts, 0.25), "p50": ttft_p50, "p75": _percentile(ttfts, 0.75)}
+        if ttfts
+        else None
+    )
     metric["assumptions"] = [
-        {"label": "Manual lookup baseline", "value": f"{baseline:.0f} s per answer",
-         "source": "STATED ASSUMPTION, not measured in this pilot"},
-        {"label": "Sage answer latency (p50)",
-         "value": (f"{measured_seconds:.1f} s" if measured_seconds is not None else "not measured"),
-         "source": "measured, sage.drafted.total_ms"},
-        {"label": "Sage time-to-first-token (p50 / p95)",
-         "value": (f"{ttft_p50 / 1000.0:.1f} s / {ttft_p95 / 1000.0:.1f} s"
-                   if ttft_p50 is not None and ttft_p95 is not None else "not measured"),
-         "source": "measured, sage.drafted.ttft_ms"},
+        {
+            "label": "Manual lookup baseline",
+            "value": f"{baseline:.0f} s per answer",
+            "source": "STATED ASSUMPTION, not measured in this pilot",
+        },
+        {
+            "label": "Sage answer latency (p50)",
+            "value": (
+                f"{measured_seconds:.1f} s" if measured_seconds is not None else "not measured"
+            ),
+            "source": "measured, sage.drafted.total_ms",
+        },
+        {
+            "label": "Sage time-to-first-token (p50 / p95)",
+            "value": (
+                f"{ttft_p50 / 1000.0:.1f} s / {ttft_p95 / 1000.0:.1f} s"
+                if ttft_p50 is not None and ttft_p95 is not None
+                else "not measured"
+            ),
+            "source": "measured, sage.drafted.ttft_ms",
+        },
         {"label": "Answers timed", "value": str(timed), "source": "measured, event count"},
-        {"label": "Clinical time saved", "value": "NOT MEASURED",
-         "source": "would require a controlled comparison this pilot is not running"},
+        {
+            "label": "Clinical time saved",
+            "value": "NOT MEASURED",
+            "source": "would require a controlled comparison this pilot is not running",
+        },
     ]
     metric["detail"] = {
         "answers": len(drafts),
@@ -1608,15 +1831,21 @@ def _time_saved(events: list[dict], start: datetime, end: datetime) -> dict:
         "formula": "timed_answers x max(0, manual_baseline_seconds - measured_total_p50_seconds)",
     }
     metric["alternative_denominators"] = [
-        {"label": "hours saved (proxy)",
-         "display": (f"{saved_hours:.2f} h" if saved_hours is not None else None),
-         "is_primary": True},
-        {"label": "measured Sage TTFT p50",
-         "display": (f"{ttft_p50 / 1000.0:.1f} s" if ttft_p50 is not None else None),
-         "is_primary": False},
-        {"label": "measured Sage TTFT p95",
-         "display": (f"{ttft_p95 / 1000.0:.1f} s" if ttft_p95 is not None else None),
-         "is_primary": False},
+        {
+            "label": "hours saved (proxy)",
+            "display": (f"{saved_hours:.2f} h" if saved_hours is not None else None),
+            "is_primary": True,
+        },
+        {
+            "label": "measured Sage TTFT p50",
+            "display": (f"{ttft_p50 / 1000.0:.1f} s" if ttft_p50 is not None else None),
+            "is_primary": False,
+        },
+        {
+            "label": "measured Sage TTFT p95",
+            "display": (f"{ttft_p95 / 1000.0:.1f} s" if ttft_p95 is not None else None),
+            "is_primary": False,
+        },
     ]
     metric["caveat"] += (
         f" This is a PROXY: {timed} measured answer(s) multiplied by a stated "
@@ -1661,8 +1890,10 @@ def _instrument(conn, include_simulator: bool, truncated: bool) -> dict:
     present = _instrument_present(conn)
     status["present"] = present
     if not present:
-        status["warnings"] = ["The pilot evidence log is missing from this appliance's "
-                              "database, so nothing has been recorded. Contact Orb support."]
+        status["warnings"] = [
+            "The pilot evidence log is missing from this appliance's "
+            "database, so nothing has been recorded. Contact Orb support."
+        ]
         status["healthy"] = False
         status["dropped_events"] = 0
         status["error_events"] = 0
@@ -1670,7 +1901,8 @@ def _instrument(conn, include_simulator: bool, truncated: bool) -> dict:
         return status
 
     triggers = {
-        r[0] for r in conn.execute(
+        r[0]
+        for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN "
             "('trg_shadow_no_update','trg_shadow_no_delete')"
         ).fetchall()
@@ -1688,24 +1920,30 @@ def _instrument(conn, include_simulator: bool, truncated: bool) -> dict:
     ).fetchone()
     if row is not None:
         row = dict(row)
-        status.update({
-            "events_total": int(row.get("n") or 0),
-            "episodes_total": int(row.get("episodes") or 0),
-            "episodes_closed": int(row.get("closed") or 0),
-            "first_event_at": row.get("first_at"),
-            "last_event_at": row.get("last_at"),
-            "schema_v": row.get("schema_v"),
-            "corrections": int(row.get("corrections") or 0),
-            "simulator_events": int(row.get("simulated") or 0),
-        })
+        status.update(
+            {
+                "events_total": int(row.get("n") or 0),
+                "episodes_total": int(row.get("episodes") or 0),
+                "episodes_closed": int(row.get("closed") or 0),
+                "first_event_at": row.get("first_at"),
+                "last_event_at": row.get("last_at"),
+                "schema_v": row.get("schema_v"),
+                "corrections": int(row.get("corrections") or 0),
+                "simulator_events": int(row.get("simulated") or 0),
+            }
+        )
 
     status["lanes"] = {
-        r["lane"]: int(r["n"]) for r in conn.execute(
-            "SELECT lane, COUNT(*) AS n FROM shadow_events_current GROUP BY lane").fetchall()
+        r["lane"]: int(r["n"])
+        for r in conn.execute(
+            "SELECT lane, COUNT(*) AS n FROM shadow_events_current GROUP BY lane"
+        ).fetchall()
     }
     status["kinds"] = {
-        r["kind"]: int(r["n"]) for r in conn.execute(
-            "SELECT kind, COUNT(*) AS n FROM shadow_events_current GROUP BY kind").fetchall()
+        r["kind"]: int(r["n"])
+        for r in conn.execute(
+            "SELECT kind, COUNT(*) AS n FROM shadow_events_current GROUP BY kind"
+        ).fetchall()
     }
 
     # Instrument lag: recorded_at − occurred_at, over a bounded recent sample.
@@ -1721,27 +1959,36 @@ def _instrument(conn, include_simulator: bool, truncated: bool) -> dict:
     status["lag_sample"] = len(lags)
 
     stats = dict(shadow_service.STATS)
-    dropped = (stats.get("dropped_error", 0) + stats.get("dropped_backpressure", 0)
-               + stats.get("dropped_invalid", 0))
+    dropped = (
+        stats.get("dropped_error", 0)
+        + stats.get("dropped_backpressure", 0)
+        + stats.get("dropped_invalid", 0)
+    )
     status["runtime"] = stats
     status["dropped_events"] = dropped
     status["error_events"] = stats.get("dropped_error", 0)
 
     warnings: list[str] = []
     if not status["append_only"]:
-        warnings.append("Append-only triggers are MISSING: rows in this table could have "
-                        "been edited or deleted, so the export is not evidentiary.")
+        warnings.append(
+            "Append-only triggers are MISSING: rows in this table could have "
+            "been edited or deleted, so the export is not evidentiary."
+        )
     if dropped:
-        warnings.append(f"{dropped} shadow event(s) were dropped by the writer since start "
-                        f"({stats.get('dropped_error', 0)} error, "
-                        f"{stats.get('dropped_backpressure', 0)} backpressure, "
-                        f"{stats.get('dropped_invalid', 0)} invalid). Every denominator "
-                        "below is a LOWER bound.")
+        warnings.append(
+            f"{dropped} shadow event(s) were dropped by the writer since start "
+            f"({stats.get('dropped_error', 0)} error, "
+            f"{stats.get('dropped_backpressure', 0)} backpressure, "
+            f"{stats.get('dropped_invalid', 0)} invalid). Every denominator "
+            "below is a LOWER bound."
+        )
     if truncated:
         warnings.append(f"The scan hit its {_max_events()} row cap; this window is partial.")
     if status["simulator_events"] and not include_simulator:
-        warnings.append(f"{status['simulator_events']} simulator-lane event(s) exist and are "
-                        "EXCLUDED from every metric: simulated alerts are not evidence.")
+        warnings.append(
+            f"{status['simulator_events']} simulator-lane event(s) exist and are "
+            "EXCLUDED from every metric: simulated alerts are not evidence."
+        )
     status["warnings"] = warnings
     status["healthy"] = bool(status["append_only"]) and dropped == 0 and not truncated
     return status
@@ -1759,45 +2006,78 @@ def instrument_health(*, db=None) -> dict:
 def _readiness(instrument: dict, coverage: dict, metrics: dict, events: list[dict]) -> list[dict]:
     outcomes = sum(1 for e in events if e["kind"] == "outcome.recorded")
     adjudications = sum(1 for e in events if e["kind"] == "adjudication.recorded")
-    negatives = sum(1 for e in events
-                    if e["kind"] in ("alert.expired", "action.abandoned", "episode.closed"))
+    negatives = sum(
+        1 for e in events if e["kind"] in ("alert.expired", "action.abandoned", "episode.closed")
+    )
     clinical = instrument["events_total"] - instrument.get("simulator_events", 0)
     ratio = coverage["ratio"]
     threshold = _coverage_threshold()
     return [
-        {"id": "instrument", "label": "Shadow event log present and append-only",
-         "met": bool(instrument.get("present")) and bool(instrument["append_only"]),
-         "detail": (f"{instrument['events_total']} event(s); protection against editing "
-                    f"or deleting entries {'in place' if instrument['append_only'] else 'MISSING'}.")},
-        {"id": "clinical_data", "label": "Non-simulator (real) events recorded",
-         "met": clinical > 0,
-         "detail": (f"{clinical} clinical-lane event(s); "
-                    f"{instrument.get('simulator_events', 0)} simulator event(s) excluded.")},
-        {"id": "outcome_capture", "label": "Clinical outcome capture running",
-         "met": outcomes > 0,
-         "detail": (f"{outcomes} clinical outcome(s) recorded. Without them, detection "
-                    "lead time does not exist.")},
-        {"id": "adjudication", "label": "False-alert adjudication running",
-         "met": adjudications > 0,
-         "detail": f"{adjudications} alert adjudication(s) recorded in this window."},
-        {"id": "coverage", "label": "Ward-shift coverage",
-         "met": ratio is not None and ratio >= threshold,
-         "detail": (f"{coverage['display']} ward-shifts covered "
-                    f"({coverage['uncovered_hours']:.0f} uncovered hours). Uncovered time is "
-                    "excluded from every denominator.")},
-        {"id": "negatives", "label": "Negatives materialised (the sweeper is running)",
-         "met": negatives > 0,
-         "detail": (f"{negatives} closed/expired/abandoned row(s). Without these the "
-                    "scorecard would score only the successes.")},
-        {"id": "no_dropped_events", "label": "No shadow writes dropped",
-         "met": instrument.get("dropped_events", 0) == 0,
-         "detail": f"{instrument.get('dropped_events', 0)} dropped since process start."},
+        {
+            "id": "instrument",
+            "label": "Shadow event log present and append-only",
+            "met": bool(instrument.get("present")) and bool(instrument["append_only"]),
+            "detail": (
+                f"{instrument['events_total']} event(s); protection against editing "
+                f"or deleting entries {'in place' if instrument['append_only'] else 'MISSING'}."
+            ),
+        },
+        {
+            "id": "clinical_data",
+            "label": "Non-simulator (real) events recorded",
+            "met": clinical > 0,
+            "detail": (
+                f"{clinical} clinical-lane event(s); "
+                f"{instrument.get('simulator_events', 0)} simulator event(s) excluded."
+            ),
+        },
+        {
+            "id": "outcome_capture",
+            "label": "Clinical outcome capture running",
+            "met": outcomes > 0,
+            "detail": (
+                f"{outcomes} clinical outcome(s) recorded. Without them, detection "
+                "lead time does not exist."
+            ),
+        },
+        {
+            "id": "adjudication",
+            "label": "False-alert adjudication running",
+            "met": adjudications > 0,
+            "detail": f"{adjudications} alert adjudication(s) recorded in this window.",
+        },
+        {
+            "id": "coverage",
+            "label": "Ward-shift coverage",
+            "met": ratio is not None and ratio >= threshold,
+            "detail": (
+                f"{coverage['display']} ward-shifts covered "
+                f"({coverage['uncovered_hours']:.0f} uncovered hours). Uncovered time is "
+                "excluded from every denominator."
+            ),
+        },
+        {
+            "id": "negatives",
+            "label": "Negatives materialised (the sweeper is running)",
+            "met": negatives > 0,
+            "detail": (
+                f"{negatives} closed/expired/abandoned row(s). Without these the "
+                "scorecard would score only the successes."
+            ),
+        },
+        {
+            "id": "no_dropped_events",
+            "label": "No shadow writes dropped",
+            "met": instrument.get("dropped_events", 0) == 0,
+            "detail": f"{instrument.get('dropped_events', 0)} dropped since process start.",
+        },
     ]
 
 
 # ── The scorecard ────────────────────────────────────────────────────────────
-def _census_wards(conn, start: datetime, end: datetime,
-                  ward: Optional[str] = None) -> tuple[set[str], dict]:
+def _census_wards(
+    conn, start: datetime, end: datetime, ward: str | None = None
+) -> tuple[set[str], dict]:
     """Wards that had a patient on them during the window, from `patients`.
 
     Stay bounds are computed exactly as `_occupied_bed_days` computes them —
@@ -1811,8 +2091,11 @@ def _census_wards(conn, start: datetime, end: datetime,
     may be wrong in.
     """
     diagnostics: dict[str, Any] = {
-        "available": True, "patients_scanned": 0, "patients_in_window": 0,
-        "undated_admissions": 0, "wards_from_census": 0,
+        "available": True,
+        "patients_scanned": 0,
+        "patients_in_window": 0,
+        "undated_admissions": 0,
+        "wards_from_census": 0,
     }
     try:
         rows = conn.execute(
@@ -1820,8 +2103,11 @@ def _census_wards(conn, start: datetime, end: datetime,
         ).fetchall()
     except Exception:
         logger.debug("scorecard: patients table unavailable for ward scope", exc_info=True)
-        return set(), {**diagnostics, "available": False,
-                       "note": "patients table unavailable; ward scope fell back to events"}
+        return set(), {
+            **diagnostics,
+            "available": False,
+            "note": "patients table unavailable; ward scope fell back to events",
+        }
     if not rows:
         return set(), {**diagnostics, "note": "no patients on the appliance"}
 
@@ -1852,15 +2138,20 @@ def _census_wards(conn, start: datetime, end: datetime,
         # discharge row to close on — instead of grouping the whole table the way
         # `_occupied_bed_days` does. Usually that set is empty and the query
         # never runs at all.
-        undischarged = [p["id"] for p in patients
-                        if (p.get("status") or "admitted").strip() != "admitted"
-                        and p.get("id") and p.get("id") not in discharges]
-        for chunk in (undischarged[i:i + 400] for i in range(0, len(undischarged), 400)):
+        undischarged = [
+            p["id"]
+            for p in patients
+            if (p.get("status") or "admitted").strip() != "admitted"
+            and p.get("id")
+            and p.get("id") not in discharges
+        ]
+        for chunk in (undischarged[i : i + 400] for i in range(0, len(undischarged), 400)):
             placeholders = ",".join("?" * len(chunk))
             try:
                 for row in conn.execute(
                     f"SELECT patient_id, MAX(timestamp) AS last_at FROM vitals "
-                    f"WHERE patient_id IN ({placeholders}) GROUP BY patient_id", chunk
+                    f"WHERE patient_id IN ({placeholders}) GROUP BY patient_id",
+                    chunk,
                 ).fetchall():
                     when = _dt(row["last_at"] if hasattr(row, "keys") else row[1])
                     if when:
@@ -1877,15 +2168,18 @@ def _census_wards(conn, start: datetime, end: datetime,
         diagnostics["patients_scanned"] += 1
         status = (patient.get("status") or "admitted").strip()
         stay_start = _dt(patient.get("admission_date"))
-        stay_end = discharges.get(patient.get("id"))
+        stay_end = discharges.get(patient.get("id") or "")
         if stay_start is None:
             diagnostics["undated_admissions"] += 1
             if status != "admitted" and stay_end is None:
                 continue  # gone, and undateable: cannot honestly place them in time
             stay_start = start
         if stay_end is None:
-            stay_end = end if status == "admitted" else (
-                last_vital.get(patient.get("id")) or stay_start)
+            stay_end = (
+                end
+                if status == "admitted"
+                else (last_vital.get(patient.get("id") or "") or stay_start)
+            )
         if stay_start < end and stay_end > start:
             wards.add(patient_ward)
             diagnostics["patients_in_window"] += 1
@@ -1895,8 +2189,16 @@ def _census_wards(conn, start: datetime, end: datetime,
     return wards, diagnostics
 
 
-def _census_repeat_stays(conn, repeat: dict, by_id: dict, start: datetime, end: datetime,
-                         ward: Optional[str], wards: set, diagnostics: dict) -> None:
+def _census_repeat_stays(
+    conn,
+    repeat: dict,
+    by_id: dict,
+    start: datetime,
+    end: datetime,
+    ward: str | None,
+    wards: set,
+    diagnostics: dict,
+) -> None:
     """_census_wards for patients with more than one stay (opd-17b): each
     stay is placed in time on its own, with the same rules as one stay (no
     end and still here: the window's end; no end and gone: the last vital
@@ -1930,7 +2232,8 @@ def _census_repeat_stays(conn, repeat: dict, by_id: dict, start: datetime, end: 
                 wards.add(stay_ward)
                 in_window = True
                 diagnostics["repeat_stays_in_window"] = (
-                    diagnostics.get("repeat_stays_in_window", 0) + 1)
+                    diagnostics.get("repeat_stays_in_window", 0) + 1
+                )
         if scanned:
             diagnostics["patients_scanned"] += 1
             diagnostics["repeat_stay_patients"] = diagnostics.get("repeat_stay_patients", 0) + 1
@@ -1939,8 +2242,9 @@ def _census_repeat_stays(conn, repeat: dict, by_id: dict, start: datetime, end: 
             diagnostics["patients_in_window"] += 1
 
 
-def _wards_in_scope(conn, events: list[dict], ward: Optional[str],
-                    start: datetime, end: datetime) -> tuple[list[str], dict]:
+def _wards_in_scope(
+    conn, events: list[dict], ward: str | None, start: datetime, end: datetime
+) -> tuple[list[str], dict]:
     """The wards coverage is measured OVER — from the census, not the events.
 
     Deriving the ward list from the event stream makes the worst possible
@@ -1957,8 +2261,12 @@ def _wards_in_scope(conn, events: list[dict], ward: Optional[str],
     """
     if ward:
         return [ward], {"available": True, "note": "explicit ward filter; census not consulted"}
-    seen = {_event_ward(e) for e in events if e["kind"] in (
-        "alert.fired", "outcome.recorded", "outcome.none_confirmed", "episode.opened")}
+    seen = {
+        _event_ward(e)
+        for e in events
+        if e["kind"]
+        in ("alert.fired", "outcome.recorded", "outcome.none_confirmed", "episode.opened")
+    }
     census, diagnostics = _census_wards(conn, start, end, ward)
     diagnostics["wards_from_events"] = len(seen)
     diagnostics["wards_with_census_but_no_events"] = len(census - seen)
@@ -1974,8 +2282,14 @@ def _empty_metrics(reason: str) -> dict:
     return out
 
 
-def scorecard(days: int = 14, ward: Optional[str] = None, *, now: Optional[datetime] = None,
-              db=None, include_simulator: Optional[bool] = None) -> dict:
+def scorecard(
+    days: int = 14,
+    ward: str | None = None,
+    *,
+    now: datetime | None = None,
+    db=None,
+    include_simulator: bool | None = None,
+) -> dict:
     """The composite scorecard for the last `days` days.
 
     SYNC — never call on the event loop; route handlers must be `def`.
@@ -1988,10 +2302,11 @@ def scorecard(days: int = 14, ward: Optional[str] = None, *, now: Optional[datet
         return _scorecard(conn, days, ward, now, include_simulator)
 
 
-def _scorecard(conn, days: int, ward: Optional[str], now: Optional[datetime],
-               include_simulator: Optional[bool]) -> dict:
+def _scorecard(
+    conn, days: int, ward: str | None, now: datetime | None, include_simulator: bool | None
+) -> dict:
     days = max(1, int(days or 1))
-    end = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    end = (now or datetime.now(UTC)).astimezone(UTC)
     start = end - timedelta(days=days)
     if include_simulator is None:
         include_simulator = _include_simulator_default()
@@ -2002,17 +2317,21 @@ def _scorecard(conn, days: int, ward: Optional[str], now: Optional[datetime],
         "available": True,
         "formats": ["json", "csv"],
         "deidentification": DEIDENTIFICATION,
-        "note": ("The exported artefact is de-identified as itemised above and is the only "
-                 "form that may leave the appliance. The identified data never does."),
+        "note": (
+            "The exported artefact is de-identified as itemised above and is the only "
+            "form that may leave the appliance. The identified data never does."
+        ),
     }
 
     if not _instrument_present(conn):
         instrument = _instrument(conn, include_simulator, False)
-        reason = ("The shadow-event instrument is not present on this appliance: no episode, "
-                  "alert or outcome has been recorded here.")
+        reason = (
+            "The shadow-event instrument is not present on this appliance: no episode, "
+            "alert or outcome has been recorded here."
+        )
         coverage = _coverage([], start, end, [])
         return {
-            "generated_at": _iso(datetime.now(timezone.utc)),
+            "generated_at": _iso(datetime.now(UTC)),
             "period": period,
             "wards": [],
             "phase": phases.current(end),
@@ -2029,7 +2348,7 @@ def _scorecard(conn, days: int, ward: Optional[str], now: Optional[datetime],
     # Alerts just BEFORE the window can still precede an outcome inside it, so the
     # scan reaches back by the lookback and forward by the late window.
     scan_start = start - timedelta(hours=_lookback_hours())
-    scan_end = max(end, datetime.now(timezone.utc)) + timedelta(hours=_late_window_hours())
+    scan_end = max(end, datetime.now(UTC)) + timedelta(hours=_late_window_hours())
     events, truncated = _load_events(conn, scan_start, scan_end, ward, include_simulator)
     adjudications = _load_late_adjudications(conn, start, ward, include_simulator)
     seen_ids = {e["id"] for e in events}
@@ -2043,7 +2362,9 @@ def _scorecard(conn, days: int, ward: Optional[str], now: Optional[datetime],
 
     metrics = {
         "detection_lead_time": _detection_lead_time(events, start, end),
-        "false_alert_rate": _false_alert_rate(events, adjudications, start, end, coverage, bed_days),
+        "false_alert_rate": _false_alert_rate(
+            events, adjudications, start, end, coverage, bed_days
+        ),
         "agreement": _agreement(events, start, end, phases),
         "time_saved": _time_saved(events, start, end),
     }
@@ -2059,13 +2380,15 @@ def _scorecard(conn, days: int, ward: Optional[str], now: Optional[datetime],
     if coverage.get("silent_wards"):
         notes.append(coverage["silent_ward_note"])
     if not include_simulator and instrument.get("simulator_events"):
-        notes.append(f"{instrument['simulator_events']} simulator-lane event(s) are excluded "
-                     "from every metric on this page.")
+        notes.append(
+            f"{instrument['simulator_events']} simulator-lane event(s) are excluded "
+            "from every metric on this page."
+        )
     for warning in instrument.get("warnings", []):
         notes.append(warning)
 
     return {
-        "generated_at": _iso(datetime.now(timezone.utc)),
+        "generated_at": _iso(datetime.now(UTC)),
         "period": period,
         "wards": [w for w in wards if w != _UNSPECIFIED_WARD] or wards,
         "phase": current_phase,
@@ -2081,7 +2404,7 @@ def _scorecard(conn, days: int, ward: Optional[str], now: Optional[datetime],
 
 
 # ── Drill-down ───────────────────────────────────────────────────────────────
-def episode_detail(episode_id: str, *, db=None, include_phi: bool = False) -> Optional[dict]:
+def episode_detail(episode_id: str, *, db=None, include_phi: bool = False) -> dict | None:
     """Every current row for one episode, in order, plus the derived summary.
 
     SYNC — never call on the event loop. `include_phi` is off by default: the
@@ -2095,7 +2418,7 @@ def episode_detail(episode_id: str, *, db=None, include_phi: bool = False) -> Op
         return _episode_detail(conn, episode_id, include_phi)
 
 
-def _episode_detail(conn, episode_id: str, include_phi: bool) -> Optional[dict]:
+def _episode_detail(conn, episode_id: str, include_phi: bool) -> dict | None:
     if not _instrument_present(conn):
         return None
     columns = _SCAN_COLUMNS + (", phi_json" if include_phi else "")
@@ -2111,29 +2434,37 @@ def _episode_detail(conn, episode_id: str, include_phi: bool) -> Optional[dict]:
     for raw in rows:
         event = _row_to_event(raw)
         occurred, recorded = event["_t"], _dt(event.get("recorded_at"))
-        events.append({
-            "id": event["id"],
-            "kind": event["kind"],
-            "occurred_at": event["occurred_at"],
-            "recorded_at": event["recorded_at"],
-            "lag_ms": ((recorded - occurred).total_seconds() * 1000.0
-                       if occurred and recorded else None),
-            "lane": event["lane"],
-            "patient_id": event.get("patient_id"),
-            "ward": event.get("ward"),
-            "actor_user_id": event.get("actor_user_id"),
-            "actor_role": event.get("actor_role"),
-            "subject_type": event.get("subject_type"),
-            "subject_id": event.get("subject_id"),
-            "payload": event["payload"],
-            "supersedes_event_id": event.get("supersedes_event_id"),
-            "correction_reason": event.get("correction_reason"),
-            "phi": (json.loads(dict(raw).get("phi_json") or "null")
-                    if include_phi and dict(raw).get("phi_json") else None),
-            "_t": occurred,
-        })
+        events.append(
+            {
+                "id": event["id"],
+                "kind": event["kind"],
+                "occurred_at": event["occurred_at"],
+                "recorded_at": event["recorded_at"],
+                "lag_ms": (
+                    (recorded - occurred).total_seconds() * 1000.0
+                    if occurred and recorded
+                    else None
+                ),
+                "lane": event["lane"],
+                "patient_id": event.get("patient_id"),
+                "ward": event.get("ward"),
+                "actor_user_id": event.get("actor_user_id"),
+                "actor_role": event.get("actor_role"),
+                "subject_type": event.get("subject_type"),
+                "subject_id": event.get("subject_id"),
+                "payload": event["payload"],
+                "supersedes_event_id": event.get("supersedes_event_id"),
+                "correction_reason": event.get("correction_reason"),
+                "phi": (
+                    json.loads(dict(raw).get("phi_json") or "null")
+                    if include_phi and dict(raw).get("phi_json")
+                    else None
+                ),
+                "_t": occurred,
+            }
+        )
 
-    def _first(kind: str) -> Optional[dict]:
+    def _first(kind: str) -> dict | None:
         return next((e for e in events if e["kind"] == kind), None)
 
     alerts = [e for e in events if e["kind"] == "alert.fired"]
@@ -2163,8 +2494,11 @@ def _episode_detail(conn, episode_id: str, include_phi: bool) -> Optional[dict]:
         "summary": {
             "alerts_fired": len(alerts),
             "qualifying_alerts": len(qualifying),
-            "max_level": ("critical" if any(e["payload"].get("level") == "critical" for e in alerts)
-                          else ("elevated" if qualifying else None)),
+            "max_level": (
+                "critical"
+                if any(e["payload"].get("level") == "critical" for e in alerts)
+                else ("elevated" if qualifying else None)
+            ),
             "outcome": (outcome["payload"].get("event_type") if outcome else None),
             "outcome_source": (outcome["payload"].get("source") if outcome else None),
             "outcome_at": (outcome["occurred_at"] if outcome else None),
@@ -2175,10 +2509,14 @@ def _episode_detail(conn, episode_id: str, include_phi: bool) -> Optional[dict]:
             # how the metric counted it. Both, so a reader can see a historical
             # spelling and see that it still counted.
             "verdict": (adjudication["payload"].get("verdict") if adjudication else None),
-            "verdict_canonical": (shadow_verdicts.normalise(adjudication["payload"].get("verdict"))
-                                  if adjudication else None),
-            "verdict_class": (_classify_verdict(adjudication["payload"].get("verdict"))
-                              if adjudication else None),
+            "verdict_canonical": (
+                shadow_verdicts.normalise(adjudication["payload"].get("verdict"))
+                if adjudication
+                else None
+            ),
+            "verdict_class": (
+                _classify_verdict(adjudication["payload"].get("verdict")) if adjudication else None
+            ),
             "sage_drafts": sum(1 for e in events if e["kind"] == "sage.drafted"),
             "proposals": sum(1 for e in events if e["kind"] == "action.proposed"),
             "clinician_actions": sum(1 for e in events if e["kind"] in CLINICIAN_ACTION_KINDS),
@@ -2188,31 +2526,71 @@ def _episode_detail(conn, episode_id: str, include_phi: bool) -> Optional[dict]:
     }
 
 
-def list_episodes(days: int = 14, ward: Optional[str] = None, *, limit: int = 50, offset: int = 0,
-                  now: Optional[datetime] = None, db=None, only_with_outcome: bool = False,
-                  only_unadjudicated: bool = False, include_simulator: Optional[bool] = None) -> dict:
+def list_episodes(
+    days: int = 14,
+    ward: str | None = None,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+    now: datetime | None = None,
+    db=None,
+    only_with_outcome: bool = False,
+    only_unadjudicated: bool = False,
+    include_simulator: bool | None = None,
+) -> dict:
     """Episode index for the drill-down. SYNC — never call on the event loop."""
     if db is not None:
-        return _list_episodes(db, days, ward, limit, offset, now, only_with_outcome,
-                              only_unadjudicated, include_simulator)
+        return _list_episodes(
+            db,
+            days,
+            ward,
+            limit,
+            offset,
+            now,
+            only_with_outcome,
+            only_unadjudicated,
+            include_simulator,
+        )
     with db_session() as conn:
-        return _list_episodes(conn, days, ward, limit, offset, now, only_with_outcome,
-                              only_unadjudicated, include_simulator)
+        return _list_episodes(
+            conn,
+            days,
+            ward,
+            limit,
+            offset,
+            now,
+            only_with_outcome,
+            only_unadjudicated,
+            include_simulator,
+        )
 
 
-def _list_episodes(conn, days: int, ward: Optional[str], limit: int, offset: int,
-                   now: Optional[datetime], only_with_outcome: bool, only_unadjudicated: bool,
-                   include_simulator: Optional[bool]) -> dict:
+def _list_episodes(
+    conn,
+    days: int,
+    ward: str | None,
+    limit: int,
+    offset: int,
+    now: datetime | None,
+    only_with_outcome: bool,
+    only_unadjudicated: bool,
+    include_simulator: bool | None,
+) -> dict:
     days = max(1, int(days or 1))
     limit = max(1, min(int(limit or 50), 500))
     offset = max(0, int(offset or 0))
-    end = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    end = (now or datetime.now(UTC)).astimezone(UTC)
     start = end - timedelta(days=days)
     if include_simulator is None:
         include_simulator = _include_simulator_default()
     if not _instrument_present(conn):
-        return {"episodes": [], "total": 0, "limit": limit, "offset": offset,
-                "period": {"start": _iso(start), "end": _iso(end), "days": days}}
+        return {
+            "episodes": [],
+            "total": 0,
+            "limit": limit,
+            "offset": offset,
+            "period": {"start": _iso(start), "end": _iso(end), "days": days},
+        }
 
     phases = PhaseSchedule.from_env()
     events, truncated = _load_events(conn, start, end, ward, include_simulator)
@@ -2225,45 +2603,63 @@ def _list_episodes(conn, days: int, ward: Optional[str], limit: int, offset: int
     for episode_id, series in grouped.items():
         alerts = [e for e in series if e["kind"] == "alert.fired"]
         outcome = next((e for e in series if e["kind"] == "outcome.recorded"), None)
-        adjudication = next((e for e in reversed(series)
-                             if e["kind"] == "adjudication.recorded"), None)
+        adjudication = next(
+            (e for e in reversed(series) if e["kind"] == "adjudication.recorded"), None
+        )
         if only_with_outcome and outcome is None:
             continue
         if only_unadjudicated and adjudication is not None:
             continue
         closed_row = next((e for e in series if e["kind"] == "episode.closed"), None)
         first_at, last_at = series[0]["_t"], series[-1]["_t"]
-        summaries.append({
-            "episode_id": episode_id,
-            "patient_id": next((e["patient_id"] for e in series if e.get("patient_id")), None),
-            "ward": _event_ward(series[0]),
-            "phase": phases.phase_at(series[0]["_t"]),
-            "lane": series[0]["lane"],
-            "opened_at": series[0]["occurred_at"],
-            "last_at": series[-1]["occurred_at"],
-            "closed_at": (closed_row["occurred_at"] if closed_row else None),
-            "duration_min": (round((last_at - first_at).total_seconds() / 60.0, 1)
-                             if first_at and last_at else None),
-            "has_outcome": outcome is not None,
-            "events_n": len(series),
-            "alerts": len(alerts),
-            "max_level": ("critical" if any(e["payload"].get("level") == "critical" for e in alerts)
-                          else ("elevated" if any(e["payload"].get("level") == "elevated"
-                                                  for e in alerts) else None)),
-            "closed": any(e["kind"] == "episode.closed" for e in series),
-            "outcome": (outcome["payload"].get("event_type") if outcome else None),
-            "outcome_source": (outcome["payload"].get("source") if outcome else None),
-            "verdict": (adjudication["payload"].get("verdict") if adjudication else None),
-            "verdict_canonical": (shadow_verdicts.normalise(adjudication["payload"].get("verdict"))
-                                  if adjudication else None),
-            "verdict_class": (_classify_verdict(adjudication["payload"].get("verdict"))
-                              if adjudication else None),
-            "sage_drafts": sum(1 for e in series if e["kind"] == "sage.drafted"),
-        })
+        summaries.append(
+            {
+                "episode_id": episode_id,
+                "patient_id": next((e["patient_id"] for e in series if e.get("patient_id")), None),
+                "ward": _event_ward(series[0]),
+                "phase": phases.phase_at(series[0]["_t"]),
+                "lane": series[0]["lane"],
+                "opened_at": series[0]["occurred_at"],
+                "last_at": series[-1]["occurred_at"],
+                "closed_at": (closed_row["occurred_at"] if closed_row else None),
+                "duration_min": (
+                    round((last_at - first_at).total_seconds() / 60.0, 1)
+                    if first_at and last_at
+                    else None
+                ),
+                "has_outcome": outcome is not None,
+                "events_n": len(series),
+                "alerts": len(alerts),
+                "max_level": (
+                    "critical"
+                    if any(e["payload"].get("level") == "critical" for e in alerts)
+                    else (
+                        "elevated"
+                        if any(e["payload"].get("level") == "elevated" for e in alerts)
+                        else None
+                    )
+                ),
+                "closed": any(e["kind"] == "episode.closed" for e in series),
+                "outcome": (outcome["payload"].get("event_type") if outcome else None),
+                "outcome_source": (outcome["payload"].get("source") if outcome else None),
+                "verdict": (adjudication["payload"].get("verdict") if adjudication else None),
+                "verdict_canonical": (
+                    shadow_verdicts.normalise(adjudication["payload"].get("verdict"))
+                    if adjudication
+                    else None
+                ),
+                "verdict_class": (
+                    _classify_verdict(adjudication["payload"].get("verdict"))
+                    if adjudication
+                    else None
+                ),
+                "sage_drafts": sum(1 for e in series if e["kind"] == "sage.drafted"),
+            }
+        )
 
     summaries.sort(key=lambda s: s["opened_at"], reverse=True)
     return {
-        "episodes": summaries[offset:offset + limit],
+        "episodes": summaries[offset : offset + limit],
         "total": len(summaries),
         "limit": limit,
         "offset": offset,

@@ -21,6 +21,7 @@ live risk level (acute → early phase, stable → near discharge), so it stays 
 without invalidating the cached projection and does not depend on the wall-clock
 admission date.
 """
+
 import asyncio
 import hashlib
 import json
@@ -28,7 +29,6 @@ import logging
 import time
 
 import httpx
-
 from config import AMBIENT_LLM_MODEL, OLLAMA_KEEP_ALIVE
 from database import db_session, run_db
 
@@ -56,6 +56,7 @@ def _load_clinical_inputs(db, patient_id: str):
     prof = db.execute(
         "SELECT comorbidities FROM patient_profiles WHERE patient_id = ?", (patient_id,)
     ).fetchone()
+    comorbidities: list[str]
     comorbidities = []
     if prof and prof["comorbidities"]:
         try:
@@ -93,10 +94,26 @@ def _heuristic_projection(inputs: dict) -> dict:
     return {
         "expected_los_days": los,
         "phases": [
-            {"name": "Stabilization", "focus": "Resuscitate, correct acute derangements, start targeted therapy", "typical_days": "Day 0–1"},
-            {"name": "Active Treatment", "focus": "Treat the primary condition; monitor response and labs", "typical_days": f"Day 1–{max(2, los - 2)}"},
-            {"name": "Recovery", "focus": "Step down therapy, mobilize, confirm clinical stability", "typical_days": f"Day {max(2, los - 2)}–{los}"},
-            {"name": "Discharge Readiness", "focus": "Meet discharge criteria, arrange follow-up and medications", "typical_days": f"~Day {los}"},
+            {
+                "name": "Stabilization",
+                "focus": "Resuscitate, correct acute derangements, start targeted therapy",
+                "typical_days": "Day 0–1",
+            },
+            {
+                "name": "Active Treatment",
+                "focus": "Treat the primary condition; monitor response and labs",
+                "typical_days": f"Day 1–{max(2, los - 2)}",
+            },
+            {
+                "name": "Recovery",
+                "focus": "Step down therapy, mobilize, confirm clinical stability",
+                "typical_days": f"Day {max(2, los - 2)}–{los}",
+            },
+            {
+                "name": "Discharge Readiness",
+                "focus": "Meet discharge criteria, arrange follow-up and medications",
+                "typical_days": f"~Day {los}",
+            },
         ],
         "discharge_criteria": [
             "Hemodynamically stable off escalating support",
@@ -105,7 +122,11 @@ def _heuristic_projection(inputs: dict) -> dict:
         ],
         "rationale": (
             f"Baseline course for {inputs['diagnosis']}"
-            + (f", extended for comorbidities ({', '.join(inputs['comorbidities'])})." if inputs["comorbidities"] else ".")
+            + (
+                f", extended for comorbidities ({', '.join(inputs['comorbidities'])})."
+                if inputs["comorbidities"]
+                else "."
+            )
         ),
     }
 
@@ -123,10 +144,10 @@ def _build_prompt(inputs: dict) -> str:
         "Adjust the expected length of stay and phases for the diagnosis, and lengthen or "
         "add caution for the age and comorbidities.\n\n"
         "RULES:\n"
-        "- The \"phases\" array MUST contain 3 to 5 ordered phases spanning admission to discharge "
+        '- The "phases" array MUST contain 3 to 5 ordered phases spanning admission to discharge '
         "(stabilization → active treatment → recovery/step-down → discharge readiness). Never return "
         "fewer than 3 phases.\n"
-        "- Keep each \"focus\" to one short clause. Put target values in discharge_criteria, not in phases.\n\n"
+        '- Keep each "focus" to one short clause. Put target values in discharge_criteria, not in phases.\n\n'
         "EXAMPLE (for a DIFFERENT condition, community-acquired pneumonia, so do NOT copy it, follow its shape):\n"
         "{\n"
         '  "expected_los_days": 5,\n'
@@ -224,16 +245,18 @@ async def _call_llm(inputs: dict, patient_id: str | None = None) -> dict:
     # the ambient tier is not resident, raise so the caller renders the
     # heuristic projection rather than reloading a tier the operator evicted.
     from services.model_router import ambient_tier_evicted, select_chat_model
-    model_choice = await select_chat_model(
-        preferred=AMBIENT_LLM_MODEL, fallback=AMBIENT_LLM_MODEL
-    )
+
+    model_choice = await select_chat_model(preferred=AMBIENT_LLM_MODEL, fallback=AMBIENT_LLM_MODEL)
     if await ambient_tier_evicted(model_choice.model):
         raise RuntimeError("ambient tier not resident, expected-course projection skipped")
 
     from services import ollama_gateway
+
     await llm_queue.acquire(priority=3)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=15.0, read=120.0, write=15.0, pool=15.0), trust_env=False) as client:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=15.0, read=120.0, write=15.0, pool=15.0), trust_env=False
+        ) as client:
             # Yields the lane to a clinician's turn (or at the P3 hold cap):
             # LaneYielded is a TimeoutError, and the caller renders the
             # heuristic projection for any failure here.
@@ -243,7 +266,10 @@ async def _call_llm(inputs: dict, patient_id: str | None = None) -> dict:
                 {
                     "model": model_choice.model,
                     "messages": [
-                        {"role": "system", "content": "You output only valid JSON. No commentary, no markdown."},
+                        {
+                            "role": "system",
+                            "content": "You output only valid JSON. No commentary, no markdown.",
+                        },
                         {"role": "user", "content": _build_prompt(inputs)},
                     ],
                     "stream": False,
@@ -322,7 +348,10 @@ def _load_inputs_and_cache(patient_id, force_refresh):
             ).fetchone()
             if row and row["input_hash"] == ihash:
                 try:
-                    cached = {"projection": json.loads(row["projection_json"]), "source": row["source"]}
+                    cached = {
+                        "projection": json.loads(row["projection_json"]),
+                        "source": row["source"],
+                    }
                 except json.JSONDecodeError:
                     cached = None
     return inputs, ihash, cached
@@ -355,10 +384,15 @@ def _persist_projection(patient_id, ihash, projection, source):
         )
 
 
-async def get_timeline_projection(patient_id: str, risk_level: str = "stable", force_refresh: bool = False) -> dict:
+async def get_timeline_projection(
+    patient_id: str, risk_level: str = "stable", force_refresh: bool = False
+) -> dict:
     """Return the Sage-deduced clinical timeline for a patient (cached)."""
     # Downgrade a spammed refresh to a cache read once one just ran for this patient.
-    if force_refresh and (time.monotonic() - _last_generated.get(patient_id, 0.0)) < _REFRESH_COOLDOWN_S:
+    if (
+        force_refresh
+        and (time.monotonic() - _last_generated.get(patient_id, 0.0)) < _REFRESH_COOLDOWN_S
+    ):
         force_refresh = False
 
     loaded = await run_db(_load_inputs_and_cache, patient_id, force_refresh)
@@ -379,9 +413,16 @@ async def get_timeline_projection(patient_id: str, risk_level: str = "stable", f
             row = await run_db(_reread_cached_row, patient_id)
             # Only accept the in-lock re-read if another request generated it moments ago;
             # otherwise fall through and generate (covers a genuine forced refresh).
-            if row and row["input_hash"] == ihash and (time.monotonic() - _last_generated.get(patient_id, 0.0)) < _REFRESH_COOLDOWN_S:
+            if (
+                row
+                and row["input_hash"] == ihash
+                and (time.monotonic() - _last_generated.get(patient_id, 0.0)) < _REFRESH_COOLDOWN_S
+            ):
                 try:
-                    fresh = {"projection": json.loads(row["projection_json"]), "source": row["source"]}
+                    fresh = {
+                        "projection": json.loads(row["projection_json"]),
+                        "source": row["source"],
+                    }
                 except json.JSONDecodeError:
                     fresh = None
 
@@ -390,6 +431,7 @@ async def get_timeline_projection(patient_id: str, risk_level: str = "stable", f
                 source = fresh["source"]
             else:
                 from services.ollama_gateway import LaneYielded
+
                 persist = True
                 try:
                     projection = await _call_llm(inputs, patient_id)

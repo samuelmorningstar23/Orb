@@ -15,6 +15,7 @@ Usage:
 The database is chosen exactly like the rest of the app: ``ORB_DB_PATH`` env var,
 falling back to server/orb.db (see config.py). Point it at a scratch DB to dry-run.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -27,6 +28,7 @@ import sys
 _SERVER_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _SERVER_ROOT not in sys.path:
     sys.path.insert(0, _SERVER_ROOT)
+
 
 from services.corpus_loader import corpus_stats, load_directory  # noqa: E402
 
@@ -66,7 +68,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     print(f"\nCorpus load — {result['directory']}")
-    print(f"  mode:            {result['mode']}  (fts={result['fts_available']}, vec={result['vec_available']})")
+    print(
+        f"  mode:            {result['mode']}  (fts={result['fts_available']}, vec={result['vec_available']})"
+    )
     print(f"  files found:     {result['files_found']}")
     print(f"  files loaded:    {result['files_loaded']}")
     print(f"  chunks loaded:   {result['chunks_loaded']}")
@@ -78,8 +82,8 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 emb = "embedded" if d.get("embedded") else "lexical"
                 print(
-                    f"    - {d['file']:<44} tier {d.get('trust_tier','?')} "
-                    f"ver {d.get('version','?')}  {d['chunks']:>2} chunks  [{emb}]"
+                    f"    - {d['file']:<44} tier {d.get('trust_tier', '?')} "
+                    f"ver {d.get('version', '?')}  {d['chunks']:>2} chunks  [{emb}]"
                 )
 
     print("\nCorpus stats (whole store):")

@@ -30,6 +30,7 @@ _admission_moves), so admission, leave and link rows never reprice a day.
 Flag-independent: runs on every install, Ward Record and demo databases
 included, before anything writes the new movement types.
 """
+
 import re
 
 from migrations import Migration
@@ -39,16 +40,35 @@ LEDGER_TABLE = "patient_movements"
 #: The columns the lazy CREATE defined, in order. The front desk's API projects
 #: movements onto exactly these, so the new columns change no existing screen.
 LEGACY_COLUMNS: tuple = (
-    "id", "patient_id", "admission_id", "movement_type",
-    "from_department", "from_ward", "from_bed",
-    "to_department", "to_ward", "to_bed",
-    "reason", "moved_at", "moved_by", "moved_by_name", "notes", "idempotency_key",
+    "id",
+    "patient_id",
+    "admission_id",
+    "movement_type",
+    "from_department",
+    "from_ward",
+    "from_bed",
+    "to_department",
+    "to_ward",
+    "to_bed",
+    "reason",
+    "moved_at",
+    "moved_by",
+    "moved_by_name",
+    "notes",
+    "idempotency_key",
 )
 
 #: The columns this migration adds, in order.
 ADDED_COLUMNS: tuple = (
-    "from_ward_id", "from_bed_id", "to_ward_id", "to_bed_id", "end_type",
-    "discharge_summary_id", "corrects_movement_id", "recorded_at", "detail_json",
+    "from_ward_id",
+    "from_bed_id",
+    "to_ward_id",
+    "to_bed_id",
+    "end_type",
+    "discharge_summary_id",
+    "corrects_movement_id",
+    "recorded_at",
+    "detail_json",
 )
 
 CANONICAL_COLUMNS: tuple = LEGACY_COLUMNS + ADDED_COLUMNS
@@ -56,9 +76,18 @@ CANONICAL_COLUMNS: tuple = LEGACY_COLUMNS + ADDED_COLUMNS
 #: Every movement type the ledger accepts. Widened only by a new migration that
 #: drops and recreates the two vocabulary triggers.
 MOVEMENT_TYPES: tuple = (
-    "admission", "bed_assigned", "transfer", "bed_change", "bed_swap",
-    "leave_start", "leave_end", "absconded", "absconded_return", "discharge",
-    "location_linked", "correction",
+    "admission",
+    "bed_assigned",
+    "transfer",
+    "bed_change",
+    "bed_swap",
+    "leave_start",
+    "leave_end",
+    "absconded",
+    "absconded_return",
+    "discharge",
+    "location_linked",
+    "correction",
 )
 
 # The new shape. admission_id is the admission the patient STAYS on: a transfer
@@ -111,19 +140,22 @@ LEGACY_INDEXES: tuple = (
 #: The three this migration adds: what came into and out of a bed, and every
 #: movement of one type in time order (the census reads these).
 NEW_INDEXES: tuple = (
-    "CREATE INDEX IF NOT EXISTS idx_movements_to_bed ON patient_movements("
-    "to_bed_id, moved_at)",
-    "CREATE INDEX IF NOT EXISTS idx_movements_from_bed ON patient_movements("
-    "from_bed_id, moved_at)",
-    "CREATE INDEX IF NOT EXISTS idx_movements_type ON patient_movements("
-    "movement_type, moved_at)",
+    "CREATE INDEX IF NOT EXISTS idx_movements_to_bed ON patient_movements(to_bed_id, moved_at)",
+    "CREATE INDEX IF NOT EXISTS idx_movements_from_bed ON patient_movements(from_bed_id, moved_at)",
+    "CREATE INDEX IF NOT EXISTS idx_movements_type ON patient_movements(movement_type, moved_at)",
 )
 
 INDEXES: tuple = LEGACY_INDEXES + NEW_INDEXES
-INDEX_NAMES: frozenset = frozenset({
-    "idx_movements_patient", "idx_movements_admission", "idx_movements_idempotency",
-    "idx_movements_to_bed", "idx_movements_from_bed", "idx_movements_type",
-})
+INDEX_NAMES: frozenset = frozenset(
+    {
+        "idx_movements_patient",
+        "idx_movements_admission",
+        "idx_movements_idempotency",
+        "idx_movements_to_bed",
+        "idx_movements_from_bed",
+        "idx_movements_type",
+    }
+)
 
 #: The lazy CREATE's CHECK on movement_type, which marks the old shape.
 _OLD_TYPE_CHECK = re.compile(r"CHECK\s*\(\s*movement_type\s+IN\b", re.I)
@@ -140,9 +172,12 @@ TRIGGERS: tuple = (
     f"WHEN NEW.movement_type IS NULL OR NEW.movement_type NOT IN ({_TYPE_LIST}) "
     "BEGIN SELECT RAISE(ABORT, 'unknown patient_movements.movement_type'); END",
 )
-TRIGGER_NAMES: frozenset = frozenset({
-    "trg_patient_movements_type_insert", "trg_patient_movements_type_update",
-})
+TRIGGER_NAMES: frozenset = frozenset(
+    {
+        "trg_patient_movements_type_insert",
+        "trg_patient_movements_type_update",
+    }
+)
 
 
 def _columns(conn) -> list:
@@ -192,8 +227,9 @@ def _rebuild_old_shape(conn) -> None:
         "AND type IN ('index', 'trigger') AND name NOT LIKE 'sqlite_autoindex%'",
         (LEDGER_TABLE,),
     ).fetchall()
-    strangers = [(r[0], r[1]) for r in assoc
-                 if r[0] not in INDEX_NAMES and r[0] not in TRIGGER_NAMES]
+    strangers = [
+        (r[0], r[1]) for r in assoc if r[0] not in INDEX_NAMES and r[0] not in TRIGGER_NAMES
+    ]
     if strangers:
         raise RuntimeError(
             "patient_movements rebuild would drop associated objects it does not "
@@ -229,9 +265,7 @@ def _rebuild_old_shape(conn) -> None:
     )
     after = conn.execute("SELECT COUNT(*) FROM patient_movements").fetchone()[0]
     if after != before:
-        raise RuntimeError(
-            f"patient_movements rebuild aborted: copied {after} of {before} rows"
-        )
+        raise RuntimeError(f"patient_movements rebuild aborted: copied {after} of {before} rows")
     # The old indexes and any vocabulary triggers go with the aside table.
     conn.execute("DROP TABLE patient_movements_aside")
 

@@ -30,6 +30,7 @@ file, a version that does not match its file name, a missing MIGRATION, or a
 version that another migration already holds. A silently skipped migration is
 the failure this guards against, so nothing here is skipped quietly.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -64,8 +65,12 @@ def _still_importing(module) -> bool:
 
 def _is_migration(obj) -> bool:
     """A migrations.Migration (a NamedTuple of version, name, apply)."""
-    return (isinstance(obj, tuple) and getattr(obj, "_fields", None) == ("version", "name", "apply")
-            and isinstance(obj.version, int) and isinstance(obj.name, str))
+    return (
+        isinstance(obj, tuple)
+        and getattr(obj, "_fields", None) == ("version", "name", "apply")
+        and isinstance(getattr(obj, "version", None), int)
+        and isinstance(getattr(obj, "name", None), str)
+    )
 
 
 def collect_from(directory: Path, *, package: str | None = None) -> list:
@@ -104,12 +109,12 @@ def collect_from(directory: Path, *, package: str | None = None) -> list:
                 f"{path.name} was being imported when migrations.py started "
                 "collecting this directory, so its MIGRATION is not defined yet "
                 "(an import cycle, not a broken file). Import migrations first "
-                "(\"import migrations\"), then the migration file."
+                '("import migrations"), then the migration file.'
             )
         # Checked by shape, not isinstance: scripts/lib/verify_restore.py loads
         # migrations.py by path, so its Migration class is a different object
         # from the one a cached migration file was built with.
-        if not _is_migration(mig):
+        if mig is None or not _is_migration(mig):
             raise MigrationDiscoveryError(
                 f"{path.name} defines no MIGRATION = Migration(version, name, apply)"
             )
@@ -160,4 +165,5 @@ def merge(core: list, extra: list) -> list:
 # is loaded by file path (scripts/lib/verify_restore.py), it registers a module
 # under the name "migrations" before importing this package (see
 # migrations._with_his_migrations), so this line finds that one.
+
 import migrations as _migrations  # noqa: E402,F401

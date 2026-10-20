@@ -98,16 +98,19 @@ CONVENTIONS (same as the rest of server/services)
   * No foreign keys on these tables (migration 25): a dangling id yields
     "unknown", never a failed clinical write.
 """
+
 from __future__ import annotations
 
 import json
 import logging
 from collections import Counter
-from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from database import db_session
 from db_backend import DBIntegrityError
+
 from services.billing_masters import MAIN_FACILITY_ID, next_document_number
 from services.hospital_time import hospital_now, hospital_today
 
@@ -160,11 +163,22 @@ __all__ = [
 NPO = "npo"
 
 DIET_TYPES: tuple[str, ...] = (
-    "normal", "diabetic", "renal", "cardiac", "soft", "liquid", NPO,
+    "normal",
+    "diabetic",
+    "renal",
+    "cardiac",
+    "soft",
+    "liquid",
+    NPO,
 )
 
 TEXTURES: tuple[str, ...] = (
-    "regular", "soft", "minced", "pureed", "liquid", "thickened",
+    "regular",
+    "soft",
+    "minced",
+    "pureed",
+    "liquid",
+    "thickened",
 )
 
 MEAL_SERVICES: tuple[str, ...] = ("breakfast", "lunch", "dinner")
@@ -232,6 +246,7 @@ NPO_EXPIRY_NOTICE = (
 #  Errors
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class DietaryError(ValueError):
     """Bad dietary input — unknown diet type, unknown patient, impossible dates."""
 
@@ -254,6 +269,7 @@ class KitchenIndentError(DietaryError):
 # ══════════════════════════════════════════════════════════════════════════════
 #  Time helpers
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def _parse_ts(value: Any, *, field: str) -> datetime:
     """Parse an ISO-ish timestamp into an AWARE datetime in the hospital's zone.
@@ -278,13 +294,13 @@ def _parse_ts(value: Any, *, field: str) -> datetime:
         except ValueError:
             raise DietaryError(
                 f"{field} must be an ISO timestamp (e.g. 2026-08-12T08:00), got {value!r}"
-            )
+            ) from None
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=hospital_now().tzinfo)
     return dt
 
 
-def _iso(dt: Optional[datetime]) -> Optional[str]:
+def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat() if dt else None
 
 
@@ -292,10 +308,10 @@ def _stored_ts(dt: datetime) -> str:
     """The form we WRITE. UTC, second precision, no offset suffix — the same
     shape the rest of this schema stores (CURRENT_TIMESTAMP is UTC), so ordering
     comparisons in SQL work against rows written by triggers and by us alike."""
-    return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return dt.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _read_ts(value: Any) -> Optional[datetime]:
+def _read_ts(value: Any) -> datetime | None:
     """Read a stored timestamp back as an AWARE UTC datetime. Returns None for
     anything unparsable rather than raising — a row with a corrupt timestamp must
     still render (as "unknown"), because refusing to draw the ward view over one
@@ -303,7 +319,7 @@ def _read_ts(value: Any) -> Optional[datetime]:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
     text = str(value).strip()
     if not text:
         return None
@@ -313,7 +329,7 @@ def _read_ts(value: Any) -> Optional[datetime]:
     except ValueError:
         logger.warning("[Dietary] unparsable stored timestamp %r", value)
         return None
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 def _as_date(value: Any, *, field: str = "service_date") -> str:
@@ -324,12 +340,13 @@ def _as_date(value: Any, *, field: str = "service_date") -> str:
     try:
         return datetime.strptime(text[:10], "%Y-%m-%d").date().isoformat()
     except ValueError:
-        raise DietaryError(f"{field} must be YYYY-MM-DD, got {value!r}")
+        raise DietaryError(f"{field} must be YYYY-MM-DD, got {value!r}") from None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  Allergies — READ from the existing record, never copied
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def _read_allergies(db, patient_ids: Iterable[str]) -> dict[str, list[dict]]:
     """Active allergies for a set of patients, from `patient_allergies`.
@@ -352,7 +369,7 @@ def _read_allergies(db, patient_ids: Iterable[str]) -> dict[str, list[dict]]:
     out: dict[str, list[dict]] = {pid: [] for pid in ids}
     # Chunked so a large ward cannot blow SQLITE_MAX_VARIABLE_NUMBER.
     for start in range(0, len(ids), 400):
-        chunk = ids[start:start + 400]
+        chunk = ids[start : start + 400]
         placeholders = ",".join("?" for _ in chunk)
         rows = db.execute(
             f"SELECT patient_id, id, substance, substance_class, reaction, severity "
@@ -363,13 +380,15 @@ def _read_allergies(db, patient_ids: Iterable[str]) -> dict[str, list[dict]]:
             tuple(chunk),
         ).fetchall()
         for row in rows:
-            out.setdefault(row["patient_id"], []).append({
-                "id": row["id"],
-                "substance": row["substance"],
-                "substance_class": row["substance_class"],
-                "reaction": row["reaction"],
-                "severity": row["severity"],
-            })
+            out.setdefault(row["patient_id"], []).append(
+                {
+                    "id": row["id"],
+                    "substance": row["substance"],
+                    "substance_class": row["substance_class"],
+                    "reaction": row["reaction"],
+                    "severity": row["severity"],
+                }
+            )
     return out
 
 
@@ -443,9 +462,9 @@ _STILL_ADMITTED = "a.status = 'active' AND p.status <> 'discharged'"
 def _active_diet_rows(
     db,
     *,
-    ward: Optional[str] = None,
-    department: Optional[str] = None,
-    patient_id: Optional[str] = None,
+    ward: str | None = None,
+    department: str | None = None,
+    patient_id: str | None = None,
 ) -> list[dict]:
     """Every ACTIVE diet order belonging to a patient who is STILL ADMITTED.
 
@@ -473,7 +492,7 @@ def _active_diet_rows(
     return [dict(r) for r in rows]
 
 
-def _decorate(row: dict, *, now: Optional[datetime] = None) -> dict:
+def _decorate(row: dict, *, now: datetime | None = None) -> dict:
     """Add the derived, display-facing fields — above all the NPO state.
 
     Everything here is computed, never stored: an `npo_expired` column would be
@@ -488,8 +507,8 @@ def _decorate(row: dict, *, now: Optional[datetime] = None) -> dict:
     remaining = (until - now).total_seconds() / 3600.0 if until else None
 
     row["is_npo"] = is_npo
-    row["diet_label"] = DIET_TYPE_LABELS.get(diet_type, diet_type or "unknown")
-    row["texture_label"] = TEXTURE_LABELS.get(row.get("texture"), row.get("texture"))
+    row["diet_label"] = DIET_TYPE_LABELS.get((diet_type or ""), diet_type or "unknown")
+    row["texture_label"] = TEXTURE_LABELS.get((row.get("texture") or ""), row.get("texture"))
     row["npo_label"] = NPO_LABEL if is_npo else None
     row["npo_until_iso"] = _iso(until)
     row["npo_hours_remaining"] = round(remaining, 2) if remaining is not None else None
@@ -497,9 +516,7 @@ def _decorate(row: dict, *, now: Optional[datetime] = None) -> dict:
     # An NPO whose end time we cannot parse is treated as EXPIRED-equivalent for
     # review purposes: unreviewable is not the same as fine.
     row["npo_end_unknown"] = bool(is_npo and until is None)
-    row["npo_long_window"] = bool(
-        remaining is not None and remaining > NPO_LONG_WINDOW_HOURS
-    )
+    row["npo_long_window"] = bool(remaining is not None and remaining > NPO_LONG_WINDOW_HOURS)
     row["npo_notice"] = (
         NPO_EXPIRY_NOTICE if (row["npo_expired"] or row["npo_end_unknown"]) else None
     )
@@ -515,7 +532,8 @@ def _decorate(row: dict, *, now: Optional[datetime] = None) -> dict:
 #  Diet orders
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _current_admission(db, patient_id: str) -> Optional[dict]:
+
+def _current_admission(db, patient_id: str) -> dict | None:
     row = db.execute(
         "SELECT a.id, a.ward, a.bed, a.department, a.status "
         "FROM admissions a WHERE a.patient_id = ? "
@@ -531,10 +549,10 @@ def order_diet(
     diet_type: str,
     ordered_by: str,
     texture: str = "regular",
-    restriction_notes: Optional[str] = None,
-    notes: Optional[str] = None,
-    npo_reason: Optional[str] = None,
-    npo_until: Optional[str] = None,
+    restriction_notes: str | None = None,
+    notes: str | None = None,
+    npo_reason: str | None = None,
+    npo_until: str | None = None,
 ) -> dict:
     """Write a diet order for an ADMITTED patient, superseding any current one.
 
@@ -558,9 +576,7 @@ def order_diet(
             f"unknown diet type {diet_type!r}; expected one of {', '.join(DIET_TYPES)}"
         )
     if texture not in TEXTURES:
-        raise DietOrderError(
-            f"unknown texture {texture!r}; expected one of {', '.join(TEXTURES)}"
-        )
+        raise DietOrderError(f"unknown texture {texture!r}; expected one of {', '.join(TEXTURES)}")
     ordered_by = (ordered_by or "").strip()
     if not ordered_by:
         # Not a formality. An NPO order with no author is an NPO nobody can
@@ -568,7 +584,7 @@ def order_diet(
         raise DietOrderError("ordered_by is required: a diet order must name its clinician")
 
     is_npo = diet_type == NPO
-    npo_until_stored: Optional[str] = None
+    npo_until_stored: str | None = None
     npo_reason_clean = (npo_reason or "").strip() or None
 
     if is_npo:
@@ -601,8 +617,7 @@ def order_diet(
     else:
         if npo_until not in (None, "") or npo_reason_clean:
             raise DietOrderError(
-                "npo_until / npo_reason belong to an NPO order only. "
-                f"This order is {diet_type!r}"
+                f"npo_until / npo_reason belong to an NPO order only. This order is {diet_type!r}"
             )
 
     with db_session(immediate=True) as db:
@@ -613,7 +628,11 @@ def order_diet(
             raise DietOrderError(f"unknown patient {patient_id!r}")
 
         admission = _current_admission(db, patient_id)
-        if admission is None or admission["status"] != "active" or patient["status"] == "discharged":
+        if (
+            admission is None
+            or admission["status"] != "active"
+            or patient["status"] == "discharged"
+        ):
             # A diet order for somebody who is not on a ward has no tray to
             # arrive on. Refusing is honest; accepting would put a row in the
             # table that the kitchen count would then correctly ignore, and the
@@ -643,10 +662,16 @@ def order_diet(
                     supersedes_order_id
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)""",
                 (
-                    patient_id, admission["id"], diet_type, texture,
+                    patient_id,
+                    admission["id"],
+                    diet_type,
+                    texture,
                     (restriction_notes or "").strip() or None,
                     (notes or "").strip() or None,
-                    npo_reason_clean, npo_until_stored, ordered_by, now_stored,
+                    npo_reason_clean,
+                    npo_until_stored,
+                    ordered_by,
+                    now_stored,
                     int(current["id"]) if current is not None else None,
                 ),
             )
@@ -666,9 +691,7 @@ def order_diet(
         return _load_order(db, order_id)
 
 
-def discontinue_diet(
-    order_id: int, *, discontinued_by: str, reason: Optional[str] = None
-) -> dict:
+def discontinue_diet(order_id: int, *, discontinued_by: str, reason: str | None = None) -> dict:
     """Stop a diet order without replacing it.
 
     Distinct from superseding on purpose. Superseded means "the diet changed";
@@ -728,7 +751,7 @@ def get_order(order_id: int) -> dict:
         return _load_order(db, int(order_id))
 
 
-def get_active_order(patient_id: str) -> Optional[dict]:
+def get_active_order(patient_id: str) -> dict | None:
     """This patient's current diet order, or None. Allergies come live."""
     with db_session() as db:
         rows = _active_diet_rows(db, patient_id=patient_id)
@@ -764,7 +787,8 @@ def patient_diet_history(patient_id: str, *, limit: int = 50) -> list[dict]:
 #  The ward view — where NPO has to be unmissable
 # ══════════════════════════════════════════════════════════════════════════════
 
-def list_wards(*, department: Optional[str] = None) -> list[dict]:
+
+def list_wards(*, department: str | None = None) -> list[dict]:
     """Wards with at least one currently-admitted patient, and how many of them
     hold a diet order. The gap between the two numbers is the useful figure: it
     is how many patients on that ward nobody has written a diet for."""
@@ -786,7 +810,7 @@ def list_wards(*, department: Optional[str] = None) -> list[dict]:
                     LIMIT 1)
                 LEFT JOIN diet_orders d
                        ON d.patient_id = p.id AND d.status = 'active'
-                WHERE {' AND '.join(where)}
+                WHERE {" AND ".join(where)}
                 GROUP BY a.ward
                 ORDER BY a.ward""",
             tuple(params),
@@ -795,17 +819,19 @@ def list_wards(*, department: Optional[str] = None) -> list[dict]:
     for row in rows:
         admitted = int(row["admitted"] or 0)
         with_orders = int(row["with_orders"] or 0)
-        out.append({
-            "ward": row["ward"] or "(no ward)",
-            "admitted": admitted,
-            "with_orders": with_orders,
-            "without_orders": max(0, admitted - with_orders),
-            "npo": int(row["npo"] or 0),
-        })
+        out.append(
+            {
+                "ward": row["ward"] or "(no ward)",
+                "admitted": admitted,
+                "with_orders": with_orders,
+                "without_orders": max(0, admitted - with_orders),
+                "npo": int(row["npo"] or 0),
+            }
+        )
     return out
 
 
-def ward_view(*, ward: Optional[str] = None, department: Optional[str] = None) -> dict:
+def ward_view(*, ward: str | None = None, department: str | None = None) -> dict:
     """The nurse's and dietitian's screen for one ward.
 
     Returns NPO patients as their OWN list as well as inside `rows`. That
@@ -851,7 +877,7 @@ def ward_view(*, ward: Optional[str] = None, department: Optional[str] = None) -
 
 
 def _patients_without_orders(
-    db, *, ward: Optional[str] = None, department: Optional[str] = None
+    db, *, ward: str | None = None, department: str | None = None
 ) -> list[dict]:
     where = ["a.status = 'active'", "p.status <> 'discharged'", "d.id IS NULL"]
     params: list[Any] = []
@@ -870,14 +896,14 @@ def _patients_without_orders(
                 ORDER BY (a2.status = 'active') DESC, a2.created_at DESC, a2.rowid DESC
                 LIMIT 1)
             LEFT JOIN diet_orders d ON d.patient_id = p.id AND d.status = 'active'
-            WHERE {' AND '.join(where)}
+            WHERE {" AND ".join(where)}
             ORDER BY a.ward, a.bed, p.name""",
         tuple(params),
     ).fetchall()
     return [dict(r) for r in rows]
 
 
-def stale_orders(*, department: Optional[str] = None) -> list[dict]:
+def stale_orders(*, department: str | None = None) -> list[dict]:
     """Active diet orders whose patient is NO LONGER being fed here.
 
     The visible other half of "a discharged patient leaves the count". The count
@@ -922,13 +948,14 @@ def _counts_payload(counts: Counter) -> list[dict]:
 #  Meal plans — the roll-up from diet orders to a kitchen count
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def build_meal_plan(
     *,
     ward: str,
     meal_service: str,
     generated_by: str,
-    service_date: Optional[str] = None,
-    notes: Optional[str] = None,
+    service_date: str | None = None,
+    notes: str | None = None,
 ) -> dict:
     """Roll this ward's live diet orders into a count for one meal service.
 
@@ -985,8 +1012,14 @@ def build_meal_plan(
                 "generated_at = ?, notes = ?, cancelled_by = NULL, cancelled_at = NULL "
                 "WHERE id = ?",
                 (
-                    total_meals, len(npo_rows), len(rows), json.dumps(basis_ids),
-                    generated_by, now_stored, (notes or "").strip() or None, plan_id,
+                    total_meals,
+                    len(npo_rows),
+                    len(rows),
+                    json.dumps(basis_ids),
+                    generated_by,
+                    now_stored,
+                    (notes or "").strip() or None,
+                    plan_id,
                 ),
             )
         else:
@@ -996,8 +1029,15 @@ def build_meal_plan(
                     order_count, basis_order_ids_json, generated_by, generated_at, notes
                 ) VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    day, meal_service, ward, total_meals, len(npo_rows), len(rows),
-                    json.dumps(basis_ids), generated_by, now_stored,
+                    day,
+                    meal_service,
+                    ward,
+                    total_meals,
+                    len(npo_rows),
+                    len(rows),
+                    json.dumps(basis_ids),
+                    generated_by,
+                    now_stored,
                     (notes or "").strip() or None,
                 ),
             )
@@ -1042,7 +1082,8 @@ def _load_meal_plan(db, plan_id: int) -> dict:
         raise MealPlanError(f"meal plan {plan_id} not found")
     plan = dict(row)
     lines = [
-        dict(r) for r in db.execute(
+        dict(r)
+        for r in db.execute(
             "SELECT * FROM meal_plan_lines WHERE meal_plan_id = ? ORDER BY line_no",
             (int(plan_id),),
         ).fetchall()
@@ -1051,9 +1092,7 @@ def _load_meal_plan(db, plan_id: int) -> dict:
         line["diet_label"] = DIET_TYPE_LABELS.get(line["diet_type"], line["diet_type"])
         line["texture_label"] = TEXTURE_LABELS.get(line["texture"], line["texture"])
     plan["lines"] = lines
-    plan["meal_service_label"] = MEAL_SERVICE_LABELS.get(
-        plan["meal_service"], plan["meal_service"]
-    )
+    plan["meal_service_label"] = MEAL_SERVICE_LABELS.get(plan["meal_service"], plan["meal_service"])
     # Computed here as well as stored, so a caller can SEE that the stored total
     # and the lines agree rather than taking the stored figure on trust.
     plan["lines_total"] = sum(int(line["meal_count"]) for line in lines)
@@ -1070,9 +1109,9 @@ def get_meal_plan(plan_id: int) -> dict:
 
 def list_meal_plans(
     *,
-    service_date: Optional[str] = None,
-    ward: Optional[str] = None,
-    meal_service: Optional[str] = None,
+    service_date: str | None = None,
+    ward: str | None = None,
+    meal_service: str | None = None,
     limit: int = 60,
 ) -> list[dict]:
     where: list[str] = []
@@ -1100,7 +1139,8 @@ def list_meal_plans(
 #  Kitchen indents
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _live_indent_for_plan(db, plan_id: int) -> Optional[dict]:
+
+def _live_indent_for_plan(db, plan_id: int) -> dict | None:
     row = db.execute(
         "SELECT id, indent_number, status, total_meals FROM kitchen_indents "
         "WHERE meal_plan_id = ? AND status <> 'cancelled' ORDER BY id DESC LIMIT 1",
@@ -1109,9 +1149,7 @@ def _live_indent_for_plan(db, plan_id: int) -> Optional[dict]:
     return dict(row) if row else None
 
 
-def raise_kitchen_indent(
-    *, meal_plan_id: int, raised_by: str, notes: Optional[str] = None
-) -> dict:
+def raise_kitchen_indent(*, meal_plan_id: int, raised_by: str, notes: str | None = None) -> dict:
     """Turn a LOCKED plan into the requisition the kitchen cooks against.
 
     The lines are COPIED from the plan rather than recomputed from live orders.
@@ -1120,9 +1158,7 @@ def raise_kitchen_indent(
     change under the kitchen's feet because a patient was admitted at 11:40.
     """
     with db_session(immediate=True) as db:
-        plan = db.execute(
-            "SELECT * FROM meal_plans WHERE id = ?", (int(meal_plan_id),)
-        ).fetchone()
+        plan = db.execute("SELECT * FROM meal_plans WHERE id = ?", (int(meal_plan_id),)).fetchone()
         if plan is None:
             raise KitchenIndentError(f"meal plan {meal_plan_id} not found")
         if plan["status"] != "locked":
@@ -1151,8 +1187,13 @@ def raise_kitchen_indent(
                 raised_by, raised_at, notes
             ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?)""",
             (
-                int(meal_plan_id), plan["service_date"], plan["meal_service"], plan["ward"],
-                total, (raised_by or "").strip() or None, _stored_ts(hospital_now()),
+                int(meal_plan_id),
+                plan["service_date"],
+                plan["meal_service"],
+                plan["ward"],
+                total,
+                (raised_by or "").strip() or None,
+                _stored_ts(hospital_now()),
                 (notes or "").strip() or None,
             ),
         )
@@ -1161,8 +1202,13 @@ def raise_kitchen_indent(
             db.execute(
                 "INSERT INTO kitchen_indent_lines (kitchen_indent_id, line_no, diet_type, "
                 "texture, meal_count) VALUES (?, ?, ?, ?, ?)",
-                (indent_id, int(row["line_no"]), row["diet_type"], row["texture"],
-                 int(row["meal_count"])),
+                (
+                    indent_id,
+                    int(row["line_no"]),
+                    row["diet_type"],
+                    row["texture"],
+                    int(row["meal_count"]),
+                ),
             )
         return _load_indent(db, indent_id)
 
@@ -1212,8 +1258,10 @@ def issue_kitchen_indent(indent_id: int, *, issued_by: str) -> dict:
             "UPDATE kitchen_indents SET status = 'issued', indent_number = ?, issued_by = ?, "
             "issued_at = ? WHERE id = ? AND status = 'draft'",
             (
-                allocated["number"], (issued_by or "").strip() or None,
-                _stored_ts(hospital_now()), int(indent_id),
+                allocated["number"],
+                (issued_by or "").strip() or None,
+                _stored_ts(hospital_now()),
+                int(indent_id),
             ),
         )
         out = _load_indent(db, int(indent_id))
@@ -1221,9 +1269,7 @@ def issue_kitchen_indent(indent_id: int, *, issued_by: str) -> dict:
         return out
 
 
-def cancel_kitchen_indent(
-    indent_id: int, *, cancelled_by: str, reason: Optional[str] = None
-) -> dict:
+def cancel_kitchen_indent(indent_id: int, *, cancelled_by: str, reason: str | None = None) -> dict:
     with db_session(immediate=True) as db:
         row = db.execute(
             "SELECT id, status FROM kitchen_indents WHERE id = ?", (int(indent_id),)
@@ -1236,22 +1282,23 @@ def cancel_kitchen_indent(
             "UPDATE kitchen_indents SET status = 'cancelled', cancelled_by = ?, "
             "cancelled_at = ?, cancel_reason = ? WHERE id = ?",
             (
-                (cancelled_by or "").strip() or None, _stored_ts(hospital_now()),
-                (reason or "").strip() or None, int(indent_id),
+                (cancelled_by or "").strip() or None,
+                _stored_ts(hospital_now()),
+                (reason or "").strip() or None,
+                int(indent_id),
             ),
         )
         return _load_indent(db, int(indent_id))
 
 
 def _load_indent(db, indent_id: int) -> dict:
-    row = db.execute(
-        "SELECT * FROM kitchen_indents WHERE id = ?", (int(indent_id),)
-    ).fetchone()
+    row = db.execute("SELECT * FROM kitchen_indents WHERE id = ?", (int(indent_id),)).fetchone()
     if row is None:
         raise KitchenIndentError(f"kitchen indent {indent_id} not found")
     indent = dict(row)
     lines = [
-        dict(r) for r in db.execute(
+        dict(r)
+        for r in db.execute(
             "SELECT * FROM kitchen_indent_lines WHERE kitchen_indent_id = ? ORDER BY line_no",
             (int(indent_id),),
         ).fetchall()
@@ -1275,10 +1322,10 @@ def get_kitchen_indent(indent_id: int) -> dict:
 
 def list_kitchen_indents(
     *,
-    service_date: Optional[str] = None,
-    meal_service: Optional[str] = None,
-    ward: Optional[str] = None,
-    status: Optional[str] = None,
+    service_date: str | None = None,
+    meal_service: str | None = None,
+    ward: str | None = None,
+    status: str | None = None,
     limit: int = 60,
 ) -> list[dict]:
     where: list[str] = []
@@ -1309,9 +1356,8 @@ def list_kitchen_indents(
 #  The kitchen's own screen — counts, and NOT ONE PATIENT NAME
 # ══════════════════════════════════════════════════════════════════════════════
 
-def kitchen_board(
-    *, service_date: Optional[str] = None, meal_service: Optional[str] = None
-) -> dict:
+
+def kitchen_board(*, service_date: str | None = None, meal_service: str | None = None) -> dict:
     """What the kitchen needs: how many of what, for which ward, right now.
 
     NO PHI. Not a name, not an MRN, not a bed, not an allergy — ward labels and
@@ -1333,8 +1379,9 @@ def kitchen_board(
         live_rows = _active_diet_rows(db)
         plans = db.execute(
             "SELECT id FROM meal_plans WHERE service_date = ? "
-            "AND meal_service IN (%s) ORDER BY ward, meal_service"
-            % ",".join("?" for _ in services),
+            "AND meal_service IN ({}) ORDER BY ward, meal_service".format(
+                ",".join("?" for _ in services)
+            ),
             (day,) + tuple(services),
         ).fetchall()
         plan_dicts = [_load_meal_plan(db, int(r["id"])) for r in plans]
@@ -1348,40 +1395,42 @@ def kitchen_board(
             continue
         by_ward.setdefault(ward, Counter())[(row["diet_type"], row["texture"])] += 1
 
-    wards = []
+    wards: list[dict[str, Any]] = []
     hospital_total = 0
     for ward in sorted(set(by_ward) | set(npo_by_ward)):
         counts = by_ward.get(ward, Counter())
         total = sum(counts.values())
         hospital_total += total
-        wards.append({
-            "ward": ward,
-            "lines": _counts_payload(counts),
-            "total_meals": total,
-            "npo_count": npo_by_ward.get(ward, 0),
-            "order_count": total + npo_by_ward.get(ward, 0),
-        })
+        wards.append(
+            {
+                "ward": ward,
+                "lines": _counts_payload(counts),
+                "total_meals": total,
+                "npo_count": npo_by_ward.get(ward, 0),
+                "order_count": total + npo_by_ward.get(ward, 0),
+            }
+        )
 
     plan_payload = []
     for plan in plan_dicts:
-        live_total = next(
-            (w["total_meals"] for w in wards if w["ward"] == plan["ward"]), 0
+        live_total = next((w["total_meals"] for w in wards if w["ward"] == plan["ward"]), 0)
+        plan_payload.append(
+            {
+                "id": plan["id"],
+                "ward": plan["ward"],
+                "meal_service": plan["meal_service"],
+                "meal_service_label": plan["meal_service_label"],
+                "status": plan["status"],
+                "total_meals": plan["total_meals"],
+                "npo_count": plan["npo_count"],
+                "order_count": plan["order_count"],
+                "lines": plan["lines"],
+                "indent": plan["indent"],
+                # Positive = the ward has more patients now than when this was
+                # counted. The number that stops the argument at the hatch.
+                "drift": live_total - int(plan["total_meals"]),
+            }
         )
-        plan_payload.append({
-            "id": plan["id"],
-            "ward": plan["ward"],
-            "meal_service": plan["meal_service"],
-            "meal_service_label": plan["meal_service_label"],
-            "status": plan["status"],
-            "total_meals": plan["total_meals"],
-            "npo_count": plan["npo_count"],
-            "order_count": plan["order_count"],
-            "lines": plan["lines"],
-            "indent": plan["indent"],
-            # Positive = the ward has more patients now than when this was
-            # counted. The number that stops the argument at the hatch.
-            "drift": live_total - int(plan["total_meals"]),
-        })
 
     return {
         "service_date": day,
@@ -1394,7 +1443,7 @@ def kitchen_board(
     }
 
 
-def dietary_summary(*, department: Optional[str] = None) -> dict:
+def dietary_summary(*, department: str | None = None) -> dict:
     """The overview tiles. Every figure is a live count, never a stored one."""
     with db_session() as db:
         rows = _active_diet_rows(db, department=department)

@@ -20,6 +20,7 @@ Both CHECKs are the limits the service also enforces: an interval of 30
 minutes to 24 hours, a grace window of 0 to 4 hours. Plain CREATE TABLE IF NOT
 EXISTS, no foreign key, idempotent.
 """
+
 from __future__ import annotations
 
 from migrations import Migration

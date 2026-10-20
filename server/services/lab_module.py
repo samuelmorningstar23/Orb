@@ -49,12 +49,14 @@ analyser listener) register their loops with register_loop(), with the states
 they run in, from a module listed in _LOOP_MODULES below (startup imports
 each one first), so main.py never changes for them.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import uuid
-from typing import Awaitable, Callable, Optional
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 import config
 
@@ -75,7 +77,7 @@ _EMPTY_COUNTS = {"specimens": 0, "tests": 0, "results": 0, "critical_results": 0
 # reads as draining (an unknown answer must not hide open work).
 _drain: dict = {"open": None, "counts": None}
 
-LoopFactory = Callable[[], Awaitable[None]]
+LoopFactory = Callable[[], Coroutine[Any, Any, None]]
 # (name, factory, states it runs in)
 _LOOPS: list[tuple[str, LoopFactory, tuple[str, ...]]] = []
 _tasks: list[asyncio.Task] = []
@@ -88,13 +90,13 @@ _tasks: list[asyncio.Task] = []
 #: lis-15: the critical-result sweep (services/lab_critical_service.py),
 #: registered for every state and running while a critical surface is open
 #: (on, draining, or interfaced criticals switched on).
-_LOOP_MODULES: tuple[str, ...] = ("services.lab_order_service",
-                                  "services.lab_critical_service")
+_LOOP_MODULES: tuple[str, ...] = ("services.lab_order_service", "services.lab_critical_service")
 
 
 # ════════════════════════════════════════════════════════════════════════════
 #  State
 # ════════════════════════════════════════════════════════════════════════════
+
 
 def module_state() -> str:
     """'on', 'draining' or 'off', as /api/health publishes it."""
@@ -113,15 +115,19 @@ def drain_check() -> bool:
     return True if cached is None else bool(cached)
 
 
-def cached_open_work() -> Optional[dict]:
+def cached_open_work() -> dict | None:
     """The counts behind the cached answer, or None before the first check."""
     counts = _drain.get("counts")
     return dict(counts) if counts is not None else None
 
 
 def _table_names(conn) -> set:
-    return {r[0] for r in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'lab_%'").fetchall()}
+    return {
+        r[0]
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'lab_%'"
+        ).fetchall()
+    }
 
 
 def _placeholders(values) -> str:
@@ -153,20 +159,32 @@ def open_work_counts(conn) -> dict:
             f"""SELECT COUNT(*) AS tests, COUNT(DISTINCT specimen_id) AS specimens
                 FROM lab_order_items
                 WHERE status NOT IN ({_placeholders(CLOSED_ITEM_STATUSES)})""",
-            CLOSED_ITEM_STATUSES).fetchone()
+            CLOSED_ITEM_STATUSES,
+        ).fetchone()
         counts["tests"] = int(row[0] or 0)
         counts["specimens"] = int(row[1] or 0)
     if "lab_results" in tables:
-        counts["results"] = int(conn.execute(
-            f"SELECT COUNT(*) FROM lab_results WHERE status IN ({_placeholders(OPEN_RESULT_STATUSES)})",
-            OPEN_RESULT_STATUSES).fetchone()[0] or 0)
+        counts["results"] = int(
+            conn.execute(
+                f"SELECT COUNT(*) FROM lab_results WHERE status IN ({_placeholders(OPEN_RESULT_STATUSES)})",
+                OPEN_RESULT_STATUSES,
+            ).fetchone()[0]
+            or 0
+        )
     if "lab_critical_notifications" in tables:
-        lane_sql = (" AND COALESCE(source_lane, '') != 'interfaced'"
-                    if config.feature_enabled("lab_critical_interfaced") else "")
-        counts["critical_results"] = int(conn.execute(
-            "SELECT COUNT(*) FROM lab_critical_notifications "
-            f"WHERE status IN ({_placeholders(OPEN_CRITICAL_STATUSES)}){lane_sql}",
-            OPEN_CRITICAL_STATUSES).fetchone()[0] or 0)
+        lane_sql = (
+            " AND COALESCE(source_lane, '') != 'interfaced'"
+            if config.feature_enabled("lab_critical_interfaced")
+            else ""
+        )
+        counts["critical_results"] = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM lab_critical_notifications "
+                f"WHERE status IN ({_placeholders(OPEN_CRITICAL_STATUSES)}){lane_sql}",
+                OPEN_CRITICAL_STATUSES,
+            ).fetchone()[0]
+            or 0
+        )
     return counts
 
 
@@ -179,6 +197,7 @@ def refresh_drain_state(conn=None) -> bool:
     try:
         if conn is None:
             from database import db_session
+
             with db_session() as db:
                 counts = open_work_counts(db)
         else:
@@ -197,17 +216,19 @@ def refresh_drain_state(conn=None) -> bool:
 #  The cutover
 # ════════════════════════════════════════════════════════════════════════════
 
-def latest_module_event(conn) -> Optional[dict]:
+
+def latest_module_event(conn) -> dict | None:
     """The newest lab_module_events row, or None."""
     if "lab_module_events" not in _table_names(conn):
         return None
     row = conn.execute(
         "SELECT id, event, occurred_at, detail FROM lab_module_events "
-        "ORDER BY julianday(occurred_at) DESC, id DESC LIMIT 1").fetchone()
+        "ORDER BY julianday(occurred_at) DESC, id DESC LIMIT 1"
+    ).fetchone()
     return dict(row) if row else None
 
 
-def current_enable_instant(conn) -> Optional[str]:
+def current_enable_instant(conn) -> str | None:
     """When the module was last switched on, if it is on now by the events
     (the latest event is 'enabled'); else None. Intake (lis-6) uses this: an
     order activated before it is never taken into the laboratory, and None
@@ -218,7 +239,7 @@ def current_enable_instant(conn) -> Optional[str]:
     return None
 
 
-def record_cutover(conn, *, lab_on: bool) -> Optional[str]:
+def record_cutover(conn, *, lab_on: bool) -> str | None:
     """Write 'enabled' or 'disabled' if the switch changed since the last
     event, with its audit row (clinical_config, fail-closed) in the same
     transaction. Returns the event written, or None when nothing changed.
@@ -240,10 +261,11 @@ def record_cutover(conn, *, lab_on: bool) -> Optional[str]:
     else:
         return None
     now = utc_iso_now()
-    detail = ("ORB_LAB switched on" if event == "enabled" else "ORB_LAB switched off")
+    detail = "ORB_LAB switched on" if event == "enabled" else "ORB_LAB switched off"
     cur = conn.execute(
         "INSERT INTO lab_module_events (event, occurred_at, detail) VALUES (?, ?, ?)",
-        (event, now, detail))
+        (event, now, detail),
+    )
     log_audit_event(
         correlation_id=str(uuid.uuid4()),
         event_category="clinical_config",
@@ -252,8 +274,9 @@ def record_cutover(conn, *, lab_on: bool) -> Optional[str]:
         db=conn,
         summary_message=(
             "Laboratory module switched on: orders activated from now on go to the laboratory"
-            if event == "enabled" else
-            "Laboratory module switched off: new laboratory work stops, open work drains"),
+            if event == "enabled"
+            else "Laboratory module switched off: new laboratory work stops, open work drains"
+        ),
         actor_user_id="system",
         actor_role="system",
         target_type="lab_module_event",
@@ -268,7 +291,8 @@ def record_cutover(conn, *, lab_on: bool) -> Optional[str]:
 #  Compliance
 # ════════════════════════════════════════════════════════════════════════════
 
-def compliance_control() -> Optional[dict]:
+
+def compliance_control() -> dict | None:
     """The compliance report's laboratory check: present (and failing) only
     while the module is switched off with open work. None otherwise, so a site
     that never used the laboratory sees no new line. Counts fresh from the
@@ -277,20 +301,21 @@ def compliance_control() -> Optional[dict]:
         return None
     try:
         from database import db_session
+
         with db_session() as db:
             counts = open_work_counts(db)
     except Exception:
         # Keep whatever the module already reports: a failed count here must
         # neither invent a laboratory line on a site that never used one nor
         # hide one that is draining.
-        logger.warning("Laboratory open-work count failed in the compliance report",
-                       exc_info=True)
+        logger.warning("Laboratory open-work count failed in the compliance report", exc_info=True)
         counts = None
     else:
-        _drain["counts"] = counts
-        _drain["open"] = any(counts.values())
-        if not _drain["open"]:
-            return None
+        if counts is not None:
+            _drain["counts"] = counts
+            _drain["open"] = any(counts.values())
+            if not _drain["open"]:
+                return None
     if counts is None:
         if module_state() != "draining":
             return None
@@ -298,8 +323,10 @@ def compliance_control() -> Optional[dict]:
             "id": "lab_module_draining",
             "name": "Laboratory module switched off with open work",
             "status": "unknown",
-            "evidence": ("The laboratory module is switched off, and Orb could not count the "
-                         "open laboratory work, so it keeps the laboratory screens open."),
+            "evidence": (
+                "The laboratory module is switched off, and Orb could not count the "
+                "open laboratory work, so it keeps the laboratory screens open."
+            ),
             "remediation": "Contact Orb support: the laboratory work list could not be read.",
             "settings": ["ORB_LAB"],
         }
@@ -311,13 +338,17 @@ def compliance_control() -> Optional[dict]:
         "id": "lab_module_draining",
         "name": "Laboratory module switched off with open work",
         "status": "fail",
-        "evidence": ("The laboratory module is switched off on this site, but laboratory "
-                     "work is still open: " + ", ".join(parts) + ". Laboratory staff can "
-                     "still finish, cancel or release it, and critical results stay on the "
-                     "ward until they are closed."),
-        "remediation": ("Have the laboratory finish, cancel or release the open work, and "
-                        "close every critical result by a phone call or a read-back on the "
-                        "ward. Or switch the laboratory module back on."),
+        "evidence": (
+            "The laboratory module is switched off on this site, but laboratory "
+            "work is still open: " + ", ".join(parts) + ". Laboratory staff can "
+            "still finish, cancel or release it, and critical results stay on the "
+            "ward until they are closed."
+        ),
+        "remediation": (
+            "Have the laboratory finish, cancel or release the open work, and "
+            "close every critical result by a phone call or a read-back on the "
+            "ward. Or switch the laboratory module back on."
+        ),
         "settings": ["ORB_LAB"],
     }
 
@@ -326,8 +357,10 @@ def compliance_control() -> Optional[dict]:
 #  Startup and shutdown
 # ════════════════════════════════════════════════════════════════════════════
 
-def register_loop(name: str, factory: LoopFactory, *,
-                  states: tuple[str, ...] = ("on", "draining")) -> None:
+
+def register_loop(
+    name: str, factory: LoopFactory, *, states: tuple[str, ...] = ("on", "draining")
+) -> None:
     """Have startup() run `factory()` as a background task while the module
     is in one of `states` at boot. For later LIS increments (the critical
     sweep, the analyser listener); main.py never changes for them. The
@@ -356,6 +389,7 @@ def _startup_sync() -> dict:
     if lab_on:
         try:
             from services.lab_master_service import load_starter_catalogue
+
             summary["catalogue"] = load_starter_catalogue()
         except Exception:
             logger.error("Laboratory starter catalogue could not be loaded", exc_info=True)
@@ -365,6 +399,7 @@ def _startup_sync() -> dict:
         # raises; a background loop repeats it while the module is on.
         try:
             from services.lab_order_service import ensure_intake
+
             summary["intake"] = ensure_intake()
         except Exception:
             logger.error("Laboratory order intake sweep could not run at startup", exc_info=True)
@@ -409,18 +444,27 @@ async def startup() -> dict:
     state = module_state()
     summary["state"] = state
     import importlib
+
     for dotted in _LOOP_MODULES:
         try:
             importlib.import_module(dotted)
         except Exception:
-            logger.error("Laboratory module %s failed to import; its loop will not run",
-                         dotted, exc_info=True)
+            logger.error(
+                "Laboratory module %s failed to import; its loop will not run",
+                dotted,
+                exc_info=True,
+            )
     if state == "draining":
-        _tasks.append(asyncio.create_task(
-            _drain_refresh_loop(max(5, int(config.LAB_CRITICAL_SWEEP_S))),
-            name="lab-drain-refresh"))
-        logger.warning("Laboratory module is switched off with open work; it stays reachable "
-                       "for laboratory staff until the work is finished")
+        _tasks.append(
+            asyncio.create_task(
+                _drain_refresh_loop(max(5, int(config.LAB_CRITICAL_SWEEP_S))),
+                name="lab-drain-refresh",
+            )
+        )
+        logger.warning(
+            "Laboratory module is switched off with open work; it stays reachable "
+            "for laboratory staff until the work is finished"
+        )
     for name, factory, states in list(_LOOPS):
         if state in states:
             try:
@@ -441,7 +485,8 @@ async def shutdown() -> None:
     if tasks:
         _done, pending = await asyncio.wait(tasks, timeout=10.0)
         for task in pending:
-            logger.error("Laboratory task %s did not stop within 10s; abandoning it",
-                         task.get_name())
+            logger.error(
+                "Laboratory task %s did not stop within 10s; abandoning it", task.get_name()
+            )
     _tasks.clear()
     config.register_module_drain_check(MODULE_ID, None)

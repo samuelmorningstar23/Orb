@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback, memo, lazy, Suspense, useSyncExternalStore, type ComponentProps } from 'react'
+const IMAGING_TYPES = ['xray', 'x-ray', 'ct', 'mri', 'ultrasound', 'ecg', 'echo']
 import { createPortal } from 'react-dom'
 import { apiFetch, getPatientDetail, dischargePatient, getOpenEscalations, resolveEscalation, type EscalationChain, addClinicalNote, addMedication, getAdministrations, givenAcrossAllergy, isSafetyAckRequired, getPatientForecast, getTimelineProjection, getDischargeQrObjectUrl, prefetchSageContext, getUnseenCounts, socket, getUser, buildHeaders, type Patient, type MedicationSafety, type SafetyAck, type AdministrationRecord, type PatientDetail, type ChartVitalsRow, type PatientRisk, type ChartMedicationRow, type DischargeResult, type DischargeSummaryView, type TimelineProjection } from '../../api/client'
 import { ClinicalCourseTimeline } from '../../components/ClinicalCourseTimeline'
@@ -238,7 +239,7 @@ export default function VigilPanel({ role }: { role?: string | null }) {
     liveFailed: !!loadError,
     onReconnect: () => loadPatients(),
   })
-  const patients = boardOffline.data ?? []
+  const patients = useMemo(() => boardOffline.data ?? [], [boardOffline.data])
 
   // Stable row-select callback so PatientRow's memo() bails on unchanged rows
   // (a fresh per-row closure would re-render all ~100 rows every vitals tick).
@@ -957,7 +958,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
   const adminSeqRef = useRef(0)
 
   // Declared above the offline snapshot, whose reconnect handler calls it.
-  const loadPatientData = async () => {
+  const loadPatientData = useCallback(async () => {
     const seq = ++detailSeqRef.current
     setLoading(true)
     try {
@@ -988,7 +989,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
     } finally {
       if (seq === detailSeqRef.current) setLoading(false)
     }
-  }
+  }, [patientId])
 
   // Offline copy of one patient's chart — vitals, notes, medications, labs.
   // `data` is the SNAPSHOT everything below reads, so a chart served from the
@@ -1171,7 +1172,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
 
   // eMAR history drives the per-med "Given HH:MM" chips; refreshed on load and
   // after each recorded administration.
-  const loadAdministrations = async () => {
+  const loadAdministrations = useCallback(async () => {
     const seq = ++adminSeqRef.current
     // Orb Ward Record has no medication round: every eMAR route is switched off.
     if (wardRecord) { setAdministrations([]); return }
@@ -1182,7 +1183,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
     } catch (err) {
       console.error('Failed to load administrations:', err)
     }
-  }
+  }, [patientId, wardRecord])
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch/subscribe trigger: the setState is the loader's own loading flag, not state derived from props or state.
@@ -1192,7 +1193,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
     // The forecast is a model: not asked for while the models are switched off.
     if (modelsEnabled) getPatientForecast(patientId).then(setForecast).catch(() => {})
     loadProjection()
-  }, [patientId, loadProjection, modelsEnabled, wardRecord])
+  }, [patientId, loadProjection, modelsEnabled, wardRecord, loadPatientData, loadAdministrations])
 
   /* Charted allergies for the Administer modal. Cleared to `null` on every
      patient change BEFORE the fetch, so a slow response can never leave the
@@ -1495,7 +1496,6 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
     )
   }, [data?.notes, data?.scribe_notes, notesSearchQuery])
 
-  const IMAGING_TYPES = ['xray', 'x-ray', 'ct', 'mri', 'ultrasound', 'ecg', 'echo']
 
   // All diagnostic reports (imaging only)
   const allDiagnosticReports = useMemo<ChartReport[]>(() => {

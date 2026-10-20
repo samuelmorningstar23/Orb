@@ -13,6 +13,7 @@ MO-R2 (a): only the prescriber holds, resumes or stops a live order):
 A nurse still records a single dose as not given (held) at the bedside; that
 is always allowed (services.medorders.core.order_allows_dose).
 """
+
 from fastapi import APIRouter, Depends
 
 from routes.medorders import require_med_order_lifecycle

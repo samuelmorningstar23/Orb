@@ -46,17 +46,15 @@ FIVE THINGS THIS FILE IS CAREFUL ABOUT
    happen. The KITCHEN board is the deliberate exception — it carries counts and
    ward labels and not one patient name, so there is no PHI to audit.
 """
+
 from __future__ import annotations
 
 import logging
 import uuid
-from typing import Optional
-
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
 
 import config
 from auth import get_current_user
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from permissions import (
     ADMIN_OVERVIEW,
     ORDER_READ,
@@ -66,14 +64,13 @@ from permissions import (
     has_permission,
     require_permission,
 )
+from pydantic import BaseModel, Field
 from services.audit_service import log_audit_event
-from services.hospital_time import hospital_now
 from services.dietary_service import (
     ALLERGY_SOURCE_TABLE,
     ALLERGY_UNAVAILABLE_MESSAGE,
     DIET_TYPE_LABELS,
     DIET_TYPES,
-    KitchenIndentError,
     MEAL_SERVICE_LABELS,
     MEAL_SERVICES,
     NPO,
@@ -85,6 +82,7 @@ from services.dietary_service import (
     TEXTURES,
     DietaryError,
     DietOrderError,
+    KitchenIndentError,
     MealPlanError,
     build_meal_plan,
     cancel_kitchen_indent,
@@ -106,6 +104,7 @@ from services.dietary_service import (
     stale_orders,
     ward_view,
 )
+from services.hospital_time import hospital_now
 
 logger = logging.getLogger("orb.dietary.routes")
 
@@ -113,6 +112,7 @@ router = APIRouter(prefix="/api/dietary", tags=["dietary"])
 
 
 # ── The module switch ────────────────────────────────────────────────────────
+
 
 def require_module() -> None:
     """404 the whole desk when a deployment has hidden this module.
@@ -127,9 +127,7 @@ def require_module() -> None:
             status_code=404,
             detail={
                 "error": "module_disabled",
-                "message": (
-                    "The diet & kitchen module is not enabled for this deployment."
-                ),
+                "message": ("The diet & kitchen module is not enabled for this deployment."),
             },
         )
 
@@ -152,7 +150,10 @@ def _require_any(*permissions: str):
     any-of check is not a quieter check. Plain `def`, so FastAPI threadpools the
     blocking audit write.
     """
-    def _checker(request: Request, user: dict = Depends(get_current_user)) -> dict:
+
+    _CHECKER_USER_DEFAULT = Depends(get_current_user)
+
+    def _checker(request: Request, user: dict = _CHECKER_USER_DEFAULT) -> dict:
         role = user.get("role", "")
         if any(has_permission(role, perm) for perm in permissions):
             return user
@@ -181,6 +182,7 @@ def _require_any(*permissions: str):
                 "required_any_of": list(permissions),
             },
         )
+
     return _checker
 
 
@@ -193,10 +195,10 @@ def _audit(
     *,
     summary: str,
     outcome: str = "success",
-    patient_id: Optional[str] = None,
-    target_id: Optional[str] = None,
+    patient_id: str | None = None,
+    target_id: str | int | None = None,
     target_type: str = "diet_order",
-    metadata: Optional[dict] = None,
+    metadata: dict | None = None,
     category: str = "clinical_support",
 ) -> None:
     """One audit line per action.
@@ -253,60 +255,70 @@ def _handle(fn, *args, **kwargs):
         if "not found" in message or message.startswith("unknown patient"):
             raise HTTPException(
                 status_code=404, detail={"error": "not_found", "message": message}
+            ) from exc
+        if any(
+            token in message
+            for token in (
+                "is locked",
+                "already has",
+                "already ",
+                "reload and try again",
+                "lock it first",
+                "cannot be",
+                "nothing to discontinue",
             )
-        if any(token in message for token in (
-            "is locked", "already has", "already ", "reload and try again",
-            "lock it first", "cannot be", "nothing to discontinue",
-        )):
+        ):
             raise HTTPException(
                 status_code=409, detail={"error": "conflict", "message": message}
-            )
+            ) from exc
         raise HTTPException(
             status_code=400, detail={"error": "invalid", "message": message}
-        )
+        ) from exc
     except DietaryError as exc:
         raise HTTPException(
             status_code=400, detail={"error": "invalid", "message": str(exc)}
-        )
+        ) from exc
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  Request bodies
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class DietOrderIn(BaseModel):
     patient_id: str
     diet_type: str
     texture: str = "regular"
-    restriction_notes: Optional[str] = None
-    notes: Optional[str] = None
-    npo_reason: Optional[str] = None
-    npo_until: Optional[str] = None
+    restriction_notes: str | None = None
+    notes: str | None = None
+    npo_reason: str | None = None
+    npo_until: str | None = None
 
 
 class DiscontinueIn(BaseModel):
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 class MealPlanIn(BaseModel):
     ward: str
     meal_service: str
-    service_date: Optional[str] = None
-    notes: Optional[str] = None
+    service_date: str | None = None
+    notes: str | None = None
 
 
 class IndentIn(BaseModel):
     meal_plan_id: int = Field(..., ge=1)
-    notes: Optional[str] = None
+    notes: str | None = None
 
 
 class CancelIn(BaseModel):
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  Reference / meta
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def _meal_service_at(hour: int) -> str:
     """The service a ward is counting for at this hospital-local hour.
@@ -337,8 +349,12 @@ def _capabilities(user: dict) -> dict:
     }
 
 
+_META_USER_DEFAULT = Depends(_READ)
+_META_M_DEFAULT = Depends(require_module)
+
+
 @router.get("/meta")
-def meta(user: dict = Depends(_READ), _m: None = Depends(require_module)) -> dict:
+def meta(user: dict = _META_USER_DEFAULT, _m: None = _META_M_DEFAULT) -> dict:
     """Everything the panel needs to render its forms without hard-coding a
     vocabulary that could drift from the server's CHECK constraints, plus the
     hospital's own day and current meal service (the browser's clock is not the
@@ -365,8 +381,12 @@ def meta(user: dict = Depends(_READ), _m: None = Depends(require_module)) -> dic
     }
 
 
+_SUMMARY_USER_DEFAULT = Depends(_READ)
+_SUMMARY_M_DEFAULT = Depends(require_module)
+
+
 @router.get("/summary")
-def summary(user: dict = Depends(_READ), _m: None = Depends(require_module)) -> dict:
+def summary(user: dict = _SUMMARY_USER_DEFAULT, _m: None = _SUMMARY_M_DEFAULT) -> dict:
     """Overview tiles. Aggregate counts within the caller's ward scope, no
     patient identifiers, so no PHI audit row.
 
@@ -385,8 +405,12 @@ def summary(user: dict = Depends(_READ), _m: None = Depends(require_module)) -> 
     return body
 
 
+_WARDS_USER_DEFAULT = Depends(_READ)
+_WARDS_M_DEFAULT = Depends(require_module)
+
+
 @router.get("/wards")
-def wards(user: dict = Depends(_READ), _m: None = Depends(require_module)) -> dict:
+def wards(user: dict = _WARDS_USER_DEFAULT, _m: None = _WARDS_M_DEFAULT) -> dict:
     return {"wards": list_wards(department=department_scope(user))}
 
 
@@ -394,11 +418,17 @@ def wards(user: dict = Depends(_READ), _m: None = Depends(require_module)) -> di
 #  The ward view
 # ══════════════════════════════════════════════════════════════════════════════
 
+
+_WARD_DIETS_WARD_DEFAULT = Query(None)
+_WARD_DIETS_USER_DEFAULT = Depends(_READ)
+_WARD_DIETS_M_DEFAULT = Depends(require_module)
+
+
 @router.get("/ward")
 def ward_diets(
-    ward: Optional[str] = Query(None),
-    user: dict = Depends(_READ),
-    _m: None = Depends(require_module),
+    ward: str | None = _WARD_DIETS_WARD_DEFAULT,
+    user: dict = _WARD_DIETS_USER_DEFAULT,
+    _m: None = _WARD_DIETS_M_DEFAULT,
 ) -> dict:
     """The nurse's screen: every diet order on this ward, NPO called out
     separately, and the admitted patients nobody has written an order for.
@@ -413,7 +443,8 @@ def ward_diets(
     view = ward_view(ward=ward, department=dept)
     # FAIL-CLOSED: names, beds and allergies are going over the wire.
     _audit(
-        user, "ward_view_read",
+        user,
+        "ward_view_read",
         category="phi_access",
         summary=f"Diet ward view read for {ward or 'all wards'} ({view['order_count']} orders)",
         target_type="ward",
@@ -428,8 +459,12 @@ def ward_diets(
     return view
 
 
+_STALE_USER_DEFAULT = Depends(_READ)
+_STALE_M_DEFAULT = Depends(require_module)
+
+
 @router.get("/stale")
-def stale(user: dict = Depends(_READ), _m: None = Depends(require_module)) -> dict:
+def stale(user: dict = _STALE_USER_DEFAULT, _m: None = _STALE_M_DEFAULT) -> dict:
     """Active diet orders whose patient is no longer admitted here.
 
     The VISIBLE half of "a discharged patient leaves the kitchen count". The
@@ -439,7 +474,8 @@ def stale(user: dict = Depends(_READ), _m: None = Depends(require_module)) -> di
     dept = department_scope(user)
     rows = stale_orders(department=dept)
     _audit(
-        user, "stale_orders_read",
+        user,
+        "stale_orders_read",
         category="phi_access",
         summary=f"Lapsed diet orders read ({len(rows)})",
         target_type="ward",
@@ -452,12 +488,19 @@ def stale(user: dict = Depends(_READ), _m: None = Depends(require_module)) -> di
 #  Diet orders
 # ══════════════════════════════════════════════════════════════════════════════
 
+
+_ORDERS_PATIENT_ID_DEFAULT = Query(...)
+_ORDERS_HISTORY_DEFAULT = Query(False)
+_ORDERS_USER_DEFAULT = Depends(_READ)
+_ORDERS_M_DEFAULT = Depends(require_module)
+
+
 @router.get("/orders")
 def orders(
-    patient_id: str = Query(...),
-    history: bool = Query(False),
-    user: dict = Depends(_READ),
-    _m: None = Depends(require_module),
+    patient_id: str = _ORDERS_PATIENT_ID_DEFAULT,
+    history: bool = _ORDERS_HISTORY_DEFAULT,
+    user: dict = _ORDERS_USER_DEFAULT,
+    _m: None = _ORDERS_M_DEFAULT,
 ) -> dict:
     """One patient's current diet order, and optionally their history.
 
@@ -475,7 +518,8 @@ def orders(
     if history:
         payload["history"] = patient_diet_history(patient_id)
     _audit(
-        user, "order_read",
+        user,
+        "order_read",
         category="phi_access",
         summary=f"Diet order read for {patient_id}",
         patient_id=patient_id,
@@ -485,11 +529,15 @@ def orders(
     return payload
 
 
+_CREATE_ORDER_USER_DEFAULT = Depends(_ORDER)
+_CREATE_ORDER_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/orders")
 def create_order(
     body: DietOrderIn,
-    user: dict = Depends(_ORDER),
-    _m: None = Depends(require_module),
+    user: dict = _CREATE_ORDER_USER_DEFAULT,
+    _m: None = _CREATE_ORDER_M_DEFAULT,
 ) -> dict:
     """Write (or change) a patient's diet order.
 
@@ -500,7 +548,8 @@ def create_order(
     enforce_patient_scope(user, body.patient_id)
     row = _handle(order_diet, ordered_by=user.get("id") or "", **body.model_dump())
     _audit(
-        user, "order_written",
+        user,
+        "order_written",
         category="phi_access",
         summary=(
             f"Diet order for {body.patient_id}: {row['diet_label']}"
@@ -519,12 +568,16 @@ def create_order(
     return {"order": row}
 
 
+_STOP_ORDER_USER_DEFAULT = Depends(_ORDER)
+_STOP_ORDER_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/orders/{order_id}/discontinue")
 def stop_order(
     order_id: int,
     body: DiscontinueIn,
-    user: dict = Depends(_ORDER),
-    _m: None = Depends(require_module),
+    user: dict = _STOP_ORDER_USER_DEFAULT,
+    _m: None = _STOP_ORDER_M_DEFAULT,
 ) -> dict:
     # Scope FIRST, on the order's own patient. A ward check that runs after the
     # write has already happened is not a ward check — it is a log entry.
@@ -537,7 +590,8 @@ def stop_order(
         reason=body.reason,
     )
     _audit(
-        user, "order_discontinued",
+        user,
+        "order_discontinued",
         category="phi_access",
         summary=f"Diet order #{order_id} discontinued for {row['patient_id']}",
         patient_id=row.get("patient_id"),
@@ -551,13 +605,21 @@ def stop_order(
 #  Meal plans
 # ══════════════════════════════════════════════════════════════════════════════
 
+
+_MEAL_PLANS_SERVICE_DATE_DEFAULT = Query(None)
+_MEAL_PLANS_WARD_DEFAULT = Query(None)
+_MEAL_PLANS_MEAL_SERVICE_DEFAULT = Query(None)
+_MEAL_PLANS_USER_DEFAULT = Depends(_READ)
+_MEAL_PLANS_M_DEFAULT = Depends(require_module)
+
+
 @router.get("/meal-plans")
 def meal_plans(
-    service_date: Optional[str] = Query(None),
-    ward: Optional[str] = Query(None),
-    meal_service: Optional[str] = Query(None),
-    user: dict = Depends(_READ),
-    _m: None = Depends(require_module),
+    service_date: str | None = _MEAL_PLANS_SERVICE_DATE_DEFAULT,
+    ward: str | None = _MEAL_PLANS_WARD_DEFAULT,
+    meal_service: str | None = _MEAL_PLANS_MEAL_SERVICE_DEFAULT,
+    user: dict = _MEAL_PLANS_USER_DEFAULT,
+    _m: None = _MEAL_PLANS_M_DEFAULT,
 ) -> dict:
     """Plans are COUNTS — ward label, diet type, integer. No patient identifiers
     cross this boundary, so no PHI audit row. (`basis_order_ids` is stripped
@@ -569,20 +631,28 @@ def meal_plans(
     return {"plans": [_strip_basis(p) for p in plans]}
 
 
+_MEAL_PLAN_USER_DEFAULT = Depends(_READ)
+_MEAL_PLAN_M_DEFAULT = Depends(require_module)
+
+
 @router.get("/meal-plans/{plan_id}")
 def meal_plan(
     plan_id: int,
-    user: dict = Depends(_READ),
-    _m: None = Depends(require_module),
+    user: dict = _MEAL_PLAN_USER_DEFAULT,
+    _m: None = _MEAL_PLAN_M_DEFAULT,
 ) -> dict:
     return {"plan": _strip_basis(_handle(get_meal_plan, plan_id))}
+
+
+_MAKE_MEAL_PLAN_USER_DEFAULT = Depends(_KITCHEN)
+_MAKE_MEAL_PLAN_M_DEFAULT = Depends(require_module)
 
 
 @router.post("/meal-plans")
 def make_meal_plan(
     body: MealPlanIn,
-    user: dict = Depends(_KITCHEN),
-    _m: None = Depends(require_module),
+    user: dict = _MAKE_MEAL_PLAN_USER_DEFAULT,
+    _m: None = _MAKE_MEAL_PLAN_M_DEFAULT,
 ) -> dict:
     """Roll this ward's live diet orders into a count for one meal service.
 
@@ -593,7 +663,8 @@ def make_meal_plan(
         _handle(build_meal_plan, generated_by=user.get("id") or "", **body.model_dump())
     )
     _audit(
-        user, "meal_plan_built",
+        user,
+        "meal_plan_built",
         summary=(
             f"{plan['meal_service_label']} plan for {plan['ward']} on "
             f"{plan['service_date']}: {plan['total_meals']} meals, "
@@ -612,15 +683,20 @@ def make_meal_plan(
     return {"plan": plan}
 
 
+_LOCK_PLAN_USER_DEFAULT = Depends(_KITCHEN)
+_LOCK_PLAN_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/meal-plans/{plan_id}/lock")
 def lock_plan(
     plan_id: int,
-    user: dict = Depends(_KITCHEN),
-    _m: None = Depends(require_module),
+    user: dict = _LOCK_PLAN_USER_DEFAULT,
+    _m: None = _LOCK_PLAN_M_DEFAULT,
 ) -> dict:
     plan = _strip_basis(_handle(lock_meal_plan, plan_id, locked_by=user.get("id") or ""))
     _audit(
-        user, "meal_plan_locked",
+        user,
+        "meal_plan_locked",
         summary=f"Meal plan #{plan_id} locked at {plan['total_meals']} meals",
         target_type="meal_plan",
         target_id=str(plan_id),
@@ -633,12 +709,19 @@ def lock_plan(
 #  Kitchen indents + the kitchen's own board
 # ══════════════════════════════════════════════════════════════════════════════
 
+
+_KITCHEN_SERVICE_DATE_DEFAULT = Query(None)
+_KITCHEN_MEAL_SERVICE_DEFAULT = Query(None)
+_KITCHEN_USER_DEFAULT = Depends(_READ)
+_KITCHEN_M_DEFAULT = Depends(require_module)
+
+
 @router.get("/kitchen")
 def kitchen(
-    service_date: Optional[str] = Query(None),
-    meal_service: Optional[str] = Query(None),
-    user: dict = Depends(_READ),
-    _m: None = Depends(require_module),
+    service_date: str | None = _KITCHEN_SERVICE_DATE_DEFAULT,
+    meal_service: str | None = _KITCHEN_MEAL_SERVICE_DEFAULT,
+    user: dict = _KITCHEN_USER_DEFAULT,
+    _m: None = _KITCHEN_M_DEFAULT,
 ) -> dict:
     """The kitchen's screen. COUNTS AND WARD LABELS ONLY — not one patient name,
     MRN, bed or allergy. The kitchen does not need to know who is diabetic in
@@ -647,14 +730,22 @@ def kitchen(
     return _handle(kitchen_board, service_date=service_date, meal_service=meal_service)
 
 
+_INDENTS_SERVICE_DATE_DEFAULT = Query(None)
+_INDENTS_MEAL_SERVICE_DEFAULT = Query(None)
+_INDENTS_WARD_DEFAULT = Query(None)
+_INDENTS_STATUS_DEFAULT = Query(None)
+_INDENTS_USER_DEFAULT = Depends(_READ)
+_INDENTS_M_DEFAULT = Depends(require_module)
+
+
 @router.get("/indents")
 def indents(
-    service_date: Optional[str] = Query(None),
-    meal_service: Optional[str] = Query(None),
-    ward: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
-    user: dict = Depends(_READ),
-    _m: None = Depends(require_module),
+    service_date: str | None = _INDENTS_SERVICE_DATE_DEFAULT,
+    meal_service: str | None = _INDENTS_MEAL_SERVICE_DEFAULT,
+    ward: str | None = _INDENTS_WARD_DEFAULT,
+    status: str | None = _INDENTS_STATUS_DEFAULT,
+    user: dict = _INDENTS_USER_DEFAULT,
+    _m: None = _INDENTS_M_DEFAULT,
 ) -> dict:
     return {
         "indents": _handle(
@@ -667,20 +758,28 @@ def indents(
     }
 
 
+_INDENT_USER_DEFAULT = Depends(_READ)
+_INDENT_M_DEFAULT = Depends(require_module)
+
+
 @router.get("/indents/{indent_id}")
 def indent(
     indent_id: int,
-    user: dict = Depends(_READ),
-    _m: None = Depends(require_module),
+    user: dict = _INDENT_USER_DEFAULT,
+    _m: None = _INDENT_M_DEFAULT,
 ) -> dict:
     return {"indent": _handle(get_kitchen_indent, indent_id)}
+
+
+_CREATE_INDENT_USER_DEFAULT = Depends(_KITCHEN)
+_CREATE_INDENT_M_DEFAULT = Depends(require_module)
 
 
 @router.post("/indents")
 def create_indent(
     body: IndentIn,
-    user: dict = Depends(_KITCHEN),
-    _m: None = Depends(require_module),
+    user: dict = _CREATE_INDENT_USER_DEFAULT,
+    _m: None = _CREATE_INDENT_M_DEFAULT,
 ) -> dict:
     row = _handle(
         raise_kitchen_indent,
@@ -689,7 +788,8 @@ def create_indent(
         notes=body.notes,
     )
     _audit(
-        user, "indent_raised",
+        user,
+        "indent_raised",
         summary=(
             f"Kitchen indent raised for {row['ward']} "
             f"{row['meal_service_label'].lower()}: {row['total_meals']} meals"
@@ -701,15 +801,20 @@ def create_indent(
     return {"indent": row}
 
 
+_ISSUE_INDENT_USER_DEFAULT = Depends(_KITCHEN)
+_ISSUE_INDENT_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/indents/{indent_id}/issue")
 def issue_indent(
     indent_id: int,
-    user: dict = Depends(_KITCHEN),
-    _m: None = Depends(require_module),
+    user: dict = _ISSUE_INDENT_USER_DEFAULT,
+    _m: None = _ISSUE_INDENT_M_DEFAULT,
 ) -> dict:
     row = _handle(issue_kitchen_indent, indent_id, issued_by=user.get("id") or "")
     _audit(
-        user, "indent_issued",
+        user,
+        "indent_issued",
         summary=f"Kitchen indent {row.get('indent_number') or indent_id} issued to the kitchen",
         target_type="kitchen_indent",
         target_id=str(indent_id),
@@ -721,12 +826,16 @@ def issue_indent(
     return {"indent": row}
 
 
+_CANCEL_INDENT_USER_DEFAULT = Depends(_KITCHEN)
+_CANCEL_INDENT_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/indents/{indent_id}/cancel")
 def cancel_indent(
     indent_id: int,
     body: CancelIn,
-    user: dict = Depends(_KITCHEN),
-    _m: None = Depends(require_module),
+    user: dict = _CANCEL_INDENT_USER_DEFAULT,
+    _m: None = _CANCEL_INDENT_M_DEFAULT,
 ) -> dict:
     row = _handle(
         cancel_kitchen_indent,
@@ -735,7 +844,8 @@ def cancel_indent(
         reason=body.reason,
     )
     _audit(
-        user, "indent_cancelled",
+        user,
+        "indent_cancelled",
         summary=f"Kitchen indent {row.get('indent_number') or indent_id} cancelled",
         target_type="kitchen_indent",
         target_id=str(indent_id),

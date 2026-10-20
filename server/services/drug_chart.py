@@ -19,6 +19,7 @@ no orders (SALES_PLAN_2026-10.md section 3, step 2). With ORB_WARD_RECORD on:
 
 Read at call time, so a test or an operator flip is seen without re-importing.
 """
+
 from __future__ import annotations
 
 from fastapi import HTTPException
@@ -30,6 +31,7 @@ DRUG_CHART_OFF = "The drug chart is not part of Orb Ward Record"
 def drug_chart_enabled() -> bool:
     """False on an Orb Ward Record computer (ORB_WARD_RECORD)."""
     import config
+
     return not getattr(config, "WARD_RECORD", False)
 
 

@@ -34,11 +34,11 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import datetime, timedelta, timezone
-
-logger = logging.getLogger("orb.capacity_sim")
+from datetime import datetime, timedelta
 
 from services import forecast_service
+
+logger = logging.getLogger("orb.capacity_sim")
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -69,17 +69,17 @@ ASSUMPTIONS_META = {
     "base_avg_los_days": {
         "value": BASE_AVG_LOS_DAYS,
         "source": "forecast_service._heuristic_prediction ward base-LOS mean "
-                  "(ICU 7 / W1 4 / W2 3 / W3 3.5 days → mean 4.375)",
+        "(ICU 7 / W1 4 / W2 3 / W3 3.5 days → mean 4.375)",
     },
     "nurse_patient_ratio": {
         "value": DEFAULT_NURSE_PATIENT_RATIO,
         "source": "Med-surg safe-staffing benchmark 1:4 (California Title 22 "
-                  "§70217; ICU 1:2). Editable per scenario.",
+        "§70217; ICU 1:2). Editable per scenario.",
     },
     "admission_rate_source": {
         "value": "forecast_service.predict_hospital_flow",
         "source": "Poisson mean fit over 30-day admission_history "
-                  "(day-of-week multipliers average to 1.0 across a full week)",
+        "(day-of-week multipliers average to 1.0 across a full week)",
     },
     "capacity_source": {
         "value": forecast_service.TOTAL_CAPACITY,
@@ -95,6 +95,7 @@ ASSUMPTIONS_META = {
 # ══════════════════════════════════════════════════════════════════════
 #  BASELINE — pulled from the live forecast models
 # ══════════════════════════════════════════════════════════════════════
+
 
 def _load_baseline() -> dict:
     """Read the current census, capacity, and expected daily admission rate
@@ -124,6 +125,7 @@ def _load_baseline() -> dict:
 # ══════════════════════════════════════════════════════════════════════
 #  SIMULATION
 # ══════════════════════════════════════════════════════════════════════
+
 
 def _f(scenario: dict, key: str, default: float) -> float:
     """Coerce a scenario knob to float, tolerating None/blank/bad input."""
@@ -165,7 +167,9 @@ def simulate(scenario: dict | None = None, horizon_hours: int = 24) -> dict:
     if "baseline_capacity" in scenario and scenario["baseline_capacity"] is not None:
         base["capacity"] = max(0, int(_f(scenario, "baseline_capacity", base["capacity"])))
     if "admission_rate_daily" in scenario and scenario["admission_rate_daily"] is not None:
-        base["admission_rate"] = round(_f(scenario, "admission_rate_daily", base["admission_rate"]), 2)
+        base["admission_rate"] = round(
+            _f(scenario, "admission_rate_daily", base["admission_rate"]), 2
+        )
 
     # ── Resolve knobs ──
     horizon_hours = max(1, min(int(horizon_hours), 24 * 30))  # cap at 30 days

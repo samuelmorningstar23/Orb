@@ -35,6 +35,7 @@ rows and the ingestion path never publishes to the event bus. There is no table
 in which both halves of an episode appear, so an `episode_id` is minted once at
 the semantic birth of the alert and carried.
 """
+
 from __future__ import annotations
 
 import json
@@ -43,13 +44,15 @@ import os
 import secrets
 import threading
 from collections import OrderedDict
-from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from database import db_session
 from db_backend import DBIntegrityError
 
 logger = logging.getLogger("orb.shadow")
+
 
 # ── Configuration ────────────────────────────────────────────────────────────
 #: Master switch. Off => every emit is a no-op that still returns cleanly, so a
@@ -82,85 +85,110 @@ LANES = frozenset({"simulator", "ingestion", "chat", "voice", "manual", "sweeper
 PAYLOAD_KEYS: dict[str, frozenset[str]] = {
     "episode.opened": frozenset({"trigger", "level", "raw_news2", "reopened"}),
     "episode.closed": frozenset({"window_min", "events_n", "reason"}),
-
-    "alert.fired": frozenset({
-        "level", "raw_news2", "score", "drivers", "single_param_3", "spo2_scale",
-        "vital_id", "repeat",
-    }),
+    "alert.fired": frozenset(
+        {
+            "level",
+            "raw_news2",
+            "score",
+            "drivers",
+            "single_param_3",
+            "spo2_scale",
+            "vital_id",
+            "repeat",
+        }
+    ),
     "alert.suppressed": frozenset({"level", "raw_news2", "suppressed_by", "seconds_since_last"}),
     "alert.dropped": frozenset({"reason", "level"}),
     "alert.persisted": frozenset({"message_id", "channel_id"}),
     "alert.delivered": frozenset({"channel_id", "recipients", "transport"}),
-
     "context.compiled": frozenset({"facts_n", "guidelines_n", "compile_ms", "trigger"}),
-    "sage.drafted": frozenset({
-        "conversation_id", "citation_basis", "confidence", "retrieved_doc_ids",
-        "cited_doc_ids", "trust_tiers", "ttft_ms", "retrieval_ms", "total_ms",
-        "query_class", "cancelled",
-        # THE TWO TIMING FACTS THE PILOT'S LATENCY CLAIM IS MADE OF, added
-        # 2026-08-14 with the alert assessment's tier split. `ttft_ms` is when
-        # the first TOKEN existed, which nobody can read; `first_step_ms` is when
-        # the first complete, sanitized suggestion reached the surface. `depth`
-        # separates a capped three-step alert draft from the four-section
-        # handover assessment — without it the scorecard's time-saved figure
-        # averages two workloads that never happen together.
-        "first_step_ms", "depth",
-        # ── THE PATIENT-SPECIFIC ADVICE TIER, added 2026-08-15 ──────────────
-        # The tier now says only what depends on THIS patient's chart, so its
-        # commonest correct output is silence — and the pilot has to be able to
-        # tell TWO KINDS OF SILENCE APART. "Orb checked and there was nothing to
-        # flag" and "the check never ran" are OPPOSITE facts about a
-        # deteriorating patient, and an empty flag list reports them as the same
-        # number. `patient_specific` is therefore the outcome WORD, not a count:
-        #   flags | no_candidates | no_material | failed
-        # Without it a scorecard reading "advice delivered on 12% of alerts"
-        # cannot say whether the tier is working exactly as designed or is
-        # broken on 88% of the ward, which are opposite conclusions from one
-        # figure — the same trap the old 22%/0% delivery number sprang.
-        "patient_specific",
-        # How many cautions survived to the screen, and how many candidate facts
-        # the DETERMINISTIC pre-screen produced before any model saw them. The
-        # ratio is how we learn whether the pre-screen is too tight or too loose
-        # without reading a single patient's chart.
-        "patient_specific_n", "patient_specific_candidates",
-        # THE THROUGHPUT FACT THE RULING PREDICTED. On most patients the
-        # pre-screen finds nothing and the model is never called, which is what
-        # dissolves the old 22% delivery problem as a side effect. This boolean
-        # is the only honest way to report "what fraction of a realistic ward
-        # actually triggers a model call" — inferring it from timings would make
-        # a fast draft and a skipped one indistinguishable.
-        "patient_specific_model_called",
-        # What the post-filters dropped, and why. `dropped_generic` is a line
-        # that restated the alert; `dropped_unsourced` is the model naming a
-        # drug or a value the pre-screen never supplied — i.e. reaching into its
-        # own memory, which is the failure mode this tier's whole design exists
-        # to make impossible. Both are counted rather than merely suppressed:
-        # a filter nobody measures is a filter nobody notices going quiet.
-        "patient_specific_dropped_generic", "patient_specific_dropped_unsourced",
-        # Cost of the deterministic pre-screen alone (no model in the path).
-        "patient_specific_ms",
-    }),
+    "sage.drafted": frozenset(
+        {
+            "conversation_id",
+            "citation_basis",
+            "confidence",
+            "retrieved_doc_ids",
+            "cited_doc_ids",
+            "trust_tiers",
+            "ttft_ms",
+            "retrieval_ms",
+            "total_ms",
+            "query_class",
+            "cancelled",
+            # THE TWO TIMING FACTS THE PILOT'S LATENCY CLAIM IS MADE OF, added
+            # 2026-08-14 with the alert assessment's tier split. `ttft_ms` is when
+            # the first TOKEN existed, which nobody can read; `first_step_ms` is when
+            # the first complete, sanitized suggestion reached the surface. `depth`
+            # separates a capped three-step alert draft from the four-section
+            # handover assessment — without it the scorecard's time-saved figure
+            # averages two workloads that never happen together.
+            "first_step_ms",
+            "depth",
+            # ── THE PATIENT-SPECIFIC ADVICE TIER, added 2026-08-15 ──────────────
+            # The tier now says only what depends on THIS patient's chart, so its
+            # commonest correct output is silence — and the pilot has to be able to
+            # tell TWO KINDS OF SILENCE APART. "Orb checked and there was nothing to
+            # flag" and "the check never ran" are OPPOSITE facts about a
+            # deteriorating patient, and an empty flag list reports them as the same
+            # number. `patient_specific` is therefore the outcome WORD, not a count:
+            #   flags | no_candidates | no_material | failed
+            # Without it a scorecard reading "advice delivered on 12% of alerts"
+            # cannot say whether the tier is working exactly as designed or is
+            # broken on 88% of the ward, which are opposite conclusions from one
+            # figure — the same trap the old 22%/0% delivery number sprang.
+            "patient_specific",
+            # How many cautions survived to the screen, and how many candidate facts
+            # the DETERMINISTIC pre-screen produced before any model saw them. The
+            # ratio is how we learn whether the pre-screen is too tight or too loose
+            # without reading a single patient's chart.
+            "patient_specific_n",
+            "patient_specific_candidates",
+            # THE THROUGHPUT FACT THE RULING PREDICTED. On most patients the
+            # pre-screen finds nothing and the model is never called, which is what
+            # dissolves the old 22% delivery problem as a side effect. This boolean
+            # is the only honest way to report "what fraction of a realistic ward
+            # actually triggers a model call" — inferring it from timings would make
+            # a fast draft and a skipped one indistinguishable.
+            "patient_specific_model_called",
+            # What the post-filters dropped, and why. `dropped_generic` is a line
+            # that restated the alert; `dropped_unsourced` is the model naming a
+            # drug or a value the pre-screen never supplied — i.e. reaching into its
+            # own memory, which is the failure mode this tier's whole design exists
+            # to make impossible. Both are counted rather than merely suppressed:
+            # a filter nobody measures is a filter nobody notices going quiet.
+            "patient_specific_dropped_generic",
+            "patient_specific_dropped_unsourced",
+            # Cost of the deterministic pre-screen alone (no model in the path).
+            "patient_specific_ms",
+        }
+    ),
     "sage.refused": frozenset({"refusal_class", "stage"}),
     "sage.failed": frozenset({"failure"}),
-
-    "action.proposed": frozenset({
-        "action_class", "status_code", "supported", "gate", "target_patient_present",
-        "drug_rxnorm", "dose_present", "conversation_id",
-    }),
+    "action.proposed": frozenset(
+        {
+            "action_class",
+            "status_code",
+            "supported",
+            "gate",
+            "target_patient_present",
+            "drug_rxnorm",
+            "dose_present",
+            "conversation_id",
+        }
+    ),
     "action.approved": frozenset({"action_class", "order_id", "decline_reason"}),
     "action.declined": frozenset({"action_class", "order_id", "decline_reason"}),
     "action.abandoned": frozenset({"action_class", "window_min"}),
-
     "alert.viewed": frozenset({"message_id", "channel_id", "seconds_since_persisted"}),
     "alert.acknowledged": frozenset({"message_id", "disposition"}),
     "alert.expired": frozenset({"message_id", "window_min", "viewers"}),
-
     "clinical.action": frozenset({"action_class", "source_table", "minutes_after_alert"}),
-
     "outcome.candidate": frozenset({"event_type", "source", "detected_by"}),
     "outcome.recorded": frozenset({"event_type", "recognised_by", "source", "confirmed_by_role"}),
     "outcome.none_confirmed": frozenset({"ward", "period_start", "period_end", "shift"}),
-    "adjudication.recorded": frozenset({"verdict", "adjudicator_role", "blinded", "review_seconds"}),
+    "adjudication.recorded": frozenset(
+        {"verdict", "adjudicator_role", "blinded", "review_seconds"}
+    ),
 }
 
 KINDS = frozenset(PAYLOAD_KEYS)
@@ -171,11 +199,18 @@ KINDS = frozenset(PAYLOAD_KEYS)
 #: migration that extends idx_shadow_once (_m18 added outcome.none_confirmed);
 #: a kind in the index but not here makes the losing side of a concurrent
 #: double-submit count as dropped_error and false-alarms instrument.healthy.
-ONCE_KINDS = frozenset({
-    "alert.persisted", "action.approved", "action.declined", "action.abandoned",
-    "alert.expired", "episode.closed", "episode.opened",
-    "outcome.none_confirmed",
-})
+ONCE_KINDS = frozenset(
+    {
+        "alert.persisted",
+        "action.approved",
+        "action.declined",
+        "action.abandoned",
+        "alert.expired",
+        "episode.closed",
+        "episode.opened",
+        "outcome.none_confirmed",
+    }
+)
 
 # ── Instrument self-observability ────────────────────────────────────────────
 #: The instrument's own failures are themselves data. A scorecard built on a
@@ -220,10 +255,10 @@ def utc_now() -> str:
     every cross-table comparison has to go through julianday(). Inside
     shadow_events there is exactly one format, and it sorts lexicographically.
     """
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    return datetime.now(UTC).isoformat(timespec="milliseconds")
 
 
-def _parse(ts: str) -> Optional[datetime]:
+def _parse(ts: str) -> datetime | None:
     try:
         return datetime.fromisoformat(ts)
     except (TypeError, ValueError):
@@ -231,12 +266,14 @@ def _parse(ts: str) -> Optional[datetime]:
 
 
 # ── Episode registry (tier 2 of correlation; tier 3 is the DB fallback) ──────
-_episodes: "OrderedDict[str, tuple[str, float]]" = OrderedDict()  # patient_id -> (episode_id, opened_epoch)
+_episodes: OrderedDict[str, tuple[str, float]] = (
+    OrderedDict()
+)  # patient_id -> (episode_id, opened_epoch)
 _episode_lock = threading.RLock()
 
 # patient_id -> ward, bounded. Ward is a quasi-identifier (2 wards) and is PHI at
 # export; it is cached only to keep the emit path from re-reading `patients`.
-_ward_cache: "OrderedDict[str, Optional[str]]" = OrderedDict()
+_ward_cache: OrderedDict[str, str | None] = OrderedDict()
 _WARD_CACHE_MAX = 512
 
 
@@ -252,9 +289,9 @@ def _remember(patient_id: str, episode_id: str, opened_epoch: float) -> None:
             _episodes.popitem(last=False)
 
 
-def _registry_lookup(patient_id: str) -> Optional[str]:
+def _registry_lookup(patient_id: str) -> str | None:
     window = _episode_window_min() * 60
-    now = datetime.now(timezone.utc).timestamp()
+    now = datetime.now(UTC).timestamp()
     with _episode_lock:
         hit = _episodes.get(patient_id)
         if not hit:
@@ -267,14 +304,14 @@ def _registry_lookup(patient_id: str) -> Optional[str]:
         return episode_id
 
 
-def current_episode_cached(patient_id: str) -> Optional[str]:
+def current_episode_cached(patient_id: str) -> str | None:
     """Registry-only lookup. Safe on the event loop — touches no DB."""
     if not patient_id:
         return None
     return _registry_lookup(patient_id)
 
 
-def current_episode(patient_id: str, db=None) -> Optional[str]:
+def current_episode(patient_id: str, db=None) -> str | None:
     """Resolve the open episode for a patient. SYNC — never call on the loop.
 
     Tier 2 (in-process registry) then tier 3 (DB fallback). The registry dies
@@ -288,7 +325,7 @@ def current_episode(patient_id: str, db=None) -> Optional[str]:
     if hit:
         return hit
     try:
-        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=_episode_window_min())).isoformat(
+        cutoff = (datetime.now(UTC) - timedelta(minutes=_episode_window_min())).isoformat(
             timespec="milliseconds"
         )
         if db is not None:
@@ -303,7 +340,7 @@ def current_episode(patient_id: str, db=None) -> Optional[str]:
             _remember(
                 patient_id,
                 episode_id,
-                parsed.timestamp() if parsed else datetime.now(timezone.utc).timestamp(),
+                parsed.timestamp() if parsed else datetime.now(UTC).timestamp(),
             )
             return episode_id
     except Exception:
@@ -320,7 +357,7 @@ def _fetch_open_episode(conn, patient_id: str, cutoff: str):
     ).fetchone()
 
 
-def _lookup_ward(conn, patient_id: Optional[str]) -> Optional[str]:
+def _lookup_ward(conn, patient_id: str | None) -> str | None:
     if not patient_id:
         return None
     with _episode_lock:
@@ -350,7 +387,7 @@ def reset_registry() -> None:
 
 
 # ── Payload discipline ───────────────────────────────────────────────────────
-def sanitize_payload(kind: str, payload: Optional[dict]) -> dict:
+def sanitize_payload(kind: str, payload: dict | None) -> dict:
     """Key-whitelist + JSON-safety + byte cap. Unknown keys are DROPPED, not
     stored: the whitelist is the contract the scorecard queries are written
     against, and an un-whitelisted key is how free clinical prose leaks into a
@@ -377,7 +414,7 @@ def sanitize_payload(kind: str, payload: Optional[dict]) -> dict:
 
 
 # ── The emit API ─────────────────────────────────────────────────────────────
-def _insert(conn, ev: dict) -> Optional[int]:
+def _insert(conn, ev: dict) -> int | None:
     payload = sanitize_payload(ev["kind"], ev.get("payload"))
     phi = ev.get("phi")
     phi_json = None
@@ -415,7 +452,7 @@ def _insert(conn, ev: dict) -> Optional[int]:
     return cur.lastrowid
 
 
-def _validate(ev: dict) -> Optional[str]:
+def _validate(ev: dict) -> str | None:
     if ev.get("kind") not in KINDS:
         return f"unknown kind {ev.get('kind')!r}"
     if ev.get("lane") not in LANES:
@@ -432,19 +469,19 @@ def build(
     episode_id: str,
     lane: str,
     *,
-    occurred_at: Optional[str] = None,
-    patient_id: Optional[str] = None,
-    encounter_id: Optional[str] = None,
-    ward: Optional[str] = None,
-    actor_user_id: Optional[str] = None,
-    actor_role: Optional[str] = None,
-    subject_type: Optional[str] = None,
-    subject_id: Optional[Any] = None,
-    payload: Optional[dict] = None,
-    phi: Optional[dict] = None,
-    supersedes_event_id: Optional[int] = None,
-    correction_reason: Optional[str] = None,
-    source_correlation_id: Optional[str] = None,
+    occurred_at: str | None = None,
+    patient_id: str | None = None,
+    encounter_id: str | None = None,
+    ward: str | None = None,
+    actor_user_id: str | None = None,
+    actor_role: str | None = None,
+    subject_type: str | None = None,
+    subject_id: Any | None = None,
+    payload: dict | None = None,
+    phi: dict | None = None,
+    supersedes_event_id: int | None = None,
+    correction_reason: str | None = None,
+    source_correlation_id: str | None = None,
 ) -> dict:
     """Build one event dict. Cheap and loop-safe — no DB, no clock beyond
     `occurred_at`. Stamp `occurred_at` at the SEMANTIC moment of the thing (for
@@ -472,7 +509,7 @@ def build(
     }
 
 
-def emit_many(events: Iterable[dict], db=None) -> list[Optional[int]]:
+def emit_many(events: Iterable[dict], db=None) -> list[int | None]:
     """Insert a batch of built events in ONE transaction. SYNC — worker thread only.
 
     NEVER raises. Pass `db=` when the caller already holds a write transaction
@@ -495,7 +532,7 @@ def emit_many(events: Iterable[dict], db=None) -> list[Optional[int]]:
         return [None] * len(events)
 
 
-def _emit_one(conn, ev: dict) -> Optional[int]:
+def _emit_one(conn, ev: dict) -> int | None:
     problem = _validate(ev)
     if problem:
         _bump("dropped_invalid")
@@ -522,14 +559,15 @@ def _emit_one(conn, ev: dict) -> Optional[int]:
         return None
 
 
-def emit(kind: str, episode_id: str, lane: str, *, db=None, **kwargs) -> Optional[int]:
+def emit(kind: str, episode_id: str, lane: str, *, db=None, **kwargs) -> int | None:
     """Single-event convenience over `emit_many`. SYNC — worker thread only."""
     return emit_many([build(kind, episode_id, lane, **kwargs)], db=db)[0]
 
 
 # ── Async entry points (everything on the loop goes through these) ───────────
-async def aemit_many(events: Iterable[dict]) -> list[Optional[int]]:
+async def aemit_many(events: Iterable[dict]) -> list[int | None]:
     from database import run_db
+
     events = [e for e in events if e]
     if not events or not _enabled():
         return [None] * len(events)
@@ -541,7 +579,7 @@ async def aemit_many(events: Iterable[dict]) -> list[Optional[int]]:
         return [None] * len(events)
 
 
-async def aemit(kind: str, episode_id: str, lane: str, **kwargs) -> Optional[int]:
+async def aemit(kind: str, episode_id: str, lane: str, **kwargs) -> int | None:
     return (await aemit_many([build(kind, episode_id, lane, **kwargs)]))[0]
 
 
@@ -558,6 +596,7 @@ def emit_bg(kind: str, episode_id: str, lane: str, **kwargs) -> None:
     observability feature into an outage.
     """
     import asyncio
+
     if not _enabled():
         return
     try:
@@ -577,12 +616,12 @@ def open_episode(
     patient_id: str,
     lane: str,
     *,
-    occurred_at: Optional[str] = None,
-    source_correlation_id: Optional[str] = None,
-    trigger: Optional[str] = None,
-    payload: Optional[dict] = None,
+    occurred_at: str | None = None,
+    source_correlation_id: str | None = None,
+    trigger: str | None = None,
+    payload: dict | None = None,
     db=None,
-) -> tuple[Optional[str], bool]:
+) -> tuple[str | None, bool]:
     """Resolve-or-mint the episode for a patient. SYNC — worker thread only.
 
     Returns ``(episode_id, opened_now)``. A RE-ALERT JOINS THE EXISTING EPISODE:
@@ -607,7 +646,7 @@ def open_episode(
             if existing:
                 return (existing, False)
             episode_id = new_episode_id()
-            _remember(patient_id, episode_id, datetime.now(timezone.utc).timestamp())
+            _remember(patient_id, episode_id, datetime.now(UTC).timestamp())
         ev = build(
             "episode.opened",
             episode_id,
@@ -626,8 +665,9 @@ def open_episode(
         return (None, False)
 
 
-async def aopen_episode(patient_id: str, lane: str, **kwargs) -> tuple[Optional[str], bool]:
+async def aopen_episode(patient_id: str, lane: str, **kwargs) -> tuple[str | None, bool]:
     from database import run_db
+
     if not patient_id or not _enabled():
         return (None, False)
     try:
@@ -665,7 +705,8 @@ def record_batch(observations: list[dict], lane: str) -> dict[str, str]:
                 episode_id = episodes.get(pid)
                 if not episode_id:
                     episode_id, _ = open_episode(
-                        pid, lane,
+                        pid,
+                        lane,
                         occurred_at=obs.get("occurred_at"),
                         source_correlation_id=obs.get("source_correlation_id"),
                         trigger=obs.get("trigger"),
@@ -675,24 +716,31 @@ def record_batch(observations: list[dict], lane: str) -> dict[str, str]:
                     if not episode_id:
                         continue
                     episodes[pid] = episode_id
-                batch.append(build(
-                    obs["kind"], episode_id, lane,
-                    occurred_at=obs.get("occurred_at"),
-                    patient_id=pid,
-                    subject_type=obs.get("subject_type"),
-                    subject_id=obs.get("subject_id"),
-                    payload=obs.get("payload"),
-                    source_correlation_id=obs.get("source_correlation_id"),
-                ))
+                batch.append(
+                    build(
+                        obs["kind"],
+                        episode_id,
+                        lane,
+                        occurred_at=obs.get("occurred_at"),
+                        patient_id=pid,
+                        subject_type=obs.get("subject_type"),
+                        subject_id=obs.get("subject_id"),
+                        payload=obs.get("payload"),
+                        source_correlation_id=obs.get("source_correlation_id"),
+                    )
+                )
             emit_many(batch, db=conn)
     except Exception:
         _bump("dropped_error", len(observations))
-        logger.warning("shadow: record_batch failed (%d observations)", len(observations), exc_info=True)
+        logger.warning(
+            "shadow: record_batch failed (%d observations)", len(observations), exc_info=True
+        )
     return episodes
 
 
 async def arecord_batch(observations: list[dict], lane: str) -> dict[str, str]:
     from database import run_db
+
     if not observations or not _enabled():
         return {}
     try:
@@ -707,9 +755,9 @@ def record_correction(
     event_id: int,
     reason: str,
     *,
-    payload: Optional[dict] = None,
+    payload: dict | None = None,
     db=None,
-) -> Optional[int]:
+) -> int | None:
     """Correct an earlier row by APPENDING a superseding one. There is no UPDATE
     path — `trg_shadow_no_update` aborts it at the storage layer. The superseded
     row vanishes from `shadow_events_current` (and therefore from every metric)
@@ -718,9 +766,7 @@ def record_correction(
         return None
 
     def _work(conn):
-        row = conn.execute(
-            "SELECT * FROM shadow_events WHERE id = ?", (event_id,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM shadow_events WHERE id = ?", (event_id,)).fetchone()
         if row is None:
             return None
         keys = row.keys() if hasattr(row, "keys") else None
@@ -730,10 +776,12 @@ def record_correction(
             base_payload = json.loads(get("payload_json") or "{}")
         except (TypeError, ValueError):
             base_payload = {}
+        kind, episode_id, lane = get("kind"), get("episode_id"), get("lane")
+        assert isinstance(kind, str) and isinstance(episode_id, str) and isinstance(lane, str)
         ev = build(
-            get("kind"),
-            get("episode_id"),
-            get("lane"),
+            kind,
+            episode_id,
+            lane,
             occurred_at=get("occurred_at"),
             patient_id=get("patient_id"),
             encounter_id=get("encounter_id"),
@@ -780,17 +828,17 @@ def record_correction(
 # on the scorecard's instrument block.
 _sweeper_lock = threading.Lock()
 _SWEEPER: dict[str, Any] = {
-    "started": False,          # the lifespan actually registered the loop
+    "started": False,  # the lifespan actually registered the loop
     "cycles": 0,
     "failures": 0,
     "consecutive_failures": 0,
     "last_attempt_at": None,
     "last_success_at": None,
-    "last_error": None,        # exception CLASS + message, never a row
+    "last_error": None,  # exception CLASS + message, never a row
 }
 
 
-def _record_sweep(ok: bool, error: Optional[BaseException] = None) -> None:
+def _record_sweep(ok: bool, error: BaseException | None = None) -> None:
     """Fold one sweep cycle's outcome into the instrument's self-report."""
     stamp = utc_now()
     with _sweeper_lock:
@@ -834,7 +882,8 @@ def note_sweeper_unavailable(reason: str) -> None:
     logger.error(
         "shadow: the negatives sweeper is NOT running (%s). Nothing will write "
         "alert.expired, action.abandoned or episode.closed, so the scorecard "
-        "will score the successes only.", reason,
+        "will score the successes only.",
+        reason,
     )
 
 
@@ -864,7 +913,7 @@ def sweeper_health() -> dict:
     return state
 
 
-def sweep_once(now: Optional[datetime] = None) -> dict:
+def sweep_once(now: datetime | None = None) -> dict:
     """Close expired episodes and MATERIALISE THE NEGATIVES. SYNC — worker only.
 
     The negatives are the point of the instrument. An alert nobody opened, a
@@ -889,7 +938,7 @@ def sweep_once(now: Optional[datetime] = None) -> dict:
     if not _enabled():
         return counts
     window = _episode_window_min()
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     cutoff = (now - timedelta(minutes=window)).isoformat(timespec="milliseconds")
     stamp = now.isoformat(timespec="milliseconds")
     try:
@@ -923,12 +972,23 @@ def sweep_once(now: Optional[datetime] = None) -> dict:
                     (episode_id,),
                 ).fetchall()
                 for row in unviewed:
-                    batch.append(build(
-                        "alert.expired", episode_id, "sweeper",
-                        occurred_at=stamp, patient_id=patient_id, ward=ward,
-                        subject_type="messages", subject_id=row["subject_id"],
-                        payload={"message_id": row["message_id"], "window_min": window, "viewers": 0},
-                    ))
+                    batch.append(
+                        build(
+                            "alert.expired",
+                            episode_id,
+                            "sweeper",
+                            occurred_at=stamp,
+                            patient_id=patient_id,
+                            ward=ward,
+                            subject_type="messages",
+                            subject_id=row["subject_id"],
+                            payload={
+                                "message_id": row["message_id"],
+                                "window_min": window,
+                                "viewers": 0,
+                            },
+                        )
+                    )
 
                 proposals = conn.execute(
                     """SELECT json_extract(payload_json,'$.action_class') AS action_class
@@ -944,21 +1004,39 @@ def sweep_once(now: Optional[datetime] = None) -> dict:
                         (episode_id,),
                     ).fetchone()
                     if not settled:
-                        batch.append(build(
-                            "action.abandoned", episode_id, "sweeper",
-                            occurred_at=stamp, patient_id=patient_id, ward=ward,
-                            payload={"action_class": proposals[0]["action_class"],
-                                     "window_min": window},
-                        ))
+                        batch.append(
+                            build(
+                                "action.abandoned",
+                                episode_id,
+                                "sweeper",
+                                occurred_at=stamp,
+                                patient_id=patient_id,
+                                ward=ward,
+                                payload={
+                                    "action_class": proposals[0]["action_class"],
+                                    "window_min": window,
+                                },
+                            )
+                        )
 
-                batch.append(build(
-                    "episode.closed", episode_id, "sweeper",
-                    occurred_at=stamp, patient_id=patient_id, ward=ward,
-                    payload={"window_min": window, "events_n": ep["events_n"], "reason": "window_expired"},
-                ))
+                batch.append(
+                    build(
+                        "episode.closed",
+                        episode_id,
+                        "sweeper",
+                        occurred_at=stamp,
+                        patient_id=patient_id,
+                        ward=ward,
+                        payload={
+                            "window_min": window,
+                            "events_n": ep["events_n"],
+                            "reason": "window_expired",
+                        },
+                    )
+                )
 
                 ids = emit_many(batch, db=conn)
-                for ev, row_id in zip(batch, ids):
+                for ev, row_id in zip(batch, ids, strict=False):
                     if row_id is None:
                         continue
                     if ev["kind"] == "alert.expired":
@@ -982,7 +1060,8 @@ def sweep_once(now: Optional[datetime] = None) -> dict:
             "shadow: sweep cycle FAILED (%d consecutive) — no negatives were "
             "materialised this cycle; alert.expired / action.abandoned / "
             "episode.closed are the scorecard's only counter-evidence",
-            STATS.get("sweep_consecutive_failures", 1), exc_info=True,
+            STATS.get("sweep_consecutive_failures", 1),
+            exc_info=True,
         )
         return counts
     _record_sweep(True)
@@ -997,7 +1076,9 @@ async def sweep_loop(interval_seconds: int = 300) -> None:
     to prevent. It is loud instead — see `sweep_once` and `sweeper_health`.
     """
     import asyncio
+
     from database import run_db
+
     while True:
         await asyncio.sleep(interval_seconds)
         try:
@@ -1009,11 +1090,12 @@ async def sweep_loop(interval_seconds: int = 300) -> None:
             logger.error(
                 "shadow: sweep cycle could not run (%d consecutive) — the "
                 "negatives producer is down",
-                STATS.get("sweep_consecutive_failures", 1), exc_info=True,
+                STATS.get("sweep_consecutive_failures", 1),
+                exc_info=True,
             )
             continue
         if not counts.get("ok", True):
-            continue        # already logged at error, and counted, in sweep_once
+            continue  # already logged at error, and counted, in sweep_once
         if any(counts.get(k) for k in ("closed", "expired", "abandoned")):
             logger.info("shadow sweep: %s", counts)
 
@@ -1023,15 +1105,15 @@ def record_outcome(
     patient_id: str,
     event_type: str,
     *,
-    occurred_at: Optional[str] = None,
-    recognised_by: Optional[str] = None,
+    occurred_at: str | None = None,
+    recognised_by: str | None = None,
     source: str = "manual",
-    confirmed_by_role: Optional[str] = None,
-    actor_user_id: Optional[str] = None,
-    note: Optional[str] = None,
+    confirmed_by_role: str | None = None,
+    actor_user_id: str | None = None,
+    note: str | None = None,
     lane: str = "manual",
     db=None,
-) -> Optional[int]:
+) -> int | None:
     """Write the ground-truth term of the detection-lead-time metric.
 
     THERE IS NO GROUND-TRUTH OUTCOME RECORD ANYWHERE IN ORB TODAY —
@@ -1049,16 +1131,25 @@ def record_outcome(
     """
     episode_id = current_episode(patient_id, db=db)
     if not episode_id:
-        episode_id, _ = open_episode(patient_id, lane, occurred_at=occurred_at,
-                                     trigger="outcome_capture", db=db)
+        episode_id, _ = open_episode(
+            patient_id, lane, occurred_at=occurred_at, trigger="outcome_capture", db=db
+        )
     if not episode_id:
         return None
     text = (note or "").strip()
     return emit(
-        "outcome.recorded", episode_id, lane,
-        occurred_at=occurred_at, patient_id=patient_id, actor_user_id=actor_user_id,
-        payload={"event_type": event_type, "recognised_by": recognised_by,
-                 "source": source, "confirmed_by_role": confirmed_by_role},
+        "outcome.recorded",
+        episode_id,
+        lane,
+        occurred_at=occurred_at,
+        patient_id=patient_id,
+        actor_user_id=actor_user_id,
+        payload={
+            "event_type": event_type,
+            "recognised_by": recognised_by,
+            "source": source,
+            "confirmed_by_role": confirmed_by_role,
+        },
         phi={"note": text[:1000]} if text else None,
         db=db,
     )
@@ -1068,20 +1159,28 @@ def record_adjudication(
     episode_id: str,
     verdict: str,
     *,
-    adjudicator_role: Optional[str] = None,
+    adjudicator_role: str | None = None,
     blinded: bool = False,
-    review_seconds: Optional[int] = None,
-    actor_user_id: Optional[str] = None,
-    patient_id: Optional[str] = None,
+    review_seconds: int | None = None,
+    actor_user_id: str | None = None,
+    patient_id: str | None = None,
     lane: str = "manual",
     db=None,
-) -> Optional[int]:
+) -> int | None:
     """Record a blinded clinician verdict on an episode (the false-alert term)."""
     return emit(
-        "adjudication.recorded", episode_id, lane,
-        patient_id=patient_id, actor_user_id=actor_user_id, actor_role=adjudicator_role,
-        payload={"verdict": verdict, "adjudicator_role": adjudicator_role,
-                 "blinded": bool(blinded), "review_seconds": review_seconds},
+        "adjudication.recorded",
+        episode_id,
+        lane,
+        patient_id=patient_id,
+        actor_user_id=actor_user_id,
+        actor_role=adjudicator_role,
+        payload={
+            "verdict": verdict,
+            "adjudicator_role": adjudicator_role,
+            "blinded": bool(blinded),
+            "review_seconds": review_seconds,
+        },
         db=db,
     )
 
@@ -1148,6 +1247,7 @@ def verify_append_only(db=None) -> dict:
     this is a diagnostic, and a caller deciding what to do about a broken
     guarantee is a different question from discovering that it is broken.
     """
+
     def _work(conn) -> dict:
         present = _existing_triggers(conn)
         out = {
@@ -1214,10 +1314,15 @@ def verify_append_only(db=None) -> dict:
             return _work(conn)
     except Exception as exc:
         logger.error("shadow: append-only verification could not run", exc_info=True)
-        return {"ok": False, "error": f"{type(exc).__name__}: {exc}",
-                "triggers_present": [], "triggers_missing": sorted(_APPEND_ONLY_TRIGGERS),
-                "update_blocked": False, "delete_blocked": False,
-                "simulator_delete_allowed": False}
+        return {
+            "ok": False,
+            "error": f"{type(exc).__name__}: {exc}",
+            "triggers_present": [],
+            "triggers_missing": sorted(_APPEND_ONLY_TRIGGERS),
+            "update_blocked": False,
+            "delete_blocked": False,
+            "simulator_delete_allowed": False,
+        }
 
 
 def ensure_append_only(db=None) -> dict:
@@ -1231,6 +1336,7 @@ def ensure_append_only(db=None) -> dict:
     Deliberately does NOT run inside `verify_append_only`: verification that
     silently repairs what it is verifying cannot report a breach.
     """
+
     def _work(conn) -> dict:
         missing = sorted(set(_APPEND_ONLY_TRIGGERS) - _existing_triggers(conn))
         for name in missing:

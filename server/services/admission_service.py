@@ -1,15 +1,18 @@
 """Orb Admission Service — Handles the cross-module orchestration of admitting a patient"""
+
+import json
 import logging
 import re
 import uuid
-import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
+
 from database import SERVICE_ACCOUNT_IDS, db_session
+
 from services.clinical_time import to_utc_iso
-from services.vitals_source import manual_entry_source_or_standin
-from services.patient_name_rule import validate_patient_name
 from services.drug_chart import drug_chart_enabled as _drug_chart_enabled
-from ws.realtime import sio
+from services.patient_name_rule import validate_patient_name
+from services.vitals_source import manual_entry_source_or_standin
 
 logger = logging.getLogger("orb.admission")
 
@@ -76,8 +79,7 @@ def attending_doctors() -> list[dict]:
                  ORDER BY name""",
             (*ATTENDING_ROLES, *service_ids),
         ).fetchall()
-    return [{"id": r["id"], "name": r["name"], "department": r["department"] or None}
-            for r in rows]
+    return [{"id": r["id"], "name": r["name"], "department": r["department"] or None} for r in rows]
 
 
 class AdmissionInputError(ValueError):
@@ -97,8 +99,9 @@ DEPARTMENT_NOT_COVERED = (
 )
 
 
-def resolve_admission_department(name, *, facility_id: int | None = None,
-                                 facilities: frozenset | None = None) -> str:
+def resolve_admission_department(
+    name, *, facility_id: int | None = None, facilities: frozenset | None = None
+) -> str:
     """The department as the access boundary spells it, or AdmissionInputError.
 
     permissions.department_scope matches admissions.department to users.department
@@ -113,8 +116,9 @@ def resolve_admission_department(name, *, facility_id: int | None = None,
     """
     from services.frontdesk_service import _resolve_covering_department
 
-    canonical = _resolve_covering_department(name if isinstance(name, str) else "",
-                                             facility_id=facility_id, facilities=facilities)
+    canonical = _resolve_covering_department(
+        name if isinstance(name, str) else "", facility_id=facility_id, facilities=facilities
+    )
     if canonical is None:
         raise AdmissionInputError(DEPARTMENT_NOT_COVERED)
     return canonical
@@ -149,14 +153,23 @@ CROSS_FACILITY_ADMISSION_WORDS = (
 )
 
 
-def admission_facility(department, user: dict, *, lane: str, patient_id: str | None = None,
-                       request_meta: dict | None = None) -> int | None:
+def admission_facility(
+    department,
+    user: dict,
+    *,
+    lane: str,
+    patient_id: str | None = None,
+    request_meta: dict | None = None,
+) -> int | None:
     """The facility a new admission into `department` is at, or None while one
     facility is on record (nothing to stamp). Raises AdmissionRefused, after
     the audit row, for the three refusals above. Opens sessions of its own:
     call it before the admission's transaction opens."""
     from services import facility_service
-    from services.frontdesk_service import audit_cross_facility_refusal, patient_facility_ids_on
+    from services.frontdesk_service import (
+        audit_cross_facility_refusal,
+        patient_facility_ids_on,
+    )
 
     if not facility_service.multi_facility_data():
         return None
@@ -167,25 +180,41 @@ def admission_facility(department, user: dict, *, lane: str, patient_id: str | N
         with db_session() as db:
             held = patient_facility_ids_on(db, patient_id)
     if to_facility is None:
-        cause, refused = "department_not_listed", AdmissionRefused(
-            "department_not_listed", DEPARTMENT_NOT_COVERED, status=400)
+        cause, refused = (
+            "department_not_listed",
+            AdmissionRefused("department_not_listed", DEPARTMENT_NOT_COVERED, status=400),
+        )
     elif scope is not None and to_facility not in scope:
-        cause, refused = "actor_outside_facility", AdmissionRefused(
-            "facility_scope", OUTSIDE_FACILITY_WORDS, status=403)
+        cause, refused = (
+            "actor_outside_facility",
+            AdmissionRefused("facility_scope", OUTSIDE_FACILITY_WORDS, status=403),
+        )
     elif held - {to_facility}:
-        cause, refused = "patient_at_another_facility", AdmissionRefused(
-            "cross_facility_move_refused", CROSS_FACILITY_ADMISSION_WORDS, status=409)
+        cause, refused = (
+            "patient_at_another_facility",
+            AdmissionRefused(
+                "cross_facility_move_refused", CROSS_FACILITY_ADMISSION_WORDS, status=409
+            ),
+        )
     else:
         return to_facility
     audit_cross_facility_refusal(
-        lane=lane, cause=cause, patient_id=patient_id, actor_id=user.get("id"),
-        actor_role=user.get("role"), to_department=department, to_facility_id=to_facility,
-        from_facility_ids=held, request_meta=request_meta)
+        lane=lane,
+        cause=cause,
+        patient_id=patient_id,
+        actor_id=user.get("id"),
+        actor_role=user.get("role"),
+        to_department=department,
+        to_facility_id=to_facility,
+        from_facility_ids=held,
+        request_meta=request_meta,
+    )
     raise refused
 
 
-def _stamp_admission_facility_on(db, *, admission_id: str, patient_id: str,
-                                 facility_id: int | None, new_patient: bool) -> None:
+def _stamp_admission_facility_on(
+    db, *, admission_id: str, patient_id: str, facility_id: int | None, new_patient: bool
+) -> None:
     """Write the admission's facility on the admission's own transaction, and
     for a patient this admission creates, the facility they were registered
     at. None (one facility on record): the columns' default, 1, stands."""
@@ -193,8 +222,9 @@ def _stamp_admission_facility_on(db, *, admission_id: str, patient_id: str,
         return
     db.execute("UPDATE admissions SET facility_id = ? WHERE id = ?", (facility_id, admission_id))
     if new_patient:
-        db.execute("UPDATE patients SET registered_facility_id = ? WHERE id = ?",
-                   (facility_id, patient_id))
+        db.execute(
+            "UPDATE patients SET registered_facility_id = ? WHERE id = ?", (facility_id, patient_id)
+        )
 
 
 def require_listed_attending(doctor_id) -> str:
@@ -231,8 +261,10 @@ def bed_in_use_warning(db, ward, bed) -> str | None:
     ).fetchone()
     if held is None:
         return None
-    return (f"Bed {bed_t} on {ward_t} is already held by another admitted patient. "
-            "Check the bed with the ward.")
+    return (
+        f"Bed {bed_t} on {ward_t} is already held by another admitted patient. "
+        "Check the bed with the ward."
+    )
 
 
 def _natural_key(label: str) -> list:
@@ -261,8 +293,11 @@ def admission_choices(user_department=None, *, user: dict | None = None) -> dict
 
     # multisite-3: with more than one facility on record, only the departments
     # of the caller's own facilities (admission_facility refuses the rest).
-    scope = (facility_service.facility_scope_for(user)
-             if user is not None and facility_service.multi_facility_data() else None)
+    scope = (
+        facility_service.facility_scope_for(user)
+        if user is not None and facility_service.multi_facility_data()
+        else None
+    )
     departments = list_covering_departments(facilities=scope)
     with db_session() as db:
         held_rows = db.execute(
@@ -278,16 +313,23 @@ def admission_choices(user_department=None, *, user: dict | None = None) -> dict
         ).fetchall()
         # Read straight from the table, never through housekeeping_service: that
         # module must never sit in the admission path (its module note).
-        has_register = db.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'housekeeping_units'"
-        ).fetchone() is not None
-        register_rows = db.execute(
-            """SELECT TRIM(ward) AS ward,
+        has_register = (
+            db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'housekeeping_units'"
+            ).fetchone()
+            is not None
+        )
+        register_rows = (
+            db.execute(
+                """SELECT TRIM(ward) AS ward,
                       COALESCE(NULLIF(TRIM(bed_label), ''), TRIM(unit_code)) AS bed
                  FROM housekeeping_units
                 WHERE unit_type = 'bed' AND COALESCE(is_active, 1) = 1
                   AND TRIM(COALESCE(ward, '')) != ''"""
-        ).fetchall() if has_register else []
+            ).fetchall()
+            if has_register
+            else []
+        )
 
     def key(ward: str, bed: str) -> tuple:
         return ward.casefold(), bed.casefold()
@@ -308,13 +350,14 @@ def admission_choices(user_department=None, *, user: dict | None = None) -> dict
             entry["departments"].append(r["department"])
 
     wanted = (user_department or "").strip().casefold() if isinstance(user_department, str) else ""
-    choices = {
+    choices: dict[str, Any] = {
         "departments": departments,
         "default_department": next((d for d in departments if d.casefold() == wanted), None),
         "doctors": attending_doctors(),
         "wards": sorted(wards.values(), key=lambda w: _natural_key(w["ward"])),
-        "beds": sorted(beds.values(),
-                       key=lambda b: (_natural_key(b["ward"]), _natural_key(b["bed"]))),
+        "beds": sorted(
+            beds.values(), key=lambda b: (_natural_key(b["ward"]), _natural_key(b["bed"]))
+        ),
     }
     # Beds and admissions (ORB_ADT, default off): the bed master's wards and
     # beds with the status the bed board derives, for the form's bed picker
@@ -340,6 +383,7 @@ def admission_choices(user_department=None, *, user: dict | None = None) -> dict
 # the master the same way (design section 5): 'gm-1' links to GM-1. With the
 # module off nothing here runs and admit_patient is exactly as before.
 
+
 def _adt_admitting() -> bool:
     """True while ORB_ADT is on (read at call time; draining counts as off,
     so a module being switched off takes no new master placements)."""
@@ -362,9 +406,12 @@ def _master_choices(user: dict | None = None) -> dict:
     treating one, or none). Staff names and ward and bed labels only; no
     patient data."""
     import config
+
     from services import housekeeping_service as hk
     from services.adt.core import (
-        TERMINAL_CLEAN_AUTHORISER_ROLES, bed_choices_on, terminal_authoriser_eligible_on,
+        TERMINAL_CLEAN_AUTHORISER_ROLES,
+        bed_choices_on,
+        terminal_authoriser_eligible_on,
     )
 
     # Opens a session of its own, so it runs before the read session below.
@@ -376,8 +423,12 @@ def _master_choices(user: dict | None = None) -> dict:
     with db_session() as db:
         wards = bed_choices_on(db)
         authorisers = [
-            {"id": r["id"], "name": r["name"], "role": r["role"],
-             "department": r["department"] or None}
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "role": r["role"],
+                "department": r["department"] or None,
+            }
             for r in db.execute(
                 f"""SELECT id, name, role, TRIM(COALESCE(department, '')) AS department
                       FROM users
@@ -393,16 +444,26 @@ def _master_choices(user: dict | None = None) -> dict:
         if me and terminal_authoriser_eligible_on(db, me):
             row = db.execute(
                 "SELECT id, name, role, TRIM(COALESCE(department, '')) AS department "
-                "FROM users WHERE id = ?", (me,)).fetchone()
-            self_authoriser = {"id": row["id"], "name": row["name"], "role": row["role"],
-                               "department": row["department"] or None}
+                "FROM users WHERE id = ?",
+                (me,),
+            ).fetchone()
+            self_authoriser = {
+                "id": row["id"],
+                "name": row["name"],
+                "role": row["role"],
+                "department": row["department"] or None,
+            }
     from services.adt.core import strict_locations_on
 
-    return {"wards": wards, "authorisers": authorisers, "self_authoriser": self_authoriser,
-            "backtime_hours": int(getattr(config, "ADT_BACKTIME_HOURS", 72)),
-            # adt-16: with strict locations on the server refuses a ward or bed
-            # not in bed setup, so the picker offers no typed place.
-            "strict_locations": strict_locations_on()}
+    return {
+        "wards": wards,
+        "authorisers": authorisers,
+        "self_authoriser": self_authoriser,
+        "backtime_hours": int(getattr(config, "ADT_BACKTIME_HOURS", 72)),
+        # adt-16: with strict locations on the server refuses a ward or bed
+        # not in bed setup, so the picker offers no typed place.
+        "strict_locations": strict_locations_on(),
+    }
 
 
 def _plain(value) -> str | None:
@@ -413,8 +474,13 @@ def _plain(value) -> str | None:
     return text or None
 
 
-def _adt_admission_plan(data: dict, idempotency_key, user: dict | None = None,
-                        request_meta: dict | None = None, authoriser_pin=None) -> dict:
+def _adt_admission_plan(
+    data: dict,
+    idempotency_key,
+    user: dict | None = None,
+    request_meta: dict | None = None,
+    authoriser_pin=None,
+) -> dict:
     """The placement fields of an admission, checked BEFORE any session opens
     (the immediate session must be the outermost one). Raises AdtError (or
     AdtBadTime, 400) with words. A signing PIN typed for a terminal-clean
@@ -422,7 +488,11 @@ def _adt_admission_plan(data: dict, idempotency_key, user: dict | None = None,
     authoriser), so a refused PIN is audited in a session of its own; only
     whether it confirmed somebody is kept, never the PIN."""
     from services import housekeeping_service as hk
-    from services.adt.core import AdtError, check_event_time, confirm_terminal_authoriser
+    from services.adt.core import (
+        AdtError,
+        check_event_time,
+        confirm_terminal_authoriser,
+    )
     from services.clinical_time import to_utc_iso as _iso
 
     awaiting = data.get("awaiting_bed") is True
@@ -441,16 +511,22 @@ def _adt_admission_plan(data: dict, idempotency_key, user: dict | None = None,
         "terminal_clean_reason": data.get("terminal_clean_reason"),
     }
     if awaiting and (plan["bed_id"] or plan["bed_text"] or extra):
-        raise AdtError("No bed yet was chosen, but a bed was named as well. Choose one or "
-                       "the other.", code="awaiting_bed_with_bed")
+        raise AdtError(
+            "No bed yet was chosen, but a bed was named as well. Choose one or the other.",
+            code="awaiting_bed_with_bed",
+        )
     admitted = check_event_time(data.get("admitted_at"), what="admission")
     plan["admitted"] = admitted
     plan["admitted_iso"] = _iso(admitted)
     # Opens a session of its own (the lazy housekeeping path), so before ours.
     hk.ensure_housekeeping_schema()
     plan["terminal_clean_confirmed"] = confirm_terminal_authoriser(
-        actor=user, authorised_by=plan["terminal_clean_authorised_by"], pin=authoriser_pin,
-        bed_id=plan["bed_id"], request_meta=request_meta)
+        actor=user,
+        authorised_by=plan["terminal_clean_authorised_by"],
+        pin=authoriser_pin,
+        bed_id=plan["bed_id"],
+        request_meta=request_meta,
+    )
     return plan
 
 
@@ -473,15 +549,22 @@ def _adt_replay_on(db, plan: dict, user: dict, name: str) -> dict | None:
             WHERE a.id = ?""",
         (prior.get("admission_id"),),
     ).fetchone()
-    same = (row is not None and prior.get("movement_type") == "admission"
-            and (prior.get("moved_by") or None) == user.get("id")
-            and (_plain(row["name"]) or "").casefold() == (_plain(name) or "").casefold())
+    same = (
+        row is not None
+        and prior.get("movement_type") == "admission"
+        and (prior.get("moved_by") or None) == user.get("id")
+        and (_plain(row["name"]) or "").casefold() == (_plain(name) or "").casefold()
+    )
     if not same:
-        raise AdtConflict("That Idempotency-Key was already used for another admission. "
-                          "Nothing was saved.", code="idempotency_key_reused")
+        raise AdtConflict(
+            "That Idempotency-Key was already used for another admission. Nothing was saved.",
+            code="idempotency_key_reused",
+        )
     room = db.execute(
         "SELECT id FROM channels WHERE patient_id = ? AND type = 'case_room' "
-        "ORDER BY created_at LIMIT 1", (row["id"],)).fetchone()
+        "ORDER BY created_at LIMIT 1",
+        (row["id"],),
+    ).fetchone()
     return {
         "success": True,
         "replayed": True,
@@ -496,8 +579,10 @@ def _adt_replay_on(db, plan: dict, user: dict, name: str) -> dict | None:
         "admitted_at": row["admitted_at"],
         "movement_id": prior["id"],
         "location": {
-            "ward_id": prior.get("to_ward_id"), "bed_id": prior.get("to_bed_id"),
-            "ward": prior.get("to_ward"), "bed": prior.get("to_bed"),
+            "ward_id": prior.get("to_ward_id"),
+            "bed_id": prior.get("to_bed_id"),
+            "ward": prior.get("to_ward"),
+            "bed": prior.get("to_bed"),
             "linked": prior.get("to_bed_id") is not None,
             "awaiting_bed": not prior.get("to_bed_id") and not prior.get("to_bed"),
             "boarder": bool((prior.get("detail") or {}).get("boarder")),
@@ -505,8 +590,11 @@ def _adt_replay_on(db, plan: dict, user: dict, name: str) -> dict | None:
         },
         "location_warning": None,
         # adt-17b: a replayed ward clerk's admission says so again.
-        **({"clerk_admission": True, "clinical_fields": "Not yet assessed"}
-           if (prior.get("detail") or {}).get("clerk_admission") else {}),
+        **(
+            {"clerk_admission": True, "clinical_fields": "Not yet assessed"}
+            if (prior.get("detail") or {}).get("clerk_admission")
+            else {}
+        ),
     }
 
 
@@ -653,20 +741,27 @@ def _door_review(raw) -> dict | None:
         raise AdmissionRefused(
             "bad_duplicate_review",
             "A duplicate review must say 'admit_new' and list the records you checked.",
-            status=422)
+            status=422,
+        )
     ids = raw.get("candidate_ids") or []
     if not isinstance(ids, list) or not all(isinstance(i, str) and i.strip() for i in ids):
-        raise AdmissionRefused("bad_duplicate_review",
-                               "List the records you checked by their ids.", status=422)
+        raise AdmissionRefused(
+            "bad_duplicate_review", "List the records you checked by their ids.", status=422
+        )
     reason = raw.get("reason")
     reason = " ".join(reason.split()) if isinstance(reason, str) else ""
     if len(reason) < reg.REASON_MIN_CHARS:
         raise AdmissionRefused(
             "override_reason_required",
             f"Give a reason of at least {reg.REASON_MIN_CHARS} characters. It is the only "
-            "thing that explains this to whoever reads it next.", status=422)
-    return {"decision": "admit_new", "candidate_ids": sorted({i.strip() for i in ids}),
-            "reason": reason[:1000]}
+            "thing that explains this to whoever reads it next.",
+            status=422,
+        )
+    return {
+        "decision": "admit_new",
+        "candidate_ids": sorted({i.strip() for i in ids}),
+        "reason": reason[:1000],
+    }
 
 
 def _door_identity_plan(data: dict, door: str) -> dict:
@@ -677,6 +772,7 @@ def _door_identity_plan(data: dict, door: str) -> dict:
     if not _registration_on():
         return {"on": False}
     import config
+
     from services import registration_service as reg
 
     source = config.UHID_SOURCE
@@ -688,14 +784,20 @@ def _door_identity_plan(data: dict, door: str) -> dict:
             raise AdmissionRefused(
                 "uhid_assigned_by_orb",
                 "This site issues hospital numbers itself. Leave the hospital number blank.",
-                status=422)
+                status=422,
+            )
     else:
         try:
             uhid = reg._hospital_uhid(typed)
         except reg.RegistrationError as exc:
             raise AdmissionRefused(exc.code, exc.message, status=exc.status) from exc
-    return {"on": True, "door": door, "uhid_source": source, "uhid": uhid,
-            "review": _door_review(data.get("duplicate_review"))}
+    return {
+        "on": True,
+        "door": door,
+        "uhid_source": source,
+        "uhid": uhid,
+        "review": _door_review(data.get("duplicate_review")),
+    }
 
 
 def _may_see_index_cards(user: dict) -> bool:
@@ -707,8 +809,17 @@ def _may_see_index_cards(user: dict) -> bool:
     return bool(has_permission(user.get("role") or "", REGISTRATION_READ))
 
 
-def _door_refusal(reason: str, message: str, candidates: list[dict], *, mode: str,
-                  scan: dict, user: dict, door: str, override_allowed: bool) -> _DoorRefusal:
+def _door_refusal(
+    reason: str,
+    message: str,
+    candidates: list[dict],
+    *,
+    mode: str,
+    scan: dict,
+    user: dict,
+    door: str,
+    override_allowed: bool,
+) -> _DoorRefusal:
     shown = _may_see_index_cards(user)
     ids = [c["patient_id"] for c in candidates]
     # opd-17a: with outpatients on, a registered patient in a clinic today is
@@ -721,30 +832,53 @@ def _door_refusal(reason: str, message: str, candidates: list[dict], *, mode: st
     # it is off, so the refusal is exactly as before.
     readmit_extra: dict = {}
     if readmission_on():
-        pointer = (READMIT_FROM_FORM_POINTER if door == DOOR_SCRIBE_QUICK_ADMIT
-                   else READMIT_FROM_VISIT_POINTER if from_visit else READMIT_POINTER)
-        readmit_extra = {"readmission_available": any(
-            c.get("readmittable") for c in candidates)}
+        pointer = (
+            READMIT_FROM_FORM_POINTER
+            if door == DOOR_SCRIBE_QUICK_ADMIT
+            else READMIT_FROM_VISIT_POINTER
+            if from_visit
+            else READMIT_POINTER
+        )
+        readmit_extra = {"readmission_available": any(c.get("readmittable") for c in candidates)}
     refused = AdmissionRefused(
-        POSSIBLE_EXISTING_PATIENT, f"{message} {pointer}", status=409,
-        reason=reason, candidates=candidates if shown else [],
-        candidate_count=len(candidates), candidates_hidden=not shown, mode=mode,
-        check_incomplete=scan["check_incomplete"], override_allowed=override_allowed,
-        admit_existing_available=from_visit, **readmit_extra)
-    return _DoorRefusal(refused, shown=shown, metadata={
-        "reason_code": reason, "door": door, "mode": mode,
-        "matched_patient_ids": ids, "bands": [c["band"] for c in candidates],
-        "candidates_shown": shown, **scan})
+        POSSIBLE_EXISTING_PATIENT,
+        f"{message} {pointer}",
+        status=409,
+        reason=reason,
+        candidates=candidates if shown else [],
+        candidate_count=len(candidates),
+        candidates_hidden=not shown,
+        mode=mode,
+        check_incomplete=scan["check_incomplete"],
+        override_allowed=override_allowed,
+        admit_existing_available=from_visit,
+        **readmit_extra,
+    )
+    return _DoorRefusal(
+        refused,
+        shown=shown,
+        metadata={
+            "reason_code": reason,
+            "door": door,
+            "mode": mode,
+            "matched_patient_ids": ids,
+            "bands": [c["band"] for c in candidates],
+            "candidates_shown": shown,
+            **scan,
+        },
+    )
 
 
-def _door_index_check_on(db, plan: dict, *, name: str, data: dict, date_of_birth,
-                         user: dict) -> dict:
+def _door_index_check_on(
+    db, plan: dict, *, name: str, data: dict, date_of_birth, user: dict
+) -> dict:
     """Search the patient index for this admission inside its own immediate
     transaction and apply the desk's duplicate rule (section note above).
     Raises _DoorRefusal (candidates to disclose) or AdmissionRefused. Returns
     the facts the admission writes after its rows: the hospital number to
     store and what the check found."""
     from permissions import department_scope
+
     from services import patient_matching as pm
     from services import registration_service as reg
 
@@ -755,13 +889,20 @@ def _door_index_check_on(db, plan: dict, *, name: str, data: dict, date_of_birth
             raise AdmissionRefused(
                 "uhid_series_not_configured",
                 "Hospital numbers cannot be issued yet: the UHID series is not set up on "
-                "this site. Ask an administrator to configure it.", status=409)
+                "this site. Ask an administrator to configure it.",
+                status=409,
+            )
     probe = pm.probe_from(
-        name=name, phone=data.get("phone"), date_of_birth=date_of_birth,
-        age_years=None if date_of_birth else data.get("age"), sex=data.get("sex"),
-        uhid=plan["uhid"])
+        name=name,
+        phone=data.get("phone"),
+        date_of_birth=date_of_birth,
+        age_years=None if date_of_birth else data.get("age"),
+        sex=data.get("sex"),
+        uhid=plan["uhid"],
+    )
     found = pm.find_candidates_on(
-        db, probe, dob_visible=reg._dob_visible_to(db, department_scope(user)))
+        db, probe, dob_visible=reg._dob_visible_to(db, department_scope(user))
+    )
     candidates = reg._decorate_candidates(db, found["candidates"])
     if readmission_on():
         # opd-17c: which of these records a discharged patient may be
@@ -777,14 +918,25 @@ def _door_index_check_on(db, plan: dict, *, name: str, data: dict, date_of_birth
             "existing_record",
             "A patient with this hospital number already has a record, so this admission "
             "was not saved and the patient does not get a second chart.",
-            needs["hard"], mode=mode, scan=scan, user=user, door=door, override_allowed=False)
+            needs["hard"],
+            mode=mode,
+            scan=scan,
+            user=user,
+            door=door,
+            override_allowed=False,
+        )
     if needs["blocked"] and needs["probable"]:
         raise _door_refusal(
             "probable_duplicate",
             "This looks like a patient who already has a record, so this admission was not "
             "saved. This site does not admit past a probable duplicate.",
-            needs["probable"] + needs["possible"], mode=mode, scan=scan, user=user,
-            door=door, override_allowed=False)
+            needs["probable"] + needs["possible"],
+            mode=mode,
+            scan=scan,
+            user=user,
+            door=door,
+            override_allowed=False,
+        )
     if needs["blocked"]:
         raise _door_refusal(
             "duplicate_check_incomplete",
@@ -792,8 +944,13 @@ def _door_index_check_on(db, plan: dict, *, name: str, data: dict, date_of_birth
             "duplicate check to compare them all, and one it did not compare may be this "
             "patient, so this admission was not saved. Search the patient index for them, "
             "and leave out a phone number that is not the patient's own.",
-            needs["possible"], mode=mode, scan=scan, user=user, door=door,
-            override_allowed=False)
+            needs["possible"],
+            mode=mode,
+            scan=scan,
+            user=user,
+            door=door,
+            override_allowed=False,
+        )
     reviewed: list[dict] = []
     review = plan["review"]
     if needs["review_required"]:
@@ -802,49 +959,81 @@ def _door_index_check_on(db, plan: dict, *, name: str, data: dict, date_of_birth
             message = (
                 "This may be a patient who already has a record, so this admission was not "
                 "saved yet. Check each record. To admit as a new patient anyway, give a reason."
-                if listed else
-                "Too many records share this phone number, name or date of birth for the "
+                if listed
+                else "Too many records share this phone number, name or date of birth for the "
                 "duplicate check to compare them all, so this may be a patient who already "
                 "has a record and this admission was not saved yet. Search the patient index "
-                "for them. To admit as a new patient anyway, give a reason.")
+                "for them. To admit as a new patient anyway, give a reason."
+            )
             raise _door_refusal(
-                "duplicate_review_required", message,
-                listed, mode=mode, scan=scan, user=user, door=door,
-                override_allowed=_may_see_index_cards(user))
+                "duplicate_review_required",
+                message,
+                listed,
+                mode=mode,
+                scan=scan,
+                user=user,
+                door=door,
+                override_allowed=_may_see_index_cards(user),
+            )
         if any(c["patient_id"] not in review["candidate_ids"] for c in listed):
             raise _door_refusal(
                 "duplicate_review_stale",
                 "More possible matches were found since you checked, so this admission was "
                 "not saved. Review the list again.",
-                listed, mode=mode, scan=scan, user=user, door=door,
-                override_allowed=_may_see_index_cards(user))
+                listed,
+                mode=mode,
+                scan=scan,
+                user=user,
+                door=door,
+                override_allowed=_may_see_index_cards(user),
+            )
         reviewed = listed
     uhid = plan["uhid"]
     if series is not None:
         from services.billing_masters import SeriesNotConfigured, allocate_series_number
+
         try:
             uhid = allocate_series_number(db, reg.UHID_SERIES, require_configured=True)["number"]
         except SeriesNotConfigured:
             raise AdmissionRefused(
                 "uhid_series_not_configured",
                 "Hospital numbers cannot be issued yet: the UHID series is not set up on "
-                "this site.", status=409)
+                "this site.",
+                status=409,
+            ) from None
         if reg._uhid_in_use_on(db, uhid):
             raise AdmissionRefused(
                 "uhid_series_collision",
                 "The next number in the UHID series is already in use. Ask an administrator "
-                "to check the series before admitting anyone.", status=409)
-    return {"mrn": uhid, "mode": mode, "scan": scan, "reviewed": reviewed,
-            "review": review if needs["review_required"] else None,
-            "review_used": bool(needs["review_required"])}
+                "to check the series before admitting anyone.",
+                status=409,
+            )
+    return {
+        "mrn": uhid,
+        "mode": mode,
+        "scan": scan,
+        "reviewed": reviewed,
+        "review": review if needs["review_required"] else None,
+        "review_used": bool(needs["review_required"]),
+    }
 
 
-def _door_record_on(db, facts: dict, plan: dict, *, patient_id: str, admission_id: str,
-                    user: dict, now: str, request_meta: dict | None) -> None:
+def _door_record_on(
+    db,
+    facts: dict,
+    plan: dict,
+    *,
+    patient_id: str,
+    admission_id: str,
+    user: dict,
+    now: str,
+    request_meta: dict | None,
+) -> None:
     """After the admission's rows: the worklist row for each candidate the
     clinician admitted past, and the fail-closed patient_identity rows, in the
     admission's transaction (an unwritable row rolls the admission back)."""
     from permissions import department_scope
+
     from services.audit_service import log_audit_event
 
     meta = dict(request_meta or {})
@@ -857,38 +1046,73 @@ def _door_record_on(db, facts: dict, plan: dict, *, patient_id: str, admission_i
                    overridden_by, override_reason)
                VALUES (?, ?, ?, ?, 'open', 'admission', ?, ?, ?, ?)
                ON CONFLICT(patient_id, candidate_patient_id) DO NOTHING""",
-            (a, b, int(c["score"]), json.dumps(c["reasons"]), now, user["id"],
-             user["id"], review["reason"] if review else None))
+            (
+                a,
+                b,
+                int(c["score"]),
+                json.dumps(c["reasons"]),
+                now,
+                user["id"],
+                user["id"],
+                review["reason"] if review else None,
+            ),
+        )
 
     def audit(action: str, summary: str, metadata: dict) -> None:
         log_audit_event(
             correlation_id=f"admission-identity-{admission_id}",
-            event_category="patient_identity", action_type=action, outcome="success",
-            db=db, summary_message=summary, actor_user_id=user.get("id"),
-            actor_role=user.get("role"), target_type="patient", target_id=str(patient_id),
-            patient_id=patient_id, request_path=meta.get("request_path"),
-            http_method=meta.get("http_method"), ip_address=meta.get("ip_address"),
+            event_category="patient_identity",
+            action_type=action,
+            outcome="success",
+            db=db,
+            summary_message=summary,
+            actor_user_id=user.get("id"),
+            actor_role=user.get("role"),
+            target_type="patient",
+            target_id=str(patient_id),
+            patient_id=patient_id,
+            request_path=meta.get("request_path"),
+            http_method=meta.get("http_method"),
+            ip_address=meta.get("ip_address"),
             user_agent=meta.get("user_agent"),
-            metadata={"department": department_scope(user), "door": plan["door"],
-                      "admission_id": admission_id, **metadata})
+            metadata={
+                "department": department_scope(user),
+                "door": plan["door"],
+                "admission_id": admission_id,
+                **metadata,
+            },
+        )
 
     scan = facts["scan"]
-    audit("admission_identity_checked",
-          f"Patient {patient_id} created at an admission door after a patient index check",
-          {"uhid_source": plan["uhid_source"], "mode": facts["mode"],
-           "duplicate_review": facts["review_used"],
-           "candidate_scan_truncated": scan["truncated"],
-           "check_incomplete": scan["check_incomplete"]})
+    audit(
+        "admission_identity_checked",
+        f"Patient {patient_id} created at an admission door after a patient index check",
+        {
+            "uhid_source": plan["uhid_source"],
+            "mode": facts["mode"],
+            "duplicate_review": facts["review_used"],
+            "candidate_scan_truncated": scan["truncated"],
+            "check_incomplete": scan["check_incomplete"],
+        },
+    )
     if facts["review_used"]:
-        audit("admission_duplicate_override",
-              (f"Admitted {patient_id} past {len(facts['reviewed'])} possible duplicate(s)"
-               if facts["reviewed"] else
-               f"Admitted {patient_id} past a duplicate check that could not compare every "
-               "record"),
-              {"mode": facts["mode"], "reason": review["reason"] if review else None,
-               "candidate_ids": [c["patient_id"] for c in facts["reviewed"]],
-               "scores": [c["score"] for c in facts["reviewed"]],
-               "bands": [c["band"] for c in facts["reviewed"]], **scan})
+        audit(
+            "admission_duplicate_override",
+            (
+                f"Admitted {patient_id} past {len(facts['reviewed'])} possible duplicate(s)"
+                if facts["reviewed"]
+                else f"Admitted {patient_id} past a duplicate check that could not compare every "
+                "record"
+            ),
+            {
+                "mode": facts["mode"],
+                "reason": review["reason"] if review else None,
+                "candidate_ids": [c["patient_id"] for c in facts["reviewed"]],
+                "scores": [c["score"] for c in facts["reviewed"]],
+                "bands": [c["band"] for c in facts["reviewed"]],
+                **scan,
+            },
+        )
 
 
 def _audit_door_refusal(refusal: _DoorRefusal, user: dict, request_meta: dict | None) -> None:
@@ -897,32 +1121,46 @@ def _audit_door_refusal(refusal: _DoorRefusal, user: dict, request_meta: dict | 
     import uuid as _uuid
 
     from permissions import department_scope
+
     from services.audit_service import log_audit_event
 
     meta = dict(request_meta or {})
     with db_session() as db:
         log_audit_event(
-            correlation_id=str(_uuid.uuid4()), event_category="patient_identity",
-            action_type="admission_index_refused", outcome="denied", db=db,
+            correlation_id=str(_uuid.uuid4()),
+            event_category="patient_identity",
+            action_type="admission_index_refused",
+            outcome="denied",
+            db=db,
             summary_message=f"Admission refused at the patient index: "
-                            f"{refusal.metadata.get('reason_code')}",
-            actor_user_id=user.get("id"), actor_role=user.get("role"),
-            target_type="patient_index", target_id=None, patient_id=None,
-            request_path=meta.get("request_path"), http_method=meta.get("http_method"),
-            ip_address=meta.get("ip_address"), user_agent=meta.get("user_agent"),
-            metadata={"department": department_scope(user), **refusal.metadata})
+            f"{refusal.metadata.get('reason_code')}",
+            actor_user_id=user.get("id"),
+            actor_role=user.get("role"),
+            target_type="patient_index",
+            target_id=None,
+            patient_id=None,
+            request_path=meta.get("request_path"),
+            http_method=meta.get("http_method"),
+            ip_address=meta.get("ip_address"),
+            user_agent=meta.get("user_agent"),
+            metadata={"department": department_scope(user), **refusal.metadata},
+        )
 
 
 def _location_warning(target: dict) -> str | None:
     """Ruling F104 until a site turns strict on: a ward or bed not in bed
     setup is admitted unlinked, and said so."""
     if target["ward"] is None and target["ward_text"]:
-        return (f"Ward {target['ward_text']} is not in bed setup, so this admission is not "
-                "linked to a bed. A bed manager can link it once the ward is set up.")
+        return (
+            f"Ward {target['ward_text']} is not in bed setup, so this admission is not "
+            "linked to a bed. A bed manager can link it once the ward is set up."
+        )
     if target["ward"] is not None and target["bed"] is None and target["bed_text"]:
-        return (f"Bed {target['bed_text']} on {target['ward_text']} is not in bed setup, so "
-                "this admission is not linked to a bed. A bed manager can link it once the "
-                "bed is set up.")
+        return (
+            f"Bed {target['bed_text']} on {target['ward_text']} is not in bed setup, so "
+            "this admission is not linked to a bed. A bed manager can link it once the "
+            "bed is set up."
+        )
     return None
 
 
@@ -933,6 +1171,7 @@ def _location_warning(target: dict) -> str | None:
 # line through these, so neither can drift from the other. The case room has
 # ONE writer in the codebase (tests/test_stay_keying.py pins it): a patient
 # keeps one room for life, and readers fetch it by patient_id alone.
+
 
 def _insert_portal_login_on(db, *, user_id: str, name: str, department, password_hash: str) -> None:
     """The patient's Bridge portal login. Only the password's hash is stored."""
@@ -946,7 +1185,7 @@ def _insert_case_room_on(db, *, channel_id: str, room_name: str, patient_id: str
     """The patient's Relay case room. Call it only after _case_room_of found none."""
     db.execute(
         "INSERT INTO channels (id, name, type, patient_id, created_at) VALUES (?, ?, 'case_room', ?, ?)",
-        (channel_id, room_name, patient_id, now)
+        (channel_id, room_name, patient_id, now),
     )
 
 
@@ -954,11 +1193,13 @@ def _case_room_of(db, patient_id: str) -> str | None:
     """The patient's existing case room, the oldest when (wrongly) there are two."""
     row = db.execute(
         "SELECT id FROM channels WHERE patient_id = ? AND type = 'case_room' "
-        "ORDER BY created_at, id LIMIT 1", (patient_id,)).fetchone()
+        "ORDER BY created_at, id LIMIT 1",
+        (patient_id,),
+    ).fetchone()
     return row["id"] if row else None
 
 
-def _post_system_line_on(db, *, channel_id: str, content: str, now: str) -> None:
+def _post_system_line_on(db, *, channel_id: str | None, content: str, now: str) -> None:
     """A system line in a case room.
 
     messages.timestamp is written in SQLite's own UTC form, the one its
@@ -967,13 +1208,19 @@ def _post_system_line_on(db, *, channel_id: str, content: str, now: str) -> None
     db.execute(
         """INSERT INTO messages (channel_id, sender_id, sender_name, sender_role, content, message_type, timestamp, is_bot, source)
            VALUES (?, 'system', 'Orb System', 'system', ?, 'system', ?, 1, 'system')""",
-        (channel_id, content, datetime.fromisoformat(now).strftime("%Y-%m-%d %H:%M:%S"))
+        (channel_id, content, datetime.fromisoformat(now).strftime("%Y-%m-%d %H:%M:%S")),
     )
 
 
-def admit_patient(data: dict, user: dict, *, idempotency_key: str | None = None,
-                  request_meta: dict | None = None, door: str = DOOR_ADMISSION_FORM,
-                  clerk_entry: bool = False) -> dict:
+def admit_patient(
+    data: dict,
+    user: dict,
+    *,
+    idempotency_key: str | None = None,
+    request_meta: dict | None = None,
+    door: str = DOOR_ADMISSION_FORM,
+    clerk_entry: bool = False,
+) -> dict:
     """Admit a patient through one of the admission doors (`door`: the
     admission form or Scribe's quick admission). The transaction is _admit's.
 
@@ -991,8 +1238,14 @@ def admit_patient(data: dict, user: dict, *, idempotency_key: str | None = None,
     from db_backend import DBIntegrityError
 
     try:
-        return _admit(data, user, idempotency_key=idempotency_key,
-                      request_meta=request_meta, door=door, clerk_entry=clerk_entry)
+        return _admit(
+            data,
+            user,
+            idempotency_key=idempotency_key,
+            request_meta=request_meta,
+            door=door,
+            clerk_entry=clerk_entry,
+        )
     except _DoorRefusal as refusal:
         _audit_door_refusal(refusal, user, request_meta)
         raise refusal.refused from None
@@ -1002,9 +1255,15 @@ def admit_patient(data: dict, user: dict, *, idempotency_key: str | None = None,
         raise
 
 
-def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
-           request_meta: dict | None = None, door: str = DOOR_ADMISSION_FORM,
-           clerk_entry: bool = False) -> dict:
+def _admit(
+    data: dict,
+    user: dict,
+    *,
+    idempotency_key: str | None = None,
+    request_meta: dict | None = None,
+    door: str = DOOR_ADMISSION_FORM,
+    clerk_entry: bool = False,
+) -> dict:
     """
     Transactional admission orchestrator.
     Creates records in patients, admissions, patient_profiles, channels, messages, and sage_room_memory.
@@ -1046,8 +1305,11 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
         if not _adt_admitting():
             from services.adt.core import AdtError
 
-            raise AdtError("The ward clerk admits through Beds and admissions, which is switched "
-                           "off on this site.", code="module_disabled")
+            raise AdtError(
+                "The ward clerk admits through Beds and admissions, which is switched "
+                "off on this site.",
+                code="module_disabled",
+            )
         data.update(_clerk_admission_fields())
 
     # The patient index (opd-5b, ORB_REGISTRATION): {'on': False} while it is
@@ -1056,28 +1318,36 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
     door_plan = _door_identity_plan(data, door)
 
     # Beds and admissions (ORB_ADT): None while the module is off.
-    adt_plan = (_adt_admission_plan(data, idempotency_key, user, request_meta, authoriser_pin)
-                if _adt_admitting() else None)
+    adt_plan = (
+        _adt_admission_plan(data, idempotency_key, user, request_meta, authoriser_pin)
+        if _adt_admitting()
+        else None
+    )
     authoriser_pin = None
 
     # multisite-3: the facility this admission is at; None (nothing read)
     # while one facility is on record. Refusals are raised here, before any
     # session of the admission opens.
     admission_facility_id = admission_facility(
-        data.get("department"), user, lane="clerk_admission" if clerk_entry else door,
-        request_meta=request_meta)
+        data.get("department"),
+        user,
+        lane="clerk_admission" if clerk_entry else door,
+        request_meta=request_meta,
+    )
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     admitting_user_id = user["id"]
     admitting_user_name = user.get("name", "Unknown")
 
     # Bridge portal login for the patient: a UNIQUE one-time password (never a
     # shared default), returned once so the clinician can hand it over.
     import secrets
+
     from auth import hash_password
+
     patient_user_id = f"P{uuid.uuid4().hex[:6].upper()}"
     temp_password = secrets.token_urlsafe(9)
-    
+
     # Generate unique IDs
     patient_id = f"PAT-{str(uuid.uuid4())[:8].upper()}"
     mrn = data.get("mrn") or f"MRN-{str(uuid.uuid4())[:6].upper()}"
@@ -1091,8 +1361,8 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
     # spelling of the checked place.
     row_ward, row_bed = data.get("ward"), data.get("bed")
     portal_ward = data.get("ward", "General")
-    summary_ward, summary_bed = data.get('ward', 'Unassigned'), data.get('bed', 'Unassigned')
-    sage_ward = data.get('ward')
+    summary_ward, summary_bed = data.get("ward", "Unassigned"), data.get("bed", "Unassigned")
+    sage_ward = data.get("ward")
     admission_date = now
     adt_prepared = None
 
@@ -1107,13 +1377,19 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
             replay = _adt_replay_on(db, adt_plan, user, name)
             if replay is not None:
                 return replay
-        door_facts = (_door_index_check_on(db, door_plan, name=name, data=data,
-                                           date_of_birth=date_of_birth, user=user)
-                      if door_plan["on"] else None)
+        door_facts = (
+            _door_index_check_on(
+                db, door_plan, name=name, data=data, date_of_birth=date_of_birth, user=user
+            )
+            if door_plan["on"]
+            else None
+        )
         if door_facts is not None:
             mrn = door_facts["mrn"]
-        elif data.get("mrn") and db.execute(
-                "SELECT 1 FROM patients WHERE mrn = ?", (mrn,)).fetchone() is not None:
+        elif (
+            data.get("mrn")
+            and db.execute("SELECT 1 FROM patients WHERE mrn = ?", (mrn,)).fetchone() is not None
+        ):
             # Always on (opd-5b): a typed number already on a record is a 409
             # naming nobody, never the UNIQUE constraint's raw 500.
             raise _mrn_in_use()
@@ -1134,9 +1410,14 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
             # answer's bed_warning is always None here.
             bed_warning = None
             adt_prepared = prepare_place_on(
-                db, admission_id=None, actor=user, movement_type="admission",
-                ward_id=adt_plan["ward_id"], bed_id=adt_plan["bed_id"],
-                ward_text=adt_plan["ward_text"], bed_text=adt_plan["bed_text"],
+                db,
+                admission_id=None,
+                actor=user,
+                movement_type="admission",
+                ward_id=adt_plan["ward_id"],
+                bed_id=adt_plan["bed_id"],
+                ward_text=adt_plan["ward_text"],
+                bed_text=adt_plan["bed_text"],
                 extra_bed=adt_plan["extra_bed"],
                 out_of_service_reason=adt_plan["out_of_service_reason"],
                 not_clean_reason=adt_plan["not_clean_reason"],
@@ -1156,8 +1437,13 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
             admission_date = adt_plan["admitted"].isoformat()
 
         # 0. Create the patient's Bridge portal login (unique one-time password).
-        _insert_portal_login_on(db, user_id=patient_user_id, name=name,
-                                department=portal_ward, password_hash=hash_password(temp_password))
+        _insert_portal_login_on(
+            db,
+            user_id=patient_user_id,
+            name=name,
+            department=portal_ward,
+            password_hash=hash_password(temp_password),
+        )
         # 1. Create Patient Master Record (Identity), linked to the login user.
         db.execute(
             """INSERT INTO patients (
@@ -1189,16 +1475,24 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
                 data.get("initial_diagnosis") or data.get("chief_complaint"),
                 data.get("attending_doctor_id"),
                 admission_date,
-                now
-            )
+                now,
+            ),
         )
         if door_facts is not None:
             # The new record's match keys, from the values just stored, so the
             # next door or desk finds this patient without a resync.
             from services import patient_matching as _pm
-            _pm.upsert_keys_on(db, patient_id, {
-                "name": name, "phone": data.get("phone"),
-                "date_of_birth": date_of_birth, "sex": data.get("sex")})
+
+            _pm.upsert_keys_on(
+                db,
+                patient_id,
+                {
+                    "name": name,
+                    "phone": data.get("phone"),
+                    "date_of_birth": date_of_birth,
+                    "sex": data.get("sex"),
+                },
+            )
 
         # 2. Create Admission Record
         db.execute(
@@ -1228,16 +1522,23 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
                 json.dumps(data.get("isolation_precautions", [])),
                 data.get("code_status", "full_code"),
                 json.dumps(data.get("vitals")) if data.get("vitals") else None,
-                now
-            )
+                now,
+            ),
         )
-        _stamp_admission_facility_on(db, admission_id=admission_id, patient_id=patient_id,
-                                     facility_id=admission_facility_id, new_patient=True)
+        _stamp_admission_facility_on(
+            db,
+            admission_id=admission_id,
+            patient_id=patient_id,
+            facility_id=admission_facility_id,
+            new_patient=True,
+        )
         if adt_plan is not None:
             # When the stay began, which may be up to ADT_BACKTIME_HOURS back
             # (ruling ADT-P3); created_at stays the time it was recorded.
-            db.execute("UPDATE admissions SET admitted_at = ? WHERE id = ?",
-                       (adt_plan["admitted_iso"], admission_id))
+            db.execute(
+                "UPDATE admissions SET admitted_at = ? WHERE id = ?",
+                (adt_plan["admitted_iso"], admission_id),
+            )
 
         # 3. Create Patient Profile (Longitudinal Data)
         db.execute(
@@ -1257,8 +1558,8 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
                 json.dumps(data.get("current_medications", []) if _drug_chart_enabled() else []),
                 data.get("family_history"),
                 data.get("social_history"),
-                now
-            )
+                now,
+            ),
         )
 
         # 3b. Chart the allergy chips as structured allergies. The narrative
@@ -1266,10 +1567,18 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
         # bedside interlocks screen against, so a chip kept only in the profile
         # let a penicillin-allergic patient be ordered amoxicillin unchallenged.
         # Same handle, so the allergy and the admission commit together.
-        from services.clinical_records_service import allergy_entries, record_allergies_on
+        from services.clinical_records_service import (
+            allergy_entries,
+            record_allergies_on,
+        )
+
         record_allergies_on(
-            db, patient_id, allergy_entries(data.get("allergies") or []),
-            source="admission", recorded_by=admitting_user_id, recorded_at=now,
+            db,
+            patient_id,
+            allergy_entries(data.get("allergies") or []),
+            source="admission",
+            recorded_by=admitting_user_id,
+            recorded_at=now,
         )
 
         # 4. Insert Initial Vitals (if provided) to trigger Vigil visibility immediately
@@ -1297,8 +1606,9 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
                 # As supplied, None when the form left them out (ruled
                 # 2026-10-03): never a default 'alert' / on air.
                 consciousness=vitals.get("consciousness"),
-                on_oxygen=(None if vitals.get("on_oxygen") is None
-                           else bool(vitals.get("on_oxygen"))),
+                on_oxygen=(
+                    None if vitals.get("on_oxygen") is None else bool(vitals.get("on_oxygen"))
+                ),
             )
             # Inline an initial NEWS2 risk score so the patient shows a real risk in
             # Vigil immediately (the simulator bot won't seed a vitals-less patient).
@@ -1308,9 +1618,11 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
             # the same as the observation write path.
             try:
                 from services.vigil_service import scoring_enabled as _scoring_enabled
+
                 if not _scoring_enabled():
                     raise _ScoringOff()
                 from services.vigil_service import score_vitals_row
+
                 # On the patient's recorded SpO2 scale, read back from the row
                 # inserted above on THIS connection. Admission has no Scale 2
                 # input today (gap register X003), so this reads 0, but a
@@ -1322,15 +1634,23 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
                     "SELECT on_scale_2 FROM patients WHERE id = ?", (patient_id,)
                 ).fetchone()
                 _risk = score_vitals_row(
-                    {"heart_rate": vitals.get("hr"), "systolic_bp": vitals.get("bp_sys"),
-                     "respiratory_rate": vitals.get("rr"),
-                     "temperature": vitals.get("temperature"), "spo2": vitals.get("spo2"),
-                     "consciousness": vitals.get("consciousness"),
-                     "on_oxygen": (None if vitals.get("on_oxygen") is None
-                                   else bool(vitals.get("on_oxygen")))},
+                    {
+                        "heart_rate": vitals.get("hr"),
+                        "systolic_bp": vitals.get("bp_sys"),
+                        "respiratory_rate": vitals.get("rr"),
+                        "temperature": vitals.get("temperature"),
+                        "spo2": vitals.get("spo2"),
+                        "consciousness": vitals.get("consciousness"),
+                        "on_oxygen": (
+                            None
+                            if vitals.get("on_oxygen") is None
+                            else bool(vitals.get("on_oxygen"))
+                        ),
+                    },
                     on_scale_2=bool(_prow and _prow["on_scale_2"]),
                     overlay=False,
                 )
+                assert _risk is not None
                 # Stamped with the admission instant the vitals row above
                 # carries, in the one stored spelling (services/clinical_time.py).
                 # The column's CURRENT_TIMESTAMP default wrote "... HH:MM:SS",
@@ -1338,8 +1658,13 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
                 db.execute(
                     "INSERT INTO risk_scores (patient_id, timestamp, score, level, drivers) "
                     "VALUES (?, ?, ?, ?, ?)",
-                    (patient_id, to_utc_iso(now), _risk["score"], _risk["level"],
-                     json.dumps(_risk["drivers"])),
+                    (
+                        patient_id,
+                        to_utc_iso(now),
+                        _risk["score"],
+                        _risk["level"],
+                        json.dumps(_risk["drivers"]),
+                    ),
                 )
             except _ScoringOff:
                 pass
@@ -1347,11 +1672,12 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
                 # Non-fatal: admission still succeeds without a seeded baseline
                 # risk score, but log it so the gap is visible rather than silent.
                 logger.warning("Baseline risk-score seeding failed for %s: %s", patient_id, e)
-        
+
         # 5. Initialize Relay (Case Room)
         room_name = f"Case: {data.get('name', 'Unknown')}"
-        _insert_case_room_on(db, channel_id=channel_id, room_name=room_name,
-                             patient_id=patient_id, now=now)
+        _insert_case_room_on(
+            db, channel_id=channel_id, room_name=room_name, patient_id=patient_id, now=now
+        )
 
         # Build structured initial system message for Relay
         summary_lines = [
@@ -1361,10 +1687,10 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
             f"Chief Complaint: {data.get('chief_complaint', 'Not provided')}",
             f"Initial Diagnosis: {data.get('initial_diagnosis', 'Pending')}",
         ]
-        if data.get('allergies'):
-            summary_lines.append(f"Allergies: {', '.join(data.get('allergies'))}")
-        if data.get('comorbidities'):
-            summary_lines.append(f"Comorbidities: {', '.join(data.get('comorbidities'))}")
+        if data.get("allergies"):
+            summary_lines.append(f"Allergies: {', '.join(data['allergies'])}")
+        if data.get("comorbidities"):
+            summary_lines.append(f"Comorbidities: {', '.join(data['comorbidities'])}")
         if clerk_entry:
             # adt-17b: said in the room the treating team reads first. Never
             # 'no known allergies': nobody has asked yet.
@@ -1380,20 +1706,28 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
             sage_patient_summary = (
                 f"{data.get('name')}, {data.get('age', '?')}y {data.get('sex', '?')} admitted to "
                 f"{sage_ward} by the ward clerk. The presenting complaint, allergies and every "
-                "other clinical detail are not yet assessed: allergies are unknown, not none.")
-        if data.get('comorbidities'):
-            sage_patient_summary += f" PMH: {', '.join(data.get('comorbidities'))}."
-            
+                "other clinical detail are not yet assessed: allergies are unknown, not none."
+            )
+        if data.get("comorbidities"):
+            sage_patient_summary += f" PMH: {', '.join(data['comorbidities'])}."
+
         sage_discussion_summary = f"Patient admitted via {data.get('admission_source')}. {data.get('admitting_notes', '')}"
         if clerk_entry:
-            sage_discussion_summary = (f"Patient admitted via {data.get('admission_source')} by the "
-                                       "ward clerk. Admission assessment due.")
+            sage_discussion_summary = (
+                f"Patient admitted via {data.get('admission_source')} by the "
+                "ward clerk. Admission assessment due."
+            )
 
         # Initialize risk flags for Sage based on triage and infection/fall risks
         risk_flags = []
-        if data.get('triage_severity') and int(data.get('triage_severity')) <= 2:
-            risk_flags.append({"detail": f"High acuity admission (Triage {data.get('triage_severity')})", "confidence": 1.0})
-        
+        if data.get("triage_severity") and int(data["triage_severity"]) <= 2:
+            risk_flags.append(
+                {
+                    "detail": f"High acuity admission (Triage {data.get('triage_severity')})",
+                    "confidence": 1.0,
+                }
+            )
+
         db.execute(
             """INSERT INTO sage_room_memory (
                 room_id, patient_id, patient_summary, discussion_summary,
@@ -1409,19 +1743,27 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
                 json.dumps(risk_flags),
                 json.dumps([admitting_user_name]),
                 now,
-                now
-            )
+                now,
+            ),
         )
 
         if door_facts is not None:
             # The worklist rows and the fail-closed patient_identity record of
             # the index check, with the admission or not at all.
-            _door_record_on(db, door_facts, door_plan, patient_id=patient_id,
-                            admission_id=admission_id, user=user, now=now,
-                            request_meta=request_meta)
+            _door_record_on(
+                db,
+                door_facts,
+                door_plan,
+                patient_id=patient_id,
+                admission_id=admission_id,
+                user=user,
+                now=now,
+                request_meta=request_meta,
+            )
 
         placed = None
         if adt_plan is not None:
+            assert adt_prepared is not None
             from services.adt.core import place_admission_on
 
             if clerk_entry:
@@ -1435,32 +1777,49 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
             # above commits with the movement and its fail-closed audit, or
             # none of them does.
             placed = place_admission_on(
-                db, admission_id=admission_id, actor=user, movement_type="admission",
-                reason=("Patient admitted by the ward clerk (registration only)"
-                        if clerk_entry else "Patient admitted"), prepared=adt_prepared,
+                db,
+                admission_id=admission_id,
+                actor=user,
+                movement_type="admission",
+                reason=(
+                    "Patient admitted by the ward clerk (registration only)"
+                    if clerk_entry
+                    else "Patient admitted"
+                ),
+                prepared=adt_prepared,
                 boarder_acknowledged=adt_plan["boarder_acknowledged"],
-                moved_at=adt_plan["admitted_iso"], idempotency_key=adt_plan["key"],
+                moved_at=adt_plan["admitted_iso"],
+                idempotency_key=adt_plan["key"],
                 request_meta=request_meta,
             )
             if clerk_entry:
-                _audit_clerk_admission_on(db, user=user, patient_id=patient_id,
-                                          admission_id=admission_id,
-                                          movement_id=placed["movement"]["id"],
-                                          department=data.get("department"),
-                                          request_meta=request_meta)
+                _audit_clerk_admission_on(
+                    db,
+                    user=user,
+                    patient_id=patient_id,
+                    admission_id=admission_id,
+                    movement_id=placed["movement"]["id"],
+                    department=data.get("department"),
+                    request_meta=request_meta,
+                )
 
     adt_answer = {}
     if placed is not None:
-        extra = (adt_prepared["detail"].get("extra_bed") or {})
+        assert adt_prepared is not None and adt_plan is not None
+        extra = adt_prepared["detail"].get("extra_bed") or {}
         adt_answer = {
             "replayed": False,
-            "admitted_at": adt_plan["admitted_iso"],
+            "admitted_at": adt_plan["admitted_iso"] if adt_plan is not None else None,
             "movement_id": placed["movement"]["id"],
             "location": {
-                "ward_id": placed["ward_id"], "bed_id": placed["bed_id"],
-                "ward": placed["ward"], "bed": placed["bed"], "linked": placed["linked"],
+                "ward_id": placed["ward_id"],
+                "bed_id": placed["bed_id"],
+                "ward": placed["ward"],
+                "bed": placed["bed"],
+                "linked": placed["linked"],
                 "awaiting_bed": placed["bed_id"] is None and not placed["bed"],
-                "boarder": placed["boarder"], "extra_bed": extra.get("label"),
+                "boarder": placed["boarder"],
+                "extra_bed": extra.get("label"),
             },
             "location_warning": _location_warning(adt_prepared["target"]),
         }
@@ -1488,17 +1847,32 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
         **adt_answer,
         # With ORB_REGISTRATION on: how the hospital number was set and any
         # duplicate review the clinician admitted past. Absent while it is off.
-        **({"index_check": {
-            "uhid_source": door_plan["uhid_source"],
-            "duplicate_review": ({
-                "reason": door_facts["review"]["reason"] if door_facts["review"] else None,
-                "candidate_ids": [c["patient_id"] for c in door_facts["reviewed"]],
-                "check_incomplete": door_facts["scan"]["check_incomplete"],
-            } if door_facts["review_used"] else None),
-        }} if door_facts is not None else {}),
+        **(
+            {
+                "index_check": {
+                    "uhid_source": door_plan["uhid_source"],
+                    "duplicate_review": (
+                        {
+                            "reason": door_facts["review"]["reason"]
+                            if door_facts["review"]
+                            else None,
+                            "candidate_ids": [c["patient_id"] for c in door_facts["reviewed"]],
+                            "check_incomplete": door_facts["scan"]["check_incomplete"],
+                        }
+                        if door_facts["review_used"]
+                        else None
+                    ),
+                }
+            }
+            if door_facts is not None
+            else {}
+        ),
         # adt-17b: only on the ward clerk's admission.
-        **({"clerk_admission": True, "assessment_due": True,
-            "clinical_fields": _NOT_YET_ASSESSED} if clerk_entry else {}),
+        **(
+            {"clerk_admission": True, "assessment_due": True, "clinical_fields": _NOT_YET_ASSESSED}
+            if clerk_entry
+            else {}
+        ),
     }
 
 
@@ -1559,28 +1933,50 @@ def _clerk_admission_lines() -> list[str]:
     return [
         f"Presenting complaint: {_NOT_YET_ASSESSED}",
         f"Diagnosis: {_NOT_YET_ASSESSED}",
-        (f"Allergies: {_NOT_YET_ASSESSED}. Nobody has asked yet, so this is not 'no known "
-         "allergies'."),
+        (
+            f"Allergies: {_NOT_YET_ASSESSED}. Nobody has asked yet, so this is not 'no known "
+            "allergies'."
+        ),
         "Admitted by the ward clerk (registration only). Admission assessment due: a doctor "
         "records the allergies, the presenting complaint and the code status.",
     ]
 
 
-def _audit_clerk_admission_on(db, *, user: dict, patient_id: str, admission_id: str,
-                              movement_id: str, department, request_meta) -> None:
+def _audit_clerk_admission_on(
+    db,
+    *,
+    user: dict,
+    patient_id: str,
+    admission_id: str,
+    movement_id: str,
+    department,
+    request_meta,
+) -> None:
     """clinical_access 'clerk_admission_recorded', fail-closed, in the
     admission's own transaction."""
     from services.adt.core import audit_on
 
     audit_on(
-        db, category="clinical_access", action="clerk_admission_recorded",
-        summary=(f"Admission {admission_id} entered by the ward clerk at registration level; "
-                 "clinical fields not yet assessed"),
-        actor=user, patient_id=patient_id, target_type="admission", target_id=admission_id,
+        db,
+        category="clinical_access",
+        action="clerk_admission_recorded",
+        summary=(
+            f"Admission {admission_id} entered by the ward clerk at registration level; "
+            "clinical fields not yet assessed"
+        ),
+        actor=user,
+        patient_id=patient_id,
+        target_type="admission",
+        target_id=admission_id,
         request_meta=request_meta,
-        metadata={"movement_id": movement_id, "department": department,
-                  "clinical_fields": "not_yet_assessed", "allergies_recorded": False,
-                  "assessment_due": True})
+        metadata={
+            "movement_id": movement_id,
+            "department": department,
+            "clinical_fields": "not_yet_assessed",
+            "allergies_recorded": False,
+            "assessment_due": True,
+        },
+    )
 
 
 def clerk_admission_choices(user: dict) -> dict:
@@ -1590,14 +1986,19 @@ def clerk_admission_choices(user: dict) -> dict:
     'master' block). No patient data. Only with ORB_ADT on; the department
     is None when the clerk's department has no clinical cover."""
     from permissions import department_scope
+
     from services.frontdesk_service import list_covering_departments
 
     own = department_scope(user)
     covering = list_covering_departments()
     department = next((d for d in covering if own and d.casefold() == own.casefold()), None)
-    doctors = [d for d in attending_doctors()
-               if department is not None and d.get("department")
-               and d["department"].casefold() == department.casefold()]
+    doctors = [
+        d
+        for d in attending_doctors()
+        if department is not None
+        and d.get("department")
+        and d["department"].casefold() == department.casefold()
+    ]
     import config
 
     return {
@@ -1620,10 +2021,12 @@ def clerk_attending(doctor_id, department: str) -> str:
     list who works in the admitting department. AdmissionInputError otherwise."""
     wanted = require_listed_attending(doctor_id)
     doctor = next((d for d in attending_doctors() if d["id"] == wanted), None)
-    if (doctor is None or not doctor.get("department")
-            or doctor["department"].casefold() != (department or "").casefold()):
-        raise AdmissionInputError(
-            f"Choose an attending doctor who works in {department}.")
+    if (
+        doctor is None
+        or not doctor.get("department")
+        or doctor["department"].casefold() != (department or "").casefold()
+    ):
+        raise AdmissionInputError(f"Choose an attending doctor who works in {department}.")
     return wanted
 
 
@@ -1716,15 +2119,17 @@ def conversion_admission_id(user_id: str, idempotency_key: str) -> str:
     the same key gets another id."""
     import hashlib
 
-    digest = hashlib.sha256(
-        f"opd-17a\x00{user_id}\x00{idempotency_key}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(f"opd-17a\x00{user_id}\x00{idempotency_key}".encode()).hexdigest()
     return f"ADM-{digest[:12].upper()}"
 
 
 def _table_exists(db, name: str) -> bool:
-    return db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
-    ).fetchone() is not None
+    return (
+        db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+        ).fetchone()
+        is not None
+    )
 
 
 def _json_or(raw, default):
@@ -1742,8 +2147,9 @@ def _conversion_visit_on(db, visit_id: str, scope_department):
     row = None
     if visit_id and _table_exists(db, "opd_visits"):
         row = db.execute("SELECT * FROM opd_visits WHERE id = ?", (visit_id,)).fetchone()
-    if row is None or (scope_department is not None
-                       and (row["department"] or "") != scope_department):
+    if row is None or (
+        scope_department is not None and (row["department"] or "") != scope_department
+    ):
         raise AdmissionRefused("visit_not_found", "Outpatient visit not found.", status=404)
     return row
 
@@ -1764,33 +2170,44 @@ def _conversion_refusal_on(db, visit, patient) -> AdmissionRefused | None:
     if status == "cancelled":
         return AdmissionRefused(
             "visit_cancelled",
-            "This visit was cancelled, so the patient cannot be admitted from it.", status=409)
+            "This visit was cancelled, so the patient cannot be admitted from it.",
+            status=409,
+        )
     if status == "completed":
         return AdmissionRefused(
             "visit_completed",
             "This visit is already finished, so the patient cannot be admitted from it. "
             "Register a new visit at the front desk, then admit the patient from that visit.",
-            status=409)
+            status=409,
+        )
     if status not in CONVERTIBLE_VISIT_STATUSES:
         return AdmissionRefused(
-            "visit_closed", "This visit cannot be finished, so the patient cannot be "
-            "admitted from it.", status=409)
+            "visit_closed",
+            "This visit cannot be finished, so the patient cannot be admitted from it.",
+            status=409,
+        )
     if (visit["visit_date"] or "") != _hospital_today():
         return AdmissionRefused(
             "visit_not_current",
             "A patient is admitted from today's visit only. Register today's visit at the "
-            "front desk first.", status=409)
+            "front desk first.",
+            status=409,
+        )
     if patient is None:
         return AdmissionRefused("visit_not_found", "Outpatient visit not found.", status=404)
     active = db.execute(
         "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' LIMIT 1",
-        (patient["id"],)).fetchone()
+        (patient["id"],),
+    ).fetchone()
     if patient["status"] == "admitted" or active is not None:
         return AdmissionRefused(
             "patient_already_admitted",
-            "This patient is already admitted. Open their inpatient chart.", status=409)
-    earlier = db.execute("SELECT 1 FROM admissions WHERE patient_id = ? LIMIT 1",
-                         (patient["id"],)).fetchone()
+            "This patient is already admitted. Open their inpatient chart.",
+            status=409,
+        )
+    earlier = db.execute(
+        "SELECT 1 FROM admissions WHERE patient_id = ? LIMIT 1", (patient["id"],)
+    ).fetchone()
     if (patient["status"] != "registered" or earlier is not None) and readmission_on():
         # opd-17c (ORB_READMISSION): a discharged patient is readmitted onto
         # their own record from this visit, under the readmission rules.
@@ -1800,7 +2217,9 @@ def _conversion_refusal_on(db, visit, patient) -> AdmissionRefused | None:
             "readmission_not_available",
             "This patient has been an inpatient before. Readmitting a patient onto their "
             "earlier record is not available yet, so ask an administrator before admitting "
-            "them.", status=409)
+            "them.",
+            status=409,
+        )
     return None
 
 
@@ -1809,8 +2228,10 @@ def _user_names_on(db, ids) -> dict:
     if not wanted:
         return {}
     marks = ",".join("?" for _ in wanted)
-    return {r["id"]: r["name"] for r in db.execute(
-        f"SELECT id, name FROM users WHERE id IN ({marks})", wanted).fetchall()}
+    return {
+        r["id"]: r["name"]
+        for r in db.execute(f"SELECT id, name FROM users WHERE id IN ({marks})", wanted).fetchall()
+    }
 
 
 def _carried_from_note(visit, note) -> dict:
@@ -1830,9 +2251,12 @@ def _conversion_visit_reference(visit) -> dict:
     """The visit itself, as the clinic's queue already lists it: nothing about
     the patient."""
     return {
-        "id": visit["id"], "visit_date": visit["visit_date"],
-        "department": visit["department"], "doctor_name": visit["doctor_name"],
-        "token_number": visit["token_number"], "status": visit["status"],
+        "id": visit["id"],
+        "visit_date": visit["visit_date"],
+        "department": visit["department"],
+        "doctor_name": visit["doctor_name"],
+        "token_number": visit["token_number"],
+        "status": visit["status"],
     }
 
 
@@ -1872,19 +2296,28 @@ def conversion_preview(visit_id: str, *, scope_department) -> tuple[dict, str]:
             raise AdmissionRefused("visit_not_found", "Outpatient visit not found.", status=404)
         refusal = _conversion_refusal_on(db, visit, patient)
         if refusal is not None:
-            return ({"visit": _conversion_visit_reference(visit), "admittable": False,
-                     "refusal": refusal.detail()}, patient["id"])
+            return (
+                {
+                    "visit": _conversion_visit_reference(visit),
+                    "admittable": False,
+                    "refusal": refusal.detail(),
+                },
+                patient["id"],
+            )
         note = None
         if _table_exists(db, "opd_consultations"):
             note = db.execute(
                 "SELECT status, chief_complaint, diagnoses_json, vitals_json, signed_at "
-                "FROM opd_consultations WHERE visit_id = ?", (visit["id"],)).fetchone()
+                "FROM opd_consultations WHERE visit_id = ?",
+                (visit["id"],),
+            ).fetchone()
         allergies = [
             {"substance": r["substance"], "reaction": r["reaction"], "severity": r["severity"]}
             for r in db.execute(
                 "SELECT substance, reaction, severity FROM patient_allergies "
                 "WHERE patient_id = ? AND status = 'active' ORDER BY substance",
-                (patient["id"],)).fetchall()
+                (patient["id"],),
+            ).fetchall()
         ]
         medicines_listed = _drug_chart_enabled()
         medicines: list[dict] = []
@@ -1893,40 +2326,63 @@ def conversion_preview(visit_id: str, *, scope_department) -> tuple[dict, str]:
 
             marks = ",".join("?" for _ in LIVE_STATUSES)
             medicines = [
-                {"drug_name": r["drug_name"], "dose": r["dose"], "route": r["route"],
-                 "frequency": r["frequency"], "is_prn": bool(r["is_prn"]),
-                 "status": r["status"], "prescribed_at": r["prescribed_at"] or r["created_at"]}
+                {
+                    "drug_name": r["drug_name"],
+                    "dose": r["dose"],
+                    "route": r["route"],
+                    "frequency": r["frequency"],
+                    "is_prn": bool(r["is_prn"]),
+                    "status": r["status"],
+                    "prescribed_at": r["prescribed_at"] or r["created_at"],
+                }
                 for r in db.execute(
                     f"SELECT drug_name, dose, route, frequency, is_prn, status, prescribed_at, "
                     f"created_at FROM med_orders WHERE patient_id = ? AND encounter_type = 'op' "
                     f"AND status IN ({marks}) ORDER BY COALESCE(prescribed_at, created_at), id",
-                    (patient["id"], *LIVE_STATUSES)).fetchall()
+                    (patient["id"], *LIVE_STATUSES),
+                ).fetchall()
             ]
         vitals = _json_or(note["vitals_json"], None) if note is not None else None
-        names = _user_names_on(db, [(vitals or {}).get("measured_by") if isinstance(vitals, dict)
-                                    else None])
+        names = _user_names_on(
+            db, [(vitals or {}).get("measured_by") if isinstance(vitals, dict) else None]
+        )
     age, _stated = pm.current_age(
-        date_of_birth=patient["date_of_birth"], stated_age=patient["age"],
-        age_recorded_on=patient["age_recorded_on"], created_at=patient["created_at"])
+        date_of_birth=patient["date_of_birth"],
+        stated_age=patient["age"],
+        age_recorded_on=patient["age_recorded_on"],
+        created_at=patient["created_at"],
+    )
     opd_vitals = []
     if isinstance(vitals, dict) and isinstance(vitals.get("values"), dict) and vitals["values"]:
-        opd_vitals.append({
-            "measured_at": vitals.get("measured_at"),
-            "measured_by_name": names.get(vitals.get("measured_by")),
-            "values": vitals["values"],
-        })
+        opd_vitals.append(
+            {
+                "measured_at": vitals.get("measured_at"),
+                "measured_by_name": names.get(vitals.get("measured_by")),
+                "values": vitals["values"],
+            }
+        )
     return {
         "visit": _conversion_visit_reference(visit),
         "patient": {
-            "id": patient["id"], "name": patient["name"], "uhid": patient["mrn"],
-            "age": age, "sex": patient["sex"],
+            "id": patient["id"],
+            "name": patient["name"],
+            "uhid": patient["mrn"],
+            "age": age,
+            "sex": patient["sex"],
             "portal_login": bool(patient["user_id"]),
             "date_of_birth_on_file": patient["date_of_birth"] is not None,
         },
         "admittable": True,
         "refusal": None,
-        "note": ({"status": note["status"], "signed": note["status"] == "signed",
-                  "signed_at": note["signed_at"]} if note is not None else None),
+        "note": (
+            {
+                "status": note["status"],
+                "signed": note["status"] == "signed",
+                "signed_at": note["signed_at"],
+            }
+            if note is not None
+            else None
+        ),
         "carried": _carried_from_note(visit, note),
         "opd_vitals": opd_vitals,
         "medicines_listed": medicines_listed,
@@ -1936,14 +2392,21 @@ def conversion_preview(visit_id: str, *, scope_department) -> tuple[dict, str]:
         # opd-17c: a discharged patient readmitted onto their record from this
         # visit. What that does is said, never what the earlier stay held
         # (the clinic reads the patient through the outpatient arm only).
-        **({"readmission": True, "readmission_note": READMISSION_FORM_NOTE}
-           if patient["status"] != "registered" else {}),
+        **(
+            {"readmission": True, "readmission_note": READMISSION_FORM_NOTE}
+            if patient["status"] != "registered"
+            else {}
+        ),
     }, patient["id"]
 
 
-def _audit_conversion_identity_refused(patient_id: str, user: dict, reason_code: str,
-                                       request_meta: dict | None,
-                                       purpose: str = "opd_admission") -> None:
+def _audit_conversion_identity_refused(
+    patient_id: str,
+    user: dict,
+    reason_code: str,
+    request_meta: dict | None,
+    purpose: str = "opd_admission",
+) -> None:
     """A conversion (or, with purpose 'readmission', a readmission) refused
     because who the patient is was not confirmed, on the fail-closed
     patient_identity chain, in a write of its own (nothing else was saved).
@@ -1951,26 +2414,43 @@ def _audit_conversion_identity_refused(patient_id: str, user: dict, reason_code:
     from services.audit_service import log_audit_event
 
     meta = dict(request_meta or {})
-    what = ("Readmission of" if purpose == READMISSION_PURPOSE
-            else "Admission of")
+    what = "Readmission of" if purpose == READMISSION_PURPOSE else "Admission of"
     where = "" if purpose == READMISSION_PURPOSE else " from outpatients"
     log_audit_event(
-        correlation_id=str(uuid.uuid4()), event_category="patient_identity",
-        action_type=CONVERSION_IDENTITY_REFUSED_ACTION, outcome="denied",
+        correlation_id=str(uuid.uuid4()),
+        event_category="patient_identity",
+        action_type=CONVERSION_IDENTITY_REFUSED_ACTION,
+        outcome="denied",
         summary_message=(
             f"{what} {patient_id}{where} refused: "
-            + ("no identity check was sent" if reason_code == "identity_check_required"
-               else "what the patient stated did not match the record")),
-        actor_user_id=user.get("id"), actor_role=user.get("role"),
-        target_type="patient", target_id=str(patient_id), patient_id=patient_id,
-        request_path=meta.get("request_path"), http_method=meta.get("http_method"),
-        ip_address=meta.get("ip_address"), user_agent=meta.get("user_agent"),
-        metadata={"reason_code": reason_code, "purpose": purpose})
+            + (
+                "no identity check was sent"
+                if reason_code == "identity_check_required"
+                else "what the patient stated did not match the record"
+            )
+        ),
+        actor_user_id=user.get("id"),
+        actor_role=user.get("role"),
+        target_type="patient",
+        target_id=str(patient_id),
+        patient_id=patient_id,
+        request_path=meta.get("request_path"),
+        http_method=meta.get("http_method"),
+        ip_address=meta.get("ip_address"),
+        user_agent=meta.get("user_agent"),
+        metadata={"reason_code": reason_code, "purpose": purpose},
+    )
 
 
-def _confirm_conversion_identity(patient_id: str, stated: dict | None, *, user: dict,
-                                 scope_department, request_meta: dict | None,
-                                 purpose: str = "opd_admission") -> dict:
+def _confirm_conversion_identity(
+    patient_id: str,
+    stated: dict | None,
+    *,
+    user: dict,
+    scope_department,
+    request_meta: dict | None,
+    purpose: str = "opd_admission",
+) -> dict:
     """Ruling OPD-S1 (a): what the patient states, checked against the record
     by registration_service.check_identity (its own immediate session, so it
     runs before the conversion's). Returns what the conversion's record keeps:
@@ -1980,29 +2460,46 @@ def _confirm_conversion_identity(patient_id: str, stated: dict | None, *, user: 
     from services import registration_service as reg
 
     if not stated:
-        _audit_conversion_identity_refused(patient_id, user, "identity_check_required",
-                                           request_meta, purpose)
+        _audit_conversion_identity_refused(
+            patient_id, user, "identity_check_required", request_meta, purpose
+        )
         raise AdmissionRefused(
             "identity_check_required",
             "Confirm who the patient is first: ask for their name, their date of birth or "
             "age, and the last 4 digits of their phone or their UHID. Nothing was saved.",
-            status=409)
-    verdict = reg.check_identity(patient_id, stated, user=user, department=scope_department,
-                                 request_meta=request_meta, purpose=purpose)
+            status=409,
+        )
+    verdict = reg.check_identity(
+        patient_id,
+        stated,
+        user=user,
+        department=scope_department,
+        request_meta=request_meta,
+        purpose=purpose,
+    )
     if verdict.get("result") != "match":
-        _audit_conversion_identity_refused(patient_id, user, "identity_not_confirmed",
-                                           request_meta, purpose)
+        _audit_conversion_identity_refused(
+            patient_id, user, "identity_not_confirmed", request_meta, purpose
+        )
         raise AdmissionRefused(
             "identity_not_confirmed",
             "What the patient told you does not match this record. Check you have the right "
-            "patient. Nothing was saved.", status=409)
-    return {"result": "match", "checked": list(verdict.get("checked") or []),
-            "checked_at": verdict.get("checked_at"), "checked_by": user.get("id"),
-            "purpose": purpose, "method": "stated_identifiers"}
+            "patient. Nothing was saved.",
+            status=409,
+        )
+    return {
+        "result": "match",
+        "checked": list(verdict.get("checked") or []),
+        "checked_at": verdict.get("checked_at"),
+        "checked_by": user.get("id"),
+        "purpose": purpose,
+        "method": "stated_identifiers",
+    }
 
 
-def _conversion_replay_on(db, admission_id: str, visit_id: str,
-                          user: dict | None = None) -> dict | None:
+def _conversion_replay_on(
+    db, admission_id: str, visit_id: str, user: dict | None = None
+) -> dict | None:
     """The first conversion when this sender already sent this key; None for
     a new key. The same key naming another visit is refused and nothing is
     written. The one-time portal password was shown once and is never shown
@@ -2021,9 +2518,11 @@ def _conversion_replay_on(db, admission_id: str, visit_id: str,
         raise AdmissionRefused(
             "idempotency_key_reused",
             "That Idempotency-Key was already used for another admission. Nothing was saved.",
-            status=409)
-    visit = db.execute("SELECT department, status, disposition FROM opd_visits WHERE id = ?",
-                       (visit_id,)).fetchone()
+            status=409,
+        )
+    visit = db.execute(
+        "SELECT department, status, disposition FROM opd_visits WHERE id = ?", (visit_id,)
+    ).fetchone()
     return {
         "success": True,
         "replayed": True,
@@ -2037,12 +2536,22 @@ def _conversion_replay_on(db, admission_id: str, visit_id: str,
         "date_of_birth_recorded": row["date_of_birth"] is not None,
         "bed_warning": None,
         "opd_visit_id": visit_id,
-        "visit": ({"id": visit_id, "department": visit["department"],
-                   "status": visit["status"], "disposition": visit["disposition"]}
-                  if visit is not None else None),
+        "visit": (
+            {
+                "id": visit_id,
+                "department": visit["department"],
+                "status": visit["status"],
+                "disposition": visit["disposition"],
+            }
+            if visit is not None
+            else None
+        ),
         "admitted_at": row["admitted_at"],
-        **(_readmission_replay_parts_on(db, row["id"], user, row["department"])
-           if user is not None else {}),
+        **(
+            _readmission_replay_parts_on(db, row["id"], user, row["department"])
+            if user is not None
+            else {}
+        ),
     }
 
 
@@ -2052,8 +2561,9 @@ def _profile_on(db, patient_id: str, data: dict, now: str) -> bool:
     blank text field takes the new text, and nothing already written is
     replaced. A registered outpatient has none, so it is created."""
     meds = data.get("current_medications", []) if _drug_chart_enabled() else []
-    row = db.execute("SELECT * FROM patient_profiles WHERE patient_id = ?",
-                     (patient_id,)).fetchone()
+    row = db.execute(
+        "SELECT * FROM patient_profiles WHERE patient_id = ?", (patient_id,)
+    ).fetchone()
     if row is None:
         db.execute(
             """INSERT INTO patient_profiles (
@@ -2061,36 +2571,58 @@ def _profile_on(db, patient_id: str, data: dict, now: str) -> bool:
                 past_surgical_history, allergies, current_medications,
                 family_history, social_history, updated_at
                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (patient_id, json.dumps(data.get("comorbidities") or []),
-             data.get("past_medical_history"), data.get("past_surgical_history"),
-             json.dumps(data.get("allergies") or []), json.dumps(meds or []),
-             data.get("family_history"), data.get("social_history"), now),
+            (
+                patient_id,
+                json.dumps(data.get("comorbidities") or []),
+                data.get("past_medical_history"),
+                data.get("past_surgical_history"),
+                json.dumps(data.get("allergies") or []),
+                json.dumps(meds or []),
+                data.get("family_history"),
+                data.get("social_history"),
+                now,
+            ),
         )
         return True
     changes: dict = {}
-    for field, new in (("comorbidities", data.get("comorbidities") or []),
-                       ("allergies", data.get("allergies") or []),
-                       ("current_medications", meds or [])):
+    for field, new in (
+        ("comorbidities", data.get("comorbidities") or []),
+        ("allergies", data.get("allergies") or []),
+        ("current_medications", meds or []),
+    ):
         old = _json_or(row[field], [])
         if not isinstance(old, list):
             continue  # a free-text narrative is kept exactly as written
         merged = list(old) + [x for x in new if x not in old]
         if merged != old:
             changes[field] = json.dumps(merged)
-    for field in ("past_medical_history", "past_surgical_history", "family_history",
-                  "social_history"):
+    for field in (
+        "past_medical_history",
+        "past_surgical_history",
+        "family_history",
+        "social_history",
+    ):
         if not _plain(row[field]) and _plain(data.get(field)):
             changes[field] = data.get(field)
     if changes:
         sets = ", ".join(f"{k} = ?" for k in changes)
-        db.execute(f"UPDATE patient_profiles SET {sets}, updated_at = ? WHERE patient_id = ?",
-                   (*changes.values(), now, patient_id))
+        db.execute(
+            f"UPDATE patient_profiles SET {sets}, updated_at = ? WHERE patient_id = ?",
+            (*changes.values(), now, patient_id),
+        )
     return False
 
 
-def admit_existing_patient(visit_id: str, data: dict, user: dict, *, scope_department,
-                           identity: dict | None, idempotency_key: str | None,
-                           request_meta: dict | None = None) -> dict:
+def admit_existing_patient(
+    visit_id: str,
+    data: dict,
+    user: dict,
+    *,
+    scope_department,
+    identity: dict | None,
+    idempotency_key: str | None,
+    request_meta: dict | None = None,
+) -> dict:
     """Admit the registered outpatient of this open visit onto their own
     record (opd-17a). See the section note above for what one call writes and
     refuses.
@@ -2110,17 +2642,20 @@ def admit_existing_patient(visit_id: str, data: dict, user: dict, *, scope_depar
     import secrets
 
     from auth import hash_password
+
+    from services import patient_matching as pm
     from services.audit_service import log_audit_event
     from services.clinical_records_service import allergy_entries, record_allergies_on
     from services.frontdesk_service import FrontDeskError, complete_opd_visit
-    from services import patient_matching as pm
 
     key = _plain(idempotency_key)
     if not key:
         raise AdmissionRefused(
             "idempotency_key_required",
             "Send an Idempotency-Key with the admission, so a retry never admits the patient "
-            "twice.", status=422)
+            "twice.",
+            status=422,
+        )
     visit_id = _plain(visit_id) or ""
     data = dict(data)
     # A signing PIN for a terminal-clean authoriser (ORB_ADT) is taken out at
@@ -2147,8 +2682,11 @@ def admit_existing_patient(visit_id: str, data: dict, user: dict, *, scope_depar
     readmitting = first_read is not None and first_read["status"] != "registered"
 
     # 2. The bed master's checks that open sessions of their own (ORB_ADT).
-    adt_plan = (_adt_admission_plan(data, key, user, request_meta, authoriser_pin)
-                if _adt_admitting() else None)
+    adt_plan = (
+        _adt_admission_plan(data, key, user, request_meta, authoriser_pin)
+        if _adt_admitting()
+        else None
+    )
     authoriser_pin = None
 
     # 3. Who the patient is (OPD-S1), before the transaction.
@@ -2156,9 +2694,13 @@ def admit_existing_patient(visit_id: str, data: dict, user: dict, *, scope_depar
 
     try:
         identity_facts = _confirm_conversion_identity(
-            patient_id, identity, user=user, scope_department=scope_department,
+            patient_id,
+            identity,
+            user=user,
+            scope_department=scope_department,
             request_meta=request_meta,
-            purpose=READMISSION_PURPOSE if readmitting else "opd_admission")
+            purpose=READMISSION_PURPOSE if readmitting else "opd_admission",
+        )
     except RegistrationNotFound:
         # The check hides another ward's inpatient as 'not found'. When the
         # patient was admitted from this visit a moment ago (a second send
@@ -2168,8 +2710,10 @@ def admit_existing_patient(visit_id: str, data: dict, user: dict, *, scope_depar
             if replay is not None:
                 return replay
             now_refused = _conversion_refusal_on(
-                db, _conversion_visit_on(db, visit_id, scope_department),
-                _conversion_patient_on(db, patient_id))
+                db,
+                _conversion_visit_on(db, visit_id, scope_department),
+                _conversion_patient_on(db, patient_id),
+            )
         if now_refused is not None:
             raise now_refused from None
         raise
@@ -2177,8 +2721,12 @@ def admit_existing_patient(visit_id: str, data: dict, user: dict, *, scope_depar
     # multisite-3: the facility of this admission (None with one facility on
     # record); refused when the patient's admissions are at another facility.
     admission_facility_id = admission_facility(
-        data.get("department"), user, lane="opd_admission", patient_id=patient_id,
-        request_meta=request_meta)
+        data.get("department"),
+        user,
+        lane="opd_admission",
+        patient_id=patient_id,
+        request_meta=request_meta,
+    )
 
     meta = dict(request_meta or {})
     state: dict = {}
@@ -2187,13 +2735,16 @@ def admit_existing_patient(visit_id: str, data: dict, user: dict, *, scope_depar
         """complete_opd_visit's before_complete: inside its immediate
         transaction, before the visit is finished. Anything raised here rolls
         the visit, the charge and every row below back together."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         if scope_department is not None and (row["department"] or "") != scope_department:
             raise AdmissionRefused("visit_not_found", "Outpatient visit not found.", status=404)
         if row["patient_id"] != patient_id:
             raise AdmissionRefused(
-                "state_changed", "This visit changed while the form was open. Nothing was "
-                "saved. Open the patient again.", status=409)
+                "state_changed",
+                "This visit changed while the form was open. Nothing was "
+                "saved. Open the patient again.",
+                status=409,
+            )
         patient = _conversion_patient_on(db, patient_id)
         refused = _conversion_refusal_on(db, row, patient)
         if refused is not None:
@@ -2203,14 +2754,20 @@ def admit_existing_patient(visit_id: str, data: dict, user: dict, *, scope_depar
         readmit_now = patient["status"] != "registered"
         if readmit_now != readmitting:
             raise AdmissionRefused(
-                "state_changed", "This patient's record changed while the form was open. "
-                "Nothing was saved. Open the patient again.", status=409)
+                "state_changed",
+                "This patient's record changed while the form was open. "
+                "Nothing was saved. Open the patient again.",
+                status=409,
+            )
         if adt_plan is not None:
             from services.adt.core import AdtConflict, movement_for_key
 
             if movement_for_key(db, key) is not None:
-                raise AdtConflict("That Idempotency-Key was already used for another "
-                                  "admission. Nothing was saved.", code="idempotency_key_reused")
+                raise AdtConflict(
+                    "That Idempotency-Key was already used for another "
+                    "admission. Nothing was saved.",
+                    code="idempotency_key_reused",
+                )
         if readmit_now:
             # opd-17c, ADT-S9 (a): never before the earlier stay ended.
             _check_readmission_time_on(db, patient_id, adt_plan)
@@ -2222,7 +2779,9 @@ def admit_existing_patient(visit_id: str, data: dict, user: dict, *, scope_depar
             raise AdmissionRefused(
                 "signed_note_required",
                 "Sign the consultation note first, or say why there is none (for example, "
-                "the note is on paper).", status=409)
+                "the note is on paper).",
+                status=409,
+            )
 
         name = patient["name"]
         row_ward, row_bed = data.get("ward"), data.get("bed")
@@ -2242,9 +2801,14 @@ def admit_existing_patient(visit_id: str, data: dict, user: dict, *, scope_depar
             # Every placement rule, before a row about the admission exists.
             bed_warning = None
             prepared = prepare_place_on(
-                db, admission_id=None, actor=user, movement_type="admission",
-                ward_id=adt_plan["ward_id"], bed_id=adt_plan["bed_id"],
-                ward_text=adt_plan["ward_text"], bed_text=adt_plan["bed_text"],
+                db,
+                admission_id=None,
+                actor=user,
+                movement_type="admission",
+                ward_id=adt_plan["ward_id"],
+                bed_id=adt_plan["bed_id"],
+                ward_text=adt_plan["ward_text"],
+                bed_text=adt_plan["bed_text"],
                 extra_bed=adt_plan["extra_bed"],
                 out_of_service_reason=adt_plan["out_of_service_reason"],
                 not_clean_reason=adt_plan["not_clean_reason"],
@@ -2271,14 +2835,21 @@ def admit_existing_patient(visit_id: str, data: dict, user: dict, *, scope_depar
         login_created = password_reissued = False
         if readmit_now:
             login_id, temp_password, login_created, password_reissued = (
-                _readmission_portal_login_on(db, patient=patient, name=name,
-                                             portal_ward=portal_ward))
+                _readmission_portal_login_on(
+                    db, patient=patient, name=name, portal_ward=portal_ward
+                )
+            )
         elif not login_id:
             login_id = f"P{uuid.uuid4().hex[:6].upper()}"
             temp_password = secrets.token_urlsafe(9)
             login_created = True
-            _insert_portal_login_on(db, user_id=login_id, name=name, department=portal_ward,
-                                    password_hash=hash_password(temp_password))
+            _insert_portal_login_on(
+                db,
+                user_id=login_id,
+                name=name,
+                department=portal_ward,
+                password_hash=hash_password(temp_password),
+            )
 
         # The same patient row: only the status, the login and the clinical
         # and location mirrors change. Name, hospital number, age, date of
@@ -2288,15 +2859,24 @@ def admit_existing_patient(visit_id: str, data: dict, user: dict, *, scope_depar
                   SET status = 'admitted', user_id = ?, ward = ?, bed = ?, diagnosis = ?,
                       attending_doctor_id = ?, admission_date = ?
                 WHERE id = ? AND status = ?""",
-            (login_id, row_ward, row_bed,
-             data.get("initial_diagnosis") or data.get("chief_complaint"),
-             data.get("attending_doctor_id"), admission_date, patient_id,
-             READMITTABLE_STATUS if readmit_now else "registered"),
+            (
+                login_id,
+                row_ward,
+                row_bed,
+                data.get("initial_diagnosis") or data.get("chief_complaint"),
+                data.get("attending_doctor_id"),
+                admission_date,
+                patient_id,
+                READMITTABLE_STATUS if readmit_now else "registered",
+            ),
         )
         if moved.rowcount != 1:
             raise AdmissionRefused(
-                "state_changed", "This patient's record changed while the form was open. "
-                "Nothing was saved. Open the patient again.", status=409)
+                "state_changed",
+                "This patient's record changed while the form was open. "
+                "Nothing was saved. Open the patient again.",
+                status=409,
+            )
 
         db.execute(
             """INSERT INTO admissions (
@@ -2306,30 +2886,60 @@ def admit_existing_patient(visit_id: str, data: dict, user: dict, *, scope_depar
                 admitting_notes, nursing_notes, isolation_precautions, code_status,
                 initial_vitals_json, status, created_at, opd_visit_id
                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'active', ?, ?)""",
-            (admission_id, patient_id, user["id"], data.get("admission_source"),
-             data.get("admission_type"), data.get("department"), row_ward, row_bed,
-             data.get("attending_doctor_id"), data.get("referring_clinician"),
-             data.get("chief_complaint"), data.get("initial_diagnosis"),
-             data.get("triage_severity"), data.get("admitting_notes"),
-             data.get("nursing_notes"), json.dumps(data.get("isolation_precautions") or []),
-             data.get("code_status") or "full_code", now, row["id"]),
+            (
+                admission_id,
+                patient_id,
+                user["id"],
+                data.get("admission_source"),
+                data.get("admission_type"),
+                data.get("department"),
+                row_ward,
+                row_bed,
+                data.get("attending_doctor_id"),
+                data.get("referring_clinician"),
+                data.get("chief_complaint"),
+                data.get("initial_diagnosis"),
+                data.get("triage_severity"),
+                data.get("admitting_notes"),
+                data.get("nursing_notes"),
+                json.dumps(data.get("isolation_precautions") or []),
+                data.get("code_status") or "full_code",
+                now,
+                row["id"],
+            ),
         )
-        _stamp_admission_facility_on(db, admission_id=admission_id, patient_id=patient_id,
-                                     facility_id=admission_facility_id, new_patient=False)
+        _stamp_admission_facility_on(
+            db,
+            admission_id=admission_id,
+            patient_id=patient_id,
+            facility_id=admission_facility_id,
+            new_patient=False,
+        )
         if adt_plan is not None:
-            db.execute("UPDATE admissions SET admitted_at = ? WHERE id = ?",
-                       (adt_plan["admitted_iso"], admission_id))
-        db.execute("UPDATE opd_visits SET admission_id = ? WHERE id = ?",
-                   (admission_id, row["id"]))
+            db.execute(
+                "UPDATE admissions SET admitted_at = ? WHERE id = ?",
+                (adt_plan["admitted_iso"], admission_id),
+            )
+        db.execute("UPDATE opd_visits SET admission_id = ? WHERE id = ?", (admission_id, row["id"]))
 
         profile_created = _profile_on(db, patient_id, data, now)
         # Add-only: an allergy already charted stays exactly as it is.
         added = record_allergies_on(
-            db, patient_id, allergy_entries(data.get("allergies") or []),
-            source="admission", recorded_by=user["id"], recorded_at=now)
-        charted = [r["substance"] for r in db.execute(
-            "SELECT substance FROM patient_allergies WHERE patient_id = ? AND status = 'active' "
-            "ORDER BY substance", (patient_id,)).fetchall()]
+            db,
+            patient_id,
+            allergy_entries(data.get("allergies") or []),
+            source="admission",
+            recorded_by=user["id"],
+            recorded_at=now,
+        )
+        charted = [
+            r["substance"]
+            for r in db.execute(
+                "SELECT substance FROM patient_allergies WHERE patient_id = ? AND status = 'active' "
+                "ORDER BY substance",
+                (patient_id,),
+            ).fetchall()
+        ]
 
         # opd-17c, ruling OPD-S8 (a): every medicine the earlier stay left on
         # the chart is stopped here, so none can be given in the new stay.
@@ -2338,21 +2948,29 @@ def admit_existing_patient(visit_id: str, data: dict, user: dict, *, scope_depar
         if readmit_now:
             previous_admission_id = _previous_admission_id_on(db, patient_id)
             stopped = _close_previous_stay_medicines_on(
-                db, patient_id, user=user, admission_id=admission_id,
-                previous_admission_id=previous_admission_id, request_meta=request_meta)
+                db,
+                patient_id,
+                user=user,
+                admission_id=admission_id,
+                previous_admission_id=previous_admission_id,
+                request_meta=request_meta,
+            )
 
         # One case room per patient for life: reused when there is one.
         channel_id = _case_room_of(db, patient_id)
         room_reused = channel_id is not None
         if not room_reused:
             channel_id = f"chan_{uuid.uuid4().hex[:12]}"
-            _insert_case_room_on(db, channel_id=channel_id, room_name=f"Case: {name}",
-                                 patient_id=patient_id, now=now)
+            _insert_case_room_on(
+                db, channel_id=channel_id, room_name=f"Case: {name}", patient_id=patient_id, now=now
+            )
         age, _stated = pm.current_age(
-            date_of_birth=patient["date_of_birth"], stated_age=patient["age"],
-            age_recorded_on=patient["age_recorded_on"], created_at=patient["created_at"])
-        heading = ("READMISSION" if readmit_now
-                   else "NEW ADMISSION" if room_reused else "ADMISSION")
+            date_of_birth=patient["date_of_birth"],
+            stated_age=patient["age"],
+            age_recorded_on=patient["age_recorded_on"],
+            created_at=patient["created_at"],
+        )
+        heading = "READMISSION" if readmit_now else "NEW ADMISSION" if room_reused else "ADMISSION"
         lines = [
             f"**{heading}**: {name} ({age if age is not None else '?'}y {patient['sex'] or '?'})",
         ]
@@ -2369,90 +2987,147 @@ def admit_existing_patient(visit_id: str, data: dict, user: dict, *, scope_depar
         if charted:
             lines.append(f"Allergies: {', '.join(charted)}")
         if data.get("comorbidities"):
-            lines.append(f"Comorbidities: {', '.join(data.get('comorbidities'))}")
+            lines.append(f"Comorbidities: {', '.join(data['comorbidities'])}")
         if readmit_now:
             lines += _readmission_case_room_lines(stopped)
-        lines.append("Outpatient observations and medicines were not carried onto the "
-                     "inpatient chart: chart a fresh set of observations, and prescribe each "
-                     "medicine again if it is needed.")
+        lines.append(
+            "Outpatient observations and medicines were not carried onto the "
+            "inpatient chart: chart a fresh set of observations, and prescribe each "
+            "medicine again if it is needed."
+        )
         _post_system_line_on(db, channel_id=channel_id, content="\n".join(lines), now=now)
 
-        memory_exists = db.execute("SELECT 1 FROM sage_room_memory WHERE room_id = ?",
-                                   (channel_id,)).fetchone() is not None
+        memory_exists = (
+            db.execute("SELECT 1 FROM sage_room_memory WHERE room_id = ?", (channel_id,)).fetchone()
+            is not None
+        )
         sage_facts: dict = {}
         if readmit_now:
             # Ruling ADT-S9 (a): the earlier stay's Sage memory is archived
             # and a new one started; its open suggestions are closed.
-            summary = (f"{name}, {age if age is not None else '?'}y {patient['sex'] or '?'} "
-                       f"readmitted to {sage_ward} from the {row['department']} clinic for "
-                       f"{data.get('initial_diagnosis')}.")
+            summary = (
+                f"{name}, {age if age is not None else '?'}y {patient['sex'] or '?'} "
+                f"readmitted to {sage_ward} from the {row['department']} clinic for "
+                f"{data.get('initial_diagnosis')}."
+            )
             if data.get("comorbidities"):
-                summary += f" PMH: {', '.join(data.get('comorbidities'))}."
+                summary += f" PMH: {', '.join(data['comorbidities'])}."
             sage_facts = _restart_room_memory_on(
-                db, channel_id=channel_id, patient_id=patient_id, admission_id=admission_id,
-                previous_admission_id=previous_admission_id, summary=summary,
-                discussion=(f"Patient readmitted from outpatients onto the same record. "
-                            f"{data.get('admitting_notes') or ''}"),
+                db,
+                channel_id=channel_id,
+                patient_id=patient_id,
+                admission_id=admission_id,
+                previous_admission_id=previous_admission_id,
+                summary=summary,
+                discussion=(
+                    f"Patient readmitted from outpatients onto the same record. "
+                    f"{data.get('admitting_notes') or ''}"
+                ),
                 concern=data.get("chief_complaint") or "",
-                triage=data.get("triage_severity"), user=user, now=now)
+                triage=data.get("triage_severity"),
+                user=user,
+                now=now,
+            )
         elif not memory_exists:
-            summary = (f"{name}, {age if age is not None else '?'}y {patient['sex'] or '?'} "
-                       f"admitted to {sage_ward} from the {row['department']} clinic for "
-                       f"{data.get('initial_diagnosis')}.")
+            summary = (
+                f"{name}, {age if age is not None else '?'}y {patient['sex'] or '?'} "
+                f"admitted to {sage_ward} from the {row['department']} clinic for "
+                f"{data.get('initial_diagnosis')}."
+            )
             if data.get("comorbidities"):
-                summary += f" PMH: {', '.join(data.get('comorbidities'))}."
+                summary += f" PMH: {', '.join(data['comorbidities'])}."
             risk_flags = []
             triage = data.get("triage_severity")
             if triage and int(triage) <= 2:
-                risk_flags.append({"detail": f"High acuity admission (Triage {triage})",
-                                   "confidence": 1.0})
+                risk_flags.append(
+                    {"detail": f"High acuity admission (Triage {triage})", "confidence": 1.0}
+                )
             db.execute(
                 """INSERT INTO sage_room_memory (
                     room_id, patient_id, patient_summary, discussion_summary,
                     current_concern, risk_flags, participants,
                     message_count, llm_call_count, created_at, updated_at
                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)""",
-                (channel_id, patient_id, summary[:1000],
-                 (f"Patient admitted from outpatients. {data.get('admitting_notes') or ''}")[:1000],
-                 (data.get("chief_complaint") or "")[:200], json.dumps(risk_flags),
-                 json.dumps([user.get("name", "Unknown")]), now, now),
+                (
+                    channel_id,
+                    patient_id,
+                    summary[:1000],
+                    (f"Patient admitted from outpatients. {data.get('admitting_notes') or ''}")[
+                        :1000
+                    ],
+                    (data.get("chief_complaint") or "")[:200],
+                    json.dumps(risk_flags),
+                    json.dumps([user.get("name", "Unknown")]),
+                    now,
+                    now,
+                ),
             )
 
         placed = None
         if adt_plan is not None:
+            assert prepared is not None
             from services.adt.core import place_admission_on
 
             # Last, so every row above commits with the movement and its
             # fail-closed audit, or none of them does.
             placed = place_admission_on(
-                db, admission_id=admission_id, actor=user, movement_type="admission",
-                reason="Patient admitted from outpatients", prepared=prepared,
+                db,
+                admission_id=admission_id,
+                actor=user,
+                movement_type="admission",
+                reason="Patient admitted from outpatients",
+                prepared=prepared,
                 boarder_acknowledged=adt_plan["boarder_acknowledged"],
-                moved_at=adt_plan["admitted_iso"], idempotency_key=key,
+                moved_at=adt_plan["admitted_iso"],
+                idempotency_key=key,
                 request_meta=request_meta,
             )
 
         log_audit_event(
-            correlation_id=f"opd-convert-{row['id']}", event_category="clinical_access",
-            action_type=CONVERSION_AUDIT_ACTION, outcome="success", db=db,
-            summary_message=(f"Outpatient {patient_id} admitted from visit {row['id']} as "
-                             f"admission {admission_id}"),
-            actor_user_id=user.get("id"), actor_role=user.get("role"),
-            target_type="admission", target_id=admission_id, patient_id=patient_id,
-            request_path=meta.get("request_path"), http_method=meta.get("http_method"),
-            ip_address=meta.get("ip_address"), user_agent=meta.get("user_agent"),
+            correlation_id=f"opd-convert-{row['id']}",
+            event_category="clinical_access",
+            action_type=CONVERSION_AUDIT_ACTION,
+            outcome="success",
+            db=db,
+            summary_message=(
+                f"Outpatient {patient_id} admitted from visit {row['id']} as "
+                f"admission {admission_id}"
+            ),
+            actor_user_id=user.get("id"),
+            actor_role=user.get("role"),
+            target_type="admission",
+            target_id=admission_id,
+            patient_id=patient_id,
+            request_path=meta.get("request_path"),
+            http_method=meta.get("http_method"),
+            ip_address=meta.get("ip_address"),
+            user_agent=meta.get("user_agent"),
             metadata={
-                "opd_visit_id": row["id"], "admission_id": admission_id,
-                "clinic": row["department"], "department": data.get("department"),
-                "token_number": row["token_number"], "identity_check": identity_facts,
-                "same_record": True, "portal_login_created": login_created,
-                "case_room_reused": room_reused, "profile_created": profile_created,
-                "allergies_added": added, "allergies_on_chart": len(charted),
-                "opd_vitals_copied": False, "opd_medicines_copied": False,
-                "signed_note": signed, "no_signed_note_reason": None if signed else reason,
-                "location": ({"ward_id": placed["ward_id"], "bed_id": placed["bed_id"],
-                              "linked": placed["linked"]} if placed is not None else
-                             {"ward": row_ward, "bed": row_bed}),
+                "opd_visit_id": row["id"],
+                "admission_id": admission_id,
+                "clinic": row["department"],
+                "department": data.get("department"),
+                "token_number": row["token_number"],
+                "identity_check": identity_facts,
+                "same_record": True,
+                "portal_login_created": login_created,
+                "case_room_reused": room_reused,
+                "profile_created": profile_created,
+                "allergies_added": added,
+                "allergies_on_chart": len(charted),
+                "opd_vitals_copied": False,
+                "opd_medicines_copied": False,
+                "signed_note": signed,
+                "no_signed_note_reason": None if signed else reason,
+                "location": (
+                    {
+                        "ward_id": placed["ward_id"],
+                        "bed_id": placed["bed_id"],
+                        "linked": placed["linked"],
+                    }
+                    if placed is not None
+                    else {"ward": row_ward, "bed": row_bed}
+                ),
                 "written": "in_transaction",
                 **({"readmission": True} if readmit_now else {}),
             },
@@ -2460,23 +3135,48 @@ def admit_existing_patient(visit_id: str, data: dict, user: dict, *, scope_depar
         if readmit_now:
             # opd-17c: the readmission's own records, in this transaction.
             _audit_readmission_on(
-                db, patient_id=patient_id, admission_id=admission_id,
-                previous_admission_id=previous_admission_id, door=READMISSION_DOOR_OPD_VISIT,
-                user=user, request_meta=request_meta, identity_facts=identity_facts,
-                facts={"opd_visit_id": row["id"], "department": data.get("department"),
-                       "case_room_reused": room_reused, "profile_created": profile_created,
-                       "allergies_added": added, "allergies_on_chart": len(charted),
-                       "portal_login_created": login_created,
-                       "portal_password_reissued": password_reissued,
-                       "previous_stay_medicines_closed": len(stopped), **sage_facts},
-                login_id=login_id if password_reissued else None)
+                db,
+                patient_id=patient_id,
+                admission_id=admission_id,
+                previous_admission_id=previous_admission_id,
+                door=READMISSION_DOOR_OPD_VISIT,
+                user=user,
+                request_meta=request_meta,
+                identity_facts=identity_facts,
+                facts={
+                    "opd_visit_id": row["id"],
+                    "department": data.get("department"),
+                    "case_room_reused": room_reused,
+                    "profile_created": profile_created,
+                    "allergies_added": added,
+                    "allergies_on_chart": len(charted),
+                    "portal_login_created": login_created,
+                    "portal_password_reissued": password_reissued,
+                    "previous_stay_medicines_closed": len(stopped),
+                    **sage_facts,
+                },
+                login_id=login_id if password_reissued else None,
+            )
         state.update(
-            converted=True, now=now, channel_id=channel_id, room_reused=room_reused,
-            login_id=login_id, temp_password=temp_password, bed_warning=bed_warning,
-            mrn=patient["mrn"], dob=patient["date_of_birth"], added=added,
-            signed=signed, prepared=prepared, placed=placed, readmission=readmit_now,
-            login_created=login_created, password_reissued=password_reissued,
-            stopped=stopped, department=data.get("department"))
+            converted=True,
+            now=now,
+            channel_id=channel_id,
+            room_reused=room_reused,
+            login_id=login_id,
+            temp_password=temp_password,
+            bed_warning=bed_warning,
+            mrn=patient["mrn"],
+            dob=patient["date_of_birth"],
+            added=added,
+            signed=signed,
+            prepared=prepared,
+            placed=placed,
+            readmission=readmit_now,
+            login_created=login_created,
+            password_reissued=password_reissued,
+            stopped=stopped,
+            department=data.get("department"),
+        )
 
     def _record_completion(db, finished: dict, facts: dict) -> None:
         """The visit's own record of finishing, beside the conversion's, in
@@ -2485,34 +3185,53 @@ def admit_existing_patient(visit_id: str, data: dict, user: dict, *, scope_depar
             return
         charge = finished.get("consultation_charge") or {}
         log_audit_event(
-            correlation_id=f"opd-complete-{finished['id']}", event_category="clinical_record",
-            action_type="opd_visit_completed", outcome="success", db=db,
-            summary_message=(f"OPD visit {finished['id']} completed (admitted); consultation "
-                             f"charge {charge.get('charge_id') or 'not raised'}"),
-            actor_user_id=user.get("id"), actor_role=user.get("role"),
-            patient_id=finished.get("patient_id"), target_type="opd_visit",
-            target_id=str(finished["id"]), request_path=meta.get("request_path"),
-            http_method=meta.get("http_method"), ip_address=meta.get("ip_address"),
-            metadata={"disposition": ADMITTED_DISPOSITION, "admission_id": admission_id,
-                      "signed_note": state.get("signed"),
-                      "no_signed_note_reason": None if state.get("signed") else reason,
-                      "charge_id": charge.get("charge_id"),
-                      "rate_is_configured": charge.get("rate_is_configured"),
-                      "total_paise": charge.get("total_paise"), **facts,
-                      "written": "in_transaction"},
+            correlation_id=f"opd-complete-{finished['id']}",
+            event_category="clinical_record",
+            action_type="opd_visit_completed",
+            outcome="success",
+            db=db,
+            summary_message=(
+                f"OPD visit {finished['id']} completed (admitted); consultation "
+                f"charge {charge.get('charge_id') or 'not raised'}"
+            ),
+            actor_user_id=user.get("id"),
+            actor_role=user.get("role"),
+            patient_id=finished.get("patient_id"),
+            target_type="opd_visit",
+            target_id=str(finished["id"]),
+            request_path=meta.get("request_path"),
+            http_method=meta.get("http_method"),
+            ip_address=meta.get("ip_address"),
+            metadata={
+                "disposition": ADMITTED_DISPOSITION,
+                "admission_id": admission_id,
+                "signed_note": state.get("signed"),
+                "no_signed_note_reason": None if state.get("signed") else reason,
+                "charge_id": charge.get("charge_id"),
+                "rate_is_configured": charge.get("rate_is_configured"),
+                "total_paise": charge.get("total_paise"),
+                **facts,
+                "written": "in_transaction",
+            },
         )
 
     # 4. One immediate transaction: the visit's completion with the admission
     # inside it.
     try:
         finished = complete_opd_visit(
-            visit_id, completed_by=user.get("id"), raise_charge=True,
-            disposition=ADMITTED_DISPOSITION, before_complete=_convert,
-            on_done=_record_completion)
+            visit_id,
+            completed_by=user.get("id"),
+            raise_charge=True,
+            disposition=ADMITTED_DISPOSITION,
+            before_complete=_convert,
+            on_done=_record_completion,
+        )
     except FrontDeskError as exc:
         raise AdmissionRefused(
-            "visit_closed", "This visit cannot be finished, so the patient was not admitted "
-            "from it.", status=409) from exc
+            "visit_closed",
+            "This visit cannot be finished, so the patient was not admitted from it.",
+            status=409,
+        ) from exc
     if not state.get("converted"):
         # The visit was finished elsewhere between the checks and the
         # transaction (or by this key's first send): nothing was admitted here.
@@ -2524,20 +3243,25 @@ def admit_existing_patient(visit_id: str, data: dict, user: dict, *, scope_depar
             "visit_completed",
             "This visit was finished before the admission was saved, so the patient was not "
             "admitted. Register a new visit at the front desk, then admit the patient from it.",
-            status=409)
+            status=409,
+        )
 
     adt_answer = {}
     if state.get("placed") is not None:
         placed, prepared = state["placed"], state["prepared"]
         extra = prepared["detail"].get("extra_bed") or {}
         adt_answer = {
-            "admitted_at": adt_plan["admitted_iso"],
+            "admitted_at": adt_plan["admitted_iso"] if adt_plan is not None else None,
             "movement_id": placed["movement"]["id"],
             "location": {
-                "ward_id": placed["ward_id"], "bed_id": placed["bed_id"],
-                "ward": placed["ward"], "bed": placed["bed"], "linked": placed["linked"],
+                "ward_id": placed["ward_id"],
+                "bed_id": placed["bed_id"],
+                "ward": placed["ward"],
+                "bed": placed["bed"],
+                "linked": placed["linked"],
                 "awaiting_bed": placed["bed_id"] is None and not placed["bed"],
-                "boarder": placed["boarder"], "extra_bed": extra.get("label"),
+                "boarder": placed["boarder"],
+                "extra_bed": extra.get("label"),
             },
             "location_warning": _location_warning(prepared["target"]),
         }
@@ -2556,9 +3280,12 @@ def admit_existing_patient(visit_id: str, data: dict, user: dict, *, scope_depar
         "date_of_birth_recorded": state["dob"] is not None,
         "bed_warning": state["bed_warning"],
         "opd_visit_id": visit_id,
-        "visit": {"id": finished["id"], "department": finished.get("department"),
-                  "status": finished.get("status"),
-                  "disposition": finished.get("disposition") or ADMITTED_DISPOSITION},
+        "visit": {
+            "id": finished["id"],
+            "department": finished.get("department"),
+            "status": finished.get("status"),
+            "disposition": finished.get("disposition") or ADMITTED_DISPOSITION,
+        },
         "case_room_reused": state["room_reused"],
         "allergies_added": state["added"],
         **adt_answer,
@@ -2650,8 +3377,9 @@ READMISSION_DOOR_OPD_VISIT = "opd_visit"
 #: Death, as an ended stay and as a NABH disposition records it.
 DEATH_DISPOSITIONS = ("death", "death_within_48h")
 #: The case room's dividing line (ADT-S9 (a)).
-READMISSION_DIVIDER = ("Readmitted onto the same record. Everything above this line is from "
-                       "the previous stay.")
+READMISSION_DIVIDER = (
+    "Readmitted onto the same record. Everything above this line is from the previous stay."
+)
 #: What the form says a readmission does, before anything is admitted.
 READMISSION_FORM_NOTE = (
     "This patient was an inpatient here before. Admitting them reopens their own record: any "
@@ -2675,8 +3403,7 @@ def readmission_admission_id(user_id: str, idempotency_key: str) -> str:
     Idempotency-Key, so a retried send finds the first admission."""
     import hashlib
 
-    digest = hashlib.sha256(
-        f"opd-17c\x00{user_id}\x00{idempotency_key}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(f"opd-17c\x00{user_id}\x00{idempotency_key}".encode()).hexdigest()
     return f"ADM-{digest[:12].upper()}"
 
 
@@ -2696,18 +3423,27 @@ def _readmission_patient_on(db, patient_id: str):
 def _deceased_on(db, patient_id: str) -> bool:
     """True when the record says the patient died: an admission ended as a
     death (not reopened, which clears it), or a live NABH death disposition."""
-    if db.execute("SELECT 1 FROM admissions WHERE patient_id = ? AND discharge_type = 'death' "
-                  "LIMIT 1", (patient_id,)).fetchone() is not None:
+    if (
+        db.execute(
+            "SELECT 1 FROM admissions WHERE patient_id = ? AND discharge_type = 'death' LIMIT 1",
+            (patient_id,),
+        ).fetchone()
+        is not None
+    ):
         return True
     if not _table_exists(db, "nabh_discharge_dispositions"):
         return False
     cols = {r[1] for r in db.execute("PRAGMA table_info(nabh_discharge_dispositions)")}
     live = " AND voided_at IS NULL" if "voided_at" in cols else ""
     marks = ",".join("?" for _ in DEATH_DISPOSITIONS)
-    return db.execute(
-        f"SELECT 1 FROM nabh_discharge_dispositions WHERE patient_id = ? "
-        f"AND disposition IN ({marks}){live} LIMIT 1",
-        (patient_id, *DEATH_DISPOSITIONS)).fetchone() is not None
+    return (
+        db.execute(
+            f"SELECT 1 FROM nabh_discharge_dispositions WHERE patient_id = ? "
+            f"AND disposition IN ({marks}){live} LIMIT 1",
+            (patient_id, *DEATH_DISPOSITIONS),
+        ).fetchone()
+        is not None
+    )
 
 
 def _readmission_refusal_on(db, patient) -> AdmissionRefused | None:
@@ -2716,32 +3452,43 @@ def _readmission_refusal_on(db, patient) -> AdmissionRefused | None:
         return AdmissionRefused("patient_not_found", "Patient not found.", status=404)
     active = db.execute(
         "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' LIMIT 1",
-        (patient["id"],)).fetchone()
+        (patient["id"],),
+    ).fetchone()
     if patient["status"] == "admitted" or active is not None:
         return AdmissionRefused(
             "patient_already_admitted",
-            "This patient is already admitted. Open their inpatient chart.", status=409)
+            "This patient is already admitted. Open their inpatient chart.",
+            status=409,
+        )
     ended = db.execute(
         "SELECT 1 FROM admissions WHERE patient_id = ? AND status <> 'active' LIMIT 1",
-        (patient["id"],)).fetchone()
+        (patient["id"],),
+    ).fetchone()
     if patient["status"] != READMITTABLE_STATUS or ended is None:
         return AdmissionRefused(
             "readmission_not_applicable",
             "Only a patient discharged from an earlier stay here can be readmitted onto their "
-            "record. Check the patient's record with the registration desk.", status=409)
+            "record. Check the patient's record with the registration desk.",
+            status=409,
+        )
     if _deceased_on(db, patient["id"]):
         return AdmissionRefused(
             "patient_deceased",
             "This record says the patient died, so they cannot be readmitted onto it. Check "
             "you have the right patient. If the death was recorded in error, correct the "
-            "earlier stay first.", status=409)
+            "earlier stay first.",
+            status=409,
+        )
     return None
 
 
 def _readmittable_ids_on(db, ids) -> set:
     """The patient ids a readmission would accept now (same rule)."""
-    return {pid for pid in dict.fromkeys(i for i in ids if i)
-            if _readmission_refusal_on(db, _readmission_patient_on(db, pid)) is None}
+    return {
+        pid
+        for pid in dict.fromkeys(i for i in ids if i)
+        if _readmission_refusal_on(db, _readmission_patient_on(db, pid)) is None
+    }
 
 
 def _previous_admission_id_on(db, patient_id: str) -> str | None:
@@ -2749,14 +3496,16 @@ def _previous_admission_id_on(db, patient_id: str) -> str | None:
     row = db.execute(
         "SELECT id FROM admissions WHERE patient_id = ? AND status <> 'active' "
         "ORDER BY COALESCE(admitted_at, created_at) DESC, rowid DESC LIMIT 1",
-        (patient_id,)).fetchone()
+        (patient_id,),
+    ).fetchone()
     return row["id"] if row else None
 
 
 #: Said when a readmission's admission time is before the earlier stay ended.
 READMISSION_BEFORE_PREVIOUS_END = (
     "The admission time is before this patient's previous stay ended. A readmission "
-    "starts after the earlier discharge: give a later admission time.")
+    "starts after the earlier discharge: give a later admission time."
+)
 
 
 def _previous_stay_end_on(db, patient_id: str):
@@ -2777,14 +3526,18 @@ def _previous_stay_end_on(db, patient_id: str):
 
     from services import stay_times
 
-    ceiling = datetime.now(timezone.utc) + timedelta(minutes=5)
+    ceiling = datetime.now(UTC) + timedelta(minutes=5)
     latest = None
-    for row in db.execute("SELECT * FROM admissions WHERE patient_id = ? "
-                          "AND status <> 'active'", (patient_id,)).fetchall():
+    for row in db.execute(
+        "SELECT * FROM admissions WHERE patient_id = ? AND status <> 'active'", (patient_id,)
+    ).fetchall():
         stay = dict(row)
         # Its end, else (no end, or one not yet reached) its start.
-        known = [t for t in (stay_times.stay_end(db, stay), stay_times.stay_start(stay))
-                 if t is not None and t <= ceiling]
+        known = [
+            t
+            for t in (stay_times.stay_end(db, stay), stay_times.stay_start(stay))
+            if t is not None and t <= ceiling
+        ]
         if known and (latest is None or known[0] > latest):
             latest = known[0]
     return latest
@@ -2822,25 +3575,37 @@ def _readmission_portal_login_on(db, *, patient, name: str, portal_ward) -> tupl
     from auth import hash_password
 
     login_id = patient["user_id"]
-    row = (db.execute("SELECT id, role, COALESCE(is_active, 1) AS active FROM users "
-                      "WHERE id = ?", (login_id,)).fetchone() if login_id else None)
+    row = (
+        db.execute(
+            "SELECT id, role, COALESCE(is_active, 1) AS active FROM users WHERE id = ?", (login_id,)
+        ).fetchone()
+        if login_id
+        else None
+    )
     password = secrets.token_urlsafe(9)
     if row is None:
         login_id = f"P{uuid.uuid4().hex[:6].upper()}"
-        _insert_portal_login_on(db, user_id=login_id, name=name, department=portal_ward,
-                                password_hash=hash_password(password))
+        _insert_portal_login_on(
+            db,
+            user_id=login_id,
+            name=name,
+            department=portal_ward,
+            password_hash=hash_password(password),
+        )
         return login_id, password, True, False
     if row["role"] != "patient" or not row["active"]:
         return login_id, None, False, False
     db.execute(
         "UPDATE users SET password_hash = ?, token_version = COALESCE(token_version, 0) + 1 "
         "WHERE id = ? AND role = 'patient'",
-        (hash_password(password), login_id))
+        (hash_password(password), login_id),
+    )
     return login_id, password, False, True
 
 
-def _close_previous_stay_medicines_on(db, patient_id: str, *, user: dict, admission_id: str,
-                                      previous_admission_id, request_meta) -> list[dict]:
+def _close_previous_stay_medicines_on(
+    db, patient_id: str, *, user: dict, admission_id: str, previous_admission_id, request_meta
+) -> list[dict]:
     """Ruling OPD-S8 (a): discontinue every medicine the earlier stay left
     'active' or 'prn', in the caller's transaction, and return them for the
     prescriber to prescribe again. A ward row linked to a live medication
@@ -2855,18 +3620,28 @@ def _close_previous_stay_medicines_on(db, patient_id: str, *, user: dict, admiss
         "SELECT id, drug_name, dosage, route, frequency, status, started_at, med_order_id, "
         "held_at, hold_reason FROM medications WHERE patient_id = ? "
         "AND status IN ('active', 'prn') ORDER BY started_at, id",
-        (patient_id,)).fetchall()
+        (patient_id,),
+    ).fetchall()
     stopped: list[dict] = []
     order_ids: list[str] = []
 
     def stop_order(order_id: str) -> None:
         mo.transition_in_txn(
-            db, order_id, "stopped", expected_version=None, actor_id=user.get("id"),
-            actor_role=user.get("role"), entry_point=READMISSION_ENTRY_POINT,
-            reason=PREVIOUS_STAY_STOP_REASON, lane=READMISSION_PURPOSE,
-            audit_extra={"admission_id": admission_id,
-                         "previous_admission_id": previous_admission_id},
-            request_meta=request_meta)
+            db,
+            order_id,
+            "stopped",
+            expected_version=None,
+            actor_id=user.get("id"),
+            actor_role=user.get("role"),
+            entry_point=READMISSION_ENTRY_POINT,
+            reason=PREVIOUS_STAY_STOP_REASON,
+            lane=READMISSION_PURPOSE,
+            audit_extra={
+                "admission_id": admission_id,
+                "previous_admission_id": previous_admission_id,
+            },
+            request_meta=request_meta,
+        )
         order_ids.append(order_id)
 
     has_orders = _table_exists(db, "med_orders")
@@ -2877,45 +3652,77 @@ def _close_previous_stay_medicines_on(db, patient_id: str, *, user: dict, admiss
                 stop_order(order["id"])
         # The ward row itself, whatever the order did: one the projection did
         # not reach (an unlinked row, or a link out of step) is closed here.
-        db.execute("UPDATE medications SET status = 'discontinued' WHERE id = ? "
-                   "AND status IN ('active', 'prn')", (r["id"],))
-        stopped.append({
-            "medication_id": r["id"], "drug_name": r["drug_name"], "dose": r["dosage"],
-            "route": r["route"], "frequency": r["frequency"],
-            "as_needed": r["status"] == "prn", "started_at": r["started_at"],
-            "was_on_hold": bool(r["held_at"]),
-        })
+        db.execute(
+            "UPDATE medications SET status = 'discontinued' WHERE id = ? "
+            "AND status IN ('active', 'prn')",
+            (r["id"],),
+        )
+        stopped.append(
+            {
+                "medication_id": r["id"],
+                "drug_name": r["drug_name"],
+                "dose": r["dosage"],
+                "route": r["route"],
+                "frequency": r["frequency"],
+                "as_needed": r["status"] == "prn",
+                "started_at": r["started_at"],
+                "was_on_hold": bool(r["held_at"]),
+            }
+        )
     if has_orders:
         marks = ",".join("?" for _ in mo.LIVE_STATUSES)
         for o in db.execute(
-                f"SELECT id FROM med_orders WHERE patient_id = ? AND encounter_type = 'ip' "
-                f"AND status IN ({marks}) ORDER BY created_at, id",
-                (patient_id, *mo.LIVE_STATUSES)).fetchall():
+            f"SELECT id FROM med_orders WHERE patient_id = ? AND encounter_type = 'ip' "
+            f"AND status IN ({marks}) ORDER BY created_at, id",
+            (patient_id, *mo.LIVE_STATUSES),
+        ).fetchall():
             if o["id"] not in order_ids:
                 stop_order(o["id"])
     if stopped or order_ids:
         meta = dict(request_meta or {})
         log_audit_event(
-            correlation_id=f"readmission-{admission_id}", event_category="clinical_access",
-            action_type=PREVIOUS_STAY_MEDICINES_ACTION, outcome="success", db=db,
-            summary_message=(f"{len(stopped)} medicine(s) from the previous stay of "
-                             f"{patient_id} stopped at readmission"),
-            actor_user_id=user.get("id"), actor_role=user.get("role"),
-            target_type="admission", target_id=admission_id, patient_id=patient_id,
-            request_path=meta.get("request_path"), http_method=meta.get("http_method"),
-            ip_address=meta.get("ip_address"), user_agent=meta.get("user_agent"),
-            metadata={"admission_id": admission_id,
-                      "previous_admission_id": previous_admission_id,
-                      "medication_ids": [s["medication_id"] for s in stopped],
-                      "med_order_ids": order_ids, "count": len(stopped),
-                      "reason": PREVIOUS_STAY_STOP_REASON, "written": "in_transaction"})
+            correlation_id=f"readmission-{admission_id}",
+            event_category="clinical_access",
+            action_type=PREVIOUS_STAY_MEDICINES_ACTION,
+            outcome="success",
+            db=db,
+            summary_message=(
+                f"{len(stopped)} medicine(s) from the previous stay of "
+                f"{patient_id} stopped at readmission"
+            ),
+            actor_user_id=user.get("id"),
+            actor_role=user.get("role"),
+            target_type="admission",
+            target_id=admission_id,
+            patient_id=patient_id,
+            request_path=meta.get("request_path"),
+            http_method=meta.get("http_method"),
+            ip_address=meta.get("ip_address"),
+            user_agent=meta.get("user_agent"),
+            metadata={
+                "admission_id": admission_id,
+                "previous_admission_id": previous_admission_id,
+                "medication_ids": [s["medication_id"] for s in stopped],
+                "med_order_ids": order_ids,
+                "count": len(stopped),
+                "reason": PREVIOUS_STAY_STOP_REASON,
+                "written": "in_transaction",
+            },
+        )
     return stopped
 
 
 def _medicine_words(m: dict) -> str:
-    return " ".join(str(x) for x in (
-        m["drug_name"], m.get("dose"), m.get("route"),
-        "when needed" if m.get("as_needed") else m.get("frequency")) if x)
+    return " ".join(
+        str(x)
+        for x in (
+            m["drug_name"],
+            m.get("dose"),
+            m.get("route"),
+            "when needed" if m.get("as_needed") else m.get("frequency"),
+        )
+        if x
+    )
 
 
 def _readmission_case_room_lines(stopped: list[dict]) -> list[str]:
@@ -2926,19 +3733,35 @@ def _readmission_case_room_lines(stopped: list[dict]) -> list[str]:
         if _drug_chart_enabled():
             named = [_medicine_words(m) for m in stopped[:_CASE_ROOM_MEDICINES_MAX]]
             more = len(stopped) - len(named)
-            lines.append("Medicines from the previous stay were stopped at readmission: "
-                         + "; ".join(named) + (f"; and {more} more" if more > 0 else "")
-                         + ". Prescribe each one again if it is needed.")
+            lines.append(
+                "Medicines from the previous stay were stopped at readmission: "
+                + "; ".join(named)
+                + (f"; and {more} more" if more > 0 else "")
+                + ". Prescribe each one again if it is needed."
+            )
         else:
-            lines.append(f"{len(stopped)} medicine(s) from the previous stay were stopped at "
-                         "readmission. Prescribe each one again if it is needed.")
+            lines.append(
+                f"{len(stopped)} medicine(s) from the previous stay were stopped at "
+                "readmission. Prescribe each one again if it is needed."
+            )
     lines.append("Observations from the previous stay are not current: chart a fresh set.")
     return lines
 
 
-def _restart_room_memory_on(db, *, channel_id: str, patient_id: str, admission_id: str,
-                            previous_admission_id, summary: str, discussion: str,
-                            concern: str, triage, user: dict, now: str) -> dict:
+def _restart_room_memory_on(
+    db,
+    *,
+    channel_id: str | None,
+    patient_id: str,
+    admission_id: str,
+    previous_admission_id,
+    summary: str,
+    discussion: str,
+    concern: str,
+    triage,
+    user: dict,
+    now: str,
+) -> dict:
     """Ruling ADT-S9 (a): archive the room's Sage memory and start a new one
     for this stay, in the caller's transaction. The archive is one
     sage_observations row (type room_memory_archived) holding every field of
@@ -2949,22 +3772,32 @@ def _restart_room_memory_on(db, *, channel_id: str, patient_id: str, admission_i
     context is cleared."""
     risk_flags = []
     if triage and int(triage) <= 2:
-        risk_flags.append({"detail": f"High acuity admission (Triage {triage})",
-                           "confidence": 1.0})
+        risk_flags.append({"detail": f"High acuity admission (Triage {triage})", "confidence": 1.0})
     participants = json.dumps([user.get("name", "Unknown")])
-    old = db.execute("SELECT * FROM sage_room_memory WHERE room_id = ?",
-                     (channel_id,)).fetchone()
+    old = db.execute("SELECT * FROM sage_room_memory WHERE room_id = ?", (channel_id,)).fetchone()
     archived = old is not None
     if archived:
         content = {k: old[k] for k in old.keys()}
-        content.update({"archived_at": now, "archived_because": READMISSION_PURPOSE,
-                        "new_admission_id": admission_id,
-                        "previous_admission_id": previous_admission_id})
+        content.update(
+            {
+                "archived_at": now,
+                "archived_because": READMISSION_PURPOSE,
+                "new_admission_id": admission_id,
+                "previous_admission_id": previous_admission_id,
+            }
+        )
         db.execute(
             "INSERT INTO sage_observations (room_id, patient_id, source_message_id, "
             "observation_type, content, confidence, created_at) VALUES (?, ?, ?, ?, ?, NULL, ?)",
-            (channel_id, patient_id, old["last_processed_msg_id"], ROOM_MEMORY_ARCHIVED,
-             json.dumps(content, default=str), now))
+            (
+                channel_id,
+                patient_id,
+                old["last_processed_msg_id"],
+                ROOM_MEMORY_ARCHIVED,
+                json.dumps(content, default=str),
+                now,
+            ),
+        )
         db.execute(
             """UPDATE sage_room_memory
                   SET patient_id = ?, patient_summary = ?, discussion_summary = ?,
@@ -2974,8 +3807,18 @@ def _restart_room_memory_on(db, *, channel_id: str, patient_id: str, admission_i
                       last_processed_at = NULL, message_count = 1, llm_call_count = 0,
                       created_at = ?, updated_at = ?
                 WHERE room_id = ?""",
-            (patient_id, summary[:1000], discussion[:1000], (concern or "")[:200],
-             json.dumps(risk_flags), participants, now, now, channel_id))
+            (
+                patient_id,
+                summary[:1000],
+                discussion[:1000],
+                (concern or "")[:200],
+                json.dumps(risk_flags),
+                participants,
+                now,
+                now,
+                channel_id,
+            ),
+        )
     else:
         db.execute(
             """INSERT INTO sage_room_memory (
@@ -2983,65 +3826,126 @@ def _restart_room_memory_on(db, *, channel_id: str, patient_id: str, admission_i
                 current_concern, risk_flags, participants,
                 message_count, llm_call_count, created_at, updated_at
                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)""",
-            (channel_id, patient_id, summary[:1000], discussion[:1000],
-             (concern or "")[:200], json.dumps(risk_flags), participants, now, now))
+            (
+                channel_id,
+                patient_id,
+                summary[:1000],
+                discussion[:1000],
+                (concern or "")[:200],
+                json.dumps(risk_flags),
+                participants,
+                now,
+                now,
+            ),
+        )
     open_actions = db.execute(
         "SELECT id, state FROM sage_actions WHERE room_id = ? "
         "AND state IN ('suggested', 'acknowledged') ORDER BY created_at, id",
-        (channel_id,)).fetchall()
+        (channel_id,),
+    ).fetchall()
     for a in open_actions:
-        db.execute("UPDATE sage_actions SET state = 'superseded', "
-                   "version = COALESCE(version, 1) + 1, updated_at = ? "
-                   "WHERE id = ? AND state = ?", (now, a["id"], a["state"]))
+        db.execute(
+            "UPDATE sage_actions SET state = 'superseded', "
+            "version = COALESCE(version, 1) + 1, updated_at = ? "
+            "WHERE id = ? AND state = ?",
+            (now, a["id"], a["state"]),
+        )
         db.execute(
             "INSERT INTO sage_action_events (action_id, prior_state, new_state, actor_id, "
             "actor_name, actor_role, reason, source) VALUES (?, ?, 'superseded', ?, ?, ?, ?, "
             "'system')",
-            (a["id"], a["state"], user["id"], user.get("name") or "Unknown",
-             user.get("role"), ROOM_ACTION_CLOSED_REASON))
+            (
+                a["id"],
+                a["state"],
+                user["id"],
+                user.get("name") or "Unknown",
+                user.get("role"),
+                ROOM_ACTION_CLOSED_REASON,
+            ),
+        )
     cleared = 0
     if _table_exists(db, "sage_decision_cache"):
-        cleared = db.execute("DELETE FROM sage_decision_cache WHERE patient_id = ?",
-                             (patient_id,)).rowcount
-    return {"sage_memory_archived": archived, "sage_actions_closed": len(open_actions),
-            "sage_context_cache_cleared": bool(cleared)}
+        cleared = db.execute(
+            "DELETE FROM sage_decision_cache WHERE patient_id = ?", (patient_id,)
+        ).rowcount
+    return {
+        "sage_memory_archived": archived,
+        "sage_actions_closed": len(open_actions),
+        "sage_context_cache_cleared": bool(cleared),
+    }
 
 
-def _audit_readmission_on(db, *, patient_id: str, admission_id: str, previous_admission_id,
-                          door: str, user: dict, request_meta, identity_facts: dict,
-                          facts: dict, login_id) -> None:
+def _audit_readmission_on(
+    db,
+    *,
+    patient_id: str,
+    admission_id: str,
+    previous_admission_id,
+    door: str,
+    user: dict,
+    request_meta,
+    identity_facts: dict,
+    facts: dict,
+    login_id,
+) -> None:
     """The readmission's records in its own transaction, fail-closed: without
     them there is no readmission. `login_id` names a login whose one-time
     password was issued again (ruling R029 (2)); None writes no such row."""
     from services.audit_service import log_audit_event
 
     meta = dict(request_meta or {})
-    common = dict(db=db, outcome="success", actor_user_id=user.get("id"),
-                  actor_role=user.get("role"), patient_id=patient_id,
-                  request_path=meta.get("request_path"), http_method=meta.get("http_method"),
-                  ip_address=meta.get("ip_address"), user_agent=meta.get("user_agent"))
+    common = dict(
+        db=db,
+        outcome="success",
+        actor_user_id=user.get("id"),
+        actor_role=user.get("role"),
+        patient_id=patient_id,
+        request_path=meta.get("request_path"),
+        http_method=meta.get("http_method"),
+        ip_address=meta.get("ip_address"),
+        user_agent=meta.get("user_agent"),
+    )
     log_audit_event(
-        correlation_id=f"readmission-{admission_id}", event_category="clinical_access",
+        correlation_id=f"readmission-{admission_id}",
+        event_category="clinical_access",
         action_type=READMISSION_AUDIT_ACTION,
-        summary_message=(f"Patient {patient_id} readmitted onto the same record as admission "
-                         f"{admission_id}"),
-        target_type="admission", target_id=admission_id,
-        metadata={"admission_id": admission_id,
-                  "previous_admission_id": previous_admission_id, "door": door,
-                  "identity_check": identity_facts, "same_record": True,
-                  "observations_written": False, "previous_stay_observations_current": False,
-                  **facts, "written": "in_transaction"},
-        **common)
+        summary_message=(
+            f"Patient {patient_id} readmitted onto the same record as admission {admission_id}"
+        ),
+        target_type="admission",
+        target_id=admission_id,
+        metadata={
+            "admission_id": admission_id,
+            "previous_admission_id": previous_admission_id,
+            "door": door,
+            "identity_check": identity_facts,
+            "same_record": True,
+            "observations_written": False,
+            "previous_stay_observations_current": False,
+            **facts,
+            "written": "in_transaction",
+        },
+        **common,
+    )
     if login_id:
         log_audit_event(
-            correlation_id=f"readmission-{admission_id}", event_category="security",
+            correlation_id=f"readmission-{admission_id}",
+            event_category="security",
             action_type=PORTAL_PASSWORD_REISSUED_ACTION,
-            summary_message=(f"Bridge portal one-time password issued again for {login_id} at "
-                             "readmission; earlier sessions revoked"),
-            target_type="user", target_id=str(login_id),
-            metadata={"admission_id": admission_id, "sessions_revoked": True,
-                      "ruling": "R029 (2)", "written": "in_transaction"},
-            **common)
+            summary_message=(
+                f"Bridge portal one-time password issued again for {login_id} at "
+                "readmission; earlier sessions revoked"
+            ),
+            target_type="user",
+            target_id=str(login_id),
+            metadata={
+                "admission_id": admission_id,
+                "sessions_revoked": True,
+                "ruling": "R029 (2)",
+                "written": "in_transaction",
+            },
+            **common,
+        )
 
 
 def _may_read_after(user: dict, department) -> bool:
@@ -3075,25 +3979,37 @@ def _readmission_replay_parts_on(db, admission_id: str, user: dict, department) 
     readmission. Never a password: it was shown once."""
     row = db.execute(
         "SELECT metadata_json FROM audit_logs WHERE action_type = ? AND target_id = ? "
-        "ORDER BY id DESC LIMIT 1", (READMISSION_AUDIT_ACTION, admission_id)).fetchone()
+        "ORDER BY id DESC LIMIT 1",
+        (READMISSION_AUDIT_ACTION, admission_id),
+    ).fetchone()
     if row is None:
         return {}
     meds = db.execute(
         "SELECT metadata_json FROM audit_logs WHERE action_type = ? AND target_id = ? "
-        "ORDER BY id DESC LIMIT 1", (PREVIOUS_STAY_MEDICINES_ACTION, admission_id)).fetchone()
+        "ORDER BY id DESC LIMIT 1",
+        (PREVIOUS_STAY_MEDICINES_ACTION, admission_id),
+    ).fetchone()
     ids = (_json_or(meds["metadata_json"], {}) or {}).get("medication_ids") if meds else None
     stopped: list[dict] = []
     if ids:
         marks = ",".join("?" for _ in ids)
-        stopped = [{
-            "medication_id": r["id"], "drug_name": r["drug_name"], "dose": r["dosage"],
-            "route": r["route"], "frequency": r["frequency"],
-            "as_needed": None, "started_at": r["started_at"],
-            "was_on_hold": bool(r["held_at"]),
-        } for r in db.execute(
-            f"SELECT id, drug_name, dosage, route, frequency, started_at, held_at, hold_reason "
-            f"FROM medications WHERE id IN ({marks}) ORDER BY started_at, id",
-            tuple(ids)).fetchall()]
+        stopped = [
+            {
+                "medication_id": r["id"],
+                "drug_name": r["drug_name"],
+                "dose": r["dosage"],
+                "route": r["route"],
+                "frequency": r["frequency"],
+                "as_needed": None,
+                "started_at": r["started_at"],
+                "was_on_hold": bool(r["held_at"]),
+            }
+            for r in db.execute(
+                f"SELECT id, drug_name, dosage, route, frequency, started_at, held_at, hold_reason "
+                f"FROM medications WHERE id IN ({marks}) ORDER BY started_at, id",
+                tuple(ids),
+            ).fetchall()
+        ]
     answer = _readmission_answer({"stopped": stopped, "department": department}, user)
     answer["portal_password_reissued"] = False
     return answer
@@ -3115,7 +4031,8 @@ def _readmission_replay_on(db, admission_id: str, patient_id: str, user: dict) -
         raise AdmissionRefused(
             "idempotency_key_reused",
             "That Idempotency-Key was already used for another admission. Nothing was saved.",
-            status=409)
+            status=409,
+        )
     return {
         "success": True,
         "replayed": True,
@@ -3133,9 +4050,16 @@ def _readmission_replay_on(db, admission_id: str, patient_id: str, user: dict) -
     }
 
 
-def readmit_patient(patient_id: str, data: dict, user: dict, *, scope_department,
-                    identity: dict | None, idempotency_key: str | None,
-                    request_meta: dict | None = None) -> dict:
+def readmit_patient(
+    patient_id: str,
+    data: dict,
+    user: dict,
+    *,
+    scope_department,
+    identity: dict | None,
+    idempotency_key: str | None,
+    request_meta: dict | None = None,
+) -> dict:
     """Readmit a discharged patient onto their own record from the admission
     form (opd-17c). See the section note above for what one call writes and
     refuses.
@@ -3152,6 +4076,7 @@ def readmit_patient(patient_id: str, data: dict, user: dict, *, scope_department
     AuditWriteError (503: a record that cannot be written means no
     readmission)."""
     from db_backend import DBIntegrityError
+
     from services.registration_service import RegistrationNotFound
 
     key = _plain(idempotency_key)
@@ -3159,7 +4084,9 @@ def readmit_patient(patient_id: str, data: dict, user: dict, *, scope_department
         raise AdmissionRefused(
             "idempotency_key_required",
             "Send an Idempotency-Key with the admission, so a retry never admits the patient "
-            "twice.", status=422)
+            "twice.",
+            status=422,
+        )
     patient_id = _plain(patient_id) or ""
     data = dict(data)
     authoriser_pin = data.pop("terminal_clean_authoriser_pin", None)
@@ -3175,15 +4102,23 @@ def readmit_patient(patient_id: str, data: dict, user: dict, *, scope_department
         raise refusal
 
     # 2. The bed master's checks that open sessions of their own (ORB_ADT).
-    adt_plan = (_adt_admission_plan(data, key, user, request_meta, authoriser_pin)
-                if _adt_admitting() else None)
+    adt_plan = (
+        _adt_admission_plan(data, key, user, request_meta, authoriser_pin)
+        if _adt_admitting()
+        else None
+    )
     authoriser_pin = None
 
     # 3. Who the patient is (OPD-S1), before the transaction.
     try:
         identity_facts = _confirm_conversion_identity(
-            patient_id, identity, user=user, scope_department=scope_department,
-            request_meta=request_meta, purpose=READMISSION_PURPOSE)
+            patient_id,
+            identity,
+            user=user,
+            scope_department=scope_department,
+            request_meta=request_meta,
+            purpose=READMISSION_PURPOSE,
+        )
     except RegistrationNotFound:
         # The check hides another ward's inpatient as 'not found'. When the
         # patient was readmitted a moment ago (by this send's twin, or
@@ -3200,8 +4135,12 @@ def readmit_patient(patient_id: str, data: dict, user: dict, *, scope_department
     # multisite-3: the facility of this admission (None with one facility on
     # record); refused when the patient's admissions are at another facility.
     admission_facility_id = admission_facility(
-        data.get("department"), user, lane="readmission", patient_id=patient_id,
-        request_meta=request_meta)
+        data.get("department"),
+        user,
+        lane="readmission",
+        patient_id=patient_id,
+        request_meta=request_meta,
+    )
 
     # 4. One immediate transaction.
     try:
@@ -3209,10 +4148,18 @@ def readmit_patient(patient_id: str, data: dict, user: dict, *, scope_department
             replay = _readmission_replay_on(db, admission_id, patient_id, user)
             if replay is not None:
                 return replay
-            state = _readmit_on(db, patient_id=patient_id, admission_id=admission_id,
-                                data=data, user=user, identity_facts=identity_facts,
-                                adt_plan=adt_plan, key=key, request_meta=request_meta,
-                                facility_id=admission_facility_id)
+            state = _readmit_on(
+                db,
+                patient_id=patient_id,
+                admission_id=admission_id,
+                data=data,
+                user=user,
+                identity_facts=identity_facts,
+                adt_plan=adt_plan,
+                key=key,
+                request_meta=request_meta,
+                facility_id=admission_facility_id,
+            )
     except DBIntegrityError as exc:
         if "admissions" in str(exc):
             # The one-active-admission index (migration 65): a concurrent
@@ -3220,7 +4167,8 @@ def readmit_patient(patient_id: str, data: dict, user: dict, *, scope_department
             raise AdmissionRefused(
                 "patient_already_admitted",
                 "This patient is already admitted. Open their inpatient chart.",
-                status=409) from exc
+                status=409,
+            ) from exc
         raise
 
     adt_answer = {}
@@ -3228,13 +4176,17 @@ def readmit_patient(patient_id: str, data: dict, user: dict, *, scope_department
         placed, prepared = state["placed"], state["prepared"]
         extra = prepared["detail"].get("extra_bed") or {}
         adt_answer = {
-            "admitted_at": adt_plan["admitted_iso"],
+            "admitted_at": adt_plan["admitted_iso"] if adt_plan is not None else None,
             "movement_id": placed["movement"]["id"],
             "location": {
-                "ward_id": placed["ward_id"], "bed_id": placed["bed_id"],
-                "ward": placed["ward"], "bed": placed["bed"], "linked": placed["linked"],
+                "ward_id": placed["ward_id"],
+                "bed_id": placed["bed_id"],
+                "ward": placed["ward"],
+                "bed": placed["bed"],
+                "linked": placed["linked"],
                 "awaiting_bed": placed["bed_id"] is None and not placed["bed"],
-                "boarder": placed["boarder"], "extra_bed": extra.get("label"),
+                "boarder": placed["boarder"],
+                "extra_bed": extra.get("label"),
             },
             "location_warning": _location_warning(prepared["target"]),
         }
@@ -3259,16 +4211,26 @@ def readmit_patient(patient_id: str, data: dict, user: dict, *, scope_department
     }
 
 
-def _readmit_on(db, *, patient_id: str, admission_id: str, data: dict, user: dict,
-                identity_facts: dict, adt_plan, key: str, request_meta,
-                facility_id: int | None = None) -> dict:
+def _readmit_on(
+    db,
+    *,
+    patient_id: str,
+    admission_id: str,
+    data: dict,
+    user: dict,
+    identity_facts: dict,
+    adt_plan,
+    key: str,
+    request_meta,
+    facility_id: int | None = None,
+) -> dict:
     """readmit_patient's transaction body, on the caller's immediate session.
     Anything raised here rolls every row back. `facility_id` is
     admission_facility's answer (multisite-3)."""
     from services import patient_matching as pm
     from services.clinical_records_service import allergy_entries, record_allergies_on
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     patient = _readmission_patient_on(db, patient_id)
     refused = _readmission_refusal_on(db, patient)
     if refused is not None:
@@ -3277,8 +4239,10 @@ def _readmit_on(db, *, patient_id: str, admission_id: str, data: dict, user: dic
         from services.adt.core import AdtConflict, movement_for_key
 
         if movement_for_key(db, key) is not None:
-            raise AdtConflict("That Idempotency-Key was already used for another admission. "
-                              "Nothing was saved.", code="idempotency_key_reused")
+            raise AdtConflict(
+                "That Idempotency-Key was already used for another admission. Nothing was saved.",
+                code="idempotency_key_reused",
+            )
     # ADT-S9 (a): never before the earlier stay ended. Before any row exists.
     _check_readmission_time_on(db, patient_id, adt_plan)
 
@@ -3300,9 +4264,14 @@ def _readmit_on(db, *, patient_id: str, admission_id: str, data: dict, user: dic
         # Every placement rule, before a row about the admission exists.
         bed_warning = None
         prepared = prepare_place_on(
-            db, admission_id=None, actor=user, movement_type="admission",
-            ward_id=adt_plan["ward_id"], bed_id=adt_plan["bed_id"],
-            ward_text=adt_plan["ward_text"], bed_text=adt_plan["bed_text"],
+            db,
+            admission_id=None,
+            actor=user,
+            movement_type="admission",
+            ward_id=adt_plan["ward_id"],
+            bed_id=adt_plan["bed_id"],
+            ward_text=adt_plan["ward_text"],
+            bed_text=adt_plan["bed_text"],
             extra_bed=adt_plan["extra_bed"],
             out_of_service_reason=adt_plan["out_of_service_reason"],
             not_clean_reason=adt_plan["not_clean_reason"],
@@ -3322,7 +4291,8 @@ def _readmit_on(db, *, patient_id: str, admission_id: str, data: dict, user: dic
         admission_date = adt_plan["admitted"].isoformat()
 
     login_id, temp_password, login_created, password_reissued = _readmission_portal_login_on(
-        db, patient=patient, name=name, portal_ward=portal_ward)
+        db, patient=patient, name=name, portal_ward=portal_ward
+    )
 
     # The same patient row: only the status, the login and the clinical and
     # location mirrors change. Name, hospital number, age, date of birth, sex
@@ -3332,14 +4302,24 @@ def _readmit_on(db, *, patient_id: str, admission_id: str, data: dict, user: dic
               SET status = 'admitted', user_id = ?, ward = ?, bed = ?, diagnosis = ?,
                   attending_doctor_id = ?, admission_date = ?
             WHERE id = ? AND status = ?""",
-        (login_id, row_ward, row_bed,
-         data.get("initial_diagnosis") or data.get("chief_complaint"),
-         data.get("attending_doctor_id"), admission_date, patient_id, READMITTABLE_STATUS),
+        (
+            login_id,
+            row_ward,
+            row_bed,
+            data.get("initial_diagnosis") or data.get("chief_complaint"),
+            data.get("attending_doctor_id"),
+            admission_date,
+            patient_id,
+            READMITTABLE_STATUS,
+        ),
     )
     if moved.rowcount != 1:
         raise AdmissionRefused(
-            "state_changed", "This patient's record changed while the form was open. Nothing "
-            "was saved. Open the patient again.", status=409)
+            "state_changed",
+            "This patient's record changed while the form was open. Nothing "
+            "was saved. Open the patient again.",
+            status=409,
+        )
 
     db.execute(
         """INSERT INTO admissions (
@@ -3349,44 +4329,83 @@ def _readmit_on(db, *, patient_id: str, admission_id: str, data: dict, user: dic
             admitting_notes, nursing_notes, isolation_precautions, code_status,
             initial_vitals_json, status, created_at
            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'active', ?)""",
-        (admission_id, patient_id, user["id"], data.get("admission_source"),
-         data.get("admission_type"), data.get("department"), row_ward, row_bed,
-         data.get("attending_doctor_id"), data.get("referring_clinician"),
-         data.get("chief_complaint"), data.get("initial_diagnosis"),
-         data.get("triage_severity"), data.get("admitting_notes"),
-         data.get("nursing_notes"), json.dumps(data.get("isolation_precautions") or []),
-         data.get("code_status") or "full_code", now),
+        (
+            admission_id,
+            patient_id,
+            user["id"],
+            data.get("admission_source"),
+            data.get("admission_type"),
+            data.get("department"),
+            row_ward,
+            row_bed,
+            data.get("attending_doctor_id"),
+            data.get("referring_clinician"),
+            data.get("chief_complaint"),
+            data.get("initial_diagnosis"),
+            data.get("triage_severity"),
+            data.get("admitting_notes"),
+            data.get("nursing_notes"),
+            json.dumps(data.get("isolation_precautions") or []),
+            data.get("code_status") or "full_code",
+            now,
+        ),
     )
-    _stamp_admission_facility_on(db, admission_id=admission_id, patient_id=patient_id,
-                                 facility_id=facility_id, new_patient=False)
+    _stamp_admission_facility_on(
+        db,
+        admission_id=admission_id,
+        patient_id=patient_id,
+        facility_id=facility_id,
+        new_patient=False,
+    )
     if adt_plan is not None:
-        db.execute("UPDATE admissions SET admitted_at = ? WHERE id = ?",
-                   (adt_plan["admitted_iso"], admission_id))
+        db.execute(
+            "UPDATE admissions SET admitted_at = ? WHERE id = ?",
+            (adt_plan["admitted_iso"], admission_id),
+        )
 
     profile_created = _profile_on(db, patient_id, data, now)
     # Add-only: an allergy already charted stays exactly as it is.
     added = record_allergies_on(
-        db, patient_id, allergy_entries(data.get("allergies") or []),
-        source="admission", recorded_by=user["id"], recorded_at=now)
-    charted = [r["substance"] for r in db.execute(
-        "SELECT substance FROM patient_allergies WHERE patient_id = ? AND status = 'active' "
-        "ORDER BY substance", (patient_id,)).fetchall()]
+        db,
+        patient_id,
+        allergy_entries(data.get("allergies") or []),
+        source="admission",
+        recorded_by=user["id"],
+        recorded_at=now,
+    )
+    charted = [
+        r["substance"]
+        for r in db.execute(
+            "SELECT substance FROM patient_allergies WHERE patient_id = ? AND status = 'active' "
+            "ORDER BY substance",
+            (patient_id,),
+        ).fetchall()
+    ]
 
     previous_admission_id = _previous_admission_id_on(db, patient_id)
     stopped = _close_previous_stay_medicines_on(
-        db, patient_id, user=user, admission_id=admission_id,
-        previous_admission_id=previous_admission_id, request_meta=request_meta)
+        db,
+        patient_id,
+        user=user,
+        admission_id=admission_id,
+        previous_admission_id=previous_admission_id,
+        request_meta=request_meta,
+    )
 
     # One case room per patient for life: reused, with a dividing line.
     channel_id = _case_room_of(db, patient_id)
     room_reused = channel_id is not None
     if not room_reused:
         channel_id = f"chan_{uuid.uuid4().hex[:12]}"
-        _insert_case_room_on(db, channel_id=channel_id, room_name=f"Case: {name}",
-                             patient_id=patient_id, now=now)
+        _insert_case_room_on(
+            db, channel_id=channel_id, room_name=f"Case: {name}", patient_id=patient_id, now=now
+        )
     age, _stated = pm.current_age(
-        date_of_birth=patient["date_of_birth"], stated_age=patient["age"],
-        age_recorded_on=patient["age_recorded_on"], created_at=patient["created_at"])
+        date_of_birth=patient["date_of_birth"],
+        stated_age=patient["age"],
+        age_recorded_on=patient["age_recorded_on"],
+        created_at=patient["created_at"],
+    )
     lines = [
         f"**READMISSION**: {name} ({age if age is not None else '?'}y {patient['sex'] or '?'})",
         READMISSION_DIVIDER,
@@ -3399,54 +4418,97 @@ def _readmit_on(db, *, patient_id: str, admission_id: str, data: dict, user: dic
     if charted:
         lines.append(f"Allergies: {', '.join(charted)}")
     if data.get("comorbidities"):
-        lines.append(f"Comorbidities: {', '.join(data.get('comorbidities'))}")
+        lines.append(f"Comorbidities: {', '.join(data['comorbidities'])}")
     lines += _readmission_case_room_lines(stopped)
     _post_system_line_on(db, channel_id=channel_id, content="\n".join(lines), now=now)
 
-    summary = (f"{name}, {age if age is not None else '?'}y {patient['sex'] or '?'} "
-               f"readmitted to {sage_ward} for {data.get('initial_diagnosis')}.")
+    summary = (
+        f"{name}, {age if age is not None else '?'}y {patient['sex'] or '?'} "
+        f"readmitted to {sage_ward} for {data.get('initial_diagnosis')}."
+    )
     if data.get("comorbidities"):
-        summary += f" PMH: {', '.join(data.get('comorbidities'))}."
+        summary += f" PMH: {', '.join(data['comorbidities'])}."
     sage_facts = _restart_room_memory_on(
-        db, channel_id=channel_id, patient_id=patient_id, admission_id=admission_id,
-        previous_admission_id=previous_admission_id, summary=summary,
-        discussion=(f"Patient readmitted via {data.get('admission_source')} onto the same "
-                    f"record. {data.get('admitting_notes') or ''}"),
-        concern=data.get("chief_complaint") or "", triage=data.get("triage_severity"),
-        user=user, now=now)
+        db,
+        channel_id=channel_id,
+        patient_id=patient_id,
+        admission_id=admission_id,
+        previous_admission_id=previous_admission_id,
+        summary=summary,
+        discussion=(
+            f"Patient readmitted via {data.get('admission_source')} onto the same "
+            f"record. {data.get('admitting_notes') or ''}"
+        ),
+        concern=data.get("chief_complaint") or "",
+        triage=data.get("triage_severity"),
+        user=user,
+        now=now,
+    )
 
     placed = None
     if adt_plan is not None:
+        assert prepared is not None
         from services.adt.core import place_admission_on
 
         # Last, so every row above commits with the movement and its
         # fail-closed audit, or none of them does.
         placed = place_admission_on(
-            db, admission_id=admission_id, actor=user, movement_type="admission",
-            reason="Patient readmitted", prepared=prepared,
+            db,
+            admission_id=admission_id,
+            actor=user,
+            movement_type="admission",
+            reason="Patient readmitted",
+            prepared=prepared,
             boarder_acknowledged=adt_plan["boarder_acknowledged"],
-            moved_at=adt_plan["admitted_iso"], idempotency_key=key,
+            moved_at=adt_plan["admitted_iso"],
+            idempotency_key=key,
             request_meta=request_meta,
         )
 
     _audit_readmission_on(
-        db, patient_id=patient_id, admission_id=admission_id,
-        previous_admission_id=previous_admission_id, door=READMISSION_DOOR_FORM,
-        user=user, request_meta=request_meta, identity_facts=identity_facts,
-        facts={"department": data.get("department"), "case_room_reused": room_reused,
-               "profile_created": profile_created, "allergies_added": added,
-               "allergies_on_chart": len(charted), "portal_login_created": login_created,
-               "portal_password_reissued": password_reissued,
-               "previous_stay_medicines_closed": len(stopped), **sage_facts,
-               "location": ({"ward_id": placed["ward_id"], "bed_id": placed["bed_id"],
-                             "linked": placed["linked"]} if placed is not None else
-                            {"ward": row_ward, "bed": row_bed})},
-        login_id=login_id if password_reissued else None)
+        db,
+        patient_id=patient_id,
+        admission_id=admission_id,
+        previous_admission_id=previous_admission_id,
+        door=READMISSION_DOOR_FORM,
+        user=user,
+        request_meta=request_meta,
+        identity_facts=identity_facts,
+        facts={
+            "department": data.get("department"),
+            "case_room_reused": room_reused,
+            "profile_created": profile_created,
+            "allergies_added": added,
+            "allergies_on_chart": len(charted),
+            "portal_login_created": login_created,
+            "portal_password_reissued": password_reissued,
+            "previous_stay_medicines_closed": len(stopped),
+            **sage_facts,
+            "location": (
+                {
+                    "ward_id": placed["ward_id"],
+                    "bed_id": placed["bed_id"],
+                    "linked": placed["linked"],
+                }
+                if placed is not None
+                else {"ward": row_ward, "bed": row_bed}
+            ),
+        },
+        login_id=login_id if password_reissued else None,
+    )
     return {
-        "channel_id": channel_id, "room_reused": room_reused, "login_id": login_id,
-        "temp_password": temp_password, "login_created": login_created,
-        "password_reissued": password_reissued, "bed_warning": bed_warning,
-        "mrn": patient["mrn"], "dob": patient["date_of_birth"], "added": added,
-        "prepared": prepared, "placed": placed, "stopped": stopped,
+        "channel_id": channel_id,
+        "room_reused": room_reused,
+        "login_id": login_id,
+        "temp_password": temp_password,
+        "login_created": login_created,
+        "password_reissued": password_reissued,
+        "bed_warning": bed_warning,
+        "mrn": patient["mrn"],
+        "dob": patient["date_of_birth"],
+        "added": added,
+        "prepared": prepared,
+        "placed": placed,
+        "stopped": stopped,
         "department": data.get("department"),
     }

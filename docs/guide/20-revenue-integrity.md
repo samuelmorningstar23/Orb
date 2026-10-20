@@ -101,7 +101,7 @@ These four tables *are* the "AI". They are curated by hand, not learned. Everyth
 
 ---
 
-### `_code_value_inr`: `server/services/coding_service.py:200`
+### `_code_value_inr`: `server/services/coding_service.py:445`
 **Signature:** `(code: str) → float`
 **Does:** returns the illustrative rupee value of a single code.
 **How it works:** `round(DEFAULT_CODE_WEIGHTS.get(code, 0.0) * BASE_RATE_INR, 2)` (`:202`), relative weight × base rate, rounded to paise; unknown codes → 0.
@@ -113,7 +113,7 @@ These four tables *are* the "AI". They are curated by hand, not learned. Everyth
 
 ---
 
-### `_load_patient_context`: `server/services/coding_service.py:209`
+### `_load_patient_context`: `server/services/coding_service.py:455`
 **Signature:** `(patient_id: str) → dict`
 **Does:** gathers, in one place, every free-text and coded source the engine scans for a patient.
 **How it works:**
@@ -130,7 +130,7 @@ These four tables *are* the "AI". They are curated by hand, not learned. Everyth
 
 ---
 
-### `_term_matches`: `server/services/coding_service.py:308`
+### `_term_matches`: `server/services/coding_service.py:577`
 **Signature:** `(term: str, text: str) → bool`
 **Does:** whole-token, case-insensitive substring test.
 **How it works:** builds the regex `(?<![A-Za-z0-9])` + `re.escape(term)` + `(?![A-Za-z0-9])` and searches case-insensitively. The look-behind/look-ahead assertions require the term not be flanked by an alphanumeric, so short abbreviations like "MI", "AKI", "AF" match as standalone words but not inside "MIchael" or "leAF".
@@ -141,7 +141,7 @@ These four tables *are* the "AI". They are curated by hand, not learned. Everyth
 
 ---
 
-### `_emit_code`: `server/services/coding_service.py:351`
+### `_emit_code`: `server/services/coding_service.py:620`
 **Signature:** `(system: str, code: str, display_fallback: str) → dict | None`
 **Does:** validates a candidate code against the loaded terminology and returns a normalised code dict, or `None` if the code is unknown.
 **How it works:**
@@ -155,7 +155,7 @@ These four tables *are* the "AI". They are curated by hand, not learned. Everyth
 
 ---
 
-### `suggest_codes`: `server/services/coding_service.py:365`  *(the public entry point)*
+### `suggest_codes`: `server/services/coding_service.py:635`  *(the public entry point)*
 **Signature:** `(patient_id: str, use_llm: bool = False) → dict`
 **Does:** the whole feature, suggest codes, flag CDI gaps, estimate reimbursement, deterministically.
 **How it works (the four passes):**
@@ -182,7 +182,7 @@ These four tables *are* the "AI". They are curated by hand, not learned. Everyth
 
 ---
 
-### `_add_suggestion` (nested closure in `suggest_codes`): `server/services/coding_service.py:401`
+### `_add_suggestion` (nested closure in `suggest_codes`): `server/services/coding_service.py:671`
 **Signature:** `(system, code, display_fallback, evidence, confidence) → (system, code) | None`
 **Does:** validate-and-dedupe a candidate into the `suggestions` dict, keeping the highest-confidence hit per `(system, code)`.
 **How it works:** calls `_emit_code`; if valid, computes `key=(system,code)`; writes/overwrites the entry only when there's no existing hit or the new confidence is higher; stores `{**emitted, evidence, confidence: round(confidence,2)}`.
@@ -192,7 +192,7 @@ These four tables *are* the "AI". They are curated by hand, not learned. Everyth
 
 ---
 
-### `_llm_available`: `server/services/coding_service.py:581`
+### `_llm_available`: `server/services/coding_service.py:864`
 **Signature:** `() → bool`
 **Does:** reports whether a local LLM (Ollama / MedGemma) is reachable.
 **How it works:** unconditionally returns `False` today; the `try/except` is scaffolding for a future health probe.
@@ -201,7 +201,7 @@ These four tables *are* the "AI". They are curated by hand, not learned. Everyth
 
 ---
 
-### `_llm_refine`: `server/services/coding_service.py:594`
+### `_llm_refine`: `server/services/coding_service.py:877`
 **Signature:** `(patient_id, ctx, result) → dict`
 **Does:** the optional LLM-refinement hook; a marked no-op unless an LLM is wired.
 **How it works:** if `_llm_available()` is false (always, today), it sets `result["meta"]["llm"] = "unavailable, deterministic result returned unchanged"` and returns `result` untouched; the real re-rank/de-dupe/CDI-query-drafting code is a stub below.

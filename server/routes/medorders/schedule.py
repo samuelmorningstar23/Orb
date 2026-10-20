@@ -27,12 +27,9 @@ def.
       core.http_detail: order_not_live, prn_has_no_set_times,
       frequency_not_daily, invalid_times, stale_version.
 """
-from typing import Optional
-
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, ConfigDict
 
 from database import db_session
+from fastapi import APIRouter, Depends, HTTPException, Request
 from permissions import (
     MEDICATION_PRESCRIBE,
     MEDICATION_VERIFY,
@@ -41,6 +38,11 @@ from permissions import (
     require_patient_access,
     require_permission,
 )
+from pydantic import BaseModel, ConfigDict
+from services.medorders import core as store
+from services.medorders import queries
+from services.medorders import schedule as schedule_service
+
 from routes.medorders import require_med_order_lifecycle
 from routes.medorders.core import (
     ORDER_NOT_FOUND,
@@ -50,9 +52,6 @@ from routes.medorders.core import (
     _refusal,
     _request_meta,
 )
-from services.medorders import core as store
-from services.medorders import queries
-from services.medorders import schedule as schedule_service
 
 router = APIRouter()
 
@@ -65,21 +64,31 @@ class ScheduleRequest(BaseModel):
 
     #: 'HH:MM' on the hospital's 24-hour clock, one per dose a day; [] clears.
     times: list[str]
-    expected_version: Optional[int] = None
+    expected_version: int | None = None
+
+
+_DOSE_TIMES_USER_DEFAULT = Depends(
+    require_any_permission(PATIENT_READ_ALL, MEDICATION_PRESCRIBE, MEDICATION_VERIFY)
+)
 
 
 @router.get("/dose-times")
-def dose_times(user: dict = Depends(require_any_permission(
-        PATIENT_READ_ALL, MEDICATION_PRESCRIBE, MEDICATION_VERIFY))):
+def dose_times(
+    user: dict = _DOSE_TIMES_USER_DEFAULT,
+):
     """The hospital's signed dose times, or {available: false}."""
     return schedule_service.site_times_view()
+
+
+_PATIENT_SCHEDULES_USER_DEFAULT = Depends(
+    require_patient_access(PATIENT_READ_ALL, audit_action="med_order_schedules_viewed")
+)
 
 
 @router.get("/patient/{patient_id}/schedules")
 def patient_schedules(
     patient_id: str,
-    user: dict = Depends(require_patient_access(
-        PATIENT_READ_ALL, audit_action="med_order_schedules_viewed")),
+    user: dict = _PATIENT_SCHEDULES_USER_DEFAULT,
 ):
     """The set times of the patient's draft and live orders."""
     site = schedule_service.site_dose_times()
@@ -87,44 +96,68 @@ def patient_schedules(
         if db.execute("SELECT 1 FROM patients WHERE id = ?", (patient_id,)).fetchone() is None:
             raise HTTPException(status_code=404, detail=PATIENT_NOT_FOUND)
         marks = ",".join("?" for _ in _OPEN_STATUSES)
-        orders = [dict(r) for r in db.execute(
-            f"SELECT id, status, version, frequency, is_prn FROM med_orders "
-            f"WHERE patient_id = ? AND status IN ({marks}) ORDER BY created_at, id",
-            (patient_id, *_OPEN_STATUSES)).fetchall()]
+        orders = [
+            dict(r)
+            for r in db.execute(
+                f"SELECT id, status, version, frequency, is_prn FROM med_orders "
+                f"WHERE patient_id = ? AND status IN ({marks}) ORDER BY created_at, id",
+                (patient_id, *_OPEN_STATUSES),
+            ).fetchall()
+        ]
         authored = schedule_service.current_schedules_in_txn(db, [o["id"] for o in orders])
     out = []
     for order in orders:
         site_times = schedule_service.site_times_for(order["frequency"], site)
-        out.append({
-            "med_order_id": order["id"],
-            "status": order["status"],
-            "version": order["version"],
-            "frequency": order["frequency"],
-            "doses_per_day": (None if order["is_prn"]
-                              else schedule_service.doses_per_day(order["frequency"])),
-            "schedule": authored.get(order["id"]),
-            "site_times": list(site_times) if site_times else None,
-        })
-    return {"patient_id": patient_id,
-            "site_times": schedule_service.site_times_view(site),
-            "orders": out}
+        out.append(
+            {
+                "med_order_id": order["id"],
+                "status": order["status"],
+                "version": order["version"],
+                "frequency": order["frequency"],
+                "doses_per_day": (
+                    None if order["is_prn"] else schedule_service.doses_per_day(order["frequency"])
+                ),
+                "schedule": authored.get(order["id"]),
+                "site_times": list(site_times) if site_times else None,
+            }
+        )
+    return {
+        "patient_id": patient_id,
+        "site_times": schedule_service.site_times_view(site),
+        "orders": out,
+    }
+
+
+_SET_ORDER_SCHEDULE_USER_DEFAULT = Depends(require_permission(MEDICATION_PRESCRIBE))
 
 
 @router.put("/orders/{order_id}/schedule", dependencies=[Depends(require_med_order_lifecycle)])
-def set_order_schedule(order_id: str, body: ScheduleRequest, request: Request,
-                       user: dict = Depends(require_permission(MEDICATION_PRESCRIBE))):
+def set_order_schedule(
+    order_id: str,
+    body: ScheduleRequest,
+    request: Request,
+    user: dict = _SET_ORDER_SCHEDULE_USER_DEFAULT,
+):
     """The prescriber sets the times this order is due. Answers {order,
     schedule, replayed}."""
     _med_order_patient_in_scope_or_404(order_id, user, request)
     try:
         result = schedule_service.set_schedule(
-            order_id, body.times, actor_id=user["id"], actor_role=user.get("role"),
-            expected_version=body.expected_version, request_meta=_request_meta(request))
+            order_id,
+            body.times,
+            actor_id=user["id"],
+            actor_role=user.get("role"),
+            expected_version=body.expected_version,
+            request_meta=_request_meta(request),
+        )
     except store.MedOrderNotFound:
-        raise HTTPException(status_code=404, detail=ORDER_NOT_FOUND)
+        raise HTTPException(status_code=404, detail=ORDER_NOT_FOUND) from None
     except store.MedOrderError as e:
-        raise _refusal(e, user, request)
+        raise _refusal(e, user, request) from e
     if not result["replayed"]:
         _emit(result["order"])
-    return {"order": queries.serialize_order(result["order"]),
-            "schedule": result["schedule"], "replayed": result["replayed"]}
+    return {
+        "order": queries.serialize_order(result["order"]),
+        "schedule": result["schedule"],
+        "replayed": result["replayed"],
+    }

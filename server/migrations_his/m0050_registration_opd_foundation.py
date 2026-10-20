@@ -38,6 +38,7 @@ visible effect on the Ward Record and the demo databases is the wider schema.
 The retention review already lists the new PHI tables (consent_service.
 _RETENTION_SOURCES, registered in wave 1).
 """
+
 from migrations import Migration
 
 # ── 1. opd_visits, frozen as services/frontdesk_service wrote it on 3 October 2026 ──
@@ -80,10 +81,26 @@ OPD_VISITS_DDL = """CREATE TABLE IF NOT EXISTS opd_visits (
 #: front desk's API projects visits onto exactly these, so the columns this
 #: migration adds never change what an existing screen receives.
 OPD_VISITS_BASE_COLUMNS: tuple = (
-    "id", "patient_id", "department", "doctor_id", "doctor_name", "visit_date",
-    "token_number", "visit_type", "chief_complaint", "status", "appointment_id",
-    "registered_by", "registered_at", "called_at", "completed_at", "cancelled_at",
-    "cancel_reason", "consultation_charge_id", "notes", "idempotency_key",
+    "id",
+    "patient_id",
+    "department",
+    "doctor_id",
+    "doctor_name",
+    "visit_date",
+    "token_number",
+    "visit_type",
+    "chief_complaint",
+    "status",
+    "appointment_id",
+    "registered_by",
+    "registered_at",
+    "called_at",
+    "completed_at",
+    "cancelled_at",
+    "cancel_reason",
+    "consultation_charge_id",
+    "notes",
+    "idempotency_key",
 )
 
 OPD_VISITS_INDEXES: tuple = (

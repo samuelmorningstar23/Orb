@@ -22,6 +22,7 @@ helix_patient_med_orders is still widened by init_helix_db, as before). Each
 index is created only when its table has the indexed column, so an unusual
 legacy table cannot make boot fail here.
 """
+
 from migrations import Migration
 
 # The six tables, exactly as services/helix_db.HELIX_SCHEMA wrote them on
@@ -97,8 +98,12 @@ _INDEXES = (
 )
 
 TABLE_NAMES = (
-    "helix_medication_master", "helix_inventory_lots", "helix_patient_med_orders",
-    "helix_pharmacy_verifications", "helix_stock_movements", "helix_transitions",
+    "helix_medication_master",
+    "helix_inventory_lots",
+    "helix_patient_med_orders",
+    "helix_pharmacy_verifications",
+    "helix_stock_movements",
+    "helix_transitions",
 )
 
 

@@ -49,15 +49,17 @@ stays off at every site until Samuel confirms them):
 Only the ward clerk (CLERK_ROLES, holding adt.bed, with a department) reaches
 these lanes, and only for patients of their own department.
 """
+
 from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import config
 from database import SERVICE_ACCOUNT_IDS, db_session
 from permissions import ADT_BED, department_scope, has_permission
+
 from services.adt.core import (
     _UNSET,
     AdtConflict,
@@ -76,10 +78,22 @@ from services.clinical_time import utc_iso_now
 logger = logging.getLogger("orb.adt.clerk")
 
 __all__ = [
-    "CLERK_ROLES", "NOT_YET_ASSESSED", "ASSESSMENT_DUE_MARKER", "CLERK_ADMISSION_KEY",
-    "CODE_STATUSES", "ALLERGY_STATUSES", "LEFT_WARD_DOOR", "AdtForbidden",
-    "is_clerk", "ward_record_on", "clerk_entered_ids_on", "assessment_due_ids_on",
-    "assessment_due_on", "ordering_doctor_on", "ordered_transfer", "record_left_ward",
+    "CLERK_ROLES",
+    "NOT_YET_ASSESSED",
+    "ASSESSMENT_DUE_MARKER",
+    "CLERK_ADMISSION_KEY",
+    "CODE_STATUSES",
+    "ALLERGY_STATUSES",
+    "LEFT_WARD_DOOR",
+    "AdtForbidden",
+    "is_clerk",
+    "ward_record_on",
+    "clerk_entered_ids_on",
+    "assessment_due_ids_on",
+    "assessment_due_on",
+    "ordering_doctor_on",
+    "ordered_transfer",
+    "record_left_ward",
     "record_admission_assessment",
 ]
 
@@ -133,11 +147,15 @@ class AdtForbidden(AdtError):
 #  Who, and where
 # ═════════════════════════════════════════════════════════════════════════════
 
-def is_clerk(user: Optional[dict]) -> bool:
+
+def is_clerk(user: dict | None) -> bool:
     """True for a ward clerk who holds adt.bed and has a department."""
     role = (user or {}).get("role") or ""
-    return (role in CLERK_ROLES and has_permission(role, ADT_BED)
-            and department_scope(user or {}) is not None)
+    return (
+        role in CLERK_ROLES
+        and has_permission(role, ADT_BED)
+        and department_scope(user or {}) is not None
+    )
 
 
 def ward_record_on() -> bool:
@@ -149,13 +167,18 @@ def ward_record_on() -> bool:
 #  'Admission assessment due' (ADT-S5 (a))
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _ids(values: Any) -> tuple:
     return tuple(sorted({str(v) for v in (values or ()) if v}))
 
 
 def _table_exists(db, name: str) -> bool:
-    return db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-                      (name,)).fetchone() is not None
+    return (
+        db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+        ).fetchone()
+        is not None
+    )
 
 
 def clerk_entered_ids_on(db, admission_ids: Any) -> set:
@@ -166,13 +189,17 @@ def clerk_entered_ids_on(db, admission_ids: Any) -> set:
         return set()
     out: set = set()
     for i in range(0, len(ids), 500):
-        chunk = ids[i:i + 500]
+        chunk = ids[i : i + 500]
         marks = ",".join("?" for _ in chunk)
-        out |= {r[0] for r in db.execute(
-            f"""SELECT DISTINCT admission_id FROM patient_movements
+        out |= {
+            r[0]
+            for r in db.execute(
+                f"""SELECT DISTINCT admission_id FROM patient_movements
                  WHERE admission_id IN ({marks}) AND movement_type = 'admission'
                    AND detail_json LIKE '%"{CLERK_ADMISSION_KEY}"%'""",
-            chunk).fetchall()}
+                chunk,
+            ).fetchall()
+        }
     return out
 
 
@@ -182,12 +209,16 @@ def _assessed_ids_on(db, admission_ids: Any) -> set:
         return set()
     out: set = set()
     for i in range(0, len(ids), 500):
-        chunk = ids[i:i + 500]
+        chunk = ids[i : i + 500]
         marks = ",".join("?" for _ in chunk)
-        out |= {r[0] for r in db.execute(
-            f"""SELECT DISTINCT admission_id FROM patient_allergy_assessments
+        out |= {
+            r[0]
+            for r in db.execute(
+                f"""SELECT DISTINCT admission_id FROM patient_allergy_assessments
                  WHERE admission_id IN ({marks}) AND source = 'admission'""",
-            chunk).fetchall()}
+                chunk,
+            ).fetchall()
+        }
     return out
 
 
@@ -209,10 +240,16 @@ def assessment_due_on(db, admission_id: str) -> bool:
 #  The doctor's admission assessment, which clears the flag
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _active_allergies_on(db, patient_id: str) -> list[str]:
-    return [r["substance"] for r in db.execute(
-        "SELECT substance FROM patient_allergies WHERE patient_id = ? AND status = 'active' "
-        "ORDER BY substance", (patient_id,)).fetchall()]
+    return [
+        r["substance"]
+        for r in db.execute(
+            "SELECT substance FROM patient_allergies WHERE patient_id = ? AND status = 'active' "
+            "ORDER BY substance",
+            (patient_id,),
+        ).fetchall()
+    ]
 
 
 def _substances(raw: Any) -> list[str]:
@@ -231,15 +268,24 @@ def _substances(raw: Any) -> list[str]:
         raise AdtError(f"At most {_MAX_SUBSTANCES} allergies at once.", code="bad_allergies")
     for entry in entries:
         if len(entry) > _MAX_SUBSTANCE_TEXT:
-            raise AdtError(f"Keep each allergy under {_MAX_SUBSTANCE_TEXT} characters.",
-                           code="bad_allergies")
+            raise AdtError(
+                f"Keep each allergy under {_MAX_SUBSTANCE_TEXT} characters.", code="bad_allergies"
+            )
     return entries
 
 
 def record_admission_assessment(
-    admission_id: str, *, actor: dict, allergy_status: Any, allergies: Any = None,
-    reason: Any = None, chief_complaint: Any = None, initial_diagnosis: Any = None,
-    code_status: Any = None, note: Any = None, request_meta: Optional[dict] = None,
+    admission_id: str,
+    *,
+    actor: dict,
+    allergy_status: Any,
+    allergies: Any = None,
+    reason: Any = None,
+    chief_complaint: Any = None,
+    initial_diagnosis: Any = None,
+    code_status: Any = None,
+    note: Any = None,
+    request_meta: dict | None = None,
 ) -> dict:
     """A doctor completes a ward clerk's admission, in ONE immediate session:
     the allergy review (written to patient_allergy_assessments, source
@@ -259,28 +305,40 @@ def record_admission_assessment(
 
     status = (_text(allergy_status) or "").lower()
     if status not in ALLERGY_STATUSES:
-        raise AdtError("Choose what the patient said about allergies: allergies recorded, no "
-                       "known allergies, or unable to obtain.", code="bad_allergy_status")
+        raise AdtError(
+            "Choose what the patient said about allergies: allergies recorded, no "
+            "known allergies, or unable to obtain.",
+            code="bad_allergy_status",
+        )
     named = _substances(allergies)
     why = _text(reason, _MAX_REASON)
     if status == "none_known" and named:
-        raise AdtError("You named an allergy, so record 'allergies recorded', not 'no known "
-                       "allergies'.", code="substances_not_allowed")
+        raise AdtError(
+            "You named an allergy, so record 'allergies recorded', not 'no known allergies'.",
+            code="substances_not_allowed",
+        )
     if status == "unable_to_obtain":
         if named:
-            raise AdtError("Chart the allergies you were told about with 'allergies recorded'.",
-                           code="substances_not_allowed")
+            raise AdtError(
+                "Chart the allergies you were told about with 'allergies recorded'.",
+                code="substances_not_allowed",
+            )
         if not why or len(why) < _MIN_REASON:
-            raise AdtError("Say why the allergies could not be obtained, for example the patient "
-                           "cannot speak and nobody with them knows.", code="reason_required")
+            raise AdtError(
+                "Say why the allergies could not be obtained, for example the patient "
+                "cannot speak and nobody with them knows.",
+                code="reason_required",
+            )
     complaint = _text(chief_complaint, _MAX_COMPLAINT)
     if not complaint or _same(complaint, NOT_YET_ASSESSED):
         raise AdtError("Type the presenting complaint.", code="chief_complaint_required")
     diagnosis = _text(initial_diagnosis, _MAX_COMPLAINT)
     code = (_text(code_status) or "").lower()
     if code not in CODE_STATUSES:
-        raise AdtError("Choose the code status: full code, DNR, DNI or comfort care only.",
-                       code="code_status_required")
+        raise AdtError(
+            "Choose the code status: full code, DNR, DNI or comfort care only.",
+            code="code_status_required",
+        )
     remark = _text(note, _MAX_TEXT)
     actor_id = (actor or {}).get("id")
 
@@ -291,26 +349,40 @@ def record_admission_assessment(
         if adm.get("status") != "active":
             raise AdtConflict("That stay has ended.", code="admission_not_active")
         if admission_id not in clerk_entered_ids_on(db, [admission_id]):
-            raise AdtConflict("This admission was not entered by the ward clerk, so no admission "
-                              "assessment is due for it.", code="not_clerk_admission")
+            raise AdtConflict(
+                "This admission was not entered by the ward clerk, so no admission "
+                "assessment is due for it.",
+                code="not_clerk_admission",
+            )
         if not _table_exists(db, "patient_allergy_assessments"):
-            raise AdtError("Allergy reviews cannot be recorded on this database yet.",
-                           code="allergy_review_unavailable")
+            raise AdtError(
+                "Allergy reviews cannot be recorded on this database yet.",
+                code="allergy_review_unavailable",
+            )
         if admission_id in _assessed_ids_on(db, [admission_id]):
-            raise AdtConflict("The admission assessment for this stay is already recorded.",
-                              code="assessment_already_recorded")
+            raise AdtConflict(
+                "The admission assessment for this stay is already recorded.",
+                code="assessment_already_recorded",
+            )
         pid = adm["patient_id"]
         active = _active_allergies_on(db, pid)
         if status == "none_known" and active:
-            raise AdtConflict("This patient has allergies on the chart: " + ", ".join(active)
-                              + ". Confirm them with 'allergies recorded' instead.",
-                              code="allergies_on_chart", charted=active)
+            raise AdtConflict(
+                "This patient has allergies on the chart: "
+                + ", ".join(active)
+                + ". Confirm them with 'allergies recorded' instead.",
+                code="allergies_on_chart",
+                charted=active,
+            )
         if status == "allergies_recorded" and not named and not active:
-            raise AdtError("Name at least one allergy, or record 'no known allergies'.",
-                           code="no_allergies_named")
+            raise AdtError(
+                "Name at least one allergy, or record 'no known allergies'.",
+                code="no_allergies_named",
+            )
         now = utc_iso_now()
-        charted = record_allergies_on(db, pid, named, source="admission",
-                                      recorded_by=actor_id, recorded_at=now)
+        charted = record_allergies_on(
+            db, pid, named, source="admission", recorded_by=actor_id, recorded_at=now
+        )
         reactivated: list[str] = []
         for entry in named:
             norm = entry.strip().lower()
@@ -318,34 +390,59 @@ def record_admission_assessment(
                 continue
             row = db.execute(
                 "SELECT id, status FROM patient_allergies WHERE patient_id = ? AND substance = ?",
-                (pid, norm)).fetchone()
+                (pid, norm),
+            ).fetchone()
             if row is not None and row["status"] != "active":
-                db.execute("UPDATE patient_allergies SET status = 'active' WHERE id = ?",
-                           (row["id"],))
+                db.execute(
+                    "UPDATE patient_allergies SET status = 'active' WHERE id = ?", (row["id"],)
+                )
                 reactivated.append(norm)
         on_chart = _active_allergies_on(db, pid)
         cur = db.execute(
             "INSERT INTO patient_allergy_assessments (patient_id, status, substances_json, "
             "reason, note, opd_visit_id, admission_id, department, source, assessed_by, "
             "assessed_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, 'admission', ?, ?)",
-            (pid, status, json.dumps(on_chart) if status == "allergies_recorded" else None,
-             why if status == "unable_to_obtain" else None, remark, admission_id,
-             adm.get("department"), actor_id, now))
+            (
+                pid,
+                status,
+                json.dumps(on_chart) if status == "allergies_recorded" else None,
+                why if status == "unable_to_obtain" else None,
+                remark,
+                admission_id,
+                adm.get("department"),
+                actor_id,
+                now,
+            ),
+        )
         assessment_id = cur.lastrowid
         db.execute(
             "UPDATE admissions SET chief_complaint = ?, initial_diagnosis = ?, code_status = ? "
-            "WHERE id = ?", (complaint, diagnosis, code, admission_id))
-        db.execute("UPDATE patients SET diagnosis = ? WHERE id = ?",
-                   (diagnosis or complaint, pid))
+            "WHERE id = ?",
+            (complaint, diagnosis, code, admission_id),
+        )
+        db.execute("UPDATE patients SET diagnosis = ? WHERE id = ?", (diagnosis or complaint, pid))
         audit_on(
-            db, category="clinical_access", action="admission_assessment_recorded",
-            summary=(f"Admission assessment recorded for the clerk's admission {admission_id}: "
-                     f"{_ALLERGY_STATUS_WORDS[status].lower()}"),
-            actor=actor, patient_id=pid, target_type="admission", target_id=admission_id,
+            db,
+            category="clinical_access",
+            action="admission_assessment_recorded",
+            summary=(
+                f"Admission assessment recorded for the clerk's admission {admission_id}: "
+                f"{_ALLERGY_STATUS_WORDS[status].lower()}"
+            ),
+            actor=actor,
+            patient_id=pid,
+            target_type="admission",
+            target_id=admission_id,
             request_meta=request_meta,
-            metadata={"assessment_id": assessment_id, "allergy_status": status,
-                      "charted": charted, "reactivated": reactivated,
-                      "on_chart_count": len(on_chart), "code_status": code})
+            metadata={
+                "assessment_id": assessment_id,
+                "allergy_status": status,
+                "charted": charted,
+                "reactivated": reactivated,
+                "on_chart_count": len(on_chart),
+                "code_status": code,
+            },
+        )
         allergy_words = {
             "allergies_recorded": "Allergies: " + ", ".join(on_chart),
             "none_known": "Allergies: no known allergies (asked at the admission assessment)",
@@ -354,14 +451,20 @@ def record_admission_assessment(
         name_row = db.execute("SELECT name FROM users WHERE id = ?", (actor_id,)).fetchone()
         who = name_row["name"] if name_row else actor_id
         _case_room_line_on(
-            db, pid,
+            db,
+            pid,
             f"Admission assessment recorded by {who}. {allergy_words}. Presenting complaint: "
-            f"{complaint}." + (f" Diagnosis: {diagnosis}." if diagnosis else ""))
+            f"{complaint}." + (f" Diagnosis: {diagnosis}." if diagnosis else ""),
+        )
     return {
         "admission_id": admission_id,
         "patient_id": pid,
-        "assessment": {"id": assessment_id, "status": status,
-                       "status_label": _ALLERGY_STATUS_WORDS[status], "assessed_at": now},
+        "assessment": {
+            "id": assessment_id,
+            "status": status,
+            "status_label": _ALLERGY_STATUS_WORDS[status],
+            "assessed_at": now,
+        },
         "charted": charted,
         "reactivated": reactivated,
         "assessment_due": False,
@@ -376,8 +479,14 @@ _PRESENCE_WORDS = {"on_leave": "on leave", "absconded": "absconded"}
 
 
 def record_left_ward(
-    admission_id: str, *, actor: dict, confirm_mrn: Any, occurred_at: Any = None,
-    notes: Any = None, idempotency_key: Any = None, request_meta: Optional[dict] = None,
+    admission_id: str,
+    *,
+    actor: dict,
+    confirm_mrn: Any,
+    occurred_at: Any = None,
+    notes: Any = None,
+    idempotency_key: Any = None,
+    request_meta: dict | None = None,
 ) -> dict:
     """The ward clerk records that the patient left the ward, in ONE immediate
     session, through end_stay_on (discharge_preconditions, the typed MRN
@@ -396,27 +505,45 @@ def record_left_ward(
     if not ward_record_on():
         raise AdtForbidden(
             "On this computer a doctor's discharge ends the stay. 'Left the ward' is recorded by "
-            "the ward clerk only on an Orb Ward Record computer.", code="left_ward_not_here")
+            "the ward clerk only on an Orb Ward Record computer.",
+            code="left_ward_not_here",
+        )
     key = _text(idempotency_key)
     if not key:
-        raise AdtError("This needs an Idempotency-Key header, so a retried request is never "
-                       "recorded twice.", code="idempotency_key_required")
+        raise AdtError(
+            "This needs an Idempotency-Key header, so a retried request is never recorded twice.",
+            code="idempotency_key_required",
+        )
     actor_id = (actor or {}).get("id")
     with db_session(immediate=True) as db:
         prior = movement_for_key(db, key)
         if prior is not None:
-            if (prior.get("admission_id") != admission_id
-                    or prior.get("movement_type") != "discharge"
-                    or (prior.get("moved_by") or None) != (actor_id or None)
-                    or (prior.get("detail") or {}).get("door") != LEFT_WARD_DOOR):
-                raise AdtConflict("That Idempotency-Key was already used for something else.",
-                                  code="idempotency_key_reused")
-            return {"status": "ended", "replayed": True, "left_ward": True,
-                    "admission_id": admission_id, "patient_id": prior.get("patient_id"),
-                    "end_type": prior.get("end_type"), "discharged_at": prior.get("moved_at"),
-                    "movement_id": prior.get("id"), "discharge_link_issued": False}
-        adm = _row(db.execute("SELECT status, presence_status FROM admissions WHERE id = ?",
-                              (admission_id,)).fetchone())
+            if (
+                prior.get("admission_id") != admission_id
+                or prior.get("movement_type") != "discharge"
+                or (prior.get("moved_by") or None) != (actor_id or None)
+                or (prior.get("detail") or {}).get("door") != LEFT_WARD_DOOR
+            ):
+                raise AdtConflict(
+                    "That Idempotency-Key was already used for something else.",
+                    code="idempotency_key_reused",
+                )
+            return {
+                "status": "ended",
+                "replayed": True,
+                "left_ward": True,
+                "admission_id": admission_id,
+                "patient_id": prior.get("patient_id"),
+                "end_type": prior.get("end_type"),
+                "discharged_at": prior.get("moved_at"),
+                "movement_id": prior.get("id"),
+                "discharge_link_issued": False,
+            }
+        adm = _row(
+            db.execute(
+                "SELECT status, presence_status FROM admissions WHERE id = ?", (admission_id,)
+            ).fetchone()
+        )
         if adm is None:
             raise AdtNotFound("No admission with that id", code="admission_not_found")
         presence = adm.get("presence_status")
@@ -424,12 +551,24 @@ def record_left_ward(
             raise AdtConflict(
                 f"This patient is recorded as {_PRESENCE_WORDS.get(presence, presence)}, so a "
                 "doctor records how the stay ended. Nothing was recorded.",
-                code="patient_not_on_ward", presence_status=presence)
+                code="patient_not_on_ward",
+                presence_status=presence,
+            )
         result = end_stay_on(
-            db, admission_id=admission_id, end_type=None, allow_unstated_type=True,
-            actor=actor, confirm_mrn=confirm_mrn, require_read_back=True,
-            occurred_at=occurred_at, reason="Left the ward, recorded by the ward clerk",
-            notes=notes, door=LEFT_WARD_DOOR, idempotency_key=key, request_meta=request_meta)
+            db,
+            admission_id=admission_id,
+            end_type=None,
+            allow_unstated_type=True,
+            actor=actor,
+            confirm_mrn=confirm_mrn,
+            require_read_back=True,
+            occurred_at=occurred_at,
+            reason="Left the ward, recorded by the ward clerk",
+            notes=notes,
+            door=LEFT_WARD_DOOR,
+            idempotency_key=key,
+            request_meta=request_meta,
+        )
     sync_housekeeping_after_commit()
     result["left_ward"] = True
     return result
@@ -438,6 +577,7 @@ def record_left_ward(
 # ═════════════════════════════════════════════════════════════════════════════
 #  A transfer a doctor ordered (ADT-S8 (b))
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def ordering_doctor_on(db, doctor_id: Any, admission: dict) -> dict:
     """The doctor the clerk names as having ordered a transfer: an active
@@ -448,16 +588,23 @@ def ordering_doctor_on(db, doctor_id: Any, admission: dict) -> dict:
 
     uid = _text(doctor_id)
     if not uid:
-        raise AdtError("Name the doctor who ordered this transfer.",
-                       code="ordering_doctor_required")
+        raise AdtError(
+            "Name the doctor who ordered this transfer.", code="ordering_doctor_required"
+        )
     row = None
     if uid not in SERVICE_ACCOUNT_IDS and not uid.lower().startswith("bot_"):
-        row = _row(db.execute(
-            "SELECT id, name, role, department, COALESCE(is_active, 1) AS is_active "
-            "FROM users WHERE id = ?", (uid,)).fetchone())
+        row = _row(
+            db.execute(
+                "SELECT id, name, role, department, COALESCE(is_active, 1) AS is_active "
+                "FROM users WHERE id = ?",
+                (uid,),
+            ).fetchone()
+        )
     if row is None or not row.get("is_active") or row.get("role") not in ATTENDING_ROLES:
-        raise AdtError("The doctor named must be an active doctor on this system.",
-                       code="ordering_doctor_invalid")
+        raise AdtError(
+            "The doctor named must be an active doctor on this system.",
+            code="ordering_doctor_invalid",
+        )
     if row["id"] == admission.get("attending_doctor_id"):
         return row
     dept = department_scope(row)
@@ -467,19 +614,36 @@ def ordering_doctor_on(db, doctor_id: Any, admission: dict) -> dict:
         f"{row.get('name') or row['id']} is not this patient's attending doctor and does not "
         f"work in {admission.get('department') or 'the treating department'}, so cannot be named "
         "as ordering this transfer. Name the doctor who ordered it.",
-        code="ordering_doctor_not_treating", ordered_by=row["id"])
+        code="ordering_doctor_not_treating",
+        ordered_by=row["id"],
+    )
 
 
 def ordered_transfer(
-    admission_id: str, *, actor: dict, ordered_by: Any, to_department: Any, reason: Any,
-    ward_id: Any = None, bed_id: Any = None, ward_text: Any = None, bed_text: Any = None,
-    awaiting_bed: bool = False, keep_location: bool = False, extra_bed: bool = False,
-    expected_bed_id: Any = _UNSET, moved_at: Any = None,
-    out_of_service_reason: Optional[str] = None, boarder_acknowledged: bool = False,
-    not_clean_reason: Any = None, terminal_clean_authorised_by: Any = None,
-    terminal_clean_reason: Any = None, terminal_clean_authoriser_pin: Any = None,
-    notes: Optional[str] = None, idempotency_key: Any = None,
-    request_meta: Optional[dict] = None,
+    admission_id: str,
+    *,
+    actor: dict,
+    ordered_by: Any,
+    to_department: Any,
+    reason: Any,
+    ward_id: Any = None,
+    bed_id: Any = None,
+    ward_text: Any = None,
+    bed_text: Any = None,
+    awaiting_bed: bool = False,
+    keep_location: bool = False,
+    extra_bed: bool = False,
+    expected_bed_id: Any = _UNSET,
+    moved_at: Any = None,
+    out_of_service_reason: str | None = None,
+    boarder_acknowledged: bool = False,
+    not_clean_reason: Any = None,
+    terminal_clean_authorised_by: Any = None,
+    terminal_clean_reason: Any = None,
+    terminal_clean_authoriser_pin: Any = None,
+    notes: str | None = None,
+    idempotency_key: Any = None,
+    request_meta: dict | None = None,
 ) -> dict:
     """The ward clerk carries out a transfer a doctor ordered (POST
     /api/adt/ordered-transfers), in ONE immediate session, through the same
@@ -497,71 +661,127 @@ def ordered_transfer(
 
     key = _text(idempotency_key)
     if not key:
-        raise AdtError("This move needs an Idempotency-Key header, so a retried request is never "
-                       "recorded twice.", code="idempotency_key_required")
+        raise AdtError(
+            "This move needs an Idempotency-Key header, so a retried request is never "
+            "recorded twice.",
+            code="idempotency_key_required",
+        )
     why = _text(reason, 2000)
     if not why:
-        raise AdtError("A transfer needs a reason. A move with no reason is not a record.",
-                       code="reason_required")
+        raise AdtError(
+            "A transfer needs a reason. A move with no reason is not a record.",
+            code="reason_required",
+        )
     if expected_bed_id is _UNSET:
-        raise AdtError("A move must say which bed the screen showed (expected_bed_id), so it "
-                       "never overwrites a change made since.", code="expected_bed_required")
+        raise AdtError(
+            "A move must say which bed the screen showed (expected_bed_id), so it "
+            "never overwrites a change made since.",
+            code="expected_bed_required",
+        )
     canonical = adt_transfer.resolve_cover(to_department)
     hk.ensure_housekeeping_schema()
     confirmed = confirm_terminal_authoriser(
-        actor=actor, authorised_by=terminal_clean_authorised_by,
-        pin=terminal_clean_authoriser_pin, admission_id=admission_id, bed_id=bed_id,
-        request_meta=request_meta)
-    move = dict(ward_id=ward_id, bed_id=bed_id, ward_text=ward_text, bed_text=bed_text,
-                awaiting_bed=awaiting_bed, keep_location=keep_location, extra_bed=extra_bed,
-                expected_bed_id=expected_bed_id, moved_at=moved_at,
-                out_of_service_reason=out_of_service_reason,
-                boarder_acknowledged=boarder_acknowledged, not_clean_reason=not_clean_reason,
-                terminal_clean_authorised_by=terminal_clean_authorised_by,
-                terminal_clean_reason=terminal_clean_reason, terminal_clean_confirmed=confirmed,
-                notes=notes, idempotency_key=key, request_meta=request_meta)
+        actor=actor,
+        authorised_by=terminal_clean_authorised_by,
+        pin=terminal_clean_authoriser_pin,
+        admission_id=admission_id,
+        bed_id=bed_id,
+        request_meta=request_meta,
+    )
+    move = dict(
+        ward_id=ward_id,
+        bed_id=bed_id,
+        ward_text=ward_text,
+        bed_text=bed_text,
+        awaiting_bed=awaiting_bed,
+        keep_location=keep_location,
+        extra_bed=extra_bed,
+        expected_bed_id=expected_bed_id,
+        moved_at=moved_at,
+        out_of_service_reason=out_of_service_reason,
+        boarder_acknowledged=boarder_acknowledged,
+        not_clean_reason=not_clean_reason,
+        terminal_clean_authorised_by=terminal_clean_authorised_by,
+        terminal_clean_reason=terminal_clean_reason,
+        terminal_clean_confirmed=confirmed,
+        notes=notes,
+        idempotency_key=key,
+        request_meta=request_meta,
+    )
     with db_session(immediate=True) as db:
         if movement_for_key(db, key) is not None:
             # A retry: the transfer writer answers the first result, or refuses
             # a key used for anything else, before reading the order again.
-            return adt_transfer.transfer_on(db, actor=actor, to_department=canonical,
-                                            reason=why, admission_id=admission_id, **move)
+            return adt_transfer.transfer_on(
+                db,
+                actor=actor,
+                to_department=canonical,
+                reason=why,
+                admission_id=admission_id,
+                **move,
+            )
         adm = _row(db.execute("SELECT * FROM admissions WHERE id = ?", (admission_id,)).fetchone())
         if adm is None:
             raise AdtNotFound("No admission with that id", code="admission_not_found")
         if adm.get("status") != "active":
-            raise AdtConflict("That admission has ended, so the patient cannot be moved",
-                              code="admission_not_active", status=adm.get("status"))
+            raise AdtConflict(
+                "That admission has ended, so the patient cannot be moved",
+                code="admission_not_active",
+                status=adm.get("status"),
+            )
         if canonical == adm.get("department"):
             raise AdtConflict(
                 f"This patient is already treated by {canonical}. A move inside one department "
-                "is a bed change, which needs no doctor's order.", code="no_department_change")
+                "is a bed change, which needs no doctor's order.",
+                code="no_department_change",
+            )
         doctor = ordering_doctor_on(db, ordered_by, adm)
         doctor_words = doctor.get("name") or doctor["id"]
         result = adt_transfer.transfer_on(
-            db, actor=actor, to_department=canonical,
+            db,
+            actor=actor,
+            to_department=canonical,
             reason=f"{why} (ordered by {doctor_words}, named by the ward clerk)",
-            admission_id=admission_id, **move)
+            admission_id=admission_id,
+            **move,
+        )
         movement = result["movement"]
-        clerk_row = db.execute("SELECT name FROM users WHERE id = ?",
-                               ((actor or {}).get("id"),)).fetchone()
+        clerk_row = db.execute(
+            "SELECT name FROM users WHERE id = ?", ((actor or {}).get("id"),)
+        ).fetchone()
         clerk_words = clerk_row["name"] if clerk_row else (actor or {}).get("id")
         audit_on(
-            db, category="clinical_access", action="transfer_order_carried_out",
-            summary=(f"{adm['patient_id']} transferred from {adm.get('department')} to "
-                     f"{canonical} by the ward clerk on the order of {doctor_words}"),
-            actor=actor, patient_id=adm["patient_id"], target_type="patient_movement",
-            target_id=movement["id"], request_meta=request_meta,
+            db,
+            category="clinical_access",
+            action="transfer_order_carried_out",
+            summary=(
+                f"{adm['patient_id']} transferred from {adm.get('department')} to "
+                f"{canonical} by the ward clerk on the order of {doctor_words}"
+            ),
+            actor=actor,
+            patient_id=adm["patient_id"],
+            target_type="patient_movement",
+            target_id=movement["id"],
+            request_meta=request_meta,
             correlation_id=f"transfer-{movement['id']}",
-            metadata={"movement_id": movement["id"], "admission_id": admission_id,
-                      "ordered_by": doctor["id"], "ordered_by_name": doctor.get("name"),
-                      "ordered_by_department": doctor.get("department") or None,
-                      "named_by": (actor or {}).get("id"), "confirmed_by_doctor": False,
-                      "from_department": adm.get("department"), "to_department": canonical})
+            metadata={
+                "movement_id": movement["id"],
+                "admission_id": admission_id,
+                "ordered_by": doctor["id"],
+                "ordered_by_name": doctor.get("name"),
+                "ordered_by_department": doctor.get("department") or None,
+                "named_by": (actor or {}).get("id"),
+                "confirmed_by_doctor": False,
+                "from_department": adm.get("department"),
+                "to_department": canonical,
+            },
+        )
         _case_room_line_on(
-            db, adm["patient_id"],
+            db,
+            adm["patient_id"],
             f"Transferred from {adm.get('department')} to {canonical} by {clerk_words} (ward "
-            f"clerk), on the order of {doctor_words}. {why}")
+            f"clerk), on the order of {doctor_words}. {why}",
+        )
     adt_transfer.sync_housekeeping_after_commit()
     result["ordered_by"] = {"id": doctor["id"], "name": doctor.get("name")}
     return result

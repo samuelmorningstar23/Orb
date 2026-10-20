@@ -41,6 +41,7 @@ scripts/backup_db.py backup first, and dry-run init_db() on a copy of that
 backup on the isolated verify stack before the real database (docs/
 HIS_BUILD_PLAN_2026-10.md, "The two FK-parent rebuilds").
 """
+
 import re
 
 from migrations import Migration
@@ -52,23 +53,40 @@ FROZEN_STATUSES: tuple = ("admitted", "discharged", "transferred", "registered")
 #: import provenance columns. Migration 50 adds none (patient_demographics
 #: holds the registration fields instead).
 CANONICAL_COLUMNS: tuple = (
-    "id", "user_id", "name", "mrn", "bed", "ward", "admission_date", "diagnosis",
-    "status", "age", "date_of_birth", "sex", "phone", "emergency_contact_name",
-    "emergency_contact_phone", "address", "attending_doctor_id", "created_at",
-    "on_scale_2", "import_run_id", "import_source_system", "import_external_id",
+    "id",
+    "user_id",
+    "name",
+    "mrn",
+    "bed",
+    "ward",
+    "admission_date",
+    "diagnosis",
+    "status",
+    "age",
+    "date_of_birth",
+    "sex",
+    "phone",
+    "emergency_contact_name",
+    "emergency_contact_phone",
+    "address",
+    "attending_doctor_id",
+    "created_at",
+    "on_scale_2",
+    "import_run_id",
+    "import_source_system",
+    "import_external_id",
 )
 
 #: The two indexes migration 15 put on patients. Dropped with the old table
 #: and recreated by post_sql, exactly as migration 15 wrote them.
 KNOWN_INDEXES: dict = {
     "idx_patients_import_external": (
-        'CREATE UNIQUE INDEX IF NOT EXISTS idx_patients_import_external '
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_patients_import_external "
         'ON "patients"(import_source_system, import_external_id) '
-        'WHERE import_external_id IS NOT NULL'
+        "WHERE import_external_id IS NOT NULL"
     ),
     "idx_patients_import_run": (
-        'CREATE INDEX IF NOT EXISTS idx_patients_import_run '
-        'ON "patients"(import_run_id)'
+        'CREATE INDEX IF NOT EXISTS idx_patients_import_run ON "patients"(import_run_id)'
     ),
 }
 
@@ -148,8 +166,7 @@ def apply(conn) -> None:
         new = _patient_fk_violations(rebuilt) - violations_before
         if new:
             raise RuntimeError(
-                "patients rebuild aborted: rows would point at missing patients "
-                f"{sorted(new)[:10]}"
+                f"patients rebuild aborted: rows would point at missing patients {sorted(new)[:10]}"
             )
 
     was_in_txn = bool(getattr(conn, "in_transaction", False))

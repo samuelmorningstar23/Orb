@@ -24,6 +24,7 @@ encrypted rows as long as the key remains configured.
 Fail-closed option: ORB_REQUIRE_FIELD_ENCRYPTION=1 makes an unavailable cipher a
 hard error rather than a silent cleartext write, for regulated deployments.
 """
+
 from __future__ import annotations
 
 import base64
@@ -33,11 +34,12 @@ import os
 
 logger = logging.getLogger("orb.field_crypto")
 
-_PREFIX = "ORBF1:"          # marks an encrypted field value
+_PREFIX = "ORBF1:"  # marks an encrypted field value
 _NONCE_LEN = 12
 
 try:
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
     _HAVE_AESGCM = True
 except Exception:  # pragma: no cover
     AESGCM = None  # type: ignore
@@ -55,7 +57,12 @@ def is_field_encryption_enabled() -> bool:
 
 
 def _require() -> bool:
-    return os.getenv("ORB_REQUIRE_FIELD_ENCRYPTION", "").strip().lower() in ("1", "true", "yes", "on")
+    return os.getenv("ORB_REQUIRE_FIELD_ENCRYPTION", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
 
 
 def _derive_key() -> bytes:
@@ -108,10 +115,10 @@ def decrypt_field(value: str) -> str:
             "Field value is encrypted but ORB_FIELD_ENCRYPTION_KEY / cryptography "
             "is unavailable; cannot decrypt."
         )
-    raw = base64.b64decode(value[len(_PREFIX):].encode("ascii"))
+    raw = base64.b64decode(value[len(_PREFIX) :].encode("ascii"))
     nonce, ct = raw[:_NONCE_LEN], raw[_NONCE_LEN:]
     aes = AESGCM(_derive_key())
     try:
         return aes.decrypt(nonce, ct, None).decode("utf-8")
     except Exception as e:
-        raise ValueError(f"Field decryption failed (tampered or wrong key): {e}")
+        raise ValueError(f"Field decryption failed (tampered or wrong key): {e}") from e

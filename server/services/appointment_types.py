@@ -11,6 +11,7 @@ before this list existed still reads as itself. On read, a value that is not
 one of the four (an old free-text type, or the portal's "Patient request:
 confirm time") is counted as `other`; its text is still shown as written.
 """
+
 from __future__ import annotations
 
 #: key -> the label a nurse reads, which is also what is stored.

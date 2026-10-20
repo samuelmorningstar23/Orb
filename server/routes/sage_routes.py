@@ -1,18 +1,32 @@
 """Orb Sage — AI Intelligence Routes"""
+
+import json
+import re
+import time
+import uuid
+from typing import Any
+
+from auth import get_current_user
+from database import db_session, run_db
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
-from auth import get_current_user
 from permissions import department_scope, require_patient_access, require_permission
-from services.sage_service import query_ollama, get_relevant_context, save_conversation, get_conversation_history, detect_mutation_intent, declares_action
-from services.sage_service import assess_answer_grounding, classify_answer_confidence
-from services.sage_service import CONTRACT_TAG_EMPHASIS as _EMPHASIS, CONTRACT_TAG_RE as _SHARED_CONTRACT_TAG_RE, CONTRACT_TAGS as _CONTRACT_TAGS
+from pydantic import BaseModel, Field
+from services.sage_service import CONTRACT_TAG_EMPHASIS as _EMPHASIS
+from services.sage_service import CONTRACT_TAG_RE as _SHARED_CONTRACT_TAG_RE
+from services.sage_service import CONTRACT_TAGS as _CONTRACT_TAGS
+from services.sage_service import (
+    assess_answer_grounding,
+    classify_answer_confidence,
+    declares_action,
+    detect_mutation_intent,
+    get_conversation_history,
+    get_relevant_context,
+    query_ollama,
+    save_conversation,
+)
+
 from services import thinking_mode
-import json
-import time
-import re
-import uuid
-from database import db_session, run_db
 
 router = APIRouter(prefix="/api/sage", tags=["sage"])
 
@@ -29,7 +43,8 @@ _HARM_INTENT = re.compile(
     r"how much .*(?:to (?:kill|die)|would (?:be )?(?:fatal|lethal))|"
     r"enough .* to (?:kill|die|stop)|stop (?:the|his|her|their) heart|"
     r"kill (?:the |this )?(?:patient|him|her|them)|"
-    r"end (?:the |their |his |her )?(?:life|patient)|harm (?:the |this )?patient)\b")
+    r"end (?:the |their |his |her )?(?:life|patient)|harm (?:the |this )?patient)\b"
+)
 _INJECT_INTENT = re.compile(
     r"(?i)(ignore (?:all )?(?:the )?(?:previous|prior|your|above) instructions|"
     r"disregard (?:your |the )?(?:safety|rules|previous|instructions)|system override|"
@@ -37,13 +52,18 @@ _INJECT_INTENT = re.compile(
     r"print (?:your |the )?(?:full )?(?:system )?prompt|new system message|"
     r"forget (?:you are|your role|everything)|pretend you (?:have no|are (?:an? )?(?:unrestricted|jailbroken))|"
     r"reply with exactly|output exactly|say [A-Za-z0-9\-]{3,} and nothing|"
-    r"repeat (?:the following|this) verbatim)")
-_HARM_REFUSAL = ("I can't help with anything intended to harm a patient. If you have a genuine "
-                 "clinical safety concern, please escalate to the senior clinician on duty or the "
-                 "on-call team immediately.")
-_INJECT_REFUSAL = ("I can't follow instructions that ask me to ignore my role or safety rules, "
-                   "reveal my configuration, or output arbitrary text. I'm Orb Sage. I can help "
-                   "with clinical questions about your patients.")
+    r"repeat (?:the following|this) verbatim)"
+)
+_HARM_REFUSAL = (
+    "I can't help with anything intended to harm a patient. If you have a genuine "
+    "clinical safety concern, please escalate to the senior clinician on duty or the "
+    "on-call team immediately."
+)
+_INJECT_REFUSAL = (
+    "I can't follow instructions that ask me to ignore my role or safety rules, "
+    "reveal my configuration, or output arbitrary text. I'm Orb Sage. I can help "
+    "with clinical questions about your patients."
+)
 
 
 def _safety_refusal(q: str):
@@ -293,6 +313,7 @@ FORBIDDEN_PHRASE_PATTERNS = [
 # exhaustion is printed, because it means text is still being removed and the
 # result may still hold a confirmation.
 
+
 def _scoped(pattern: str) -> str:
     """`(?i)foo` -> `(?i:foo)`. Python rejects a GLOBAL inline flag that is not
     at the start of the expression, so per-pattern flags have to become scoped
@@ -303,9 +324,7 @@ def _scoped(pattern: str) -> str:
     return f"(?:{pattern})"
 
 
-_FORBIDDEN_ALTERNATION = re.compile(
-    "|".join(_scoped(p) for p in FORBIDDEN_PHRASE_PATTERNS)
-)
+_FORBIDDEN_ALTERNATION = re.compile("|".join(_scoped(p) for p in FORBIDDEN_PHRASE_PATTERNS))
 
 _STRIP_MAX_PASSES = 32
 
@@ -344,7 +363,7 @@ def _strip_forbidden_core(text: str, collapse_whitespace: bool) -> str:
         return text
     for _ in range(_STRIP_MAX_PASSES):
         out = _FORBIDDEN_ALTERNATION.sub("", text)
-        if out == text:                       # fixed point: nothing still matches
+        if out == text:  # fixed point: nothing still matches
             return _tidy_whitespace(text) if collapse_whitespace else text
         text = out
     # FAIL CLOSED. Reaching here means text was still shrinking after 32 passes,
@@ -355,8 +374,10 @@ def _strip_forbidden_core(text: str, collapse_whitespace: bool) -> str:
     # settles in 2 passes; it takes 32 stacked separator-less confirmations from
     # a 15 tok/s model to get here), which is why dropping the answer is the
     # right trade rather than a denial-of-service risk.
-    print("  [Sage] forbidden-phrase strip did not settle within "
-          f"{_STRIP_MAX_PASSES} passes; DROPPING the text (fail closed)")
+    print(
+        "  [Sage] forbidden-phrase strip did not settle within "
+        f"{_STRIP_MAX_PASSES} passes; DROPPING the text (fail closed)"
+    )
     return ""
 
 
@@ -458,7 +479,7 @@ def _scan_group(src: str, i: int):
         elif c == ")":
             depth -= 1
             if depth == 0:
-                return src[i:j + 1], j + 1
+                return src[i : j + 1], j + 1
         j += 1
     raise _UndecidableTrigger(f"unbalanced group in {src!r}")
 
@@ -469,7 +490,7 @@ def _top_level_alts(body: str) -> list:
     while i < len(body):
         c = body[i]
         if c == "\\":
-            cur.append(body[i:i + 2])
+            cur.append(body[i : i + 2])
             i += 2
             continue
         if in_class:
@@ -506,7 +527,7 @@ def _tokenize_tail(rest: str) -> list:
                 raise _UndecidableTrigger(f"trailing backslash in tail {rest!r}")
             e = rest[i + 1]
             if e in "bBAZ":
-                toks.append((True, False))        # zero-width assertion
+                toks.append((True, False))  # zero-width assertion
                 i += 2
                 continue
             if e not in _ESCAPED_LITERAL and not e.isalpha():
@@ -516,7 +537,7 @@ def _tokenize_tail(rest: str) -> list:
             i += 2
             atom_width_one = True
         elif c == "[":
-            j = rest.find("]", i + 2)             # +2: "[]" and "[^]" are literals
+            j = rest.find("]", i + 2)  # +2: "[]" and "[^]" are literals
             if j == -1:
                 raise _UndecidableTrigger(f"unterminated class in {rest!r}")
             i = j + 1
@@ -580,12 +601,12 @@ def _literal_trigger(pattern: str) -> str:
             if i + 1 >= n:
                 raise _UndecidableTrigger(f"trailing backslash in {pattern!r}")
             e = src[i + 1]
-            if e in "bBAZ":                       # zero-width assertion
+            if e in "bBAZ":  # zero-width assertion
                 i += 2
                 continue
             if e in _ESCAPED_LITERAL:
                 if i + 2 < n and src[i + 2] in _QUANTIFIERS:
-                    break                         # optional/repeated → literal ends
+                    break  # optional/repeated → literal ends
                 out.append(e)
                 i += 2
                 continue
@@ -594,23 +615,23 @@ def _literal_trigger(pattern: str) -> str:
             grp, after = _scan_group(src, i)
             body = grp[1:-1]
             if body[:2] in ("?=", "?!") or body[:3] in ("?<=", "?<!"):
-                i = after                         # lookaround → zero-width
+                i = after  # lookaround → zero-width
                 continue
             if body.startswith("?:"):
                 body = body[2:]
             elif body.startswith("?"):
                 raise _UndecidableTrigger(f"unsupported group {grp!r} in {pattern!r}")
             if all(_ZERO_WIDTH_ALT.match(a.strip()) for a in _top_level_alts(body)):
-                i = after                         # e.g. (?:^|(?<=[.!?]\s))
+                i = after  # e.g. (?:^|(?<=[.!?]\s))
                 continue
-            break                                 # real alternation → literal ends
+            break  # real alternation → literal ends
         if c in "^$":
-            i += 1                                # zero-width anchor
+            i += 1  # zero-width anchor
             continue
         if c in "[|)" or c in _QUANTIFIERS:
             break
         if i + 1 < n and src[i + 1] in _QUANTIFIERS:
-            break                                 # this char is optional/repeated
+            break  # this char is optional/repeated
         out.append(c)
         i += 1
     trigger = "".join(out).lower()
@@ -625,6 +646,9 @@ def _literal_trigger(pattern: str) -> str:
 
 # Cache: pattern tuple → (compiled patterns, set of trigger prefixes, max len).
 # `None` prefixes means derivation failed → sanitizer uses the old sentence path.
+_HOLD_TABLES: dict[
+    tuple, tuple[tuple[re.Pattern, ...], frozenset[str] | None, int, tuple[str, ...]]
+]
 _HOLD_TABLES = {}
 
 
@@ -638,14 +662,20 @@ def _hold_table(patterns: tuple):
         # Every non-empty prefix of every trigger. A buffer tail that is in this
         # set could be the beginning of a forbidden phrase and must be held.
         prefixes = {t[:k] for t in triggers for k in range(1, len(t) + 1)}
-        table = (compiled, frozenset(prefixes), max(len(t) for t in triggers),
-                 tuple(triggers))
+        table: tuple[tuple[re.Pattern, ...], frozenset[str] | None, int, tuple[str, ...]] = (
+            compiled,
+            frozenset(prefixes),
+            max(len(t) for t in triggers),
+            tuple(triggers),
+        )
     except _UndecidableTrigger as exc:
         # Fail SAFE, never open: without triggers the sanitizer cannot bound how
         # far back a phrase might start, so it reverts to holding the whole
         # trailing sentence. Slower, identical safety.
-        print(f"  [Sage] forbidden-trigger derivation failed ({exc}); "
-              f"sanitizer falls back to sentence granularity")
+        print(
+            f"  [Sage] forbidden-trigger derivation failed ({exc}); "
+            f"sanitizer falls back to sentence granularity"
+        )
         table = (compiled, None, 0, ())
     _HOLD_TABLES[patterns] = table
     return table
@@ -705,22 +735,25 @@ class SentenceStreamSanitizer:
     def __init__(self, strip_fn, patterns=None):
         self._strip = strip_fn
         pats = tuple(FORBIDDEN_PHRASE_PATTERNS if patterns is None else patterns)
-        (self._compiled, self._prefixes,
-         self._maxtrig, self._triggers) = _hold_table(pats)
+        (self._compiled, self._prefixes, self._maxtrig, self._triggers) = _hold_table(pats)
         # Barrier cuts (see _settled_cut) rest on properties of THIS strip and
         # THIS pattern list, so a caller with its own strip keeps sentence units.
-        self._barrier_cuts = (strip_fn is _strip_forbidden_streaming
-                              and patterns is None and self._prefixes is not None)
+        self._barrier_cuts = (
+            strip_fn is _strip_forbidden_streaming
+            and patterns is None
+            and self._prefixes is not None
+        )
         if self._barrier_cuts:
             self._trigger_re = re.compile(
-                "|".join(re.escape(t) for t in self._triggers), re.IGNORECASE)
+                "|".join(re.escape(t) for t in self._triggers), re.IGNORECASE
+            )
             self._barriers = frozenset(
-                c for c in _CUT_BARRIER_CANDIDATES
-                if not any(c in t for t in self._triggers))
+                c for c in _CUT_BARRIER_CANDIDATES if not any(c in t for t in self._triggers)
+            )
         self._pinned = False  # see _is_pinned
-        self._win = ""      # active raw text (never released un-stripped)
-        self._rel = 0       # index in _win proven safe and already released
-        self._emitted = 0   # chars of strip(_win[:_rel]) already handed out
+        self._win = ""  # active raw text (never released un-stripped)
+        self._rel = 0  # index in _win proven safe and already released
+        self._emitted = 0  # chars of strip(_win[:_rel]) already handed out
 
     # ── public API ──
     def feed(self, chunk: str) -> str:
@@ -759,9 +792,9 @@ class SentenceStreamSanitizer:
                 out.append(piece)
             end -= self._commit()
         if final:
-            stripped = self._strip(self._win[:self._rel]) or ""
+            stripped = self._strip(self._win[: self._rel]) or ""
             if len(stripped) > self._emitted:
-                out.append(stripped[self._emitted:])
+                out.append(stripped[self._emitted :])
                 self._emitted = len(stripped)
         return "".join(out)
 
@@ -845,7 +878,7 @@ class SentenceStreamSanitizer:
         # therefore applied to the strip's OUTPUT — the bytes that actually go
         # on the wire — and only that prefix is handed out.
         safe = self._safe_end(stripped)
-        out = stripped[self._emitted:safe] if safe > self._emitted else ""
+        out = stripped[self._emitted : safe] if safe > self._emitted else ""
         # Never un-say text: if a strip_fn shortened an already-emitted prefix,
         # hold the counter rather than re-emitting from an earlier offset.
         self._emitted = max(self._emitted, safe)
@@ -921,7 +954,7 @@ class SentenceStreamSanitizer:
             return False
         win = self._win
         low = win.lower()
-        if len(low) != len(win):        # case-folding moved the indices
+        if len(low) != len(win):  # case-folding moved the indices
             return False
         settled = win.rfind(".") + 1
         for t in self._triggers:
@@ -1013,6 +1046,7 @@ def _drop_action_json_lines(text: str) -> str:
     if not text or "action_type" not in text:
         return text
     return "\n".join(ln for ln in text.split("\n") if not _is_action_json_line(ln))
+
 
 # ── Output-contract scaffolding ──────────────────────────────────────────────
 # The names of every section tag in the structured output contract. The 27B
@@ -1123,15 +1157,27 @@ _EMPH_CLOSE = _EMPHASIS + r"(?!\w)"
 #: Anchored on a real contract tag name for the same reason every other rule
 #: here is: a sentence that ends "...in the referral details:" cannot fire it.
 _BARE_LABEL_BEFORE_TAG = (
-    _EMPH_OPEN + r"details" + _EMPHASIS + r"\s*:"
-    + r"(?=\s*</?\s*%s(?:%s))" % (_EMPHASIS, "|".join(_CONTRACT_TAGS))
+    _EMPH_OPEN
+    + r"details"
+    + _EMPHASIS
+    + r"\s*:"
+    + r"(?=\s*</?\s*{}(?:{}))".format(_EMPHASIS, "|".join(_CONTRACT_TAGS))
 )
 
 _BARE_CONTRACT_CUT_RE = re.compile(
-    _EMPH_OPEN + r"display_mode" + _EMPH_CLOSE
+    _EMPH_OPEN
+    + r"display_mode"
+    + _EMPH_CLOSE
     + r"|"
-    + _EMPH_OPEN + r"details" + _EMPHASIS + r"\s*:\s*" + _EMPHASIS + r"\s*"
-    + r"(?:concise|detailed)" + _EMPH_CLOSE + r"(?=\s*(?:None\b|$))"
+    + _EMPH_OPEN
+    + r"details"
+    + _EMPHASIS
+    + r"\s*:\s*"
+    + _EMPHASIS
+    + r"\s*"
+    + r"(?:concise|detailed)"
+    + _EMPH_CLOSE
+    + r"(?=\s*(?:None\b|$))"
     + r"|"
     + _BARE_LABEL_BEFORE_TAG,
     re.IGNORECASE,
@@ -1208,7 +1254,7 @@ def _contract_cut(text: str, *, still_arriving: bool = False) -> int:
     if complete:
         cuts.append(complete.start())
     bare = _BARE_CONTRACT_CUT_RE.search(text)
-    if bare and not (still_arriving and not text[bare.end():].strip()):
+    if bare and not (still_arriving and not text[bare.end() :].strip()):
         cuts.append(_widen_to_opener(text, bare.start()))
     return min(cuts) if cuts else -1
 
@@ -1219,9 +1265,7 @@ def _contract_cut(text: str, *, still_arriving: bool = False) -> int:
 #: the padding before ">". Sized for the unpadded tag it silently cut the window
 #: off mid-"</ ***patient_facts_summary*** >", releasing the whole opening one
 #: character before the cut could fire.
-_MAX_CONTRACT_TAG_LEN = (
-    len("</") + 3 + max(len(t) for t in _CONTRACT_TAGS) + 3 + len("  >")
-)
+_MAX_CONTRACT_TAG_LEN = len("</") + 3 + max(len(t) for t in _CONTRACT_TAGS) + 3 + len("  >")
 
 #: Padding that can sit between "<" (or "</") and the tag name: the emphasis the
 #: model wraps tags in, and the whitespace `_CONTRACT_CUT_RE` now tolerates. The
@@ -1238,8 +1282,7 @@ _TAG_PADDING = "*_ \t\r\n"
 #: back, since `_emit_pos` has already passed it. Emphasis-aware for the same
 #: reason `_BARE_CONTRACT_CUT_RE` is: a hold that cannot see "__Details__" holds
 #: nothing, and the cut that fires a moment later lands behind `_emit_pos`.
-_BARE_LABEL_RE = re.compile(
-    _EMPH_OPEN + r"(?:details|display_mode)" + _EMPH_CLOSE, re.IGNORECASE)
+_BARE_LABEL_RE = re.compile(_EMPH_OPEN + r"(?:details|display_mode)" + _EMPH_CLOSE, re.IGNORECASE)
 #: How far past the label we wait before ruling it ordinary prose. Long enough
 #: to cover "Details: concise None" (20 chars), short enough that a sentence
 #: ending "...in the referral details." resumes streaming almost immediately.
@@ -1273,16 +1316,16 @@ def _contract_tag_prefix_start(body: str) -> int:
         # closing half arrives before the ">" does, and testing "escalation*"
         # against the tag names fails, which let the hold jump forward past the
         # bracket and stream "<**escalation" a moment before the cut fired.
-        frag = body[lt + 1:].lstrip("/").strip(_TAG_PADDING)
+        frag = body[lt + 1 :].lstrip("/").strip(_TAG_PADDING)
         if frag == "":
-            candidates.append(lt)   # bracket + padding only: could open anything
+            candidates.append(lt)  # bracket + padding only: could open anything
         elif any(t.startswith(frag.lower()) for t in _CONTRACT_TAGS):
             candidates.append(lt)
 
     # A whole label near the tail whose meaning is not yet decided.
     last = None
-    for last in _BARE_LABEL_RE.finditer(body):
-        pass
+    for match in _BARE_LABEL_RE.finditer(body):
+        last = match
     if last is not None and (len(body) - last.start()) <= _BARE_DECIDE_WINDOW:
         candidates.append(_widen_to_opener(body, last.start()))
 
@@ -1294,8 +1337,7 @@ def _contract_tag_prefix_start(body: str) -> int:
     word = re.search(r"[A-Za-z_]+$", body)
     if word:
         frag = word.group(0).lower().lstrip("_")
-        if frag and any(w.startswith(frag) and w != frag
-                        for w in ("details", "display_mode")):
+        if frag and any(w.startswith(frag) and w != frag for w in ("details", "display_mode")):
             candidates.append(_widen_to_opener(body, word.start()))
 
     # Emphasis that has arrived but whose label has not ("**" before
@@ -1339,9 +1381,9 @@ def _marker_still_possible(buf: str) -> bool:
     if s.startswith("`"):
         m = re.match(r"^```[a-zA-Z]*\s*", s)
         if not m:
-            return len(s) <= len("```python")   # a fence may still be arriving
-        s = s[m.end():]
-    head = s[:len(_MARKER_NOACT)]
+            return len(s) <= len("```python")  # a fence may still be arriving
+        s = s[m.end() :]
+    head = s[: len(_MARKER_NOACT)]
     return _MARKER_NOACT.startswith(head) or _MARKER_ACT.startswith(head)
 
 
@@ -1424,12 +1466,17 @@ class MarkerAnswerStreamer:
     # coming. `_marker_still_possible` normally gives up long before this.
     _MAX_MARKER_WAIT = 64
 
-    def __init__(self, sanitizer: "SentenceStreamSanitizer", mutation_locked: bool,
-                 *, marker_asserted: bool = False):
+    def __init__(
+        self,
+        sanitizer: "SentenceStreamSanitizer",
+        mutation_locked: bool,
+        *,
+        marker_asserted: bool = False,
+    ):
         self._sanitizer = sanitizer
         self._buf = ""
-        self._emit_pos = 0            # consumed offset within the answer body
-        self._body_start = None       # index just past the marker
+        self._emit_pos = 0  # consumed offset within the answer body
+        self._body_start: int | None = None  # index just past the marker
         self._state = "locked" if mutation_locked else "wait_marker"
         self._asserted = bool(marker_asserted)
         self.streamed_any = False
@@ -1460,8 +1507,10 @@ class MarkerAnswerStreamer:
             if marker == self._NOACT:
                 self._body_start = end
                 self._state = "stream_answer"
-            elif (not _marker_still_possible(self._buf)
-                    or len(self._buf.strip()) > self._MAX_MARKER_WAIT):
+            elif (
+                not _marker_still_possible(self._buf)
+                or len(self._buf.strip()) > self._MAX_MARKER_WAIT
+            ):
                 # The reply can no longer open with a marker. Which way that
                 # fails is decided per turn, by WHO OWNS THE MARKER:
                 #
@@ -1483,10 +1532,10 @@ class MarkerAnswerStreamer:
                 self._body_start = 0
                 self._state = "stream_answer"
             else:
-                return ""            # a marker may still be arriving
+                return ""  # a marker may still be arriving
 
         if self._state == "stream_answer":
-            body = self._buf[self._body_start:]
+            body = self._buf[self._body_start :]
             cut = body.find(self._DETAILS)
             if cut == -1:
                 # The 4B lane often ends the answer with a bare section tag and
@@ -1527,7 +1576,7 @@ class MarkerAnswerStreamer:
         while pos < end:
             nl = body.find("\n", pos, end)
             line_end = end if nl == -1 else nl
-            line = body[body.rfind("\n", 0, pos) + 1:line_end]
+            line = body[body.rfind("\n", 0, pos) + 1 : line_end]
             if nl == -1 and not final and _action_line_undecided(line):
                 break
             nxt = end if nl == -1 else nl + 1
@@ -1550,7 +1599,7 @@ class MarkerAnswerStreamer:
         """
         if self._state != "stream_answer":
             return ""
-        body = self._buf[self._body_start:]
+        body = self._buf[self._body_start :]
         cut = body.find(self._DETAILS)
         if cut == -1:
             cut = _contract_cut(body)
@@ -1576,11 +1625,12 @@ def parse_fast_response(raw: str) -> dict:
     directions are deliberate and the reasoning is in MarkerAnswerStreamer's
     docstring.
     """
+    out: dict[str, Any]
     out = {"answer": "", "action_intent": "None.", "marker": None, "details": {}}
     if not raw:
         return out
     text = raw.strip()
-    if text.startswith("```"):                      # stray fence, be forgiving
+    if text.startswith("```"):  # stray fence, be forgiving
         text = re.sub(r"^```[a-zA-Z]*\s*", "", text).rstrip("`").strip()
 
     marker, end = _leading_marker(text)
@@ -1623,9 +1673,16 @@ def parse_fast_response(raw: str) -> dict:
     if cut > 0:
         detail_blob = body[cut:]
         body = body[:cut]
-        for tag in ("display_mode", "patient_facts_summary", "local_policy_guidance",
-                    "external_guidance", "clinical_assessment", "caveats",
-                    "escalation", "cited_sources"):
+        for tag in (
+            "display_mode",
+            "patient_facts_summary",
+            "local_policy_guidance",
+            "external_guidance",
+            "clinical_assessment",
+            "caveats",
+            "escalation",
+            "cited_sources",
+        ):
             # Properly closed section first; then the loose `<tag> value` form
             # the small model emits, which ends at the next tag or end-of-text.
             #
@@ -1637,13 +1694,11 @@ def parse_fast_response(raw: str) -> dict:
             # from the details panel, which is the quietest way this file could
             # fail. Cutting a tag you cannot harvest is not a fix, it is a
             # better-looking loss.
-            open_tag = r"<\s*%s%s%s\s*>" % (_EMPHASIS, tag, _EMPHASIS)
-            close_tag = r"</\s*%s%s%s\s*>" % (_EMPHASIS, tag, _EMPHASIS)
-            m = re.search(f"{open_tag}(.*?){close_tag}", detail_blob,
-                          re.DOTALL | re.IGNORECASE)
+            open_tag = rf"<\s*{_EMPHASIS}{tag}{_EMPHASIS}\s*>"
+            close_tag = rf"</\s*{_EMPHASIS}{tag}{_EMPHASIS}\s*>"
+            m = re.search(f"{open_tag}(.*?){close_tag}", detail_blob, re.DOTALL | re.IGNORECASE)
             if not m:
-                m = re.search(f"{open_tag}(.*?)(?=<|$)", detail_blob,
-                              re.DOTALL | re.IGNORECASE)
+                m = re.search(f"{open_tag}(.*?)(?=<|$)", detail_blob, re.DOTALL | re.IGNORECASE)
             if m:
                 out["details"][tag] = m.group(1).strip()
 
@@ -1665,9 +1720,11 @@ def parse_fast_response(raw: str) -> dict:
         # `trailing` distinguishes the two failures worth telling apart — the
         # model answered then emitted a marker, versus it emitted none at all.
         trailing = bool(_MARKER_ANYWHERE_RE.search(text))
-        print(f"  [Sage] fast contract: no LEADING marker "
-              f"(trailing_marker={trailing}, chars={len(text)}) — "
-              f"answer kept, deterministic gate only")
+        print(
+            f"  [Sage] fast contract: no LEADING marker "
+            f"(trailing_marker={trailing}, chars={len(text)}) — "
+            f"answer kept, deterministic gate only"
+        )
     return out
 
 
@@ -1686,7 +1743,7 @@ class XmlAnswerStreamer:
     def __init__(self, sanitizer: SentenceStreamSanitizer, mutation_locked: bool):
         self._sanitizer = sanitizer
         self._buf = ""
-        self._answer_pos = 0          # consumed offset within the answer body
+        self._answer_pos = 0  # consumed offset within the answer body
         self._state = "locked" if mutation_locked else "wait_intent"
         self.streamed_any = False
 
@@ -1720,11 +1777,11 @@ class XmlAnswerStreamer:
                 tail_lt = self._buf.rfind("<", body_start)
                 if tail_lt >= body_start:
                     safe_end = tail_lt
-                fresh = self._buf[body_start + self._answer_pos:safe_end]
+                fresh = self._buf[body_start + self._answer_pos : safe_end]
                 self._answer_pos = max(self._answer_pos, safe_end - body_start)
                 out = self._sanitizer.feed(fresh) if fresh else ""
             else:
-                fresh = self._buf[body_start + self._answer_pos:close_idx]
+                fresh = self._buf[body_start + self._answer_pos : close_idx]
                 self._answer_pos = close_idx - body_start
                 self._state = "done"
                 out = (self._sanitizer.feed(fresh) if fresh else "") + self._sanitizer.flush()
@@ -1800,12 +1857,14 @@ def _stored_answer_meta(sources_json):
         return None
     if not isinstance(blob, dict):
         return None
-    meta = {}
+    meta: dict[str, Any] = {}
     stored = blob.get("timing")
     if isinstance(stored, dict):
-        timing = _answer_timing(ttft_ms=stored.get("ttft_ms"),
-                                total_ms=stored.get("total_ms"),
-                                tokens=stored.get("tokens"))
+        timing = _answer_timing(
+            ttft_ms=stored.get("ttft_ms"),
+            total_ms=stored.get("total_ms"),
+            tokens=stored.get("tokens"),
+        )
         if timing["ttft_ms"] is not None or timing["total_ms"] is not None:
             meta["timing"] = timing
             tier = blob.get("thinking_tier")
@@ -1829,7 +1888,7 @@ def _chart_patient_name(patient_context_dict) -> str | None:
     demo = patient_context_dict.get("demographics")
     if not isinstance(demo, str) or not demo.strip():
         return None
-    return demo.split(',')[0].replace('PATIENT: ', '').strip() or None
+    return demo.split(",")[0].replace("PATIENT: ", "").strip() or None
 
 
 # ── Blocking DB helpers (module level, always called via run_db) ──
@@ -1843,12 +1902,16 @@ def _match_medication(med_name):
         # Case-insensitive partial match, over CONFIRMED drugs only (grn-6): a
         # draft waiting for its second pharmacist, or a retired drug, is never
         # drafted into a pharmacy request.
-        match = db.execute("SELECT id, name FROM helix_medication_master WHERE (name LIKE ? OR generic_name LIKE ?) AND identity_status = 'active'", (f"%{med_name}%", f"%{med_name}%")).fetchone()
+        match = db.execute(
+            "SELECT id, name FROM helix_medication_master WHERE (name LIKE ? OR generic_name LIKE ?) AND identity_status = 'active'",
+            (f"%{med_name}%", f"%{med_name}%"),
+        ).fetchone()
         return match
 
 
-def _save_turn(user_id: str, query: str, full_response: str, meta_json,
-               conversation_id: str | None = None):
+def _save_turn(
+    user_id: str, query: str, full_response: str, meta_json, conversation_id: str | None = None
+):
     """Persist the user turn and (if any) the assistant turn. Both writes go in one
     executor hop because they are a pair and the caller is a streaming generator's
     finally block — the fewer suspension points in there, the fewer chances a
@@ -1859,8 +1922,9 @@ def _save_turn(user_id: str, query: str, full_response: str, meta_json,
     save_conversation(user_id, "user", query, conversation_id=conversation_id)
     if full_response:
         # Note: We save the parsed JSON metadata to support governance and auditing
-        save_conversation(user_id, "assistant", full_response, sources=meta_json,
-                          conversation_id=conversation_id)
+        save_conversation(
+            user_id, "assistant", full_response, sources=meta_json, conversation_id=conversation_id
+        )
 
 
 def _with_label(text: str | None, label: str | None) -> str | None:
@@ -1886,24 +1950,30 @@ def _labelled(raw: str, label: str | None) -> str:
         return raw
     if marker == _MARKER_NOACT:
         lead = len(raw) - len(raw.lstrip())
-        return raw[:lead + end] + f"{label}\n\n" + raw[lead + end:]
+        return raw[: lead + end] + f"{label}\n\n" + raw[lead + end :]
     return f"{label}\n\n{raw}"
 
 
 def _save_voice_turn(user_id: str, query: str, full_response: str, meta_json=None):
     save_conversation(user_id, "user", f"[voice] {query}")
     if full_response:
-        save_conversation(user_id, "assistant", f"[voice] {full_response}",
-                          sources=meta_json)
+        save_conversation(user_id, "assistant", f"[voice] {full_response}", sources=meta_json)
 
 
 #: Every tag the live buffered path sweeps for before it decides a reply was
 #: "untagged". `cited_sources` is deliberately absent — it is metadata, never the
 #: answer, and the live check excludes it for the same reason.
-_LIVE_ANSWER_TAGS = ("action_intent", "concise_answer", "display_mode",
-                     "patient_facts_summary", "local_policy_guidance",
-                     "external_guidance", "clinical_assessment", "caveats",
-                     "escalation")
+_LIVE_ANSWER_TAGS = (
+    "action_intent",
+    "concise_answer",
+    "display_mode",
+    "patient_facts_summary",
+    "local_policy_guidance",
+    "external_guidance",
+    "clinical_assessment",
+    "caveats",
+    "escalation",
+)
 
 
 def _display_answer(raw: str) -> str:
@@ -1983,8 +2053,12 @@ def _history_safe_answer(sources_json, previous: dict | None) -> str | None:
     `concise_answer` reading is only the safe message on a mutation turn.
     """
     from services.sage_service import (
-        _history_turn_proposed_action, _safe_answer_of, _stored_turn_blob, _verdict_of,
+        _history_turn_proposed_action,
+        _safe_answer_of,
+        _stored_turn_blob,
+        _verdict_of,
     )
+
     blob = _stored_turn_blob(sources_json)
     if blob is None:
         return None
@@ -1992,8 +2066,7 @@ def _history_safe_answer(sources_json, previous: dict | None) -> str | None:
     if isinstance(explicit, str) and explicit.strip():
         return explicit
     verdict, resolved = _verdict_of(blob)
-    turn = {"role": "assistant", "proposed_action": verdict,
-            "proposed_action_resolved": resolved}
+    turn = {"role": "assistant", "proposed_action": verdict, "proposed_action_resolved": resolved}
     if _history_turn_proposed_action(turn, previous):
         return _safe_answer_of(blob)
     return None
@@ -2032,11 +2105,14 @@ def _history_rows(user_id: str, limit: int = 200) -> list:
             (user_id, limit),
         ).fetchall()
         out = []
+        previous_by_thread: dict[str, dict]
         previous_by_thread = {}
         for r in reversed(rows):
             content = r["content"]
             if r["role"] == "assistant":
-                content = _history_safe_answer(r["sources"], previous_by_thread.get(r["conversation_id"])) or _display_answer(content)
+                content = _history_safe_answer(
+                    r["sources"], previous_by_thread.get(r["conversation_id"])
+                ) or _display_answer(content)
             previous_by_thread[r["conversation_id"]] = {"role": r["role"], "content": r["content"]}
             msg = {
                 "role": r["role"],
@@ -2134,22 +2210,22 @@ def _sh_open_episode_sync(conn, patient_id, lane: str, trigger: str):
     lead-time denominators (both require an `alert.fired` in the episode).
     """
     from services import shadow_service
+
     if patient_id:
-        episode_id, _ = shadow_service.open_episode(
-            patient_id, lane, trigger=trigger, db=conn)
+        episode_id, _ = shadow_service.open_episode(patient_id, lane, trigger=trigger, db=conn)
         if episode_id:
             return episode_id
     episode_id = shadow_service.new_episode_id()
     shadow_service.emit_many(
-        [shadow_service.build("episode.opened", episode_id, lane,
-                              payload={"trigger": trigger})],
+        [shadow_service.build("episode.opened", episode_id, lane, payload={"trigger": trigger})],
         db=conn,
     )
     return episode_id
 
 
-def _sh_context_compiled_sync(patient_id, lane: str, facts_n: int, guidelines_n: int,
-                              compile_ms: int, trigger: str):
+def _sh_context_compiled_sync(
+    patient_id, lane: str, facts_n: int, guidelines_n: int, compile_ms: int, trigger: str
+):
     """Open/resolve the episode AND write `context.compiled` in ONE transaction.
 
     SYNC — called from `_prepare_context`, which is already on a to_thread worker.
@@ -2160,14 +2236,24 @@ def _sh_context_compiled_sync(patient_id, lane: str, facts_n: int, guidelines_n:
     """
     try:
         from services import shadow_service
+
         with db_session() as conn:
             episode_id = _sh_open_episode_sync(conn, patient_id, lane, "sage_query")
             shadow_service.emit_many(
-                [shadow_service.build(
-                    "context.compiled", episode_id, lane, patient_id=patient_id,
-                    payload={"facts_n": facts_n, "guidelines_n": guidelines_n,
-                             "compile_ms": compile_ms, "trigger": trigger},
-                )],
+                [
+                    shadow_service.build(
+                        "context.compiled",
+                        episode_id,
+                        lane,
+                        patient_id=patient_id,
+                        payload={
+                            "facts_n": facts_n,
+                            "guidelines_n": guidelines_n,
+                            "compile_ms": compile_ms,
+                            "trigger": trigger,
+                        },
+                    )
+                ],
                 db=conn,
             )
             return episode_id
@@ -2197,13 +2283,15 @@ async def _sh_emit(kind: str, episode_id, lane: str, **kwargs):
         return None
     try:
         from services import shadow_service
+
         return await shadow_service.aemit(kind, episode_id, lane, **kwargs)
     except Exception:
         return None
 
 
-async def _sh_turn_failed(patient_id, lane: str, failure: str, user: dict | None = None,
-                          episode_id=None):
+async def _sh_turn_failed(
+    patient_id, lane: str, failure: str, user: dict | None = None, episode_id=None
+):
     """`sage.failed` — the turn that did not produce an answer.
 
     Without this row the record contains only the turns that worked, and a
@@ -2211,10 +2299,15 @@ async def _sh_turn_failed(patient_id, lane: str, failure: str, user: dict | None
     """
     try:
         episode_id = episode_id or await _sh_episode(patient_id, lane)
-        await _sh_emit("sage.failed", episode_id, lane, patient_id=patient_id,
-                       actor_user_id=(user or {}).get("id"),
-                       actor_role=(user or {}).get("role"),
-                       payload={"failure": failure})
+        await _sh_emit(
+            "sage.failed",
+            episode_id,
+            lane,
+            patient_id=patient_id,
+            actor_user_id=(user or {}).get("id"),
+            actor_role=(user or {}).get("role"),
+            payload={"failure": failure},
+        )
     except Exception:
         pass
 
@@ -2228,9 +2321,15 @@ async def _sh_refused(patient_id, lane: str, refusal_class: str, stage: str, use
     """
     try:
         episode_id = await _sh_episode(patient_id, lane)
-        await _sh_emit("sage.refused", episode_id, lane, patient_id=patient_id,
-                       actor_user_id=user.get("id"), actor_role=user.get("role"),
-                       payload={"refusal_class": refusal_class, "stage": stage})
+        await _sh_emit(
+            "sage.refused",
+            episode_id,
+            lane,
+            patient_id=patient_id,
+            actor_user_id=user.get("id"),
+            actor_role=user.get("role"),
+            payload={"refusal_class": refusal_class, "stage": stage},
+        )
     except Exception:
         pass
 
@@ -2247,8 +2346,7 @@ def _sh_facts_n(patient_context_dict) -> int:
     if not patient_context_dict:
         return 0
     completeness = patient_context_dict.get("completeness") or {}
-    return sum(1 for key, value in completeness.items()
-               if key.startswith("has_") and value is True)
+    return sum(1 for key, value in completeness.items() if key.startswith("has_") and value is True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2272,6 +2370,7 @@ async def _prov_record(**kwargs):
     """Capture one Sage turn. Fire-safe: returns None rather than raising."""
     try:
         from services import sage_provenance_service as _prov
+
         # Bound late, by attribute, so a test (or an ops kill-switch) that
         # replaces `record_turn` on the module is honoured — and so this stays a
         # SYNC callable handed to run_db, which refuses coroutine functions.
@@ -2302,13 +2401,17 @@ def _voice_model_name() -> str | None:
     not be able to turn a spoken answer into an error event."""
     try:
         from config import VOICE as _V
+
         return str(_V["conversational"]["model_path"]).rsplit("/", 1)[-1]
     except Exception:
         return None
 
 
+_SAGE_QUERY_USER_DEFAULT = Depends(require_permission("sage.query"))
+
+
 @router.post("/query")
-async def sage_query(request: Request, user: dict = Depends(require_permission("sage.query"))):
+async def sage_query(request: Request, user: dict = _SAGE_QUERY_USER_DEFAULT):
     """Query Sage with streaming response."""
     body = await request.json()
     query = body.get("query", "")
@@ -2381,18 +2484,27 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
             yield f"data: {json.dumps({'done': True})}\n\n"
             # SHADOW, after the clinician already has the refusal: the guardrail's
             # own record. Emitted last so the instrument can never delay a refusal.
-            await _sh_refused(effective_patient_id, SHADOW_CHAT_LANE,
-                              _refusal_class, "pre_llm", user)
+            await _sh_refused(
+                effective_patient_id, SHADOW_CHAT_LANE, _refusal_class, "pre_llm", user
+            )
             # PROVENANCE. "Why did Sage refuse me?" is one of the two questions a
             # clinician actually escalates, and a store that only kept answers
             # could not answer it. The refused QUESTION is the whole evidence.
             await _prov_record(
-                turn_id=shadow_turn_id, lane=SHADOW_CHAT_LANE, outcome="refused",
-                user=user, question=query, patient_id=effective_patient_id,
-                query_scope="SAFETY_REFUSAL", refusal_class=_refusal_class,
-                answer=refusal, route_info=_no_model_route_info,
-                confidence="high", escalation=True,
+                turn_id=shadow_turn_id,
+                lane=SHADOW_CHAT_LANE,
+                outcome="refused",
+                user=user,
+                question=query,
+                patient_id=effective_patient_id,
+                query_scope="SAFETY_REFUSAL",
+                refusal_class=_refusal_class,
+                answer=refusal,
+                route_info=_no_model_route_info,
+                confidence="high",
+                escalation=True,
             )
+
         return StreamingResponse(_refuse(), media_type="text/event-stream")
 
     # ── Deterministic Intent Gate (shared with the voice lane) ──
@@ -2403,15 +2515,21 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
     # It only feeds the prompt and is never written back, so the new suspension
     # point here cannot invalidate anything; the history/save pair was already
     # separated by the entire LLM stream.
-    history = await run_db(get_conversation_history, user["id"], limit=6,
-                           conversation_id=conversation_id)
+    history = await run_db(
+        get_conversation_history, user["id"], limit=6, conversation_id=conversation_id
+    )
     # The which-patient exchange a reply may settle, read further back than the
     # prompt window (bed locator attempt 13b): a re-ask chain must not lose the
     # message that started it.
     from services.sage_service import _last_turn_asked_which_patient
-    question_history = (await run_db(get_conversation_history, user["id"], limit=20,
-                                     conversation_id=conversation_id)
-                        if _last_turn_asked_which_patient(history) else None)
+
+    question_history = (
+        await run_db(
+            get_conversation_history, user["id"], limit=20, conversation_id=conversation_id
+        )
+        if _last_turn_asked_which_patient(history)
+        else None
+    )
 
     # ── Retrieval, deferred into the stream (2026-07 UX/latency pass) ──
     # Previously get_relevant_context() ran HERE, synchronously in the async
@@ -2461,17 +2579,21 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
         if effective_patient_id:
             from permissions import department_scope as _dept_scope
             from services.sage_service import _patient_in_scope
+
             with db_session() as _db:
                 _view_patient_in_scope = _patient_in_scope(
-                    _db, effective_patient_id, _dept_scope(user))
+                    _db, effective_patient_id, _dept_scope(user)
+                )
         # Not on a no-such-patient turn (R026): the clinician asked about a
         # bed or name nobody here holds, no chart was attached, and the open
         # patient's name on this line would be the one patient the model
         # could drift to.
         from services.sage_service import NO_MATCHING_PATIENT_NOTICE
+
         view_line = _describe_view(
             view_context,
-            _view_patient_in_scope and NO_MATCHING_PATIENT_NOTICE not in (_context or ""))
+            _view_patient_in_scope and NO_MATCHING_PATIENT_NOTICE not in (_context or ""),
+        )
         # NEVER add the view line to an OUT_OF_SCOPE notice. For every other
         # scope `_context` is prompt material the model reads and the clinician
         # never sees, so describing their screen in it is exactly right. The
@@ -2504,7 +2626,8 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
         # stream needs somewhere to put `action.proposed`. One transaction, at
         # the one point in the turn where the clinician is not waiting on a token.
         _episode = _sh_context_compiled_sync(
-            effective_patient_id, SHADOW_CHAT_LANE,
+            effective_patient_id,
+            SHADOW_CHAT_LANE,
             facts_n=_sh_facts_n(_pcd),
             guidelines_n=len(_sources or []),
             compile_ms=round((time.perf_counter() - t_start) * 1000),
@@ -2536,7 +2659,10 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
     # It is also a DB read (it scans the patient roster for name/bed matches), so
     # it goes to a worker thread like every other read on this path.
     from services.ai_governance import classify_query_sensitivity
-    classification = await run_db(classify_query_sensitivity, query, effective_patient_id, view_context)
+
+    classification = await run_db(
+        classify_query_sensitivity, query, effective_patient_id, view_context
+    )
 
     async def stream_response():
         # Raised below when a reply settles the which-patient question of an
@@ -2546,6 +2672,7 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
         cancelled = False
         t_first_token = None
         t_first_emit = None
+        route_info: dict[str, Any]
         route_info = {}
         emitted_stream = False
         # The patient this turn read, for the audit row and provenance. Starts
@@ -2556,15 +2683,16 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
         # Deliberately NOT the same names the finally block probes with locals()
         # below: those probes mean "was this ever bound?", and pre-initialising
         # them would silently change what the audit record stores.
-        sh_episode = None          # episode this turn's rows hang on
-        sh_failure = None          # set => sage.failed instead of sage.drafted
-        sh_action = None           # payload for action.proposed
+        sh_episode = None  # episode this turn's rows hang on
+        sh_failure = None  # set => sage.failed instead of sage.drafted
+        sh_action = None  # payload for action.proposed
         sh_retrieval_ms = None
         broad_sanitizer = SentenceStreamSanitizer(_strip_forbidden_streaming)
         # The fast (answer-first) contract is the default; ORB_SAGE_XML_CONTRACT=1
         # rolls the whole app back to the XML contract, so the streamer that
         # enforces the gate has to follow the same switch.
         from services.sage_service import _xml_contract_forced
+
         _streamer_cls = XmlAnswerStreamer if _xml_contract_forced() else MarkerAnswerStreamer
         xml_streamer = _streamer_cls(
             SentenceStreamSanitizer(_strip_forbidden_streaming),
@@ -2573,10 +2701,19 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
 
         # ── Stage 1: retrieval (threaded — keeps the event loop free) ──
         import asyncio as _aio
+
         yield f"data: {json.dumps({'stage': 'retrieving'})}\n\n"
         try:
-            (context, scope, sources, confidence, escalation,
-             patient_context_dict, query_scope, sh_episode) = await _aio.to_thread(_prepare_context)
+            (
+                context,
+                scope,
+                sources,
+                confidence,
+                escalation,
+                patient_context_dict,
+                query_scope,
+                sh_episode,
+            ) = await _aio.to_thread(_prepare_context)
         except Exception as e:
             print(f"  [Sage] Retrieval error: {e}")
             # SHADOW: this `return` leaves the generator WITHOUT passing through
@@ -2590,10 +2727,16 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
             # skips the finally, so without its own capture a retrieval outage
             # would leave the store describing only the turns that survived.
             await _prov_record(
-                turn_id=shadow_turn_id, lane=SHADOW_CHAT_LANE, outcome="failed",
-                user=user, question=query, patient_id=effective_patient_id,
-                query_scope="RETRIEVAL_FAILED", refusal_class=None,
-                answer="", route_info=_no_model_route_info,
+                turn_id=shadow_turn_id,
+                lane=SHADOW_CHAT_LANE,
+                outcome="failed",
+                user=user,
+                question=query,
+                patient_id=effective_patient_id,
+                query_scope="RETRIEVAL_FAILED",
+                refusal_class=None,
+                answer="",
+                route_info=_no_model_route_info,
                 timings={"retrieval_ms": round((time.perf_counter() - t_start) * 1000)},
             )
             return
@@ -2619,7 +2762,8 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
         if isinstance(patient_context_dict, dict) and patient_context_dict.get("question_what"):
             model_query = patient_context_dict["question_what"]
             if not is_deterministic_mutation and any(
-                    _mutation_gate(t) for t in patient_context_dict.get("question_exchange") or ()):
+                _mutation_gate(t) for t in patient_context_dict.get("question_exchange") or ()
+            ):
                 is_deterministic_mutation = True
                 xml_streamer = _streamer_cls(
                     SentenceStreamSanitizer(_strip_forbidden_streaming),
@@ -2641,21 +2785,24 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
         if patient_context_dict is not None and not classification.contains_phi:
             classification.contains_phi = True
             classification.query_class = "patient_scoped"
-            classification.reasons.append(
-                "retrieval attached a chart (sticky patient anchoring)")
+            classification.reasons.append("retrieval attached a chart (sticky patient anchoring)")
         # The same truth for patient ROWS with no chart (2026-10-04): DISAMBIGUATE
         # hands the model each matching patient's name, bed and ward, and BROAD a
         # census row per patient, both with patient_context_dict None. Probed: a
         # misspelt name that fuzzily matched two patients ("thiruvengadem") put
         # both names in the prompt under `general_knowledge`, and the thinking
         # floor's context markers do not see a disambiguation list either.
-        _rows_class = {"DISAMBIGUATE": "patient_scoped", "NOT_CARRIED": "patient_scoped",
-                       "BROAD": "census_broad"}.get(query_scope)
+        _rows_class = {
+            "DISAMBIGUATE": "patient_scoped",
+            "NOT_CARRIED": "patient_scoped",
+            "BROAD": "census_broad",
+        }.get(query_scope)
         if _rows_class and not classification.contains_phi:
             classification.contains_phi = True
             classification.query_class = _rows_class
             classification.reasons.append(
-                f"retrieval put patient rows in the prompt ({query_scope})")
+                f"retrieval put patient rows in the prompt ({query_scope})"
+            )
 
         # ── Cross-department reach: answered DETERMINISTICALLY, no model ──
         # Retrieval refused to assemble a chart outside this clinician's
@@ -2671,8 +2818,7 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
             # A scope denial is a guardrail SUCCESS and a Sage NON-ANSWER — same
             # accounting as the pre-LLM safety refusal, so it must not land in
             # `sage.drafted` and flatter the time-saved denominator.
-            await _sh_refused(None, SHADOW_CHAT_LANE, "out_of_scope_patient",
-                              "retrieval", user)
+            await _sh_refused(None, SHADOW_CHAT_LANE, "out_of_scope_patient", "retrieval", user)
             # PROVENANCE, with `patient_id=None` deliberately. Retrieval refused
             # to confirm this patient exists; writing their id into a store an
             # auditor can list would re-disclose exactly what the 404-shaped
@@ -2681,10 +2827,16 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
             # audit row that names the patient was already written, fail-closed,
             # by retrieval itself.
             await _prov_record(
-                turn_id=shadow_turn_id, lane=SHADOW_CHAT_LANE, outcome="refused",
-                user=user, question=query, patient_id=None,
-                query_scope="OUT_OF_SCOPE", refusal_class="out_of_scope_patient",
-                answer=context, route_info=route_info or _no_model_route_info,
+                turn_id=shadow_turn_id,
+                lane=SHADOW_CHAT_LANE,
+                outcome="refused",
+                user=user,
+                question=query,
+                patient_id=None,
+                query_scope="OUT_OF_SCOPE",
+                refusal_class="out_of_scope_patient",
+                answer=context,
+                route_info=route_info or _no_model_route_info,
                 confidence="high",
                 timings={"retrieval_ms": round(t_retrieval)},
             )
@@ -2707,10 +2859,16 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
             yield f"data: {json.dumps({'done': True})}\n\n"
             await _sh_refused(None, SHADOW_CHAT_LANE, _no_model_class, "retrieval", user)
             await _prov_record(
-                turn_id=shadow_turn_id, lane=SHADOW_CHAT_LANE, outcome="refused",
-                user=user, question=query, patient_id=None,
-                query_scope=query_scope, refusal_class=_no_model_class,
-                answer=context, route_info=route_info or _no_model_route_info,
+                turn_id=shadow_turn_id,
+                lane=SHADOW_CHAT_LANE,
+                outcome="refused",
+                user=user,
+                question=query,
+                patient_id=None,
+                query_scope=query_scope,
+                refusal_class=_no_model_class,
+                answer=context,
+                route_info=route_info or _no_model_route_info,
                 confidence="high",
                 timings={"retrieval_ms": round(t_retrieval)},
             )
@@ -2718,8 +2876,9 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
             # followed this question, or "yes" goes to the open chart. This
             # branch returns before the try/finally that saves every other
             # turn, which is how attempt 4 lost it in production.
-            await run_db(_save_turn, user["id"], query, context, None,
-                         conversation_id=conversation_id)
+            await run_db(
+                _save_turn, user["id"], query, context, None, conversation_id=conversation_id
+            )
             return
 
         yield f"data: {json.dumps({'stage': 'generating', 'retrieval_ms': round(t_retrieval)})}\n\n"
@@ -2728,8 +2887,11 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
         # turn (the open chart, or the conversation's patient) starts with that
         # patient's name and bed, written here by the server, so a reference
         # to another patient that retrieval missed is visible, not silent.
-        _answer_label = (patient_context_dict.get("answer_label")
-                         if isinstance(patient_context_dict, dict) else None)
+        _answer_label = (
+            patient_context_dict.get("answer_label")
+            if isinstance(patient_context_dict, dict)
+            else None
+        )
         if _answer_label:
             yield f"data: {json.dumps({'content': _answer_label + chr(10) + chr(10)})}\n\n"
 
@@ -2738,16 +2900,20 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
         # request arrives as `model_query`; an unsettled order cannot be
         # narrated by a model that never saw it.
         from services.sage_service import history_for_model
+
         try:
             async for chunk in query_ollama(
-                model_query, context, history_for_model(history), scope,
+                model_query,
+                context,
+                history_for_model(history),
+                scope,
                 classification=classification,
                 user_id=user["id"],
                 patient_id=turn_patient_id,
                 route_info=route_info,
             ):
                 if await request.is_disconnected():
-                    print(f"  [Sage] Client disconnected, aborting LLM stream")
+                    print("  [Sage] Client disconnected, aborting LLM stream")
                     cancelled = True
                     break
                 if t_first_token is None:
@@ -2761,6 +2927,7 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
                     # (False for every prose scope and for the XML contract, so
                     # this can only ever reach MarkerAnswerStreamer.)
                     if route_info.get("marker_asserted"):
+                        assert isinstance(xml_streamer, MarkerAnswerStreamer)
                         xml_streamer.assert_marker()
                 full_response += chunk
                 # ── INCREMENTAL SANITIZED STREAMING ──
@@ -2769,7 +2936,8 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
                 # closed as "None"; mutation turns stay fully buffered.
                 if stream_raw_to_client:
                     safe_piece = (
-                        broad_sanitizer.feed(chunk) if scope in ("broad", "aggregate", "quick")
+                        broad_sanitizer.feed(chunk)
+                        if scope in ("broad", "aggregate", "quick")
                         else xml_streamer.feed(chunk)
                     )
                     if safe_piece:
@@ -2805,8 +2973,11 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
                     if scope == "quick":
                         _q_answer = _strip_forbidden(full_response)
                         _q_grounding = assess_answer_grounding(
-                            answer=_q_answer, sources=sources or [], query=model_query,
-                            prompt_context=context, patient_context=None,
+                            answer=_q_answer,
+                            sources=sources or [],
+                            query=model_query,
+                            prompt_context=context,
+                            patient_context=None,
                         )
                         _q_conf, _q_basis = classify_answer_confidence(
                             retrieval_confidence=confidence,
@@ -2816,8 +2987,13 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
                             degraded=not _q_answer.strip(),
                         )
                         _q_attributed = list(_q_grounding["attributed"])
-                        _q_citation_basis = ("system_attributed" if _q_attributed
-                                             else "retrieved" if sources else "none")
+                        _q_citation_basis = (
+                            "system_attributed"
+                            if _q_attributed
+                            else "retrieved"
+                            if sources
+                            else "none"
+                        )
                     else:
                         _q_conf, _q_basis = "high", "deterministic_scope"
                         _q_attributed, _q_citation_basis = [], "none"
@@ -2844,7 +3020,7 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
                             "ttft_ms": round(t_first_token) if t_first_token else None,
                             "first_content_ms": round(t_first_emit) if t_first_emit else None,
                             "total_ms": round(t_total),
-                        }
+                        },
                     }
                     yield f"data: {json.dumps({'metadata': metadata})}\n\n"
                     yield f"data: {json.dumps({'done': True})}\n\n"
@@ -2859,8 +3035,18 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
 
                 # --- PARSE THE RESPONSE AND VALIDATE EVIDENCE ---
                 parsed_json = {}
-                tags = ["action_intent", "concise_answer", "display_mode", "patient_facts_summary", "local_policy_guidance", "external_guidance",
-                        "clinical_assessment", "caveats", "escalation", "cited_sources"]
+                tags = [
+                    "action_intent",
+                    "concise_answer",
+                    "display_mode",
+                    "patient_facts_summary",
+                    "local_policy_guidance",
+                    "external_guidance",
+                    "clinical_assessment",
+                    "caveats",
+                    "escalation",
+                    "cited_sources",
+                ]
                 for tag in tags:
                     match = re.search(f"<{tag}>(.*?)</{tag}>", full_response, re.DOTALL)
                     if match:
@@ -2927,21 +3113,32 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
                 # readings must agree by construction rather than by two copies
                 # of one predicate staying in step.
                 is_model_mutation = declares_action(raw_action_intent)
-                
+
                 action_state = None
                 if is_deterministic_mutation or is_model_mutation:
                     try:
-                        parsed_payload = json.loads(raw_action_intent) if is_model_mutation and raw_action_intent.startswith("{") else raw_action_intent
+                        parsed_payload = (
+                            json.loads(raw_action_intent)
+                            if is_model_mutation and raw_action_intent.startswith("{")
+                            else raw_action_intent
+                        )
                     except json.JSONDecodeError:
                         parsed_payload = raw_action_intent
-                    
-                    target_patient_name = patient_context_dict["demographics"].split(',')[0].replace('PATIENT: ', '') if patient_context_dict else "Unknown"
 
-                    if isinstance(parsed_payload, dict) and parsed_payload.get("action_type") == "add_medication":
+                    target_patient_name = (
+                        patient_context_dict["demographics"].split(",")[0].replace("PATIENT: ", "")
+                        if patient_context_dict
+                        else "Unknown"
+                    )
+
+                    if (
+                        isinstance(parsed_payload, dict)
+                        and parsed_payload.get("action_type") == "add_medication"
+                    ):
                         med_name = parsed_payload.get("medication", "")
 
                         match = await run_db(_match_medication, med_name)
-                        
+
                         if match:
                             safe_user_message = f"Drafted request for {match['name']}. Please review and approve to send to the Pharmacy."
                             action_state = {
@@ -2952,7 +3149,7 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
                                 "supported": True,
                                 "status_code": "request_drafted",
                                 "safe_user_message": safe_user_message,
-                                "safe_detail_message": "Action available but requires explicit clinician approval before sending to Helix."
+                                "safe_detail_message": "Action available but requires explicit clinician approval before sending to Helix.",
                             }
                         else:
                             safe_user_message = f"The requested medication ({med_name}) is not available in the pharmacy database."
@@ -2964,7 +3161,7 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
                                 "supported": False,
                                 "status_code": "not_in_helix_database",
                                 "safe_user_message": safe_user_message,
-                                "safe_detail_message": "Medication not found in formulary."
+                                "safe_detail_message": "Medication not found in formulary.",
                             }
                     else:
                         # Construct strict action state (mapped to unsupported for now)
@@ -2985,9 +3182,9 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
                             "post_write_readback_passed": False,
                             "status_code": "unsupported",
                             "safe_user_message": safe_user_message,
-                            "safe_detail_message": "Direct execution not supported. Clinician review required."
+                            "safe_detail_message": "Direct execution not supported. Clinician review required.",
                         }
-                    
+
                     # Policy Layer: Override hallucinated confirmation language
                     parsed_json["concise_answer"] = safe_user_message
                     # …and the same message, named for what it IS, so the replay
@@ -3002,7 +3199,9 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
                     turn_safe_answer = safe_user_message
 
                     # Strip forbidden phrases from detailed assessment
-                    parsed_json["clinical_assessment"] = _strip_forbidden(parsed_json.get("clinical_assessment", ""))
+                    parsed_json["clinical_assessment"] = _strip_forbidden(
+                        parsed_json.get("clinical_assessment", "")
+                    )
 
                     # ── SHADOW: `action.proposed` ──
                     # Sage proposed something and the clinician has not answered
@@ -3021,12 +3220,16 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
                         "action_class": action_state.get("action_type"),
                         "status_code": action_state.get("status_code"),
                         "supported": bool(action_state.get("supported")),
-                        "gate": ("clinician_approval" if action_state.get("supported")
-                                 else "blocked_unsupported"),
+                        "gate": (
+                            "clinician_approval"
+                            if action_state.get("supported")
+                            else "blocked_unsupported"
+                        ),
                         "target_patient_present": bool(patient_context_dict),
                         "drug_rxnorm": _payload_dict.get("rxnorm"),
-                        "dose_present": bool(_payload_dict.get("dose")
-                                             or _payload_dict.get("dosage")),
+                        "dose_present": bool(
+                            _payload_dict.get("dose") or _payload_dict.get("dosage")
+                        ),
                         "conversation_id": shadow_turn_id,
                     }
 
@@ -3035,8 +3238,12 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
                 # mutation was detected — detect_mutation_intent/action_intent miss
                 # phrasings like "he needs 500 of metoprolol", so a hallucinated
                 # "order placed" could otherwise survive into the final answer.
-                parsed_json["concise_answer"] = _strip_forbidden(parsed_json.get("concise_answer", ""))
-                parsed_json["clinical_assessment"] = _strip_forbidden(parsed_json.get("clinical_assessment", ""))
+                parsed_json["concise_answer"] = _strip_forbidden(
+                    parsed_json.get("concise_answer", "")
+                )
+                parsed_json["clinical_assessment"] = _strip_forbidden(
+                    parsed_json.get("clinical_assessment", "")
+                )
 
                 # Validation: cited_sources ⊆ retrieved_sources
                 retrieved_ids = [s.get("document_id") for s in sources] if sources else []
@@ -3130,7 +3337,8 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
                 # eval harness scores against directly.
                 _missing_critical = bool(
                     patient_context_dict
-                    and patient_context_dict.get("completeness", {}).get("missing"))
+                    and patient_context_dict.get("completeness", {}).get("missing")
+                )
                 final_confidence, confidence_basis = classify_answer_confidence(
                     retrieval_confidence=confidence,
                     source_count=len(sources) if sources else 0,
@@ -3143,20 +3351,28 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
                     missing_critical_context=_missing_critical,
                 )
 
-                local_policy_found = any(s.get("trust_tier") in [1, 2] for s in sources) if sources else False
-                
+                local_policy_found = (
+                    any(s.get("trust_tier") in [1, 2] for s in sources) if sources else False
+                )
+
                 # --- APP-LEVEL DISPLAY MODE DECISION ---
                 # Model's display_mode is advisory; app logic makes the final call
                 model_display_mode = parsed_json.get("display_mode", "concise").lower().strip()
-                has_escalation = escalation or (parsed_json.get("escalation") and parsed_json.get("escalation").lower().strip() not in ("none", "none."))
-                has_missing_critical = bool(patient_context_dict and patient_context_dict.get("completeness", {}).get("missing"))
-                
+                has_escalation = escalation or (
+                    parsed_json.get("escalation")
+                    and parsed_json["escalation"].lower().strip() not in ("none", "none.")
+                )
+                has_missing_critical = bool(
+                    patient_context_dict
+                    and patient_context_dict.get("completeness", {}).get("missing")
+                )
+
                 # App determines final display mode
                 should_expand = (
-                    model_display_mode == "detailed" or
-                    has_escalation or
-                    final_confidence == "low" or
-                    has_missing_critical
+                    model_display_mode == "detailed"
+                    or has_escalation
+                    or final_confidence == "low"
+                    or has_missing_critical
                 )
                 final_display_mode = "detailed" if should_expand else "concise"
 
@@ -3186,13 +3402,17 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
                             # it is. `context_only` = retrieved and shown, but
                             # nothing in the answer shows it was used.
                             "attribution": (
-                                "model_cited" if s.get("document_id") in valid_cited_sources
-                                else "system_attributed" if s.get("document_id") in system_attributed
+                                "model_cited"
+                                if s.get("document_id") in valid_cited_sources
+                                else "system_attributed"
+                                if s.get("document_id") in system_attributed
                                 else "context_only"
                             ),
                         }
                         for s in sources
-                    ] if sources else [],
+                    ]
+                    if sources
+                    else [],
                     "citation_basis": citation_basis,
                     "cited_count": len(valid_cited_sources),
                     "attributed_count": len(system_attributed),
@@ -3206,10 +3426,16 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
                     "display_mode": final_display_mode,
                     "query_scope": query_scope,
                     "patient_context_used": patient_context_dict is not None,
-                    "patient_id": patient_context_dict["patient_id"] if patient_context_dict else None,
+                    "patient_id": patient_context_dict["patient_id"]
+                    if patient_context_dict
+                    else None,
                     "patient_name": _chart_patient_name(patient_context_dict),
-                    "patient_source": patient_context_dict.get("source_of_truth") if patient_context_dict else None,
-                    "data_completeness": patient_context_dict["completeness"] if patient_context_dict else None,
+                    "patient_source": patient_context_dict.get("source_of_truth")
+                    if patient_context_dict
+                    else None,
+                    "data_completeness": patient_context_dict["completeness"]
+                    if patient_context_dict
+                    else None,
                     "local_policy_found": local_policy_found,
                     "provider": route_info or None,
                     "timing": {
@@ -3217,7 +3443,7 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
                         "ttft_ms": round(t_first_token) if t_first_token else None,
                         "first_content_ms": round(t_first_emit) if t_first_emit else None,
                         "total_ms": round(t_total),
-                    }
+                    },
                 }
                 # Turns that streamed incrementally already delivered the answer;
                 # re-emitting it would duplicate text client-side (the client
@@ -3233,16 +3459,21 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
                 # `structured_response.concise_answer` once it arrives, so the
                 # label must be IN it, not only in the stream (attempt 5 lost it
                 # here).
-                if _answer_label and parsed_json.get("concise_answer") \
-                        and not parsed_json["concise_answer"].startswith(_answer_label):
-                    parsed_json["concise_answer"] = f"{_answer_label}\n\n{parsed_json['concise_answer']}"
+                if (
+                    _answer_label
+                    and parsed_json.get("concise_answer")
+                    and not parsed_json["concise_answer"].startswith(_answer_label)
+                ):
+                    parsed_json["concise_answer"] = (
+                        f"{_answer_label}\n\n{parsed_json['concise_answer']}"
+                    )
 
                 yield f"data: {json.dumps({'metadata': metadata})}\n\n"
 
                 # Also yield the structured parsed JSON as a separate event for frontend rendering
                 yield f"data: {json.dumps({'structured_response': parsed_json})}\n\n"
                 yield f"data: {json.dumps({'done': True})}\n\n"
-                
+
         except Exception as e:
             print(f"  [Sage] Stream error: {e}")
             sh_failure = "stream"
@@ -3250,81 +3481,105 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
         finally:
             meta_json = None
             if full_response:
-                meta_json = json.dumps({
-                    # The audit record keeps BOTH lists. "What did the model claim to
-                    # cite" and "what evidence was actually in front of it" are different
-                    # questions, and a retrospective review of a bad answer needs the
-                    # second one — storing only the citations lost the entire retrieval
-                    # context for every turn where the model skipped the tag.
-                    "sources": valid_cited_sources if not cancelled and 'valid_cited_sources' in locals() else [],
-                    # System-attributed documents are kept SEPARATE from
-                    # `sources` here rather than merged into it: a reopened
-                    # conversation must not be able to grow model citations that
-                    # never existed. `citation_basis` names which of the two the
-                    # turn actually shipped.
-                    "attributed_sources": (
-                        list(system_attributed)
-                        if not cancelled and 'system_attributed' in locals() else []
-                    ),
-                    "retrieved_sources": (
-                        [s.get("document_id") for s in sources]
-                        if not cancelled and 'sources' in locals() and sources else []
-                    ),
-                    "citation_basis": citation_basis if not cancelled and 'citation_basis' in locals() else "none",
-                    "confidence_basis": (confidence_basis
-                                         if not cancelled and 'confidence_basis' in locals() else None),
-                    "confidence": final_confidence if not cancelled and 'final_confidence' in locals() else confidence,
-                    "escalation": escalation,
-                    "timing_ms": round((time.perf_counter() - t_start) * 1000),
-                    # The speed footer's own numbers, persisted so a RELOADED
-                    # conversation renders the SAME footer the clinician saw
-                    # live. Kept apart from `timing_ms` above, which is the
-                    # audit record's single wall-clock number in a different
-                    # shape. `t_total` is reused rather than re-measured here
-                    # for exactly that reason — re-measuring in the finally
-                    # would make a reopened turn quote a slightly larger total
-                    # than the one it showed while streaming. It is unbound on
-                    # a cancelled turn, which is honestly unmeasured.
-                    "timing": _answer_timing(
-                        ttft_ms=round(t_first_token) if t_first_token else None,
-                        total_ms=round(t_total) if 't_total' in locals() else None,
-                    ),
-                    "thinking_tier": (route_info or {}).get("thinking_tier"),
-                    # The patient this turn was about, as the live metadata
-                    # named them, so the history sidebar can label the thread.
-                    "patient_name": (_chart_patient_name(patient_context_dict)
-                                     if 'patient_context_dict' in locals() else None),
-                    # DID THIS TURN PROPOSE A CHART MUTATION — resolved here,
-                    # where BOTH gates are known, rather than left to be
-                    # re-derived from `parsed_response.action_intent` later.
-                    # That field alone is not the answer: the deterministic gate
-                    # locks a turn on the QUERY with the model declaring
-                    # nothing, which is every mutation the fast tier has ever
-                    # handled (it declares nothing at all, 0/15 measured), and
-                    # `action_intent` on those rows reads "None.". The history
-                    # assembly path (sage_service._history_turn_proposed_action)
-                    # reads this to decide whether the turn may be replayed
-                    # under a synthesized `NOACT|`, so recording only half the
-                    # decision would label a mutation turn action-free.
-                    #
-                    # True means locked; False means both gates cleared it; null
-                    # means the turn ended before the model's half was decided,
-                    # and unknown is treated as unknown rather than as False.
-                    "proposed_action": (
-                        True if is_deterministic_mutation
-                        else (bool(is_model_mutation)
-                              if 'is_model_mutation' in locals() else None)),
-                    # Set only on a turn the action-state override rewrote, so
-                    # its presence IS the statement "content is not what was
-                    # shown". Unbound on every other path, hence the locals()
-                    # probe the rest of this literal already uses.
-                    # With the ruling E label when the screen showed one: a
-                    # reloaded order turn is read from here (/history), and
-                    # attempt 7 reloaded "Drafted request for ..." unlabelled.
-                    "safe_answer": (_with_label(turn_safe_answer, _answer_label)
-                                    if 'turn_safe_answer' in locals() else None),
-                    "parsed_response": parsed_json if not cancelled and 'parsed_json' in locals() else {}
-                })
+                meta_json = json.dumps(
+                    {
+                        # The audit record keeps BOTH lists. "What did the model claim to
+                        # cite" and "what evidence was actually in front of it" are different
+                        # questions, and a retrospective review of a bad answer needs the
+                        # second one — storing only the citations lost the entire retrieval
+                        # context for every turn where the model skipped the tag.
+                        "sources": valid_cited_sources
+                        if not cancelled and "valid_cited_sources" in locals()
+                        else [],
+                        # System-attributed documents are kept SEPARATE from
+                        # `sources` here rather than merged into it: a reopened
+                        # conversation must not be able to grow model citations that
+                        # never existed. `citation_basis` names which of the two the
+                        # turn actually shipped.
+                        "attributed_sources": (
+                            list(system_attributed)
+                            if not cancelled and "system_attributed" in locals()
+                            else []
+                        ),
+                        "retrieved_sources": (
+                            [s.get("document_id") for s in sources]
+                            if not cancelled and "sources" in locals() and sources
+                            else []
+                        ),
+                        "citation_basis": citation_basis
+                        if not cancelled and "citation_basis" in locals()
+                        else "none",
+                        "confidence_basis": (
+                            confidence_basis
+                            if not cancelled and "confidence_basis" in locals()
+                            else None
+                        ),
+                        "confidence": final_confidence
+                        if not cancelled and "final_confidence" in locals()
+                        else confidence,
+                        "escalation": escalation,
+                        "timing_ms": round((time.perf_counter() - t_start) * 1000),
+                        # The speed footer's own numbers, persisted so a RELOADED
+                        # conversation renders the SAME footer the clinician saw
+                        # live. Kept apart from `timing_ms` above, which is the
+                        # audit record's single wall-clock number in a different
+                        # shape. `t_total` is reused rather than re-measured here
+                        # for exactly that reason — re-measuring in the finally
+                        # would make a reopened turn quote a slightly larger total
+                        # than the one it showed while streaming. It is unbound on
+                        # a cancelled turn, which is honestly unmeasured.
+                        "timing": _answer_timing(
+                            ttft_ms=round(t_first_token) if t_first_token else None,
+                            total_ms=round(t_total) if "t_total" in locals() else None,
+                        ),
+                        "thinking_tier": (route_info or {}).get("thinking_tier"),
+                        # The patient this turn was about, as the live metadata
+                        # named them, so the history sidebar can label the thread.
+                        "patient_name": (
+                            _chart_patient_name(patient_context_dict)
+                            if "patient_context_dict" in locals()
+                            else None
+                        ),
+                        # DID THIS TURN PROPOSE A CHART MUTATION — resolved here,
+                        # where BOTH gates are known, rather than left to be
+                        # re-derived from `parsed_response.action_intent` later.
+                        # That field alone is not the answer: the deterministic gate
+                        # locks a turn on the QUERY with the model declaring
+                        # nothing, which is every mutation the fast tier has ever
+                        # handled (it declares nothing at all, 0/15 measured), and
+                        # `action_intent` on those rows reads "None.". The history
+                        # assembly path (sage_service._history_turn_proposed_action)
+                        # reads this to decide whether the turn may be replayed
+                        # under a synthesized `NOACT|`, so recording only half the
+                        # decision would label a mutation turn action-free.
+                        #
+                        # True means locked; False means both gates cleared it; null
+                        # means the turn ended before the model's half was decided,
+                        # and unknown is treated as unknown rather than as False.
+                        "proposed_action": (
+                            True
+                            if is_deterministic_mutation
+                            else (
+                                bool(is_model_mutation) if "is_model_mutation" in locals() else None
+                            )
+                        ),
+                        # Set only on a turn the action-state override rewrote, so
+                        # its presence IS the statement "content is not what was
+                        # shown". Unbound on every other path, hence the locals()
+                        # probe the rest of this literal already uses.
+                        # With the ruling E label when the screen showed one: a
+                        # reloaded order turn is read from here (/history), and
+                        # attempt 7 reloaded "Drafted request for ..." unlabelled.
+                        "safe_answer": (
+                            _with_label(turn_safe_answer, _answer_label)
+                            if "turn_safe_answer" in locals()
+                            else None
+                        ),
+                        "parsed_response": parsed_json
+                        if not cancelled and "parsed_json" in locals()
+                        else {},
+                    }
+                )
             # Two SQLCipher INSERTs that ran on the loop at the end of EVERY Sage
             # turn, right where the next request is waiting to be served. The
             # meta_json literal above stays in this frame on purpose: it probes
@@ -3336,9 +3591,14 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
             # disconnect still lets the save complete rather than raising
             # "async generator ignored GeneratorExit". Both writes are appends,
             # so ordering against a concurrent turn does not matter.
-            await run_db(_save_turn, user["id"], query,
-                         "" if sh_failure else _labelled(full_response, _answer_label),
-                         meta_json, conversation_id=conversation_id)
+            await run_db(
+                _save_turn,
+                user["id"],
+                query,
+                "" if sh_failure else _labelled(full_response, _answer_label),
+                meta_json,
+                conversation_id=conversation_id,
+            )
 
             # ══ PROVENANCE: everything needed to REPLAY this turn ══════════════
             # Same "every exit lands here" property as the shadow block below, and
@@ -3355,9 +3615,13 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
             # too rather than read from it: `sh_failure` is not set to
             # "empty_response" until after this call, so trusting it alone would
             # file a zero-content turn as a delivered answer.
-            _prov_outcome = ("failed" if (sh_failure or (not full_response and not cancelled))
-                             else "cancelled" if cancelled
-                             else "answered")
+            _prov_outcome = (
+                "failed"
+                if (sh_failure or (not full_response and not cancelled))
+                else "cancelled"
+                if cancelled
+                else "answered"
+            )
             await _prov_record(
                 turn_id=shadow_turn_id,
                 lane=SHADOW_CHAT_LANE,
@@ -3370,31 +3634,45 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
                 # the first plus the passages, so keeping it would duplicate — and
                 # defeat the dedup on — both). The prompt's sha256 goes with it as
                 # the integrity anchor tying the two together.
-                patient_context=(patient_context_dict
-                                 if 'patient_context_dict' in locals() else None),
-                prompt_context=(context if 'context' in locals() else None),
-                sources=(sources if 'sources' in locals() else None),
+                patient_context=(
+                    patient_context_dict if "patient_context_dict" in locals() else None
+                ),
+                prompt_context=(context if "context" in locals() else None),
+                sources=(sources if "sources" in locals() else None),
                 route_info=(route_info or _no_model_route_info),
-                answer=((parsed_json.get("concise_answer") or "")
-                        if 'parsed_json' in locals() and parsed_json
-                        else _strip_forbidden(full_response)),
+                answer=(
+                    (parsed_json.get("concise_answer") or "")
+                    if "parsed_json" in locals() and parsed_json
+                    else _strip_forbidden(full_response)
+                ),
                 raw_output=full_response,
-                structured=(parsed_json if 'parsed_json' in locals() else None),
+                structured=(parsed_json if "parsed_json" in locals() else None),
                 # The documents this turn ATTRIBUTED, by whichever route —
                 # `citation_basis` alongside says which, so a replay can tell
                 # "the model cited this" from "Orb attributed this". Storing
                 # only the model's list would have lost the attribution
                 # entirely, which on this model means losing all of it.
-                cited_doc_ids=((valid_cited_sources
-                                or (system_attributed if 'system_attributed' in locals() else []))
-                               if 'valid_cited_sources' in locals() else []),
-                citation_basis=(citation_basis if 'citation_basis' in locals() else None),
-                confidence=(final_confidence if 'final_confidence' in locals()
-                            else (confidence if 'confidence' in locals() else None)),
-                escalation=bool(has_escalation) if 'has_escalation' in locals() else False,
-                query_scope=(query_scope if 'query_scope' in locals() else None),
-                action_status=((action_state or {}).get("status_code")
-                               if 'action_state' in locals() and action_state else None),
+                cited_doc_ids=(
+                    (
+                        valid_cited_sources
+                        or (system_attributed if "system_attributed" in locals() else [])
+                    )
+                    if "valid_cited_sources" in locals()
+                    else []
+                ),
+                citation_basis=(citation_basis if "citation_basis" in locals() else None),
+                confidence=(
+                    final_confidence
+                    if "final_confidence" in locals()
+                    else (confidence if "confidence" in locals() else None)
+                ),
+                escalation=bool(has_escalation) if "has_escalation" in locals() else False,
+                query_scope=(query_scope if "query_scope" in locals() else None),
+                action_status=(
+                    (action_state or {}).get("status_code")
+                    if "action_state" in locals() and action_state
+                    else None
+                ),
                 timings={
                     "retrieval_ms": sh_retrieval_ms,
                     "ttft_ms": round(t_first_token) if t_first_token else None,
@@ -3422,66 +3700,102 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
             #     zero-content draft that would still be counted as an answer.
             try:
                 from services import shadow_service as _shadow
+
                 if not sh_failure and not full_response and not cancelled:
                     sh_failure = "empty_response"
                 if sh_episode is None:
                     sh_episode = await _sh_episode(effective_patient_id, SHADOW_CHAT_LANE)
                 if sh_episode:
-                    _sh_sources = sources if 'sources' in locals() and sources else []
+                    _sh_sources = sources if "sources" in locals() and sources else []
                     _sh_events = []
                     if sh_failure:
-                        _sh_events.append(_shadow.build(
-                            "sage.failed", sh_episode, SHADOW_CHAT_LANE,
-                            patient_id=effective_patient_id,
-                            actor_user_id=user["id"], actor_role=user.get("role"),
-                            payload={"failure": sh_failure},
-                        ))
+                        _sh_events.append(
+                            _shadow.build(
+                                "sage.failed",
+                                sh_episode,
+                                SHADOW_CHAT_LANE,
+                                patient_id=effective_patient_id,
+                                actor_user_id=user["id"],
+                                actor_role=user.get("role"),
+                                payload={"failure": sh_failure},
+                            )
+                        )
                     else:
-                        _sh_events.append(_shadow.build(
-                            "sage.drafted", sh_episode, SHADOW_CHAT_LANE,
-                            patient_id=effective_patient_id,
-                            actor_user_id=user["id"], actor_role=user.get("role"),
-                            payload={
-                                "conversation_id": shadow_turn_id,
-                                "citation_basis": (citation_basis
-                                                   if 'citation_basis' in locals() else None),
-                                "confidence": (final_confidence
-                                               if 'final_confidence' in locals()
-                                               else (confidence if 'confidence' in locals() else None)),
-                                "retrieved_doc_ids": [s.get("document_id") for s in _sh_sources],
-                                # Same union as the provenance record, and for
-                                # the same reason: `citation_basis` in this very
-                                # payload says whether the model named them or
-                                # Orb attributed them, so the shadow analysis can
-                                # count each honestly. (No new payload key — the
-                                # sage.drafted schema in shadow_service is a
-                                # whitelist.)
-                                "cited_doc_ids": ((valid_cited_sources
-                                                   or (system_attributed
-                                                       if 'system_attributed' in locals() else []))
-                                                  if 'valid_cited_sources' in locals() else []),
-                                # key=str, not a bare sort: a corpus row with a
-                                # string tier next to an int one would raise, and
-                                # the except below would then drop the WHOLE turn
-                                # — draft and proposal together — over a
-                                # cosmetic field.
-                                "trust_tiers": sorted(
-                                    {s.get("trust_tier") for s in _sh_sources
-                                     if s.get("trust_tier") is not None}, key=str),
-                                "ttft_ms": round(t_first_token) if t_first_token else None,
-                                "retrieval_ms": sh_retrieval_ms,
-                                "total_ms": round((time.perf_counter() - t_start) * 1000),
-                                "query_class": (query_scope if 'query_scope' in locals() else None),
-                                "cancelled": bool(cancelled),
-                            },
-                        ))
+                        _sh_events.append(
+                            _shadow.build(
+                                "sage.drafted",
+                                sh_episode,
+                                SHADOW_CHAT_LANE,
+                                patient_id=effective_patient_id,
+                                actor_user_id=user["id"],
+                                actor_role=user.get("role"),
+                                payload={
+                                    "conversation_id": shadow_turn_id,
+                                    "citation_basis": (
+                                        citation_basis if "citation_basis" in locals() else None
+                                    ),
+                                    "confidence": (
+                                        final_confidence
+                                        if "final_confidence" in locals()
+                                        else (confidence if "confidence" in locals() else None)
+                                    ),
+                                    "retrieved_doc_ids": [
+                                        s.get("document_id") for s in _sh_sources
+                                    ],
+                                    # Same union as the provenance record, and for
+                                    # the same reason: `citation_basis` in this very
+                                    # payload says whether the model named them or
+                                    # Orb attributed them, so the shadow analysis can
+                                    # count each honestly. (No new payload key — the
+                                    # sage.drafted schema in shadow_service is a
+                                    # whitelist.)
+                                    "cited_doc_ids": (
+                                        (
+                                            valid_cited_sources
+                                            or (
+                                                system_attributed
+                                                if "system_attributed" in locals()
+                                                else []
+                                            )
+                                        )
+                                        if "valid_cited_sources" in locals()
+                                        else []
+                                    ),
+                                    # key=str, not a bare sort: a corpus row with a
+                                    # string tier next to an int one would raise, and
+                                    # the except below would then drop the WHOLE turn
+                                    # — draft and proposal together — over a
+                                    # cosmetic field.
+                                    "trust_tiers": sorted(
+                                        {
+                                            s.get("trust_tier")
+                                            for s in _sh_sources
+                                            if s.get("trust_tier") is not None
+                                        },
+                                        key=str,
+                                    ),
+                                    "ttft_ms": round(t_first_token) if t_first_token else None,
+                                    "retrieval_ms": sh_retrieval_ms,
+                                    "total_ms": round((time.perf_counter() - t_start) * 1000),
+                                    "query_class": (
+                                        query_scope if "query_scope" in locals() else None
+                                    ),
+                                    "cancelled": bool(cancelled),
+                                },
+                            )
+                        )
                     if sh_action:
-                        _sh_events.append(_shadow.build(
-                            "action.proposed", sh_episode, SHADOW_CHAT_LANE,
-                            patient_id=effective_patient_id,
-                            actor_user_id=user["id"], actor_role=user.get("role"),
-                            payload=sh_action,
-                        ))
+                        _sh_events.append(
+                            _shadow.build(
+                                "action.proposed",
+                                sh_episode,
+                                SHADOW_CHAT_LANE,
+                                patient_id=effective_patient_id,
+                                actor_user_id=user["id"],
+                                actor_role=user.get("role"),
+                                payload=sh_action,
+                            )
+                        )
                     await _shadow.aemit_many(_sh_events)
             except Exception:
                 # Rule 1: the observational log never breaks the clinical path,
@@ -3515,11 +3829,15 @@ async def sage_query(request: Request, user: dict = Depends(require_permission("
 # `/storage` path is declared BEFORE `/{turn_id}` — FastAPI matches in
 # declaration order and the parametrised route would otherwise swallow it.
 
+
+_GET_PROVENANCE_STORAGE_USER_DEFAULT = Depends(require_permission("audit.read"))
+
+
 @router.get("/provenance/storage")
 def get_provenance_storage(
     request: Request,
     turns_per_day: int = 200,
-    user: dict = Depends(require_permission("audit.read")),
+    user: dict = _GET_PROVENANCE_STORAGE_USER_DEFAULT,
 ):
     """What the provenance store costs, measured — not estimated.
 
@@ -3527,18 +3845,22 @@ def get_provenance_storage(
     projection is straight-line arithmetic over the MEASURED bytes-per-turn, so
     the number an operator reads here is the number their disk will see."""
     from services import sage_provenance_service as prov
+
     return prov.storage_stats(turns_per_day=max(1, min(int(turns_per_day or 200), 100000)))
+
+
+_LIST_PROVENANCE_USER_DEFAULT = Depends(require_permission("audit.read"))
 
 
 @router.get("/provenance")
 def list_provenance(
     request: Request,
-    patient_id: str = None,
-    actor_user_id: str = None,
-    since: str = None,
+    patient_id: str | None = None,
+    actor_user_id: str | None = None,
+    since: str | None = None,
     limit: int = 50,
     offset: int = 0,
-    user: dict = Depends(require_permission("audit.read")),
+    user: dict = _LIST_PROVENANCE_USER_DEFAULT,
 ):
     """Metadata index of recorded turns. NO question text, NO chart, NO answer.
 
@@ -3551,6 +3873,7 @@ def list_provenance(
     enforce_patient_scope 404s an out-of-ward patient rather than returning an
     empty list, which would itself confirm the ward."""
     from permissions import enforce_patient_scope, scope_patient_ids_sql
+
     from services import sage_provenance_service as prov
 
     if patient_id:
@@ -3562,18 +3885,27 @@ def list_provenance(
     turns = prov.list_turns(
         patient_ids_sql=(None if dept is None else scope_patient_ids_sql(dept)),
         scope_department=dept,
-        patient_id=patient_id, actor_user_id=actor_user_id, since=since,
-        limit=limit, offset=offset,
+        patient_id=patient_id,
+        actor_user_id=actor_user_id,
+        since=since,
+        limit=limit,
+        offset=offset,
     )
-    return {"turns": turns, "count": len(turns),
-            "scope": {"department": dept, "hospital_wide": dept is None}}
+    return {
+        "turns": turns,
+        "count": len(turns),
+        "scope": {"department": dept, "hospital_wide": dept is None},
+    }
+
+
+_REPLAY_PROVENANCE_USER_DEFAULT = Depends(require_permission("audit.read"))
 
 
 @router.get("/provenance/{turn_id}")
 def replay_provenance(
     turn_id: str,
     request: Request,
-    user: dict = Depends(require_permission("audit.read")),
+    user: dict = _REPLAY_PROVENANCE_USER_DEFAULT,
 ):
     """Reconstruct one Sage turn from what was stored AT THE TIME.
 
@@ -3581,6 +3913,7 @@ def replay_provenance(
     model was shown, which is the only thing that can answer "why did it say
     that?" months later."""
     from permissions import enforce_patient_scope, log_phi_read
+
     from services import sage_provenance_service as prov
 
     row = prov.get_turn_row(turn_id)
@@ -3606,19 +3939,27 @@ def replay_provenance(
 
     # Fail-closed: if this cannot be written, the PHI is not returned.
     log_phi_read(
-        request=request, user=user,
+        request=request,
+        user=user,
         action_type="sage_provenance_replay",
         summary_message=f"Replayed Sage provenance turn {turn_id}",
         patient_id=row.get("patient_id"),
-        target_type="sage_provenance_turn", target_id=turn_id,
-        metadata={"lane": row.get("lane"), "outcome": row.get("outcome"),
-                  "turn_occurred_at": row.get("occurred_at")},
+        target_type="sage_provenance_turn",
+        target_id=turn_id,
+        metadata={
+            "lane": row.get("lane"),
+            "outcome": row.get("outcome"),
+            "turn_occurred_at": row.get("occurred_at"),
+        },
     )
     return record
 
 
+_GET_HISTORY_USER_DEFAULT = Depends(require_permission("sage.query"))
+
+
 @router.get("/history")
-def get_history(user: dict = Depends(require_permission("sage.query"))):
+def get_history(user: dict = _GET_HISTORY_USER_DEFAULT):
     """This user's own past turns, for the "Recent Conversations" sidebar.
 
     Deliberately NOT get_conversation_history: that function is prompt context
@@ -3638,10 +3979,14 @@ def get_history(user: dict = Depends(require_permission("sage.query"))):
     return {"messages": _history_rows(user["id"])}
 
 
+_CLEAR_HISTORY_USER_DEFAULT = Depends(require_permission("sage.query"))
+
+
 @router.delete("/history")
-def clear_history(user: dict = Depends(require_permission("sage.query"))):
+def clear_history(user: dict = _CLEAR_HISTORY_USER_DEFAULT):
     """Clear conversation history."""
     from database import get_db
+
     db = get_db()
     db.execute("DELETE FROM sage_conversations WHERE user_id = ?", (user["id"],))
     db.commit()
@@ -3653,16 +3998,20 @@ def clear_history(user: dict = Depends(require_permission("sage.query"))):
 # Voice Agent Endpoint (Conversational AI via MedGemma 4B)
 # ═══════════════════════════════════════════════════
 
+
+_SAGE_VOICE_QUERY_USER_DEFAULT = Depends(require_permission("sage.query"))
+
+
 @router.post("/voice")
-async def sage_voice_query(request: Request, user: dict = Depends(require_permission("sage.query"))):
+async def sage_voice_query(request: Request, user: dict = _SAGE_VOICE_QUERY_USER_DEFAULT):
     """Conversational voice query via MedGemma 4B.
-    
+
     Accepts transcribed speech text, injects patient context from local DB,
     and streams response tokens for real-time TTS playback.
-    
+
     Request body:
         {"query": "What are the side effects of Metoprolol?", "patient_id": "P001"}
-    
+
     Response (SSE stream):
         data: {"token": "Metoprolol "}
         data: {"token": "can cause "}
@@ -3695,8 +4044,10 @@ async def sage_voice_query(request: Request, user: dict = Depends(require_permis
             # SHADOW: the voice lane records refusals on the same footing as the
             # chat lane. A guardrail that is only measured on one surface is how
             # a hole ships in the other (see FORBIDDEN_PHRASE_PATTERNS above).
-            await _sh_refused(effective_patient_id, SHADOW_VOICE_LANE,
-                              _refusal_class, "pre_llm", user)
+            await _sh_refused(
+                effective_patient_id, SHADOW_VOICE_LANE, _refusal_class, "pre_llm", user
+            )
+
         return StreamingResponse(_refuse_voice(), media_type="text/event-stream")
 
     #: Links this voice turn's shadow rows (see the chat lane's equivalent).
@@ -3716,15 +4067,27 @@ async def sage_voice_query(request: Request, user: dict = Depends(require_permis
             yield f"data: {json.dumps({'done': True, 'timing': timing})}\n\n"
             # The stored content IS the safe message, so no separate safe_answer;
             # the verdict marks the turn as a mutation for every replay reader.
-            await run_db(_save_voice_turn, user["id"], query, CHART_MUTATION_SAFE_MESSAGE,
-                         json.dumps({"timing": timing, "proposed_action": True}))
+            await run_db(
+                _save_voice_turn,
+                user["id"],
+                query,
+                CHART_MUTATION_SAFE_MESSAGE,
+                json.dumps({"timing": timing, "proposed_action": True}),
+            )
             await _prov_record(
-                turn_id=shadow_turn_id, lane=SHADOW_VOICE_LANE, outcome="answered",
-                user=user, question=query, patient_id=effective_patient_id,
-                answer=CHART_MUTATION_SAFE_MESSAGE, query_scope="VOICE",
-                citation_basis="none", action_status="unsupported",
+                turn_id=shadow_turn_id,
+                lane=SHADOW_VOICE_LANE,
+                outcome="answered",
+                user=user,
+                question=query,
+                patient_id=effective_patient_id,
+                answer=CHART_MUTATION_SAFE_MESSAGE,
+                query_scope="VOICE",
+                citation_basis="none",
+                action_status="unsupported",
                 route_info=_gate_route_info,
             )
+
         return StreamingResponse(_decline_voice_mutation(), media_type="text/event-stream")
 
     # Guardrails apply to every provider AND every surface: a hallucinated
@@ -3745,11 +4108,16 @@ async def sage_voice_query(request: Request, user: dict = Depends(require_permis
         cancelled = False
         try:
             from config import VOICE
+
             if not VOICE["conversational"]["enabled"]:
                 yield f"data: {json.dumps({'error': 'Voice agent is disabled'})}\n\n"
                 return
 
-            from services.voice_agent_service import collect_voice_retrieval, get_voice_agent
+            from services.voice_agent_service import (
+                collect_voice_retrieval,
+                get_voice_agent,
+            )
+
             agent = get_voice_agent()
             # Filled by the agent's retrieval inside this request's context.
             voice_retrieval = collect_voice_retrieval()
@@ -3764,7 +4132,12 @@ async def sage_voice_query(request: Request, user: dict = Depends(require_permis
             # agent builds its prompt from get_relevant_context, which is
             # department-scoped and vets effective_patient_id against the user's
             # own department rather than trusting the request.
-            async for token in agent.generate_stream(query, user, patient_id=effective_patient_id, conversation_history=conversation_history):
+            async for token in agent.generate_stream(
+                query,
+                user,
+                patient_id=effective_patient_id,
+                conversation_history=conversation_history,
+            ):
                 if await request.is_disconnected():
                     cancelled = True
                     break
@@ -3782,8 +4155,9 @@ async def sage_voice_query(request: Request, user: dict = Depends(require_permis
 
             total_ms = round((time.perf_counter() - t0) * 1000)
 
-            answer_timing = _answer_timing(ttft_ms=ttft_ms, total_ms=total_ms,
-                                           tokens=len(full_response.split()))
+            answer_timing = _answer_timing(
+                ttft_ms=ttft_ms, total_ms=total_ms, tokens=len(full_response.split())
+            )
             yield f"data: {json.dumps({'done': True, 'timing': answer_timing})}\n\n"
 
             # Save to conversation history (off the loop; both writes in one hop).
@@ -3803,15 +4177,26 @@ async def sage_voice_query(request: Request, user: dict = Depends(require_permis
             else:
                 voice_patient_id = effective_patient_id
 
-            await run_db(_save_voice_turn, user["id"], query, full_response,
-                         json.dumps({"timing": answer_timing,
-                                     "patient_name": (_chart_patient_name(voice_chart)
-                                                      if voice_patient_id else None)}))
+            await run_db(
+                _save_voice_turn,
+                user["id"],
+                query,
+                full_response,
+                json.dumps(
+                    {
+                        "timing": answer_timing,
+                        "patient_name": (
+                            _chart_patient_name(voice_chart) if voice_patient_id else None
+                        ),
+                    }
+                ),
+            )
 
             # Per-inference provider record (local voice lane; fail-soft).
             try:
                 from config import VOICE as _V
                 from services.ai_governance import record_inference
+
                 # Whole call in ONE executor hop, never split: record_inference
                 # appends to the tamper-evident audit hash chain, which is a
                 # read-last-hash-then-write. It defends itself against parallel
@@ -3819,9 +4204,12 @@ async def sage_voice_query(request: Request, user: dict = Depends(require_permis
                 # retry), but only if the sequence stays inside one call.
                 await run_db(
                     lambda: record_inference(
-                        provider="mlx", model=str(_V["conversational"]["model_path"]).rsplit("/", 1)[-1],
-                        purpose="sage_voice", outcome="served",
-                        user_id=user["id"], patient_id=voice_patient_id,
+                        provider="mlx",
+                        model=str(_V["conversational"]["model_path"]).rsplit("/", 1)[-1],
+                        purpose="sage_voice",
+                        outcome="served",
+                        user_id=user["id"],
+                        patient_id=voice_patient_id,
                         timing_ms={"ttft": ttft_ms, "total": total_ms},
                     )
                 )
@@ -3838,13 +4226,21 @@ async def sage_voice_query(request: Request, user: dict = Depends(require_permis
             try:
                 _v_episode = await _sh_episode(effective_patient_id, SHADOW_VOICE_LANE)
                 if not full_response and not cancelled:
-                    await _sh_turn_failed(effective_patient_id, SHADOW_VOICE_LANE,
-                                          "empty_response", user, episode_id=_v_episode)
+                    await _sh_turn_failed(
+                        effective_patient_id,
+                        SHADOW_VOICE_LANE,
+                        "empty_response",
+                        user,
+                        episode_id=_v_episode,
+                    )
                 else:
                     await _sh_emit(
-                        "sage.drafted", _v_episode, SHADOW_VOICE_LANE,
+                        "sage.drafted",
+                        _v_episode,
+                        SHADOW_VOICE_LANE,
                         patient_id=effective_patient_id,
-                        actor_user_id=user["id"], actor_role=user.get("role"),
+                        actor_user_id=user["id"],
+                        actor_role=user.get("role"),
                         payload={
                             "conversation_id": shadow_turn_id,
                             "citation_basis": "none",
@@ -3867,14 +4263,18 @@ async def sage_voice_query(request: Request, user: dict = Depends(require_permis
             # the agent built with no chart still stores none rather than a
             # faked one.
             await _prov_record(
-                turn_id=shadow_turn_id, lane=SHADOW_VOICE_LANE,
-                outcome=("cancelled" if cancelled
-                         else "answered" if full_response else "failed"),
-                user=user, question=query, patient_id=voice_patient_id,
+                turn_id=shadow_turn_id,
+                lane=SHADOW_VOICE_LANE,
+                outcome=("cancelled" if cancelled else "answered" if full_response else "failed"),
+                user=user,
+                question=query,
+                patient_id=voice_patient_id,
                 patient_context=(voice_chart if voice_patient_id else None),
                 prompt_context=voice_retrieval.get("prompt"),
-                answer=_strip_forbidden(full_response), raw_output=full_response,
-                query_scope="VOICE", citation_basis="none",
+                answer=_strip_forbidden(full_response),
+                raw_output=full_response,
+                query_scope="VOICE",
+                citation_basis="none",
                 sources=voice_retrieval.get("sources") or None,
                 route_info={"provider": "mlx", "model": _voice_model_name()},
                 timings={"ttft_ms": ttft_ms, "total_ms": total_ms},
@@ -3890,10 +4290,16 @@ async def sage_voice_query(request: Request, user: dict = Depends(require_permis
             # `locals()` probed rather than pre-initialised: the names below are
             # bound inside the try and the exception may have preceded any of them.
             await _prov_record(
-                turn_id=shadow_turn_id, lane=SHADOW_VOICE_LANE, outcome="failed",
-                user=user, question=query, patient_id=effective_patient_id,
-                answer="", raw_output=(full_response if 'full_response' in locals() else ""),
-                query_scope="VOICE", refusal_class=None,
+                turn_id=shadow_turn_id,
+                lane=SHADOW_VOICE_LANE,
+                outcome="failed",
+                user=user,
+                question=query,
+                patient_id=effective_patient_id,
+                answer="",
+                raw_output=(full_response if "full_response" in locals() else ""),
+                query_scope="VOICE",
+                refusal_class=None,
                 route_info={"provider": "mlx", "model": _voice_model_name()},
             )
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
@@ -3912,6 +4318,12 @@ async def sage_voice_query(request: Request, user: dict = Depends(require_permis
 # AI Governance Posture + Speculative Context Prefetch
 # ═══════════════════════════════════════════════════
 
+
+_GET_PATIENT_WORLD_USER_DEFAULT = Depends(
+    require_patient_access("patient.read_all", audit_action="sage_patient_world_viewed")
+)
+
+
 @router.get("/world/patient/{patient_id}")
 def get_patient_world(
     patient_id: str,
@@ -3929,24 +4341,24 @@ def get_patient_world(
     #     sail through. Requiring patient.read_all closes it deterministically.
     #     Holding `sage.query` says this account may ask Sage things; it does
     #     not say which patients it may see.
-    user: dict = Depends(
-        require_patient_access("patient.read_all",
-                               audit_action="sage_patient_world_viewed")
-    ),
+    user: dict = _GET_PATIENT_WORLD_USER_DEFAULT,
 ):
     """The persistent, versioned temporal state for one patient (trend
     directions + risk trajectory over time). PHI — local only; the state_json is
     field-encrypted at rest when a key is configured."""
     from services.world_model_service import get_patient_state
+
     state = get_patient_state(patient_id)
     if state is None:
         return {"error": "no such patient"}
     return state
 
 
+_GET_WARD_BRIEF_USER_DEFAULT = Depends(require_permission("sage.query"))
+
+
 @router.get("/ward-brief")
-def get_ward_brief(request: Request,
-                   user: dict = Depends(require_permission("sage.query"))):
+def get_ward_brief(request: Request, user: dict = _GET_WARD_BRIEF_USER_DEFAULT):
     """The situational-awareness narrator's live 'state of the ward' briefing:
     a deterministic snapshot (census, risk mix, watchlist, recent events) plus
     an optional local-LLM narrative. Local engine only — the snapshot is PHI.
@@ -3956,8 +4368,9 @@ def get_ward_brief(request: Request,
     the deteriorating patients on the caller's own ward, and a bulk PHI read
     that leaves no row is a read the hospital cannot account for afterwards.
     """
-    from services.sage_narrator_service import ward_narrator
     from permissions import department_scope, log_phi_read
+    from services.sage_narrator_service import ward_narrator
+
     # Scoped to the AUTHENTICATED user. Holding `sage.query` says this account may
     # ask Sage things; it does not say which patients it may see.
     dept = department_scope(user)
@@ -3986,11 +4399,15 @@ def get_ward_brief(request: Request,
     return brief
 
 
+_GET_AI_POSTURE_USER_DEFAULT = Depends(get_current_user)
+
+
 @router.get("/ai-posture")
-def get_ai_posture(user: dict = Depends(get_current_user)):
+def get_ai_posture(user: dict = _GET_AI_POSTURE_USER_DEFAULT):
     """Client-visible AI governance posture (no secrets): the local model the
     UI names as provenance, and whether on-appliance transcription can run."""
     from services.ai_governance import ai_posture
+
     return ai_posture()
 
 
@@ -4008,17 +4425,22 @@ def _audit_prefetch_patient(request: Request, user: dict, patient_id: str) -> No
     if exists is None:
         raise HTTPException(status_code=404, detail="Patient not found")
     log_phi_read(
-        request=request, user=user, action_type="sage_context_prefetched",
+        request=request,
+        user=user,
+        action_type="sage_context_prefetched",
         summary_message=f"Sage context prefetched for patient {patient_id}",
         patient_id=patient_id,
     )
+
+
+_SAGE_PREFETCH_USER_DEFAULT = Depends(require_permission("sage.query", "patient.read_all"))
 
 
 @router.post("/prefetch")
 async def sage_prefetch(
     request: Request,
     body: SagePrefetchRequest,
-    user: dict = Depends(require_permission("sage.query", "patient.read_all")),
+    user: dict = _SAGE_PREFETCH_USER_DEFAULT,
 ):
     """Speculative context prefetch: the client calls this when a clinician
     OPENS a patient, so retrieval (facts + guideline RAG) leaves the TTFT
@@ -4036,6 +4458,7 @@ async def sage_prefetch(
     await run_db(enforce_patient_scope, user, patient_id)
     await run_db(_audit_prefetch_patient, request, user, patient_id)
     from services.nervous_system_triggers import warm_patient_context
+
     ok = await warm_patient_context(
         patient_id,
         query_hint=body.hint or "",
@@ -4043,4 +4466,3 @@ async def sage_prefetch(
         reason="ui_patient_opened",
     )
     return {"status": "warmed" if ok else "skipped", "patient_id": patient_id}
-

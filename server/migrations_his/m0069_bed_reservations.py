@@ -53,6 +53,7 @@ so a second run changes nothing, and an index or trigger is created only when
 the table has every column it names, so an unusual table of the same name
 cannot stop boot.
 """
+
 from migrations import Migration
 
 #: Why a bed is held. Shared with the writer (services/adt/reservations.py).
@@ -90,10 +91,14 @@ TABLE_NAMES = ("bed_reservations",)
 _INDEXES = (
     # One active reservation per bed: a second is refused underneath the
     # writer's own check.
-    ("idx_bed_reservations_active_bed", "bed_id", True, "status = 'active'",
-     ("bed_id", "status")),
-    ("idx_bed_reservations_key", "idempotency_key", True, "idempotency_key IS NOT NULL",
-     ("idempotency_key",)),
+    ("idx_bed_reservations_active_bed", "bed_id", True, "status = 'active'", ("bed_id", "status")),
+    (
+        "idx_bed_reservations_key",
+        "idempotency_key",
+        True,
+        "idempotency_key IS NOT NULL",
+        ("idempotency_key",),
+    ),
     ("idx_bed_reservations_patient", "patient_id", False, None, ("patient_id",)),
     ("idx_bed_reservations_admission", "admission_id", False, None, ("admission_id",)),
     ("idx_bed_reservations_ward_status", "ward_id, status", False, None, ("ward_id", "status")),

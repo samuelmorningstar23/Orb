@@ -105,6 +105,7 @@ that is not this API — a physical box, or a route exempted from actor logging.
 `ANONYMITY_STATEMENT` below is the sentence the API and the panel both print,
 and it is asserted by tests/test_nabh.py so it cannot be quietly deleted.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -112,11 +113,13 @@ import json
 import logging
 import os
 from collections import Counter
-from datetime import date, datetime, timedelta, timezone
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
 from database import db_session
 from db_backend import DBIntegrityError  # sqlcipher3 raises its OWN hierarchy:
+
 # sqlcipher3.dbapi2.IntegrityError is NOT a subclass of sqlite3.IntegrityError,
 # so `except sqlite3.IntegrityError` is DEAD CODE whenever ORB_DB_ENCRYPTION_KEY
 # is set — i.e. in the shipping config. Guarded by tests/test_db_exception_aliases.
@@ -134,20 +137,38 @@ logger = logging.getLogger("orb.nabh")
 #: this tuple cannot be inserted, and the API rejects it with a list rather than
 #: letting SQLite raise a constraint error at a clerk.
 INCIDENT_TYPES: tuple[str, ...] = (
-    "medication_error", "adverse_drug_reaction", "patient_fall",
-    "hospital_acquired_infection", "blood_transfusion_reaction",
-    "wrong_patient_procedure", "wrong_site_surgery", "retained_item",
-    "delay_in_care", "diagnostic_error", "equipment_failure",
-    "documentation_error", "consent_lapse", "needle_stick",
-    "patient_identification", "specimen_error", "security",
-    "fire_or_safety", "absconding", "other",
+    "medication_error",
+    "adverse_drug_reaction",
+    "patient_fall",
+    "hospital_acquired_infection",
+    "blood_transfusion_reaction",
+    "wrong_patient_procedure",
+    "wrong_site_surgery",
+    "retained_item",
+    "delay_in_care",
+    "diagnostic_error",
+    "equipment_failure",
+    "documentation_error",
+    "consent_lapse",
+    "needle_stick",
+    "patient_identification",
+    "specimen_error",
+    "security",
+    "fire_or_safety",
+    "absconding",
+    "other",
 )
 
 #: The harm ladder, lightest first. `near_miss` leads because a register whose
 #: lightest category is "minor harm" teaches a ward that near misses are not
 #: wanted, and near misses are the only free lesson a hospital gets.
 SEVERITIES: tuple[str, ...] = (
-    "near_miss", "no_harm", "minor", "moderate", "major", "sentinel",
+    "near_miss",
+    "no_harm",
+    "minor",
+    "moderate",
+    "major",
+    "sentinel",
 )
 
 #: Severities NABH expects a hospital to treat as externally reportable /
@@ -155,7 +176,11 @@ SEVERITIES: tuple[str, ...] = (
 SENTINEL_SEVERITIES = frozenset({"major", "sentinel"})
 
 INCIDENT_STATUSES: tuple[str, ...] = (
-    "reported", "under_investigation", "actions_pending", "closed", "void",
+    "reported",
+    "under_investigation",
+    "actions_pending",
+    "closed",
+    "void",
 )
 
 #: The lifecycle, as data. A transition not in this map does not happen — there
@@ -179,12 +204,22 @@ TRANSITIONS: dict[str, tuple[str, ...]] = {
 }
 
 ACTION_TYPES: tuple[str, ...] = (
-    "corrective", "preventive", "system_change", "training", "other",
+    "corrective",
+    "preventive",
+    "system_change",
+    "training",
+    "other",
 )
 
 DISPOSITIONS: tuple[str, ...] = (
-    "routine", "referred_out", "transferred_out", "lama", "dama",
-    "absconded", "death", "death_within_48h",
+    "routine",
+    "referred_out",
+    "transferred_out",
+    "lama",
+    "dama",
+    "absconded",
+    "death",
+    "death_within_48h",
 )
 
 #: Dispositions that count in the numerator of the mortality indicator.
@@ -223,6 +258,7 @@ PACK_ATTESTATION = (
 # Errors
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class NabhError(Exception):
     """A refusal with a machine-readable code the UI can branch on."""
 
@@ -235,11 +271,12 @@ class NabhError(Exception):
 # Time / parsing helpers
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
-def _dt(value: Any) -> Optional[datetime]:
+def _dt(value: Any) -> datetime | None:
     """Parse any timestamp Orb writes into an aware UTC datetime.
 
     This module's own tables are written in one ISO format, but it READS
@@ -251,9 +288,9 @@ def _dt(value: Any) -> Optional[datetime]:
     if value is None or value == "":
         return None
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
     if isinstance(value, date):
-        return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
+        return datetime(value.year, value.month, value.day, tzinfo=UTC)
     text = str(value).strip()
     if text.endswith("Z"):
         text = text[:-1] + "+00:00"
@@ -263,17 +300,18 @@ def _dt(value: Any) -> Optional[datetime]:
         parsed = datetime.fromisoformat(text.replace(" ", "T", 1))
     except ValueError:
         return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
-def _iso(value: Optional[datetime]) -> Optional[str]:
+def _iso(value: datetime | None) -> str | None:
     if value is None:
         return None
-    return value.astimezone(timezone.utc).isoformat(timespec="seconds")
+    return value.astimezone(UTC).isoformat(timespec="seconds")
 
 
-def resolve_period(period_start: Optional[str], period_end: Optional[str],
-                   *, default_days: int = 90) -> tuple[datetime, datetime]:
+def resolve_period(
+    period_start: str | None, period_end: str | None, *, default_days: int = 90
+) -> tuple[datetime, datetime]:
     """[start, end) as aware UTC datetimes, from two ISO dates.
 
     HALF-OPEN, always. `period_end` names a DAY the caller wants included, so it
@@ -283,7 +321,7 @@ def resolve_period(period_start: Optional[str], period_end: Optional[str],
     of error nobody finds because the number still looks plausible.
     """
     end_day = _dt(period_end) if period_end else None
-    end = ((end_day + timedelta(days=1)) if end_day else _now())
+    end = (end_day + timedelta(days=1)) if end_day else _now()
     start_day = _dt(period_start) if period_start else None
     start = start_day if start_day else (end - timedelta(days=default_days))
     if start >= end:
@@ -359,6 +397,7 @@ def _closure_days() -> int:
 # INCIDENT REGISTER
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _seq_for(db, incident_id: int) -> int:
     row = db.execute(
         "SELECT COALESCE(MAX(seq), 0) FROM nabh_incident_events WHERE incident_id = ?",
@@ -367,22 +406,38 @@ def _seq_for(db, incident_id: int) -> int:
     return int(row[0]) + 1
 
 
-def _log_event(db, incident_id: int, event_type: str, *, from_status: Optional[str],
-               to_status: Optional[str], actor_user_id: Optional[str],
-               detail: Optional[str] = None, metadata: Optional[dict] = None) -> None:
+def _log_event(
+    db,
+    incident_id: int,
+    event_type: str,
+    *,
+    from_status: str | None,
+    to_status: str | None,
+    actor_user_id: str | None,
+    detail: str | None = None,
+    metadata: dict | None = None,
+) -> None:
     """Append one transition. `actor_user_id` is None for anonymous reporting and
     that is not an omission — see the module docstring."""
     db.execute(
         "INSERT INTO nabh_incident_events (incident_id, seq, event_type, from_status, "
         "to_status, actor_user_id, detail, metadata_json, occurred_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (incident_id, _seq_for(db, incident_id), event_type, from_status, to_status,
-         actor_user_id, detail, json.dumps(metadata) if metadata else None,
-         _iso(_now())),
+        (
+            incident_id,
+            _seq_for(db, incident_id),
+            event_type,
+            from_status,
+            to_status,
+            actor_user_id,
+            detail,
+            json.dumps(metadata) if metadata else None,
+            _iso(_now()),
+        ),
     )
 
 
-def _require(value: Optional[str], field: str) -> str:
+def _require(value: str | None, field: str) -> str:
     text = (value or "").strip()
     if not text:
         raise NabhError("missing_field", f"{field} is required")
@@ -405,6 +460,7 @@ def _check_vocab(value: str, allowed: Iterable[str], field: str) -> str:
 # and empty the register. Every ward comparison in this module goes through the
 # same key: trimmed and upper-cased, in SQL as UPPER(TRIM(col)) = ?.
 
+
 def _ward_key(value: Any) -> str:
     return str(value or "").strip().upper()
 
@@ -421,6 +477,7 @@ def hospital_wards(db: Any = None) -> list[str]:
     names: list[str] = []
     try:
         from services.site_config_service import current_site_config
+
         names.extend(w for w in (current_site_config().wards or []) if w)
     except Exception:  # noqa: BLE001 - no site file is a normal dev state
         pass
@@ -447,7 +504,7 @@ def hospital_wards(db: Any = None) -> list[str]:
     return sorted(seen.values(), key=str.upper)
 
 
-def _canonical_ward(db: Any, ward: Optional[str]) -> Optional[str]:
+def _canonical_ward(db: Any, ward: str | None) -> str | None:
     """Store the hospital's spelling of a ward the reporter typed, so one ward
     never becomes two rows in a by-ward count. An unknown ward is kept as typed
     (trimmed): a report must never be refused over its ward."""
@@ -467,15 +524,15 @@ def report_incident(
     severity: str,
     title: str,
     description: str,
-    occurred_at: Optional[str] = None,
-    ward: Optional[str] = None,
-    department: Optional[str] = None,
-    location: Optional[str] = None,
-    patient_id: Optional[str] = None,
+    occurred_at: str | None = None,
+    ward: str | None = None,
+    department: str | None = None,
+    location: str | None = None,
+    patient_id: str | None = None,
     is_anonymous: bool = False,
-    reported_by: Optional[str] = None,
-    reporter_role: Optional[str] = None,
-    externally_reportable: Optional[bool] = None,
+    reported_by: str | None = None,
+    reporter_role: str | None = None,
+    externally_reportable: bool | None = None,
     db: Any = None,
 ) -> dict:
     """Record one incident. Returns the stored row.
@@ -490,8 +547,9 @@ def report_incident(
     Second resolution plus a platform audit trail that records who was calling
     the API is enough to name one person on a night shift.
     """
-    incident_type = _check_vocab(_require(incident_type, "incident_type"),
-                                INCIDENT_TYPES, "incident_type")
+    incident_type = _check_vocab(
+        _require(incident_type, "incident_type"), INCIDENT_TYPES, "incident_type"
+    )
     severity = _check_vocab(_require(severity, "severity"), SEVERITIES, "severity")
     title = _require(title, "title")
     description = _require(description, "description")
@@ -499,9 +557,10 @@ def report_incident(
     now = _now()
     occurred = _dt(occurred_at) or now
     if occurred > now + timedelta(minutes=5):
-        raise NabhError("future_incident",
-                        "The time it happened is in the future. An incident is reported "
-                        "after it happens.")
+        raise NabhError(
+            "future_incident",
+            "The time it happened is in the future. An incident is reported after it happens.",
+        )
 
     if is_anonymous:
         # Belt. The CHECK constraint is the braces.
@@ -528,17 +587,37 @@ def report_incident(
             "department, location, patient_id, is_anonymous, reported_by, reporter_role, "
             "status, externally_reportable, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'reported', ?, ?, ?)",
-            (reference, incident_type, severity, title, description, _iso(occurred),
-             _iso(reported_at), precision, _canonical_ward(conn, ward), (department or None),
-             (location or None), (patient_id or None), 1 if is_anonymous else 0,
-             reported_by, reporter_role, 1 if externally_reportable else 0,
-             _iso(now), _iso(now)),
+            (
+                reference,
+                incident_type,
+                severity,
+                title,
+                description,
+                _iso(occurred),
+                _iso(reported_at),
+                precision,
+                _canonical_ward(conn, ward),
+                (department or None),
+                (location or None),
+                (patient_id or None),
+                1 if is_anonymous else 0,
+                reported_by,
+                reporter_role,
+                1 if externally_reportable else 0,
+                _iso(now),
+                _iso(now),
+            ),
         )
         incident_id = int(cur.lastrowid)
-        _log_event(conn, incident_id, "reported", from_status=None, to_status="reported",
-                   actor_user_id=None if is_anonymous else reported_by,
-                   detail="Incident reported"
-                          + (" anonymously" if is_anonymous else ""))
+        _log_event(
+            conn,
+            incident_id,
+            "reported",
+            from_status=None,
+            to_status="reported",
+            actor_user_id=None if is_anonymous else reported_by,
+            detail="Incident reported" + (" anonymously" if is_anonymous else ""),
+        )
         return _load_incident(conn, incident_id)
 
     try:
@@ -593,18 +672,24 @@ def _incident_dict(row) -> dict:
 
 def get_incident(incident_id: int, *, db: Any = None) -> dict:
     """One incident with its actions and its full transition log."""
+
     def _work(conn) -> dict:
         incident = _load_incident(conn, incident_id)
-        incident["actions"] = [dict(r) for r in conn.execute(
-            "SELECT * FROM nabh_incident_actions WHERE incident_id = ? ORDER BY id",
-            (incident_id,),
-        ).fetchall()]
-        incident["events"] = [dict(r) for r in conn.execute(
-            "SELECT * FROM nabh_incident_events WHERE incident_id = ? ORDER BY seq",
-            (incident_id,),
-        ).fetchall()]
-        incident["open_action_count"] = sum(
-            1 for a in incident["actions"] if a["status"] == "open")
+        incident["actions"] = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT * FROM nabh_incident_actions WHERE incident_id = ? ORDER BY id",
+                (incident_id,),
+            ).fetchall()
+        ]
+        incident["events"] = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT * FROM nabh_incident_events WHERE incident_id = ? ORDER BY seq",
+                (incident_id,),
+            ).fetchall()
+        ]
+        incident["open_action_count"] = sum(1 for a in incident["actions"] if a["status"] == "open")
         return incident
 
     if db is not None:
@@ -615,13 +700,13 @@ def get_incident(incident_id: int, *, db: Any = None) -> dict:
 
 def list_incidents(
     *,
-    period_start: Optional[str] = None,
-    period_end: Optional[str] = None,
-    status: Optional[str] = None,
-    incident_type: Optional[str] = None,
-    severity: Optional[str] = None,
-    ward: Optional[str] = None,
-    patient_id: Optional[str] = None,
+    period_start: str | None = None,
+    period_end: str | None = None,
+    status: str | None = None,
+    incident_type: str | None = None,
+    severity: str | None = None,
+    ward: str | None = None,
+    patient_id: str | None = None,
     include_void: bool = False,
     limit: int = 200,
     db: Any = None,
@@ -647,8 +732,12 @@ def list_incidents(
     if patient_id:
         clauses.append("patient_id = ?")
         params.append(patient_id)
-    sql = (_INCIDENT_SELECT + " WHERE " + " AND ".join(clauses)
-           + " ORDER BY occurred_at DESC, id DESC LIMIT ?")
+    sql = (
+        _INCIDENT_SELECT
+        + " WHERE "
+        + " AND ".join(clauses)
+        + " ORDER BY occurred_at DESC, id DESC LIMIT ?"
+    )
     params.append(max(1, min(int(limit), 1000)))
 
     def _work(conn) -> dict:
@@ -690,8 +779,9 @@ def _transition(db, incident_id: int, to_status: str) -> dict:
     return incident
 
 
-def start_investigation(incident_id: int, *, actor_user_id: str,
-                        note: Optional[str] = None, db: Any = None) -> dict:
+def start_investigation(
+    incident_id: int, *, actor_user_id: str, note: str | None = None, db: Any = None
+) -> dict:
     def _work(conn) -> dict:
         incident = _transition(conn, incident_id, "under_investigation")
         conn.execute(
@@ -699,10 +789,15 @@ def start_investigation(incident_id: int, *, actor_user_id: str,
             "reopened_count = reopened_count + ?, updated_at = ? WHERE id = ?",
             (1 if incident["status"] == "closed" else 0, _iso(_now()), incident_id),
         )
-        _log_event(conn, incident_id,
-                   "reopened" if incident["status"] == "closed" else "investigation_started",
-                   from_status=incident["status"], to_status="under_investigation",
-                   actor_user_id=actor_user_id, detail=note)
+        _log_event(
+            conn,
+            incident_id,
+            "reopened" if incident["status"] == "closed" else "investigation_started",
+            from_status=incident["status"],
+            to_status="under_investigation",
+            actor_user_id=actor_user_id,
+            detail=note,
+        )
         return _load_incident(conn, incident_id)
 
     if db is not None:
@@ -712,9 +807,12 @@ def start_investigation(incident_id: int, *, actor_user_id: str,
 
 
 def record_investigation(
-    incident_id: int, *, actor_user_id: str, summary: str,
-    root_cause: Optional[str] = None,
-    contributing_factors: Optional[list[str]] = None,
+    incident_id: int,
+    *,
+    actor_user_id: str,
+    summary: str,
+    root_cause: str | None = None,
+    contributing_factors: list[str] | None = None,
     db: Any = None,
 ) -> dict:
     """Record the investigation and move to `actions_pending`.
@@ -732,13 +830,25 @@ def record_investigation(
             "UPDATE nabh_incidents SET status = 'actions_pending', investigation_summary = ?, "
             "root_cause = ?, contributing_factors_json = ?, investigated_by = ?, "
             "investigated_at = ?, updated_at = ? WHERE id = ?",
-            (summary, (root_cause or None),
-             json.dumps(contributing_factors) if contributing_factors else None,
-             actor_user_id, _iso(_now()), _iso(_now()), incident_id),
+            (
+                summary,
+                (root_cause or None),
+                json.dumps(contributing_factors) if contributing_factors else None,
+                actor_user_id,
+                _iso(_now()),
+                _iso(_now()),
+                incident_id,
+            ),
         )
-        _log_event(conn, incident_id, "investigation_recorded",
-                   from_status=incident["status"], to_status="actions_pending",
-                   actor_user_id=actor_user_id, detail=summary[:500])
+        _log_event(
+            conn,
+            incident_id,
+            "investigation_recorded",
+            from_status=incident["status"],
+            to_status="actions_pending",
+            actor_user_id=actor_user_id,
+            detail=summary[:500],
+        )
         return _load_incident(conn, incident_id)
 
     if db is not None:
@@ -748,9 +858,14 @@ def record_investigation(
 
 
 def add_action(
-    incident_id: int, *, actor_user_id: str, description: str,
-    action_type: str = "corrective", owner_user_id: Optional[str] = None,
-    owner_description: Optional[str] = None, due_date: Optional[str] = None,
+    incident_id: int,
+    *,
+    actor_user_id: str,
+    description: str,
+    action_type: str = "corrective",
+    owner_user_id: str | None = None,
+    owner_description: str | None = None,
+    due_date: str | None = None,
     db: Any = None,
 ) -> dict:
     description = _require(description, "description")
@@ -768,13 +883,28 @@ def add_action(
             "INSERT INTO nabh_incident_actions (incident_id, action_type, description, "
             "owner_user_id, owner_description, due_date, created_by, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (incident_id, action_type, description, (owner_user_id or None),
-             (owner_description or None), (due_date or None), actor_user_id,
-             _iso(_now()), _iso(_now())),
+            (
+                incident_id,
+                action_type,
+                description,
+                (owner_user_id or None),
+                (owner_description or None),
+                (due_date or None),
+                actor_user_id,
+                _iso(_now()),
+                _iso(_now()),
+            ),
         )
-        _log_event(conn, incident_id, "action_added", from_status=incident["status"],
-                   to_status=incident["status"], actor_user_id=actor_user_id,
-                   detail=description[:500], metadata={"action_id": int(cur.lastrowid)})
+        _log_event(
+            conn,
+            incident_id,
+            "action_added",
+            from_status=incident["status"],
+            to_status=incident["status"],
+            actor_user_id=actor_user_id,
+            detail=description[:500],
+            metadata={"action_id": int(cur.lastrowid)},
+        )
         return get_incident(incident_id, db=conn)
 
     if db is not None:
@@ -783,8 +913,9 @@ def add_action(
         return _work(conn)
 
 
-def complete_action(incident_id: int, action_id: int, *, actor_user_id: str,
-                    note: Optional[str] = None, db: Any = None) -> dict:
+def complete_action(
+    incident_id: int, action_id: int, *, actor_user_id: str, note: str | None = None, db: Any = None
+) -> dict:
     def _work(conn) -> dict:
         row = conn.execute(
             "SELECT * FROM nabh_incident_actions WHERE id = ? AND incident_id = ?",
@@ -793,17 +924,23 @@ def complete_action(incident_id: int, action_id: int, *, actor_user_id: str,
         if row is None:
             raise NabhError("not_found", f"action {action_id} is not on incident {incident_id}")
         if row["status"] != "open":
-            raise NabhError("illegal_transition",
-                            f"action {action_id} is already {row['status']}")
+            raise NabhError("illegal_transition", f"action {action_id} is already {row['status']}")
         conn.execute(
             "UPDATE nabh_incident_actions SET status = 'completed', completed_at = ?, "
             "completed_by = ?, completion_note = ?, updated_at = ? WHERE id = ?",
             (_iso(_now()), actor_user_id, (note or None), _iso(_now()), action_id),
         )
         incident = _load_incident(conn, incident_id)
-        _log_event(conn, incident_id, "action_completed", from_status=incident["status"],
-                   to_status=incident["status"], actor_user_id=actor_user_id,
-                   detail=note, metadata={"action_id": action_id})
+        _log_event(
+            conn,
+            incident_id,
+            "action_completed",
+            from_status=incident["status"],
+            to_status=incident["status"],
+            actor_user_id=actor_user_id,
+            detail=note,
+            metadata={"action_id": action_id},
+        )
         return get_incident(incident_id, db=conn)
 
     if db is not None:
@@ -812,9 +949,14 @@ def complete_action(incident_id: int, action_id: int, *, actor_user_id: str,
         return _work(conn)
 
 
-def close_incident(incident_id: int, *, actor_user_id: str,
-                   closure_note: Optional[str] = None,
-                   no_action_reason: Optional[str] = None, db: Any = None) -> dict:
+def close_incident(
+    incident_id: int,
+    *,
+    actor_user_id: str,
+    closure_note: str | None = None,
+    no_action_reason: str | None = None,
+    db: Any = None,
+) -> dict:
     """Close an incident. Refuses on three grounds, each of which is a real
     finding an assessor would otherwise make:
 
@@ -825,6 +967,7 @@ def close_incident(incident_id: int, *, actor_user_id: str,
       * no action AND no reason — deciding that nothing needs to change is a
         legitimate outcome, but it is a DECISION and it gets a sentence.
     """
+
     def _work(conn) -> dict:
         incident = _transition(conn, incident_id, "closed")
         if not (incident.get("investigation_summary") or "").strip():
@@ -855,13 +998,25 @@ def close_incident(incident_id: int, *, actor_user_id: str,
         conn.execute(
             "UPDATE nabh_incidents SET status = 'closed', closed_by = ?, closed_at = ?, "
             "closure_note = ?, no_action_reason = ?, updated_at = ? WHERE id = ?",
-            (actor_user_id, _iso(_now()), (closure_note or None),
-             (reason or None), _iso(_now()), incident_id),
+            (
+                actor_user_id,
+                _iso(_now()),
+                (closure_note or None),
+                (reason or None),
+                _iso(_now()),
+                incident_id,
+            ),
         )
-        _log_event(conn, incident_id, "closed", from_status=incident["status"],
-                   to_status="closed", actor_user_id=actor_user_id,
-                   detail=closure_note or reason or None,
-                   metadata={"completed_actions": len(effective)})
+        _log_event(
+            conn,
+            incident_id,
+            "closed",
+            from_status=incident["status"],
+            to_status="closed",
+            actor_user_id=actor_user_id,
+            detail=closure_note or reason or None,
+            metadata={"completed_actions": len(effective)},
+        )
         return get_incident(incident_id, db=conn)
 
     if db is not None:
@@ -870,8 +1025,7 @@ def close_incident(incident_id: int, *, actor_user_id: str,
         return _work(conn)
 
 
-def void_incident(incident_id: int, *, actor_user_id: str, reason: str,
-                  db: Any = None) -> dict:
+def void_incident(incident_id: int, *, actor_user_id: str, reason: str, db: Any = None) -> dict:
     """Mark a report as void — a duplicate, or something that turned out not to
     have happened. THE ROW STAYS. There is no delete in this module."""
     reason = _require(reason, "reason")
@@ -883,8 +1037,15 @@ def void_incident(incident_id: int, *, actor_user_id: str, reason: str,
             "void_reason = ?, updated_at = ? WHERE id = ?",
             (actor_user_id, _iso(_now()), reason, _iso(_now()), incident_id),
         )
-        _log_event(conn, incident_id, "voided", from_status=incident["status"],
-                   to_status="void", actor_user_id=actor_user_id, detail=reason)
+        _log_event(
+            conn,
+            incident_id,
+            "voided",
+            from_status=incident["status"],
+            to_status="void",
+            actor_user_id=actor_user_id,
+            detail=reason,
+        )
         return get_incident(incident_id, db=conn)
 
     if db is not None:
@@ -897,8 +1058,10 @@ def void_incident(incident_id: int, *, actor_user_id: str, reason: str,
 # DISCHARGE DISPOSITION
 # ═════════════════════════════════════════════════════════════════════════════
 
-def _adt_disposition_on(conn, patient_id: str, admission_id: Optional[str],
-                        when: datetime) -> Optional[dict]:
+
+def _adt_disposition_on(
+    conn, patient_id: str, admission_id: str | None, when: datetime
+) -> dict | None:
     """The live disposition the end of stay (source 'adt', adt-8a) wrote for
     the stay the desk is keying, or None.
 
@@ -910,27 +1073,36 @@ def _adt_disposition_on(conn, patient_id: str, admission_id: Optional[str],
     into a later stay of the same patient: a readmission inside the 24 hours
     is its own stay, and its disposition must not overwrite this one. None on
     a database without migration 59's columns."""
-    cols = {r[1] for r in conn.execute(
-        "PRAGMA table_info(nabh_discharge_dispositions)").fetchall()}
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(nabh_discharge_dispositions)").fetchall()}
     if not {"source", "voided_at", "needs_reconciliation"} <= cols:
         return None
-    rows = [dict(r) for r in conn.execute(
-        "SELECT d.id, d.admission_id, d.occurred_at, "
-        "COALESCE(a.admitted_at, a.created_at) AS stay_start "
-        "FROM nabh_discharge_dispositions d LEFT JOIN admissions a ON a.id = d.admission_id "
-        "WHERE d.patient_id = ? AND d.source = 'adt' AND d.voided_at IS NULL "
-        "ORDER BY d.id DESC",
-        (patient_id,),
-    ).fetchall()]
+    rows = [
+        dict(r)
+        for r in conn.execute(
+            "SELECT d.id, d.admission_id, d.occurred_at, "
+            "COALESCE(a.admitted_at, a.created_at) AS stay_start "
+            "FROM nabh_discharge_dispositions d LEFT JOIN admissions a ON a.id = d.admission_id "
+            "WHERE d.patient_id = ? AND d.source = 'adt' AND d.voided_at IS NULL "
+            "ORDER BY d.id DESC",
+            (patient_id,),
+        ).fetchall()
+    ]
     if admission_id:
         return next((r for r in rows if r["admission_id"] == admission_id), None)
     if not rows:
         return None
-    stay_starts = [t for t in (_dt(r[0]) for r in conn.execute(
-        "SELECT COALESCE(admitted_at, created_at) FROM admissions WHERE patient_id = ?",
-        (patient_id,),
-    ).fetchall()) if t is not None]
-    best: Optional[tuple[float, dict]] = None
+    stay_starts = [
+        t
+        for t in (
+            _dt(r[0])
+            for r in conn.execute(
+                "SELECT COALESCE(admitted_at, created_at) FROM admissions WHERE patient_id = ?",
+                (patient_id,),
+            ).fetchall()
+        )
+        if t is not None
+    ]
+    best: tuple[float, dict] | None = None
     for row in rows:
         end = _dt(row["occurred_at"])
         if end is None:
@@ -948,9 +1120,14 @@ def _adt_disposition_on(conn, patient_id: str, admission_id: Optional[str],
 
 
 def record_disposition(
-    *, patient_id: str, disposition: str, occurred_at: Optional[str] = None,
-    admission_id: Optional[str] = None, recorded_by: Optional[str] = None,
-    notes: Optional[str] = None, db: Any = None,
+    *,
+    patient_id: str,
+    disposition: str,
+    occurred_at: str | None = None,
+    admission_id: str | None = None,
+    recorded_by: str | None = None,
+    notes: str | None = None,
+    db: Any = None,
 ) -> dict:
     """Record how one admission ended.
 
@@ -965,8 +1142,7 @@ def record_disposition(
     a mortality denominator.
     """
     patient_id = _require(patient_id, "patient_id")
-    disposition = _check_vocab(_require(disposition, "disposition"),
-                               DISPOSITIONS, "disposition")
+    disposition = _check_vocab(_require(disposition, "disposition"), DISPOSITIONS, "disposition")
     when = _dt(occurred_at) or _now()
     if when > _now() + timedelta(minutes=5):
         raise NabhError("future_disposition", "occurred_at is in the future")
@@ -988,12 +1164,21 @@ def record_disposition(
                 "recorded_by = COALESCE(?, recorded_by), notes = COALESCE(?, notes), "
                 "needs_reconciliation = CASE WHEN disposition <> ? THEN 1 "
                 "ELSE needs_reconciliation END, updated_at = ? WHERE id = ?",
-                (disposition, (admission_id or None), (recorded_by or None), (notes or None),
-                 disposition, _iso(_now()), recorded["id"]),
+                (
+                    disposition,
+                    (admission_id or None),
+                    (recorded_by or None),
+                    (notes or None),
+                    disposition,
+                    _iso(_now()),
+                    recorded["id"],
+                ),
             )
-            return dict(conn.execute(
-                "SELECT * FROM nabh_discharge_dispositions WHERE id = ?", (recorded["id"],)
-            ).fetchone())
+            return dict(
+                conn.execute(
+                    "SELECT * FROM nabh_discharge_dispositions WHERE id = ?", (recorded["id"],)
+                ).fetchone()
+            )
         conn.execute(
             "INSERT INTO nabh_discharge_dispositions (patient_id, admission_id, "
             "disposition, occurred_at, recorded_by, notes, created_at, updated_at) "
@@ -1002,8 +1187,16 @@ def record_disposition(
             "disposition = excluded.disposition, admission_id = excluded.admission_id, "
             "recorded_by = excluded.recorded_by, notes = excluded.notes, "
             "updated_at = excluded.updated_at",
-            (patient_id, (admission_id or None), disposition, _iso(when),
-             (recorded_by or None), (notes or None), _iso(_now()), _iso(_now())),
+            (
+                patient_id,
+                (admission_id or None),
+                disposition,
+                _iso(when),
+                (recorded_by or None),
+                (notes or None),
+                _iso(_now()),
+                _iso(_now()),
+            ),
         )
         row = conn.execute(
             "SELECT * FROM nabh_discharge_dispositions WHERE patient_id = ? AND occurred_at = ?",
@@ -1017,25 +1210,35 @@ def record_disposition(
         return _work(conn)
 
 
-def list_dispositions(*, period_start: Optional[str] = None,
-                      period_end: Optional[str] = None,
-                      limit: int = 500, db: Any = None,
-                      include_voided: bool = False) -> dict:
+def list_dispositions(
+    *,
+    period_start: str | None = None,
+    period_end: str | None = None,
+    limit: int = 500,
+    db: Any = None,
+    include_voided: bool = False,
+) -> dict:
     """The dispositions recorded in the period. A disposition voided because
     the stay it described was reopened (migration 59, adt-8b) is left out
     unless `include_voided`: it is kept as evidence, never counted."""
     start, end = resolve_period(period_start, period_end, default_days=90)
 
     def _work(conn) -> dict:
-        rows = [dict(r) for r in conn.execute(
-            "SELECT * FROM nabh_discharge_dispositions WHERE "
-            + _in_window("occurred_at")
-            + ("" if include_voided else " AND voided_at IS NULL")
-            + " ORDER BY occurred_at DESC LIMIT ?",
-            (_iso(start), _iso(end), max(1, min(int(limit), 2000))),
-        ).fetchall()]
-        return {"period": {"start": _iso(start), "end": _iso(end)},
-                "dispositions": rows, "count": len(rows)}
+        rows = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT * FROM nabh_discharge_dispositions WHERE "
+                + _in_window("occurred_at")
+                + ("" if include_voided else " AND voided_at IS NULL")
+                + " ORDER BY occurred_at DESC LIMIT ?",
+                (_iso(start), _iso(end), max(1, min(int(limit), 2000))),
+            ).fetchall()
+        ]
+        return {
+            "period": {"start": _iso(start), "end": _iso(end)},
+            "dispositions": rows,
+            "count": len(rows),
+        }
 
     if db is not None:
         return _work(db)
@@ -1043,8 +1246,14 @@ def list_dispositions(*, period_start: Optional[str] = None,
         return _work(conn)
 
 
-def void_stay_dispositions_on(conn, *, admission_id: str, disposition_id: Optional[int] = None,
-                              voided_by: Optional[str], reason: str) -> list[int]:
+def void_stay_dispositions_on(
+    conn,
+    *,
+    admission_id: str,
+    disposition_id: int | None = None,
+    voided_by: str | None,
+    reason: str,
+) -> list[int]:
     """Void, never delete, the live dispositions that describe the end of one
     stay, on the caller's connection (adt-8b: a stay reopened because its end
     was recorded in error). Returns the ids voided.
@@ -1055,8 +1264,7 @@ def void_stay_dispositions_on(conn, *, admission_id: str, disposition_id: Option
     indicator and list skips it (voided_at IS NOT NULL). Writes no audit: the
     reopen audits the whole correction in the same transaction. Returns []
     on a database without migration 59's columns."""
-    cols = {r[1] for r in conn.execute(
-        "PRAGMA table_info(nabh_discharge_dispositions)").fetchall()}
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(nabh_discharge_dispositions)").fetchall()}
     if not {"voided_at", "voided_by", "void_reason"} <= cols:
         return []
     why = (" ".join(str(reason or "").split()) or "stay reopened")[:2000]
@@ -1092,7 +1300,8 @@ INDICATOR_SPEC: dict[str, dict] = {
         "unit": "per 1,000 inpatient-days",
         "definition": (
             "Incidents recorded in the register as a medication error, divided "
-            "by inpatient-days in the period, × 1,000. Voided reports excluded."),
+            "by inpatient-days in the period, × 1,000. Voided reports excluded."
+        ),
         "denominator_label": "inpatient-days",
         "numerator_label": "reported medication errors",
         "direction": "lower_is_better",
@@ -1103,7 +1312,8 @@ INDICATOR_SPEC: dict[str, dict] = {
             "THIS MEASURES REPORTING, NOT SAFETY. A low number is produced both "
             "by a safe hospital and by a ward that has learned not to report. "
             "Read it beside the near-miss share and the total report volume: a "
-            "register with no near misses in it is not being used."),
+            "register with no near misses in it is not being used."
+        ),
     },
     "medication_override_rate": {
         "code": "QI-MED-02",
@@ -1112,21 +1322,26 @@ INDICATOR_SPEC: dict[str, dict] = {
         "definition": (
             "Dose-check and allergy-check overrides recorded at the bedside, "
             "divided by medication doses recorded as given in the period, "
-            "× 1,000."),
+            "× 1,000."
+        ),
         "denominator_label": "administrations given",
         "numerator_label": "safety-alert overrides",
         "direction": "lower_is_better",
         "n_required": 200,
         "is_proxy": True,
-        "sources": ["medication_dose_overrides", "medication_allergy_overrides",
-                    "medication_administrations"],
+        "sources": [
+            "medication_dose_overrides",
+            "medication_allergy_overrides",
+            "medication_administrations",
+        ],
         "caveat": (
             "A PROXY, AND NOT A MEDICATION-ERROR RATE. An override is a "
             "clinician deliberately proceeding past a dose or allergy warning; "
             "most are clinically correct and the interlock is the thing that is "
             "wrong. It is here because it is the one medication-safety signal "
             "Orb generates without anyone choosing to report, so it does not "
-            "share the reported rate's under-reporting bias."),
+            "share the reported rate's under-reporting bias."
+        ),
     },
     "patient_fall_rate": {
         "code": "QI-NUR-01",
@@ -1134,7 +1349,8 @@ INDICATOR_SPEC: dict[str, dict] = {
         "unit": "per 1,000 inpatient-days",
         "definition": (
             "Incidents recorded in the register as a patient fall, divided by "
-            "inpatient-days in the period, × 1,000. Voided reports excluded."),
+            "inpatient-days in the period, × 1,000. Voided reports excluded."
+        ),
         "denominator_label": "inpatient-days",
         "numerator_label": "reported falls",
         "direction": "lower_is_better",
@@ -1144,7 +1360,8 @@ INDICATOR_SPEC: dict[str, dict] = {
         "caveat": (
             "Reporting-dependent, exactly as the medication-error rate is. Orb "
             "has no independent fall detection, so an unreported fall is "
-            "invisible here and everywhere else in this system."),
+            "invisible here and everywhere else in this system."
+        ),
     },
     "handoff_completion": {
         "code": "QI-CONT-01",
@@ -1152,7 +1369,8 @@ INDICATOR_SPEC: dict[str, dict] = {
         "unit": "%",
         "definition": (
             "I-PASS handoff notes created in the period that reached a signed "
-            "state, divided by I-PASS handoff notes created in the period."),
+            "state, divided by I-PASS handoff notes created in the period."
+        ),
         "denominator_label": "handoffs drafted",
         "numerator_label": "handoffs signed",
         "direction": "higher_is_better",
@@ -1164,7 +1382,8 @@ INDICATOR_SPEC: dict[str, dict] = {
             "receiver' read-back that makes I-PASS work is spoken at the bedside "
             "and is not captured anywhere in Orb. The denominator is handoffs "
             "DRAFTED, not shifts that occurred: a shift where nobody opened the "
-            "handoff tool at all is invisible to this indicator."),
+            "handoff tool at all is invisible to this indicator."
+        ),
     },
     "escalation_ack_compliance": {
         "code": "QI-CARE-01",
@@ -1174,7 +1393,8 @@ INDICATOR_SPEC: dict[str, dict] = {
             "Escalation chains raised in the period that a named clinician "
             "acknowledged within the response window, divided by chains whose "
             "outcome is decidable. Chains still inside the window at computation "
-            "time are excluded and counted separately."),
+            "time are excluded and counted separately."
+        ),
         "denominator_label": "decidable escalations",
         "numerator_label": "acknowledged in time",
         "direction": "higher_is_better",
@@ -1183,7 +1403,8 @@ INDICATOR_SPEC: dict[str, dict] = {
         "sources": ["clinical_escalations"],
         "caveat": (
             "Acknowledgement is a click, not a bedside review. This says a named "
-            "human took the alert, not that the patient was seen."),
+            "human took the alert, not that the patient was seen."
+        ),
     },
     "inpatient_mortality": {
         "code": "QI-OUT-01",
@@ -1191,7 +1412,8 @@ INDICATOR_SPEC: dict[str, dict] = {
         "unit": "%",
         "definition": (
             "Discharges recorded as a death (including a death within 48 hours), "
-            "divided by all discharge dispositions recorded in the period."),
+            "divided by all discharge dispositions recorded in the period."
+        ),
         "denominator_label": "recorded dispositions",
         "numerator_label": "deaths",
         "direction": "lower_is_better",
@@ -1202,7 +1424,8 @@ INDICATOR_SPEC: dict[str, dict] = {
             "COVERAGE-GATED. The denominator is dispositions somebody RECORDED, "
             "not discharges that happened, so a partly-kept register inflates "
             "this number without limit. It refuses to print below the coverage "
-            "floor and prints the coverage beside the value when it does."),
+            "floor and prints the coverage beside the value when it does."
+        ),
     },
     "against_medical_advice_rate": {
         "code": "QI-OUT-02",
@@ -1211,7 +1434,8 @@ INDICATOR_SPEC: dict[str, dict] = {
         "definition": (
             "Discharges recorded as LAMA or DAMA, divided by all discharge "
             "dispositions recorded in the period. Absconding is counted and "
-            "reported separately, never folded in."),
+            "reported separately, never folded in."
+        ),
         "denominator_label": "recorded dispositions",
         "numerator_label": "LAMA + DAMA",
         "direction": "lower_is_better",
@@ -1220,7 +1444,8 @@ INDICATOR_SPEC: dict[str, dict] = {
         "sources": ["nabh_discharge_dispositions", "discharge_summaries"],
         "caveat": (
             "Coverage-gated on the same denominator as mortality. A LAMA rate is "
-            "also a billing and a communication signal, not only a clinical one."),
+            "also a billing and a communication signal, not only a clinical one."
+        ),
     },
     "readmission_7_day": {
         "code": "QI-OUT-03",
@@ -1230,7 +1455,8 @@ INDICATOR_SPEC: dict[str, dict] = {
             "Discharges followed by a re-admission of the same patient within "
             "the follow-up window, divided by discharges whose follow-up window "
             "has fully elapsed. Discharges still inside their window are "
-            "excluded and counted separately."),
+            "excluded and counted separately."
+        ),
         "denominator_label": "discharges with elapsed follow-up",
         "numerator_label": "re-admitted within window",
         "direction": "lower_is_better",
@@ -1242,7 +1468,8 @@ INDICATOR_SPEC: dict[str, dict] = {
             "patient who deteriorates and presents somewhere else is invisible, "
             "which biases this number DOWNWARD, i.e. in the hospital's favour. "
             "Nor does it distinguish planned from unplanned returns: a staged "
-            "procedure counts as a re-admission here."),
+            "procedure counts as a re-admission here."
+        ),
     },
     "incident_closure_30d": {
         "code": "QI-QI-01",
@@ -1252,7 +1479,8 @@ INDICATOR_SPEC: dict[str, dict] = {
             "Incidents reported in the period and closed within the closure "
             "target, divided by incidents reported in the period whose target "
             "has fully elapsed. Voided reports excluded; incidents still inside "
-            "their target are excluded and counted separately."),
+            "their target are excluded and counted separately."
+        ),
         "denominator_label": "incidents past their target date",
         "numerator_label": "closed in time",
         "direction": "higher_is_better",
@@ -1262,7 +1490,8 @@ INDICATOR_SPEC: dict[str, dict] = {
         "caveat": (
             "Measures the quality committee's throughput, not the quality of the "
             "investigations. A register closed quickly and shallowly scores 100 % "
-            "here."),
+            "here."
+        ),
     },
 }
 
@@ -1284,7 +1513,8 @@ LAB_INDICATOR_SPEC: dict[str, dict] = {
             "receipt in the laboratory to the first release was within the "
             "test's turnaround target for its priority, divided by tests "
             "released in the period that have a target. Tests with no target "
-            "and simulated results are excluded and counted separately."),
+            "and simulated results are excluded and counted separately."
+        ),
         "denominator_label": "tests reported with a target",
         "numerator_label": "reported within target",
         "direction": "higher_is_better",
@@ -1295,7 +1525,8 @@ LAB_INDICATOR_SPEC: dict[str, dict] = {
             "A TARGET THE LABORATORY SETS ITSELF. Each test's target is the "
             "pathologist's, per priority; none ships with Orb. A test with no "
             "target is never counted as within or outside it. The clock starts "
-            "at receipt, so time in transit from the ward is not in this number."),
+            "at receipt, so time in transit from the ward is not in this number."
+        ),
     },
     "lab_critical_ack_in_window": {
         "code": "QI-LAB-02",
@@ -1307,7 +1538,8 @@ LAB_INDICATOR_SPEC: dict[str, dict] = {
             "logged phone call with a read-back) came within the callback window, divided by "
             "critical results whose outcome is decidable. Results still inside "
             "the window and not yet acknowledged are excluded and counted "
-            "separately."),
+            "separately."
+        ),
         "denominator_label": "decidable critical results",
         "numerator_label": "acknowledged in time",
         "direction": "higher_is_better",
@@ -1318,7 +1550,8 @@ LAB_INDICATOR_SPEC: dict[str, dict] = {
             "Acknowledgement is a recorded read-back, not a bedside review. A Relay "
             "post, or a logged call that reached nobody, never counts as an "
             "acknowledgement. The window is one printed number; check it against "
-            "the hospital's own critical-result policy."),
+            "the hospital's own critical-result policy."
+        ),
     },
 }
 
@@ -1341,7 +1574,8 @@ ADT_INDICATOR_SPEC: dict[str, dict] = {
             "over the days of the period, divided by available bed-days (each bed set up "
             "in Bed setup, counted by the part of the day it was set up and not recorded "
             "out of service), × 100. Whole hospital-local days only, and only when every "
-            "ward counted had its bed register marked complete before the period began."),
+            "ward counted had its bed register marked complete before the period began."
+        ),
         "denominator_label": "available bed-days",
         "numerator_label": "patients at midnight, added over the days",
         "direction": "neutral",
@@ -1356,7 +1590,8 @@ ADT_INDICATOR_SPEC: dict[str, dict] = {
             "recorded stays in it and lowers this figure. Patients in temporary extra beds "
             "are counted at midnight but their beds are not in the denominator, so the "
             "figure can pass 100 per cent. The detail also gives the midnight census over "
-            "licensed beds and inpatient days over available beds."),
+            "licensed beds and inpatient days over available beds."
+        ),
     },
     "icu_return_48h": {
         "code": "QI-OUT-04",
@@ -1368,7 +1603,8 @@ ADT_INDICATOR_SPEC: dict[str, dict] = {
             "within 48 hours, in the same stay or a new admission, divided by moves out "
             "whose outcome is decidable. Moves out less than 48 hours ago, and patients who "
             "died or left the hospital within the 48 hours, are excluded and counted "
-            "separately."),
+            "separately."
+        ),
         "denominator_label": "moves out of intensive care with the 48 hours decided",
         "numerator_label": "back in intensive care within 48 hours",
         "direction": "lower_is_better",
@@ -1382,7 +1618,8 @@ ADT_INDICATOR_SPEC: dict[str, dict] = {
             "of the denominator rather than counted as not returned, which would lower "
             "this rate. A patient who died within the 48 hours is left out the same way. "
             "A move to a place that is not set up in Bed setup is not seen as leaving "
-            "intensive care."),
+            "intensive care."
+        ),
     },
 }
 
@@ -1394,37 +1631,57 @@ _LEDGER_INDICATOR_CODES = frozenset(spec["code"] for spec in ADT_INDICATOR_SPEC.
 #: This is the gap list, shipped as data rather than left in a slide deck: the
 #: honest half of an evidence pack is the half that says what is missing.
 NOT_COLLECTED_CATALOGUE: tuple[dict[str, str], ...] = (
-    {"code": "QI-INF-01", "label": "Hand-hygiene compliance",
-     "reason": "Orb captures no hand-hygiene observation audit.",
-     "needed": "An observation round: observer, opportunity, moment, compliance."},
-    {"code": "QI-INF-02",
-     "label": "Device-associated infection rates (CAUTI / CLABSI / VAP)",
-     "reason": "Orb records no device insertion, removal or device-days, so "
-               "neither numerator nor denominator exists.",
-     "needed": "Device line/catheter/ventilator start and stop per patient, plus "
-               "a surveillance definition applied by the infection-control nurse."},
-    {"code": "QI-INF-03", "label": "Surgical site infection rate",
-     "reason": "Surgeries are scheduled in Orb but post-operative infection "
-               "surveillance and the 30/90-day follow-up window are not.",
-     "needed": "Post-discharge SSI surveillance capture linked to the surgery."},
-    {"code": "QI-ASS-01", "label": "Time to initial assessment",
-     "reason": "No timestamped initial-assessment record exists; an admission "
-               "row's creation time is a clerical event, not a clinical one.",
-     "needed": "An initial-assessment note with its own completion timestamp."},
-    {"code": "QI-OUT-04", "label": "Return to ICU within 48 hours",
-     "reason": "Orb has no ICU admission/discharge record distinct from a ward "
-               "move, so a return cannot be detected.",
-     "needed": "Bed-level transfers with unit type, or an explicit ICU episode."},
-    {"code": "QI-UTL-01", "label": "Bed occupancy rate",
-     "reason": "Inpatient-days are computable, but the hospital's licensed bed "
-               "count is not configured anywhere in Orb, so the denominator is "
-               "missing. A guessed bed count would make this indicator "
-               "arbitrary in either direction.",
-     "needed": "A configured bed count per ward."},
-    {"code": "QI-BLD-01", "label": "Blood transfusion reactions per unit transfused",
-     "reason": "Reactions can be reported in the register, but Orb records no "
-               "transfusion events, so there is no denominator.",
-     "needed": "Transfusion issue and administration records."},
+    {
+        "code": "QI-INF-01",
+        "label": "Hand-hygiene compliance",
+        "reason": "Orb captures no hand-hygiene observation audit.",
+        "needed": "An observation round: observer, opportunity, moment, compliance.",
+    },
+    {
+        "code": "QI-INF-02",
+        "label": "Device-associated infection rates (CAUTI / CLABSI / VAP)",
+        "reason": "Orb records no device insertion, removal or device-days, so "
+        "neither numerator nor denominator exists.",
+        "needed": "Device line/catheter/ventilator start and stop per patient, plus "
+        "a surveillance definition applied by the infection-control nurse.",
+    },
+    {
+        "code": "QI-INF-03",
+        "label": "Surgical site infection rate",
+        "reason": "Surgeries are scheduled in Orb but post-operative infection "
+        "surveillance and the 30/90-day follow-up window are not.",
+        "needed": "Post-discharge SSI surveillance capture linked to the surgery.",
+    },
+    {
+        "code": "QI-ASS-01",
+        "label": "Time to initial assessment",
+        "reason": "No timestamped initial-assessment record exists; an admission "
+        "row's creation time is a clerical event, not a clinical one.",
+        "needed": "An initial-assessment note with its own completion timestamp.",
+    },
+    {
+        "code": "QI-OUT-04",
+        "label": "Return to ICU within 48 hours",
+        "reason": "Orb has no ICU admission/discharge record distinct from a ward "
+        "move, so a return cannot be detected.",
+        "needed": "Bed-level transfers with unit type, or an explicit ICU episode.",
+    },
+    {
+        "code": "QI-UTL-01",
+        "label": "Bed occupancy rate",
+        "reason": "Inpatient-days are computable, but the hospital's licensed bed "
+        "count is not configured anywhere in Orb, so the denominator is "
+        "missing. A guessed bed count would make this indicator "
+        "arbitrary in either direction.",
+        "needed": "A configured bed count per ward.",
+    },
+    {
+        "code": "QI-BLD-01",
+        "label": "Blood transfusion reactions per unit transfused",
+        "reason": "Reactions can be reported in the register, but Orb records no "
+        "transfusion events, so there is no denominator.",
+        "needed": "Transfusion issue and administration records.",
+    },
 )
 
 
@@ -1463,8 +1720,11 @@ def _source_labels(sources) -> list[str]:
 
 
 def _new_indicator(indicator_id: str) -> dict:
-    spec = (INDICATOR_SPEC.get(indicator_id) or LAB_INDICATOR_SPEC.get(indicator_id)
-            or ADT_INDICATOR_SPEC[indicator_id])
+    spec = (
+        INDICATOR_SPEC.get(indicator_id)
+        or LAB_INDICATOR_SPEC.get(indicator_id)
+        or ADT_INDICATOR_SPEC[indicator_id]
+    )
     return {
         "id": indicator_id,
         "code": spec["code"],
@@ -1479,8 +1739,7 @@ def _new_indicator(indicator_id: str) -> dict:
         "numerator_label": spec["numerator_label"],
         "denominator_label": spec["denominator_label"],
         "n_observed": 0,
-        "n_required": _env_int(f"ORB_NABH_MIN_N_{indicator_id.upper()}",
-                               spec["n_required"], 0),
+        "n_required": _env_int(f"ORB_NABH_MIN_N_{indicator_id.upper()}", spec["n_required"], 0),
         "direction": spec["direction"],
         "is_proxy": spec["is_proxy"],
         "caveat": spec["caveat"],
@@ -1530,15 +1789,15 @@ def _rate_per_1000(numerator: int, denominator: float) -> float:
 # Shared denominators
 # ═════════════════════════════════════════════════════════════════════════════
 
-def _ward_filter(rows: list[dict], ward: Optional[str], key: str = "ward") -> list[dict]:
+
+def _ward_filter(rows: list[dict], ward: str | None, key: str = "ward") -> list[dict]:
     if not ward:
         return rows
     wanted = _ward_key(ward)
     return [r for r in rows if _ward_key(r.get(key)) == wanted]
 
 
-def _overlap_hours(a_start: datetime, a_end: datetime,
-                   b_start: datetime, b_end: datetime) -> float:
+def _overlap_hours(a_start: datetime, a_end: datetime, b_start: datetime, b_end: datetime) -> float:
     lo = max(a_start, b_start)
     hi = min(a_end, b_end)
     return max(0.0, (hi - lo).total_seconds() / 3600.0)
@@ -1556,9 +1815,12 @@ def _per_stay_counting_on(db) -> bool:
     cols = {r[1] for r in db.execute("PRAGMA table_info(admissions)").fetchall()}
     if not {"admitted_at", "discharge_type", "discharged_at"} <= cols:
         return False
-    return db.execute(
-        "SELECT 1 FROM admissions WHERE discharge_type IS NOT NULL OR admitted_at IS NOT NULL LIMIT 1"
-    ).fetchone() is not None
+    return (
+        db.execute(
+            "SELECT 1 FROM admissions WHERE discharge_type IS NOT NULL OR admitted_at IS NOT NULL LIMIT 1"
+        ).fetchone()
+        is not None
+    )
 
 
 def _native_admission_filter(db, alias: str = "a") -> str:
@@ -1579,13 +1841,18 @@ def _repeat_stay_patients(db) -> set[str]:
     them would lower every rate."""
     native = _native_admission_filter(db)
     where = f"WHERE {native}" if native else ""
-    return {r[0] for r in db.execute(
-        f"SELECT a.patient_id FROM admissions a {where} "
-        "GROUP BY a.patient_id HAVING COUNT(*) > 1").fetchall()}
+    return {
+        r[0]
+        for r in db.execute(
+            f"SELECT a.patient_id FROM admissions a {where} "
+            "GROUP BY a.patient_id HAVING COUNT(*) > 1"
+        ).fetchall()
+    }
 
 
-def _last_vital_in_stay(db, patient_id: str, since: datetime,
-                        before: Optional[datetime]) -> Optional[datetime]:
+def _last_vital_in_stay(
+    db, patient_id: str, since: datetime, before: datetime | None
+) -> datetime | None:
     """The patient's last vital signs at or after `since` and before `before`
     (no upper bound when None): where one stay of a patient admitted more than
     once ends when it records no end and has no summary. The patient's latest
@@ -1594,8 +1861,10 @@ def _last_vital_in_stay(db, patient_id: str, since: datetime,
     days, which lowers every rate. julianday() compares any stored spelling
     as a time; the bounds are checked again here, since it keeps only
     milliseconds."""
-    sql = ("SELECT timestamp FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
-           "AND julianday(timestamp) >= julianday(?)")
+    sql = (
+        "SELECT timestamp FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
+        "AND julianday(timestamp) >= julianday(?)"
+    )
     params: list[Any] = [patient_id, since.isoformat()]
     if before is not None:
         sql += " AND julianday(timestamp) < julianday(?)"
@@ -1607,9 +1876,16 @@ def _last_vital_in_stay(db, patient_id: str, since: datetime,
     return when
 
 
-def _per_stay_totals(db, start: datetime, horizon: datetime, ward: Optional[str], *,
-                     only_patients: Optional[set] = None, native_only: bool = False,
-                     include_legacy: bool = True) -> dict:
+def _per_stay_totals(
+    db,
+    start: datetime,
+    horizon: datetime,
+    ward: str | None,
+    *,
+    only_patients: set | None = None,
+    native_only: bool = False,
+    include_legacy: bool = True,
+) -> dict:
     """The per-stay count behind _inpatient_days_per_stay, as raw hours.
 
     A patient with ONE admission is counted exactly as before (adt-8a). A
@@ -1626,10 +1902,13 @@ def _per_stay_totals(db, start: datetime, horizon: datetime, ward: Optional[str]
     leaves out encounters a history import filed; `include_legacy` counts the
     patients with no admission row from patients.admission_date."""
     native = _native_admission_filter(db) if native_only else ""
-    stays = [dict(r) for r in db.execute(
-        "SELECT a.id, a.patient_id, a.ward, a.status, a.admitted_at, a.created_at, "
-        "a.discharged_at FROM admissions a" + (f" WHERE {native}" if native else "")
-    ).fetchall()]
+    stays = [
+        dict(r)
+        for r in db.execute(
+            "SELECT a.id, a.patient_id, a.ward, a.status, a.admitted_at, a.created_at, "
+            "a.discharged_at FROM admissions a" + (f" WHERE {native}" if native else "")
+        ).fetchall()
+    ]
     if only_patients is not None:
         stays = [s for s in stays if s["patient_id"] in only_patients]
     with_stays = {s["patient_id"] for s in stays}
@@ -1638,26 +1917,35 @@ def _per_stay_totals(db, start: datetime, horizon: datetime, ward: Optional[str]
     by_patient: dict[str, list[dict]] = {}
     for s in stays:
         by_patient.setdefault(s["patient_id"], []).append(s)
-    next_start: dict[Any, Optional[datetime]] = {}
+    next_start: dict[Any, datetime | None] = {}
     repeat: set[str] = set()
     for pid, own in by_patient.items():
         if len(own) < 2:
             continue
         repeat.add(pid)
-        ordered = sorted(own, key=lambda s: (_dt(s.get("admitted_at")) or _dt(s.get("created_at"))
-                                             or datetime.max.replace(tzinfo=timezone.utc)))
-        for here, after in zip(ordered, ordered[1:] + [None]):
+        ordered = sorted(
+            own,
+            key=lambda s: (
+                _dt(s.get("admitted_at"))
+                or _dt(s.get("created_at"))
+                or datetime.max.replace(tzinfo=UTC)
+            ),
+        )
+        for here, after in zip(ordered, ordered[1:] + [None], strict=False):
             next_start[id(here)] = (
                 (_dt(after.get("admitted_at")) or _dt(after.get("created_at")))
-                if after is not None else None)
+                if after is not None
+                else None
+            )
     stays = _ward_filter(stays, ward)
 
     summaries: dict[str, list[datetime]] = {}
     keyed: dict[str, list[datetime]] = {}
     summary_cols = {r[1] for r in db.execute("PRAGMA table_info(discharge_summaries)").fetchall()}
     keyed_sql = ", admission_id" if "admission_id" in summary_cols else ", NULL AS admission_id"
-    for row in db.execute(f"SELECT patient_id, discharged_at{keyed_sql} FROM discharge_summaries"
-                          ).fetchall():
+    for row in db.execute(
+        f"SELECT patient_id, discharged_at{keyed_sql} FROM discharge_summaries"
+    ).fetchall():
         when = _dt(row["discharged_at"])
         if when:
             summaries.setdefault(row["patient_id"], []).append(when)
@@ -1689,23 +1977,27 @@ def _per_stay_totals(db, start: datetime, horizon: datetime, ward: Optional[str]
                 stay_end = horizon
                 open_stays += 1
             elif pid in repeat:
-                own = [t for t in keyed.get(stay["id"], []) if t >= stay_start]
-                later = own or [t for t in summaries.get(pid, [])
-                                if t >= stay_start and (following is None or t < following)]
-                if later:
-                    stay_end = later[0]
+                own_summary_times = [t for t in keyed.get(stay["id"], []) if t >= stay_start]
+                later_summary_times = own_summary_times or [
+                    t
+                    for t in summaries.get(pid, [])
+                    if t >= stay_start and (following is None or t < following)
+                ]
+                if later_summary_times:
+                    stay_end = later_summary_times[0]
                 else:
                     # Its own last vital signs, never one from the next stay.
                     stay_end = _last_vital_in_stay(db, pid, stay_start, following) or stay_start
                     assumed_ends += 1
             else:
-                later = [t for t in summaries.get(pid, []) if t >= stay_start]
-                if later:
-                    stay_end = later[0]
+                later_summary_times = [t for t in summaries.get(pid, []) if t >= stay_start]
+                if later_summary_times:
+                    stay_end = later_summary_times[0]
                 else:
                     vital = last_vital.get(pid)
                     stay_end = vital if vital and vital >= stay_start else stay_start
                     assumed_ends += 1
+        assert stay_end is not None
         if following is not None and following > stay_start and stay_end > following:
             stay_end = following
         overlap = _overlap_hours(stay_start, stay_end, start, horizon)
@@ -1716,10 +2008,13 @@ def _per_stay_totals(db, start: datetime, horizon: datetime, ward: Optional[str]
 
     if include_legacy:
         # Patients with no admission row: the older, per-patient method.
-        legacy = [dict(r) for r in db.execute(
-            "SELECT id, ward, admission_date, status FROM patients "
-            "WHERE COALESCE(status, 'admitted') <> 'registered'"
-        ).fetchall()]
+        legacy = [
+            dict(r)
+            for r in db.execute(
+                "SELECT id, ward, admission_date, status FROM patients "
+                "WHERE COALESCE(status, 'admitted') <> 'registered'"
+            ).fetchall()
+        ]
         legacy = _ward_filter([p for p in legacy if p["id"] not in with_stays], ward)
         for patient in legacy:
             stay_start = _dt(patient.get("admission_date"))
@@ -1740,13 +2035,17 @@ def _per_stay_totals(db, start: datetime, horizon: datetime, ward: Optional[str]
                 counted.add(patient["id"])
                 stay_count += 1
 
-    return {"hours": hours, "counted": counted, "stays": stay_count,
-            "open_stays": open_stays, "assumed_ends": assumed_ends,
-            "repeat_stay_patients": repeat}
+    return {
+        "hours": hours,
+        "counted": counted,
+        "stays": stay_count,
+        "open_stays": open_stays,
+        "assumed_ends": assumed_ends,
+        "repeat_stay_patients": repeat,
+    }
 
 
-def _inpatient_days_per_stay(db, start: datetime, horizon: datetime,
-                             ward: Optional[str]) -> dict:
+def _inpatient_days_per_stay(db, start: datetime, horizon: datetime, ward: str | None) -> dict:
     """Inpatient-days inside [start, horizon), one stay at a time (adt-8a).
 
     Each admission counts from its start (the recorded arrival time, else when
@@ -1773,11 +2072,12 @@ def _inpatient_days_per_stay(db, start: datetime, horizon: datetime,
             "the period; an ended stay with no recorded end is closed at the first "
             "discharge summary after it began, else at the patient's last recorded "
             "vital signs. Repeat stays inside the period are each counted. A patient "
-            "with no admission record is counted from their admission date."),
+            "with no admission record is counted from their admission date."
+        ),
     }
 
 
-def _inpatient_days(db, start: datetime, end: datetime, ward: Optional[str]) -> dict:
+def _inpatient_days(db, start: datetime, end: datetime, ward: str | None) -> dict:
     """Inpatient-days inside [start, end), and an honest account of how.
 
     KNOWN UNDER-COUNT, AND ITS DIRECTION. `patients` holds ONE row per patient
@@ -1798,8 +2098,13 @@ def _inpatient_days(db, start: datetime, end: datetime, ward: Optional[str]) -> 
     """
     horizon = min(end, _now())
     if horizon <= start:
-        return {"inpatient_days": 0.0, "patients": 0, "open_stays": 0,
-                "assumed_ends": 0, "method": "window has not started"}
+        return {
+            "inpatient_days": 0.0,
+            "patients": 0,
+            "open_stays": 0,
+            "assumed_ends": 0,
+            "method": "window has not started",
+        }
 
     # Beds and admissions (adt-8a): once the module is on and has recorded
     # stays, count every stay, not only each patient's current one.
@@ -1810,10 +2115,13 @@ def _inpatient_days(db, start: datetime, end: datetime, ward: Optional[str]) -> 
     # has never been admitted: they have no stay, so they add no inpatient-day.
     # Excluded at the source so a registration desk can never feed this
     # denominator; until registration is switched on no such row exists.
-    patients = [dict(r) for r in db.execute(
-        "SELECT id, ward, admission_date, status FROM patients "
-        "WHERE COALESCE(status, 'admitted') <> 'registered'"
-    ).fetchall()]
+    patients = [
+        dict(r)
+        for r in db.execute(
+            "SELECT id, ward, admission_date, status FROM patients "
+            "WHERE COALESCE(status, 'admitted') <> 'registered'"
+        ).fetchall()
+    ]
     # Stay keying (opd-17b): a patient with more than one stay Orb opened
     # (a readmission onto the same record) is counted stay by stay below,
     # never as one stay from the latest admission date to the latest
@@ -1824,8 +2132,7 @@ def _inpatient_days(db, start: datetime, end: datetime, ward: Optional[str]) -> 
 
     discharges: dict[str, datetime] = {}
     for row in db.execute(
-        "SELECT patient_id, MAX(discharged_at) AS d FROM discharge_summaries "
-        "GROUP BY patient_id"
+        "SELECT patient_id, MAX(discharged_at) AS d FROM discharge_summaries GROUP BY patient_id"
     ).fetchall():
         when = _dt(row["d"])
         if when:
@@ -1875,7 +2182,8 @@ def _inpatient_days(db, start: datetime, end: datetime, ward: Optional[str]) -> 
             "end of the period; a discharged patient with no discharge summary is "
             "closed at their last recorded vital signs. Only each patient's current "
             "admission is visible, so repeat stays inside the period are under-counted, "
-            "which raises every rate computed on this denominator."),
+            "which raises every rate computed on this denominator."
+        ),
     }
     if not repeat:
         return result
@@ -1884,32 +2192,36 @@ def _inpatient_days(db, start: datetime, end: datetime, ward: Optional[str]) -> 
     # When none falls in this period and ward the answer is the one above,
     # exactly as before.
     single = len(counted)
-    extra = _per_stay_totals(db, start, horizon, ward, only_patients=repeat,
-                             native_only=True, include_legacy=False)
+    extra = _per_stay_totals(
+        db, start, horizon, ward, only_patients=repeat, native_only=True, include_legacy=False
+    )
     if not extra["stays"]:
         return result
     hours += extra["hours"]
     counted |= extra["counted"]
-    result.update({
-        "inpatient_days": round(hours / 24.0, 1),
-        "patients": len(counted),
-        "stays": single + extra["stays"],
-        "repeat_stay_patients": len(extra["counted"]),
-        "open_stays": open_stays + extra["open_stays"],
-        "assumed_ends": assumed_ends + extra["assumed_ends"],
-        "method": (
-            "Counted from each patient's admission date to their latest discharge, "
-            "within the period and up to now. A patient still admitted counts to the "
-            "end of the period; a discharged patient with no discharge summary is "
-            "closed at their last recorded vital signs. A patient admitted more than "
-            "once is counted stay by stay: each admission from its start to the "
-            "discharge summary of that stay, else to the last vital signs taken in "
-            "that stay, else it adds no days, and never past the start of the next stay."),
-    })
+    result.update(
+        {
+            "inpatient_days": round(hours / 24.0, 1),
+            "patients": len(counted),
+            "stays": single + extra["stays"],
+            "repeat_stay_patients": len(extra["counted"]),
+            "open_stays": open_stays + extra["open_stays"],
+            "assumed_ends": assumed_ends + extra["assumed_ends"],
+            "method": (
+                "Counted from each patient's admission date to their latest discharge, "
+                "within the period and up to now. A patient still admitted counts to the "
+                "end of the period; a discharged patient with no discharge summary is "
+                "closed at their last recorded vital signs. A patient admitted more than "
+                "once is counted stay by stay: each admission from its start to the "
+                "discharge summary of that stay, else to the last vital signs taken in "
+                "that stay, else it adds no days, and never past the start of the next stay."
+            ),
+        }
+    )
     return result
 
 
-def _register_in_use(db, start: datetime, end: datetime, ward: Optional[str]) -> dict:
+def _register_in_use(db, start: datetime, end: datetime, ward: str | None) -> dict:
     """Did anybody use the incident register in this window at all?
 
     THE GATE THAT STOPS THE WORST NUMBER IN THE PACK. Zero medication errors over
@@ -1934,8 +2246,9 @@ def _register_in_use(db, start: datetime, end: datetime, ward: Optional[str]) ->
         "in_use": len(rows) > 0,
         "by_type": dict(by_type),
         "by_severity": dict(by_severity),
-        "near_miss_share": (round(by_severity.get("near_miss", 0) / len(rows), 4)
-                            if rows else None),
+        "near_miss_share": (
+            round(by_severity.get("near_miss", 0) / len(rows), 4) if rows else None
+        ),
     }
 
 
@@ -1950,9 +2263,17 @@ _REGISTER_UNUSED_BLOCKER = (
 # INDICATORS
 # ═════════════════════════════════════════════════════════════════════════════
 
-def _register_rate_indicator(indicator_id: str, incident_type: str, db,
-                             start: datetime, end: datetime, ward: Optional[str],
-                             usage: dict, bed_days: dict) -> dict:
+
+def _register_rate_indicator(
+    indicator_id: str,
+    incident_type: str,
+    db,
+    start: datetime,
+    end: datetime,
+    ward: str | None,
+    usage: dict,
+    bed_days: dict,
+) -> dict:
     """Shared shape for 'reported X per 1,000 inpatient-days'."""
     indicator = _new_indicator(indicator_id)
     days = float(bed_days["inpatient_days"])
@@ -1985,25 +2306,32 @@ def _register_rate_indicator(indicator_id: str, incident_type: str, db,
     return _finalise(indicator)
 
 
-def _medication_override_rate(db, start: datetime, end: datetime,
-                              ward: Optional[str]) -> dict:
+def _medication_override_rate(db, start: datetime, end: datetime, ward: str | None) -> dict:
     indicator = _new_indicator("medication_override_rate")
-    ward_join = " JOIN patients p ON p.id = t.patient_id AND UPPER(TRIM(p.ward)) = ?" if ward else ""
+    ward_join = (
+        " JOIN patients p ON p.id = t.patient_id AND UPPER(TRIM(p.ward)) = ?" if ward else ""
+    )
     ward_params: list[Any] = [_ward_key(ward)] if ward else []
 
     dose = db.execute(
-        "SELECT COUNT(*) FROM medication_dose_overrides t" + ward_join
-        + " WHERE " + _in_window("t.overridden_at"),
+        "SELECT COUNT(*) FROM medication_dose_overrides t"
+        + ward_join
+        + " WHERE "
+        + _in_window("t.overridden_at"),
         (*ward_params, _iso(start), _iso(end)),
     ).fetchone()[0]
     allergy = db.execute(
-        "SELECT COUNT(*) FROM medication_allergy_overrides t" + ward_join
-        + " WHERE " + _in_window("t.overridden_at"),
+        "SELECT COUNT(*) FROM medication_allergy_overrides t"
+        + ward_join
+        + " WHERE "
+        + _in_window("t.overridden_at"),
         (*ward_params, _iso(start), _iso(end)),
     ).fetchone()[0]
     given = db.execute(
-        "SELECT COUNT(*) FROM medication_administrations t" + ward_join
-        + " WHERE t.status = 'given' AND " + _in_window("t.administered_at"),
+        "SELECT COUNT(*) FROM medication_administrations t"
+        + ward_join
+        + " WHERE t.status = 'given' AND "
+        + _in_window("t.administered_at"),
         (*ward_params, _iso(start), _iso(end)),
     ).fetchone()[0]
 
@@ -2036,13 +2364,17 @@ def _medication_override_rate(db, start: datetime, end: datetime,
     return _finalise(indicator)
 
 
-def _handoff_completion(db, start: datetime, end: datetime, ward: Optional[str]) -> dict:
+def _handoff_completion(db, start: datetime, end: datetime, ward: str | None) -> dict:
     indicator = _new_indicator("handoff_completion")
-    ward_join = " JOIN patients p ON p.id = n.patient_id AND UPPER(TRIM(p.ward)) = ?" if ward else ""
+    ward_join = (
+        " JOIN patients p ON p.id = n.patient_id AND UPPER(TRIM(p.ward)) = ?" if ward else ""
+    )
     ward_params: list[Any] = [_ward_key(ward)] if ward else []
     rows = db.execute(
-        "SELECT n.status AS status FROM scribe_notes n" + ward_join
-        + " WHERE n.note_format = 'handoff' AND " + _in_window("n.created_at"),
+        "SELECT n.status AS status FROM scribe_notes n"
+        + ward_join
+        + " WHERE n.note_format = 'handoff' AND "
+        + _in_window("n.created_at"),
         (*ward_params, _iso(start), _iso(end)),
     ).fetchall()
 
@@ -2073,22 +2405,28 @@ def _handoff_completion(db, start: datetime, end: datetime, ward: Optional[str])
     return _finalise(indicator)
 
 
-def _escalation_ack_compliance(db, start: datetime, end: datetime,
-                               ward: Optional[str]) -> dict:
+def _escalation_ack_compliance(db, start: datetime, end: datetime, ward: str | None) -> dict:
     indicator = _new_indicator("escalation_ack_compliance")
     minutes = _ack_minutes()
     window = timedelta(minutes=minutes)
     indicator["definition"] += f" The response window is {minutes} minutes."
 
-    ward_join = " JOIN patients p ON p.id = e.patient_id AND UPPER(TRIM(p.ward)) = ?" if ward else ""
+    ward_join = (
+        " JOIN patients p ON p.id = e.patient_id AND UPPER(TRIM(p.ward)) = ?" if ward else ""
+    )
     ward_params: list[Any] = [_ward_key(ward)] if ward else []
-    rows = [dict(r) for r in db.execute(
-        "SELECT e.id AS id, e.trigger AS trigger, e.raised_at AS raised_at, "
-        "e.acknowledged_at AS acknowledged_at, e.acknowledged_by AS acknowledged_by, "
-        "e.status AS status FROM clinical_escalations e" + ward_join
-        + " WHERE " + _in_window("e.raised_at"),
-        (*ward_params, _iso(start), _iso(end)),
-    ).fetchall()]
+    rows = [
+        dict(r)
+        for r in db.execute(
+            "SELECT e.id AS id, e.trigger AS trigger, e.raised_at AS raised_at, "
+            "e.acknowledged_at AS acknowledged_at, e.acknowledged_by AS acknowledged_by, "
+            "e.status AS status FROM clinical_escalations e"
+            + ward_join
+            + " WHERE "
+            + _in_window("e.raised_at"),
+            (*ward_params, _iso(start), _iso(end)),
+        ).fetchall()
+    ]
 
     now = _now()
     decidable = 0
@@ -2108,7 +2446,7 @@ def _escalation_ack_compliance(db, start: datetime, end: datetime,
         # promoted or quietly dropped.
         if acked is not None and not row["acknowledged_by"]:
             unnamed_acks += 1
-        trigger = (row["trigger"] or "unspecified")
+        trigger = row["trigger"] or "unspecified"
         bucket = by_trigger.setdefault(trigger, {"decidable": 0, "in_time": 0, "censored": 0})
         if acked is not None:
             delay = (acked - raised).total_seconds() / 60.0
@@ -2135,9 +2473,11 @@ def _escalation_ack_compliance(db, start: datetime, end: datetime,
     indicator["n_observed"] = decidable
     indicator["excluded"] = {
         "still_inside_response_window": censored,
-        "why": ("An escalation raised moments before this pack was generated "
-                "cannot yet have missed its window. Counting it as a miss would "
-                "make the indicator depend on when the report was run."),
+        "why": (
+            "An escalation raised moments before this pack was generated "
+            "cannot yet have missed its window. Counting it as a miss would "
+            "make the indicator depend on when the report was run."
+        ),
     }
     indicator["detail"] = {
         "response_window_minutes": minutes,
@@ -2165,8 +2505,7 @@ def _escalation_ack_compliance(db, start: datetime, end: datetime,
     return _finalise(indicator)
 
 
-def _summary_less_ends_in(db, start: datetime, end: datetime,
-                          ward: Optional[str]) -> list[dict]:
+def _summary_less_ends_in(db, start: datetime, end: datetime, ward: str | None) -> list[dict]:
     """Ends of stay inside [start, end) that the beds and admissions module
     recorded with no discharge summary (services/stay_times.py, adt-8c),
     reopened ones excluded. A ward filter takes the ward the ended stay was
@@ -2175,27 +2514,41 @@ def _summary_less_ends_in(db, start: datetime, end: datetime,
     return _ward_filter(rows, ward)
 
 
-def _disposition_base(db, start: datetime, end: datetime, ward: Optional[str]) -> dict:
+def _disposition_base(db, start: datetime, end: datetime, ward: str | None) -> dict:
     """The shared, coverage-gated denominator for mortality and LAMA.
 
     Voided dispositions (migration 59: a stay reopened as recorded in error)
     are never counted. The end of stay (adt-8a) writes at most one live row
     per admission, so an automatic row and a records-desk row for one death
     are one row here, not two."""
-    ward_join = " JOIN patients p ON p.id = d.patient_id AND UPPER(TRIM(p.ward)) = ?" if ward else ""
+    ward_join = (
+        " JOIN patients p ON p.id = d.patient_id AND UPPER(TRIM(p.ward)) = ?" if ward else ""
+    )
     ward_params: list[Any] = [_ward_key(ward)] if ward else []
-    rows = [dict(r) for r in db.execute(
-        "SELECT d.disposition AS disposition FROM nabh_discharge_dispositions d" + ward_join
-        + " WHERE " + _in_window("d.occurred_at") + " AND d.voided_at IS NULL",
-        (*ward_params, _iso(start), _iso(end)),
-    ).fetchall()]
+    rows = [
+        dict(r)
+        for r in db.execute(
+            "SELECT d.disposition AS disposition FROM nabh_discharge_dispositions d"
+            + ward_join
+            + " WHERE "
+            + _in_window("d.occurred_at")
+            + " AND d.voided_at IS NULL",
+            (*ward_params, _iso(start), _iso(end)),
+        ).fetchall()
+    ]
 
-    summary_join = " JOIN patients p ON p.id = s.patient_id AND UPPER(TRIM(p.ward)) = ?" if ward else ""
-    observed = int(db.execute(
-        "SELECT COUNT(*) FROM discharge_summaries s" + summary_join
-        + " WHERE " + _in_window("s.discharged_at"),
-        (*ward_params, _iso(start), _iso(end)),
-    ).fetchone()[0])
+    summary_join = (
+        " JOIN patients p ON p.id = s.patient_id AND UPPER(TRIM(p.ward)) = ?" if ward else ""
+    )
+    observed = int(
+        db.execute(
+            "SELECT COUNT(*) FROM discharge_summaries s"
+            + summary_join
+            + " WHERE "
+            + _in_window("s.discharged_at"),
+            (*ward_params, _iso(start), _iso(end)),
+        ).fetchone()[0]
+    )
     # Ends the beds and admissions module recorded with no summary are
     # discharge events too (adt-8c); a ward filter takes the ward the ended
     # stay was on. None exist with ORB_ADT off.
@@ -2213,8 +2566,9 @@ def _disposition_base(db, start: datetime, end: datetime, ward: Optional[str]) -
     }
 
 
-def _disposition_indicator(indicator_id: str, numerator_set: frozenset[str],
-                           base: dict, extra_detail: dict) -> dict:
+def _disposition_indicator(
+    indicator_id: str, numerator_set: frozenset[str], base: dict, extra_detail: dict
+) -> dict:
     indicator = _new_indicator(indicator_id)
     counts = base["rows"]
     recorded = base["recorded"]
@@ -2263,21 +2617,25 @@ def _disposition_indicator(indicator_id: str, numerator_set: frozenset[str],
     return _finalise(indicator)
 
 
-def _readmission(db, start: datetime, end: datetime, ward: Optional[str]) -> dict:
+def _readmission(db, start: datetime, end: datetime, ward: str | None) -> dict:
     indicator = _new_indicator("readmission_7_day")
     days = _readmission_days()
     follow_up = timedelta(days=days)
     indicator["label"] = f"Unplanned re-admission within {days} days"
     indicator["definition"] += f" The follow-up window is {days} days."
 
-    ward_join = " JOIN patients p ON p.id = s.patient_id AND UPPER(TRIM(p.ward)) = ?" if ward else ""
+    ward_join = (
+        " JOIN patients p ON p.id = s.patient_id AND UPPER(TRIM(p.ward)) = ?" if ward else ""
+    )
     ward_params: list[Any] = [_ward_key(ward)] if ward else []
-    discharges = [dict(r) for r in db.execute(
-        "SELECT s.patient_id AS patient_id, s.discharged_at AS discharged_at "
-        "FROM discharge_summaries s" + ward_join
-        + " WHERE " + _in_window("s.discharged_at"),
-        (*ward_params, _iso(start), _iso(end)),
-    ).fetchall()]
+    discharges = [
+        dict(r)
+        for r in db.execute(
+            "SELECT s.patient_id AS patient_id, s.discharged_at AS discharged_at "
+            "FROM discharge_summaries s" + ward_join + " WHERE " + _in_window("s.discharged_at"),
+            (*ward_params, _iso(start), _iso(end)),
+        ).fetchall()
+    ]
     # Ends the beds and admissions module recorded with no summary (adt-8c)
     # are discharges this indicator follows up too, except a death: a patient
     # who died cannot be re-admitted, and counting them as 'not re-admitted'
@@ -2288,8 +2646,9 @@ def _readmission(db, start: datetime, end: datetime, ward: Optional[str]) -> dic
         if end_row.get("end_type") == "death":
             deaths_excluded += 1
             continue
-        discharges.append({"patient_id": end_row["patient_id"],
-                           "discharged_at": end_row["ended_at"]})
+        discharges.append(
+            {"patient_id": end_row["patient_id"], "discharged_at": end_row["ended_at"]}
+        )
 
     # Admission events, from BOTH places Orb records one. `admissions` is the
     # modern path; `patients.admission_date` is the legacy one and is still
@@ -2337,10 +2696,12 @@ def _readmission(db, start: datetime, end: datetime, ward: Optional[str]) -> dic
     indicator["n_observed"] = eligible
     indicator["excluded"] = {
         "follow_up_not_elapsed": censored,
-        "why": (f"A patient discharged less than {days} days ago cannot yet be "
-                "known not to have come back. Counting them as 'not re-admitted' "
-                "is how this indicator gets quietly optimistic near the end of "
-                "every reporting period."),
+        "why": (
+            f"A patient discharged less than {days} days ago cannot yet be "
+            "known not to have come back. Counting them as 'not re-admitted' "
+            "is how this indicator gets quietly optimistic near the end of "
+            "every reporting period."
+        ),
     }
     indicator["detail"] = {
         "follow_up_days": days,
@@ -2354,8 +2715,7 @@ def _readmission(db, start: datetime, end: datetime, ward: Optional[str]) -> dic
     if not discharges:
         indicator["state"] = "not_collected"
         indicator["blockers"] = [
-            "No discharge was recorded in this period, so there is nothing to "
-            "follow up."
+            "No discharge was recorded in this period, so there is nothing to follow up."
         ]
         return _finalise(indicator)
     if eligible == 0:
@@ -2369,8 +2729,7 @@ def _readmission(db, start: datetime, end: datetime, ward: Optional[str]) -> dic
     return _finalise(indicator)
 
 
-def _incident_closure(db, start: datetime, end: datetime, ward: Optional[str],
-                      usage: dict) -> dict:
+def _incident_closure(db, start: datetime, end: datetime, ward: str | None, usage: dict) -> dict:
     indicator = _new_indicator("incident_closure_30d")
     target_days = _closure_days()
     target = timedelta(days=target_days)
@@ -2382,10 +2741,14 @@ def _incident_closure(db, start: datetime, end: datetime, ward: Optional[str],
     if ward:
         clauses.append(_ward_match("ward"))
         params.append(_ward_key(ward))
-    rows = [dict(r) for r in db.execute(
-        "SELECT reported_at, status, closed_at FROM nabh_incidents WHERE "
-        + " AND ".join(clauses), params,
-    ).fetchall()]
+    rows = [
+        dict(r)
+        for r in db.execute(
+            "SELECT reported_at, status, closed_at FROM nabh_incidents WHERE "
+            + " AND ".join(clauses),
+            params,
+        ).fetchall()
+    ]
 
     now = _now()
     eligible = 0
@@ -2412,8 +2775,10 @@ def _incident_closure(db, start: datetime, end: datetime, ward: Optional[str],
     indicator["n_observed"] = eligible
     indicator["excluded"] = {
         "target_not_elapsed": censored,
-        "why": (f"An incident reported less than {target_days} days ago has not "
-                "yet missed its closure target."),
+        "why": (
+            f"An incident reported less than {target_days} days ago has not "
+            "yet missed its closure target."
+        ),
     }
     indicator["detail"] = {
         "closure_target_days": target_days,
@@ -2445,10 +2810,12 @@ def _incident_closure(db, start: datetime, end: datetime, ward: Optional[str],
 # Optional laboratory indicators (lis-18)
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def lab_indicators_on() -> bool:
     """The laboratory indicators appear only while Orb's laboratory module is
     on or draining. Read at call time."""
     import config
+
     try:
         return config.module_state("lab") != "off"
     except Exception:  # pragma: no cover - a config without modules is off
@@ -2463,8 +2830,7 @@ def _lab_critical_ack_minutes() -> int:
     return _env_int("ORB_NABH_LAB_CRITICAL_ACK_MINUTES", 15, 1)
 
 
-def _lab_tat_within_target(db, start: datetime, end: datetime,
-                           ward: Optional[str]) -> dict:
+def _lab_tat_within_target(db, start: datetime, end: datetime, ward: str | None) -> dict:
     from services import lab_tat_service
 
     indicator = _new_indicator("lab_tat_within_target")
@@ -2479,13 +2845,14 @@ def _lab_tat_within_target(db, start: datetime, end: datetime,
         "no_target": target["no_target"],
         "simulated": len(rows) - len(real),
         "times_unreadable_or_out_of_order": target["unreadable"],
-        "why": ("A test with no turnaround target cannot be within or outside it, and a "
-                "simulated result says nothing about the laboratory's speed."),
+        "why": (
+            "A test with no turnaround target cannot be within or outside it, and a "
+            "simulated result says nothing about the laboratory's speed."
+        ),
     }
     indicator["detail"] = {
         "tests_reported": len(real),
-        "median_receipt_to_report_minutes":
-            figures["intervals"]["receipt_to_report"]["median"],
+        "median_receipt_to_report_minutes": figures["intervals"]["receipt_to_report"]["median"],
         "p90_receipt_to_report_minutes": figures["intervals"]["receipt_to_report"]["p90"],
     }
     if not real:
@@ -2509,8 +2876,7 @@ def _lab_tat_within_target(db, start: datetime, end: datetime,
     return _finalise(indicator)
 
 
-def _lab_critical_ack_in_window(db, start: datetime, end: datetime,
-                                ward: Optional[str]) -> dict:
+def _lab_critical_ack_in_window(db, start: datetime, end: datetime, ward: str | None) -> dict:
     from services import lab_tat_service
 
     indicator = _new_indicator("lab_critical_ack_in_window")
@@ -2539,12 +2905,16 @@ def _lab_critical_ack_in_window(db, start: datetime, end: datetime,
     indicator["n_observed"] = decidable
     indicator["excluded"] = {
         "still_inside_callback_window": censored,
-        "why": ("A critical result raised moments before this pack was generated cannot yet "
-                "have missed its window."),
+        "why": (
+            "A critical result raised moments before this pack was generated cannot yet "
+            "have missed its window."
+        ),
     }
-    indicator["detail"] = {"callback_window_minutes": minutes,
-                           "critical_results_raised": len(rows),
-                           "late_acknowledgement_minutes": sorted(late)}
+    indicator["detail"] = {
+        "callback_window_minutes": minutes,
+        "critical_results_raised": len(rows),
+        "late_acknowledgement_minutes": sorted(late),
+    }
     if not rows:
         indicator["state"] = "not_collected"
         indicator["blockers"] = [
@@ -2562,9 +2932,11 @@ def _lab_critical_ack_in_window(db, start: datetime, end: datetime,
     return _finalise(indicator)
 
 
-def _lab_indicators(db, start: datetime, end: datetime, ward: Optional[str]) -> list[dict]:
-    return [_lab_tat_within_target(db, start, end, ward),
-            _lab_critical_ack_in_window(db, start, end, ward)]
+def _lab_indicators(db, start: datetime, end: datetime, ward: str | None) -> list[dict]:
+    return [
+        _lab_tat_within_target(db, start, end, ward),
+        _lab_critical_ack_in_window(db, start, end, ward),
+    ]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -2611,6 +2983,7 @@ def adt_indicators_on() -> bool:
     """The bed movement indicators appear only while Beds and admissions
     (ORB_ADT) is not off. Read at call time."""
     import config
+
     try:
         return config.module_state("adt") != "off"
     except Exception:  # pragma: no cover - a config without modules is off
@@ -2623,15 +2996,18 @@ def _gap_catalogue() -> list[dict]:
     reasons and leave the list; with Beds and admissions off it is
     NOT_COLLECTED_CATALOGUE exactly."""
     ledger = adt_indicators_on()
-    return [dict(g) for g in NOT_COLLECTED_CATALOGUE
-            if not (ledger and g["code"] in _LEDGER_INDICATOR_CODES)]
+    return [
+        dict(g)
+        for g in NOT_COLLECTED_CATALOGUE
+        if not (ledger and g["code"] in _LEDGER_INDICATOR_CODES)
+    ]
 
 
 def _codes_words(wards: list[dict]) -> str:
     return ", ".join(sorted(str(w.get("code") or w.get("id")) for w in wards))
 
 
-def _ledger_context(db, start: datetime, end: datetime, ward: Optional[str]) -> dict:
+def _ledger_context(db, start: datetime, end: datetime, ward: str | None) -> dict:
     """Everything the three ledger readers share, read once: the wards of Bed
     setup, the chosen ward, the stays overlapping the period (and the 48 hours
     after it, for a return to intensive care), and which wards' registers were
@@ -2647,15 +3023,25 @@ def _ledger_context(db, start: datetime, end: datetime, ward: Optional[str]) -> 
 
     now = _now()
     ctx: dict[str, Any] = {
-        "start": start, "end": end, "horizon": min(end, now), "now": now,
-        "ward": ward, "tz": hospital_timezone(), "problem": None, "wards": [],
-        "chosen": None, "icu": set(), "stays": [], "ended_without_time": 0,
-        "gaps_scope": [], "gaps_all": [],
+        "start": start,
+        "end": end,
+        "horizon": min(end, now),
+        "now": now,
+        "ward": ward,
+        "tz": hospital_timezone(),
+        "problem": None,
+        "wards": [],
+        "chosen": None,
+        "icu": set(),
+        "stays": [],
+        "ended_without_time": 0,
+        "gaps_scope": [],
+        "gaps_all": [],
     }
     has_wards = db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'wards'").fetchone()
-    cols = ({r[1] for r in db.execute("PRAGMA table_info(wards)").fetchall()}
-            if has_wards else set())
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'wards'"
+    ).fetchone()
+    cols = {r[1] for r in db.execute("PRAGMA table_info(wards)").fetchall()} if has_wards else set()
     if "ledger_complete_from" not in cols:
         ctx["problem"] = "no_wards"
         return ctx
@@ -2674,24 +3060,36 @@ def _ledger_context(db, start: datetime, end: datetime, ward: Optional[str]) -> 
 
     until = min(now, end + census.RETURN_WINDOW)
     if until > start:
-        stays, no_end_time = census._load_stays(db, since=start, until=until,
-                                                wards=census._Wards(wards))
+        stays, no_end_time = census._load_stays(
+            db, since=start, until=until, wards=census._Wards(wards)
+        )
         ctx["stays"] = stays
         ctx["ended_without_time"] = no_end_time
 
-    held = {seg[0] for stay in ctx["stays"] for seg in stay.segments
-            if seg[0] and seg[1] < end and seg[2] > start}
-    needed = [w for w in wards
-              if (_dt(w.get("created_at")) or start) < end
-              and (w.get("is_active") or w["id"] in held)]
+    held = {
+        seg[0]
+        for stay in ctx["stays"]
+        for seg in stay.segments
+        if seg[0] and seg[1] < end and seg[2] > start
+    }
+    needed = [
+        w
+        for w in wards
+        if (_dt(w.get("created_at")) or start) < end and (w.get("is_active") or w["id"] in held)
+    ]
 
     def incomplete(w: dict) -> bool:
         complete_from = _dt(w.get("ledger_complete_from"))
         return complete_from is None or complete_from > start
 
     ctx["gaps_all"] = [w for w in needed if incomplete(w)]
-    ctx["gaps_scope"] = ([ctx["chosen"]] if ctx["chosen"] is not None and incomplete(ctx["chosen"])
-                         else [] if ctx["chosen"] is not None else ctx["gaps_all"])
+    ctx["gaps_scope"] = (
+        [ctx["chosen"]]
+        if ctx["chosen"] is not None and incomplete(ctx["chosen"])
+        else []
+        if ctx["chosen"] is not None
+        else ctx["gaps_all"]
+    )
     return ctx
 
 
@@ -2700,8 +3098,10 @@ def _ledger_problem_words(ctx: dict, what: str) -> str:
     if ctx["problem"] == "no_wards":
         return f"No ward is set up in Bed setup yet, so {what} cannot be read from it."
     if ctx["problem"] == "ward_not_in_setup":
-        return (f"{str(ctx['ward']).strip()} is not a ward in Bed setup, so {what} cannot be "
-                "read from the bed movement record for it.")
+        return (
+            f"{str(ctx['ward']).strip()} is not a ward in Bed setup, so {what} cannot be "
+            "read from the bed movement record for it."
+        )
     if ctx["problem"] == "unreadable":
         return f"The bed movement record could not be read, so {what} cannot be counted from it."
     return ""
@@ -2713,14 +3113,18 @@ def _ledger_bed_days(ctx: dict, fallback: dict) -> dict:
     admissions figure with the reason it was used instead."""
     words = _ledger_problem_words(ctx, "inpatient days")
     if not words and ctx["gaps_scope"]:
-        words = ("The bed register was not complete for the whole period on "
-                 f"{_codes_words(ctx['gaps_scope'])}, so inpatient days cannot be read from the "
-                 "bed movement record.")
+        words = (
+            "The bed register was not complete for the whole period on "
+            f"{_codes_words(ctx['gaps_scope'])}, so inpatient days cannot be read from the "
+            "bed movement record."
+        )
     if not words and ctx["horizon"] <= ctx["start"]:
         words = "The period has not started, so there are no inpatient days to read."
     if words:
-        return {**fallback, "ledger": {"used": False,
-                                       "reason": words + " They are counted from the admissions."}}
+        return {
+            **fallback,
+            "ledger": {"used": False, "reason": words + " They are counted from the admissions."},
+        }
 
     chosen = ctx["chosen"]
     start, horizon = ctx["start"], ctx["horizon"]
@@ -2728,9 +3132,11 @@ def _ledger_bed_days(ctx: dict, fallback: dict) -> dict:
     patients: set[str] = set()
     stays = open_stays = 0
     for stay in ctx["stays"]:
-        shared = sum(_overlap_hours(s0, s1, start, horizon)
-                     for ward_id, s0, s1 in stay.segments
-                     if chosen is None or ward_id == chosen["id"])
+        shared = sum(
+            _overlap_hours(s0, s1, start, horizon)
+            for ward_id, s0, s1 in stay.segments
+            if chosen is None or ward_id == chosen["id"]
+        )
         if shared <= 0:
             continue
         hours += shared
@@ -2765,11 +3171,15 @@ def _bed_occupancy(db, ctx: dict) -> dict:
     not_ended = max(0, (asked_last - max(last, first - timedelta(days=1))).days)
     indicator["excluded"] = {
         "days_not_ended": not_ended,
-        "why": ("Occupancy counts the patients present at midnight, so a day that has not "
-                "ended yet cannot be counted."),
+        "why": (
+            "Occupancy counts the patients present at midnight, so a day that has not "
+            "ended yet cannot be counted."
+        ),
     }
-    indicator["detail"] = {"method": census.METHODS["occupancy"],
-                           "beds_method": census.METHODS["beds"]}
+    indicator["detail"] = {
+        "method": census.METHODS["occupancy"],
+        "beds_method": census.METHODS["beds"],
+    }
 
     words = _ledger_problem_words(ctx, "bed occupancy")
     if words:
@@ -2777,58 +3187,87 @@ def _bed_occupancy(db, ctx: dict) -> dict:
         indicator["blockers"] = [words]
         return _finalise(indicator)
     if first > last:
-        indicator["blockers"] = ["No whole day of this period has ended yet. Bed occupancy "
-                                 "counts whole days only."]
+        indicator["blockers"] = [
+            "No whole day of this period has ended yet. Bed occupancy counts whole days only."
+        ]
         return _finalise(indicator)
     if (last - first).days + 1 > _LEDGER_MAX_DAYS:
-        indicator["blockers"] = [f"Choose a period of at most {_LEDGER_MAX_DAYS} days for bed "
-                                 "occupancy."]
+        indicator["blockers"] = [
+            f"Choose a period of at most {_LEDGER_MAX_DAYS} days for bed occupancy."
+        ]
         return _finalise(indicator)
 
     chosen = ctx["chosen"]
-    out = census.census_on(db, first_day=first, last_day=last,
-                           wards=[chosen] if chosen is not None else ctx["wards"],
-                           all_wards=ctx["wards"], hospital=chosen is None, tz=tz, now=now)
+    out = census.census_on(
+        db,
+        first_day=first,
+        last_day=last,
+        wards=[chosen] if chosen is not None else ctx["wards"],
+        all_wards=ctx["wards"],
+        hospital=chosen is None,
+        tz=tz,
+        now=now,
+    )
     ward_rows = out["wards"]
     complete = [w for w in ward_rows if (w.get("totals") or {}).get("status") == "complete"]
     incomplete = [w for w in ward_rows if w not in complete]
     scope = ward_rows[0] if chosen is not None else (out.get("hospital") or {})
     totals = scope.get("totals") or {}
-    indicator["detail"].update({
-        "first_day": first.isoformat(),
-        "last_day": last.isoformat(),
-        "days_counted": totals.get("complete_days", 0),
-        # Listed only for wards complete for the WHOLE period.
-        "by_ward": [{
-            "code": w.get("code"), "name": w.get("name"),
-            "occupancy": (w["totals"].get("occupancy") or {}).get("nabh"),
-            "midnight_census_total": w["totals"].get("midnight_census_total"),
-            "available_bed_days": w["totals"].get("available_bed_days"),
-        } for w in complete],
-        "wards_not_counted": [{
-            "code": w.get("code"), "name": w.get("name"),
-            "first_complete_day": w.get("first_complete_day"),
-            "reason": next((d.get("reason") for d in w.get("days") or []
-                            if d.get("status") != "complete"), None),
-        } for w in incomplete],
-    })
+    indicator["detail"].update(
+        {
+            "first_day": first.isoformat(),
+            "last_day": last.isoformat(),
+            "days_counted": totals.get("complete_days", 0),
+            # Listed only for wards complete for the WHOLE period.
+            "by_ward": [
+                {
+                    "code": w.get("code"),
+                    "name": w.get("name"),
+                    "occupancy": (w["totals"].get("occupancy") or {}).get("nabh"),
+                    "midnight_census_total": w["totals"].get("midnight_census_total"),
+                    "available_bed_days": w["totals"].get("available_bed_days"),
+                }
+                for w in complete
+            ],
+            "wards_not_counted": [
+                {
+                    "code": w.get("code"),
+                    "name": w.get("name"),
+                    "first_complete_day": w.get("first_complete_day"),
+                    "reason": next(
+                        (
+                            d.get("reason")
+                            for d in w.get("days") or []
+                            if d.get("status") != "complete"
+                        ),
+                        None,
+                    ),
+                }
+                for w in incomplete
+            ],
+        }
+    )
 
     if totals.get("status") != "complete":
         if chosen is not None:
             code = chosen.get("code")
-            words = (f"The bed register of {code} has not been marked complete in Bed setup, so "
-                     "its bed occupancy is not counted yet."
-                     if not chosen.get("ledger_complete_from") else
-                     f"The bed register of {code} was not complete for the whole period, so its "
-                     "bed occupancy cannot be counted for it. Choose a period that starts on or "
-                     "after the first full day after the register was marked complete.")
+            words = (
+                f"The bed register of {code} has not been marked complete in Bed setup, so "
+                "its bed occupancy is not counted yet."
+                if not chosen.get("ledger_complete_from")
+                else f"The bed register of {code} was not complete for the whole period, so its "
+                "bed occupancy cannot be counted for it. Choose a period that starts on or "
+                "after the first full day after the register was marked complete."
+            )
             first_complete = ward_rows[0].get("first_complete_day")
         else:
             blocking = [w for w in incomplete if w.get("is_active")] or incomplete
-            words = ("Bed occupancy for the hospital needs every ward's bed register complete "
-                     "for the whole period. Not complete for all of it: "
-                     f"{_codes_words(blocking)}. Choose a period that starts after those "
-                     "registers were marked complete, or choose one ward.")
+            words = (
+                "Bed occupancy for the hospital needs every ward's bed register complete "
+                "for the whole period. Not complete for all of it: "
+                f"{_codes_words(blocking)}. Choose a period that starts after those "
+                "registers were marked complete, or choose one ward."
+            )
             days = [w.get("first_complete_day") for w in blocking]
             first_complete = max(days) if days and all(days) else None
         indicator["detail"]["first_complete_day"] = first_complete
@@ -2841,24 +3280,27 @@ def _bed_occupancy(db, ctx: dict) -> dict:
     indicator["numerator"] = census_total
     indicator["denominator"] = round(available, 2)
     indicator["n_observed"] = int(available)
-    indicator["detail"].update({
-        "average_midnight_census": totals.get("average_midnight_census"),
-        "licensed_bed_days": totals.get("licensed_bed_days"),
-        "inpatient_days": totals.get("inpatient_days"),
-        "occupancy_over_licensed_beds": occupancy.get("licensed"),
-        "occupancy_from_inpatient_days": occupancy.get("hours"),
-    })
+    indicator["detail"].update(
+        {
+            "average_midnight_census": totals.get("average_midnight_census"),
+            "licensed_bed_days": totals.get("licensed_bed_days"),
+            "inpatient_days": totals.get("inpatient_days"),
+            "occupancy_over_licensed_beds": occupancy.get("licensed"),
+            "occupancy_from_inpatient_days": occupancy.get("hours"),
+        }
+    )
     if chosen is None:
         indicator["detail"]["not_on_a_ward"] = sum(
-            int(d.get("not_on_a_ward") or 0) for d in scope.get("days") or [])
+            int(d.get("not_on_a_ward") or 0) for d in scope.get("days") or []
+        )
     if available <= 0:
         indicator["state"] = "not_collected"
-        indicator["blockers"] = ["No bed was set up in Bed setup for this period, so there is "
-                                 "nothing to divide by."]
+        indicator["blockers"] = [
+            "No bed was set up in Bed setup for this period, so there is nothing to divide by."
+        ]
         return _finalise(indicator)
     indicator["value"] = occupancy.get("nabh")
-    indicator["display"] = (f"{indicator['value']:.1f}%"
-                            if indicator["value"] is not None else None)
+    indicator["display"] = f"{indicator['value']:.1f}%" if indicator["value"] is not None else None
     indicator["state"] = "reported"
     return _finalise(indicator)
 
@@ -2873,8 +3315,10 @@ def _icu_return_48h(ctx: dict) -> dict:
 
     indicator = _new_indicator("icu_return_48h")
     window = census.RETURN_WINDOW
-    indicator["detail"] = {"method": census.METHODS["return_to_icu"],
-                           "return_window_hours": int(window.total_seconds() // 3600)}
+    indicator["detail"] = {
+        "method": census.METHODS["return_to_icu"],
+        "return_window_hours": int(window.total_seconds() // 3600),
+    }
 
     words = _ledger_problem_words(ctx, "a return to intensive care")
     if words:
@@ -2885,19 +3329,24 @@ def _icu_return_48h(ctx: dict) -> dict:
     chosen = ctx["chosen"]
     if not icu:
         indicator["state"] = "not_collected"
-        indicator["blockers"] = ["No intensive care ward (ward type ICU, NICU or PICU) is set up "
-                                 "in Bed setup, so no move out of intensive care can be seen."]
+        indicator["blockers"] = [
+            "No intensive care ward (ward type ICU, NICU or PICU) is set up "
+            "in Bed setup, so no move out of intensive care can be seen."
+        ]
         return _finalise(indicator)
     if chosen is not None and chosen["id"] not in icu:
-        indicator["blockers"] = [f"{chosen.get('code')} is not an intensive care ward, so no "
-                                 "return to intensive care is counted for it."]
+        indicator["blockers"] = [
+            f"{chosen.get('code')} is not an intensive care ward, so no "
+            "return to intensive care is counted for it."
+        ]
         return _finalise(indicator)
     if ctx["gaps_all"]:
         indicator["blockers"] = [
             "A return to intensive care needs every ward's bed register complete for the whole "
             "period, because a patient leaves intensive care for any ward and comes back from "
             f"any ward. Not complete for all of it: {_codes_words(ctx['gaps_all'])}. Choose a "
-            "period that starts after those registers were marked complete."]
+            "period that starts after those registers were marked complete."
+        ]
         return _finalise(indicator)
 
     start, horizon, now = ctx["start"], ctx["horizon"], ctx["now"]
@@ -2911,7 +3360,7 @@ def _icu_return_48h(ctx: dict) -> dict:
     moved = returned = in_new_stay = not_returned = pending = died = left = 0
     for stay in ctx["stays"]:
         known = [seg for seg in stay.segments if seg[0] is not None]
-        for (w_prev, _p0, p1), (w_next, _n0, _n1) in zip(known, known[1:]):
+        for (w_prev, _p0, p1), (w_next, _n0, _n1) in zip(known, known[1:], strict=False):
             if w_prev == w_next or w_prev not in icu or w_next in icu:
                 continue
             if chosen is not None and w_prev != chosen["id"]:
@@ -2919,8 +3368,9 @@ def _icu_return_48h(ctx: dict) -> dict:
             if not (start <= p1 < horizon):
                 continue
             moved += 1
-            back = [(t, sid) for t, sid in entries.get(stay.patient_id, [])
-                    if p1 < t <= p1 + window]
+            back = [
+                (t, sid) for t, sid in entries.get(stay.patient_id, []) if p1 < t <= p1 + window
+            ]
             if back:
                 returned += 1
                 if all(sid != stay.id for _t, sid in back):
@@ -2945,20 +3395,26 @@ def _icu_return_48h(ctx: dict) -> dict:
         "still_inside_48_hours": pending,
         "died_within_48_hours": died,
         "left_the_hospital_within_48_hours": left,
-        "why": ("A move out of intensive care less than 48 hours ago cannot yet be known not to "
-                "return; a patient who died or left the hospital within the 48 hours can never "
-                "be known. Counting any of them as not returned would lower this rate."),
+        "why": (
+            "A move out of intensive care less than 48 hours ago cannot yet be known not to "
+            "return; a patient who died or left the hospital within the 48 hours can never "
+            "be known. Counting any of them as not returned would lower this rate."
+        ),
     }
-    indicator["detail"].update({
-        "moves_out_of_intensive_care": moved,
-        "returned_within_48_hours": returned,
-        "returned_in_a_new_admission": in_new_stay,
-        "not_returned": not_returned,
-    })
+    indicator["detail"].update(
+        {
+            "moves_out_of_intensive_care": moved,
+            "returned_within_48_hours": returned,
+            "returned_in_a_new_admission": in_new_stay,
+            "not_returned": not_returned,
+        }
+    )
     if moved == 0:
         indicator["state"] = "not_collected"
-        indicator["blockers"] = ["No patient moved out of an intensive care ward to another ward "
-                                 "in this period, so there is no return to count."]
+        indicator["blockers"] = [
+            "No patient moved out of an intensive care ward to another ward "
+            "in this period, so there is no return to count."
+        ]
         return _finalise(indicator)
     if decidable == 0:
         indicator["state"] = "insufficient_data"
@@ -2969,7 +3425,7 @@ def _icu_return_48h(ctx: dict) -> dict:
     return _finalise(indicator)
 
 
-def _ledger_or_none(db, start: datetime, end: datetime, ward: Optional[str]) -> Optional[dict]:
+def _ledger_or_none(db, start: datetime, end: datetime, ward: str | None) -> dict | None:
     """The shared ledger read while Beds and admissions is not off, else None.
     A record that cannot be read gives the indicators a reason, never a
     failed pack: the nine indicators above must still print."""
@@ -2980,31 +3436,50 @@ def _ledger_or_none(db, start: datetime, end: datetime, ward: Optional[str]) -> 
     except Exception:  # noqa: BLE001 - the pack must still print
         logger.exception("NABH: the bed movement record could not be read")
         now = _now()
-        return {"start": start, "end": end, "horizon": min(end, now), "now": now,
-                "ward": ward, "tz": timezone.utc, "problem": "unreadable", "wards": [],
-                "chosen": None, "icu": set(), "stays": [], "ended_without_time": 0,
-                "gaps_scope": [], "gaps_all": []}
+        return {
+            "start": start,
+            "end": end,
+            "horizon": min(end, now),
+            "now": now,
+            "ward": ward,
+            "tz": UTC,
+            "problem": "unreadable",
+            "wards": [],
+            "chosen": None,
+            "icu": set(),
+            "stays": [],
+            "ended_without_time": 0,
+            "gaps_scope": [],
+            "gaps_all": [],
+        }
 
 
 def _ledger_indicators(db, ctx: dict) -> list[dict]:
     """QI-UTL-01 and QI-OUT-04, each with its own state."""
     out: list[dict] = []
-    for indicator_id, compute in (("bed_occupancy", lambda: _bed_occupancy(db, ctx)),
-                                  ("icu_return_48h", lambda: _icu_return_48h(ctx))):
+    for indicator_id, compute in (
+        ("bed_occupancy", lambda: _bed_occupancy(db, ctx)),
+        ("icu_return_48h", lambda: _icu_return_48h(ctx)),
+    ):
         try:
             out.append(compute())
         except Exception:  # noqa: BLE001 - one indicator never sinks the pack
             logger.exception("NABH: %s could not be computed", indicator_id)
             failed = _new_indicator(indicator_id)
-            failed["blockers"] = ["This indicator could not be computed from the bed movement "
-                                  "record. The error is in the server log."]
+            failed["blockers"] = [
+                "This indicator could not be computed from the bed movement "
+                "record. The error is in the server log."
+            ]
             out.append(_finalise(failed))
     return out
 
 
 def indicators(
-    *, period_start: Optional[str] = None, period_end: Optional[str] = None,
-    ward: Optional[str] = None, db: Any = None,
+    *,
+    period_start: str | None = None,
+    period_end: str | None = None,
+    ward: str | None = None,
+    db: Any = None,
 ) -> dict:
     """Every indicator for one period, each with its own honest state.
 
@@ -3027,19 +3502,22 @@ def indicators(
         disposition_base = _disposition_base(conn, start, end, ward)
 
         computed = [
-            _register_rate_indicator("medication_error_rate", "medication_error",
-                                     conn, start, end, ward, usage, bed_days),
+            _register_rate_indicator(
+                "medication_error_rate", "medication_error", conn, start, end, ward, usage, bed_days
+            ),
             _medication_override_rate(conn, start, end, ward),
-            _register_rate_indicator("patient_fall_rate", "patient_fall",
-                                     conn, start, end, ward, usage, bed_days),
+            _register_rate_indicator(
+                "patient_fall_rate", "patient_fall", conn, start, end, ward, usage, bed_days
+            ),
             _handoff_completion(conn, start, end, ward),
             _escalation_ack_compliance(conn, start, end, ward),
-            _disposition_indicator("inpatient_mortality", DEATH_DISPOSITIONS,
-                                   disposition_base, {}),
+            _disposition_indicator("inpatient_mortality", DEATH_DISPOSITIONS, disposition_base, {}),
             _disposition_indicator(
-                "against_medical_advice_rate", AMA_DISPOSITIONS, disposition_base,
-                {"absconded_reported_separately":
-                 disposition_base["rows"].get("absconded", 0)}),
+                "against_medical_advice_rate",
+                AMA_DISPOSITIONS,
+                disposition_base,
+                {"absconded_reported_separately": disposition_base["rows"].get("absconded", 0)},
+            ),
             _readmission(conn, start, end, ward),
             _incident_closure(conn, start, end, ward, usage),
         ]
@@ -3050,9 +3528,12 @@ def indicators(
 
         states = Counter(i["state"] for i in computed)
         return {
-            "period": {"start": _iso(start), "end": _iso(end),
-                       "start_date": start.date().isoformat(),
-                       "end_date": (end - timedelta(days=1)).date().isoformat()},
+            "period": {
+                "start": _iso(start),
+                "end": _iso(end),
+                "start_date": start.date().isoformat(),
+                "end_date": (end - timedelta(days=1)).date().isoformat(),
+            },
             "ward": ward,
             "generated_at": _iso(_now()),
             "indicators": computed,
@@ -3087,6 +3568,7 @@ def indicators(
 # THE EVIDENCE PACK
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _deidentify(incident: dict) -> dict:
     """Strip the direct patient identifier from a register row.
 
@@ -3103,18 +3585,27 @@ def _deidentify(incident: dict) -> dict:
 
 
 def build_evidence_pack(
-    *, period_start: Optional[str] = None, period_end: Optional[str] = None,
-    ward: Optional[str] = None, generated_by: Optional[str] = None,
-    include_patient_identifiers: bool = False, db: Any = None,
+    *,
+    period_start: str | None = None,
+    period_end: str | None = None,
+    ward: str | None = None,
+    generated_by: str | None = None,
+    include_patient_identifiers: bool = False,
+    db: Any = None,
 ) -> dict:
     """The date-ranged pack, as one JSON document. Reads only; writes nothing."""
     start, end = resolve_period(period_start, period_end, default_days=90)
 
     def _work(conn) -> dict:
-        dash = indicators(period_start=period_start, period_end=period_end,
-                          ward=ward, db=conn)
-        register = list_incidents(period_start=period_start, period_end=period_end,
-                                  ward=ward, include_void=True, limit=1000, db=conn)
+        dash = indicators(period_start=period_start, period_end=period_end, ward=ward, db=conn)
+        register = list_incidents(
+            period_start=period_start,
+            period_end=period_end,
+            ward=ward,
+            include_void=True,
+            limit=1000,
+            db=conn,
+        )
         rows = register["incidents"]
         if not include_patient_identifiers:
             rows = [_deidentify(r) for r in rows]
@@ -3166,6 +3657,7 @@ def _site_header() -> dict:
     a pack with a made-up hospital name on it is a forgery."""
     try:
         from services.site_config_service import current_site_config
+
         cfg = current_site_config()
         return {"site_name": cfg.site_name, "configured": bool(cfg.present)}
     except Exception:  # pragma: no cover — config is optional by design
@@ -3187,31 +3679,36 @@ def _limitations(dash: dict, include_patient_identifiers: bool) -> list[str]:
         out.append(
             f"{summary['not_collected']} of {summary['total']} indicators have NO "
             "source data in this period and are marked NOT COLLECTED. They are not "
-            "zero and must not be reported as zero.")
+            "zero and must not be reported as zero."
+        )
     if summary["insufficient_data"]:
         out.append(
             f"{summary['insufficient_data']} of {summary['total']} indicators have "
             "a source but too little of it, and are marked INSUFFICIENT DATA. The "
             "arithmetic is retained in the machine-readable detail for audit and "
-            "is deliberately not displayed.")
+            "is deliberately not displayed."
+        )
     bed_days = dash["denominators"]["inpatient_days"]
     if bed_days.get("open_stays"):
         out.append(
             f"{bed_days['open_stays']} patient(s) were still admitted at the end of "
             "the period; their stay is counted to the period end, not to a "
-            "discharge that has not happened.")
+            "discharge that has not happened."
+        )
     if bed_days.get("assumed_ends"):
         out.append(
             f"{bed_days['assumed_ends']} discharged patient(s) had no discharge "
             "record, so their stay was closed at their last recorded vital. That "
             "understates inpatient-days and therefore overstates every rate "
-            "computed per 1,000 inpatient-days.")
+            "computed per 1,000 inpatient-days."
+        )
     if bed_days.get("ended_without_time"):
         out.append(
             f"{bed_days['ended_without_time']} stay(s) in the bed movement record were recorded "
             "as ended with no end time, so each was closed at its last recorded movement, else "
             "at its start. That understates inpatient-days and therefore overstates every rate "
-            "computed per 1,000 inpatient-days.")
+            "computed per 1,000 inpatient-days."
+        )
     if (bed_days.get("ledger") or {}).get("reason"):
         out.append(bed_days["ledger"]["reason"])
     coverage = dash["denominators"]["dispositions"]
@@ -3219,27 +3716,32 @@ def _limitations(dash: dict, include_patient_identifiers: bool) -> list[str]:
         out.append(
             f"Discharge dispositions were recorded for {coverage['coverage'] * 100:.0f}% "
             f"of the {coverage['discharge_events_observed']} discharge events Orb "
-            "observed. Mortality and LAMA are computed on recorded dispositions only.")
+            "observed. Mortality and LAMA are computed on recorded dispositions only."
+        )
     if bed_days.get("source") == "bed_movement_record":
         out.append(
             "Inpatient days were counted from the bed movement record, on the ward where "
             "each patient lay hour by hour. The other ward-filtered figures use each "
             "patient's CURRENT ward, so a ward-filtered pack attributes those to where the "
-            "patient is now.")
+            "patient is now."
+        )
     else:
         out.append(
             "Ward attribution uses each patient's CURRENT ward, not the ward they "
             "occupied on each day, so a ward-filtered pack attributes a whole stay to "
-            "where the patient is now.")
+            "where the patient is now."
+        )
     if include_patient_identifiers:
         out.append(
             "THIS PACK CONTAINS PATIENT IDENTIFIERS. It is PHI: handle, transmit "
-            "and destroy it accordingly.")
+            "and destroy it accordingly."
+        )
     else:
         out.append(
             "Patient identifiers have been removed from the incident rows. "
             "Free-text incident descriptions are NOT redacted and may still name "
-            "a person. Read them before this pack leaves the hospital.")
+            "a person. Read them before this pack leaves the hospital."
+        )
     return out
 
 
@@ -3250,9 +3752,13 @@ def _canonical_json(pack: dict) -> str:
 
 
 def record_evidence_export(
-    *, period_start: Optional[str] = None, period_end: Optional[str] = None,
-    ward: Optional[str] = None, generated_by: Optional[str] = None,
-    include_patient_identifiers: bool = False, db: Any = None,
+    *,
+    period_start: str | None = None,
+    period_end: str | None = None,
+    ward: str | None = None,
+    generated_by: str | None = None,
+    include_patient_identifiers: bool = False,
+    db: Any = None,
 ) -> dict:
     """Build the pack, log that it was produced, and return it with its digest.
 
@@ -3263,9 +3769,13 @@ def record_evidence_export(
     the returned document.
     """
     pack = build_evidence_pack(
-        period_start=period_start, period_end=period_end, ward=ward,
+        period_start=period_start,
+        period_end=period_end,
+        ward=ward,
         generated_by=generated_by,
-        include_patient_identifiers=include_patient_identifiers, db=db)
+        include_patient_identifiers=include_patient_identifiers,
+        db=db,
+    )
     digest = hashlib.sha256(_canonical_json(pack).encode("utf-8")).hexdigest()
     # Facility 1's series (multisite-7a): the pack is hospital-wide until the
     # NABH indicators run per facility.
@@ -3279,12 +3789,23 @@ def record_evidence_export(
             "indicator_count, reported_count, insufficient_count, not_collected_count, "
             "incident_count, content_sha256, summary_json, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (reference, pack["period"]["start"], pack["period"]["end"], ward,
-             generated_by, pack["generated_at"],
-             1 if include_patient_identifiers else 0, summary["total"],
-             summary["reported"], summary["insufficient_data"],
-             summary["not_collected"], pack["register"]["count"], digest,
-             json.dumps(summary), _iso(_now())),
+            (
+                reference,
+                pack["period"]["start"],
+                pack["period"]["end"],
+                ward,
+                generated_by,
+                pack["generated_at"],
+                1 if include_patient_identifiers else 0,
+                summary["total"],
+                summary["reported"],
+                summary["insufficient_data"],
+                summary["not_collected"],
+                pack["register"]["count"],
+                digest,
+                json.dumps(summary),
+                _iso(_now()),
+            ),
         )
         return pack
 
@@ -3299,16 +3820,20 @@ def record_evidence_export(
     pack["digest_note"] = (
         "SHA-256 over the canonical JSON of this pack EXCLUDING the 'reference', "
         "'content_sha256' and 'digest_note' fields. Recompute it by removing those "
-        "three keys, serialising with sorted keys and no whitespace, and hashing.")
+        "three keys, serialising with sorted keys and no whitespace, and hashing."
+    )
     return pack
 
 
 def list_evidence_exports(*, limit: int = 50, db: Any = None) -> dict:
     def _work(conn) -> dict:
-        rows = [dict(r) for r in conn.execute(
-            "SELECT * FROM nabh_evidence_exports ORDER BY generated_at DESC, id DESC "
-            "LIMIT ?", (max(1, min(int(limit), 500)),),
-        ).fetchall()]
+        rows = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT * FROM nabh_evidence_exports ORDER BY generated_at DESC, id DESC LIMIT ?",
+                (max(1, min(int(limit), 500)),),
+            ).fetchall()
+        ]
         return {"exports": rows, "count": len(rows)}
 
     if db is not None:
@@ -3340,8 +3865,7 @@ def render_pack_markdown(pack: dict) -> str:
         "# NABH accreditation evidence pack",
         "",
         f"**Hospital:** {name}  ",
-        f"**Period:** {period.get('start_date')} to {period.get('end_date')} "
-        f"(inclusive)  ",
+        f"**Period:** {period.get('start_date')} to {period.get('end_date')} (inclusive)  ",
         f"**Ward:** {pack.get('ward') or 'All wards'}  ",
         f"**Generated:** {pack.get('generated_at')} by {pack.get('generated_by') or 'unknown'}  ",
     ]
@@ -3356,15 +3880,25 @@ def render_pack_markdown(pack: dict) -> str:
         f"{summary.get('reported', 0)} reported · "
         f"{summary.get('insufficient_data', 0)} insufficient data · "
         f"{summary.get('not_collected', 0)} not collected · "
-        f"{summary.get('not_computable', 0)} not computable")
-    lines += ["", "| Code | Indicator | Result | Numerator | Denominator |",
-              "| --- | --- | --- | --- | --- |"]
+        f"{summary.get('not_computable', 0)} not computable"
+    )
+    lines += [
+        "",
+        "| Code | Indicator | Result | Numerator | Denominator |",
+        "| --- | --- | --- | --- | --- |",
+    ]
     for ind in pack.get("indicators", []):
-        result = ind["display"] if ind["state"] == "reported" else _STATE_LABEL.get(
-            ind["state"], ind["state"].upper())
+        result = (
+            ind["display"]
+            if ind["state"] == "reported"
+            else _STATE_LABEL.get(ind["state"], ind["state"].upper())
+        )
         num = ind["numerator"] if ind["numerator"] is not None else "—"
-        den = (f"{ind['denominator']} {ind['denominator_label']}"
-               if ind["denominator"] is not None else "—")
+        den = (
+            f"{ind['denominator']} {ind['denominator_label']}"
+            if ind["denominator"] is not None
+            else "—"
+        )
         lines.append(f"| {ind['code']} | {ind['label']} | **{result}** | {num} | {den} |")
 
     lines += ["", "### Indicator notes", ""]
@@ -3380,13 +3914,19 @@ def render_pack_markdown(pack: dict) -> str:
         excluded = ind.get("excluded") or {}
         for key, value in excluded.items():
             if key != "why" and value:
-                lines.append(f"- Excluded ({key.replace('_', ' ')}): {value}. {excluded.get('why', '')}")
+                lines.append(
+                    f"- Excluded ({key.replace('_', ' ')}): {value}. {excluded.get('why', '')}"
+                )
         lines.append("")
 
     register = pack.get("register") or {}
-    lines += ["## Incident / adverse-event register", "",
-              f"{register.get('count', 0)} incident(s) in the period, of which "
-              f"{register.get('anonymous_reports', 0)} were reported anonymously.", ""]
+    lines += [
+        "## Incident / adverse-event register",
+        "",
+        f"{register.get('count', 0)} incident(s) in the period, of which "
+        f"{register.get('anonymous_reports', 0)} were reported anonymously.",
+        "",
+    ]
     by_status = register.get("by_status") or {}
     if by_status:
         lines.append("| Status | Count |")
@@ -3396,12 +3936,17 @@ def render_pack_markdown(pack: dict) -> str:
                 lines.append(f"| {status.replace('_', ' ')} | {by_status[status]} |")
         lines.append("")
 
-    lines += ["## What Orb does NOT collect", "",
-              "Indicators an assessor may ask for that this system cannot produce, "
-              "and what each would need:", ""]
+    lines += [
+        "## What Orb does NOT collect",
+        "",
+        "Indicators an assessor may ask for that this system cannot produce, "
+        "and what each would need:",
+        "",
+    ]
     for gap in pack.get("not_collected", []):
-        lines.append(f"- **{gap['code']} {gap['label']}**: {gap['reason']} "
-                     f"*Needed:* {gap['needed']}")
+        lines.append(
+            f"- **{gap['code']} {gap['label']}**: {gap['reason']} *Needed:* {gap['needed']}"
+        )
     lines += ["", "## Limitations of this pack", ""]
     for note in pack.get("limitations", []):
         lines.append(f"- {note}")
@@ -3412,6 +3957,7 @@ def render_pack_markdown(pack: dict) -> str:
 # ═════════════════════════════════════════════════════════════════════════════
 # Meta — the vocabulary the UI builds its forms from
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def meta() -> dict:
     """Everything the client needs to render forms without hard-coding a
@@ -3427,12 +3973,21 @@ def meta() -> dict:
         "death_dispositions": sorted(DEATH_DISPOSITIONS),
         "ama_dispositions": sorted(AMA_DISPOSITIONS),
         "indicators": [
-            {"id": k, "code": v["code"], "label": v["label"], "unit": v["unit"],
-             "definition": v["definition"], "direction": v["direction"],
-             "is_proxy": v["is_proxy"], "sources": _source_labels(v["sources"])}
-            for k, v in (list(INDICATOR_SPEC.items())
-                         + (list(ADT_INDICATOR_SPEC.items()) if adt_indicators_on() else [])
-                         + (list(LAB_INDICATOR_SPEC.items()) if lab_indicators_on() else []))
+            {
+                "id": k,
+                "code": v["code"],
+                "label": v["label"],
+                "unit": v["unit"],
+                "definition": v["definition"],
+                "direction": v["direction"],
+                "is_proxy": v["is_proxy"],
+                "sources": _source_labels(v["sources"]),
+            }
+            for k, v in (
+                list(INDICATOR_SPEC.items())
+                + (list(ADT_INDICATOR_SPEC.items()) if adt_indicators_on() else [])
+                + (list(LAB_INDICATOR_SPEC.items()) if lab_indicators_on() else [])
+            )
         ],
         "not_collected_catalogue": _gap_catalogue(),
         "anonymity_statement": ANONYMITY_STATEMENT,

@@ -55,13 +55,15 @@ lose a registration over an audit outage). Every rule change writes a
 Plain sync throughout. Functions named *_on take the caller's connection and
 never commit; the rest open their own session.
 """
+
 from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Any, Mapping, Optional
+from typing import Any
 
 import config
 import migrations  # noqa: F401  (loads migrations_his in version order first)
@@ -71,6 +73,7 @@ from migrations_his.m0067_opd_charge_rules import (
     RULE_KINDS,
     VISIT_TYPES,
 )
+
 from services import billing_masters
 from services.audit_service import log_audit_event
 from services.clinical_time import utc_iso_now
@@ -79,12 +82,25 @@ from services.money import compute_line
 logger = logging.getLogger("orb.opd_charges")
 
 __all__ = [
-    "CONSULTATION_CODE", "FOLLOW_UP_CODE", "REGISTRATION_CODE", "DEFAULT_CODES",
-    "CHARGE_AT_CHOICES", "OpdChargeError", "CodeChoice", "ChargeLine",
-    "charge_at", "list_rules", "create_rule", "retire_rule",
-    "resolve_consultation_code_on", "registration_fee_rule_on", "raise_op_line_on",
-    "raise_registration_fee_on", "raise_consultation_at_registration_on",
-    "void_prepaid_consultation_on", "payer_snapshot_on",
+    "CONSULTATION_CODE",
+    "FOLLOW_UP_CODE",
+    "REGISTRATION_CODE",
+    "DEFAULT_CODES",
+    "CHARGE_AT_CHOICES",
+    "OpdChargeError",
+    "CodeChoice",
+    "ChargeLine",
+    "charge_at",
+    "list_rules",
+    "create_rule",
+    "retire_rule",
+    "resolve_consultation_code_on",
+    "registration_fee_rule_on",
+    "raise_op_line_on",
+    "raise_registration_fee_on",
+    "raise_consultation_at_registration_on",
+    "void_prepaid_consultation_on",
+    "payer_snapshot_on",
 ]
 
 CONSULTATION_CODE = "OPD-CONSULT"
@@ -102,12 +118,14 @@ DEFAULT_CODES: dict = {
 #: rule needs them: (name, category, note on the price list).
 DEFAULT_ITEMS: dict = {
     FOLLOW_UP_CODE: (
-        "OPD follow-up consultation", "consultation",
+        "OPD follow-up consultation",
+        "consultation",
         "Charged for an outpatient visit inside a follow-up window. Set the rate "
         "here; the front desk never invents one.",
     ),
     REGISTRATION_CODE: (
-        "Registration fee", "other",
+        "Registration fee",
+        "other",
         "Charged once, when the registration desk first registers a patient. Set "
         "the rate here; the desk never invents one.",
     ),
@@ -146,7 +164,7 @@ def charge_at() -> str:
     return value if value in CHARGE_AT_CHOICES else "completion"
 
 
-def _clean(value: Any, limit: int = _MAX_TEXT) -> Optional[str]:
+def _clean(value: Any, limit: int = _MAX_TEXT) -> str | None:
     if value is None:
         return None
     text = " ".join(str(value).split())
@@ -162,13 +180,24 @@ def _clean(value: Any, limit: int = _MAX_TEXT) -> Optional[str]:
 # ═════════════════════════════════════════════════════════════════════════════
 
 _RULE_COLUMNS = (
-    "id", "rule_kind", "department", "doctor_id", "visit_type", "service_code",
-    "follow_up_window_days", "is_active", "notes", "created_by", "created_at",
-    "retired_by", "retired_at", "retired_reason",
+    "id",
+    "rule_kind",
+    "department",
+    "doctor_id",
+    "visit_type",
+    "service_code",
+    "follow_up_window_days",
+    "is_active",
+    "notes",
+    "created_by",
+    "created_at",
+    "retired_by",
+    "retired_at",
+    "retired_reason",
 )
 
 
-def _rule_dict(row, names: Optional[dict] = None, items: Optional[dict] = None) -> dict:
+def _rule_dict(row, names: dict | None = None, items: dict | None = None) -> dict:
     data = {k: row[k] for k in _RULE_COLUMNS}
     data["is_active"] = bool(data["is_active"])
     names = names or {}
@@ -176,8 +205,9 @@ def _rule_dict(row, names: Optional[dict] = None, items: Optional[dict] = None) 
     item = (items or {}).get(data["service_code"])
     data["service_name"] = item["name"] if item else None
     data["service_priced"] = bool(item and int(item["rate_is_configured"] or 0))
-    data["scope"] = ("doctor" if data["doctor_id"]
-                     else "department" if data["department"] else "hospital")
+    data["scope"] = (
+        "doctor" if data["doctor_id"] else "department" if data["department"] else "hospital"
+    )
     return data
 
 
@@ -186,15 +216,23 @@ def _decorate(db, rows) -> list[dict]:
     names: dict = {}
     if doctor_ids:
         marks = ",".join("?" for _ in doctor_ids)
-        names = {r["id"]: r["name"] for r in db.execute(
-            f"SELECT id, name FROM users WHERE id IN ({marks})", doctor_ids).fetchall()}
+        names = {
+            r["id"]: r["name"]
+            for r in db.execute(
+                f"SELECT id, name FROM users WHERE id IN ({marks})", doctor_ids
+            ).fetchall()
+        }
     codes = sorted({r["service_code"] for r in rows})
     items: dict = {}
     if codes:
         marks = ",".join("?" for _ in codes)
-        items = {r["code"]: r for r in db.execute(
-            f"SELECT code, name, rate_is_configured FROM service_items WHERE code IN ({marks})",
-            codes).fetchall()}
+        items = {
+            r["code"]: r
+            for r in db.execute(
+                f"SELECT code, name, rate_is_configured FROM service_items WHERE code IN ({marks})",
+                codes,
+            ).fetchall()
+        }
     return [_rule_dict(r, names, items) for r in rows]
 
 
@@ -218,8 +256,16 @@ def list_rules(*, include_retired: bool = False) -> dict:
     }
 
 
-def _audit_rule(db, *, action: str, actor: dict, rule_id: str, summary: str,
-                metadata: dict, request_meta: Optional[dict]) -> None:
+def _audit_rule(
+    db,
+    *,
+    action: str,
+    actor: dict,
+    rule_id: str,
+    summary: str,
+    metadata: dict,
+    request_meta: dict | None,
+) -> None:
     meta = dict(request_meta or {})
     log_audit_event(
         correlation_id=f"opd-charge-rule-{rule_id}",
@@ -242,10 +288,11 @@ def _audit_rule(db, *, action: str, actor: dict, rule_id: str, summary: str,
 
 def _consulting_roles() -> tuple:
     from permissions import OPD_CONSULT, ROLE_PERMISSIONS
+
     return tuple(sorted(r for r, perms in ROLE_PERMISSIONS.items() if OPD_CONSULT in perms))
 
 
-def create_rule(fields: Mapping, *, actor: dict, request_meta: Optional[dict] = None) -> dict:
+def create_rule(fields: Mapping, *, actor: dict, request_meta: dict | None = None) -> dict:
     """Add one charge rule. Refusals (OpdChargeError): bad_rule_kind,
     bad_visit_type, bad_window, registration_rule_is_hospital_wide,
     doctor_or_department, follow_up_takes_no_visit_type,
@@ -254,8 +301,7 @@ def create_rule(fields: Mapping, *, actor: dict, request_meta: Optional[dict] = 
     fields = dict(fields or {})
     kind = str(fields.get("rule_kind") or "").strip().lower()
     if kind not in RULE_KINDS:
-        raise OpdChargeError("bad_rule_kind",
-                             "Choose consultation, follow-up or registration fee.")
+        raise OpdChargeError("bad_rule_kind", "Choose consultation, follow-up or registration fee.")
     code = _clean(fields.get("service_code"), _MAX_CODE_LEN) or DEFAULT_CODES[kind]
     department = _clean(fields.get("department"))
     doctor_id = _clean(fields.get("doctor_id"), 64)
@@ -267,32 +313,35 @@ def create_rule(fields: Mapping, *, actor: dict, request_meta: Optional[dict] = 
         raise OpdChargeError(
             "registration_rule_is_hospital_wide",
             "The registration fee is the same for every clinic. Leave the doctor, "
-            "the department and the visit type empty.")
+            "the department and the visit type empty.",
+        )
     if department and doctor_id:
         raise OpdChargeError(
             "doctor_or_department",
             "Name a doctor or a department, not both: a doctor's rule already "
-            "belongs to that doctor's clinic.")
+            "belongs to that doctor's clinic.",
+        )
     if visit_type is not None:
         if kind != "consultation":
             raise OpdChargeError(
                 "follow_up_takes_no_visit_type",
                 "Only a consultation rule can be for one visit type. A follow-up "
-                "is decided by the window.")
+                "is decided by the window.",
+            )
         visit_type = visit_type.lower()
         if visit_type not in VISIT_TYPES:
-            raise OpdChargeError("bad_visit_type",
-                                 "Choose new, follow-up, review or procedure.")
-    window: Optional[int] = None
+            raise OpdChargeError("bad_visit_type", "Choose new, follow-up, review or procedure.")
+    window: int | None = None
     if kind == "follow_up":
         try:
-            window = int(window_raw)
+            window = int(window_raw) if window_raw is not None else 0
         except (TypeError, ValueError):
             window = None
         if window is None or not 1 <= window <= MAX_FOLLOW_UP_WINDOW_DAYS:
             raise OpdChargeError(
                 "bad_window",
-                f"Give the follow-up window in days, from 1 to {MAX_FOLLOW_UP_WINDOW_DAYS}.")
+                f"Give the follow-up window in days, from 1 to {MAX_FOLLOW_UP_WINDOW_DAYS}.",
+            )
     elif window_raw not in (None, ""):
         raise OpdChargeError("bad_window", "Only a follow-up rule has a window.")
 
@@ -301,11 +350,12 @@ def create_rule(fields: Mapping, *, actor: dict, request_meta: Optional[dict] = 
         # front desk registers a visit with, so the rule and the visit name a
         # clinic one way.
         from services.frontdesk_service import resolve_covering_department
+
         canonical = resolve_covering_department(department)
         if canonical is None:
             raise OpdChargeError(
-                "unknown_department",
-                f"{department!r} is not a department with clinical cover.")
+                "unknown_department", f"{department!r} is not a department with clinical cover."
+            )
         department = canonical
 
     rule_id = f"OCR-{uuid.uuid4().hex[:12].upper()}"
@@ -315,24 +365,33 @@ def create_rule(fields: Mapping, *, actor: dict, request_meta: Optional[dict] = 
             roles = _consulting_roles()
             doctor = db.execute(
                 "SELECT id, name, role, TRIM(COALESCE(department, '')) AS department, "
-                "COALESCE(is_active, 1) AS active FROM users WHERE id = ?", (doctor_id,),
+                "COALESCE(is_active, 1) AS active FROM users WHERE id = ?",
+                (doctor_id,),
             ).fetchone()
-            if (doctor is None or doctor["role"] not in roles or not doctor["active"]
-                    or not doctor["department"]):
+            if (
+                doctor is None
+                or doctor["role"] not in roles
+                or not doctor["active"]
+                or not doctor["department"]
+            ):
                 raise OpdChargeError(
                     "not_a_consulting_doctor",
-                    "That account is not an active doctor who holds a clinic.")
+                    "That account is not an active doctor who holds a clinic.",
+                )
         item = db.execute(
-            "SELECT code, is_active FROM service_items WHERE code = ?", (code,)).fetchone()
+            "SELECT code, is_active FROM service_items WHERE code = ?", (code,)
+        ).fetchone()
         registered_item = False
         if item is None:
             if code not in DEFAULT_ITEMS:
                 raise OpdChargeError(
                     "unknown_service_code",
-                    f"{code} is not on the price list. Add it there first, then make the rule.")
+                    f"{code} is not on the price list. Add it there first, then make the rule.",
+                )
             name, category, note = DEFAULT_ITEMS[code]
             registered_item = billing_masters.register_unpriced_item_on(
-                db, code=code, name=name, category=category, notes=note)
+                db, code=code, name=name, category=category, notes=note
+            )
         live = db.execute(
             "SELECT id FROM opd_charge_rules WHERE is_active = 1 AND rule_kind = ? "
             "AND COALESCE(doctor_id, '') = COALESCE(?, '') "
@@ -344,34 +403,53 @@ def create_rule(fields: Mapping, *, actor: dict, request_meta: Optional[dict] = 
             raise OpdChargeError(
                 "rule_exists",
                 "A live rule already covers this. Retire it first to change it.",
-                status=409, rule_id=live["id"])
+                status=409,
+                rule_id=live["id"],
+            )
         db.execute(
             """INSERT INTO opd_charge_rules (id, rule_kind, department, doctor_id, visit_type,
                    service_code, follow_up_window_days, is_active, notes, created_by, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)""",
-            (rule_id, kind, department, doctor_id, visit_type, code, window, notes,
-             actor.get("id"), now),
+            (
+                rule_id,
+                kind,
+                department,
+                doctor_id,
+                visit_type,
+                code,
+                window,
+                notes,
+                actor.get("id"),
+                now,
+            ),
         )
         row = db.execute("SELECT * FROM opd_charge_rules WHERE id = ?", (rule_id,)).fetchone()
         rule = _decorate(db, [row])[0]
         _audit_rule(
-            db, action="opd_charge_rule_created", actor=actor, rule_id=rule_id,
+            db,
+            action="opd_charge_rule_created",
+            actor=actor,
+            rule_id=rule_id,
             summary=f"Outpatient charge rule {rule_id} ({kind}) charges {code}",
-            metadata={"after": {k: rule[k] for k in _RULE_COLUMNS},
-                      "price_list_item_registered": registered_item},
-            request_meta=request_meta)
+            metadata={
+                "after": {k: rule[k] for k in _RULE_COLUMNS},
+                "price_list_item_registered": registered_item,
+            },
+            request_meta=request_meta,
+        )
     return rule
 
 
-def retire_rule(rule_id: str, *, reason: Any, actor: dict,
-                request_meta: Optional[dict] = None) -> dict:
+def retire_rule(
+    rule_id: str, *, reason: Any, actor: dict, request_meta: dict | None = None
+) -> dict:
     """Retire a live rule with a reason (at least 8 characters). Nothing is
     deleted. 404 rule_not_found, 409 rule_retired, 422 reason_required."""
     text = _clean(reason, _MAX_NOTE_LEN)
     if not text or len(text) < REASON_MIN_CHARS:
         raise OpdChargeError(
-            "reason_required",
-            f"Give a reason of at least {REASON_MIN_CHARS} characters.")
+            "reason_required", f"Give a reason of at least {REASON_MIN_CHARS} characters."
+        )
     now = utc_iso_now()
     with db_session(immediate=True) as db:
         row = db.execute("SELECT * FROM opd_charge_rules WHERE id = ?", (rule_id,)).fetchone()
@@ -388,9 +466,14 @@ def retire_rule(rule_id: str, *, reason: Any, actor: dict,
         fresh = db.execute("SELECT * FROM opd_charge_rules WHERE id = ?", (rule_id,)).fetchone()
         rule = _decorate(db, [fresh])[0]
         _audit_rule(
-            db, action="opd_charge_rule_retired", actor=actor, rule_id=rule_id,
+            db,
+            action="opd_charge_rule_retired",
+            actor=actor,
+            rule_id=rule_id,
             summary=f"Outpatient charge rule {rule_id} retired: {text}",
-            metadata={"before": before, "reason": text}, request_meta=request_meta)
+            metadata={"before": before, "reason": text},
+            request_meta=request_meta,
+        )
     return rule
 
 
@@ -398,16 +481,18 @@ def retire_rule(rule_id: str, *, reason: Any, actor: dict,
 #  Which code
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass(frozen=True)
 class CodeChoice:
     """The code a visit's consultation is charged against, and why."""
+
     service_code: str
     #: 'requested' (the caller named it), 'follow_up', 'doctor', 'department',
     #: 'hospital' (a hospital-wide rule) or 'default' (OPD-CONSULT, no rule).
     basis: str
-    rule_id: Optional[str] = None
-    follow_up_of_visit_id: Optional[str] = None
-    window_days: Optional[int] = None
+    rule_id: str | None = None
+    follow_up_of_visit_id: str | None = None
+    window_days: int | None = None
 
     def as_facts(self) -> dict:
         facts = {"charge_code": self.service_code, "charge_code_basis": self.basis}
@@ -418,7 +503,7 @@ class CodeChoice:
         return facts
 
 
-def _level(rule, *, doctor_id: Optional[str], department: Optional[str]) -> Optional[int]:
+def _level(rule, *, doctor_id: str | None, department: str | None) -> int | None:
     """0 for the doctor's own rule, 1 for the clinic's, 2 for a hospital-wide
     rule, None when the rule does not apply to this visit."""
     if rule["doctor_id"]:
@@ -448,11 +533,14 @@ def _best_rule(rules, *, doctor_id, department, visit_type=None):
 def _live_rules(db, kind: str) -> list:
     return db.execute(
         "SELECT * FROM opd_charge_rules WHERE is_active = 1 AND rule_kind = ? "
-        "ORDER BY created_at, id", (kind,)).fetchall()
+        "ORDER BY created_at, id",
+        (kind,),
+    ).fetchall()
 
 
-def resolve_consultation_code_on(db, visit: Mapping, *,
-                                 requested_code: Optional[str] = None) -> CodeChoice:
+def resolve_consultation_code_on(
+    db, visit: Mapping, *, requested_code: str | None = None
+) -> CodeChoice:
     """The code this visit's consultation is charged against.
 
     `visit` carries id, patient_id, department, doctor_id, visit_type and
@@ -467,8 +555,9 @@ def resolve_consultation_code_on(db, visit: Mapping, *,
     department = visit.get("department") or None
     visit_type = visit.get("visit_type") or None
 
-    follow, follow_level = _best_rule(_live_rules(db, "follow_up"),
-                                      doctor_id=doctor_id, department=department)
+    follow, follow_level = _best_rule(
+        _live_rules(db, "follow_up"), doctor_id=doctor_id, department=department
+    )
     if follow is not None and visit.get("visit_date"):
         try:
             day = date.fromisoformat(str(visit["visit_date"])[:10])
@@ -490,24 +579,35 @@ def resolve_consultation_code_on(db, visit: Mapping, *,
                     continue
                 if follow_level == 0 and prior["doctor_id"] != doctor_id:
                     continue
-                return CodeChoice(service_code=follow["service_code"], basis="follow_up",
-                                  rule_id=follow["id"], follow_up_of_visit_id=str(prior["id"]),
-                                  window_days=window)
+                return CodeChoice(
+                    service_code=follow["service_code"],
+                    basis="follow_up",
+                    rule_id=follow["id"],
+                    follow_up_of_visit_id=str(prior["id"]),
+                    window_days=window,
+                )
 
-    rule, level = _best_rule(_live_rules(db, "consultation"), doctor_id=doctor_id,
-                             department=department, visit_type=visit_type)
+    rule, level = _best_rule(
+        _live_rules(db, "consultation"),
+        doctor_id=doctor_id,
+        department=department,
+        visit_type=visit_type,
+    )
     if rule is not None:
-        return CodeChoice(service_code=rule["service_code"],
-                          basis=("doctor", "department", "hospital")[level],
-                          rule_id=rule["id"])
+        return CodeChoice(
+            service_code=rule["service_code"],
+            basis=("doctor", "department", "hospital")[level],
+            rule_id=rule["id"],
+        )
     return CodeChoice(service_code=CONSULTATION_CODE, basis="default")
 
 
-def registration_fee_rule_on(db) -> Optional[dict]:
+def registration_fee_rule_on(db) -> dict | None:
     """The live registration-fee rule, or None (no fee is charged)."""
     row = db.execute(
         "SELECT * FROM opd_charge_rules WHERE is_active = 1 AND rule_kind = 'registration' "
-        "ORDER BY created_at, id LIMIT 1").fetchone()
+        "ORDER BY created_at, id LIMIT 1"
+    ).fetchone()
     return dict(row) if row is not None else None
 
 
@@ -515,23 +615,26 @@ def registration_fee_rule_on(db) -> Optional[dict]:
 #  Raising and voiding lines
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass(frozen=True)
 class ChargeLine:
     """One encounter_charges line this module raised (or found raised)."""
+
     charge_id: int
     service_code: str
     description: str
-    rate_paise: Optional[int]
+    rate_paise: int | None
     configured: bool
     total_paise: int
     gst_treatment: str
     rate_source: str
     status: str
-    tariff_plan_id: Optional[int]
+    tariff_plan_id: int | None
     newly_raised: bool
 
     def as_dict(self) -> dict:
         from services.money import format_inr_or_unset
+
         return {
             "charge_id": self.charge_id,
             "service_code": self.service_code,
@@ -557,12 +660,12 @@ def raise_op_line_on(
     *,
     patient_id: str,
     service_code: str,
-    tariff_plan_id: Optional[int],
+    tariff_plan_id: int | None,
     service_day: str,
     charged_at: str,
-    charged_by: Optional[str],
+    charged_by: str | None,
     idempotency_key: str,
-    source_ref: Optional[str],
+    source_ref: str | None,
     description_fallback: str,
     unpriced_note: str,
     interstate: bool = False,
@@ -577,7 +680,8 @@ def raise_op_line_on(
     posted. `source` is 'manual' (migration 20's CHECK has no OPD member) and
     `source_ref` carries what raised it. On the caller's connection."""
     resolution = billing_masters.resolve_rate_on(
-        db, service_code, tariff_plan_id=tariff_plan_id, ward_class=None, on_date=service_day)
+        db, service_code, tariff_plan_id=tariff_plan_id, ward_class=None, on_date=service_day
+    )
     existing = db.execute(
         "SELECT * FROM encounter_charges WHERE idempotency_key = ?", (idempotency_key,)
     ).fetchone()
@@ -599,7 +703,9 @@ def raise_op_line_on(
 
     description = resolution.description or description_fallback
     configured = bool(resolution.configured and resolution.rate_paise is not None)
-    unit_rate = int(resolution.rate_paise) if configured else 0
+    unit_rate = (
+        int(resolution.rate_paise) if configured and resolution.rate_paise is not None else 0
+    )
     line = compute_line(
         unit_rate_paise=unit_rate,
         gst_rate_bp=resolution.gst_rate_bp if configured else 0,
@@ -657,8 +763,15 @@ def raise_op_line_on(
     )
 
 
-def _audit_line(db, *, line: ChargeLine, patient_id: str, actor: Optional[str],
-                raised_for: str, facts: Optional[dict] = None) -> None:
+def _audit_line(
+    db,
+    *,
+    line: ChargeLine,
+    patient_id: str,
+    actor: str | None,
+    raised_for: str,
+    facts: dict | None = None,
+) -> None:
     """The billing row for a line this module raised, in its transaction."""
     log_audit_event(
         correlation_id=str(uuid.uuid4()),
@@ -668,7 +781,8 @@ def _audit_line(db, *, line: ChargeLine, patient_id: str, actor: Optional[str],
         db=db,
         summary_message=(
             f"Charge {line.charge_id} raised: {line.description} ({raised_for}), "
-            + ("priced" if line.configured else "rate not configured")),
+            + ("priced" if line.configured else "rate not configured")
+        ),
         actor_user_id=actor,
         patient_id=patient_id,
         target_type="encounter_charge",
@@ -686,8 +800,9 @@ def _audit_line(db, *, line: ChargeLine, patient_id: str, actor: Optional[str],
     )
 
 
-def raise_registration_fee_on(db, *, patient_id: str, charged_by: Optional[str],
-                              service_day: str) -> Optional[ChargeLine]:
+def raise_registration_fee_on(
+    db, *, patient_id: str, charged_by: str | None, service_day: str
+) -> ChargeLine | None:
     """The registration fee, once per patient, when a live registration rule
     exists (else None and nothing is written). Priced under the payer the
     desk recorded in the same transaction, if any."""
@@ -698,7 +813,8 @@ def raise_registration_fee_on(db, *, patient_id: str, charged_by: Optional[str],
     if code in DEFAULT_ITEMS:
         name, category, note = DEFAULT_ITEMS[code]
         billing_masters.register_unpriced_item_on(
-            db, code=code, name=name, category=category, notes=note)
+            db, code=code, name=name, category=category, notes=note
+        )
     payer = payer_snapshot_on(db, patient_id)
     line = raise_op_line_on(
         db,
@@ -714,14 +830,18 @@ def raise_registration_fee_on(db, *, patient_id: str, charged_by: Optional[str],
         unpriced_note="Rate not configured at registration",
     )
     if line.newly_raised:
-        _audit_line(db, line=line, patient_id=patient_id, actor=charged_by,
-                    raised_for="registration_fee",
-                    facts={"charge_rule_id": rule["id"], "payer_code": payer.payer_code})
+        _audit_line(
+            db,
+            line=line,
+            patient_id=patient_id,
+            actor=charged_by,
+            raised_for="registration_fee",
+            facts={"charge_rule_id": rule["id"], "payer_code": payer.payer_code},
+        )
     return line
 
 
-def raise_consultation_at_registration_on(db, *, visit: Mapping,
-                                          charged_by: Optional[str]) -> tuple:
+def raise_consultation_at_registration_on(db, *, visit: Mapping, charged_by: str | None) -> tuple:
     """OPD_CHARGE_AT 'registration': the visit's consultation line, raised
     now, once per visit (the same idempotency key completion uses, so
     completing the visit later finds it and raises nothing more). The visit
@@ -731,7 +851,8 @@ def raise_consultation_at_registration_on(db, *, visit: Mapping,
     if choice.service_code in DEFAULT_ITEMS:
         name, category, note = DEFAULT_ITEMS[choice.service_code]
         billing_masters.register_unpriced_item_on(
-            db, code=choice.service_code, name=name, category=category, notes=note)
+            db, code=choice.service_code, name=name, category=category, notes=note
+        )
     visit_id = str(visit["id"])
     line = raise_op_line_on(
         db,
@@ -747,24 +868,32 @@ def raise_consultation_at_registration_on(db, *, visit: Mapping,
         unpriced_note="Rate not configured at registration",
     )
     db.execute(
-        "UPDATE opd_visits SET consultation_charge_id = ?, registration_charge_id = ? "
-        "WHERE id = ?", (line.charge_id, line.charge_id, visit_id))
+        "UPDATE opd_visits SET consultation_charge_id = ?, registration_charge_id = ? WHERE id = ?",
+        (line.charge_id, line.charge_id, visit_id),
+    )
     if line.newly_raised:
-        _audit_line(db, line=line, patient_id=str(visit["patient_id"]), actor=charged_by,
-                    raised_for="opd_consultation_prepaid",
-                    facts={"opd_visit_id": visit_id, **choice.as_facts()})
+        _audit_line(
+            db,
+            line=line,
+            patient_id=str(visit["patient_id"]),
+            actor=charged_by,
+            raised_for="opd_consultation_prepaid",
+            facts={"opd_visit_id": visit_id, **choice.as_facts()},
+        )
     return line, choice
 
 
-def void_prepaid_consultation_on(db, *, visit_row: Mapping, actor: Optional[str],
-                                 reason: str) -> dict:
+def void_prepaid_consultation_on(db, *, visit_row: Mapping, actor: str | None, reason: str) -> dict:
     """A cancelled visit's registration-time line: voided while still pending
     (billing_service.cancel_charge, which audits it), left alone once it is on
     an invoice (the patient is refunded through the payments desk). Returns
     the facts for the cancel's audit row; {} when the visit raised no line at
     registration."""
-    charge_id = visit_row["registration_charge_id"] if "registration_charge_id" in visit_row.keys() \
+    charge_id = (
+        visit_row["registration_charge_id"]
+        if "registration_charge_id" in visit_row.keys()
         else None
+    )
     if not charge_id:
         return {}
     row = db.execute(
@@ -776,11 +905,15 @@ def void_prepaid_consultation_on(db, *, visit_row: Mapping, actor: Optional[str]
         return {"prepaid_charge_id": int(charge_id), "prepaid_charge": "already_cancelled"}
     if row["status"] == "pending":
         from services import billing_service
+
         billing_service.cancel_charge(
             int(charge_id),
             reason=f"Outpatient visit cancelled before the consultation: {reason}"[:500],
             actor=actor,
         )
         return {"prepaid_charge_id": int(charge_id), "prepaid_charge": "voided"}
-    return {"prepaid_charge_id": int(charge_id), "prepaid_charge": "invoiced",
-            "prepaid_invoice_id": row["invoice_id"]}
+    return {
+        "prepaid_charge_id": int(charge_id),
+        "prepaid_charge": "invoiced",
+        "prepaid_invoice_id": row["invoice_id"],
+    }

@@ -1,9 +1,10 @@
 """Orb Relay — Messaging Service"""
+
 import json
 import logging
-import sqlite3
+
+from database import db_session
 from db_backend import DBIntegrityError
-from database import get_db, db_session
 
 logger = logging.getLogger("orb.relay")
 
@@ -48,14 +49,15 @@ def get_channels_for_user(user_id: str, user_role: str) -> list:
     if not _relay_capable(user_role):
         return []
     from services.vigil_service import scoring_enabled
+
     _scoring = scoring_enabled()
     with db_session() as db:
         # Get user department
         user_row = db.execute("SELECT department FROM users WHERE id = ?", (user_id,)).fetchone()
         user_dept = user_row["department"] if (user_row and user_row["department"]) else ""
-        
+
         sql = """
-            SELECT c.*, 
+            SELECT c.*,
                p.mrn,
                p.diagnosis,
                p.ward,
@@ -85,14 +87,14 @@ def get_channels_for_user(user_id: str, user_role: str) -> list:
                -- SQLite's "2026-10-01 08:00:00" and ISO "2026-10-01T08:00:00+00:00"
                -- side by side, and as text 'T' sorts after ' ', so a seeded
                -- welcome line outranked a whole day of real traffic.
-               (SELECT content FROM messages m2 
-                WHERE m2.channel_id = c.id 
+               (SELECT content FROM messages m2
+                WHERE m2.channel_id = c.id
                 ORDER BY datetime(m2.timestamp) DESC, m2.id DESC LIMIT 1) as last_message,
-               (SELECT COUNT(*) FROM messages m3 
-                WHERE m3.channel_id = c.id 
+               (SELECT COUNT(*) FROM messages m3
+                WHERE m3.channel_id = c.id
                 AND m3.message_type = 'alert'
                 AND datetime(m3.timestamp) > datetime('now', '-24 hours')) as alert_count,
-               (SELECT MAX(datetime(timestamp)) FROM messages m4 
+               (SELECT MAX(datetime(timestamp)) FROM messages m4
                 WHERE m4.channel_id = c.id) as last_activity,
                (SELECT a.department FROM admissions a
                 WHERE a.patient_id = c.patient_id AND a.status = 'active'
@@ -118,14 +120,24 @@ def get_channels_for_user(user_id: str, user_role: str) -> list:
         # Scoring switched off (the Orb Ward Record): the band stored before
         # the switch does not order the list either, or a critical patient's
         # room would still float to the top.
-        band_order = ("""CASE WHEN rs.level = 'critical' THEN 0 
-                 WHEN rs.level = 'elevated' THEN 1 
+        band_order = (
+            """CASE WHEN rs.level = 'critical' THEN 0
+                 WHEN rs.level = 'elevated' THEN 1
                  ELSE 2 END,
-            """ if _scoring else "")
-        rows = db.execute(sql + """ ORDER BY 
-            """ + band_order + """last_activity DESC NULLS LAST,
-            c.name""", (user_id, user_id, user_id)).fetchall()
-        
+            """
+            if _scoring
+            else ""
+        )
+        rows = db.execute(
+            sql
+            + """ ORDER BY
+            """
+            + band_order
+            + """last_activity DESC NULLS LAST,
+            c.name""",
+            (user_id, user_id, user_id),
+        ).fetchall()
+
         filtered = []
         for r in rows:
             # Filter orphaned channels: no patient AND no messages
@@ -293,7 +305,8 @@ def get_channels_for_user(user_id: str, user_role: str) -> list:
                 # a missing channel and a warning, never as an unscoped grant.
                 logger.warning(
                     "Relay channel %s has unknown type %r — withheld (fail-closed)",
-                    r["id"], r["type"],
+                    r["id"],
+                    r["type"],
                 )
 
         return [
@@ -368,7 +381,8 @@ def _relay_capable(role: str) -> bool:
     second edit, and `patient` (Bridge-only) must never be addable to a DM.
     """
     try:
-        from permissions import has_permission, RELAY_READ
+        from permissions import RELAY_READ, has_permission
+
         return has_permission(role or "", RELAY_READ)
     except Exception:  # pragma: no cover — permissions is always importable
         logger.warning("relay: permission lookup failed for role %r", role, exc_info=True)
@@ -401,8 +415,9 @@ def list_channel_members(channel_id: str) -> list:
         ]
 
 
-def _audit_membership(db, *, action: str, actor: dict, channel_id: str,
-                      target_user_id: str, metadata: dict) -> None:
+def _audit_membership(
+    db, *, action: str, actor: dict, channel_id: str, target_user_id: str, metadata: dict
+) -> None:
     """Seal a membership change onto the tamper-evident chain.
 
     event_category='security' is FAIL-CLOSED (audit_service._FAIL_CLOSED_
@@ -413,8 +428,9 @@ def _audit_membership(db, *, action: str, actor: dict, channel_id: str,
     paths in the codebase, and the reason the audit shares the transaction rather
     than being fired afterwards.
     """
-    from services.audit_service import log_audit_event
     import uuid as _uuid
+
+    from services.audit_service import log_audit_event
 
     log_audit_event(
         correlation_id=str(_uuid.uuid4()),
@@ -492,8 +508,7 @@ def add_channel_member(channel_id: str, actor: dict, new_user_id: str) -> dict:
             "SELECT 1 FROM channel_members WHERE channel_id = ? AND user_id = ?",
             (channel_id, new_user_id),
         ).fetchone():
-            return {"status": "already_member", "channel_id": channel_id,
-                    "user_id": new_user_id}
+            return {"status": "already_member", "channel_id": channel_id, "user_id": new_user_id}
 
         try:
             db.execute(
@@ -506,14 +521,20 @@ def add_channel_member(channel_id: str, actor: dict, new_user_id: str) -> dict:
             # run_db workers execute route bodies in parallel and a SELECT holds
             # no snapshot). The PRIMARY KEY is the compare-and-swap; the loser
             # reports the same outcome as a repeat add rather than a 500.
-            return {"status": "already_member", "channel_id": channel_id,
-                    "user_id": new_user_id}
+            return {"status": "already_member", "channel_id": channel_id, "user_id": new_user_id}
 
         _audit_membership(
-            db, action="relay.channel_member_added", actor=actor,
-            channel_id=channel_id, target_user_id=new_user_id,
-            metadata={"channel_type": "direct", "member_name": target["name"],
-                      "member_role": target["role"], "source": "added"},
+            db,
+            action="relay.channel_member_added",
+            actor=actor,
+            channel_id=channel_id,
+            target_user_id=new_user_id,
+            metadata={
+                "channel_type": "direct",
+                "member_name": target["name"],
+                "member_role": target["role"],
+                "source": "added",
+            },
         )
 
     return {
@@ -555,8 +576,7 @@ def create_direct_channel(creator: dict, participant_ids: list, name: str | None
             raise ChannelAccessError(404, f"Unknown user(s): {', '.join(missing)}")
         for uid in wanted:
             if not _relay_capable(found[uid]["role"]):
-                raise ChannelAccessError(
-                    400, f"{found[uid]['name']} does not have access to Relay")
+                raise ChannelAccessError(400, f"{found[uid]['name']} does not have access to Relay")
 
         members = [creator_id] + wanted
 
@@ -571,7 +591,7 @@ def create_direct_channel(creator: dict, participant_ids: list, name: str | None
                  WHERE c.type = 'direct'
                  GROUP BY c.id
                 HAVING COUNT(*) = ?
-                   AND SUM(CASE WHEN m.user_id IN ({','.join('?' * len(members))})
+                   AND SUM(CASE WHEN m.user_id IN ({",".join("?" * len(members))})
                                 THEN 1 ELSE 0 END) = ?""",
             (len(members), *members, len(members)),
         ).fetchone()
@@ -579,14 +599,11 @@ def create_direct_channel(creator: dict, participant_ids: list, name: str | None
             return {"status": "existing", "id": existing["id"], "type": "direct"}
 
         import uuid as _uuid
+
         channel_id = f"DM-{_uuid.uuid4().hex[:12].upper()}"
-        creator_row = db.execute(
-            "SELECT name FROM users WHERE id = ?", (creator_id,)
-        ).fetchone()
+        creator_row = db.execute("SELECT name FROM users WHERE id = ?", (creator_id,)).fetchone()
         creator_name = creator_row["name"] if creator_row else creator_id
-        channel_name = name or ", ".join(
-            [creator_name] + [found[u]["name"] for u in wanted]
-        )
+        channel_name = name or ", ".join([creator_name] + [found[u]["name"] for u in wanted])
 
         db.execute(
             "INSERT INTO channels (id, name, type) VALUES (?, ?, 'direct')",
@@ -604,15 +621,27 @@ def create_direct_channel(creator: dict, participant_ids: list, name: str | None
                 (channel_id, uid, creator_id),
             )
             _audit_membership(
-                db, action="relay.channel_member_added", actor=creator,
-                channel_id=channel_id, target_user_id=uid,
-                metadata={"channel_type": "direct", "member_name": found[uid]["name"],
-                          "member_role": found[uid]["role"], "source": "added",
-                          "at_creation": True},
+                db,
+                action="relay.channel_member_added",
+                actor=creator,
+                channel_id=channel_id,
+                target_user_id=uid,
+                metadata={
+                    "channel_type": "direct",
+                    "member_name": found[uid]["name"],
+                    "member_role": found[uid]["role"],
+                    "source": "added",
+                    "at_creation": True,
+                },
             )
 
-    return {"status": "created", "id": channel_id, "name": channel_name,
-            "type": "direct", "members": members}
+    return {
+        "status": "created",
+        "id": channel_id,
+        "name": channel_name,
+        "type": "direct",
+        "members": members,
+    }
 
 
 def get_user_alerts(user_id: str, user_role: str) -> list:
@@ -649,7 +678,7 @@ def get_user_alerts(user_id: str, user_role: str) -> list:
                ORDER BY datetime(m.timestamp) DESC, m.id DESC""",
             (user_id,),
         ).fetchall()
-        
+
         user_alerts = []
         for row in rows:
             try:
@@ -658,18 +687,20 @@ def get_user_alerts(user_id: str, user_role: str) -> list:
                     continue
                 if payload.get("status") in ["resolved", "escalated"]:
                     continue
-                    
+
                 is_target = False
-                
+
                 # Check explicit assignment
                 if user_id in payload.get("target_users", []):
                     is_target = True
                 # Check role / department fallback
-                elif user_role in payload.get("target_roles", []) and user_dept in payload.get("target_departments", []):
+                elif user_role in payload.get("target_roles", []) and user_dept in payload.get(
+                    "target_departments", []
+                ):
                     is_target = True
                 elif user_role == "admin":
                     is_target = True
-                    
+
                 if is_target:
                     user_alerts.append(_message_row_to_dict(row))
             except Exception as e:
@@ -687,9 +718,9 @@ def get_channel_messages(channel_id: str, limit: int = 500, offset: int = 0) -> 
         # id to settle messages stamped in the same second.
         rows = db.execute(
             """SELECT * FROM (
-                   SELECT * FROM messages 
-                   WHERE channel_id = ? 
-                   ORDER BY datetime(timestamp) DESC, id DESC 
+                   SELECT * FROM messages
+                   WHERE channel_id = ?
+                   ORDER BY datetime(timestamp) DESC, id DESC
                    LIMIT ? OFFSET ?
                ) sub ORDER BY datetime(timestamp) ASC, id ASC""",
             (channel_id, limit, offset),
@@ -764,6 +795,7 @@ def shadow_alert_episodes(db, message_ids) -> dict:
 
 def _seconds_since(persisted_at, now_iso) -> float | None:
     from datetime import datetime
+
     try:
         start = datetime.fromisoformat(persisted_at)
         end = datetime.fromisoformat(now_iso)
@@ -821,16 +853,22 @@ def _emit_alert_viewed(db, message_ids, channel_id: str, user_id: str) -> None:
         return
     try:
         from services import shadow_service
+
         known = shadow_alert_episodes(db, message_ids)
         if not known:
             return
         now = shadow_service.utc_now()
         events = [
             shadow_service.build(
-                "alert.viewed", info["episode_id"], info["lane"],
-                occurred_at=now, patient_id=info["patient_id"], ward=info["ward"],
+                "alert.viewed",
+                info["episode_id"],
+                info["lane"],
+                occurred_at=now,
+                patient_id=info["patient_id"],
+                ward=info["ward"],
                 actor_user_id=user_id,
-                subject_type="messages", subject_id=message_id,
+                subject_type="messages",
+                subject_id=message_id,
                 payload={
                     "message_id": message_id,
                     "channel_id": channel_id,
@@ -862,10 +900,17 @@ def _message_row_to_dict(row, *, is_bot: bool = False, source: str = "clinician"
     }
 
 
-def send_message(channel_id: str, sender_id: str, sender_name: str,
-                 sender_role: str, content: str, message_type: str = "text",
-                 is_bot: bool = False, source: str = "clinician",
-                 idempotency_key: str | None = None) -> dict:
+def send_message(
+    channel_id: str,
+    sender_id: str,
+    sender_name: str,
+    sender_role: str,
+    content: str,
+    message_type: str = "text",
+    is_bot: bool = False,
+    source: str = "clinician",
+    idempotency_key: str | None = None,
+) -> dict:
     """Send a message to a channel.
 
     ``is_bot``/``source`` tag automated posts (simulation bots, AI agents) so the
@@ -904,36 +949,55 @@ def send_message(channel_id: str, sender_id: str, sender_name: str,
             ).fetchone()
             if existing and existing["channel_id"] != channel_id:
                 raise ChannelAccessError(
-                    409, "That idempotency key belongs to a different conversation")
+                    409, "That idempotency key belongs to a different conversation"
+                )
             if existing:
-                return {**_message_row_to_dict(existing, is_bot=is_bot, source=source),
-                        "idempotent_replay": True}
+                return {
+                    **_message_row_to_dict(existing, is_bot=is_bot, source=source),
+                    "idempotent_replay": True,
+                }
         try:
             cursor = db.execute(
                 """INSERT INTO messages (channel_id, sender_id, sender_name, sender_role, content, message_type, is_bot, source, idempotency_key)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (channel_id, sender_id, sender_name, sender_role, content, message_type,
-                 1 if is_bot else 0, source, idempotency_key),
+                (
+                    channel_id,
+                    sender_id,
+                    sender_name,
+                    sender_role,
+                    content,
+                    message_type,
+                    1 if is_bot else 0,
+                    source,
+                    idempotency_key,
+                ),
             )
             msg_id = cursor.lastrowid
         except DBIntegrityError:
             # Concurrent replay raced past the pre-INSERT check — return the
             # existing row for this key rather than a duplicate message.
-            existing = db.execute(
-                "SELECT * FROM messages WHERE idempotency_key = ?",
-                (idempotency_key,),
-            ).fetchone() if idempotency_key else None
+            existing = (
+                db.execute(
+                    "SELECT * FROM messages WHERE idempotency_key = ?",
+                    (idempotency_key,),
+                ).fetchone()
+                if idempotency_key
+                else None
+            )
             # Same channel check as the pre-INSERT path. A racing writer in
             # ANOTHER channel is the cross-channel case again, arriving through
             # the unique index instead of the SELECT; answering it here would
             # reopen the door the check above closes.
             if existing and existing["channel_id"] != channel_id:
                 raise ChannelAccessError(
-                    409, "That idempotency key belongs to a different conversation")
+                    409, "That idempotency key belongs to a different conversation"
+                ) from None
             if not existing:
                 raise
-            return {**_message_row_to_dict(existing, is_bot=is_bot, source=source),
-                    "idempotent_replay": True}
+            return {
+                **_message_row_to_dict(existing, is_bot=is_bot, source=source),
+                "idempotent_replay": True,
+            }
 
         # Fetch the inserted message
         row = db.execute("SELECT * FROM messages WHERE id = ?", (msg_id,)).fetchone()

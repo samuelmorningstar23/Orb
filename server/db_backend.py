@@ -11,10 +11,12 @@ The SQLite connection *configuration* (SQLCipher support, WAL/PRAGMA tuning,
 row_factory) still lives in database.py; this module owns backend selection,
 the placeholder, and pooling so those concerns have one home.
 """
+
 from __future__ import annotations
 
 import logging
 import os
+import sqlite3 as _sqlite3
 import threading
 
 logger = logging.getLogger("orb.db_backend")
@@ -28,10 +30,10 @@ _KNOWN_UNWIRED = {"postgres", "postgresql", "pg"}
 
 if BACKEND_NAME in _KNOWN_UNWIRED:
     raise RuntimeError(
-        "ORB_DB_BACKEND=%s selected, but the Postgres backend is not yet wired. "
+        f"ORB_DB_BACKEND={BACKEND_NAME} selected, but the Postgres backend is not yet wired. "
         "Orb's SQL currently uses SQLite-specific syntax (INSERT OR IGNORE, "
         "AUTOINCREMENT, PRAGMA, FTS5, sqlite-vec). See docs/DATA_LAYER.md for the "
-        "migration path. Use ORB_DB_BACKEND=sqlite until then." % BACKEND_NAME
+        "migration path. Use ORB_DB_BACKEND=sqlite until then."
     )
 if BACKEND_NAME not in _SUPPORTED:
     raise RuntimeError(
@@ -72,7 +74,6 @@ PLACEHOLDER = "?" if BACKEND_NAME == "sqlite" else "%s"
 # Enforced by tests/test_db_exception_aliases.py, which scans every .py under
 # server/ (comments and docstrings excluded, so this block is allowed to name
 # the stdlib classes) and fails on any reintroduction.
-import sqlite3 as _sqlite3
 
 _DRIVER_MODULES = [_sqlite3]
 for _mod_path in ("pysqlcipher3.dbapi2", "sqlcipher3.dbapi2"):

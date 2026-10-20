@@ -30,6 +30,7 @@ other hospital-system table.
 Idempotent: CREATE TABLE and CREATE INDEX IF NOT EXISTS only, one statement per
 conn.execute (executescript would commit the runner's transaction).
 """
+
 from migrations import Migration
 
 _TABLES = (
@@ -74,8 +75,7 @@ _TABLES = (
 )
 
 _INDEXES = (
-    "CREATE INDEX IF NOT EXISTS idx_clinic_sessions_doctor "
-    "ON clinic_sessions(doctor_id, weekday)",
+    "CREATE INDEX IF NOT EXISTS idx_clinic_sessions_doctor ON clinic_sessions(doctor_id, weekday)",
     "CREATE INDEX IF NOT EXISTS idx_clinic_sessions_department "
     "ON clinic_sessions(department, weekday)",
     "CREATE INDEX IF NOT EXISTS idx_clinic_session_exceptions_day "

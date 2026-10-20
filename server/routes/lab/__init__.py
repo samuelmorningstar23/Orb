@@ -39,25 +39,46 @@ Sub-modules, one per concern, each exporting `router` (no prefix):
   tat        turnaround times
   analysers  analyser registry, test mapping, instrument intake
 """
-from fastapi import APIRouter, Depends
 
 import config
+from fastapi import APIRouter, Depends
 from permissions import LAB_READ, require_permission
-from routes.lab import analysers, criticals, master, orders, reports, results, specimens, tat
+
+from routes.lab import (
+    analysers,
+    criticals,
+    master,
+    orders,
+    reports,
+    results,
+    specimens,
+    tat,
+)
 from routes.opt_in_gates import require_lab_module
 
 router = APIRouter(prefix="/api/lab", tags=["Laboratory"])
 
 
+_LAB_META_USER_DEFAULT = Depends(require_permission(LAB_READ))
+
+
 @router.get("/meta", dependencies=[Depends(require_lab_module(allow_draining=True))])
-def lab_meta(user: dict = Depends(require_permission(LAB_READ))):
+def lab_meta(user: dict = _LAB_META_USER_DEFAULT):
     """What this site's laboratory module is set to. No patient data."""
     return {
         "module": "lab",
         "state": config.module_state("lab"),
-        "features": {f: config.feature_enabled(f) for f in (
-            "lab_analyser_listener", "result_quarantine", "result_corrections",
-            "oru_order_link", "lab_critical_interfaced", "lab_portal_reports")},
+        "features": {
+            f: config.feature_enabled(f)
+            for f in (
+                "lab_analyser_listener",
+                "result_quarantine",
+                "result_corrections",
+                "oru_order_link",
+                "lab_critical_interfaced",
+                "lab_portal_reports",
+            )
+        },
         "settings": {
             "require_distinct_authoriser": config.LAB_REQUIRE_DISTINCT_AUTHORISER,
             "collection_backdate_minutes": config.LAB_COLLECTION_BACKDATE_MINUTES,

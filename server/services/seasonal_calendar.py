@@ -48,6 +48,7 @@ date is still 31 October.
 28 February, for starts and ends alike, so "until the end of February" still
 means that, and no range can turn into one that wraps the year by accident.
 """
+
 from __future__ import annotations
 
 import json
@@ -59,7 +60,7 @@ from calendar import isleap
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 from services import hospital_time
 from services.india_states import STATES, resolve_state, state_name
@@ -94,11 +95,20 @@ _ENTRY_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _MMDD_RE = re.compile(r"^(\d{2})-(\d{2})$")
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
-_ROOT_KEYS = {"version", "status", "reviewed_by", "reviewed_on", "compiled_on",
-              "zones", "entries"}
+_ROOT_KEYS = {"version", "status", "reviewed_by", "reviewed_on", "compiled_on", "zones", "entries"}
 _ZONE_KEYS = {"id", "name", "states"}
-_ENTRY_KEYS = {"id", "kind", "title", "zones", "start", "end", "peak", "summary",
-               "typically_rises", "sources"}
+_ENTRY_KEYS = {
+    "id",
+    "kind",
+    "title",
+    "zones",
+    "start",
+    "end",
+    "peak",
+    "summary",
+    "typically_rises",
+    "sources",
+}
 _PEAK_KEYS = {"start", "end"}
 _SOURCE_KEYS = {"name", "url", "accessed"}
 
@@ -124,19 +134,25 @@ class CalendarError(Exception):
         if self.missing:
             head = f"Seasonal calendar not found: {self.path}"
         else:
-            head = (f"Seasonal calendar {self.path} was refused, so Pulse will not "
-                    f"show it. {len(self.problems)} problem(s):")
+            head = (
+                f"Seasonal calendar {self.path} was refused, so Pulse will not "
+                f"show it. {len(self.problems)} problem(s):"
+            )
         return "\n".join([head, *(f"  - {p}" for p in self.problems)])
 
     @property
     def public_message(self) -> str:
         if self.missing:
-            return ("Pulse's seasonal calendar is not installed on this Orb, so there "
-                    "is nothing to show. Ask the person who installed Orb to check it.")
-        return ("Pulse's seasonal calendar has errors, so Orb is not showing it. "
-                "Ask the person who installed Orb to check it.")
+            return (
+                "Pulse's seasonal calendar is not installed on this Orb, so there "
+                "is nothing to show. Ask the person who installed Orb to check it."
+            )
+        return (
+            "Pulse's seasonal calendar has errors, so Orb is not showing it. "
+            "Ask the person who installed Orb to check it."
+        )
 
-    def copy(self) -> "CalendarError":
+    def copy(self) -> CalendarError:
         """A fresh instance to raise. Raising one cached instance on every
         request would grow its traceback without end."""
         return CalendarError(self.path, self.problems, missing=self.missing)
@@ -300,7 +316,7 @@ def _key_pattern(key: str) -> str:
     return rf'"{re.escape(key)}"\s*:'
 
 
-def _is_text(value: Any) -> bool:
+def _is_text(value: Any) -> TypeGuard[str]:
     return isinstance(value, str) and bool(value.strip())
 
 
@@ -314,41 +330,60 @@ def _iso_date(value: Any) -> bool:
     return True
 
 
-def _unknown_keys(check: _Check, where: str, obj: dict, allowed: set[str],
-                  needle: Any) -> None:
+def _unknown_keys(check: _Check, where: str, obj: dict, allowed: set[str], needle: Any) -> None:
     extra = sorted(k for k in obj if k not in allowed and not str(k).startswith("_"))
     if extra:
-        check.fail(where, f"unknown key(s) {extra}. Allowed: {sorted(allowed)}. "
-                          f"Keys starting with '_' are comments.", needle)
+        check.fail(
+            where,
+            f"unknown key(s) {extra}. Allowed: {sorted(allowed)}. "
+            f"Keys starting with '_' are comments.",
+            needle,
+        )
 
 
 def _check_header(check: _Check, doc: dict) -> None:
     version = doc.get("version")
     if isinstance(version, bool) or version != SCHEMA_VERSION:
-        check.fail("version", f"must be {SCHEMA_VERSION} (the version this build "
-                              f"reads); got {version!r}", _key_pattern("version"))
+        check.fail(
+            "version",
+            f"must be {SCHEMA_VERSION} (the version this build reads); got {version!r}",
+            _key_pattern("version"),
+        )
     status = doc.get("status")
     if status not in STATUSES:
-        check.fail("status", f"must be one of {list(STATUSES)}; got {status!r}",
-                   _key_pattern("status"))
+        check.fail(
+            "status", f"must be one of {list(STATUSES)}; got {status!r}", _key_pattern("status")
+        )
     reviewed_by = doc.get("reviewed_by")
     reviewed_on = doc.get("reviewed_on")
     if reviewed_by is not None and not _is_text(reviewed_by):
         check.fail("reviewed_by", "must be null or a name", _key_pattern("reviewed_by"))
     if reviewed_on is not None and not _iso_date(reviewed_on):
-        check.fail("reviewed_on", f"must be null or a date written YYYY-MM-DD; "
-                                  f"got {reviewed_on!r}", _key_pattern("reviewed_on"))
+        check.fail(
+            "reviewed_on",
+            f"must be null or a date written YYYY-MM-DD; got {reviewed_on!r}",
+            _key_pattern("reviewed_on"),
+        )
     if status == "reviewed" and (reviewed_by is None or reviewed_on is None):
-        check.fail("status", "is 'reviewed', so reviewed_by and reviewed_on must both "
-                             "say who reviewed it and when", _key_pattern("status"))
+        check.fail(
+            "status",
+            "is 'reviewed', so reviewed_by and reviewed_on must both say who reviewed it and when",
+            _key_pattern("status"),
+        )
     if status == "draft" and (reviewed_by is not None or reviewed_on is not None):
-        check.fail("status", "is 'draft', so reviewed_by and reviewed_on must both be "
-                             "null. A draft with a reviewer's name on it reads as "
-                             "reviewed.", _key_pattern("status"))
+        check.fail(
+            "status",
+            "is 'draft', so reviewed_by and reviewed_on must both be "
+            "null. A draft with a reviewer's name on it reads as "
+            "reviewed.",
+            _key_pattern("status"),
+        )
     if not _iso_date(doc.get("compiled_on")):
-        check.fail("compiled_on", f"must be a date written YYYY-MM-DD; got "
-                                  f"{doc.get('compiled_on')!r}",
-                   _key_pattern("compiled_on"))
+        check.fail(
+            "compiled_on",
+            f"must be a date written YYYY-MM-DD; got {doc.get('compiled_on')!r}",
+            _key_pattern("compiled_on"),
+        )
 
 
 def _check_zones(check: _Check, zones_raw: Any) -> list[dict]:
@@ -371,7 +406,7 @@ def _check_zones(check: _Check, zones_raw: Any) -> list[dict]:
             needle = (_id_pattern(zid), occurrences[zid])
         _unknown_keys(check, where, zone, _ZONE_KEYS, needle)
         if not isinstance(zid, str) or not _ZONE_ID_RE.match(zid):
-            check.fail(where, "id must be snake_case, e.g. \"west_coast\"", needle)
+            check.fail(where, 'id must be snake_case, e.g. "west_coast"', needle)
         elif zid in seen_ids:
             check.fail(where, "id is used by an earlier zone", needle)
         else:
@@ -387,35 +422,42 @@ def _check_zones(check: _Check, zones_raw: Any) -> list[dict]:
             if not isinstance(code, str) or code not in STATES:
                 guess = resolve_state(code) if isinstance(code, str) else None
                 hint = f" Did you mean {guess!r}?" if guess else ""
-                check.fail(where, f"{code!r} is not one of the 36 state codes.{hint}",
-                           needle)
+                check.fail(where, f"{code!r} is not one of the 36 state codes.{hint}", needle)
                 continue
             if code in owner:
-                check.fail(where, f"{code} ({STATES[code]}) is already in zone "
-                                  f"{owner[code]!r}. A state belongs to exactly one zone.",
-                           needle)
+                check.fail(
+                    where,
+                    f"{code} ({STATES[code]}) is already in zone "
+                    f"{owner[code]!r}. A state belongs to exactly one zone.",
+                    needle,
+                )
                 continue
             owner[code] = zid if isinstance(zid, str) else f"zones[{i}]"
             clean.append(code)
         zones.append({"id": zid, "name": zone.get("name"), "states": tuple(clean)})
     missing = [code for code in STATES if code not in owner]
     if missing:
-        check.fail("zones", "these state codes are in no zone, so a hospital there "
-                            "would see nothing: " + ", ".join(
-                                f"{c} ({STATES[c]})" for c in missing),
-                   _key_pattern("zones"))
+        check.fail(
+            "zones",
+            "these state codes are in no zone, so a hospital there "
+            "would see nothing: " + ", ".join(f"{c} ({STATES[c]})" for c in missing),
+            _key_pattern("zones"),
+        )
     return zones
 
 
-def _check_span(check: _Check, where: str, obj: dict, needle: Any,
-                label: str = "") -> Span | None:
+def _check_span(check: _Check, where: str, obj: dict, needle: Any, label: str = "") -> Span | None:
     start, end = _parse_mmdd(obj.get("start")), _parse_mmdd(obj.get("end"))
     if start is None:
-        check.fail(where, f"{label}start must be a real date written MM-DD; got "
-                          f"{obj.get('start')!r}", needle)
+        check.fail(
+            where,
+            f"{label}start must be a real date written MM-DD; got {obj.get('start')!r}",
+            needle,
+        )
     if end is None:
-        check.fail(where, f"{label}end must be a real date written MM-DD; got "
-                          f"{obj.get('end')!r}", needle)
+        check.fail(
+            where, f"{label}end must be a real date written MM-DD; got {obj.get('end')!r}", needle
+        )
     if start is None or end is None:
         return None
     return Span(start, end)
@@ -438,8 +480,11 @@ def _check_sources(check: _Check, where: str, sources: Any, needle: Any) -> tupl
         if not isinstance(url, str) or not re.match(r"^https?://\S+$", url):
             check.fail(here, f"url must be an http(s) address; got {url!r}", needle)
         if not _iso_date(src.get("accessed")):
-            check.fail(here, f"accessed must be a date written YYYY-MM-DD; got "
-                             f"{src.get('accessed')!r}", needle)
+            check.fail(
+                here,
+                f"accessed must be a date written YYYY-MM-DD; got {src.get('accessed')!r}",
+                needle,
+            )
         out.append({"name": src.get("name"), "url": url, "accessed": src.get("accessed")})
     return tuple(out)
 
@@ -465,7 +510,7 @@ def _check_entries(check: _Check, entries_raw: Any, zone_ids: set[str]) -> list[
 
         _unknown_keys(check, where, raw, _ENTRY_KEYS, needle)
         if not isinstance(eid, str) or not _ENTRY_ID_RE.match(eid):
-            check.fail(where, "id must be kebab-case, e.g. \"southwest-monsoon\"", needle)
+            check.fail(where, 'id must be kebab-case, e.g. "southwest-monsoon"', needle)
         elif eid in seen_ids:
             check.fail(where, "id is used by an earlier entry", needle)
         else:
@@ -479,8 +524,11 @@ def _check_entries(check: _Check, entries_raw: Any, zone_ids: set[str]) -> list[
         if not _is_text(title):
             check.fail(where, "title must be some text", needle)
         elif len(title) > TITLE_MAX:
-            check.fail(where, f"title is {len(title)} characters; the most a Pulse "
-                              f"card shows is {TITLE_MAX}", needle)
+            check.fail(
+                where,
+                f"title is {len(title)} characters; the most a Pulse card shows is {TITLE_MAX}",
+                needle,
+            )
 
         zones = raw.get("zones")
         if not isinstance(zones, list) or not zones:
@@ -502,32 +550,48 @@ def _check_entries(check: _Check, entries_raw: Any, zone_ids: set[str]) -> list[
             else:
                 _unknown_keys(check, f"{where} peak", peak_raw, _PEAK_KEYS, needle)
                 peak = _check_span(check, where, peak_raw, needle, label="peak ")
-                if peak is not None and span is not None and \
-                        not peak.reference_days() <= span.reference_days():
-                    check.fail(where, f"peak {_mmdd_text(peak.start)} to "
-                                      f"{_mmdd_text(peak.end)} is not inside the range "
-                                      f"{_mmdd_text(span.start)} to {_mmdd_text(span.end)}",
-                               needle)
+                if (
+                    peak is not None
+                    and span is not None
+                    and not peak.reference_days() <= span.reference_days()
+                ):
+                    check.fail(
+                        where,
+                        f"peak {_mmdd_text(peak.start)} to "
+                        f"{_mmdd_text(peak.end)} is not inside the range "
+                        f"{_mmdd_text(span.start)} to {_mmdd_text(span.end)}",
+                        needle,
+                    )
 
         if not _is_text(raw.get("summary")):
             check.fail(where, "summary must be some text", needle)
 
         rises = raw.get("typically_rises")
         if not isinstance(rises, list) or not all(_is_text(r) for r in rises):
-            check.fail(where, "typically_rises must be a list of text items (it may be "
-                              "empty)", needle)
+            check.fail(
+                where, "typically_rises must be a list of text items (it may be empty)", needle
+            )
             rises = []
 
         sources = _check_sources(check, where, raw.get("sources"), needle)
 
         if len(check.problems) == before and span is not None:
-            entries.append(Entry(
-                id=eid, kind=kind, title=title.strip(), zones=tuple(zones),
-                start=raw["start"], end=raw["end"], span=span, peak=peak,
-                summary=raw["summary"].strip(),
-                typically_rises=tuple(r.strip() for r in rises),
-                sources=sources,
-            ))
+            assert isinstance(eid, str) and isinstance(kind, str) and isinstance(title, str)
+            entries.append(
+                Entry(
+                    id=eid,
+                    kind=kind,
+                    title=title.strip(),
+                    zones=tuple(zones),
+                    start=raw["start"],
+                    end=raw["end"],
+                    span=span,
+                    peak=peak,
+                    summary=raw["summary"].strip(),
+                    typically_rises=tuple(r.strip() for r in rises),
+                    sources=sources,
+                )
+            )
     return entries
 
 
@@ -538,11 +602,15 @@ def load_calendar(path: Path | str | None = None) -> SeasonalCalendar:
     """
     target = Path(path) if path is not None else calendar_path()
     if not target.is_file():
-        raise CalendarError(target, [
-            f"there is no file at this path. Orb ships one at "
-            f"server/site_config/seasonal_calendar.json; set {CALENDAR_PATH_ENV} to "
-            f"use another."
-        ], missing=True)
+        raise CalendarError(
+            target,
+            [
+                f"there is no file at this path. Orb ships one at "
+                f"server/site_config/seasonal_calendar.json; set {CALENDAR_PATH_ENV} to "
+                f"use another."
+            ],
+            missing=True,
+        )
     try:
         raw = target.read_text(encoding="utf-8")
     except OSError as e:
@@ -550,9 +618,9 @@ def load_calendar(path: Path | str | None = None) -> SeasonalCalendar:
     try:
         doc = json.loads(raw)
     except json.JSONDecodeError as e:
-        raise CalendarError(target, [
-            f"line {e.lineno}, column {e.colno}: not valid JSON: {e.msg}"
-        ]) from None
+        raise CalendarError(
+            target, [f"line {e.lineno}, column {e.colno}: not valid JSON: {e.msg}"]
+        ) from None
     if not isinstance(doc, dict):
         raise CalendarError(target, ["the file must hold one JSON object"])
 
@@ -601,8 +669,11 @@ def get_calendar() -> SeasonalCalendar:
                 hit = load_calendar(key)
                 logger.info(
                     "Seasonal calendar loaded from %s: %d zone(s), %d entr%s, status %s",
-                    key, len(hit.zones), len(hit.entries),
-                    "y" if len(hit.entries) == 1 else "ies", hit.status,
+                    key,
+                    len(hit.zones),
+                    len(hit.entries),
+                    "y" if len(hit.entries) == 1 else "ies",
+                    hit.status,
                 )
             except CalendarError as e:
                 hit = e

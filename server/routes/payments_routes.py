@@ -43,22 +43,29 @@ read/record/close_counter and deliberately NOT approve. `admin` holds all four,
 so nothing about who can reach these routes today changes — what changed is
 what a counter account has to be handed.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Optional
-
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict
 
 import config
 from database import run_db
-from permissions import (PAYMENTS_APPROVE, PAYMENTS_CLOSE_COUNTER,
-                         PAYMENTS_READ, PAYMENTS_RECORD, department_scope,
-                         enforce_patient_scope, log_phi_read,
-                         require_patient_access, require_permission)
-from services import payments_service as payments
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from permissions import (
+    PAYMENTS_APPROVE,
+    PAYMENTS_CLOSE_COUNTER,
+    PAYMENTS_READ,
+    PAYMENTS_RECORD,
+    department_scope,
+    enforce_patient_scope,
+    log_phi_read,
+    require_patient_access,
+    require_permission,
+)
+from pydantic import BaseModel, ConfigDict
 from services.money import MoneyError
+
+from services import payments_service as payments
 
 logger = logging.getLogger("orb.routes.payments")
 
@@ -107,7 +114,7 @@ async def require_module(request: Request) -> None:
                 "error": "module_disabled",
                 "module": "payments",
                 "message": "The payments module is not enabled for this deployment "
-                           "(ORB_PAYMENTS=0).",
+                "(ORB_PAYMENTS=0).",
             },
         )
 
@@ -125,8 +132,10 @@ def _guard(fn, *args, **kwargs):
     including the exception translation, which must happen where the error is
     raised rather than after it has crossed a thread boundary as something else.
     """
+
     def _call():
         return fn(*args, **kwargs)
+
     return _call
 
 
@@ -136,25 +145,41 @@ async def _run(fn, *args, **kwargs):
     except payments.ImmutablePaymentError as exc:
         # 409, not 422: the request is well formed and the rule is about a
         # document that already exists.
-        raise HTTPException(status_code=409, detail={
-            "error": "receipt_immutable", "message": str(exc),
-            "remedy": "POST /api/payments/receipts/{id}/reverse",
-        }) from exc
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "receipt_immutable",
+                "message": str(exc),
+                "remedy": "POST /api/payments/receipts/{id}/reverse",
+            },
+        ) from exc
     except payments.ReconciliationError as exc:
         # A total that does not equal its own parts is OUR bug, and it must not
         # be rendered as if it were a figure. 500 and a loud log.
         logger.error("payments reconciliation failure: %s", exc)
-        raise HTTPException(status_code=500, detail={
-            "error": "reconciliation_failed", "message": str(exc),
-        }) from exc
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "reconciliation_failed",
+                "message": str(exc),
+            },
+        ) from exc
     except payments.PaymentError as exc:
-        raise HTTPException(status_code=422, detail={
-            "error": "payment_refused", "message": str(exc),
-        }) from exc
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "payment_refused",
+                "message": str(exc),
+            },
+        ) from exc
     except MoneyError as exc:
-        raise HTTPException(status_code=422, detail={
-            "error": "bad_money_value", "message": str(exc),
-        }) from exc
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "bad_money_value",
+                "message": str(exc),
+            },
+        ) from exc
 
 
 async def _with_names(rows: list[dict], user: dict, *staff_keys: str) -> list[dict]:
@@ -162,7 +187,10 @@ async def _with_names(rows: list[dict], user: dict, *staff_keys: str) -> list[di
     Patient names are held to the caller's ward scope, the one derivation
     every list uses, so a ward-scoped account sees no new names."""
     return await run_db(
-        payments.attach_people, rows, dept=department_scope(user), staff_keys=staff_keys,
+        payments.attach_people,
+        rows,
+        dept=department_scope(user),
+        staff_keys=staff_keys,
     )
 
 
@@ -190,7 +218,7 @@ class PatientMoneyBody(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    patient_id: Optional[str] = None
+    patient_id: str | None = None
 
     def raw(self) -> dict:
         """The body as the dict the `_paise` / `_int_or_none` parsers expect,
@@ -198,21 +226,28 @@ class PatientMoneyBody(BaseModel):
         return self.model_dump()
 
 
-def _int_or_none(body: dict, key: str) -> Optional[int]:
+def _int_or_none(body: dict, key: str) -> int | None:
     value = body.get(key)
     if value is None or value == "":
         return None
     if isinstance(value, bool) or isinstance(value, float):
-        raise HTTPException(status_code=422, detail={
-            "error": "bad_money_value",
-            "message": f"{key} must be a whole number of paise, not {type(value).__name__}",
-        })
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "bad_money_value",
+                "message": f"{key} must be a whole number of paise, not {type(value).__name__}",
+            },
+        )
     try:
         return int(value)
     except (TypeError, ValueError):
-        raise HTTPException(status_code=422, detail={
-            "error": "bad_money_value", "message": f"{key} must be an integer",
-        })
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "bad_money_value",
+                "message": f"{key} must be an integer",
+            },
+        ) from None
 
 
 def _paise(body: dict, key: str) -> int:
@@ -225,38 +260,58 @@ def _paise(body: dict, key: str) -> int:
     """
     value = body.get(key)
     if isinstance(value, bool):
-        raise HTTPException(status_code=422, detail={
-            "error": "bad_money_value", "message": f"{key} must be an integer of paise",
-        })
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "bad_money_value",
+                "message": f"{key} must be an integer of paise",
+            },
+        )
     if isinstance(value, float):
-        raise HTTPException(status_code=422, detail={
-            "error": "bad_money_value",
-            "message": (
-                f"{key} must be an INTEGER number of paise, not a decimal "
-                f"({value!r}). ₹12.34 is 1234."
-            ),
-        })
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "bad_money_value",
+                "message": (
+                    f"{key} must be an INTEGER number of paise, not a decimal "
+                    f"({value!r}). ₹12.34 is 1234."
+                ),
+            },
+        )
     if value is None:
-        raise HTTPException(status_code=422, detail={
-            "error": "bad_money_value", "message": f"{key} is required (integer paise)",
-        })
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "bad_money_value",
+                "message": f"{key} is required (integer paise)",
+            },
+        )
     if isinstance(value, str):
-        raise HTTPException(status_code=422, detail={
-            "error": "bad_money_value",
-            "message": f"{key} must be an integer of paise, not text, parse it client-side",
-        })
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "bad_money_value",
+                "message": f"{key} must be an integer of paise, not text, parse it client-side",
+            },
+        )
     return int(value)
 
 
 # ── Module status ────────────────────────────────────────────────────────────
 
+
+_PAYMENTS_CONFIG_USER_DEFAULT = Depends(_COUNTER_READ)
+
+
 @router.get("/config", dependencies=[Depends(require_module)])
-async def payments_config(user: dict = Depends(_COUNTER_READ)):
+async def payments_config(user: dict = _PAYMENTS_CONFIG_USER_DEFAULT):
     """What this module can and cannot do here, for a screen to render honestly."""
+
     def _read():
         from database import db_session
-        from services import facility_service
         from services.billing_masters import MAIN_FACILITY_ID
+
+        from services import facility_service
 
         with db_session() as db:
             # The counter's own facility's receipt series (multisite-7a);
@@ -273,7 +328,9 @@ async def payments_config(user: dict = Depends(_COUNTER_READ)):
                 "financial_year": row["financial_year"] if row else None,
                 "next_number": int(row["next_number"]) if row else None,
                 "is_configured": bool(row and int(row["is_configured"] or 0)),
-            } if row else None,
+            }
+            if row
+            else None,
         }
 
     series = await run_db(_read)
@@ -292,10 +349,15 @@ async def payments_config(user: dict = Depends(_COUNTER_READ)):
 
 # ── Receipts ─────────────────────────────────────────────────────────────────
 
+
+_CREATE_RECEIPT_BODY_DEFAULT = Body(...)
+_CREATE_RECEIPT_USER_DEFAULT = Depends(_COUNTER_RECORD)
+
+
 @router.post("/receipts", dependencies=[Depends(require_module)])
 async def create_receipt(
-    body: PatientMoneyBody = Body(...),
-    user: dict = Depends(_COUNTER_RECORD),
+    body: PatientMoneyBody = _CREATE_RECEIPT_BODY_DEFAULT,
+    user: dict = _CREATE_RECEIPT_USER_DEFAULT,
 ):
     """Take money. Over-payment becomes an advance and says so in the response."""
     # PHI SCOPE (2026-08-14). Same rule the GET beside it has carried since
@@ -325,15 +387,24 @@ async def create_receipt(
     )
 
 
+_LIST_RECEIPTS_PATIENT_ID_DEFAULT = Query(default=None)
+_LIST_RECEIPTS_INVOICE_ID_DEFAULT = Query(default=None)
+_LIST_RECEIPTS_COUNTER_SESSION_ID_DEFAULT = Query(default=None)
+_LIST_RECEIPTS_STATUS_DEFAULT = Query(default=None)
+_LIST_RECEIPTS_DIRECTION_DEFAULT = Query(default=None)
+_LIST_RECEIPTS_LIMIT_DEFAULT = Query(default=100, ge=1, le=500)
+_LIST_RECEIPTS_USER_DEFAULT = Depends(_COUNTER_READ)
+
+
 @router.get("/receipts", dependencies=[Depends(require_module)])
 async def list_receipts(
-    patient_id: Optional[str] = Query(default=None),
-    invoice_id: Optional[int] = Query(default=None),
-    counter_session_id: Optional[int] = Query(default=None),
-    status: Optional[str] = Query(default=None),
-    direction: Optional[str] = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=500),
-    user: dict = Depends(_COUNTER_READ),
+    patient_id: str | None = _LIST_RECEIPTS_PATIENT_ID_DEFAULT,
+    invoice_id: int | None = _LIST_RECEIPTS_INVOICE_ID_DEFAULT,
+    counter_session_id: int | None = _LIST_RECEIPTS_COUNTER_SESSION_ID_DEFAULT,
+    status: str | None = _LIST_RECEIPTS_STATUS_DEFAULT,
+    direction: str | None = _LIST_RECEIPTS_DIRECTION_DEFAULT,
+    limit: int = _LIST_RECEIPTS_LIMIT_DEFAULT,
+    user: dict = _LIST_RECEIPTS_USER_DEFAULT,
 ):
     # PHI SCOPE (2026-08-12). patient_id arrives on the QUERY STRING, so
     # require_patient_access — which resolves it from the PATH — cannot guard this
@@ -354,10 +425,13 @@ async def list_receipts(
     return {"receipts": await _with_names(receipts, user, "received_by", "cancelled_by")}
 
 
+_READ_RECEIPT_USER_DEFAULT = Depends(_COUNTER_READ)
+
+
 @router.get("/receipts/{payment_id}", dependencies=[Depends(require_module)])
 async def read_receipt(
     payment_id: int,
-    user: dict = Depends(_COUNTER_READ),
+    user: dict = _READ_RECEIPT_USER_DEFAULT,
 ):
     receipt = await _run(payments.get_payment, payment_id)
     if receipt is None:
@@ -365,11 +439,14 @@ async def read_receipt(
     return receipt
 
 
+_PRINT_RECEIPT_USER_DEFAULT = Depends(_COUNTER_READ)
+
+
 @router.get("/receipts/{payment_id}/print", dependencies=[Depends(require_module)])
 async def print_receipt(
     payment_id: int,
     request: Request,
-    user: dict = Depends(_COUNTER_READ),
+    user: dict = _PRINT_RECEIPT_USER_DEFAULT,
 ):
     """The printable receipt (multisite-2): the receipt, the supplier block it
     was issued with (never re-read from today's hospital details), the
@@ -397,34 +474,42 @@ async def print_receipt(
     return view
 
 
+_REFUSE_RECEIPT_EDIT_BODY_DEFAULT = Body(default_factory=dict)
+_REFUSE_RECEIPT_EDIT_USER_DEFAULT = Depends(_COUNTER_RECORD)
+
+
 @router.patch("/receipts/{payment_id}", dependencies=[Depends(require_module)])
 async def refuse_receipt_edit(
     payment_id: int,
-    body: dict = Body(default_factory=dict),
+    body: dict = _REFUSE_RECEIPT_EDIT_BODY_DEFAULT,
     # RECORD, not APPROVE, deliberately. This endpoint can never mutate — it
     # exists to answer 409 with the immutability rule — and its audience is the
     # recording client whose screen tries an edit. Tier it at approve and that
     # client gets a blank 403 instead of the one-round-trip lesson pointing at
     # /reverse; nothing is protected in exchange, because there is nothing here
     # to protect.
-    user: dict = Depends(_COUNTER_RECORD),
+    user: dict = _REFUSE_RECEIPT_EDIT_USER_DEFAULT,
 ):
     """ALWAYS 409. See the module docstring: this endpoint exists to state the
     rule, not to be a stub somebody later "implements"."""
     return await _run(payments.amend_payment, payment_id, **(body or {}))
 
 
+_REVERSE_RECEIPT_BODY_DEFAULT = Body(...)
+_REVERSE_RECEIPT_USER_DEFAULT = Depends(_COUNTER_APPROVE)
+
+
 @router.post("/receipts/{payment_id}/reverse", dependencies=[Depends(require_module)])
 async def reverse_receipt(
     payment_id: int,
-    body: dict = Body(...),
+    body: dict = _REVERSE_RECEIPT_BODY_DEFAULT,
     # APPROVE: a reversal voids recorded money. The permission alone did not
     # stop an admin (who holds record AND approve) voiding their own receipt,
     # the exact edit-the-ledger failure receipts are immutable to prevent, so
     # the service also refuses a reversal by the person who took the payment
     # (422), as it refuses a refund decided by its requester. The reverser is
     # the session user (_actor), never a name from the body.
-    user: dict = Depends(_COUNTER_APPROVE),
+    user: dict = _REVERSE_RECEIPT_USER_DEFAULT,
 ):
     return await _run(
         payments.reverse_payment,
@@ -436,14 +521,20 @@ async def reverse_receipt(
 
 # ── Deposits and advances ────────────────────────────────────────────────────
 
+
+_READ_DEPOSITS_ADMISSION_ID_DEFAULT = Query(default=None)
+_READ_DEPOSITS_LIMIT_DEFAULT = Query(default=200, ge=1, le=1000)
+_READ_DEPOSITS_USER_DEFAULT = Depends(
+    require_patient_access(PAYMENTS_READ, audit_action="payments_deposits_read")
+)
+
+
 @router.get("/deposits/{patient_id}", dependencies=[Depends(require_module)])
 async def read_deposits(
     patient_id: str,
-    admission_id: Optional[str] = Query(default=None),
-    limit: int = Query(default=200, ge=1, le=1000),
-    user: dict = Depends(
-        require_patient_access(PAYMENTS_READ, audit_action="payments_deposits_read")
-    ),
+    admission_id: str | None = _READ_DEPOSITS_ADMISSION_ID_DEFAULT,
+    limit: int = _READ_DEPOSITS_LIMIT_DEFAULT,
+    user: dict = _READ_DEPOSITS_USER_DEFAULT,
 ):
     """A patient's advance balance and its ledger.
 
@@ -465,10 +556,14 @@ async def read_deposits(
     return {**balance, "entries": entries}
 
 
+_APPLY_DEPOSIT_BODY_DEFAULT = Body(...)
+_APPLY_DEPOSIT_USER_DEFAULT = Depends(_COUNTER_RECORD)
+
+
 @router.post("/deposits/apply", dependencies=[Depends(require_module)])
 async def apply_deposit(
-    body: PatientMoneyBody = Body(...),
-    user: dict = Depends(_COUNTER_RECORD),
+    body: PatientMoneyBody = _APPLY_DEPOSIT_BODY_DEFAULT,
+    user: dict = _APPLY_DEPOSIT_USER_DEFAULT,
 ):
     # PHI SCOPE (2026-08-14). `GET /deposits/{patient_id}` right above wears
     # require_patient_access; this one spends the same patient's advance
@@ -488,12 +583,19 @@ async def apply_deposit(
 
 # ── Refunds ──────────────────────────────────────────────────────────────────
 
+
+_REFUND_LIMITS_PATIENT_ID_DEFAULT = Query(...)
+_REFUND_LIMITS_PAYMENT_ID_DEFAULT = Query(default=None)
+_REFUND_LIMITS_INVOICE_ID_DEFAULT = Query(default=None)
+_REFUND_LIMITS_USER_DEFAULT = Depends(_COUNTER_READ)
+
+
 @router.get("/refunds/limits", dependencies=[Depends(require_module)])
 async def refund_limits(
-    patient_id: str = Query(...),
-    payment_id: Optional[int] = Query(default=None),
-    invoice_id: Optional[int] = Query(default=None),
-    user: dict = Depends(_COUNTER_READ),
+    patient_id: str = _REFUND_LIMITS_PATIENT_ID_DEFAULT,
+    payment_id: int | None = _REFUND_LIMITS_PAYMENT_ID_DEFAULT,
+    invoice_id: int | None = _REFUND_LIMITS_INVOICE_ID_DEFAULT,
+    user: dict = _REFUND_LIMITS_USER_DEFAULT,
 ):
     """What is refundable, before anyone types an amount."""
     # PHI SCOPE (2026-08-12). patient_id arrives on the QUERY STRING, so
@@ -508,10 +610,14 @@ async def refund_limits(
     )
 
 
+_CREATE_REFUND_BODY_DEFAULT = Body(...)
+_CREATE_REFUND_USER_DEFAULT = Depends(_COUNTER_RECORD)
+
+
 @router.post("/refunds", dependencies=[Depends(require_module)])
 async def create_refund(
-    body: PatientMoneyBody = Body(...),
-    user: dict = Depends(_COUNTER_RECORD),
+    body: PatientMoneyBody = _CREATE_REFUND_BODY_DEFAULT,
+    user: dict = _CREATE_REFUND_USER_DEFAULT,
 ):
     # PHI SCOPE (2026-08-14). THE SHARPEST OF THE FOUR, because its own two
     # siblings already do it: `GET /refunds/limits?patient_id=` and
@@ -536,12 +642,18 @@ async def create_refund(
     )
 
 
+_LIST_REFUNDS_PATIENT_ID_DEFAULT = Query(default=None)
+_LIST_REFUNDS_STATUS_DEFAULT = Query(default=None)
+_LIST_REFUNDS_LIMIT_DEFAULT = Query(default=100, ge=1, le=500)
+_LIST_REFUNDS_USER_DEFAULT = Depends(_COUNTER_READ)
+
+
 @router.get("/refunds", dependencies=[Depends(require_module)])
 async def list_refunds(
-    patient_id: Optional[str] = Query(default=None),
-    status: Optional[str] = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=500),
-    user: dict = Depends(_COUNTER_READ),
+    patient_id: str | None = _LIST_REFUNDS_PATIENT_ID_DEFAULT,
+    status: str | None = _LIST_REFUNDS_STATUS_DEFAULT,
+    limit: int = _LIST_REFUNDS_LIMIT_DEFAULT,
+    user: dict = _LIST_REFUNDS_USER_DEFAULT,
 ):
     # PHI SCOPE (2026-08-12). patient_id arrives on the QUERY STRING, so
     # require_patient_access — which resolves it from the PATH — cannot guard this
@@ -550,29 +662,41 @@ async def list_refunds(
     # chart read. enforce_patient_scope 404s (never 403 — a 403 confirms the
     # patient exists); it is blocking, so it goes through run_db from async def.
     await run_db(enforce_patient_scope, user, patient_id)
-    refunds = await _run(
-        payments.list_refunds, patient_id=patient_id, status=status, limit=limit
-    )
-    return {"refunds": await _with_names(
-        refunds, user, "requested_by", "decided_by", "paid_by",
-    )}
+    refunds = await _run(payments.list_refunds, patient_id=patient_id, status=status, limit=limit)
+    return {
+        "refunds": await _with_names(
+            refunds,
+            user,
+            "requested_by",
+            "decided_by",
+            "paid_by",
+        )
+    }
+
+
+_DECIDE_REFUND_BODY_DEFAULT = Body(...)
+_DECIDE_REFUND_USER_DEFAULT = Depends(_COUNTER_APPROVE)
 
 
 @router.post("/refunds/{refund_id}/decision", dependencies=[Depends(require_module)])
 async def decide_refund(
     refund_id: int,
-    body: dict = Body(...),
+    body: dict = _DECIDE_REFUND_BODY_DEFAULT,
     # APPROVE — and the permission is IN ADDITION to the service's four-eyes
     # rule (an approver who is the requester is refused with 422), never
     # instead of it.
-    user: dict = Depends(_COUNTER_APPROVE),
+    user: dict = _DECIDE_REFUND_USER_DEFAULT,
 ):
     """Approve or reject. The service refuses if the approver is the requester."""
     approve = body.get("approve")
     if not isinstance(approve, bool):
-        raise HTTPException(status_code=422, detail={
-            "error": "bad_request", "message": "approve must be true or false",
-        })
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "bad_request",
+                "message": "approve must be true or false",
+            },
+        )
     return await _run(
         payments.decide_refund,
         refund_id,
@@ -582,16 +706,20 @@ async def decide_refund(
     )
 
 
+_PAY_REFUND_BODY_DEFAULT = Body(...)
+_PAY_REFUND_USER_DEFAULT = Depends(_COUNTER_RECORD)
+
+
 @router.post("/refunds/{refund_id}/pay", dependencies=[Depends(require_module)])
 async def pay_refund(
     refund_id: int,
-    body: dict = Body(...),
+    body: dict = _PAY_REFUND_BODY_DEFAULT,
     # RECORD, not APPROVE: the authorisation already happened — the service
     # refuses to pay a refund that is not `approved` — and handing the cash
     # across the counter is the cashier's half of the segregated pair. The
     # designed lifecycle is request (record) → decide (approve, second person)
     # → pay out (record).
-    user: dict = Depends(_COUNTER_RECORD),
+    user: dict = _PAY_REFUND_USER_DEFAULT,
 ):
     return await _run(
         payments.pay_refund,
@@ -605,10 +733,15 @@ async def pay_refund(
 
 # ── Discount approvals ───────────────────────────────────────────────────────
 
+
+_CREATE_DISCOUNT_BODY_DEFAULT = Body(...)
+_CREATE_DISCOUNT_USER_DEFAULT = Depends(_COUNTER_RECORD)
+
+
 @router.post("/discounts", dependencies=[Depends(require_module)])
 async def create_discount(
-    body: PatientMoneyBody = Body(...),
-    user: dict = Depends(_COUNTER_RECORD),
+    body: PatientMoneyBody = _CREATE_DISCOUNT_BODY_DEFAULT,
+    user: dict = _CREATE_DISCOUNT_USER_DEFAULT,
 ):
     # PHI SCOPE (2026-08-14). `GET /discounts?patient_id=` is scoped; the
     # request that creates one was not. 404, never 403.
@@ -628,21 +761,27 @@ async def create_discount(
         percent_bp=_int_or_none(data, "percent_bp") or 0,
         base_paise=None if data.get("base_paise") is None else _paise(data, "base_paise"),
         policy_limit_paise=(
-            None if data.get("policy_limit_paise") is None
-            else _paise(data, "policy_limit_paise")
+            None if data.get("policy_limit_paise") is None else _paise(data, "policy_limit_paise")
         ),
         reason_code=data.get("reason_code"),
         admission_id=data.get("admission_id"),
     )
 
 
+_LIST_DISCOUNTS_STATUS_DEFAULT = Query(default=None)
+_LIST_DISCOUNTS_INVOICE_ID_DEFAULT = Query(default=None)
+_LIST_DISCOUNTS_PATIENT_ID_DEFAULT = Query(default=None)
+_LIST_DISCOUNTS_LIMIT_DEFAULT = Query(default=100, ge=1, le=500)
+_LIST_DISCOUNTS_USER_DEFAULT = Depends(_COUNTER_READ)
+
+
 @router.get("/discounts", dependencies=[Depends(require_module)])
 async def list_discounts(
-    status: Optional[str] = Query(default=None),
-    invoice_id: Optional[int] = Query(default=None),
-    patient_id: Optional[str] = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=500),
-    user: dict = Depends(_COUNTER_READ),
+    status: str | None = _LIST_DISCOUNTS_STATUS_DEFAULT,
+    invoice_id: int | None = _LIST_DISCOUNTS_INVOICE_ID_DEFAULT,
+    patient_id: str | None = _LIST_DISCOUNTS_PATIENT_ID_DEFAULT,
+    limit: int = _LIST_DISCOUNTS_LIMIT_DEFAULT,
+    user: dict = _LIST_DISCOUNTS_USER_DEFAULT,
 ):
     # PHI SCOPE (2026-08-12). patient_id arrives on the QUERY STRING, so
     # require_patient_access — which resolves it from the PATH — cannot guard this
@@ -652,27 +791,38 @@ async def list_discounts(
     # patient exists); it is blocking, so it goes through run_db from async def.
     await run_db(enforce_patient_scope, user, patient_id)
     discounts = await _run(
-        payments.list_discounts, status=status, invoice_id=invoice_id,
-        patient_id=patient_id, limit=limit,
+        payments.list_discounts,
+        status=status,
+        invoice_id=invoice_id,
+        patient_id=patient_id,
+        limit=limit,
     )
     return {"discounts": await _with_names(discounts, user, "requested_by", "decided_by")}
+
+
+_DECIDE_DISCOUNT_BODY_DEFAULT = Body(...)
+_DECIDE_DISCOUNT_USER_DEFAULT = Depends(_COUNTER_APPROVE)
 
 
 @router.post("/discounts/{discount_id}/decision", dependencies=[Depends(require_module)])
 async def decide_discount(
     discount_id: int,
-    body: dict = Body(...),
+    body: dict = _DECIDE_DISCOUNT_BODY_DEFAULT,
     # APPROVE — in addition to the service's own requester-may-not-decide rule.
-    user: dict = Depends(_COUNTER_APPROVE),
+    user: dict = _DECIDE_DISCOUNT_USER_DEFAULT,
 ):
     """The approver's identity comes from the SESSION, never the body. A discount
     is a person's decision; a body-supplied approver name is a signature anybody
     can forge."""
     approve = body.get("approve")
     if not isinstance(approve, bool):
-        raise HTTPException(status_code=422, detail={
-            "error": "bad_request", "message": "approve must be true or false",
-        })
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "bad_request",
+                "message": "approve must be true or false",
+            },
+        )
     approved = body.get("approved_paise")
     return await _run(
         payments.decide_discount,
@@ -686,13 +836,18 @@ async def decide_discount(
 
 # ── Cash counters and the day-end count ──────────────────────────────────────
 
+
+_OPEN_COUNTER_BODY_DEFAULT = Body(...)
+_OPEN_COUNTER_USER_DEFAULT = Depends(_COUNTER_RECORD)
+
+
 @router.post("/counters/open", dependencies=[Depends(require_module)])
 async def open_counter(
-    body: dict = Body(...),
+    body: dict = _OPEN_COUNTER_BODY_DEFAULT,
     # RECORD, not CLOSE_COUNTER: opening a drawer with its float is the START
     # of taking money — a cashier must be able to open their own shift.
     # CLOSE_COUNTER is only the end-of-shift count and its sign-off.
-    user: dict = Depends(_COUNTER_RECORD),
+    user: dict = _OPEN_COUNTER_USER_DEFAULT,
 ):
     return await _run(
         payments.open_counter_session,
@@ -700,41 +855,59 @@ async def open_counter(
         opened_by=_actor(user),
         shift_label=body.get("shift_label"),
         opening_float_paise=(
-            0 if body.get("opening_float_paise") is None
-            else _paise(body, "opening_float_paise")
+            0 if body.get("opening_float_paise") is None else _paise(body, "opening_float_paise")
         ),
     )
 
 
+_LIST_COUNTERS_COUNTER_CODE_DEFAULT = Query(default=None)
+_LIST_COUNTERS_STATUS_DEFAULT = Query(default=None)
+_LIST_COUNTERS_LIMIT_DEFAULT = Query(default=50, ge=1, le=200)
+_LIST_COUNTERS_USER_DEFAULT = Depends(_COUNTER_READ)
+
+
 @router.get("/counters", dependencies=[Depends(require_module)])
 async def list_counters(
-    counter_code: Optional[str] = Query(default=None),
-    status: Optional[str] = Query(default=None),
-    limit: int = Query(default=50, ge=1, le=200),
-    user: dict = Depends(_COUNTER_READ),
+    counter_code: str | None = _LIST_COUNTERS_COUNTER_CODE_DEFAULT,
+    status: str | None = _LIST_COUNTERS_STATUS_DEFAULT,
+    limit: int = _LIST_COUNTERS_LIMIT_DEFAULT,
+    user: dict = _LIST_COUNTERS_USER_DEFAULT,
 ):
     sessions = await _run(
         payments.list_counter_sessions, counter_code=counter_code, status=status, limit=limit
     )
-    return {"sessions": await _with_names(
-        sessions, user, "opened_by", "closed_by", "reconciled_by",
-    )}
+    return {
+        "sessions": await _with_names(
+            sessions,
+            user,
+            "opened_by",
+            "closed_by",
+            "reconciled_by",
+        )
+    }
+
+
+_COUNTER_EXPECTED_USER_DEFAULT = Depends(_COUNTER_READ)
 
 
 @router.get("/counters/{session_id}/expected", dependencies=[Depends(require_module)])
 async def counter_expected(
     session_id: int,
-    user: dict = Depends(_COUNTER_READ),
+    user: dict = _COUNTER_EXPECTED_USER_DEFAULT,
 ):
     """What the drawer should hold, and the breakdown it is the sum of."""
     return await _run(payments.counter_session_expected, session_id)
 
 
+_CLOSE_COUNTER_BODY_DEFAULT = Body(...)
+_CLOSE_COUNTER_USER_DEFAULT = Depends(_COUNTER_CLOSE)
+
+
 @router.post("/counters/{session_id}/close", dependencies=[Depends(require_module)])
 async def close_counter(
     session_id: int,
-    body: dict = Body(...),
-    user: dict = Depends(_COUNTER_CLOSE),
+    body: dict = _CLOSE_COUNTER_BODY_DEFAULT,
+    user: dict = _CLOSE_COUNTER_USER_DEFAULT,
 ):
     return await _run(
         payments.close_counter_session,
@@ -745,13 +918,17 @@ async def close_counter(
     )
 
 
+_RECONCILE_COUNTER_BODY_DEFAULT = Body(default_factory=dict)
+_RECONCILE_COUNTER_USER_DEFAULT = Depends(_COUNTER_CLOSE)
+
+
 @router.post("/counters/{session_id}/reconcile", dependencies=[Depends(require_module)])
 async def reconcile_counter(
     session_id: int,
-    body: dict = Body(default_factory=dict),
+    body: dict = _RECONCILE_COUNTER_BODY_DEFAULT,
     # CLOSE_COUNTER — in addition to the service's second-pair-of-eyes rule
     # (the reconciler may not be the person who closed the till).
-    user: dict = Depends(_COUNTER_CLOSE),
+    user: dict = _RECONCILE_COUNTER_USER_DEFAULT,
 ):
     return await _run(
         payments.reconcile_counter_session,
@@ -761,21 +938,31 @@ async def reconcile_counter(
     )
 
 
+_DAY_END_DAY_DEFAULT = Query(default=None, description="YYYY-MM-DD, hospital-local")
+_DAY_END_COUNTER_CODE_DEFAULT = Query(default=None)
+_DAY_END_USER_DEFAULT = Depends(_COUNTER_READ)
+
+
 @router.get("/day-end", dependencies=[Depends(require_module)])
 async def day_end(
-    day: Optional[str] = Query(default=None, description="YYYY-MM-DD, hospital-local"),
-    counter_code: Optional[str] = Query(default=None),
-    user: dict = Depends(_COUNTER_READ),
+    day: str | None = _DAY_END_DAY_DEFAULT,
+    counter_code: str | None = _DAY_END_COUNTER_CODE_DEFAULT,
+    user: dict = _DAY_END_USER_DEFAULT,
 ):
     return await _run(payments.day_end_summary, day=day, counter_code=counter_code)
+
+
+_SEARCH_COUNTER_PATIENTS_Q_DEFAULT = Query(default="")
+_SEARCH_COUNTER_PATIENTS_LIMIT_DEFAULT = Query(default=20, ge=1, le=50)
+_SEARCH_COUNTER_PATIENTS_USER_DEFAULT = Depends(_COUNTER_READ)
 
 
 @router.get("/patients", dependencies=[Depends(require_module)])
 async def search_counter_patients(
     request: Request,
-    q: str = Query(default=""),
-    limit: int = Query(default=20, ge=1, le=50),
-    user: dict = Depends(_COUNTER_READ),
+    q: str = _SEARCH_COUNTER_PATIENTS_Q_DEFAULT,
+    limit: int = _SEARCH_COUNTER_PATIENTS_LIMIT_DEFAULT,
+    user: dict = _SEARCH_COUNTER_PATIENTS_USER_DEFAULT,
 ):
     """Find the patient at the counter by name, MRN, bed or ID.
 
@@ -799,31 +986,36 @@ async def search_counter_patients(
             ),
             target_type="department",
             target_id=dept,
-            metadata={"result_count": len(results),
-                      "patient_ids": [r["id"] for r in results]},
+            metadata={"result_count": len(results), "patient_ids": [r["id"] for r in results]},
         )
     return {"patients": results}
+
+
+_OPEN_INVOICES_USER_DEFAULT = Depends(
+    require_patient_access(PAYMENTS_READ, audit_action="payments_open_invoices")
+)
 
 
 @router.get("/patients/{patient_id}/invoices", dependencies=[Depends(require_module)])
 async def open_invoices(
     patient_id: str,
-    user: dict = Depends(
-        require_patient_access(PAYMENTS_READ, audit_action="payments_open_invoices")
-    ),
+    user: dict = _OPEN_INVOICES_USER_DEFAULT,
 ):
     """This patient's bills that still owe money, for the counter to offer as
     a choice. Ward-guarded on the path, like the invoice check below."""
     return {"invoices": await _run(payments.open_invoices_for_payment, patient_id)}
 
 
+_INVOICE_FOR_PAYMENT_USER_DEFAULT = Depends(
+    require_patient_access(PAYMENTS_READ, audit_action="payments_invoice_check")
+)
+
+
 @router.get("/patients/{patient_id}/invoices/{invoice_id}", dependencies=[Depends(require_module)])
 async def invoice_for_payment(
     patient_id: str,
     invoice_id: int,
-    user: dict = Depends(
-        require_patient_access(PAYMENTS_READ, audit_action="payments_invoice_check")
-    ),
+    user: dict = _INVOICE_FOR_PAYMENT_USER_DEFAULT,
 ):
     """The invoice a payment is about to be applied to, checked against the
     patient first. The counter shows its owner and balance before Take payment
@@ -831,19 +1023,21 @@ async def invoice_for_payment(
     return await _run(payments.invoice_for_payment, patient_id, invoice_id)
 
 
+_PATIENT_SUMMARY_ADMISSION_ID_DEFAULT = Query(default=None)
+_PATIENT_SUMMARY_USER_DEFAULT = Depends(
+    require_patient_access(PAYMENTS_READ, audit_action="payments_patient_summary")
+)
+
+
 @router.get("/patients/{patient_id}/summary", dependencies=[Depends(require_module)])
 async def patient_summary(
     patient_id: str,
-    admission_id: Optional[str] = Query(default=None),
-    user: dict = Depends(
-        require_patient_access(PAYMENTS_READ, audit_action="payments_patient_summary")
-    ),
+    admission_id: str | None = _PATIENT_SUMMARY_ADMISSION_ID_DEFAULT,
+    user: dict = _PATIENT_SUMMARY_USER_DEFAULT,
 ):
     """ADVISORY ONLY — a financial position, never a gate on care.
 
     Ward-guarded for the same reason as `/deposits/{patient_id}`: a patient id in
     the path plus no scope check is how a cross-ward probe becomes a feature.
     """
-    return await _run(
-        payments.patient_financial_snapshot, patient_id, admission_id=admission_id
-    )
+    return await _run(payments.patient_financial_snapshot, patient_id, admission_id=admission_id)

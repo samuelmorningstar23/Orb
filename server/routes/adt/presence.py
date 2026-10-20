@@ -26,19 +26,18 @@ immediate session in services/adt/presence.py. After a change commits the bed
 boards hear a content-free 'adt:changed' {ward_id} (adt-19,
 services/adt/live.py); a refusal or a replay pushes nothing.
 """
+
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel, ConfigDict
-
 from permissions import ADT_PRESENCE, PATIENT_WRITE, require_any_permission
-from routes.adt.end_stay import _meta, _scoped_admission
+from pydantic import BaseModel, ConfigDict
 from services.adt import core as adt_core
 from services.adt import presence as adt_presence
 from services.adt.live import notify_adt_changed
 from services.audit_service import AuditWriteError
+
+from routes.adt.end_stay import _meta, _scoped_admission
 
 router = APIRouter()
 
@@ -49,37 +48,54 @@ class PresenceIn(BaseModel):
     #: Why: required for a leave (who allowed it and where the patient goes)
     #: and for absconding (how and when the patient was found missing, and who
     #: was told). Optional for a return.
-    reason: Optional[str] = None
+    reason: str | None = None
     #: When it happened; now when omitted. Up to ORB_ADT_BACKTIME_HOURS back,
     #: never before the admission or the patient's last leave or return.
-    occurred_at: Optional[str] = None
-    notes: Optional[str] = None
+    occurred_at: str | None = None
+    notes: str | None = None
 
 
 class LeaveIn(PresenceIn):
     #: When the patient is expected back (optional; recorded on the movement).
-    expected_return_at: Optional[str] = None
+    expected_return_at: str | None = None
 
 
 def _audit_unavailable() -> HTTPException:
-    return HTTPException(status_code=503, detail={
-        "error": "audit_unavailable",
-        "message": "The record of this could not be written, so nothing was changed. "
-                   "Try again in a moment.",
-    })
+    return HTTPException(
+        status_code=503,
+        detail={
+            "error": "audit_unavailable",
+            "message": "The record of this could not be written, so nothing was changed. "
+            "Try again in a moment.",
+        },
+    )
 
 
-def _run(fn, admission_id: str, body: PresenceIn, request: Request, user: dict,
-         idempotency_key: Optional[str], **extra):
+def _run(
+    fn,
+    admission_id: str,
+    body: PresenceIn,
+    request: Request,
+    user: dict,
+    idempotency_key: str | None,
+    **extra,
+):
     _scoped_admission(admission_id, user, request)
     try:
-        answer = fn(admission_id, actor=user, reason=body.reason, occurred_at=body.occurred_at,
-                    notes=body.notes, idempotency_key=idempotency_key,
-                    request_meta=_meta(request), **extra)
+        answer = fn(
+            admission_id,
+            actor=user,
+            reason=body.reason,
+            occurred_at=body.occurred_at,
+            notes=body.notes,
+            idempotency_key=idempotency_key,
+            request_meta=_meta(request),
+            **extra,
+        )
     except adt_core.AdtError as err:
-        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err))
+        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err)) from err
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
     if isinstance(answer, dict) and not answer.get("replayed"):
         # adt-19: after the commit, the bed boards refetch (the tile's
         # 'Not on ward' status changed).
@@ -87,19 +103,34 @@ def _run(fn, admission_id: str, body: PresenceIn, request: Request, user: dict,
     return answer
 
 
+_START_LEAVE_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempotency-Key")
+_START_LEAVE_USER_DEFAULT = Depends(require_any_permission(ADT_PRESENCE, PATIENT_WRITE))
+
+
 @router.post("/admissions/{admission_id}/leave")
 def start_leave(
     admission_id: str,
     body: LeaveIn,
     request: Request,
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    user: dict = Depends(require_any_permission(ADT_PRESENCE, PATIENT_WRITE)),
+    idempotency_key: str | None = _START_LEAVE_IDEMPOTENCY_KEY_DEFAULT,
+    user: dict = _START_LEAVE_USER_DEFAULT,
 ):
     """The patient goes on leave; the bed stays theirs. A reason is required.
     409 already_on_leave while a leave is open, patient_absconded when the
     patient is recorded absconded."""
-    return _run(adt_presence.start_leave, admission_id, body, request, user, idempotency_key,
-                expected_return_at=body.expected_return_at)
+    return _run(
+        adt_presence.start_leave,
+        admission_id,
+        body,
+        request,
+        user,
+        idempotency_key,
+        expected_return_at=body.expected_return_at,
+    )
+
+
+_END_LEAVE_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempotency-Key")
+_END_LEAVE_USER_DEFAULT = Depends(require_any_permission(ADT_PRESENCE, PATIENT_WRITE))
 
 
 @router.post("/admissions/{admission_id}/leave-end")
@@ -107,12 +138,16 @@ def end_leave(
     admission_id: str,
     body: PresenceIn,
     request: Request,
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    user: dict = Depends(require_any_permission(ADT_PRESENCE, PATIENT_WRITE)),
+    idempotency_key: str | None = _END_LEAVE_IDEMPOTENCY_KEY_DEFAULT,
+    user: dict = _END_LEAVE_USER_DEFAULT,
 ):
     """The patient is back on the ward from leave. 409 not_on_leave when no
     leave is open."""
     return _run(adt_presence.end_leave, admission_id, body, request, user, idempotency_key)
+
+
+_MARK_ABSCONDED_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempotency-Key")
+_MARK_ABSCONDED_USER_DEFAULT = Depends(require_any_permission(ADT_PRESENCE, PATIENT_WRITE))
 
 
 @router.post("/admissions/{admission_id}/absconded")
@@ -120,8 +155,8 @@ def mark_absconded(
     admission_id: str,
     body: PresenceIn,
     request: Request,
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    user: dict = Depends(require_any_permission(ADT_PRESENCE, PATIENT_WRITE)),
+    idempotency_key: str | None = _MARK_ABSCONDED_IDEMPOTENCY_KEY_DEFAULT,
+    user: dict = _MARK_ABSCONDED_USER_DEFAULT,
 ):
     """The patient has gone without leave, or did not come back from leave.
     What is known is required as the reason. The stay is not ended here: an
@@ -129,13 +164,17 @@ def mark_absconded(
     return _run(adt_presence.mark_absconded, admission_id, body, request, user, idempotency_key)
 
 
+_MARK_RETURNED_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempotency-Key")
+_MARK_RETURNED_USER_DEFAULT = Depends(require_any_permission(ADT_PRESENCE, PATIENT_WRITE))
+
+
 @router.post("/admissions/{admission_id}/returned")
 def mark_returned(
     admission_id: str,
     body: PresenceIn,
     request: Request,
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    user: dict = Depends(require_any_permission(ADT_PRESENCE, PATIENT_WRITE)),
+    idempotency_key: str | None = _MARK_RETURNED_IDEMPOTENCY_KEY_DEFAULT,
+    user: dict = _MARK_RETURNED_USER_DEFAULT,
 ):
     """An absconded patient is back on the ward. 409 not_absconded otherwise."""
     return _run(adt_presence.mark_returned, admission_id, body, request, user, idempotency_key)

@@ -61,6 +61,7 @@ The table is registered for retention review in consent_service
 restore verifier's manifest (scripts/lib/verify_restore.py, group
 'outpatient consultations').
 """
+
 from migrations import Migration
 
 ASSESSMENTS_DDL = """CREATE TABLE IF NOT EXISTS patient_allergy_assessments (

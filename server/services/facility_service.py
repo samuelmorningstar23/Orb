@@ -42,12 +42,13 @@ This module answers the questions the rest of Orb asks about that state:
 
 The identity editor arrives in multisite-2.
 """
+
 from __future__ import annotations
 
 import logging
 import threading
 import time
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger("orb.facility")
 
@@ -91,13 +92,17 @@ def _db_session():
     # Looked up at call time, so a test that patches database.db_session sees
     # exactly the calls this module makes.
     import database
+
     return database.db_session()
 
 
 def _table_exists(db, table: str) -> bool:
-    return db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
-    ).fetchone() is not None
+    return (
+        db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+        ).fetchone()
+        is not None
+    )
 
 
 def _columns(db, table: str) -> set:
@@ -107,6 +112,7 @@ def _columns(db, table: str) -> set:
 # ═════════════════════════════════════════════════════════════════════════════
 #  Is there more than one facility on record?
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def facility_count(db) -> int:
     """facilities rows, active or not. 0 when the table does not exist."""
@@ -128,7 +134,9 @@ def _store(count: int) -> bool:
     if previous is not None and previous != value:
         logger.warning(
             "Facilities on record changed: %d row(s). Multi-facility isolation is now %s.",
-            count, "ON" if value else "off")
+            count,
+            "ON" if value else "off",
+        )
     return value
 
 
@@ -164,6 +172,7 @@ async def multi_facility_data_async() -> bool:
         if _fresh(_clock()):
             return bool(_state["value"])
     from database import run_db
+
     return bool(await run_db(multi_facility_data))
 
 
@@ -196,6 +205,7 @@ def platform_flags() -> dict:
     whether more than one facility is on record. Two booleans, no PHI, read
     from config and the cache only."""
     import config
+
     return {
         "multi_site": bool(config.feature_enabled("multi_site")),
         "multi_facility_data": cached_multi_facility_data(),
@@ -206,11 +216,12 @@ def platform_flags() -> dict:
 #  Facility identity
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _row_dict(row) -> dict:
     return {k: row[k] for k in row.keys()}
 
 
-def get_facility(facility_id: int, *, db=None) -> Optional[dict]:
+def get_facility(facility_id: int, *, db=None) -> dict | None:
     """One facilities row as a dict, or None."""
     if db is None:
         with _db_session() as own:
@@ -231,9 +242,10 @@ def list_facilities(*, db=None) -> list[dict]:
     return [_row_dict(r) for r in db.execute("SELECT * FROM facilities ORDER BY id").fetchall()]
 
 
-def _site_name() -> Optional[str]:
+def _site_name() -> str | None:
     try:
         from services.site_config_service import current_site_config
+
         name = current_site_config().site_name
     except Exception:
         return None
@@ -241,8 +253,9 @@ def _site_name() -> Optional[str]:
     return name or None
 
 
-def display_name(facility_id: int = MAIN_FACILITY_ID, *, db=None,
-                 facility: Optional[dict] = None) -> str:
+def display_name(
+    facility_id: int = MAIN_FACILITY_ID, *, db=None, facility: dict | None = None
+) -> str:
     """The name to print for a facility: its stored name; for facility 1
     without one, the site settings file's [site] name; then "This hospital"
     (facility 1) or its code (any other facility, whose name the schema
@@ -260,22 +273,30 @@ def display_name(facility_id: int = MAIN_FACILITY_ID, *, db=None,
 #  The one boot refusal
 # ═════════════════════════════════════════════════════════════════════════════
 
-def facility_one_problem(db) -> Optional[str]:
+
+def facility_one_problem(db) -> str | None:
     """None when facility 1 exists and is active, else what is wrong, in
     words for the operator. Nothing else about facilities refuses a boot: not
     the switch, not a second row, not an unfinished screen."""
     if not _table_exists(db, "facilities"):
-        return ("The facilities table is missing, so this database has not been "
-                "brought up to date (migration 70).")
-    row = db.execute("SELECT is_active FROM facilities WHERE id = ?",
-                     (MAIN_FACILITY_ID,)).fetchone()
+        return (
+            "The facilities table is missing, so this database has not been "
+            "brought up to date (migration 70)."
+        )
+    row = db.execute(
+        "SELECT is_active FROM facilities WHERE id = ?", (MAIN_FACILITY_ID,)
+    ).fetchone()
     if row is None:
-        return ("Facility 1 (MAIN) is missing from the facilities table. Orb "
-                "creates it and never deletes it, so the database has been changed "
-                "by hand.")
+        return (
+            "Facility 1 (MAIN) is missing from the facilities table. Orb "
+            "creates it and never deletes it, so the database has been changed "
+            "by hand."
+        )
     if not row[0]:
-        return ("Facility 1 (MAIN) is marked inactive. Facility 1 can never be "
-                "deactivated, so the database has been changed by hand.")
+        return (
+            "Facility 1 (MAIN) is marked inactive. Facility 1 can never be "
+            "deactivated, so the database has been changed by hand."
+        )
     return None
 
 
@@ -288,7 +309,8 @@ def assert_facility_one(db=None) -> None:
     if problem:
         raise FacilitySpineError(
             f"Orb will not start: {problem} Restore the most recent verified "
-            "backup, or put facility 1 back as it was.")
+            "backup, or put facility 1 back as it was."
+        )
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -331,15 +353,19 @@ def facility_report(db) -> dict:
     }
     if not _table_exists(db, "facilities"):
         return report
-    report["active_facilities"] = int(db.execute(
-        "SELECT COUNT(*) FROM facilities WHERE is_active = 1").fetchone()[0])
+    report["active_facilities"] = int(
+        db.execute("SELECT COUNT(*) FROM facilities WHERE is_active = 1").fetchone()[0]
+    )
 
     for table, column, label in _FACILITY_ID_COLUMNS:
         if column not in _columns(db, table):
             continue
-        n = int(db.execute(
-            f"SELECT COUNT(*) FROM {table} WHERE {column} IS NULL "
-            f"OR {column} NOT IN (SELECT id FROM facilities)").fetchone()[0])
+        n = int(
+            db.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE {column} IS NULL "
+                f"OR {column} NOT IN (SELECT id FROM facilities)"
+            ).fetchone()[0]
+        )
         if n:
             report["unknown_facility_ids"][label] = n
 
@@ -358,22 +384,27 @@ def facility_report(db) -> dict:
         rows = db.execute(
             f"SELECT {column} AS name, COUNT(*) AS n FROM {table} "
             f"WHERE {column} IS NOT NULL AND TRIM({column}) != '' {extra} "
-            f"GROUP BY {column} ORDER BY {column}").fetchall()
+            f"GROUP BY {column} ORDER BY {column}"
+        ).fetchall()
         for row in rows:
             spelling, n = row["name"], int(row["n"])
             canonical = master.get(spelling.strip().casefold())
             if canonical is None:
                 report["departments_not_in_master"].append(
-                    {"where": label, "name": spelling, "rows": n})
+                    {"where": label, "name": spelling, "rows": n}
+                )
             elif canonical != spelling:
                 report["department_variants"].append(
-                    {"where": label, "spelling": spelling, "master_spelling": canonical,
-                     "rows": n})
+                    {"where": label, "spelling": spelling, "master_spelling": canonical, "rows": n}
+                )
 
     if "facility_id" in _columns(db, "admissions"):
-        report["patients_at_several_facilities"] = int(db.execute(
-            "SELECT COUNT(*) FROM (SELECT patient_id FROM admissions "
-            "GROUP BY patient_id HAVING COUNT(DISTINCT facility_id) > 1)").fetchone()[0])
+        report["patients_at_several_facilities"] = int(
+            db.execute(
+                "SELECT COUNT(*) FROM (SELECT patient_id FROM admissions "
+                "GROUP BY patient_id HAVING COUNT(DISTINCT facility_id) > 1)"
+            ).fetchone()[0]
+        )
     return report
 
 
@@ -432,10 +463,11 @@ def _field(user, key: str):
         return None
 
 
-def _department_of(user) -> Optional[str]:
+def _department_of(user) -> str | None:
     """The account's department exactly as permissions.department_scope
     reads it (the one derivation of ward scope)."""
     from permissions import department_scope
+
     return department_scope({"department": _field(user, "department")})
 
 
@@ -447,6 +479,7 @@ def _service_account(user_id) -> bool:
     if user_id is None:
         return False
     from database import SERVICE_ACCOUNT_IDS
+
     return str(user_id) in SERVICE_ACCOUNT_IDS
 
 
@@ -460,17 +493,20 @@ def _load_scope_maps(db) -> dict:
     homes: dict[str, int] = {}
     if _table_exists(db, "user_facilities"):
         for row in db.execute(
-                "SELECT user_id, facility_id FROM user_facilities "
-                "WHERE kind = 'home' AND revoked_at IS NULL").fetchall():
+            "SELECT user_id, facility_id FROM user_facilities "
+            "WHERE kind = 'home' AND revoked_at IS NULL"
+        ).fetchall():
             if row[0] is not None and row[1] is not None:
                 homes[str(row[0])] = int(row[1])
     grants: frozenset = frozenset()
     if _table_exists(db, "enterprise_access_grants"):
         grants = frozenset(
-            str(row[0]) for row in db.execute(
-                "SELECT user_id FROM enterprise_access_grants "
-                "WHERE revoked_at IS NULL").fetchall()
-            if row[0] is not None)
+            str(row[0])
+            for row in db.execute(
+                "SELECT user_id FROM enterprise_access_grants WHERE revoked_at IS NULL"
+            ).fetchall()
+            if row[0] is not None
+        )
     return {"departments": departments, "homes": homes, "grants": grants}
 
 
@@ -496,13 +532,14 @@ def scope_maps(*, db=None) -> dict:
                 return _maps_state["maps"]
         raise FacilityScopeError(
             "More than one facility is on record and the departments, home "
-            "facility and enterprise access lists could not be read.") from e
+            "facility and enterprise access lists could not be read."
+        ) from e
     with _lock:
         _maps_state.update(maps=maps, at=_clock())
     return maps
 
 
-def facility_scope_for(user, *, db=None) -> Optional[frozenset]:
+def facility_scope_for(user, *, db=None) -> frozenset | None:
     """The facilities whose patients `user` may see, or None for no facility
     limit (see the block comment above). Reads only the user's id, role and
     department. BLOCKING on a cache miss: call it from plain-def code, or from
@@ -524,16 +561,17 @@ def facility_scope_for(user, *, db=None) -> Optional[frozenset]:
     return frozenset({maps["homes"].get(uid, MAIN_FACILITY_ID)})
 
 
-async def facility_scope_for_async(user) -> Optional[frozenset]:
+async def facility_scope_for_async(user) -> frozenset | None:
     """facility_scope_for for async callers. With one facility on record and
     a warm cache it answers None with no executor hop and no statement."""
     if not await multi_facility_data_async():
         return None
     from database import run_db
+
     return await run_db(facility_scope_for, user)
 
 
-def department_facility(name: Optional[str], *, db=None) -> Optional[int]:
+def department_facility(name: str | None, *, db=None) -> int | None:
     """The facility that owns a department in the master, or None when the
     master does not list it. Names compare ignoring case and outer spaces."""
     if not isinstance(name, str) or not name.strip():
@@ -541,14 +579,14 @@ def department_facility(name: Optional[str], *, db=None) -> Optional[int]:
     return scope_maps(db=db)["departments"].get(_department_key(name))
 
 
-def home_facility(user_id: Optional[str], *, db=None) -> int:
+def home_facility(user_id: str | None, *, db=None) -> int:
     """The facility of a department-less account: its live home row, else 1."""
     if user_id is None:
         return MAIN_FACILITY_ID
     return scope_maps(db=db)["homes"].get(str(user_id), MAIN_FACILITY_ID)
 
 
-def has_enterprise_grant(user_id: Optional[str], *, db=None) -> bool:
+def has_enterprise_grant(user_id: str | None, *, db=None) -> bool:
     """A live enterprise grant row for this account, whatever its role. Only
     an admin's grant widens the scope (ENTERPRISE_GRANT_ROLES)."""
     if user_id is None:
@@ -558,15 +596,19 @@ def has_enterprise_grant(user_id: Optional[str], *, db=None) -> bool:
 
 # ── The facility an account works at (UserOut and /api/auth/me) ─────────────
 
-def _patient_record_facility(user_id, db) -> Optional[int]:
+
+def _patient_record_facility(user_id, db) -> int | None:
     from permissions import FACILITY_PATIENT_SQL
+
     row = db.execute(
         f"SELECT {FACILITY_PATIENT_SQL} AS fid FROM patients p "
-        "WHERE p.user_id = ? ORDER BY p.rowid DESC LIMIT 1", (user_id,)).fetchone()
+        "WHERE p.user_id = ? ORDER BY p.rowid DESC LIMIT 1",
+        (user_id,),
+    ).fetchone()
     return None if row is None or row[0] is None else int(row[0])
 
 
-def user_facility_id(user, *, db=None) -> Optional[int]:
+def user_facility_id(user, *, db=None) -> int | None:
     """The facility an account belongs to, for labels: facility 1 while only
     one is on record; otherwise the department's facility (None when the
     master does not list it), the home row or 1 for a department-less account
@@ -591,11 +633,13 @@ def user_facility_id(user, *, db=None) -> Optional[int]:
 def _load_identity_rows(db) -> dict:
     if not _table_exists(db, "facilities"):
         return {}
-    return {int(r[0]): {"id": int(r[0]), "code": r[1], "name": r[2]}
-            for r in db.execute("SELECT id, code, name FROM facilities").fetchall()}
+    return {
+        int(r[0]): {"id": int(r[0]), "code": r[1], "name": r[2]}
+        for r in db.execute("SELECT id, code, name FROM facilities").fetchall()
+    }
 
 
-def facility_identity(facility_id: Optional[int], *, db=None) -> Optional[dict]:
+def facility_identity(facility_id: int | None, *, db=None) -> dict | None:
     """{id, code, name} for a label, cached for CACHE_SECONDS. name is the
     display name (facility 1 falls back to the site settings file). A
     facility id no row holds gives {id, code None, name None}."""
@@ -615,11 +659,10 @@ def facility_identity(facility_id: Optional[int], *, db=None) -> Optional[dict]:
     row = (rows or {}).get(int(facility_id))
     if row is None:
         return {"id": int(facility_id), "code": None, "name": None}
-    return {"id": row["id"], "code": row["code"],
-            "name": display_name(row["id"], facility=row)}
+    return {"id": row["id"], "code": row["code"], "name": display_name(row["id"], facility=row)}
 
 
-def user_facility(user, *, db=None) -> Optional[dict]:
+def user_facility(user, *, db=None) -> dict | None:
     """{id, code, name} of the facility an account belongs to, or None (a
     department the master does not list, or a patient login with no record).
     BLOCKING on a cache miss."""

@@ -49,6 +49,7 @@ THE VITALS COLUMNS entered_at, illegible and voided_at arrive with migration 77
 at run time and uses them when present, so this module works on a database
 from before that migration too.
 """
+
 from __future__ import annotations
 
 import csv
@@ -58,10 +59,13 @@ import json
 import logging
 import statistics
 import uuid
-from datetime import date, datetime, time as dt_time, timedelta, timezone
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from datetime import UTC, date, datetime, timedelta
+from datetime import time as dt_time
+from typing import Any
 
 from database import db_session
+
 from services.clinical_time import parse_to_utc, utc_iso_now
 
 logger = logging.getLogger("orb.ward_record")
@@ -95,6 +99,7 @@ class WardRecordError(Exception):
 #  Wards and settings
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _ward_key(value: Any) -> str:
     """Same rule as nabh_service._ward_key: case and outer spaces ignored."""
     return str(value or "").strip().upper()
@@ -108,10 +113,10 @@ def hospital_wards(db: Any = None) -> list[str]:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
-def _setting_out(row: Any) -> Optional[dict]:
+def _setting_out(row: Any) -> dict | None:
     if row is None:
         return None
     out = dict(row)
@@ -125,14 +130,17 @@ def _setting_out(row: Any) -> Optional[dict]:
     }
 
 
-def get_setting(ward: str, *, db: Any = None) -> Optional[dict]:
+def get_setting(ward: str, *, db: Any = None) -> dict | None:
     """The ward's interval and grace, or None when nobody has set them."""
-    def _work(conn) -> Optional[dict]:
-        return _setting_out(conn.execute(
-            "SELECT * FROM ward_observation_settings WHERE UPPER(TRIM(ward)) = ? "
-            "ORDER BY set_at DESC LIMIT 1",
-            (_ward_key(ward),),
-        ).fetchone())
+
+    def _work(conn) -> dict | None:
+        return _setting_out(
+            conn.execute(
+                "SELECT * FROM ward_observation_settings WHERE UPPER(TRIM(ward)) = ? "
+                "ORDER BY set_at DESC LIMIT 1",
+                (_ward_key(ward),),
+            ).fetchone()
+        )
 
     if db is not None:
         return _work(db)
@@ -144,10 +152,13 @@ def list_settings(*, db: Any = None) -> dict:
     """Every ward, each with its setting or None. A ward that has a setting
     but no longer appears in the ward list (renamed, closed) is still shown,
     so a setting is never invisible."""
+
     def _work(conn) -> dict:
-        rows = [_setting_out(r) for r in conn.execute(
-            "SELECT * FROM ward_observation_settings").fetchall()]
-        by_key = {_ward_key(r["ward"]): r for r in rows}
+        rows = [
+            _setting_out(r)
+            for r in conn.execute("SELECT * FROM ward_observation_settings").fetchall()
+        ]
+        by_key = {_ward_key(r["ward"]): r for r in rows if r is not None}
         out: list[dict] = []
         seen: set[str] = set()
         for ward in hospital_wards(conn):
@@ -177,19 +188,27 @@ def _int_in(value: Any, low: int, high: int, what: str) -> int:
     try:
         number = int(value)
     except (TypeError, ValueError):
-        raise WardRecordError(f"The {what} must be a whole number of minutes.",
-                              code="bad_value") from None
+        raise WardRecordError(
+            f"The {what} must be a whole number of minutes.", code="bad_value"
+        ) from None
     if isinstance(value, float) and value != number:
-        raise WardRecordError(f"The {what} must be a whole number of minutes.",
-                              code="bad_value")
+        raise WardRecordError(f"The {what} must be a whole number of minutes.", code="bad_value")
     if not low <= number <= high:
         raise WardRecordError(
-            f"The {what} must be between {low} and {high} minutes.", code="bad_value")
+            f"The {what} must be between {low} and {high} minutes.", code="bad_value"
+        )
     return number
 
 
-def set_setting(ward: str, *, interval_minutes: Any, grace_minutes: Any = None,
-                set_by: Any, note: Any = None, db: Any = None) -> dict:
+def set_setting(
+    ward: str,
+    *,
+    interval_minutes: Any,
+    grace_minutes: Any = None,
+    set_by: Any,
+    note: Any = None,
+    db: Any = None,
+) -> dict:
     """Record the ward's interval and grace as the nursing superintendent set
     them in writing. Returns {"old": setting or None, "new": setting}.
 
@@ -199,28 +218,29 @@ def set_setting(ward: str, *, interval_minutes: Any, grace_minutes: Any = None,
     who = str(set_by or "").strip()
     if not who:
         raise WardRecordError(
-            "Say who set this in writing (the nursing superintendent's name).",
-            code="missing_field")
+            "Say who set this in writing (the nursing superintendent's name).", code="missing_field"
+        )
     if len(who) > 200:
         raise WardRecordError("The name is too long.", code="bad_value")
     clean_note = (str(note).strip() or None) if note is not None else None
     if clean_note and len(clean_note) > 1000:
         raise WardRecordError("The note is too long.", code="bad_value")
-    interval = _int_in(interval_minutes, MIN_INTERVAL_MINUTES, MAX_INTERVAL_MINUTES,
-                       "interval")
-    grace = _int_in(DEFAULT_GRACE_MINUTES if grace_minutes is None else grace_minutes,
-                    MIN_GRACE_MINUTES, MAX_GRACE_MINUTES, "grace window")
+    interval = _int_in(interval_minutes, MIN_INTERVAL_MINUTES, MAX_INTERVAL_MINUTES, "interval")
+    grace = _int_in(
+        DEFAULT_GRACE_MINUTES if grace_minutes is None else grace_minutes,
+        MIN_GRACE_MINUTES,
+        MAX_GRACE_MINUTES,
+        "grace window",
+    )
 
     def _work(conn) -> dict:
         key = _ward_key(ward)
         known = {_ward_key(w): w for w in hospital_wards(conn)}
         old = get_setting(ward, db=conn)
         if key not in known and old is None:
-            raise WardRecordError(f"No ward called {str(ward).strip()!r}.",
-                                  code="unknown_ward")
+            raise WardRecordError(f"No ward called {str(ward).strip()!r}.", code="unknown_ward")
         spelling = known.get(key) or (old or {}).get("ward") or str(ward).strip()
-        conn.execute("DELETE FROM ward_observation_settings WHERE UPPER(TRIM(ward)) = ?",
-                     (key,))
+        conn.execute("DELETE FROM ward_observation_settings WHERE UPPER(TRIM(ward)) = ?", (key,))
         conn.execute(
             "INSERT INTO ward_observation_settings (ward, interval_minutes, "
             "grace_minutes, set_by, set_at, note) VALUES (?, ?, ?, ?, ?, ?)",
@@ -238,6 +258,7 @@ def set_setting(ward: str, *, interval_minutes: Any, grace_minutes: Any = None,
 #  Period and shifts
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _hospital_tz():
     from services.hospital_time import hospital_timezone
 
@@ -251,19 +272,17 @@ def resolve_period(start: Any, end: Any) -> dict:
         first = date.fromisoformat(str(start or "").strip()[:10])
         last = date.fromisoformat(str(end or "").strip()[:10])
     except ValueError:
-        raise WardRecordError("Give the start and end as dates, YYYY-MM-DD.",
-                              code="bad_period") from None
+        raise WardRecordError(
+            "Give the start and end as dates, YYYY-MM-DD.", code="bad_period"
+        ) from None
     if last < first:
         raise WardRecordError("The end date is before the start date.", code="bad_period")
     if (last - first).days + 1 > MAX_PERIOD_DAYS:
-        raise WardRecordError(
-            f"One file covers at most {MAX_PERIOD_DAYS} days.", code="bad_period")
+        raise WardRecordError(f"One file covers at most {MAX_PERIOD_DAYS} days.", code="bad_period")
     tz = _hospital_tz()
-    lo = datetime.combine(first, dt_time(0, 0), tzinfo=tz).astimezone(timezone.utc)
-    hi = datetime.combine(last + timedelta(days=1), dt_time(0, 0),
-                          tzinfo=tz).astimezone(timezone.utc)
-    return {"start_date": first.isoformat(), "end_date": last.isoformat(),
-            "start": lo, "end": hi}
+    lo = datetime.combine(first, dt_time(0, 0), tzinfo=tz).astimezone(UTC)
+    hi = datetime.combine(last + timedelta(days=1), dt_time(0, 0), tzinfo=tz).astimezone(UTC)
+    return {"start_date": first.isoformat(), "end_date": last.isoformat(), "start": lo, "end": hi}
 
 
 #: Used only when the product's own shift setting cannot be read.
@@ -311,7 +330,8 @@ def _shift_of(instant: datetime, shifts: list[tuple[dt_time, float]], tz) -> tup
 #  Stays on the ward
 # ═════════════════════════════════════════════════════════════════════════════
 
-def _dt(value: Any) -> Optional[datetime]:
+
+def _dt(value: Any) -> datetime | None:
     if value in (None, ""):
         return None
     try:
@@ -325,8 +345,17 @@ def _table_columns(conn, table: str) -> set[str]:
 
 
 #: Movement types that put the patient somewhere (when they carry a ward).
-_PLACING_MOVES = frozenset({"admission", "bed_assigned", "transfer", "bed_change",
-                            "bed_swap", "location_linked", "correction"})
+_PLACING_MOVES = frozenset(
+    {
+        "admission",
+        "bed_assigned",
+        "transfer",
+        "bed_change",
+        "bed_swap",
+        "location_linked",
+        "correction",
+    }
+)
 _LEAVE_MOVES = frozenset({"leave_start", "absconded"})
 _RETURN_MOVES = frozenset({"leave_end", "absconded_return"})
 
@@ -349,8 +378,9 @@ def _ward_lookup(conn) -> dict:
     return out
 
 
-def _stay_segments(conn, ward: str, period_start: datetime, period_end: datetime,
-                   now: datetime) -> tuple[list[dict], dict]:
+def _stay_segments(
+    conn, ward: str, period_start: datetime, period_end: datetime, now: datetime
+) -> tuple[list[dict], dict]:
     """Every spell a patient spent on `ward`, from arrival to leaving.
 
     A stay is an admission (admissions table) or, for a patient written before
@@ -370,15 +400,20 @@ def _stay_segments(conn, ward: str, period_start: datetime, period_end: datetime
     summaries: dict[str, list[datetime]] = {}
     if _table_columns(conn, "discharge_summaries"):
         for row in conn.execute(
-                "SELECT patient_id, discharged_at FROM discharge_summaries").fetchall():
+            "SELECT patient_id, discharged_at FROM discharge_summaries"
+        ).fetchall():
             when = _dt(row["discharged_at"])
             if when:
                 summaries.setdefault(row["patient_id"], []).append(when)
     for times in summaries.values():
         times.sort()
 
-    patients = {r["id"]: dict(r) for r in conn.execute(
-        "SELECT id, mrn, ward, bed, admission_date, status FROM patients").fetchall()}
+    patients = {
+        r["id"]: dict(r)
+        for r in conn.execute(
+            "SELECT id, mrn, ward, bed, admission_date, status FROM patients"
+        ).fetchall()
+    }
 
     def _cols(*names: str) -> str:
         return ", ".join(n if n in adm_cols else f"NULL AS {n}" for n in names)
@@ -387,32 +422,45 @@ def _stay_segments(conn, ward: str, period_start: datetime, period_end: datetime
     with_admission: set[str] = set()
     if adm_cols:
         for row in conn.execute(
-                "SELECT id, patient_id, status, created_at, "
-                + _cols("ward", "bed", "ward_id", "admitted_at", "discharged_at")
-                + " FROM admissions").fetchall():
+            "SELECT id, patient_id, status, created_at, "
+            + _cols("ward", "bed", "ward_id", "admitted_at", "discharged_at")
+            + " FROM admissions"
+        ).fetchall():
             row = dict(row)
             with_admission.add(row["patient_id"])
             start = _dt(row.get("admitted_at")) or _dt(row.get("created_at"))
             if start is None:
                 continue
-            stays.append({
-                "patient_id": row["patient_id"], "admission_id": row["id"],
-                "start": start, "end": _dt(row.get("discharged_at")),
-                "open": (row.get("status") or "active") == "active",
-                "ward": row.get("ward"), "ward_id": row.get("ward_id"),
-                "bed": row.get("bed"),
-            })
+            stays.append(
+                {
+                    "patient_id": row["patient_id"],
+                    "admission_id": row["id"],
+                    "start": start,
+                    "end": _dt(row.get("discharged_at")),
+                    "open": (row.get("status") or "active") == "active",
+                    "ward": row.get("ward"),
+                    "ward_id": row.get("ward_id"),
+                    "bed": row.get("bed"),
+                }
+            )
     for pid, p in patients.items():
         if pid in with_admission or (p.get("status") or "admitted") == "registered":
             continue
         start = _dt(p.get("admission_date"))
         if start is None:
             continue
-        stays.append({
-            "patient_id": pid, "admission_id": None, "start": start, "end": None,
-            "open": (p.get("status") or "admitted") == "admitted",
-            "ward": p.get("ward"), "ward_id": None, "bed": p.get("bed"),
-        })
+        stays.append(
+            {
+                "patient_id": pid,
+                "admission_id": None,
+                "start": start,
+                "end": None,
+                "open": (p.get("status") or "admitted") == "admitted",
+                "ward": p.get("ward"),
+                "ward_id": None,
+                "bed": p.get("bed"),
+            }
+        )
 
     segments: list[dict] = []
     for stay in stays:
@@ -427,13 +475,17 @@ def _stay_segments(conn, ward: str, period_start: datetime, period_end: datetime
                 rows = conn.execute(
                     "SELECT rowid AS _rid, * FROM patient_movements "
                     "WHERE admission_id = ? OR (admission_id IS NULL AND patient_id = ?)",
-                    (stay["admission_id"], stay["patient_id"])).fetchall()
+                    (stay["admission_id"], stay["patient_id"]),
+                ).fetchall()
             else:
                 rows = conn.execute(
                     "SELECT rowid AS _rid, * FROM patient_movements WHERE patient_id = ?",
-                    (stay["patient_id"],)).fetchall()
+                    (stay["patient_id"],),
+                ).fetchall()
             moves = [dict(r) for r in rows]
-            corrected = {m.get("corrects_movement_id") for m in moves if m.get("corrects_movement_id")}
+            corrected = {
+                m.get("corrects_movement_id") for m in moves if m.get("corrects_movement_id")
+            }
             moves = [m for m in moves if m.get("id") not in corrected]
             for m in moves:
                 m["_at"] = _dt(m.get("moved_at"))
@@ -458,17 +510,29 @@ def _stay_segments(conn, ward: str, period_start: datetime, period_end: datetime
         if end is not None:
             moves = [m for m in moves if m["_at"] < end]
 
-        placing = [m for m in moves if m.get("movement_type") in _PLACING_MOVES
-                   and _ward_names(ward_rows, m.get("to_ward"), m.get("to_ward_id"))]
-        first_from = next((m for m in placing
-                           if _ward_names(ward_rows, m.get("from_ward"), m.get("from_ward_id"))),
-                          None)
+        placing = [
+            m
+            for m in moves
+            if m.get("movement_type") in _PLACING_MOVES
+            and _ward_names(ward_rows, m.get("to_ward"), m.get("to_ward_id"))
+        ]
+        first_from = next(
+            (
+                m
+                for m in placing
+                if _ward_names(ward_rows, m.get("from_ward"), m.get("from_ward_id"))
+            ),
+            None,
+        )
         if first_from is not None and (not placing or placing[0] is first_from):
-            here = _ward_names(ward_rows, first_from.get("from_ward"), first_from.get("from_ward_id"))
+            here = _ward_names(
+                ward_rows, first_from.get("from_ward"), first_from.get("from_ward_id")
+            )
             bed = first_from.get("from_bed")
         else:
-            here = _ward_names(ward_rows, stay["ward"], stay["ward_id"]) or \
-                _ward_names(ward_rows, patient.get("ward"), None)
+            here = _ward_names(ward_rows, stay["ward"], stay["ward_id"]) or _ward_names(
+                ward_rows, patient.get("ward"), None
+            )
             # admissions.ward follows the patient, so after a move it names the
             # LATEST ward; an admission move at the start corrects it below.
             bed = stay["bed"] or patient.get("bed")
@@ -478,19 +542,32 @@ def _stay_segments(conn, ward: str, period_start: datetime, period_end: datetime
         spell_start = stay["start"] if on_ward else None
         spell_bed = bed if on_ward else None
 
-        def _close(at: datetime) -> None:
+        def _close(
+            at: datetime,
+            spell_start: datetime | None,
+            stay: dict,
+            patient: dict,
+            spell_bed: str | None,
+        ) -> None:
             if spell_start is not None:
-                segments.append({"patient_id": stay["patient_id"],
-                                 "mrn": patient.get("mrn"), "bed": spell_bed,
-                                 "start": spell_start, "end": at,
-                                 "end_known": True, "open": False})
+                segments.append(
+                    {
+                        "patient_id": stay["patient_id"],
+                        "mrn": patient.get("mrn"),
+                        "bed": spell_bed,
+                        "start": spell_start,
+                        "end": at,
+                        "end_known": True,
+                        "open": False,
+                    }
+                )
 
         for m in moves:
             kind = m.get("movement_type")
             at = m["_at"]
             if kind in _LEAVE_MOVES:
                 if on_ward and not away:
-                    _close(at)
+                    _close(at, spell_start, stay, patient, spell_bed)
                     spell_start = None
                 away = True
             elif kind in _RETURN_MOVES:
@@ -508,15 +585,23 @@ def _stay_segments(conn, ward: str, period_start: datetime, period_end: datetime
                     spell_bed = m.get("to_bed")
                 elif not now_here and on_ward:
                     if not away:
-                        _close(at)
+                        _close(at, spell_start, stay, patient, spell_bed)
                     spell_start = None
                     on_ward = False
                 elif now_here and on_ward and m.get("to_bed"):
                     spell_bed = m.get("to_bed")
         if on_ward and not away and spell_start is not None:
-            segments.append({"patient_id": stay["patient_id"], "mrn": patient.get("mrn"),
-                             "bed": spell_bed, "start": spell_start, "end": end,
-                             "end_known": end_known, "open": stay["open"] and end is now})
+            segments.append(
+                {
+                    "patient_id": stay["patient_id"],
+                    "mrn": patient.get("mrn"),
+                    "bed": spell_bed,
+                    "start": spell_start,
+                    "end": end,
+                    "end_known": end_known,
+                    "open": stay["open"] and end is now,
+                }
+            )
 
     out = [s for s in segments if s["end"] is None or s["end"] > s["start"]]
     for s in out:
@@ -585,9 +670,11 @@ def _load_sets(conn, patient_id: str, lo: datetime, hi: datetime, cols: set[str]
     for optional in ("source", "entered_at", "illegible", "voided_at"):
         if optional in cols:
             wanted.append(optional)
-    sql = (f"SELECT {', '.join(wanted)} FROM vitals WHERE patient_id = ? "
-           "AND julianday(timestamp) >= julianday(?) - 1 "
-           "AND julianday(timestamp) < julianday(?) + 1")
+    sql = (
+        f"SELECT {', '.join(wanted)} FROM vitals WHERE patient_id = ? "
+        "AND julianday(timestamp) >= julianday(?) - 1 "
+        "AND julianday(timestamp) < julianday(?) + 1"
+    )
     params: list[Any] = [patient_id, lo.isoformat(), hi.isoformat()]
     if "voided_at" in cols:
         sql += " AND voided_at IS NULL"
@@ -611,8 +698,10 @@ def _load_sets(conn, patient_id: str, lo: datetime, hi: datetime, cols: set[str]
 #  The rounds
 # ═════════════════════════════════════════════════════════════════════════════
 
-def _kept_for_next_round(sets: list[dict], i: int, next_due: datetime,
-                         half: timedelta, grace: timedelta, end: datetime) -> bool:
+
+def _kept_for_next_round(
+    sets: list[dict], i: int, next_due: datetime, half: timedelta, grace: timedelta, end: datetime
+) -> bool:
     """True when sets[i] is the only set in the NEXT round's on time window.
 
     The late window of one round (up to the next due time) and the on time
@@ -627,13 +716,19 @@ def _kept_for_next_round(sets: list[dict], i: int, next_due: datetime,
     if sets[i]["_at"] < opens:
         return False
     closes = next_due + grace
-    return not any(opens <= s["_at"] <= closes and s["_at"] < end
-                   for s in sets[i + 1:])
+    return not any(opens <= s["_at"] <= closes and s["_at"] < end for s in sets[i + 1 :])
 
 
-def _rounds_for_segment(seg: dict, sets: list[dict], *, interval: timedelta,
-                        grace: timedelta, period_start: datetime,
-                        period_end: datetime, now: datetime) -> list[dict]:
+def _rounds_for_segment(
+    seg: dict,
+    sets: list[dict],
+    *,
+    interval: timedelta,
+    grace: timedelta,
+    period_start: datetime,
+    period_end: datetime,
+    now: datetime,
+) -> list[dict]:
     """Every due time of one spell inside the period, each with its outcome.
 
     The chain starts at the spell's start and runs on the DUE times, so a due
@@ -654,12 +749,15 @@ def _rounds_for_segment(seg: dict, sets: list[dict], *, interval: timedelta,
         cutoff = min(due + interval, end)
         while i < len(sets) and sets[i]["_at"] < due - half:
             i += 1  # an extra set between rounds: satisfies nothing
-        outcome: Optional[str] = None
-        used: Optional[dict] = None
+        outcome: str | None = None
+        used: dict | None = None
         if i < len(sets) and sets[i]["_at"] <= due + grace:
             outcome, used = "done", sets[i]
-        elif i < len(sets) and sets[i]["_at"] < cutoff and \
-                not _kept_for_next_round(sets, i, due + interval, half, grace, end):
+        elif (
+            i < len(sets)
+            and sets[i]["_at"] < cutoff
+            and not _kept_for_next_round(sets, i, due + interval, half, grace, end)
+        ):
             outcome, used = "late", sets[i]
         elif not seg.get("open") and end <= due + grace:
             outcome = None  # left the ward inside the grace window
@@ -671,20 +769,24 @@ def _rounds_for_segment(seg: dict, sets: list[dict], *, interval: timedelta,
             i += 1
         if outcome is None or due < period_start:
             continue
-        rounds.append({
-            "due": due, "outcome": outcome,
-            "set_at": used["_at"] if used is not None else None,
-            "minutes_after_due": (round((used["_at"] - due).total_seconds() / 60)
-                                  if used is not None else None),
-        })
+        rounds.append(
+            {
+                "due": due,
+                "outcome": outcome,
+                "set_at": used["_at"] if used is not None else None,
+                "minutes_after_due": (
+                    round((used["_at"] - due).total_seconds() / 60) if used is not None else None
+                ),
+            }
+        )
     return rounds
 
 
-def _median(values: list[float]) -> Optional[float]:
+def _median(values: list[float]) -> float | None:
     return round(statistics.median(values), 1) if values else None
 
 
-def due_now(ward: str, *, now: Optional[datetime] = None, db: Any = None) -> Optional[dict]:
+def due_now(ward: str, *, now: datetime | None = None, db: Any = None) -> dict | None:
     """When each patient on `ward` is next due a round, by the rounds file's rule.
 
     The nurse shift board's due time while scoring is switched off (the Orb
@@ -700,24 +802,30 @@ def due_now(ward: str, *, now: Optional[datetime] = None, db: Any = None) -> Opt
     due time plus the grace window, the same "late" the file counts."""
     moment = now or _now()
 
-    def _work(conn) -> Optional[dict]:
+    def _work(conn) -> dict | None:
         setting = get_setting(ward, db=conn)
         if setting is None:
             return None
         interval = timedelta(minutes=setting["interval_minutes"])
         grace = timedelta(minutes=setting["grace_minutes"])
         cols = _table_columns(conn, "vitals")
-        segments, _notes = _stay_segments(conn, setting["ward"], moment - interval,
-                                          moment, moment)
+        segments, _notes = _stay_segments(conn, setting["ward"], moment - interval, moment, moment)
         patients: dict[str, dict] = {}
         for seg in segments:
             if not seg.get("open") or seg["start"] > moment:
                 continue
-            sets = _load_sets(conn, seg["patient_id"], seg["start"],
-                              moment + timedelta(seconds=1), cols)
-            rounds = _rounds_for_segment(seg, sets, interval=interval, grace=grace,
-                                         period_start=seg["start"],
-                                         period_end=moment + interval, now=moment)
+            sets = _load_sets(
+                conn, seg["patient_id"], seg["start"], moment + timedelta(seconds=1), cols
+            )
+            rounds = _rounds_for_segment(
+                seg,
+                sets,
+                interval=interval,
+                grace=grace,
+                period_start=seg["start"],
+                period_end=moment + interval,
+                now=moment,
+            )
             if not rounds:
                 due, late = seg["start"] + interval, False
             elif rounds[-1]["outcome"] == "open":
@@ -726,8 +834,12 @@ def due_now(ward: str, *, now: Optional[datetime] = None, db: Any = None) -> Opt
             else:
                 due, late = rounds[-1]["due"] + interval, False
             patients[seg["patient_id"]] = {"due_at": due, "late": late}
-        return {"ward": setting["ward"], "interval_minutes": setting["interval_minutes"],
-                "grace_minutes": setting["grace_minutes"], "patients": patients}
+        return {
+            "ward": setting["ward"],
+            "interval_minutes": setting["interval_minutes"],
+            "grace_minutes": setting["grace_minutes"],
+            "patients": patients,
+        }
 
     if db is not None:
         return _work(db)
@@ -735,8 +847,15 @@ def due_now(ward: str, *, now: Optional[datetime] = None, db: Any = None) -> Opt
         return _work(conn)
 
 
-def compute_rounds(ward: str, start: Any, end: Any, *, now: Optional[datetime] = None,
-                   include_patient_identifiers: bool = False, db: Any = None) -> dict:
+def compute_rounds(
+    ward: str,
+    start: Any,
+    end: Any,
+    *,
+    now: datetime | None = None,
+    include_patient_identifiers: bool = False,
+    db: Any = None,
+) -> dict:
     """The rounds file's content for one ward and period, as a dict.
 
     Refuses with code 'no_interval' when the ward has no setting. Reads only."""
@@ -752,8 +871,9 @@ def compute_rounds(ward: str, start: Any, end: Any, *, now: Optional[datetime] =
         tz = _hospital_tz()
         shifts, shift_source = ward_shifts()
         cols = _table_columns(conn, "vitals")
-        segments, notes = _stay_segments(conn, setting["ward"], period["start"],
-                                         period["end"], moment)
+        segments, notes = _stay_segments(
+            conn, setting["ward"], period["start"], period["end"], moment
+        )
 
         labels: dict[str, str] = {}
         rows: dict[tuple, dict] = {}
@@ -766,14 +886,23 @@ def compute_rounds(ward: str, start: Any, end: Any, *, now: Optional[datetime] =
         unknown_ends = 0
 
         def _blank_counts() -> dict:
-            return {"due": 0, "done": 0, "late": 0, "missed": 0, "open": 0,
-                    "sets": 0, "blank_readings": 0, "illegible_readings": 0}
+            return {
+                "due": 0,
+                "done": 0,
+                "late": 0,
+                "missed": 0,
+                "open": 0,
+                "sets": 0,
+                "blank_readings": 0,
+                "illegible_readings": 0,
+            }
 
         segments.sort(key=lambda s: (s["start"], str(s["patient_id"])))
         for seg in segments:
             hi = seg["end"] if seg["end"] is not None else period["end"] + interval
-            sets = _load_sets(conn, seg["patient_id"], seg["start"],
-                              min(hi, period["end"] + interval), cols)
+            sets = _load_sets(
+                conn, seg["patient_id"], seg["start"], min(hi, period["end"] + interval), cols
+            )
             unknown_end = seg["end"] is None
             if unknown_end:
                 # End of stay never recorded: close the spell just after its
@@ -786,13 +915,22 @@ def compute_rounds(ward: str, start: Any, end: Any, *, now: Optional[datetime] =
                 unknown_ends += 1
             pid = seg["patient_id"]
             if pid not in labels:
-                labels[pid] = (str(seg.get("mrn") or pid) if include_patient_identifiers
-                               else f"Patient {len(labels) + 1}")
+                labels[pid] = (
+                    str(seg.get("mrn") or pid)
+                    if include_patient_identifiers
+                    else f"Patient {len(labels) + 1}"
+                )
             bed = seg.get("bed") or ""
 
-            for r in _rounds_for_segment(seg, sets, interval=interval, grace=grace,
-                                         period_start=period["start"],
-                                         period_end=period["end"], now=moment):
+            for r in _rounds_for_segment(
+                seg,
+                sets,
+                interval=interval,
+                grace=grace,
+                period_start=period["start"],
+                period_end=period["end"],
+                now=moment,
+            ):
                 day, label = _shift_of(r["due"], shifts, tz)
                 key = (day, label, pid, bed)
                 row = rows.setdefault(key, _blank_counts())
@@ -832,11 +970,15 @@ def compute_rounds(ward: str, start: Any, end: Any, *, now: Optional[datetime] =
         lag_rows = []
         for key in shift_order:
             lags = lag_by_shift.get(key, [])
-            lag_rows.append({
-                "shift_date": key[0], "shift": key[1], "sets_keyed": len(lags),
-                "median_minutes": _median(lags),
-                "max_minutes": round(max(lags), 1) if lags else None,
-            })
+            lag_rows.append(
+                {
+                    "shift_date": key[0],
+                    "shift": key[1],
+                    "sets_keyed": len(lags),
+                    "median_minutes": _median(lags),
+                    "max_minutes": round(max(lags), 1) if lags else None,
+                }
+            )
         all_lags = [v for vs in lag_by_shift.values() for v in vs]
         overall = _blank_counts()
         for tot in shift_totals.values():
@@ -845,24 +987,39 @@ def compute_rounds(ward: str, start: Any, end: Any, *, now: Optional[datetime] =
 
         return {
             "ward": setting["ward"],
-            "period": {"start_date": period["start_date"], "end_date": period["end_date"],
-                       "start": period["start"].isoformat(),
-                       "end": period["end"].isoformat()},
+            "period": {
+                "start_date": period["start_date"],
+                "end_date": period["end_date"],
+                "start": period["start"].isoformat(),
+                "end": period["end"].isoformat(),
+            },
             "setting": setting,
             "setting_entered_during_period": bool(
-                _dt(setting["set_at"]) and _dt(setting["set_at"]) > period["start"]),
-            "shifts": {"source": shift_source,
-                       "labels": [_shift_label(s, h) for s, h in shifts],
-                       "timezone": str(tz)},
+                _dt(setting["set_at"]) and _dt(setting["set_at"]) > period["start"]
+            ),
+            "shifts": {
+                "source": shift_source,
+                "labels": [_shift_label(s, h) for s, h in shifts],
+                "timezone": str(tz),
+            },
             "include_patient_identifiers": bool(include_patient_identifiers),
             "totals": overall,
-            "shift_totals": [{"shift_date": k[0], "shift": k[1], **shift_totals[k]}
-                             for k in shift_order],
-            "rows": [{"shift_date": k[0], "shift": k[1], "patient": labels[k[2]],
-                      "bed": k[3], **rows[k]}
-                     for k in sorted(rows, key=lambda k: (k[0], k[1], order[k[2]], k[3]))],
-            "readings": [{"reading": name, "field": field, "blank": blank[field],
-                          "illegible": illegible[field]} for field, name in READINGS],
+            "shift_totals": [
+                {"shift_date": k[0], "shift": k[1], **shift_totals[k]} for k in shift_order
+            ],
+            "rows": [
+                {"shift_date": k[0], "shift": k[1], "patient": labels[k[2]], "bed": k[3], **rows[k]}
+                for k in sorted(rows, key=lambda k: (k[0], k[1], order[k[2]], k[3]))
+            ],
+            "readings": [
+                {
+                    "reading": name,
+                    "field": field,
+                    "blank": blank[field],
+                    "illegible": illegible[field],
+                }
+                for field, name in READINGS
+            ],
             "entry_lag": {
                 "by_shift": lag_rows,
                 "median_minutes": _median(all_lags),
@@ -886,6 +1043,7 @@ def compute_rounds(ward: str, start: Any, end: Any, *, now: Optional[datetime] =
 #  The documents
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _local_text(value: Any) -> str:
     when = _dt(value)
     if when is None:
@@ -893,14 +1051,15 @@ def _local_text(value: Any) -> str:
     return when.astimezone(_hospital_tz()).strftime("%d %b %Y %H:%M")
 
 
-def _minutes(value: Optional[float]) -> str:
+def _minutes(value: float | None) -> str:
     if value is None:
         return "none keyed"
     return f"{value:g}"
 
 
-def header_lines(data: dict, *, reference: str, generated_at: str,
-                 generated_by: str) -> list[tuple[str, str]]:
+def header_lines(
+    data: dict, *, reference: str, generated_at: str, generated_by: str
+) -> list[tuple[str, str]]:
     """The header, as (label, value) pairs, shared by both formats."""
     s = data["setting"]
     shifts = data["shifts"]
@@ -911,8 +1070,10 @@ def header_lines(data: dict, *, reference: str, generated_at: str,
         shift_words += " (the hospital's ward shifts)"
     lines = [
         ("Ward", data["ward"]),
-        ("Period", f"{data['period']['start_date']} to {data['period']['end_date']}, "
-                   "hospital local time"),
+        (
+            "Period",
+            f"{data['period']['start_date']} to {data['period']['end_date']}, hospital local time",
+        ),
         ("Observation interval", f"every {s['interval_minutes']} minutes"),
         ("Grace window", f"{s['grace_minutes']} minutes"),
         ("Set in writing by", s["set_by"]),
@@ -921,9 +1082,13 @@ def header_lines(data: dict, *, reference: str, generated_at: str,
     if s.get("note"):
         lines.append(("Setting note", s["note"]))
     if data.get("setting_entered_during_period"):
-        lines.append(("Setting caution",
-                      "This interval was entered after the period began; the whole "
-                      "period is measured against it."))
+        lines.append(
+            (
+                "Setting caution",
+                "This interval was entered after the period began; the whole "
+                "period is measured against it.",
+            )
+        )
     t = data["totals"]
     lines += [
         ("Shifts", shift_words),
@@ -936,24 +1101,32 @@ def header_lines(data: dict, *, reference: str, generated_at: str,
         ("Observation sets counted", str(data["sets_counted"])),
         ("Reference", reference),
         ("Produced", f"{_local_text(generated_at)} by {generated_by}"),
-        ("How rounds are counted",
-         "The first round is due one interval after the patient arrived on the ward, "
-         "each next one an interval after the previous due time. Done: a set timed "
-         "from half the grace window before the due time to the grace window after "
-         "it. Late: the first set after that, before the next due time, unless it is "
-         "the only set on time for the next round. Missed: no set before the next "
-         "due time. One set counts for one round. Times are the times written on "
-         "the sheet."),
-        ("Patients shown as",
-         "hospital patient number and bed" if data["include_patient_identifiers"]
-         else "a number within this file and the bed (patient numbers left out)"),
+        (
+            "How rounds are counted",
+            "The first round is due one interval after the patient arrived on the ward, "
+            "each next one an interval after the previous due time. Done: a set timed "
+            "from half the grace window before the due time to the grace window after "
+            "it. Late: the first set after that, before the next due time, unless it is "
+            "the only set on time for the next round. Missed: no set before the next "
+            "due time. One set counts for one round. Times are the times written on "
+            "the sheet.",
+        ),
+        (
+            "Patients shown as",
+            "hospital patient number and bed"
+            if data["include_patient_identifiers"]
+            else "a number within this file and the bed (patient numbers left out)",
+        ),
     ]
     if data.get("stays_with_unknown_end"):
-        lines.append(("Stays with no recorded end",
-                      f"{data['stays_with_unknown_end']}; counted up to their last set"))
+        lines.append(
+            (
+                "Stays with no recorded end",
+                f"{data['stays_with_unknown_end']}; counted up to their last set",
+            )
+        )
     if not data["vitals_columns"].get("illegible"):
-        lines.append(("Illegible readings",
-                      "this system does not record illegible readings yet"))
+        lines.append(("Illegible readings", "this system does not record illegible readings yet"))
     return lines
 
 
@@ -965,24 +1138,53 @@ def render_csv(data: dict, *, reference: str, generated_at: str, generated_by: s
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\n")
     w.writerow(["Ward Record rounds file"])
-    for label, value in header_lines(data, reference=reference,
-                                     generated_at=generated_at, generated_by=generated_by):
+    for label, value in header_lines(
+        data, reference=reference, generated_at=generated_at, generated_by=generated_by
+    ):
         w.writerow([label, value])
     w.writerow([])
     w.writerow(["Totals by shift"])
-    w.writerow(["Shift date", "Shift", *_SHIFT_HEADINGS, "Sets", "Blank readings",
-                "Illegible readings"])
+    w.writerow(
+        ["Shift date", "Shift", *_SHIFT_HEADINGS, "Sets", "Blank readings", "Illegible readings"]
+    )
     for row in data["shift_totals"]:
-        w.writerow([row["shift_date"], row["shift"], *[row[c] for c in _SHIFT_COLUMNS],
-                    row["sets"], row["blank_readings"], row["illegible_readings"]])
+        w.writerow(
+            [
+                row["shift_date"],
+                row["shift"],
+                *[row[c] for c in _SHIFT_COLUMNS],
+                row["sets"],
+                row["blank_readings"],
+                row["illegible_readings"],
+            ]
+        )
     w.writerow([])
     w.writerow(["Rounds by patient and shift"])
-    w.writerow(["Shift date", "Shift", "Patient", "Bed", *_SHIFT_HEADINGS, "Sets",
-                "Blank readings", "Illegible readings"])
+    w.writerow(
+        [
+            "Shift date",
+            "Shift",
+            "Patient",
+            "Bed",
+            *_SHIFT_HEADINGS,
+            "Sets",
+            "Blank readings",
+            "Illegible readings",
+        ]
+    )
     for row in data["rows"]:
-        w.writerow([row["shift_date"], row["shift"], row["patient"], row["bed"],
-                    *[row[c] for c in _SHIFT_COLUMNS], row["sets"],
-                    row["blank_readings"], row["illegible_readings"]])
+        w.writerow(
+            [
+                row["shift_date"],
+                row["shift"],
+                row["patient"],
+                row["bed"],
+                *[row[c] for c in _SHIFT_COLUMNS],
+                row["sets"],
+                row["blank_readings"],
+                row["illegible_readings"],
+            ]
+        )
     w.writerow([])
     w.writerow(["Blank and illegible readings"])
     w.writerow(["Reading", "Blank", "Illegible"])
@@ -990,17 +1192,32 @@ def render_csv(data: dict, *, reference: str, generated_at: str, generated_by: s
         w.writerow([row["reading"], row["blank"], row["illegible"]])
     w.writerow([])
     lag = data["entry_lag"]
-    w.writerow(["Clerk entry lag (minutes from the time on the sheet to the time keyed; "
-                "never counted as late)"])
-    w.writerow(["Overall", f"median {_minutes(lag['median_minutes'])}",
-                f"maximum {_minutes(lag['max_minutes'])}",
-                f"{lag['sets_keyed']} sets with an entry time",
-                f"{lag['sets_without_entry_time']} without"])
+    w.writerow(
+        [
+            "Clerk entry lag (minutes from the time on the sheet to the time keyed; "
+            "never counted as late)"
+        ]
+    )
+    w.writerow(
+        [
+            "Overall",
+            f"median {_minutes(lag['median_minutes'])}",
+            f"maximum {_minutes(lag['max_minutes'])}",
+            f"{lag['sets_keyed']} sets with an entry time",
+            f"{lag['sets_without_entry_time']} without",
+        ]
+    )
     w.writerow(["Shift date", "Shift", "Sets keyed", "Median minutes", "Maximum minutes"])
     for row in lag["by_shift"]:
-        w.writerow([row["shift_date"], row["shift"], row["sets_keyed"],
-                    "" if row["median_minutes"] is None else row["median_minutes"],
-                    "" if row["max_minutes"] is None else row["max_minutes"]])
+        w.writerow(
+            [
+                row["shift_date"],
+                row["shift"],
+                row["sets_keyed"],
+                "" if row["median_minutes"] is None else row["median_minutes"],
+                "" if row["max_minutes"] is None else row["max_minutes"],
+            ]
+        )
     w.writerow([])
     w.writerow([CLOSING_LINE])
     return buf.getvalue()
@@ -1010,48 +1227,88 @@ def _md_cell(value: Any) -> str:
     return str(value if value is not None else "").replace("|", "/").replace("\n", " ")
 
 
-def render_markdown(data: dict, *, reference: str, generated_at: str,
-                    generated_by: str) -> str:
+def render_markdown(data: dict, *, reference: str, generated_at: str, generated_by: str) -> str:
     out: list[str] = [f"# Ward Record rounds file: {_md_cell(data['ward'])}", ""]
-    for label, value in header_lines(data, reference=reference,
-                                     generated_at=generated_at, generated_by=generated_by):
+    for label, value in header_lines(
+        data, reference=reference, generated_at=generated_at, generated_by=generated_by
+    ):
         out.append(f"- **{label}:** {_md_cell(value)}")
-    out += ["", "## Totals by shift", "",
-            "| Shift date | Shift | " + " | ".join(_SHIFT_HEADINGS)
-            + " | Sets | Blank readings | Illegible readings |",
-            "|" + "---|" * (len(_SHIFT_HEADINGS) + 5)]
+    out += [
+        "",
+        "## Totals by shift",
+        "",
+        "| Shift date | Shift | "
+        + " | ".join(_SHIFT_HEADINGS)
+        + " | Sets | Blank readings | Illegible readings |",
+        "|" + "---|" * (len(_SHIFT_HEADINGS) + 5),
+    ]
     for row in data["shift_totals"]:
-        cells = [row["shift_date"], row["shift"], *[row[c] for c in _SHIFT_COLUMNS],
-                 row["sets"], row["blank_readings"], row["illegible_readings"]]
+        cells = [
+            row["shift_date"],
+            row["shift"],
+            *[row[c] for c in _SHIFT_COLUMNS],
+            row["sets"],
+            row["blank_readings"],
+            row["illegible_readings"],
+        ]
         out.append("| " + " | ".join(_md_cell(c) for c in cells) + " |")
     if not data["shift_totals"]:
         out.append("")
         out.append("No rounds were due on this ward in this period.")
-    out += ["", "## Rounds by patient and shift", "",
-            "| Shift date | Shift | Patient | Bed | " + " | ".join(_SHIFT_HEADINGS)
-            + " | Sets | Blank readings | Illegible readings |",
-            "|" + "---|" * (len(_SHIFT_HEADINGS) + 7)]
+    out += [
+        "",
+        "## Rounds by patient and shift",
+        "",
+        "| Shift date | Shift | Patient | Bed | "
+        + " | ".join(_SHIFT_HEADINGS)
+        + " | Sets | Blank readings | Illegible readings |",
+        "|" + "---|" * (len(_SHIFT_HEADINGS) + 7),
+    ]
     for row in data["rows"]:
-        cells = [row["shift_date"], row["shift"], row["patient"], row["bed"],
-                 *[row[c] for c in _SHIFT_COLUMNS], row["sets"],
-                 row["blank_readings"], row["illegible_readings"]]
+        cells = [
+            row["shift_date"],
+            row["shift"],
+            row["patient"],
+            row["bed"],
+            *[row[c] for c in _SHIFT_COLUMNS],
+            row["sets"],
+            row["blank_readings"],
+            row["illegible_readings"],
+        ]
         out.append("| " + " | ".join(_md_cell(c) for c in cells) + " |")
-    out += ["", "## Blank and illegible readings", "",
-            "| Reading | Blank | Illegible |", "|---|---|---|"]
+    out += [
+        "",
+        "## Blank and illegible readings",
+        "",
+        "| Reading | Blank | Illegible |",
+        "|---|---|---|",
+    ]
     for row in data["readings"]:
         out.append(f"| {row['reading']} | {row['blank']} | {row['illegible']} |")
     lag = data["entry_lag"]
-    out += ["", "## Clerk entry lag", "",
-            ("Minutes from the time written on the sheet to the time the set was keyed. "
-             "Entry lag is never counted as late."), "",
-            (f"Overall: median {_minutes(lag['median_minutes'])}, maximum "
-             f"{_minutes(lag['max_minutes'])}, over {lag['sets_keyed']} sets with an entry "
-             f"time ({lag['sets_without_entry_time']} without)."), "",
-            "| Shift date | Shift | Sets keyed | Median minutes | Maximum minutes |",
-            "|---|---|---|---|---|"]
+    out += [
+        "",
+        "## Clerk entry lag",
+        "",
+        (
+            "Minutes from the time written on the sheet to the time the set was keyed. "
+            "Entry lag is never counted as late."
+        ),
+        "",
+        (
+            f"Overall: median {_minutes(lag['median_minutes'])}, maximum "
+            f"{_minutes(lag['max_minutes'])}, over {lag['sets_keyed']} sets with an entry "
+            f"time ({lag['sets_without_entry_time']} without)."
+        ),
+        "",
+        "| Shift date | Shift | Sets keyed | Median minutes | Maximum minutes |",
+        "|---|---|---|---|---|",
+    ]
     for row in lag["by_shift"]:
-        out.append(f"| {row['shift_date']} | {row['shift']} | {row['sets_keyed']} | "
-                   f"{_minutes(row['median_minutes'])} | {_minutes(row['max_minutes'])} |")
+        out.append(
+            f"| {row['shift_date']} | {row['shift']} | {row['sets_keyed']} | "
+            f"{_minutes(row['median_minutes'])} | {_minutes(row['max_minutes'])} |"
+        )
     out += ["", CLOSING_LINE, ""]
     return "\n".join(out)
 
@@ -1063,9 +1320,16 @@ def _canonical_json(data: dict) -> str:
 FORMATS = ("json", "csv", "md")
 
 
-def produce_file(ward: str, start: Any, end: Any, *, fmt: str, generated_by: str,
-                 include_patient_identifiers: bool = False,
-                 now: Optional[datetime] = None) -> dict:
+def produce_file(
+    ward: str,
+    start: Any,
+    end: Any,
+    *,
+    fmt: str,
+    generated_by: str,
+    include_patient_identifiers: bool = False,
+    now: datetime | None = None,
+) -> dict:
     """Compute, render, hash and log one rounds file.
 
     Returns {"reference", "sha256", "format", "content" (str for csv and md,
@@ -1073,28 +1337,49 @@ def produce_file(ward: str, start: Any, end: Any, *, fmt: str, generated_by: str
     (for json: the canonical JSON of the data with its reference)."""
     if fmt not in FORMATS:
         raise WardRecordError(f"Unknown format {fmt!r}.", code="bad_value")
-    data = compute_rounds(ward, start, end, now=now,
-                          include_patient_identifiers=include_patient_identifiers)
+    data = compute_rounds(
+        ward, start, end, now=now, include_patient_identifiers=include_patient_identifiers
+    )
     reference = f"WR-{(now or _now()).strftime('%Y%m%d')}-{uuid.uuid4().hex[:8].upper()}"
     generated_at = utc_iso_now()
     if fmt == "csv":
-        content: Any = render_csv(data, reference=reference, generated_at=generated_at,
-                                  generated_by=generated_by)
+        content: Any = render_csv(
+            data, reference=reference, generated_at=generated_at, generated_by=generated_by
+        )
         digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
     elif fmt == "md":
-        content = render_markdown(data, reference=reference, generated_at=generated_at,
-                                  generated_by=generated_by)
+        content = render_markdown(
+            data, reference=reference, generated_at=generated_at, generated_by=generated_by
+        )
         digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
     else:
-        content = dict(data, reference=reference, generated_at=generated_at,
-                       generated_by=generated_by, closing_line=CLOSING_LINE)
+        content = dict(
+            data,
+            reference=reference,
+            generated_at=generated_at,
+            generated_by=generated_by,
+            closing_line=CLOSING_LINE,
+        )
         digest = hashlib.sha256(_canonical_json(content).encode("utf-8")).hexdigest()
     with db_session() as conn:
         conn.execute(
             "INSERT INTO ward_record_exports (reference, ward, period_start, period_end, "
             "generated_by, generated_at, format, sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (reference, data["ward"], data["period"]["start_date"],
-             data["period"]["end_date"], generated_by, generated_at, fmt, digest),
+            (
+                reference,
+                data["ward"],
+                data["period"]["start_date"],
+                data["period"]["end_date"],
+                generated_by,
+                generated_at,
+                fmt,
+                digest,
+            ),
         )
-    return {"reference": reference, "sha256": digest, "format": fmt,
-            "content": content, "data": data}
+    return {
+        "reference": reference,
+        "sha256": digest,
+        "format": fmt,
+        "content": content,
+        "data": data,
+    }

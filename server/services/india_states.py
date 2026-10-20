@@ -11,6 +11,7 @@ The codes are fixed by the Pulse contract of 6 October 2026. Some differ from
 the ones on vehicle plates (Odisha is OR here, not OD; Telangana is TG, not TS),
 so a code is only ever read against this table, never guessed.
 """
+
 from __future__ import annotations
 
 import re

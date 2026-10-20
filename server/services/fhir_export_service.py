@@ -22,16 +22,16 @@ All functions are read-only. Each accepts an optional ``db`` connection so a
 caller (e.g. ``patient_bundle``) can share a single connection across queries;
 if none is given the function opens and closes its own.
 """
+
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from database import get_db
+
 from services.clinical_time import to_utc_iso
 from services.medorders import held as held_labels
-
 
 # ════════════════════════════════════════════
 #  Provenance tag scheme
@@ -71,16 +71,22 @@ _MRN_SYSTEM = "https://orb.health/identifier/mrn"
 # LOINC codes are the exact inverse of ingestion_adapters._VITAL_CODE_MAP so an
 # exported Observation re-ingests to the same internal vital key.
 _VITAL_FHIR: dict[str, tuple[str, str, str, str]] = {
-    "heart_rate":       ("8867-4", "Heart rate", "/min", "/min"),
-    "systolic_bp":      ("8480-6", "Systolic blood pressure", "mmHg", "mm[Hg]"),
-    "diastolic_bp":     ("8462-4", "Diastolic blood pressure", "mmHg", "mm[Hg]"),
+    "heart_rate": ("8867-4", "Heart rate", "/min", "/min"),
+    "systolic_bp": ("8480-6", "Systolic blood pressure", "mmHg", "mm[Hg]"),
+    "diastolic_bp": ("8462-4", "Diastolic blood pressure", "mmHg", "mm[Hg]"),
     "respiratory_rate": ("9279-1", "Respiratory rate", "/min", "/min"),
-    "temperature":      ("8310-5", "Body temperature", "°C", "Cel"),
-    "spo2":             ("2708-6", "Oxygen saturation", "%", "%"),
+    "temperature": ("8310-5", "Body temperature", "°C", "Cel"),
+    "spo2": ("2708-6", "Oxygen saturation", "%", "%"),
 }
 # Deterministic emission order (matches a typical vitals panel).
-_VITAL_ORDER = ("heart_rate", "systolic_bp", "diastolic_bp",
-                "respiratory_rate", "temperature", "spo2")
+_VITAL_ORDER = (
+    "heart_rate",
+    "systolic_bp",
+    "diastolic_bp",
+    "respiratory_rate",
+    "temperature",
+    "spo2",
+)
 
 # Orb medications.status → FHIR MedicationRequest.status (draft handled separately).
 _MED_STATUS_MAP = {"active": "active", "discontinued": "stopped", "prn": "active"}
@@ -89,6 +95,7 @@ _MED_STATUS_MAP = {"active": "active", "discontinued": "stopped", "prn": "active
 # ════════════════════════════════════════════
 #  Connection helper
 # ════════════════════════════════════════════
+
 
 @contextmanager
 def _reader(db=None):
@@ -108,32 +115,37 @@ def _reader(db=None):
 #  Small formatting helpers
 # ════════════════════════════════════════════
 
+
 def _orb_meta(ai_draft: bool = False) -> dict:
     """Build a FHIR ``meta`` element carrying Orb provenance tags.
 
     Always includes the Orb source tag; adds the ai-draft tag when the resource
     is AI-derived and requires clinician verification.
     """
-    tags = [{
-        "system": ORB_SOURCE_SYSTEM,
-        "code": ORB_SOURCE_CODE,
-        "display": ORB_SOURCE_DISPLAY,
-    }]
+    tags = [
+        {
+            "system": ORB_SOURCE_SYSTEM,
+            "code": ORB_SOURCE_CODE,
+            "display": ORB_SOURCE_DISPLAY,
+        }
+    ]
     if ai_draft:
-        tags.append({
-            "system": ORB_PROVENANCE_SYSTEM,
-            "code": AI_DRAFT_CODE,
-            "display": AI_DRAFT_DISPLAY,
-        })
+        tags.append(
+            {
+                "system": ORB_PROVENANCE_SYSTEM,
+                "code": AI_DRAFT_CODE,
+                "display": AI_DRAFT_DISPLAY,
+            }
+        )
     return {"source": "https://orb.health", "tag": tags}
 
 
-def _is_ai_source(source: Optional[str]) -> bool:
+def _is_ai_source(source: str | None) -> bool:
     """True if a provenance `source` value denotes AI/LLM-derived data."""
     return (source or "").strip().lower() in _AI_DERIVED_SOURCES
 
 
-def _to_fhir_datetime(value) -> Optional[str]:
+def _to_fhir_datetime(value) -> str | None:
     """Best-effort normalise a stored timestamp into a FHIR dateTime string.
 
     Accepts ISO 8601 (passed through) and ``YYYY-MM-DD HH:MM:SS`` (space →
@@ -154,7 +166,7 @@ def _to_fhir_datetime(value) -> Optional[str]:
     return s  # date-only value
 
 
-def _sex_to_gender(sex: Optional[str]) -> str:
+def _sex_to_gender(sex: str | None) -> str:
     """Map Orb `patients.sex` to a FHIR administrative gender code."""
     s = (sex or "").strip().lower()
     if s in ("m", "male"):
@@ -166,7 +178,7 @@ def _sex_to_gender(sex: Optional[str]) -> str:
     return "unknown"
 
 
-def _name_to_fhir(name: Optional[str]) -> list[dict]:
+def _name_to_fhir(name: str | None) -> list[dict]:
     """Serialise a single Orb name string into a FHIR HumanName list.
 
     Keeps the full string in ``text`` (which the ingestion adapter reads first)
@@ -185,7 +197,7 @@ def _name_to_fhir(name: Optional[str]) -> list[dict]:
     return [hn]
 
 
-def _severity_to_criticality(severity: Optional[str]) -> str:
+def _severity_to_criticality(severity: str | None) -> str:
     """Map Orb allergy severity → FHIR AllergyIntolerance.criticality."""
     s = (severity or "").strip().lower()
     if s == "severe":
@@ -195,7 +207,7 @@ def _severity_to_criticality(severity: Optional[str]) -> str:
     return "unable-to-assess"
 
 
-def _clinical_status(system: str, code: Optional[str], allowed: tuple[str, ...]) -> dict:
+def _clinical_status(system: str, code: str | None, allowed: tuple[str, ...]) -> dict:
     """Build a clinicalStatus CodeableConcept, defaulting to 'active'."""
     c = (code or "active").strip().lower()
     if c not in allowed:
@@ -207,7 +219,8 @@ def _clinical_status(system: str, code: Optional[str], allowed: tuple[str, ...])
 #  Patient
 # ════════════════════════════════════════════
 
-def patient_to_fhir(patient_id: str, db=None) -> Optional[dict]:
+
+def patient_to_fhir(patient_id: str, db=None) -> dict | None:
     """Serialise a patient row into a FHIR R4 Patient resource.
 
     Returns None when the patient does not exist.
@@ -229,11 +242,13 @@ def patient_to_fhir(patient_id: str, db=None) -> Optional[dict]:
         "gender": _sex_to_gender(row["sex"]),
     }
     if row["mrn"]:
-        resource["identifier"] = [{
-            "use": "official",
-            "system": _MRN_SYSTEM,
-            "value": str(row["mrn"]),
-        }]
+        resource["identifier"] = [
+            {
+                "use": "official",
+                "system": _MRN_SYSTEM,
+                "value": str(row["mrn"]),
+            }
+        ]
     if row["date_of_birth"]:
         resource["birthDate"] = str(row["date_of_birth"])[:10]
     return resource
@@ -243,7 +258,8 @@ def patient_to_fhir(patient_id: str, db=None) -> Optional[dict]:
 #  Observations (vitals)
 # ════════════════════════════════════════════
 
-def observations_to_fhir(patient_id: str, since: Optional[str] = None, db=None) -> list[dict]:
+
+def observations_to_fhir(patient_id: str, since: str | None = None, db=None) -> list[dict]:
     """Serialise vitals rows into FHIR R4 Observation resources.
 
     One Observation is emitted per non-null vital per row (a standards-valid
@@ -288,13 +304,17 @@ def observations_to_fhir(patient_id: str, since: Optional[str] = None, db=None) 
                 "id": f"orb-obs-{row['id']}-{loinc}",
                 "meta": _orb_meta(),
                 "status": "final",
-                "category": [{
-                    "coding": [{
-                        "system": _OBS_CATEGORY_SYSTEM,
-                        "code": "vital-signs",
-                        "display": "Vital Signs",
-                    }],
-                }],
+                "category": [
+                    {
+                        "coding": [
+                            {
+                                "system": _OBS_CATEGORY_SYSTEM,
+                                "code": "vital-signs",
+                                "display": "Vital Signs",
+                            }
+                        ],
+                    }
+                ],
                 "code": {
                     "text": display,
                     "coding": [{"system": _LOINC_SYSTEM, "code": loinc, "display": display}],
@@ -316,6 +336,7 @@ def observations_to_fhir(patient_id: str, since: Optional[str] = None, db=None) 
 # ════════════════════════════════════════════
 #  MedicationRequest
 # ════════════════════════════════════════════
+
 
 def _dosage_instruction(row) -> dict:
     """Build a FHIR Dosage from Orb dosage/route/frequency columns."""
@@ -365,8 +386,7 @@ def medications_to_fhir(patient_id: str, db=None) -> list[dict]:
         else:
             fhir_status = _MED_STATUS_MAP.get((row["status"] or "active").lower(), "active")
             intent = "order"
-        on_hold = (not is_draft and fhir_status == "active"
-                   and held_labels.is_held(row))
+        on_hold = not is_draft and fhir_status == "active" and held_labels.is_held(row)
         if on_hold:
             fhir_status = "on-hold"
 
@@ -394,6 +414,7 @@ def medications_to_fhir(patient_id: str, db=None) -> list[dict]:
 #  AllergyIntolerance
 # ════════════════════════════════════════════
 
+
 def allergies_to_fhir(patient_id: str, db=None) -> list[dict]:
     """Serialise patient_allergies rows into FHIR R4 AllergyIntolerance resources."""
     with _reader(db) as conn:
@@ -412,7 +433,8 @@ def allergies_to_fhir(patient_id: str, db=None) -> list[dict]:
             "id": f"orb-allergy-{row['id']}",
             "meta": _orb_meta(ai_draft=ai_derived),
             "clinicalStatus": _clinical_status(
-                _ALLERGY_CLINICAL_SYSTEM, row["status"],
+                _ALLERGY_CLINICAL_SYSTEM,
+                row["status"],
                 ("active", "inactive", "resolved"),
             ),
             "code": {"text": row["substance"]},
@@ -430,6 +452,7 @@ def allergies_to_fhir(patient_id: str, db=None) -> list[dict]:
 # ════════════════════════════════════════════
 #  Condition (problem list)
 # ════════════════════════════════════════════
+
 
 def conditions_to_fhir(patient_id: str, db=None) -> list[dict]:
     """Serialise problem_list rows into FHIR R4 Condition resources."""
@@ -459,7 +482,8 @@ def conditions_to_fhir(patient_id: str, db=None) -> list[dict]:
             "id": f"orb-condition-{row['id']}",
             "meta": _orb_meta(ai_draft=ai_derived),
             "clinicalStatus": _clinical_status(
-                _CONDITION_CLINICAL_SYSTEM, row["status"],
+                _CONDITION_CLINICAL_SYSTEM,
+                row["status"],
                 ("active", "recurrence", "relapse", "inactive", "remission", "resolved"),
             ),
             "code": code,
@@ -477,7 +501,8 @@ def conditions_to_fhir(patient_id: str, db=None) -> list[dict]:
 #  Bundle ($everything)
 # ════════════════════════════════════════════
 
-def patient_bundle(patient_id: str, since: Optional[str] = None, db=None) -> Optional[dict]:
+
+def patient_bundle(patient_id: str, since: str | None = None, db=None) -> dict | None:
     """Assemble a FHIR ``collection`` Bundle of everything Orb knows about a
     patient: the Patient plus all Observations, MedicationRequests,
     AllergyIntolerances and Conditions.
@@ -496,15 +521,18 @@ def patient_bundle(patient_id: str, since: Optional[str] = None, db=None) -> Opt
         resources.extend(allergies_to_fhir(patient_id, db=conn))
         resources.extend(conditions_to_fhir(patient_id, db=conn))
 
-    entries = [{
-        "fullUrl": f"https://orb.health/fhir/{res.get('resourceType', 'Resource')}/{res.get('id', '')}",
-        "resource": res,
-    } for res in resources]
+    entries = [
+        {
+            "fullUrl": f"https://orb.health/fhir/{res.get('resourceType', 'Resource')}/{res.get('id', '')}",
+            "resource": res,
+        }
+        for res in resources
+    ]
 
     return {
         "resourceType": "Bundle",
         "type": "collection",
         "meta": _orb_meta(),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "entry": entries,
     }

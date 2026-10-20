@@ -41,14 +41,17 @@ A timestamp neither can parse is dropped from the timeline rather than sorted
 to an arbitrary position. That is the honest failure: a missing row is visible
 (the chart has a hole someone will notice), a misplaced one is not.
 """
+
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Callable, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from database import db_session
+
 from services import lab_observations
 from services.sepsis_bundle_service import bundle_label, trigger_reason_text
 
@@ -68,7 +71,8 @@ def _norm(col: str) -> str:
 #  Timestamp normalisation
 # ═════════════════════════════════════════════════════════════════════════════
 
-def _normalize_ts(raw: Any) -> Optional[datetime]:
+
+def _normalize_ts(raw: Any) -> datetime | None:
     """Parse either timestamp dialect into an aware UTC datetime, or None.
 
     None means "unparseable" and the caller drops the row. It never means
@@ -96,11 +100,11 @@ def _normalize_ts(raw: Any) -> Optional[datetime]:
         # documented as UTC). Reading them as local would shift every charted
         # time by the appliance's offset — the exact defect src/lib/datetime.ts
         # was written to stop on the browser side.
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
-def _iso(dt: Optional[datetime]) -> Optional[str]:
+def _iso(dt: datetime | None) -> str | None:
     """Emit one unambiguous wire format: ISO-8601 UTC with a Z suffix.
 
     The frontend's parseUTC accepts this untouched, so the browser never has to
@@ -133,6 +137,7 @@ def _clip(text: Any, length: int = 220) -> str:
 # the two drifting apart is the failure that matters: a stream present in the
 # detail list but missing from the count shows "0 new" above six new rows, and a
 # stream counted but not listed shows "3 new" above nothing.
+
 
 @dataclass(frozen=True)
 class _Source:
@@ -242,6 +247,7 @@ class _ScoredSource(_Source):
     @property
     def base_table(self) -> str:
         from services.vigil_service import scoring_enabled
+
         return super().base_table if scoring_enabled() else ""
 
 
@@ -255,6 +261,7 @@ class _DrugChartSource(_Source):
     @property
     def base_table(self) -> str:
         from services.drug_chart import drug_chart_enabled
+
         return super().base_table if drug_chart_enabled() else ""
 
 
@@ -271,6 +278,7 @@ class _OrderSource(_Source):
     @property
     def live_where_sql(self) -> str:
         from services.drug_chart import drug_chart_enabled
+
         if drug_chart_enabled():
             return self.where_sql
         if self.where_sql:
@@ -279,13 +287,13 @@ class _OrderSource(_Source):
 
 
 def _r_medication(r: dict) -> dict:
-    dose = " ".join(
-        str(x) for x in (r.get("dosage"), r.get("route"), r.get("frequency")) if x
-    )
+    dose = " ".join(str(x) for x in (r.get("dosage"), r.get("route"), r.get("frequency")) if x)
     status = (r.get("med_status") or "active").lower()
     verb = "Discontinued" if status == "discontinued" else "Prescribed"
     detail = dose
-    if (r.get("med_source") or "clinician") in ("llm_extracted", "agentic") and not r.get("verified_by"):
+    if (r.get("med_source") or "clinician") in ("llm_extracted", "agentic") and not r.get(
+        "verified_by"
+    ):
         # Never let an AI-extracted, pharmacist-unverified medication read on a
         # timeline exactly like a charted one. Same rule as the discharge
         # reconciliation in discharge_service.
@@ -342,8 +350,13 @@ def _r_order_event(r: dict) -> dict:
     # No prior status is the creation event. It used to print an em dash where
     # the prior status goes ("Order <dash> → draft"), standing in for a status
     # that never existed.
-    title = (f"Order {prior} → {new_status}" if prior
-             else f"Order placed ({new_status})" if new_status else "Order placed")
+    title = (
+        f"Order {prior} → {new_status}"
+        if prior
+        else f"Order placed ({new_status})"
+        if new_status
+        else "Order placed"
+    )
     return {
         "title": title,
         "detail": _clip(detail),
@@ -388,6 +401,7 @@ def _r_bundle(r: dict) -> dict:
     # bundle Orb opened on a score keeps its line, without the stored NEWS2
     # criterion that opened it. A reason a clinician typed is kept.
     from services.vigil_service import scoring_enabled
+
     # The automatic starter always signs as 'vigil_auto' (sepsis_bundle_service).
     auto = r.get("triggered_by") == "vigil_auto"
     reason = "" if auto and not scoring_enabled() else trigger_reason_text(r.get("trigger_reason"))
@@ -439,10 +453,14 @@ _OPD_VISIT_STATUS_WORDS = {
 def _r_opd_visit(r: dict) -> dict:
     """An outpatient visit (opd-10). Which clinic, which doctor, and how it
     stands; the desk's free-text complaint is not repeated here."""
-    bits = [b for b in (
-        r.get("doctor_name"),
-        _OPD_VISIT_STATUS_WORDS.get((r.get("visit_status") or "").lower()),
-    ) if b]
+    bits = [
+        b
+        for b in (
+            r.get("doctor_name"),
+            _OPD_VISIT_STATUS_WORDS.get((r.get("visit_status") or "").lower()),
+        )
+        if b
+    ]
     return {
         "title": f"Outpatient visit: {r.get('department') or 'clinic'}",
         "detail": " · ".join(bits),
@@ -461,8 +479,9 @@ def _r_opd_consultation(r: dict) -> dict:
         try:
             loaded = json.loads(raw)
             if isinstance(loaded, list):
-                diagnoses = [str(d.get("text")) for d in loaded
-                             if isinstance(d, dict) and d.get("text")]
+                diagnoses = [
+                    str(d.get("text")) for d in loaded if isinstance(d, dict) and d.get("text")
+                ]
         except (ValueError, TypeError):
             diagnoses = []
     detail = "; ".join(diagnoses)
@@ -483,8 +502,12 @@ SOURCES: tuple[_Source, ...] = (
         patient_col="p.id",
         ts_col="p.admission_date",
         id_col="p.id",
-        select_cols=("p.ward AS ward", "p.bed AS bed", "p.diagnosis AS diagnosis",
-                     "NULL AS actor_name"),
+        select_cols=(
+            "p.ward AS ward",
+            "p.bed AS bed",
+            "p.diagnosis AS diagnosis",
+            "NULL AS actor_name",
+        ),
         render=_r_admission,
     ),
     _Source(
@@ -493,8 +516,12 @@ SOURCES: tuple[_Source, ...] = (
         patient_col="cd.patient_id",
         ts_col="cd.created_at",
         id_col="cd.id",
-        select_cols=("cd.doc_type AS doc_type", "cd.title AS doc_title",
-                     "cd.content AS content", "u.name AS actor_name"),
+        select_cols=(
+            "cd.doc_type AS doc_type",
+            "cd.title AS doc_title",
+            "cd.content AS content",
+            "u.name AS actor_name",
+        ),
         render=_r_note,
     ),
     _Source(
@@ -503,8 +530,12 @@ SOURCES: tuple[_Source, ...] = (
         patient_col="sn.patient_id",
         ts_col="sn.created_at",
         id_col="sn.id",
-        select_cols=("sn.note_format AS note_format", "sn.structured_note AS structured_note",
-                     "sn.raw_transcript AS raw_transcript", "u.name AS actor_name"),
+        select_cols=(
+            "sn.note_format AS note_format",
+            "sn.structured_note AS structured_note",
+            "sn.raw_transcript AS raw_transcript",
+            "u.name AS actor_name",
+        ),
         render=_r_scribe,
     ),
     _Source(
@@ -513,8 +544,11 @@ SOURCES: tuple[_Source, ...] = (
         patient_col="la.patient_id",
         ts_col="la.created_at",
         id_col="la.id",
-        select_cols=("la.image_type AS image_type", "la.analysis AS analysis",
-                     "u.name AS actor_name"),
+        select_cols=(
+            "la.image_type AS image_type",
+            "la.analysis AS analysis",
+            "u.name AS actor_name",
+        ),
         render=_r_imaging,
     ),
     _ScoredSource(
@@ -533,24 +567,36 @@ SOURCES: tuple[_Source, ...] = (
         patient_col="m.patient_id",
         ts_col="m.started_at",
         id_col="m.id",
-        select_cols=("m.drug_name AS drug_name", "m.dosage AS dosage", "m.route AS route",
-                     "m.frequency AS frequency", "m.status AS med_status",
-                     "m.source AS med_source", "m.verified_by AS verified_by",
-                     "u.name AS actor_name"),
+        select_cols=(
+            "m.drug_name AS drug_name",
+            "m.dosage AS dosage",
+            "m.route AS route",
+            "m.frequency AS frequency",
+            "m.status AS med_status",
+            "m.source AS med_source",
+            "m.verified_by AS verified_by",
+            "u.name AS actor_name",
+        ),
         render=_r_medication,
     ),
     _DrugChartSource(
         kind="administration",
-        from_sql=("medication_administrations ma "
-                  "LEFT JOIN medications m ON m.id = ma.medication_id "
-                  "LEFT JOIN users u ON u.id = ma.administered_by"),
+        from_sql=(
+            "medication_administrations ma "
+            "LEFT JOIN medications m ON m.id = ma.medication_id "
+            "LEFT JOIN users u ON u.id = ma.administered_by"
+        ),
         patient_col="ma.patient_id",
         ts_col="ma.administered_at",
         id_col="ma.id",
-        select_cols=("ma.status AS admin_status", "ma.dose_given AS dose_given",
-                     "ma.route_given AS route_given",
-                     "ma.not_given_reason AS not_given_reason",
-                     "m.drug_name AS drug_name", "u.name AS actor_name"),
+        select_cols=(
+            "ma.status AS admin_status",
+            "ma.dose_given AS dose_given",
+            "ma.route_given AS route_given",
+            "ma.not_given_reason AS not_given_reason",
+            "m.drug_name AS drug_name",
+            "u.name AS actor_name",
+        ),
         render=_r_administration,
     ),
     _OrderSource(
@@ -559,23 +605,33 @@ SOURCES: tuple[_Source, ...] = (
         patient_col="o.patient_id",
         ts_col="o.created_at",
         id_col="o.id",
-        select_cols=("o.order_type AS order_type", "o.description AS description",
-                     "o.priority AS priority", "u.name AS actor_name",
-                     "(SELECT oe0.new_status FROM order_events oe0 "
-                     "WHERE oe0.order_id = o.id AND oe0.prior_status IS NULL "
-                     "ORDER BY oe0.id LIMIT 1) AS created_status"),
+        select_cols=(
+            "o.order_type AS order_type",
+            "o.description AS description",
+            "o.priority AS priority",
+            "u.name AS actor_name",
+            "(SELECT oe0.new_status FROM order_events oe0 "
+            "WHERE oe0.order_id = o.id AND oe0.prior_status IS NULL "
+            "ORDER BY oe0.id LIMIT 1) AS created_status",
+        ),
         render=_r_order,
     ),
     _OrderSource(
         kind="order_event",
-        from_sql=("order_events oe JOIN orders o ON o.id = oe.order_id "
-                  "LEFT JOIN users u ON u.id = oe.actor_id"),
+        from_sql=(
+            "order_events oe JOIN orders o ON o.id = oe.order_id "
+            "LEFT JOIN users u ON u.id = oe.actor_id"
+        ),
         patient_col="o.patient_id",
         ts_col="oe.created_at",
         id_col="oe.id",
-        select_cols=("oe.prior_status AS prior_status", "oe.new_status AS new_status",
-                     "oe.reason AS reason", "o.description AS description",
-                     "u.name AS actor_name"),
+        select_cols=(
+            "oe.prior_status AS prior_status",
+            "oe.new_status AS new_status",
+            "oe.reason AS reason",
+            "o.description AS description",
+            "u.name AS actor_name",
+        ),
         # The creation event is the orders row above, said again at the same
         # instant. Listing both put every order on the chart, and in the
         # round's "since" count, twice. Status changes are what this adds.
@@ -592,11 +648,16 @@ SOURCES: tuple[_Source, ...] = (
         patient_col="ob.patient_id",
         ts_col="COALESCE(ob.observed_at, ob.recorded_at, ob.created_at)",
         id_col="ob.id",
-        select_cols=("ob.observation_name AS observation_name", "ob.value_text AS value_text",
-                     "ob.value_numeric AS value_numeric", "ob.unit AS unit",
-                     "ob.reference_range AS reference_range",
-                     "ob.abnormal_flag AS abnormal_flag", "ob.panel_name AS panel_name",
-                     "NULL AS actor_name"),
+        select_cols=(
+            "ob.observation_name AS observation_name",
+            "ob.value_text AS value_text",
+            "ob.value_numeric AS value_numeric",
+            "ob.unit AS unit",
+            "ob.reference_range AS reference_range",
+            "ob.abnormal_flag AS abnormal_flag",
+            "ob.panel_name AS panel_name",
+            "NULL AS actor_name",
+        ),
         where_sql=lab_observations.live_observations_sql("ob"),
         order_sql=lab_observations.order_by_sql("ob"),
         render=_r_observation,
@@ -607,8 +668,12 @@ SOURCES: tuple[_Source, ...] = (
         patient_col="cb.patient_id",
         ts_col="cb.triggered_at",
         id_col="cb.id",
-        select_cols=("cb.bundle_type AS bundle_type", "cb.trigger_reason AS trigger_reason",
-                     "cb.triggered_by AS triggered_by", "NULL AS actor_name"),
+        select_cols=(
+            "cb.bundle_type AS bundle_type",
+            "cb.trigger_reason AS trigger_reason",
+            "cb.triggered_by AS triggered_by",
+            "NULL AS actor_name",
+        ),
         render=_r_bundle,
     ),
     _Source(
@@ -617,8 +682,12 @@ SOURCES: tuple[_Source, ...] = (
         patient_col="pl.patient_id",
         ts_col="pl.recorded_at",
         id_col="pl.id",
-        select_cols=("pl.problem AS problem", "pl.icd10_code AS icd10_code",
-                     "pl.snomed_code AS snomed_code", "u.name AS actor_name"),
+        select_cols=(
+            "pl.problem AS problem",
+            "pl.icd10_code AS icd10_code",
+            "pl.snomed_code AS snomed_code",
+            "u.name AS actor_name",
+        ),
         render=_r_problem,
     ),
     _Source(
@@ -627,8 +696,12 @@ SOURCES: tuple[_Source, ...] = (
         patient_col="pa.patient_id",
         ts_col="pa.recorded_at",
         id_col="pa.id",
-        select_cols=("pa.substance AS substance", "pa.reaction AS reaction",
-                     "pa.severity AS allergy_severity", "u.name AS actor_name"),
+        select_cols=(
+            "pa.substance AS substance",
+            "pa.reaction AS reaction",
+            "pa.severity AS allergy_severity",
+            "u.name AS actor_name",
+        ),
         render=_r_allergy,
     ),
     _Source(
@@ -648,8 +721,12 @@ SOURCES: tuple[_Source, ...] = (
         patient_col="ov.patient_id",
         ts_col="ov.registered_at",
         id_col="ov.id",
-        select_cols=("ov.department AS department", "ov.doctor_name AS doctor_name",
-                     "ov.status AS visit_status", "u.name AS actor_name"),
+        select_cols=(
+            "ov.department AS department",
+            "ov.doctor_name AS doctor_name",
+            "ov.status AS visit_status",
+            "u.name AS actor_name",
+        ),
         where_sql="ov.status != 'cancelled'",
         render=_r_opd_visit,
         feature="opd",
@@ -662,8 +739,12 @@ SOURCES: tuple[_Source, ...] = (
         patient_col="oc.patient_id",
         ts_col="oc.signed_at",
         id_col="oc.id",
-        select_cols=("oc.department AS department", "oc.diagnoses_json AS diagnoses_json",
-                     "oc.plan AS plan", "u.name AS actor_name"),
+        select_cols=(
+            "oc.department AS department",
+            "oc.diagnoses_json AS diagnoses_json",
+            "oc.plan AS plan",
+            "u.name AS actor_name",
+        ),
         where_sql="oc.status = 'signed'",
         render=_r_opd_consultation,
         feature="opd",
@@ -676,6 +757,7 @@ KINDS: tuple[str, ...] = tuple(s.kind for s in SOURCES)
 # ═════════════════════════════════════════════════════════════════════════════
 #  Queries
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def _detail_sql(src: _Source, limit: int) -> str:
     cols = ", ".join(src.select_cols) if src.select_cols else "NULL AS actor_name"
@@ -690,7 +772,7 @@ def _detail_sql(src: _Source, limit: int) -> str:
     )
 
 
-def available_sources(db, sources: Optional[tuple[_Source, ...]] = None) -> tuple[_Source, ...]:
+def available_sources(db, sources: tuple[_Source, ...] | None = None) -> tuple[_Source, ...]:
     """The declared streams whose base table actually exists in THIS database.
 
     One ``sqlite_master`` read per call, and the result is then used for BOTH
@@ -699,12 +781,13 @@ def available_sources(db, sources: Optional[tuple[_Source, ...]] = None) -> tupl
     streams exist, or the badge counts rows the rail can never show.
     """
     names = {
-        r[0] for r in db.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table'"
-        ).fetchall()
+        r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
     }
-    return tuple(s for s in (sources if sources is not None else SOURCES)
-                 if s.base_table in names and _feature_on(s.feature))
+    return tuple(
+        s
+        for s in (sources if sources is not None else SOURCES)
+        if s.base_table in names and _feature_on(s.feature)
+    )
 
 
 def _feature_on(feature: str) -> bool:
@@ -713,18 +796,18 @@ def _feature_on(feature: str) -> bool:
     if not feature:
         return True
     import config
+
     return config.feature_enabled(feature)
 
 
-def _count_union_sql(patient_filter: str,
-                     sources: Optional[tuple[_Source, ...]] = None) -> str:
+def _count_union_sql(patient_filter: str, sources: tuple[_Source, ...] | None = None) -> str:
     """UNION ALL of (patient_id, normalised_ts) across every countable stream.
 
     `patient_filter` is spliced in as a WHERE fragment — it is built by this
     module from a bound-parameter expression, never from request text.
     """
     parts = []
-    for src in (sources if sources is not None else SOURCES):
+    for src in sources if sources is not None else SOURCES:
         if not src.countable:
             continue
         where = patient_filter.format(pcol=src.patient_col)
@@ -737,18 +820,18 @@ def _count_union_sql(patient_filter: str,
     return " UNION ALL ".join(parts)
 
 
-def get_review_mark(db, user_id: str, patient_id: str) -> Optional[str]:
+def get_review_mark(db, user_id: str, patient_id: str) -> str | None:
     """This clinician's watermark for this patient, or None if never reviewed."""
     row = db.execute(
-        "SELECT last_reviewed_at FROM patient_review_marks "
-        "WHERE user_id = ? AND patient_id = ?",
+        "SELECT last_reviewed_at FROM patient_review_marks WHERE user_id = ? AND patient_id = ?",
         (user_id, patient_id),
     ).fetchone()
     return row["last_reviewed_at"] if row else None
 
 
-def count_new_since(db, patient_id: str, since_iso: Optional[str],
-                    sources: Optional[tuple[_Source, ...]] = None) -> int:
+def count_new_since(
+    db, patient_id: str, since_iso: str | None, sources: tuple[_Source, ...] | None = None
+) -> int:
     """How many chart events landed after `since_iso`.
 
     Counted by the DATABASE over every row, not by counting the truncated list
@@ -783,7 +866,7 @@ def _sql_norm_value(iso: str) -> str:
 
 def build_chart_timeline(
     patient_id: str,
-    user_id: Optional[str] = None,
+    user_id: str | None = None,
     limit: int = 150,
 ) -> dict:
     """Everything that happened to this patient, newest first.
@@ -826,19 +909,21 @@ def build_chart_timeline(
                 if dt is None:
                     continue
                 rendered = src.render(row)
-                events.append({
-                    # Stable across refetches: the UI keys on it and the "new"
-                    # divider is drawn between two of them.
-                    "id": f"{src.kind}:{row.get('row_id')}",
-                    "kind": src.kind,
-                    "timestamp": _iso(dt),
-                    "_dt": dt,
-                    "title": rendered.get("title") or src.kind,
-                    "detail": rendered.get("detail") or "",
-                    "severity": rendered.get("severity") or "info",
-                    "badge": rendered.get("badge") or src.kind.upper(),
-                    "actor": row.get("actor_name") or None,
-                })
+                events.append(
+                    {
+                        # Stable across refetches: the UI keys on it and the "new"
+                        # divider is drawn between two of them.
+                        "id": f"{src.kind}:{row.get('row_id')}",
+                        "kind": src.kind,
+                        "timestamp": _iso(dt),
+                        "_dt": dt,
+                        "title": rendered.get("title") or src.kind,
+                        "detail": rendered.get("detail") or "",
+                        "severity": rendered.get("severity") or "info",
+                        "badge": rendered.get("badge") or src.kind.upper(),
+                        "actor": row.get("actor_name") or None,
+                    }
+                )
 
         mark = get_review_mark(db, user_id, patient_id) if user_id else None
         new_count = count_new_since(db, patient_id, mark, tuple(usable)) if mark else 0
@@ -864,7 +949,7 @@ def build_chart_timeline(
     }
 
 
-def read_review_state(user_id: Optional[str], patient_id: str) -> dict:
+def read_review_state(user_id: str | None, patient_id: str) -> dict:
     """This clinician's watermark for this chart, and how much has landed since.
 
     Split out from build_chart_timeline so a caller that already has the events
@@ -885,7 +970,7 @@ def read_review_state(user_id: Optional[str], patient_id: str) -> dict:
         }
 
 
-def mark_reviewed(user_id: str, patient_id: str, as_of: Optional[str] = None) -> dict:
+def mark_reviewed(user_id: str, patient_id: str, as_of: str | None = None) -> dict:
     """Move this clinician's watermark on this patient forward.
 
     NEVER BACKWARDS. A stale tab replaying an old "reviewed" (the offline queue
@@ -900,7 +985,7 @@ def mark_reviewed(user_id: str, patient_id: str, as_of: Optional[str] = None) ->
     """
     if not user_id or not patient_id:
         raise ValueError("mark_reviewed requires both a user and a patient")
-    now = _normalize_ts(as_of) if as_of else datetime.now(timezone.utc)
+    now = _normalize_ts(as_of) if as_of else datetime.now(UTC)
     if now is None:
         raise ValueError(f"unparseable as_of: {as_of!r}")
     stamp = _iso(now)
@@ -922,7 +1007,7 @@ def mark_reviewed(user_id: str, patient_id: str, as_of: Optional[str] = None) ->
     return {"previous": previous, "last_reviewed_at": stamp, "advanced": True}
 
 
-def unseen_counts_for_scope(user_id: str, dept: Optional[str]) -> dict[str, int]:
+def unseen_counts_for_scope(user_id: str, dept: str | None) -> dict[str, int]:
     """{patient_id: new-event count} for every ADMITTED patient in `dept`.
 
     ONE query for the whole board, not one per patient — the ward board renders
@@ -951,9 +1036,7 @@ def unseen_counts_for_scope(user_id: str, dept: Optional[str]) -> dict[str, int]
 
     with db_session() as db:
         try:
-            marks = db.execute(
-                scope_sql, (user_id, dept) if dept else (user_id,)
-            ).fetchall()
+            marks = db.execute(scope_sql, (user_id, dept) if dept else (user_id,)).fetchall()
         except Exception:  # noqa: BLE001 — table absent on a pre-migration DB.
             return {}
         if not marks:

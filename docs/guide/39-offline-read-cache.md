@@ -452,7 +452,7 @@ This is not part of the read cache, but `useOfflineSession` imports two function
 **Why:** a replay is sent on the **current** session's cookie, so a write queued by the last nurse would be filed against this one, *her name on another clinician's note or dose, with nothing on screen to reveal it* (`src/api/client.ts:631-635`). Same rule `phiCache` applies to reads: **a queued write is replayed for its author or not at all.**
 **On screen:** when called from `processOfflineQueue` (`:650`) it dispatches `orb:offline-sync-failed` (`:654`), which the shell renders as a `role="alert"` badge, "N queued action(s) failed to sync. Please re-enter" (`src/pages/ClinicianShell.tsx:475-479`). When called from `useOfflineSession` on a boot it is silent, deliberately.
 
-#### `offlineMutate`: `src/api/client.ts:611`
+#### `offlineMutate`: `src/api/client.ts:704`
 **Signature:** `(path, body, offlineResult, method, key?) -> Promise<T>`
 **Does:** With no connection, **queues the request and returns the caller's optimistic result** (`:619-622`). It is a module-private `async function`, not exported.
 **On screen:** nothing today, every one of its three callers is now guarded by `assertOnlineForWrite` at the UI layer, so offline it is never reached. It remains the mechanism the guards exist to keep unreachable. **See Discrepancies; this is the largest open tension in the subsystem.**

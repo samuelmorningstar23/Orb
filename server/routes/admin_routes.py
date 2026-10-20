@@ -3,25 +3,39 @@
 Provides pre-aggregated governance metrics for the Admin dashboard.
 All endpoints require admin.overview permission.
 """
+
 import json
 import logging
 import os
-import shutil
 import sqlite3
 import tempfile
-from db_backend import DBIntegrityError, DBOperationalError
 import uuid
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
-from datetime import datetime, timezone, timedelta
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
+from config import AUDIT_SIMULATION_EVENTS, INGESTION_MODE
 from database import db_session, run_db
-from permissions import (require_permission, ADMIN_OVERVIEW, department_scope,
-                         log_phi_read, scope_patient_ids_sql)
-from services import history_import_service as history_import
+from db_backend import DBIntegrityError, DBOperationalError
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
+from permissions import (
+    ADMIN_OVERVIEW,
+    department_scope,
+    log_phi_read,
+    require_permission,
+    scope_patient_ids_sql,
+)
 from services.audit_service import log_audit_event
 from services.consent_service import ERASURE_RETAINED_TABLES
-from config import INGESTION_MODE, AUDIT_SIMULATION_EVENTS
+
+from services import history_import_service as history_import
 
 logger = logging.getLogger("orb.admin")
 
@@ -74,6 +88,7 @@ def _shadow_off_reason() -> str | None:
         # Read the switch through the module that DEFINES it rather than
         # re-reading ORB_SHADOW_ENABLED here, so the two can never drift apart.
         from services import shadow_service
+
         instrument_on = bool(shadow_service._enabled())
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("admin overview: shadow instrument probe failed: %s", exc)
@@ -129,6 +144,7 @@ def _alerts_24h(db, cutoff_iso: str) -> dict:
     firing; nothing records them. That is reported as `total: None`, i.e. UNKNOWN,
     with the reason. It is never reported as 0.
     """
+
     def _unknown(reason: str) -> dict:
         return {
             "total": None,
@@ -271,12 +287,14 @@ def _records_written_24h(db, cutoff_iso: str) -> dict:
             else:
                 obs_n += cnt
 
-    result.update({
-        "counted": vitals_n + obs_n,
-        "vitals_counted": vitals_n,
-        "observations_counted": obs_n,
-        "by_source": by_source,
-    })
+    result.update(
+        {
+            "counted": vitals_n + obs_n,
+            "vitals_counted": vitals_n,
+            "observations_counted": obs_n,
+            "by_source": by_source,
+        }
+    )
 
     truncated, reason = _simulated_history_truncated(db, cutoff_iso)
     if truncated:
@@ -348,11 +366,14 @@ def _simulated_history_truncated(db, cutoff_iso: str) -> tuple[bool, str | None]
     )
 
 
+_ADMIN_OVERVIEW_USER_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.get("/overview")
-def admin_overview(user: dict = Depends(require_permission("admin.overview"))):
+def admin_overview(user: dict = _ADMIN_OVERVIEW_USER_DEFAULT):
     """Pre-aggregated governance snapshot for the Admin dashboard."""
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cutoff_24h = (now - timedelta(hours=24)).isoformat()
     # shadow_events writes ONE format — ISO-8601 UTC at millisecond resolution
     # (shadow_service.utc_now) — and sorts lexicographically, so its window
@@ -443,7 +464,10 @@ def admin_overview(user: dict = Depends(require_permission("admin.overview"))):
                GROUP BY action_type, outcome""",
             (cutoff_24h,),
         ).fetchall()
-        auth_events = [{"action": r["action_type"], "outcome": r["outcome"], "count": r["cnt"]} for r in auth_summary]
+        auth_events = [
+            {"action": r["action_type"], "outcome": r["outcome"], "count": r["cnt"]}
+            for r in auth_summary
+        ]
 
     return {
         "ingestion_mode": INGESTION_MODE,
@@ -495,15 +519,23 @@ def admin_overview(user: dict = Depends(require_permission("admin.overview"))):
 _ALERT_LIST_MAX_HOURS = 24 * 7
 
 
+_ADMIN_ALERTS_HOURS_DEFAULT = Query(24, ge=1, le=_ALERT_LIST_MAX_HOURS)
+_ADMIN_ALERTS_LANE_DEFAULT = Query(None)
+_ADMIN_ALERTS_LEVEL_DEFAULT = Query(None)
+_ADMIN_ALERTS_LIMIT_DEFAULT = Query(25, ge=1, le=200)
+_ADMIN_ALERTS_OFFSET_DEFAULT = Query(0, ge=0)
+_ADMIN_ALERTS_USER_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.get("/alerts")
 def admin_alerts(
     request: Request,
-    hours: int = Query(24, ge=1, le=_ALERT_LIST_MAX_HOURS),
-    lane: Optional[str] = Query(None),
-    level: Optional[str] = Query(None),
-    limit: int = Query(25, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-    user: dict = Depends(require_permission("admin.overview")),
+    hours: int = _ADMIN_ALERTS_HOURS_DEFAULT,
+    lane: str | None = _ADMIN_ALERTS_LANE_DEFAULT,
+    level: str | None = _ADMIN_ALERTS_LEVEL_DEFAULT,
+    limit: int = _ADMIN_ALERTS_LIMIT_DEFAULT,
+    offset: int = _ADMIN_ALERTS_OFFSET_DEFAULT,
+    user: dict = _ADMIN_ALERTS_USER_DEFAULT,
 ):
     """Every alert.fired row in the window, newest first, with lane and level.
 
@@ -522,11 +554,18 @@ def admin_alerts(
     }
     off_reason = _shadow_off_reason()
     if off_reason:
-        return {**base, "known": False, "unknown_reason": off_reason, "total": None,
-                "alerts": [], "by_lane": {}, "scope": None, "house_total": None}
+        return {
+            **base,
+            "known": False,
+            "unknown_reason": off_reason,
+            "total": None,
+            "alerts": [],
+            "by_lane": {},
+            "scope": None,
+            "house_total": None,
+        }
 
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(
-        timespec="milliseconds")
+    cutoff = (datetime.now(UTC) - timedelta(hours=hours)).isoformat(timespec="milliseconds")
     where = ["kind = 'alert.fired'", "occurred_at >= ?"]
     params: list = [cutoff]
     if lane:
@@ -570,16 +609,21 @@ def admin_alerts(
             if dept is not None:
                 # A count names nobody; it stops a quiet ward reading as a quiet house.
                 house_total = db.execute(
-                    f"SELECT COUNT(*) AS n FROM shadow_events_current "
-                    f"WHERE {' AND '.join(where)}",
+                    f"SELECT COUNT(*) AS n FROM shadow_events_current WHERE {' AND '.join(where)}",
                     params,
                 ).fetchone()["n"]
     except DBOperationalError as exc:
         logger.warning("admin alerts: shadow event log unreadable: %s", exc)
-        return {**base, "known": False,
-                "unknown_reason": f"The shadow event log could not be read ({exc}).",
-                "total": None, "alerts": [], "by_lane": {}, "scope": dept,
-                "house_total": None}
+        return {
+            **base,
+            "known": False,
+            "unknown_reason": f"The shadow event log could not be read ({exc}).",
+            "total": None,
+            "alerts": [],
+            "by_lane": {},
+            "scope": dept,
+            "house_total": None,
+        }
 
     alerts = [
         {
@@ -607,8 +651,12 @@ def admin_alerts(
             ),
             target_type="department",
             target_id=dept,
-            metadata={"result_count": len(alerts), "patient_ids": patient_ids,
-                      "hours": hours, "offset": offset},
+            metadata={
+                "result_count": len(alerts),
+                "patient_ids": patient_ids,
+                "hours": hours,
+                "offset": offset,
+            },
         )
 
     return {
@@ -663,13 +711,19 @@ _ERASE_KEEP_TABLES: frozenset[str] = frozenset(_ERASE_RETAINED)
 # event_deliveries' parent in fact but not in schema (no FK is declared), so the
 # ordering has to be asserted here.
 _ERASE_UNLINKED_DELETES: list[tuple[str, str, int]] = [
-    ("event_deliveries",
-     "DELETE FROM event_deliveries WHERE event_id IN (SELECT event_id FROM event_log WHERE patient_id = ?)", 1),
+    (
+        "event_deliveries",
+        "DELETE FROM event_deliveries WHERE event_id IN (SELECT event_id FROM event_log WHERE patient_id = ?)",
+        1,
+    ),
     # world_model_state is keyed generically (entity_type/entity_id) rather than
     # by a patient_id column; state_json is PHI-derived (ciphertext when field
     # encryption is on, which is retention of personal data either way).
-    ("world_model_state",
-     "DELETE FROM world_model_state WHERE entity_type = 'patient' AND entity_id = ?", 1),
+    (
+        "world_model_state",
+        "DELETE FROM world_model_state WHERE entity_type = 'patient' AND entity_id = ?",
+        1,
+    ),
 ]
 
 
@@ -695,7 +749,8 @@ def _build_erase_plan(db: sqlite3.Connection) -> list[tuple[str, str, int]]:
     than one patient-scoped parent).
     """
     tables = [
-        r[0] for r in db.execute(
+        r[0]
+        for r in db.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
         ).fetchall()
     ]
@@ -767,12 +822,15 @@ def _build_erase_plan(db: sqlite3.Connection) -> list[tuple[str, str, int]]:
     return [(t, f'DELETE FROM "{t}" WHERE {predicates[t][0]}', predicates[t][1]) for t in ordered]
 
 
+_ERASE_PATIENT_USER_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.post("/patients/{patient_id}/erase")
 def erase_patient(
     patient_id: str,
     request: Request,
-    user: dict = Depends(require_permission("admin.overview")),
-):
+    user: dict = _ERASE_PATIENT_USER_DEFAULT,
+) -> None:
     """RETIRED: always 410 Gone, and deletes nothing.
 
     Kept as a route rather than removed so a stale tab or an old script gets a
@@ -844,15 +902,18 @@ def erase_patient(
 # async, but ALL parsing and DB work goes through ``database.run_db`` onto the
 # private DB pool. A 200 MB import must not stall the ward's screens.
 
+
 # Where uploads are spooled. Deliberately NOT the system temp dir by default:
 # the upload is PHI in clear text, and the operator has secured the volume the
 # database lives on (encryption at rest, backup policy, disk disposal), not
 # /tmp. Overridable for operators who mount something better.
 def _spool_dir() -> str:
     from config import DB_PATH
+
     configured = os.environ.get("ORB_IMPORT_SPOOL_DIR")
-    path = configured or os.path.join(os.path.dirname(os.path.abspath(str(DB_PATH))),
-                                      ".import-spool")
+    path = configured or os.path.join(
+        os.path.dirname(os.path.abspath(str(DB_PATH))), ".import-spool"
+    )
     os.makedirs(path, mode=0o700, exist_ok=True)
     return path
 
@@ -866,8 +927,7 @@ async def _spool_upload(file: UploadFile) -> tuple[str, int]:
     ``mkstemp`` creates the file 0600, so it is not world-readable while it
     exists; the caller MUST delete it in a finally, PHI does not linger.
     """
-    fd, path = tempfile.mkstemp(prefix="orb_history_import_", suffix=".csv",
-                                dir=_spool_dir())
+    fd, path = tempfile.mkstemp(prefix="orb_history_import_", suffix=".csv", dir=_spool_dir())
     total = 0
     try:
         with os.fdopen(fd, "wb") as out:
@@ -880,7 +940,7 @@ async def _spool_upload(file: UploadFile) -> tuple[str, int]:
                     raise HTTPException(
                         status_code=413,
                         detail=f"File exceeds the "
-                               f"{history_import.MAX_BYTES // (1024 * 1024)} MB limit.",
+                        f"{history_import.MAX_BYTES // (1024 * 1024)} MB limit.",
                     )
                 out.write(chunk)
     except BaseException:
@@ -904,24 +964,31 @@ def _parse_mapping(mapping: str) -> dict[str, str]:
     try:
         parsed = json.loads(mapping or "{}")
     except json.JSONDecodeError as e:
-        raise HTTPException(status_code=422, detail=f"mapping must be valid JSON: {e}")
+        raise HTTPException(status_code=422, detail=f"mapping must be valid JSON: {e}") from e
     if not isinstance(parsed, dict):
         raise HTTPException(
-            status_code=422,
-            detail="mapping must be a JSON object of {orb_field: csv_column}")
+            status_code=422, detail="mapping must be a JSON object of {orb_field: csv_column}"
+        )
     out: dict[str, str] = {}
     for k, v in parsed.items():
         if v is None or v == "":
             continue
         if not isinstance(k, str) or not isinstance(v, str):
-            raise HTTPException(status_code=422,
-                                detail="mapping keys and values must both be strings")
+            raise HTTPException(
+                status_code=422, detail="mapping keys and values must both be strings"
+            )
         out[k] = v
     return out
 
 
-def _history_audit(request: Request, user: dict, action_type: str, summary: str,
-                   metadata: dict, target_id: str | None = None) -> None:
+def _history_audit(
+    request: Request,
+    user: dict,
+    action_type: str,
+    summary: str,
+    metadata: dict,
+    target_id: str | None = None,
+) -> None:
     log_audit_event(
         correlation_id=f"history-import-{target_id or 'preview'}-{id(request):x}",
         event_category="data_management",
@@ -931,7 +998,7 @@ def _history_audit(request: Request, user: dict, action_type: str, summary: str,
         actor_user_id=user.get("id"),
         actor_role=user.get("role"),
         target_type="history_import",
-        target_id=target_id,
+        target_id=str(target_id) if target_id is not None else None,
         request_path=request.url.path,
         http_method=request.method,
         ip_address=request.client.host if request.client else None,
@@ -944,43 +1011,58 @@ def _refuse_historical_drugs(record_type: str | None) -> None:
     computer keeps on paper: 404 "The drug chart is not part of Orb Ward
     Record" before the upload is read (services/drug_chart)."""
     from services.drug_chart import DRUG_CHART_OFF, drug_chart_enabled
+
     if (record_type or "").strip() == "medications" and not drug_chart_enabled():
         raise HTTPException(status_code=404, detail=DRUG_CHART_OFF)
 
 
+_HISTORY_IMPORT_RECORD_TYPES_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+
+
 @router.get("/history-import/record-types")
-def history_import_record_types(user: dict = Depends(require_permission(ADMIN_OVERVIEW))):
+def history_import_record_types(user: dict = _HISTORY_IMPORT_RECORD_TYPES_USER_DEFAULT):
     """What can be imported, and the limits that apply. No medications on an
     Orb Ward Record computer (_refuse_historical_drugs)."""
     from services.drug_chart import drug_chart_enabled
+
     return {
-        "record_types": [rt for rt in history_import.record_type_catalogue()
-                         if drug_chart_enabled() or rt.get("name") != "medications"],
+        "record_types": [
+            rt
+            for rt in history_import.record_type_catalogue()
+            if drug_chart_enabled() or rt.get("name") != "medications"
+        ],
         "date_orders": ["auto", "dmy", "mdy"],
         "max_bytes": history_import.MAX_BYTES,
         "max_rows": history_import.MAX_ROWS,
     }
 
 
+_HISTORY_IMPORT_FIELDS_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+
+
 @router.get("/history-import/fields")
-def history_import_fields(record_type: str,
-                          user: dict = Depends(require_permission(ADMIN_OVERVIEW))):
+def history_import_fields(record_type: str, user: dict = _HISTORY_IMPORT_FIELDS_USER_DEFAULT):
     """Target fields one record type can populate, for the mapping UI."""
     _refuse_historical_drugs(record_type)
     try:
-        return {"record_type": record_type,
-                "fields": history_import.field_catalogue(record_type)}
+        return {"record_type": record_type, "fields": history_import.field_catalogue(record_type)}
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+_HISTORY_IMPORT_PREVIEW_FILE_DEFAULT = File(...)
+_HISTORY_IMPORT_PREVIEW_RECORD_TYPE_DEFAULT = Form(...)
+_HISTORY_IMPORT_PREVIEW_HEADER_LINE_DEFAULT = Form(None)
+_HISTORY_IMPORT_PREVIEW_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
 @router.post("/history-import/preview")
 async def history_import_preview(
     request: Request,
-    file: UploadFile = File(...),
-    record_type: str = Form(...),
-    header_line: int | None = Form(None),
-    user: dict = Depends(require_permission(ADMIN_OVERVIEW)),
+    file: UploadFile = _HISTORY_IMPORT_PREVIEW_FILE_DEFAULT,
+    record_type: str = _HISTORY_IMPORT_PREVIEW_RECORD_TYPE_DEFAULT,
+    header_line: int | None = _HISTORY_IMPORT_PREVIEW_HEADER_LINE_DEFAULT,
+    user: dict = _HISTORY_IMPORT_PREVIEW_USER_DEFAULT,
 ):
     """Sniff an export: delimiter, headers, suggested mapping, sample rows.
 
@@ -992,30 +1074,46 @@ async def history_import_preview(
     _refuse_historical_drugs(record_type)
     path, size = await _spool_upload(file)
     try:
-        result = await run_db(history_import.sniff, path, record_type,
-                              header_line=header_line)
+        result = await run_db(history_import.sniff, path, record_type, header_line=header_line)
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
     finally:
         _discard(path)
     result["filename"] = file.filename
-    _history_audit(request, user, "history_import_preview",
-                   f"History import preview of '{file.filename}' as {record_type}",
-                   {"filename": file.filename, "record_type": record_type,
-                    "bytes": size, "sha256": result.get("source_sha256")})
+    _history_audit(
+        request,
+        user,
+        "history_import_preview",
+        f"History import preview of '{file.filename}' as {record_type}",
+        {
+            "filename": file.filename,
+            "record_type": record_type,
+            "bytes": size,
+            "sha256": result.get("source_sha256"),
+        },
+    )
     return result
+
+
+_HISTORY_IMPORT_DRY_RUN_FILE_DEFAULT = File(...)
+_HISTORY_IMPORT_DRY_RUN_RECORD_TYPE_DEFAULT = Form(...)
+_HISTORY_IMPORT_DRY_RUN_SOURCE_SYSTEM_DEFAULT = Form(...)
+_HISTORY_IMPORT_DRY_RUN_MAPPING_DEFAULT = Form(...)
+_HISTORY_IMPORT_DRY_RUN_DATE_ORDER_DEFAULT = Form("auto")
+_HISTORY_IMPORT_DRY_RUN_HEADER_LINE_DEFAULT = Form(None)
+_HISTORY_IMPORT_DRY_RUN_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
 @router.post("/history-import/dry-run")
 async def history_import_dry_run(
     request: Request,
-    file: UploadFile = File(...),
-    record_type: str = Form(...),
-    source_system: str = Form(...),
-    mapping: str = Form(...),
-    date_order: str = Form("auto"),
-    header_line: int | None = Form(None),
-    user: dict = Depends(require_permission(ADMIN_OVERVIEW)),
+    file: UploadFile = _HISTORY_IMPORT_DRY_RUN_FILE_DEFAULT,
+    record_type: str = _HISTORY_IMPORT_DRY_RUN_RECORD_TYPE_DEFAULT,
+    source_system: str = _HISTORY_IMPORT_DRY_RUN_SOURCE_SYSTEM_DEFAULT,
+    mapping: str = _HISTORY_IMPORT_DRY_RUN_MAPPING_DEFAULT,
+    date_order: str = _HISTORY_IMPORT_DRY_RUN_DATE_ORDER_DEFAULT,
+    header_line: int | None = _HISTORY_IMPORT_DRY_RUN_HEADER_LINE_DEFAULT,
+    user: dict = _HISTORY_IMPORT_DRY_RUN_USER_DEFAULT,
 ):
     """Report exactly what an import WOULD create, update and skip. Writes nothing.
 
@@ -1028,37 +1126,62 @@ async def history_import_dry_run(
     path, size = await _spool_upload(file)
     try:
         result = await run_db(
-            history_import.plan, path, record_type, parsed_mapping,
-            source_system=source_system, date_order=date_order, header_line=header_line,
+            history_import.plan,
+            path,
+            record_type,
+            parsed_mapping,
+            source_system=source_system,
+            date_order=date_order,
+            header_line=header_line,
         )
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
     finally:
         _discard(path)
 
     result["filename"] = file.filename
-    _history_audit(request, user, "history_import_dry_run",
-                   f"History import dry run of '{file.filename}' as {record_type} "
-                   f"from '{source_system}': {result['counts']}",
-                   {"filename": file.filename, "record_type": record_type,
-                    "source_system": source_system, "counts": result["counts"],
-                    "issue_summary": result["issue_summary"],
-                    "mapping": parsed_mapping, "date_order": date_order,
-                    "bytes": size, "sha256": result.get("source_sha256")})
+    _history_audit(
+        request,
+        user,
+        "history_import_dry_run",
+        f"History import dry run of '{file.filename}' as {record_type} "
+        f"from '{source_system}': {result['counts']}",
+        {
+            "filename": file.filename,
+            "record_type": record_type,
+            "source_system": source_system,
+            "counts": result["counts"],
+            "issue_summary": result["issue_summary"],
+            "mapping": parsed_mapping,
+            "date_order": date_order,
+            "bytes": size,
+            "sha256": result.get("source_sha256"),
+        },
+    )
     return result
+
+
+_HISTORY_IMPORT_COMMIT_FILE_DEFAULT = File(...)
+_HISTORY_IMPORT_COMMIT_RECORD_TYPE_DEFAULT = Form(...)
+_HISTORY_IMPORT_COMMIT_SOURCE_SYSTEM_DEFAULT = Form(...)
+_HISTORY_IMPORT_COMMIT_MAPPING_DEFAULT = Form(...)
+_HISTORY_IMPORT_COMMIT_DATE_ORDER_DEFAULT = Form("auto")
+_HISTORY_IMPORT_COMMIT_HEADER_LINE_DEFAULT = Form(None)
+_HISTORY_IMPORT_COMMIT_NOTE_DEFAULT = Form(None)
+_HISTORY_IMPORT_COMMIT_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
 @router.post("/history-import/commit")
 async def history_import_commit(
     request: Request,
-    file: UploadFile = File(...),
-    record_type: str = Form(...),
-    source_system: str = Form(...),
-    mapping: str = Form(...),
-    date_order: str = Form("auto"),
-    header_line: int | None = Form(None),
-    note: str | None = Form(None),
-    user: dict = Depends(require_permission(ADMIN_OVERVIEW)),
+    file: UploadFile = _HISTORY_IMPORT_COMMIT_FILE_DEFAULT,
+    record_type: str = _HISTORY_IMPORT_COMMIT_RECORD_TYPE_DEFAULT,
+    source_system: str = _HISTORY_IMPORT_COMMIT_SOURCE_SYSTEM_DEFAULT,
+    mapping: str = _HISTORY_IMPORT_COMMIT_MAPPING_DEFAULT,
+    date_order: str = _HISTORY_IMPORT_COMMIT_DATE_ORDER_DEFAULT,
+    header_line: int | None = _HISTORY_IMPORT_COMMIT_HEADER_LINE_DEFAULT,
+    note: str | None = _HISTORY_IMPORT_COMMIT_NOTE_DEFAULT,
+    user: dict = _HISTORY_IMPORT_COMMIT_USER_DEFAULT,
 ):
     """Apply the import in ONE transaction. Idempotent on the source's own ids.
 
@@ -1072,13 +1195,19 @@ async def history_import_commit(
     path, size = await _spool_upload(file)
     try:
         result = await run_db(
-            history_import.apply_import, path, record_type, parsed_mapping,
-            source_system=source_system, actor_user_id=user["id"],
-            source_filename=file.filename, date_order=date_order,
-            header_line=header_line, note=note,
+            history_import.apply_import,
+            path,
+            record_type,
+            parsed_mapping,
+            source_system=source_system,
+            actor_user_id=user["id"],
+            source_filename=file.filename,
+            date_order=date_order,
+            header_line=header_line,
+            note=note,
         )
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except DBIntegrityError as e:
         # The whole import is one transaction, so NOTHING was written. Report the
         # constraint rather than a bare 500 — it is almost always a duplicate
@@ -1087,31 +1216,47 @@ async def history_import_commit(
         raise HTTPException(
             status_code=409,
             detail=f"Import rejected by a database constraint and NOTHING was written: {e}",
-        )
+        ) from e
     finally:
         _discard(path)
 
-    _history_audit(request, user, "history_import_committed",
-                   f"History import '{file.filename}' as {record_type} from "
-                   f"'{source_system}' applied: {result['summary']}",
-                   {"filename": file.filename, "record_type": record_type,
-                    "source_system": source_system, "summary": result["summary"],
-                    "issue_summary": result["issue_summary"],
-                    "mapping": parsed_mapping, "date_order": date_order,
-                    "bytes": size, "sha256": result.get("source_sha256"),
-                    "note": note},
-                   target_id=result["run_id"])
+    _history_audit(
+        request,
+        user,
+        "history_import_committed",
+        f"History import '{file.filename}' as {record_type} from "
+        f"'{source_system}' applied: {result['summary']}",
+        {
+            "filename": file.filename,
+            "record_type": record_type,
+            "source_system": source_system,
+            "summary": result["summary"],
+            "issue_summary": result["issue_summary"],
+            "mapping": parsed_mapping,
+            "date_order": date_order,
+            "bytes": size,
+            "sha256": result.get("source_sha256"),
+            "note": note,
+        },
+        target_id=result["run_id"],
+    )
     return result
+
+
+_HISTORY_IMPORT_RUNS_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
 @router.get("/history-import/runs")
 async def history_import_runs(
     limit: int = 50,
     record_type: str | None = None,
-    user: dict = Depends(require_permission(ADMIN_OVERVIEW)),
+    user: dict = _HISTORY_IMPORT_RUNS_USER_DEFAULT,
 ):
     """Applied-import history, newest first. Dry runs are not recorded here."""
     return {"runs": await run_db(history_import.list_runs, limit, record_type)}
+
+
+_HISTORY_IMPORT_REJECTS_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
 @router.get("/history-import/runs/{run_id}/rejects")
@@ -1120,7 +1265,7 @@ async def history_import_rejects(
     request: Request,
     limit: int = 500,
     offset: int = 0,
-    user: dict = Depends(require_permission(ADMIN_OVERVIEW)),
+    user: dict = _HISTORY_IMPORT_REJECTS_USER_DEFAULT,
 ):
     """Every row a run did NOT import, paged, with its line number and reason.
 
@@ -1135,9 +1280,12 @@ async def history_import_rejects(
     result = await run_db(history_import.list_rejects, run_id, limit, offset)
     if not result:
         raise HTTPException(status_code=404, detail="Import run not found")
-    _history_audit(request, user, "history_import_rejects_read",
-                   f"Read {len(result['rejects'])} reject row(s) for import run {run_id}",
-                   {"run_id": run_id, "count": result["count"],
-                    "limit": limit, "offset": offset},
-                   target_id=run_id)
+    _history_audit(
+        request,
+        user,
+        "history_import_rejects_read",
+        f"Read {len(result['rejects'])} reject row(s) for import run {run_id}",
+        {"run_id": run_id, "count": result["count"], "limit": limit, "offset": offset},
+        target_id=run_id,
+    )
     return result

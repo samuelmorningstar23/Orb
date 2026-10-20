@@ -57,21 +57,24 @@ category clinical_config (fail-closed): an audit that cannot be written rolls
 the change back, so the master never changes unaudited. Writes also check the
 actor holds lab.master, beside the route's own permission check.
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Literal, overload
 
 from database import db_session
 from permissions import LAB_MASTER, has_permission
+
 from services.audit_service import log_audit_event
-from services.clinical_time import parse_to_utc, utc_iso_now
+from services.clinical_time import utc_iso_now
 
 logger = logging.getLogger("orb.lab.master")
 
@@ -89,10 +92,15 @@ SHORT_NAME_MAX = 16
 MAX_DECIMAL_PLACES = 3
 # Thousandths. Far beyond any laboratory value, small enough to stay an exact
 # 64-bit integer.
-_MILLI_LIMIT = 10 ** 15
+_MILLI_LIMIT = 10**15
 
-_CATALOGUE_TABLES = ("lab_tests", "lab_panel_components", "lab_specimen_types",
-                     "lab_sections", "lab_rejection_reasons")
+_CATALOGUE_TABLES = (
+    "lab_tests",
+    "lab_panel_components",
+    "lab_specimen_types",
+    "lab_sections",
+    "lab_rejection_reasons",
+)
 
 NOT_CONFIGURED_TEXT = "Reference range not configured"
 _RANGE_REASON_TEXT = {
@@ -126,12 +134,13 @@ class LabMasterError(ValueError):
 #  Small pure helpers
 # ════════════════════════════════════════════════════════════════════════════
 
+
 def test_id_for(code_system: str, code: str) -> str:
     """The catalogue id of a test: '<CODE_SYSTEM>:<code>'."""
     return f"{code_system.strip().upper()}:{code.strip()}"
 
 
-def normalise_sex(value: Any) -> Optional[str]:
+def normalise_sex(value: Any) -> str | None:
     """'male', 'female' or None. m/male and f/female in any case, surrounding
     spaces ignored; anything else (blank, 'other', 'unknown') is None, which
     matches only a range for any sex."""
@@ -143,7 +152,7 @@ def normalise_sex(value: Any) -> Optional[str]:
     return None
 
 
-def _parse_date_of_birth(value: Any) -> Optional[date]:
+def _parse_date_of_birth(value: Any) -> date | None:
     if value is None:
         return None
     if isinstance(value, datetime):
@@ -159,7 +168,7 @@ def _parse_date_of_birth(value: Any) -> Optional[date]:
         return None
 
 
-def age_days_at(date_of_birth: Any, at: Any) -> Optional[int]:
+def age_days_at(date_of_birth: Any, at: Any) -> int | None:
     """Age in whole days on the hospital-local calendar day of `at` (the
     collection instant), from a date of birth. None when the date of birth is
     missing, unreadable or after `at`: an age Orb cannot state is not recorded.
@@ -168,6 +177,7 @@ def age_days_at(date_of_birth: Any, at: Any) -> Optional[int]:
     if dob is None or at is None:
         return None
     from services.hospital_time import to_hospital
+
     local = to_hospital(at)
     if local is None:
         return None
@@ -175,7 +185,7 @@ def age_days_at(date_of_birth: Any, at: Any) -> Optional[int]:
     return days if days >= 0 else None
 
 
-def to_milli(value: Any, decimal_places: int, *, field: str) -> Optional[int]:
+def to_milli(value: Any, decimal_places: int, *, field: str) -> int | None:
     """A value typed by a person as thousandths, refused unless it is exact at
     the test's reporting precision. None and blank stay None."""
     if value is None or (isinstance(value, str) and not value.strip()):
@@ -185,21 +195,22 @@ def to_milli(value: Any, decimal_places: int, *, field: str) -> Optional[int]:
     try:
         number = Decimal(str(value).strip())
     except (InvalidOperation, ValueError):
-        raise LabMasterError("invalid_value", f"{field} must be a number.")
+        raise LabMasterError("invalid_value", f"{field} must be a number.") from None
     if not number.is_finite():
         raise LabMasterError("invalid_value", f"{field} must be a number.")
     scaled = number * (Decimal(10) ** int(decimal_places))
     if scaled != scaled.to_integral_value():
         raise LabMasterError(
-            "precision", f"{field} has more decimal places than this test reports "
-            f"({decimal_places}).")
+            "precision",
+            f"{field} has more decimal places than this test reports ({decimal_places}).",
+        )
     milli = number * 1000
     if abs(milli) >= _MILLI_LIMIT:
         raise LabMasterError("invalid_value", f"{field} is out of range.")
     return int(milli)
 
 
-def format_milli(milli: Optional[int], decimal_places: int) -> str:
+def format_milli(milli: int | None, decimal_places: int) -> str:
     """Thousandths at the test's reporting precision, trailing zeros kept."""
     if milli is None:
         return ""
@@ -207,13 +218,12 @@ def format_milli(milli: Optional[int], decimal_places: int) -> str:
     return f"{value:.{int(decimal_places)}f}"
 
 
-def _with_unit(text: str, unit: Optional[str]) -> str:
+def _with_unit(text: str, unit: str | None) -> str:
     unit = (unit or "").strip()
     return f"{text} {unit}" if unit else text
 
 
-def range_display(low: Optional[int], high: Optional[int], decimal_places: int,
-                  unit: Optional[str]) -> str:
+def range_display(low: int | None, high: int | None, decimal_places: int, unit: str | None) -> str:
     """'3.5 to 5.1 mmol/L', '200 mg/dL or below', '40 U/L or above'."""
     lo, hi = format_milli(low, decimal_places), format_milli(high, decimal_places)
     if low is not None and high is not None:
@@ -223,8 +233,7 @@ def range_display(low: Optional[int], high: Optional[int], decimal_places: int,
     return f"{_with_unit(lo, unit)} or above"
 
 
-def limit_display(low: Optional[int], high: Optional[int], decimal_places: int,
-                  unit: Optional[str]) -> str:
+def limit_display(low: int | None, high: int | None, decimal_places: int, unit: str | None) -> str:
     """'Critical below 2.5 or above 6.5 mmol/L', 'Critical above 6.5 mmol/L'."""
     lo, hi = format_milli(low, decimal_places), format_milli(high, decimal_places)
     if low is not None and high is not None:
@@ -238,7 +247,7 @@ def _sex_compatible(a: str, b: str) -> bool:
     return a == b or "any" in (a, b)
 
 
-def _bands_overlap(a_min: int, a_max: Optional[int], b_min: int, b_max: Optional[int]) -> bool:
+def _bands_overlap(a_min: int, a_max: int | None, b_min: int, b_max: int | None) -> bool:
     a_end = float("inf") if a_max is None else a_max
     b_end = float("inf") if b_max is None else b_max
     return a_min < b_end and b_min < a_end
@@ -248,13 +257,14 @@ def _bands_overlap(a_min: int, a_max: Optional[int], b_min: int, b_max: Optional
 class RangeChoice:
     """The answer to "which range (or limit) applies to this patient now"."""
 
-    row: Optional[dict]
-    reason: Optional[str]   # None when a row applies
+    row: dict | None
+    reason: str | None  # None when a row applies
     display_text: str
 
 
-def select_applicable(rows: Iterable[dict], *, sex: Optional[str], age_days: Optional[int],
-                      limits: bool = False) -> RangeChoice:
+def select_applicable(
+    rows: Iterable[dict], *, sex: str | None, age_days: int | None, limits: bool = False
+) -> RangeChoice:
     """Pick the one current row that applies, or say why none does.
 
     `rows` are the CURRENT rows for one test. `sex` is already normalised.
@@ -297,6 +307,7 @@ def select_applicable(rows: Iterable[dict], *, sex: Optional[str], age_days: Opt
 #  Introspection
 # ════════════════════════════════════════════════════════════════════════════
 
+
 def tables_present(conn, names: Iterable[str] = _CATALOGUE_TABLES) -> bool:
     names = tuple(names)
     placeholders = ", ".join("?" for _ in names)
@@ -311,7 +322,8 @@ def tables_present(conn, names: Iterable[str] = _CATALOGUE_TABLES) -> bool:
 #  The starter catalogue
 # ════════════════════════════════════════════════════════════════════════════
 
-def read_starter_catalogue(path: Optional[Path] = None) -> dict:
+
+def read_starter_catalogue(path: Path | None = None) -> dict:
     with open(path or STARTER_CATALOGUE_PATH, encoding="utf-8") as fh:
         return json.load(fh)
 
@@ -326,7 +338,9 @@ def validate_catalogue(data: dict) -> list[str]:
     problems: list[str] = []
     for forbidden in ("reference_ranges", "critical_limits", "ranges", "limits"):
         if forbidden in data:
-            problems.append(f"the catalogue must not ship {forbidden}: a pathologist approves each one")
+            problems.append(
+                f"the catalogue must not ship {forbidden}: a pathologist approves each one"
+            )
     sections = {s.get("id") for s in data.get("sections", [])}
     specimens = {s.get("code") for s in data.get("specimen_types", [])}
     if None in sections or "" in sections:
@@ -388,13 +402,15 @@ def validate_catalogue(data: dict) -> list[str]:
                 problems.append(f"panel {pkey[1]}: component {code} is not an analyte")
     for (system, code), t in seen.items():
         if t.get("kind") == "panel" and not any(
-                (str(p.get("code_system", "")).upper(), str(p.get("code", "")).strip()) == (system, code)
-                for p in data.get("panels", [])):
+            (str(p.get("code_system", "")).upper(), str(p.get("code", "")).strip())
+            == (system, code)
+            for p in data.get("panels", [])
+        ):
             problems.append(f"panel {code} lists no components")
     return problems
 
 
-def load_starter_catalogue(*, path: Optional[Path] = None) -> dict:
+def load_starter_catalogue(*, path: Path | None = None) -> dict:
     """Load the starter catalogue into an EMPTY catalogue and register every
     active orderable code in terminology. Called only while ORB_LAB is on
     (services/lab_module.startup). Idempotent: once lab_tests holds any row
@@ -412,14 +428,20 @@ def load_starter_catalogue(*, path: Optional[Path] = None) -> dict:
         if not tables_present(conn):
             return {"loaded": False, "reason": "tables_absent", "terminology_added": 0}
         existing = conn.execute("SELECT COUNT(*) FROM lab_tests").fetchone()[0]
-        inserted = {"sections": 0, "specimen_types": 0, "rejection_reasons": 0,
-                    "tests": 0, "panel_components": 0}
+        inserted = {
+            "sections": 0,
+            "specimen_types": 0,
+            "rejection_reasons": 0,
+            "tests": 0,
+            "panel_components": 0,
+        }
         if not existing:
             for s in data.get("sections", []):
                 conn.execute(
                     "INSERT OR IGNORE INTO lab_sections (id, name, site_id, active, sort_order) "
                     "VALUES (?, ?, NULL, 1, ?)",
-                    (s["id"], s["name"], int(s.get("sort_order") or 0)))
+                    (s["id"], s["name"], int(s.get("sort_order") or 0)),
+                )
                 inserted["sections"] += 1
             for s in data.get("specimen_types", []):
                 conn.execute(
@@ -427,14 +449,23 @@ def load_starter_catalogue(*, path: Optional[Path] = None) -> dict:
                        (code, display, container, container_colour_name, min_volume_ul,
                         stability_minutes, handling_note, active)
                        VALUES (?, ?, ?, ?, ?, ?, ?, 1)""",
-                    (s["code"], s["display"], s.get("container"), s.get("container_colour_name"),
-                     s.get("min_volume_ul"), s.get("stability_minutes"), s.get("handling_note")))
+                    (
+                        s["code"],
+                        s["display"],
+                        s.get("container"),
+                        s.get("container_colour_name"),
+                        s.get("min_volume_ul"),
+                        s.get("stability_minutes"),
+                        s.get("handling_note"),
+                    ),
+                )
                 inserted["specimen_types"] += 1
             for r in data.get("rejection_reasons", []):
                 conn.execute(
                     "INSERT OR IGNORE INTO lab_rejection_reasons (code, display, incident_prompt, active) "
                     "VALUES (?, ?, ?, 1)",
-                    (r["code"], r["display"], 1 if r.get("incident_prompt") else 0))
+                    (r["code"], r["display"], 1 if r.get("incident_prompt") else 0),
+                )
                 inserted["rejection_reasons"] += 1
             for t in data.get("tests", []):
                 system = t["code_system"].upper()
@@ -444,12 +475,24 @@ def load_starter_catalogue(*, path: Optional[Path] = None) -> dict:
                         specimen_type_code, result_type, unit, decimal_places, coded_values_json,
                         orderable, active, version, created_at, updated_by, updated_at)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 1, 1, ?, 'system', ?)""",
-                    (test_id_for(system, t["code"]), t["code"].strip(), system, t["name"],
-                     t["short_name"], t.get("kind", "analyte"), t.get("performed_at", "lab"),
-                     t.get("section_id"), t["specimen_type_code"],
-                     t.get("result_type", "numeric"), t.get("unit"),
-                     int(t.get("decimal_places", 0)), 1 if t.get("orderable", True) else 0,
-                     now, now))
+                    (
+                        test_id_for(system, t["code"]),
+                        t["code"].strip(),
+                        system,
+                        t["name"],
+                        t["short_name"],
+                        t.get("kind", "analyte"),
+                        t.get("performed_at", "lab"),
+                        t.get("section_id"),
+                        t["specimen_type_code"],
+                        t.get("result_type", "numeric"),
+                        t.get("unit"),
+                        int(t.get("decimal_places", 0)),
+                        1 if t.get("orderable", True) else 0,
+                        now,
+                        now,
+                    ),
+                )
                 inserted["tests"] += 1
             for panel in data.get("panels", []):
                 system = panel["code_system"].upper()
@@ -458,45 +501,59 @@ def load_starter_catalogue(*, path: Optional[Path] = None) -> dict:
                     conn.execute(
                         "INSERT OR IGNORE INTO lab_panel_components "
                         "(panel_test_id, component_test_id, sort_order) VALUES (?, ?, ?)",
-                        (pid, test_id_for(system, code), order * 10))
+                        (pid, test_id_for(system, code), order * 10),
+                    )
                     inserted["panel_components"] += 1
-        displays = {test_id_for(t["code_system"], t["code"]): t.get("terminology_display")
-                    for t in data.get("tests", [])}
+        displays = {
+            test_id_for(t["code_system"], t["code"]): t.get("terminology_display")
+            for t in data.get("tests", [])
+        }
         added = _register_catalogue_terminology(conn, displays)
         changed = (not existing) or added
         if changed:
             log_audit_event(
                 correlation_id=str(uuid.uuid4()),
                 event_category="clinical_config",
-                action_type="lab_catalogue_loaded" if not existing else "lab_terminology_registered",
+                action_type="lab_catalogue_loaded"
+                if not existing
+                else "lab_terminology_registered",
                 outcome="success",
                 db=conn,
                 summary_message=(
                     "Starter laboratory catalogue loaded (no reference ranges or critical limits)"
-                    if not existing else "Laboratory codes registered for order validation"),
+                    if not existing
+                    else "Laboratory codes registered for order validation"
+                ),
                 actor_user_id="system",
                 actor_role="system",
                 target_type="lab_catalogue",
                 target_id="starter",
-                metadata={"inserted": inserted if not existing else {},
-                          "terminology_added": added,
-                          "catalogue_version": data.get("version")},
+                metadata={
+                    "inserted": inserted if not existing else {},
+                    "terminology_added": added,
+                    "catalogue_version": data.get("version"),
+                },
             )
-    return {"loaded": not existing, "inserted": inserted if not existing else {},
-            "terminology_added": added}
+    return {
+        "loaded": not existing,
+        "inserted": inserted if not existing else {},
+        "terminology_added": added,
+    }
 
 
-def _register_catalogue_terminology(conn, displays: Optional[dict] = None) -> int:
+def _register_catalogue_terminology(conn, displays: dict | None = None) -> int:
     """Register every active orderable test code in terminology (missing codes
     only). On the caller's transaction."""
     from services.terminology_service import register_codes
+
     displays = displays or {}
     rows = conn.execute(
         "SELECT id, code_system, code, name FROM lab_tests WHERE active = 1 AND orderable = 1 "
-        "ORDER BY id").fetchall()
-    return register_codes(conn, [
-        (r["code_system"], r["code"], displays.get(r["id"]) or r["name"]) for r in rows
-    ])
+        "ORDER BY id"
+    ).fetchall()
+    return register_codes(
+        conn, [(r["code_system"], r["code"], displays.get(r["id"]) or r["name"]) for r in rows]
+    )
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -519,13 +576,18 @@ def _test_row(r) -> dict:
 
 
 def _components(conn, panel_id: str) -> list[dict]:
-    return [dict(r) for r in conn.execute(
-        """SELECT c.component_test_id AS test_id, t.code, t.code_system, t.name,
+    return [
+        dict(r)
+        for r in conn.execute(
+            """SELECT c.component_test_id AS test_id, t.code, t.code_system, t.name,
                   t.short_name, t.unit, t.decimal_places, t.active, c.sort_order
            FROM lab_panel_components c
            LEFT JOIN lab_tests t ON t.id = c.component_test_id
            WHERE c.panel_test_id = ?
-           ORDER BY c.sort_order, c.component_test_id""", (panel_id,)).fetchall()]
+           ORDER BY c.sort_order, c.component_test_id""",
+            (panel_id,),
+        ).fetchall()
+    ]
 
 
 def search_catalogue(conn, q: str = "", *, limit: int = 25) -> list[dict]:
@@ -540,8 +602,7 @@ def search_catalogue(conn, q: str = "", *, limit: int = 25) -> list[dict]:
     where = "t.active = 1 AND t.orderable = 1"
     if term:
         like = f"%{term.lower()}%"
-        where += (" AND (LOWER(t.name) LIKE ? OR LOWER(t.short_name) LIKE ?"
-                  " OR LOWER(t.code) LIKE ?)")
+        where += " AND (LOWER(t.name) LIKE ? OR LOWER(t.short_name) LIKE ? OR LOWER(t.code) LIKE ?)"
         params += [like, like, like]
     rows = conn.execute(
         f"""SELECT t.id, t.code, t.code_system, t.name, t.short_name, t.kind,
@@ -556,19 +617,21 @@ def search_catalogue(conn, q: str = "", *, limit: int = 25) -> list[dict]:
             ORDER BY (LOWER(t.code) = ?) DESC, (LOWER(t.short_name) = ?) DESC,
                      t.name COLLATE NOCASE, t.id
             LIMIT ?""",
-        (*params, term.lower(), term.lower(), limit)).fetchall()
+        (*params, term.lower(), term.lower(), limit),
+    ).fetchall()
     out = []
     for r in rows:
         d = dict(r)
         if d["kind"] == "panel":
             d["components"] = [
                 {"test_id": c["test_id"], "name": c["name"], "short_name": c["short_name"]}
-                for c in _components(conn, d["id"])]
+                for c in _components(conn, d["id"])
+            ]
         out.append(d)
     return out
 
 
-def list_tests(conn, *, include_inactive: bool = False, kind: Optional[str] = None) -> list[dict]:
+def list_tests(conn, *, include_inactive: bool = False, kind: str | None = None) -> list[dict]:
     if not tables_present(conn):
         return []
     clauses, params = [], []
@@ -580,12 +643,16 @@ def list_tests(conn, *, include_inactive: bool = False, kind: Optional[str] = No
         clauses.append("kind = ?")
         params.append(kind)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    return [_test_row(r) for r in conn.execute(
-        f"SELECT {_TEST_COLUMNS} FROM lab_tests {where} ORDER BY name COLLATE NOCASE, id",
-        params).fetchall()]
+    return [
+        _test_row(r)
+        for r in conn.execute(
+            f"SELECT {_TEST_COLUMNS} FROM lab_tests {where} ORDER BY name COLLATE NOCASE, id",
+            params,
+        ).fetchall()
+    ]
 
 
-def get_test(conn, test_id: str) -> Optional[dict]:
+def get_test(conn, test_id: str) -> dict | None:
     if not tables_present(conn):
         return None
     r = conn.execute(f"SELECT {_TEST_COLUMNS} FROM lab_tests WHERE id = ?", (test_id,)).fetchone()
@@ -610,36 +677,49 @@ def list_specimen_types(conn, *, include_inactive: bool = False) -> list[dict]:
     if not tables_present(conn):
         return []
     where = "" if include_inactive else "WHERE active = 1"
-    return [dict(r) | {"active": bool(r["active"])} for r in conn.execute(
-        f"SELECT * FROM lab_specimen_types {where} ORDER BY display COLLATE NOCASE").fetchall()]
+    return [
+        dict(r) | {"active": bool(r["active"])}
+        for r in conn.execute(
+            f"SELECT * FROM lab_specimen_types {where} ORDER BY display COLLATE NOCASE"
+        ).fetchall()
+    ]
 
 
 def list_sections(conn, *, include_inactive: bool = False) -> list[dict]:
     if not tables_present(conn):
         return []
     where = "" if include_inactive else "WHERE active = 1"
-    return [dict(r) | {"active": bool(r["active"])} for r in conn.execute(
-        f"SELECT * FROM lab_sections {where} ORDER BY sort_order, name COLLATE NOCASE").fetchall()]
+    return [
+        dict(r) | {"active": bool(r["active"])}
+        for r in conn.execute(
+            f"SELECT * FROM lab_sections {where} ORDER BY sort_order, name COLLATE NOCASE"
+        ).fetchall()
+    ]
 
 
 def list_rejection_reasons(conn, *, include_inactive: bool = False) -> list[dict]:
     if not tables_present(conn):
         return []
     where = "" if include_inactive else "WHERE active = 1"
-    return [dict(r) | {"active": bool(r["active"]), "incident_prompt": bool(r["incident_prompt"])}
-            for r in conn.execute(
-                f"SELECT * FROM lab_rejection_reasons {where} ORDER BY display COLLATE NOCASE"
-            ).fetchall()]
+    return [
+        dict(r) | {"active": bool(r["active"]), "incident_prompt": bool(r["incident_prompt"])}
+        for r in conn.execute(
+            f"SELECT * FROM lab_rejection_reasons {where} ORDER BY display COLLATE NOCASE"
+        ).fetchall()
+    ]
 
 
 def _current_sql(alias: str = "") -> str:
     a = f"{alias}." if alias else ""
-    return (f"julianday({a}effective_from) <= julianday(?) AND "
-            f"({a}effective_to IS NULL OR julianday({a}effective_to) > julianday(?))")
+    return (
+        f"julianday({a}effective_from) <= julianday(?) AND "
+        f"({a}effective_to IS NULL OR julianday({a}effective_to) > julianday(?))"
+    )
 
 
-def _list_versioned(conn, table: str, *, test_id: Optional[str], include_retired: bool,
-                    at: Optional[str] = None) -> list[dict]:
+def _list_versioned(
+    conn, table: str, *, test_id: str | None, include_retired: bool, at: str | None = None
+) -> list[dict]:
     if not tables_present(conn, (table,)):
         return []
     clauses, params = [], []
@@ -651,22 +731,30 @@ def _list_versioned(conn, table: str, *, test_id: Optional[str], include_retired
         clauses.append(_current_sql())
         params += [at, at]
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    return [dict(r) for r in conn.execute(
-        f"SELECT * FROM {table} {where} "
-        "ORDER BY test_id, sex, age_min_days, julianday(effective_from) DESC, id DESC",
-        params).fetchall()]
+    return [
+        dict(r)
+        for r in conn.execute(
+            f"SELECT * FROM {table} {where} "
+            "ORDER BY test_id, sex, age_min_days, julianday(effective_from) DESC, id DESC",
+            params,
+        ).fetchall()
+    ]
 
 
-def list_reference_ranges(conn, *, test_id: Optional[str] = None,
-                          include_retired: bool = False) -> list[dict]:
-    return _list_versioned(conn, "lab_reference_ranges", test_id=test_id,
-                           include_retired=include_retired)
+def list_reference_ranges(
+    conn, *, test_id: str | None = None, include_retired: bool = False
+) -> list[dict]:
+    return _list_versioned(
+        conn, "lab_reference_ranges", test_id=test_id, include_retired=include_retired
+    )
 
 
-def list_critical_limits(conn, *, test_id: Optional[str] = None,
-                         include_retired: bool = False) -> list[dict]:
-    return _list_versioned(conn, "lab_critical_limits", test_id=test_id,
-                           include_retired=include_retired)
+def list_critical_limits(
+    conn, *, test_id: str | None = None, include_retired: bool = False
+) -> list[dict]:
+    return _list_versioned(
+        conn, "lab_critical_limits", test_id=test_id, include_retired=include_retired
+    )
 
 
 def configuration_gaps(conn) -> dict:
@@ -676,22 +764,37 @@ def configuration_gaps(conn) -> dict:
     if not tables_present(conn, ("lab_tests", "lab_reference_ranges", "lab_critical_limits")):
         return {"numeric_tests": 0, "without_reference_range": 0, "without_critical_limit": 0}
     now = utc_iso_now()
-    base = ("FROM lab_tests t WHERE t.active = 1 AND t.kind = 'analyte' "
-            "AND t.result_type = 'numeric' AND t.performed_at = 'lab'")
+    base = (
+        "FROM lab_tests t WHERE t.active = 1 AND t.kind = 'analyte' "
+        "AND t.result_type = 'numeric' AND t.performed_at = 'lab'"
+    )
     total = conn.execute(f"SELECT COUNT(*) {base}").fetchone()[0]
     no_range = conn.execute(
         f"SELECT COUNT(*) {base} AND NOT EXISTS (SELECT 1 FROM lab_reference_ranges r "
-        f"WHERE r.test_id = t.id AND {_current_sql('r')})", (now, now)).fetchone()[0]
+        f"WHERE r.test_id = t.id AND {_current_sql('r')})",
+        (now, now),
+    ).fetchone()[0]
     no_limit = conn.execute(
         f"SELECT COUNT(*) {base} AND NOT EXISTS (SELECT 1 FROM lab_critical_limits c "
-        f"WHERE c.test_id = t.id AND {_current_sql('c')})", (now, now)).fetchone()[0]
-    return {"numeric_tests": int(total), "without_reference_range": int(no_range),
-            "without_critical_limit": int(no_limit)}
+        f"WHERE c.test_id = t.id AND {_current_sql('c')})",
+        (now, now),
+    ).fetchone()[0]
+    return {
+        "numeric_tests": int(total),
+        "without_reference_range": int(no_range),
+        "without_critical_limit": int(no_limit),
+    }
 
 
-def applicable_range(conn, test_id: str, *, sex: Any, date_of_birth: Any,
-                     at: Optional[str] = None,
-                     version_at: Optional[str] = None) -> RangeChoice:
+def applicable_range(
+    conn,
+    test_id: str,
+    *,
+    sex: Any,
+    date_of_birth: Any,
+    at: str | None = None,
+    version_at: str | None = None,
+) -> RangeChoice:
     """The approved reference range for a patient of this sex and date of
     birth at `at` (the collection instant; now when not given).
 
@@ -701,39 +804,48 @@ def applicable_range(conn, test_id: str, *, sex: Any, date_of_birth: Any,
     sample was taken, and now as `version_at`, so a value is flagged against
     the range the laboratory has approved when the value is entered."""
     at = at or utc_iso_now()
-    rows = _list_versioned(conn, "lab_reference_ranges", test_id=test_id,
-                           include_retired=False, at=version_at or at)
-    return select_applicable(rows, sex=normalise_sex(sex),
-                             age_days=age_days_at(date_of_birth, at))
+    rows = _list_versioned(
+        conn, "lab_reference_ranges", test_id=test_id, include_retired=False, at=version_at or at
+    )
+    return select_applicable(rows, sex=normalise_sex(sex), age_days=age_days_at(date_of_birth, at))
 
 
-def applicable_critical_limit(conn, test_id: str, *, sex: Any, date_of_birth: Any,
-                              at: Optional[str] = None) -> RangeChoice:
+def applicable_critical_limit(
+    conn, test_id: str, *, sex: Any, date_of_birth: Any, at: str | None = None
+) -> RangeChoice:
     """The approved critical limit, by the same rule as the reference range."""
     at = at or utc_iso_now()
-    rows = _list_versioned(conn, "lab_critical_limits", test_id=test_id,
-                           include_retired=False, at=at)
-    return select_applicable(rows, sex=normalise_sex(sex),
-                             age_days=age_days_at(date_of_birth, at), limits=True)
+    rows = _list_versioned(
+        conn, "lab_critical_limits", test_id=test_id, include_retired=False, at=at
+    )
+    return select_applicable(
+        rows, sex=normalise_sex(sex), age_days=age_days_at(date_of_birth, at), limits=True
+    )
 
 
 def patient_demographics(conn, patient_id: str) -> dict:
     """The two facts a range depends on, read from patients.date_of_birth and
     patients.sex. The static patients.age column is deliberately not read."""
-    r = conn.execute("SELECT date_of_birth, sex FROM patients WHERE id = ?",
-                     (patient_id,)).fetchone()
+    r = conn.execute(
+        "SELECT date_of_birth, sex FROM patients WHERE id = ?", (patient_id,)
+    ).fetchone()
     if r is None:
         return {"date_of_birth": None, "sex": None}
     return {"date_of_birth": r["date_of_birth"], "sex": r["sex"]}
 
 
-def applicable_range_for_patient(conn, test_id: str, patient_id: str, *,
-                                 at: Optional[str] = None,
-                                 version_at: Optional[str] = None) -> RangeChoice:
+def applicable_range_for_patient(
+    conn, test_id: str, patient_id: str, *, at: str | None = None, version_at: str | None = None
+) -> RangeChoice:
     demo = patient_demographics(conn, patient_id)
-    return applicable_range(conn, test_id, sex=demo["sex"],
-                            date_of_birth=demo["date_of_birth"], at=at,
-                            version_at=version_at)
+    return applicable_range(
+        conn,
+        test_id,
+        sex=demo["sex"],
+        date_of_birth=demo["date_of_birth"],
+        at=at,
+        version_at=version_at,
+    )
 
 
 def coded_values(test: dict) -> list[str]:
@@ -756,14 +868,24 @@ def coded_values(test: dict) -> list[str]:
 #  Writes (each one BEGIN IMMEDIATE transaction with its audit row inside)
 # ════════════════════════════════════════════════════════════════════════════
 
+
 def _require_master(actor: dict) -> None:
     if not actor or not actor.get("id") or not has_permission(actor.get("role", ""), LAB_MASTER):
-        raise LabMasterError("permission_denied",
-                             "Only a pathologist can change the laboratory catalogue.", 403)
+        raise LabMasterError(
+            "permission_denied", "Only a pathologist can change the laboratory catalogue.", 403
+        )
 
 
-def _audit(conn, actor: dict, action: str, *, target_type: str, target_id: Any,
-           summary: str, metadata: Optional[dict] = None) -> None:
+def _audit(
+    conn,
+    actor: dict,
+    action: str,
+    *,
+    target_type: str,
+    target_id: Any,
+    summary: str,
+    metadata: dict | None = None,
+) -> None:
     log_audit_event(
         correlation_id=str(uuid.uuid4()),
         event_category="clinical_config",
@@ -780,12 +902,31 @@ def _audit(conn, actor: dict, action: str, *, target_type: str, target_id: Any,
 
 
 def _require_tables(conn) -> None:
-    if not tables_present(conn, _CATALOGUE_TABLES + ("lab_reference_ranges", "lab_critical_limits")):
+    if not tables_present(
+        conn, _CATALOGUE_TABLES + ("lab_reference_ranges", "lab_critical_limits")
+    ):
         raise LabMasterError("not_ready", "The laboratory tables are not installed yet.", 409)
 
 
-def _clean_text(value: Any, field: str, *, required: bool = False,
-                max_len: int = 200) -> Optional[str]:
+@overload
+def _clean_text(value: Any, field: str, *, required: Literal[True], max_len: int = 200) -> str: ...
+
+
+@overload
+def _clean_text(
+    value: Any, field: str, *, required: Literal[False] = False, max_len: int = 200
+) -> str | None: ...
+
+
+@overload
+def _clean_text(
+    value: Any, field: str, *, required: bool = False, max_len: int = 200
+) -> str | None: ...
+
+
+def _clean_text(
+    value: Any, field: str, *, required: bool = False, max_len: int = 200
+) -> str | None:
     text = str(value).strip() if value is not None else ""
     if not text:
         if required:
@@ -796,7 +937,7 @@ def _clean_text(value: Any, field: str, *, required: bool = False,
     return text
 
 
-def _positive_int(value: Any, field: str) -> Optional[int]:
+def _positive_int(value: Any, field: str) -> int | None:
     if value is None or value == "":
         return None
     if isinstance(value, bool):
@@ -804,29 +945,44 @@ def _positive_int(value: Any, field: str) -> Optional[int]:
     try:
         number = int(value)
     except (TypeError, ValueError):
-        raise LabMasterError("invalid_value", f"{field} must be a whole number.")
+        raise LabMasterError("invalid_value", f"{field} must be a whole number.") from None
     if number <= 0 or str(number) != str(value).strip().lstrip("+"):
         raise LabMasterError("invalid_value", f"{field} must be a whole number above zero.")
     return number
 
 
-def _check_reference(conn, table: str, key: str, value: Optional[str], label: str) -> None:
+def _check_reference(conn, table: str, key: str, value: str | None, label: str) -> None:
     if value is None:
         return
-    if conn.execute(f"SELECT 1 FROM {table} WHERE {key} = ? AND active = 1",
-                    (value,)).fetchone() is None:
+    if (
+        conn.execute(f"SELECT 1 FROM {table} WHERE {key} = ? AND active = 1", (value,)).fetchone()
+        is None
+    ):
         raise LabMasterError("unknown_reference", f"Unknown {label}: {value}.")
 
 
 _EDITABLE_TEST_FIELDS = (
-    "name", "short_name", "performed_at", "section_id", "specimen_type_code",
-    "unit", "decimal_places", "coded_values_json", "orderable", "tat_routine_min",
-    "tat_urgent_min", "tat_stat_min", "delta_kind", "delta_threshold_milli",
-    "delta_window_hours", "active", "result_type",
+    "name",
+    "short_name",
+    "performed_at",
+    "section_id",
+    "specimen_type_code",
+    "unit",
+    "decimal_places",
+    "coded_values_json",
+    "orderable",
+    "tat_routine_min",
+    "tat_urgent_min",
+    "tat_stat_min",
+    "delta_kind",
+    "delta_threshold_milli",
+    "delta_window_hours",
+    "active",
+    "result_type",
 )
 
 
-def _validated_test_fields(conn, data: dict, *, current: Optional[dict]) -> dict:
+def _validated_test_fields(conn, data: dict, *, current: dict | None) -> dict:
     """The fields of a create or update, checked. `current` is None on create."""
     out: dict[str, Any] = {}
     keys = set(data)
@@ -835,8 +991,9 @@ def _validated_test_fields(conn, data: dict, *, current: Optional[dict]) -> dict
     if "name" in keys:
         out["name"] = _clean_text(data.get("name"), "Name", required=True)
     if "short_name" in keys:
-        out["short_name"] = _clean_text(data.get("short_name"), "Short name", required=True,
-                                        max_len=SHORT_NAME_MAX)
+        out["short_name"] = _clean_text(
+            data.get("short_name"), "Short name", required=True, max_len=SHORT_NAME_MAX
+        )
     if "performed_at" in keys:
         if data.get("performed_at") not in PERFORMED_AT:
             raise LabMasterError("invalid_value", "Performed at must be lab or ward_poct.")
@@ -849,17 +1006,21 @@ def _validated_test_fields(conn, data: dict, *, current: Optional[dict]) -> dict
         out["section_id"] = _clean_text(data.get("section_id"), "Section")
         _check_reference(conn, "lab_sections", "id", out["section_id"], "section")
     if "specimen_type_code" in keys:
-        out["specimen_type_code"] = _clean_text(data.get("specimen_type_code"), "Specimen type",
-                                                required=True)
-        _check_reference(conn, "lab_specimen_types", "code", out["specimen_type_code"],
-                         "specimen type")
+        out["specimen_type_code"] = _clean_text(
+            data.get("specimen_type_code"), "Specimen type", required=True
+        )
+        _check_reference(
+            conn, "lab_specimen_types", "code", out["specimen_type_code"], "specimen type"
+        )
     if "unit" in keys:
         out["unit"] = _clean_text(data.get("unit"), "Unit", max_len=40) or ""
     if "decimal_places" in keys:
         dp = data.get("decimal_places")
         if not isinstance(dp, int) or isinstance(dp, bool) or not 0 <= dp <= MAX_DECIMAL_PLACES:
-            raise LabMasterError("invalid_value",
-                                 f"Decimal places must be a whole number from 0 to {MAX_DECIMAL_PLACES}.")
+            raise LabMasterError(
+                "invalid_value",
+                f"Decimal places must be a whole number from 0 to {MAX_DECIMAL_PLACES}.",
+            )
         out["decimal_places"] = dp
     if "coded_values_json" in keys:
         raw = data.get("coded_values_json")
@@ -867,10 +1028,18 @@ def _validated_test_fields(conn, data: dict, *, current: Optional[dict]) -> dict
             out["coded_values_json"] = None
         else:
             try:
-                values = raw if isinstance(raw, list) else json.loads(raw) if isinstance(raw, str) else None
+                values = (
+                    raw
+                    if isinstance(raw, list)
+                    else json.loads(raw)
+                    if isinstance(raw, str)
+                    else None
+                )
             except ValueError:
                 values = None
-            if not isinstance(values, list) or not all(isinstance(v, str) and v.strip() for v in values):
+            if not isinstance(values, list) or not all(
+                isinstance(v, str) and v.strip() for v in values
+            ):
                 raise LabMasterError("invalid_value", "Coded values must be a list of words.")
             out["coded_values_json"] = json.dumps([v.strip() for v in values])
     for flag in ("orderable", "active"):
@@ -887,15 +1056,17 @@ def _validated_test_fields(conn, data: dict, *, current: Optional[dict]) -> dict
             raise LabMasterError("invalid_value", "Delta kind must be absolute or percent.")
         out["delta_kind"] = kind or None
     if "delta_threshold_milli" in keys:
-        out["delta_threshold_milli"] = _positive_int(data.get("delta_threshold_milli"),
-                                                     "delta threshold")
+        out["delta_threshold_milli"] = _positive_int(
+            data.get("delta_threshold_milli"), "delta threshold"
+        )
     merged = dict(current or {})
     merged.update(out)
     if merged.get("performed_at", "lab") == "lab" and not merged.get("section_id"):
         raise LabMasterError("missing_field", "A laboratory test needs a section.")
     if bool(merged.get("delta_kind")) != bool(merged.get("delta_threshold_milli")):
-        raise LabMasterError("invalid_value",
-                             "A delta check needs both its kind and its threshold, or neither.")
+        raise LabMasterError(
+            "invalid_value", "A delta check needs both its kind and its threshold, or neither."
+        )
     if merged.get("result_type") == "coded" and not merged.get("coded_values_json"):
         raise LabMasterError("missing_field", "A coded test needs its list of coded values.")
     return out
@@ -917,26 +1088,51 @@ def create_test(data: dict, *, actor: dict) -> dict:
     with db_session(immediate=True) as conn:
         _require_tables(conn)
         tid = test_id_for(system, code)
-        if conn.execute("SELECT 1 FROM lab_tests WHERE id = ? OR (code_system = ? AND code = ?)",
-                        (tid, system, code)).fetchone():
+        if conn.execute(
+            "SELECT 1 FROM lab_tests WHERE id = ? OR (code_system = ? AND code = ?)",
+            (tid, system, code),
+        ).fetchone():
             raise LabMasterError("duplicate", f"{system} {code} is already in the catalogue.", 409)
-        fields = _validated_test_fields(conn, {k: v for k, v in data.items()
-                                               if k in _EDITABLE_TEST_FIELDS}, current=None)
+        fields = _validated_test_fields(
+            conn, {k: v for k, v in data.items() if k in _EDITABLE_TEST_FIELDS}, current=None
+        )
         if kind == "panel":
             fields["result_type"] = "text"
             fields.pop("decimal_places", None)
-        row = {"id": tid, "code": code, "code_system": system, "kind": kind,
-               "performed_at": "lab", "result_type": "numeric", "decimal_places": 0,
-               "orderable": 1, "active": 1, "version": 1, "created_at": now,
-               "updated_by": actor["id"], "updated_at": now}
+        row = {
+            "id": tid,
+            "code": code,
+            "code_system": system,
+            "kind": kind,
+            "performed_at": "lab",
+            "result_type": "numeric",
+            "decimal_places": 0,
+            "orderable": 1,
+            "active": 1,
+            "version": 1,
+            "created_at": now,
+            "updated_by": actor["id"],
+            "updated_at": now,
+        }
         row.update(fields)
         cols = ", ".join(row)
-        conn.execute(f"INSERT INTO lab_tests ({cols}) VALUES ({', '.join('?' for _ in row)})",
-                     tuple(row.values()))
+        conn.execute(
+            f"INSERT INTO lab_tests ({cols}) VALUES ({', '.join('?' for _ in row)})",
+            tuple(row.values()),
+        )
         _register_catalogue_terminology(conn)
-        _audit(conn, actor, "lab_test_created", target_type="lab_test", target_id=tid,
-               summary=f"Laboratory test added: {row['name']}", metadata={"after": row})
-        return get_test(conn, tid)
+        _audit(
+            conn,
+            actor,
+            "lab_test_created",
+            target_type="lab_test",
+            target_id=tid,
+            summary=f"Laboratory test added: {row['name']}",
+            metadata={"after": row},
+        )
+        _written_row = get_test(conn, tid)
+        assert _written_row is not None, "Expected the row written in this transaction"
+        return _written_row
 
 
 def update_test(test_id: str, changes: dict, *, actor: dict) -> dict:
@@ -947,13 +1143,16 @@ def update_test(test_id: str, changes: dict, *, actor: dict) -> dict:
     _require_master(actor)
     unknown = set(changes) - set(_EDITABLE_TEST_FIELDS)
     if unknown:
-        raise LabMasterError("not_editable", f"These cannot be changed: {', '.join(sorted(unknown))}.")
+        raise LabMasterError(
+            "not_editable", f"These cannot be changed: {', '.join(sorted(unknown))}."
+        )
     if not changes:
         raise LabMasterError("missing_field", "Nothing to change.")
     with db_session(immediate=True) as conn:
         _require_tables(conn)
-        before = conn.execute(f"SELECT {_TEST_COLUMNS} FROM lab_tests WHERE id = ?",
-                              (test_id,)).fetchone()
+        before = conn.execute(
+            f"SELECT {_TEST_COLUMNS} FROM lab_tests WHERE id = ?", (test_id,)
+        ).fetchone()
         if before is None:
             raise LabMasterError("not_found", "No such laboratory test.", 404)
         before = dict(before)
@@ -961,16 +1160,21 @@ def update_test(test_id: str, changes: dict, *, actor: dict) -> dict:
         if before["kind"] == "panel" and ("result_type" in fields or "decimal_places" in fields):
             raise LabMasterError("not_editable", "A panel has no result type or decimal places.")
         now = utc_iso_now()
-        ranges = (_list_versioned(conn, "lab_reference_ranges", test_id=test_id, include_retired=False)
-                  + _list_versioned(conn, "lab_critical_limits", test_id=test_id, include_retired=False))
+        ranges = _list_versioned(
+            conn, "lab_reference_ranges", test_id=test_id, include_retired=False
+        ) + _list_versioned(conn, "lab_critical_limits", test_id=test_id, include_retired=False)
         if ranges and "unit" in fields and (fields["unit"] or "") != (before["unit"] or ""):
-            raise LabMasterError("retire_ranges_first",
-                                 "Retire this test's current ranges and limits before changing its unit.",
-                                 409)
+            raise LabMasterError(
+                "retire_ranges_first",
+                "Retire this test's current ranges and limits before changing its unit.",
+                409,
+            )
         if ranges and "result_type" in fields and fields["result_type"] != "numeric":
-            raise LabMasterError("retire_ranges_first",
-                                 "Retire this test's current ranges and limits before it stops "
-                                 "being numeric.", 409)
+            raise LabMasterError(
+                "retire_ranges_first",
+                "Retire this test's current ranges and limits before it stops being numeric.",
+                409,
+            )
         if "decimal_places" in fields and ranges:
             step = 10 ** (MAX_DECIMAL_PLACES - fields["decimal_places"])
             for r in ranges:
@@ -980,21 +1184,37 @@ def update_test(test_id: str, changes: dict, *, actor: dict) -> dict:
                         raise LabMasterError(
                             "retire_ranges_first",
                             "A current range or limit has more decimal places than the new "
-                            "precision. Retire it first.", 409)
+                            "precision. Retire it first.",
+                            409,
+                        )
         fields["version"] = int(before["version"]) + 1
         fields["updated_by"] = actor["id"]
         fields["updated_at"] = now
         assignments = ", ".join(f"{k} = ?" for k in fields)
-        conn.execute(f"UPDATE lab_tests SET {assignments} WHERE id = ?",
-                     (*fields.values(), test_id))
+        conn.execute(
+            f"UPDATE lab_tests SET {assignments} WHERE id = ?", (*fields.values(), test_id)
+        )
         _register_catalogue_terminology(conn)
-        after = dict(conn.execute(f"SELECT {_TEST_COLUMNS} FROM lab_tests WHERE id = ?",
-                                  (test_id,)).fetchone())
-        _audit(conn, actor, "lab_test_changed", target_type="lab_test", target_id=test_id,
-               summary=f"Laboratory test changed: {after['name']} (version {after['version']})",
-               metadata={"before": {k: before.get(k) for k in fields if k in before},
-                         "after": {k: after.get(k) for k in fields}})
-        return get_test(conn, test_id)
+        after = dict(
+            conn.execute(
+                f"SELECT {_TEST_COLUMNS} FROM lab_tests WHERE id = ?", (test_id,)
+            ).fetchone()
+        )
+        _audit(
+            conn,
+            actor,
+            "lab_test_changed",
+            target_type="lab_test",
+            target_id=test_id,
+            summary=f"Laboratory test changed: {after['name']} (version {after['version']})",
+            metadata={
+                "before": {k: before.get(k) for k in fields if k in before},
+                "after": {k: after.get(k) for k in fields},
+            },
+        )
+        _written_row = get_test(conn, test_id)
+        assert _written_row is not None, "Expected the row written in this transaction"
+        return _written_row
 
 
 def set_panel_components(panel_id: str, component_ids: list, *, actor: dict) -> dict:
@@ -1007,8 +1227,9 @@ def set_panel_components(panel_id: str, component_ids: list, *, actor: dict) -> 
         raise LabMasterError("invalid_value", "A component is listed twice.")
     with db_session(immediate=True) as conn:
         _require_tables(conn)
-        panel = conn.execute("SELECT id, name, kind, version FROM lab_tests WHERE id = ?",
-                             (panel_id,)).fetchone()
+        panel = conn.execute(
+            "SELECT id, name, kind, version FROM lab_tests WHERE id = ?", (panel_id,)
+        ).fetchone()
         if panel is None:
             raise LabMasterError("not_found", "No such laboratory test.", 404)
         if panel["kind"] != "panel":
@@ -1019,23 +1240,42 @@ def set_panel_components(panel_id: str, component_ids: list, *, actor: dict) -> 
                 raise LabMasterError("unknown_reference", f"Unknown test: {cid}.")
             if c["kind"] != "analyte" or cid == panel_id:
                 raise LabMasterError("invalid_value", f"{cid} is not an analyte.")
-        before = [r["component_test_id"] for r in conn.execute(
-            "SELECT component_test_id FROM lab_panel_components WHERE panel_test_id = ? "
-            "ORDER BY sort_order, component_test_id", (panel_id,)).fetchall()]
+        before = [
+            r["component_test_id"]
+            for r in conn.execute(
+                "SELECT component_test_id FROM lab_panel_components WHERE panel_test_id = ? "
+                "ORDER BY sort_order, component_test_id",
+                (panel_id,),
+            ).fetchall()
+        ]
         conn.execute("DELETE FROM lab_panel_components WHERE panel_test_id = ?", (panel_id,))
         for order, cid in enumerate(ids, start=1):
-            conn.execute("INSERT INTO lab_panel_components (panel_test_id, component_test_id, "
-                         "sort_order) VALUES (?, ?, ?)", (panel_id, cid, order * 10))
+            conn.execute(
+                "INSERT INTO lab_panel_components (panel_test_id, component_test_id, "
+                "sort_order) VALUES (?, ?, ?)",
+                (panel_id, cid, order * 10),
+            )
         now = utc_iso_now()
-        conn.execute("UPDATE lab_tests SET version = version + 1, updated_by = ?, updated_at = ? "
-                     "WHERE id = ?", (actor["id"], now, panel_id))
-        _audit(conn, actor, "lab_panel_changed", target_type="lab_test", target_id=panel_id,
-               summary=f"Panel components changed: {panel['name']}",
-               metadata={"before": before, "after": ids})
-        return get_test(conn, panel_id)
+        conn.execute(
+            "UPDATE lab_tests SET version = version + 1, updated_by = ?, updated_at = ? "
+            "WHERE id = ?",
+            (actor["id"], now, panel_id),
+        )
+        _audit(
+            conn,
+            actor,
+            "lab_panel_changed",
+            target_type="lab_test",
+            target_id=panel_id,
+            summary=f"Panel components changed: {panel['name']}",
+            metadata={"before": before, "after": ids},
+        )
+        _written_row = get_test(conn, panel_id)
+        assert _written_row is not None, "Expected the row written in this transaction"
+        return _written_row
 
 
-def _band(data: dict) -> tuple[str, int, Optional[int]]:
+def _band(data: dict) -> tuple[str, int, int | None]:
     sex = str(data.get("sex") or "any").strip().lower()
     if sex not in SEXES:
         raise LabMasterError("invalid_value", "Sex must be any, male or female.")
@@ -1045,7 +1285,7 @@ def _band(data: dict) -> tuple[str, int, Optional[int]]:
         age_min = 0 if raw_min in (None, "") else int(raw_min)
         age_max = None if raw_max in (None, "") else int(raw_max)
     except (TypeError, ValueError):
-        raise LabMasterError("invalid_value", "Ages must be whole numbers of days.")
+        raise LabMasterError("invalid_value", "Ages must be whole numbers of days.") from None
     if isinstance(raw_min, bool) or isinstance(raw_max, bool) or age_min < 0:
         raise LabMasterError("invalid_value", "Ages must be whole numbers of days.")
     if age_max is not None and age_max <= age_min:
@@ -1054,8 +1294,11 @@ def _band(data: dict) -> tuple[str, int, Optional[int]]:
 
 
 def _numeric_test(conn, test_id: str) -> dict:
-    t = conn.execute("SELECT id, name, kind, result_type, unit, decimal_places, active "
-                     "FROM lab_tests WHERE id = ?", (test_id,)).fetchone()
+    t = conn.execute(
+        "SELECT id, name, kind, result_type, unit, decimal_places, active "
+        "FROM lab_tests WHERE id = ?",
+        (test_id,),
+    ).fetchone()
     if t is None:
         raise LabMasterError("not_found", "No such laboratory test.", 404)
     if t["kind"] != "analyte" or t["result_type"] != "numeric":
@@ -1069,8 +1312,11 @@ def _approve_versioned(table: str, test_id: str, data: dict, *, actor: dict, lim
     _require_master(actor)
     sex, age_min, age_max = _band(data)
     method_note = _clean_text(data.get("method_note"), "Approval note", required=True, max_len=500)
-    agreed_with = (_clean_text(data.get("agreed_with"), "Agreed with", required=True, max_len=500)
-                   if limits else None)
+    agreed_with = (
+        _clean_text(data.get("agreed_with"), "Agreed with", required=True, max_len=500)
+        if limits
+        else None
+    )
     with db_session(immediate=True) as conn:
         _require_tables(conn)
         test = _numeric_test(conn, test_id)
@@ -1084,19 +1330,27 @@ def _approve_versioned(table: str, test_id: str, data: dict, *, actor: dict, lim
             raise LabMasterError("invalid_value", "The upper value must be above the lower value.")
         now = utc_iso_now()
         current = _list_versioned(conn, table, test_id=test_id, include_retired=False, at=now)
-        same_band = [r for r in current
-                     if r["sex"] == sex and int(r["age_min_days"]) == age_min
-                     and r["age_max_days"] == age_max]
+        same_band = [
+            r
+            for r in current
+            if r["sex"] == sex
+            and int(r["age_min_days"]) == age_min
+            and r["age_max_days"] == age_max
+        ]
         for r in current:
             if r in same_band:
                 continue
             if _sex_compatible(r["sex"], sex) and _bands_overlap(
-                    int(r["age_min_days"]), r["age_max_days"], age_min, age_max):
+                int(r["age_min_days"]), r["age_max_days"], age_min, age_max
+            ):
                 what = "limit" if limits else "range"
                 raise LabMasterError(
-                    "overlap", f"This overlaps a current {what} for {r['sex']} patients aged "
+                    "overlap",
+                    f"This overlaps a current {what} for {r['sex']} patients aged "
                     f"{r['age_min_days']} to {r['age_max_days'] or 'any'} days. Retire that one "
-                    "first, or approve the same band to replace it.", 409)
+                    "first, or approve the same band to replace it.",
+                    409,
+                )
         for r in same_band:
             conn.execute(f"UPDATE {table} SET effective_to = ? WHERE id = ?", (now, r["id"]))
         display = (limit_display if limits else range_display)(low, high, dp, test["unit"])
@@ -1107,8 +1361,21 @@ def _approve_versioned(table: str, test_id: str, data: dict, *, actor: dict, lim
                     critical_high_milli, display_text, effective_from, effective_to,
                     approved_by, approved_at, agreed_with, method_note)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)""",
-                (test_id, sex, age_min, age_max, low, high, display, now, actor["id"], now,
-                 agreed_with, method_note))
+                (
+                    test_id,
+                    sex,
+                    age_min,
+                    age_max,
+                    low,
+                    high,
+                    display,
+                    now,
+                    actor["id"],
+                    now,
+                    agreed_with,
+                    method_note,
+                ),
+            )
         else:
             cur = conn.execute(
                 """INSERT INTO lab_reference_ranges
@@ -1116,18 +1383,36 @@ def _approve_versioned(table: str, test_id: str, data: dict, *, actor: dict, lim
                     display_text, effective_from, effective_to, approved_by, approved_at,
                     method_note)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)""",
-                (test_id, sex, age_min, age_max, low, high, display, now, actor["id"], now,
-                 method_note))
+                (
+                    test_id,
+                    sex,
+                    age_min,
+                    age_max,
+                    low,
+                    high,
+                    display,
+                    now,
+                    actor["id"],
+                    now,
+                    method_note,
+                ),
+            )
         new_id = cur.lastrowid
         row = dict(conn.execute(f"SELECT * FROM {table} WHERE id = ?", (new_id,)).fetchone())
-        _audit(conn, actor,
-               "lab_critical_limit_approved" if limits else "lab_range_approved",
-               target_type="lab_critical_limit" if limits else "lab_reference_range",
-               target_id=new_id,
-               summary=f"{'Critical limit' if limits else 'Reference range'} approved for "
-                       f"{test['name']}: {display}",
-               metadata={"test_id": test_id, "replaced": [r["id"] for r in same_band],
-                         "after": {k: row[k] for k in row if k not in ("method_note",)}})
+        _audit(
+            conn,
+            actor,
+            "lab_critical_limit_approved" if limits else "lab_range_approved",
+            target_type="lab_critical_limit" if limits else "lab_reference_range",
+            target_id=new_id,
+            summary=f"{'Critical limit' if limits else 'Reference range'} approved for "
+            f"{test['name']}: {display}",
+            metadata={
+                "test_id": test_id,
+                "replaced": [r["id"] for r in same_band],
+                "after": {k: row[k] for k in row if k not in ("method_note",)},
+            },
+        )
         return row
 
 
@@ -1152,17 +1437,24 @@ def _retire_versioned(table: str, row_id: int, reason: str, *, actor: dict, limi
         row = conn.execute(f"SELECT * FROM {table} WHERE id = ?", (row_id,)).fetchone()
         if row is None:
             raise LabMasterError("not_found", "No such range or limit.", 404)
-        if row["effective_to"] is not None and conn.execute(
-                "SELECT julianday(?) <= julianday(?)", (row["effective_to"], now)).fetchone()[0]:
+        if (
+            row["effective_to"] is not None
+            and conn.execute(
+                "SELECT julianday(?) <= julianday(?)", (row["effective_to"], now)
+            ).fetchone()[0]
+        ):
             raise LabMasterError("already_retired", "This one is already retired.", 409)
         conn.execute(f"UPDATE {table} SET effective_to = ? WHERE id = ?", (now, row_id))
-        _audit(conn, actor,
-               "lab_critical_limit_retired" if limits else "lab_range_retired",
-               target_type="lab_critical_limit" if limits else "lab_reference_range",
-               target_id=row_id,
-               summary=f"{'Critical limit' if limits else 'Reference range'} retired: "
-                       f"{row['display_text']}",
-               metadata={"test_id": row["test_id"], "reason": reason})
+        _audit(
+            conn,
+            actor,
+            "lab_critical_limit_retired" if limits else "lab_range_retired",
+            target_type="lab_critical_limit" if limits else "lab_reference_range",
+            target_id=row_id,
+            summary=f"{'Critical limit' if limits else 'Reference range'} retired: "
+            f"{row['display_text']}",
+            metadata={"test_id": row["test_id"], "reason": reason},
+        )
         return dict(conn.execute(f"SELECT * FROM {table} WHERE id = ?", (row_id,)).fetchone())
 
 
@@ -1189,9 +1481,13 @@ def upsert_specimen_type(code: str, data: dict, *, actor: dict) -> dict:
     with db_session(immediate=True) as conn:
         _require_tables(conn)
         before = conn.execute("SELECT * FROM lab_specimen_types WHERE code = ?", (code,)).fetchone()
-        if before is not None and row["active"] == 0 and conn.execute(
-                "SELECT 1 FROM lab_tests WHERE specimen_type_code = ? AND active = 1",
-                (code,)).fetchone():
+        if (
+            before is not None
+            and row["active"] == 0
+            and conn.execute(
+                "SELECT 1 FROM lab_tests WHERE specimen_type_code = ? AND active = 1", (code,)
+            ).fetchone()
+        ):
             raise LabMasterError("in_use", "An active test still uses this specimen type.", 409)
         conn.execute(
             """INSERT INTO lab_specimen_types (code, display, container, container_colour_name,
@@ -1203,12 +1499,20 @@ def upsert_specimen_type(code: str, data: dict, *, actor: dict) -> dict:
                    min_volume_ul = excluded.min_volume_ul,
                    stability_minutes = excluded.stability_minutes,
                    handling_note = excluded.handling_note, active = excluded.active""",
-            (code, *row.values()))
-        _audit(conn, actor, "lab_specimen_type_changed", target_type="lab_specimen_type",
-               target_id=code, summary=f"Specimen type saved: {row['display']}",
-               metadata={"before": dict(before) if before else None, "after": row})
-        return dict(conn.execute("SELECT * FROM lab_specimen_types WHERE code = ?",
-                                 (code,)).fetchone())
+            (code, *row.values()),
+        )
+        _audit(
+            conn,
+            actor,
+            "lab_specimen_type_changed",
+            target_type="lab_specimen_type",
+            target_id=code,
+            summary=f"Specimen type saved: {row['display']}",
+            metadata={"before": dict(before) if before else None, "after": row},
+        )
+        return dict(
+            conn.execute("SELECT * FROM lab_specimen_types WHERE code = ?", (code,)).fetchone()
+        )
 
 
 def upsert_section(section_id: str, data: dict, *, actor: dict) -> dict:
@@ -1222,22 +1526,35 @@ def upsert_section(section_id: str, data: dict, *, actor: dict) -> dict:
     with db_session(immediate=True) as conn:
         _require_tables(conn)
         before = conn.execute("SELECT * FROM lab_sections WHERE id = ?", (section_id,)).fetchone()
-        if active == 0 and conn.execute(
-                "SELECT 1 FROM lab_tests WHERE section_id = ? AND active = 1",
-                (section_id,)).fetchone():
+        if (
+            active == 0
+            and conn.execute(
+                "SELECT 1 FROM lab_tests WHERE section_id = ? AND active = 1", (section_id,)
+            ).fetchone()
+        ):
             raise LabMasterError("in_use", "An active test still belongs to this section.", 409)
         conn.execute(
             """INSERT INTO lab_sections (id, name, site_id, active, sort_order)
                VALUES (?, ?, NULL, ?, ?)
                ON CONFLICT(id) DO UPDATE SET name = excluded.name, active = excluded.active,
                    sort_order = excluded.sort_order""",
-            (section_id, name, active, sort_order))
-        _audit(conn, actor, "lab_section_changed", target_type="lab_section",
-               target_id=section_id, summary=f"Laboratory section saved: {name}",
-               metadata={"before": dict(before) if before else None,
-                         "after": {"name": name, "active": active, "sort_order": sort_order}})
-        return dict(conn.execute("SELECT * FROM lab_sections WHERE id = ?",
-                                 (section_id,)).fetchone())
+            (section_id, name, active, sort_order),
+        )
+        _audit(
+            conn,
+            actor,
+            "lab_section_changed",
+            target_type="lab_section",
+            target_id=section_id,
+            summary=f"Laboratory section saved: {name}",
+            metadata={
+                "before": dict(before) if before else None,
+                "after": {"name": name, "active": active, "sort_order": sort_order},
+            },
+        )
+        return dict(
+            conn.execute("SELECT * FROM lab_sections WHERE id = ?", (section_id,)).fetchone()
+        )
 
 
 def upsert_rejection_reason(code: str, data: dict, *, actor: dict) -> dict:
@@ -1248,18 +1565,28 @@ def upsert_rejection_reason(code: str, data: dict, *, actor: dict) -> dict:
     active = 0 if data.get("active") is False else 1
     with db_session(immediate=True) as conn:
         _require_tables(conn)
-        before = conn.execute("SELECT * FROM lab_rejection_reasons WHERE code = ?",
-                              (code,)).fetchone()
+        before = conn.execute(
+            "SELECT * FROM lab_rejection_reasons WHERE code = ?", (code,)
+        ).fetchone()
         conn.execute(
             """INSERT INTO lab_rejection_reasons (code, display, incident_prompt, active)
                VALUES (?, ?, ?, ?)
                ON CONFLICT(code) DO UPDATE SET display = excluded.display,
                    incident_prompt = excluded.incident_prompt, active = excluded.active""",
-            (code, display, incident_prompt, active))
-        _audit(conn, actor, "lab_rejection_reason_changed", target_type="lab_rejection_reason",
-               target_id=code, summary=f"Rejection reason saved: {display}",
-               metadata={"before": dict(before) if before else None,
-                         "after": {"display": display, "incident_prompt": incident_prompt,
-                                   "active": active}})
-        return dict(conn.execute("SELECT * FROM lab_rejection_reasons WHERE code = ?",
-                                 (code,)).fetchone())
+            (code, display, incident_prompt, active),
+        )
+        _audit(
+            conn,
+            actor,
+            "lab_rejection_reason_changed",
+            target_type="lab_rejection_reason",
+            target_id=code,
+            summary=f"Rejection reason saved: {display}",
+            metadata={
+                "before": dict(before) if before else None,
+                "after": {"display": display, "incident_prompt": incident_prompt, "active": active},
+            },
+        )
+        return dict(
+            conn.execute("SELECT * FROM lab_rejection_reasons WHERE code = ?", (code,)).fetchone()
+        )

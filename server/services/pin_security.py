@@ -21,6 +21,7 @@ per-process and lost on restart, so a multi-worker deploy would need a
 persistent attempts table. The server currently runs single-process (uvicorn
 workers=1), so the in-memory limiter is functional for the present deploy.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -28,7 +29,8 @@ import hmac
 import logging
 import time
 from collections import defaultdict
-from typing import Any, Mapping, Optional
+from collections.abc import Mapping
+from typing import Any
 
 from auth import hash_password, verify_password
 
@@ -47,7 +49,7 @@ def hash_pin(pin: str) -> str:
     return hash_password(pin)
 
 
-def _pin_hash_of(user_row: Any) -> Optional[str]:
+def _pin_hash_of(user_row: Any) -> str | None:
     """Extract pin_hash from a sqlite3.Row or a plain dict."""
     if user_row is None:
         return None
@@ -86,6 +88,7 @@ def verify_pin(user_row: Any, pin: str) -> bool:
         user_id = user_row["id"] if not isinstance(user_row, Mapping) else user_row.get("id")
         if user_id:
             from database import db_session
+
             with db_session() as db:
                 db.execute(
                     "UPDATE users SET pin_hash = ? WHERE id = ? AND pin_hash = ?",
@@ -99,15 +102,21 @@ def verify_pin(user_row: Any, pin: str) -> bool:
 
 # ── Per-user attempt limiter (mirrors auth_routes login limiter) ─────────────
 
+
 def _prune_pin_attempts(now: float) -> None:
     """Drop user buckets whose failures have all aged out of the window."""
-    stale = [uid for uid, ts in PIN_ATTEMPTS.items()
-             if not ts or now - ts[-1] >= LOCKOUT_DURATION_SECONDS]
+    stale = [
+        uid
+        for uid, ts in PIN_ATTEMPTS.items()
+        if not ts or now - ts[-1] >= LOCKOUT_DURATION_SECONDS
+    ]
     for uid in stale:
         del PIN_ATTEMPTS[uid]
     # If still oversized (active spray), evict the oldest-touched buckets.
     if len(PIN_ATTEMPTS) > _MAX_TRACKED_USERS:
-        for uid in sorted(PIN_ATTEMPTS, key=lambda k: PIN_ATTEMPTS[k][-1])[:len(PIN_ATTEMPTS) - _MAX_TRACKED_USERS]:
+        for uid in sorted(PIN_ATTEMPTS, key=lambda k: PIN_ATTEMPTS[k][-1])[
+            : len(PIN_ATTEMPTS) - _MAX_TRACKED_USERS
+        ]:
             del PIN_ATTEMPTS[uid]
 
 

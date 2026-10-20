@@ -32,12 +32,13 @@ existing timeout handler already takes its deterministic fallback.
 Audit failures are logged and swallowed (ai_governance.record_inference_async),
 pending the open 2026-09-04 ruling on refusing unaudited inferences.
 """
+
 from __future__ import annotations
 
 import asyncio
 import contextlib
 import time
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 from services.ai_governance import (
     QueryClassification,
@@ -64,11 +65,20 @@ def _url(path: str) -> str:
     # a closed port to reproduce a dead daemon.
     import config
     from offline_policy import local_model_origin
+
     return f"{local_model_origin(config.OLLAMA_BASE_URL)}{path}"
 
 
-async def _record(payload: dict, purpose: str, outcome: str, detail: str | None,
-                  t0: float, patient_id, user_id, classification) -> None:
+async def _record(
+    payload: dict,
+    purpose: str,
+    outcome: str,
+    detail: str | None,
+    t0: float,
+    patient_id,
+    user_id,
+    classification,
+) -> None:
     await record_inference_async(
         provider="ollama",
         model=str(payload.get("model") or ""),
@@ -108,10 +118,17 @@ async def _post_yielding(client, url: str, payload: dict):
             await asyncio.wait({request})
 
 
-async def post(client, path: str, payload: dict, *, purpose: str,
-               patient_id: str | None = None, user_id: str | None = None,
-               classification: QueryClassification | None = None,
-               yield_to_clinician: bool = False):
+async def post(
+    client,
+    path: str,
+    payload: dict,
+    *,
+    purpose: str,
+    patient_id: str | None = None,
+    user_id: str | None = None,
+    classification: QueryClassification | None = None,
+    yield_to_clinician: bool = False,
+):
     """One non-streaming inference: client.post(OLLAMA_BASE_URL + path).
 
     Returns the httpx response untouched, so callers keep their own status and
@@ -147,15 +164,20 @@ async def post(client, path: str, payload: dict, *, purpose: str,
         detail = type(e).__name__
         raise
     finally:
-        await _record(payload, purpose, outcome, detail, t0,
-                      patient_id, user_id, classification)
+        await _record(payload, purpose, outcome, detail, t0, patient_id, user_id, classification)
 
 
 @contextlib.asynccontextmanager
-async def stream(client, path: str, payload: dict, *, purpose: str,
-                 patient_id: str | None = None, user_id: str | None = None,
-                 classification: QueryClassification | None = None,
-                 ) -> AsyncIterator:
+async def stream(
+    client,
+    path: str,
+    payload: dict,
+    *,
+    purpose: str,
+    patient_id: str | None = None,
+    user_id: str | None = None,
+    classification: QueryClassification | None = None,
+) -> AsyncIterator:
     """One streaming inference: `async with client.stream("POST", ...)`.
 
     Yields the httpx response; the caller reads its lines exactly as before.
@@ -188,5 +210,4 @@ async def stream(client, path: str, payload: dict, *, purpose: str,
         detail = detail or type(e).__name__
         raise
     finally:
-        await _record(payload, purpose, outcome, detail, t0,
-                      patient_id, user_id, classification)
+        await _record(payload, purpose, outcome, detail, t0, patient_id, user_id, classification)

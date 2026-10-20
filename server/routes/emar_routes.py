@@ -20,25 +20,28 @@ attempt by anyone else is a 403 — the gate does not open for them however many
 reasons they type — carrying the same allergy payload so the screen can still
 say what the hazard is and who can authorise it.
 """
+
 from __future__ import annotations
 
 import uuid
-from typing import Optional
-
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel
 
 from database import db_session
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from permissions import (
     department_scope,
     patient_in_scope,
     require_patient_access,
     require_permission,
 )
-from services import allergy_interlock, drug_safety_service, emar_service
-from services.allergy_interlock import AllergyInterlockBlocked, AllergyOverrideNotPermitted
+from pydantic import BaseModel
+from services.allergy_interlock import (
+    AllergyInterlockBlocked,
+    AllergyOverrideNotPermitted,
+)
 from services.audit_service import log_audit_event
 from services.drug_safety_service import DoseGuardBlocked
+
+from services import allergy_interlock, drug_safety_service, emar_service
 
 #: What every eMAR route answers on an Orb Ward Record computer.
 MEDICATION_ROUND_SWITCHED_OFF = "The medication round is switched off on this computer"
@@ -50,21 +53,23 @@ def _medication_round_switched_on() -> None:
     eMAR route then answers 404 in these words, before any patient or dose is
     read. Scoring switched off on its own leaves the round as it is."""
     from services.nurse_shift_service import medication_round_enabled
+
     if not medication_round_enabled():
         raise HTTPException(status_code=404, detail=MEDICATION_ROUND_SWITCHED_OFF)
 
 
-router = APIRouter(prefix="/api/emar", tags=["eMAR"],
-                   dependencies=[Depends(_medication_round_switched_on)])
+router = APIRouter(
+    prefix="/api/emar", tags=["eMAR"], dependencies=[Depends(_medication_round_switched_on)]
+)
 
 
 class AdministerRequest(BaseModel):
     status: str  # 'given' | 'not_given'
-    dose_given: Optional[str] = None
-    route_given: Optional[str] = None
-    not_given_reason: Optional[str] = None  # required (non-empty) when status='not_given'
+    dose_given: str | None = None
+    route_given: str | None = None
+    not_given_reason: str | None = None  # required (non-empty) when status='not_given'
     confirmation_method: str = "typed"  # 'typed' | 'barcode'
-    notes: Optional[str] = None
+    notes: str | None = None
     # Typed clinical justification for giving a drug the patient has a
     # documented allergy to (de-labelled allergy, desensitisation protocol,
     # supervised challenge), or for proceeding when the allergy list is
@@ -76,11 +81,11 @@ class AdministerRequest(BaseModel):
     # for it was dropped is the worst of both). An unreadable-allergy-list block
     # is a different case and any administering user may clear it; see
     # services/allergy_interlock.py.
-    allergy_override_reason: Optional[str] = None
+    allergy_override_reason: str | None = None
     # Typed clinical justification for a dose or route the DOSE GUARD stopped
     # (a digitalisation loading dose, a U-500 insulin regimen, a deliberate
     # bedside deviation). Only consulted when the dose guard actually fires.
-    dose_override_reason: Optional[str] = None
+    dose_override_reason: str | None = None
 
 
 def _enforce_medication_scope(med_id: int, user: dict, request: Request) -> None:
@@ -96,9 +101,7 @@ def _enforce_medication_scope(med_id: int, user: dict, request: Request) -> None
     if dept is None:
         return
     with db_session() as db:
-        med = db.execute(
-            "SELECT patient_id FROM medications WHERE id = ?", (med_id,)
-        ).fetchone()
+        med = db.execute("SELECT patient_id FROM medications WHERE id = ?", (med_id,)).fetchone()
         if med is None or patient_in_scope(db, med["patient_id"], dept):
             return
         patient_id = med["patient_id"]
@@ -108,8 +111,7 @@ def _enforce_medication_scope(med_id: int, user: dict, request: Request) -> None
         action_type="patient_scope_denied",
         outcome="denied",
         summary_message=(
-            f"Medication {med_id} belongs to a patient outside the caller's "
-            f"department ({dept})"
+            f"Medication {med_id} belongs to a patient outside the caller's department ({dept})"
         ),
         actor_user_id=user.get("id"),
         actor_role=user.get("role"),
@@ -125,13 +127,17 @@ def _enforce_medication_scope(med_id: int, user: dict, request: Request) -> None
     raise HTTPException(status_code=404, detail="Medication not found")
 
 
+_ADMINISTER_MEDICATION_USER_DEFAULT = Depends(require_permission("medication.write"))
+_ADMINISTER_MEDICATION_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempotency-Key")
+
+
 @router.post("/medications/{med_id}/administer")
 def administer_medication(
     med_id: int,
     req: AdministerRequest,
     request: Request,
-    user: dict = Depends(require_permission("medication.write")),
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    user: dict = _ADMINISTER_MEDICATION_USER_DEFAULT,
+    idempotency_key: str | None = _ADMINISTER_MEDICATION_IDEMPOTENCY_KEY_DEFAULT,
 ):
     """Record a bedside administration of a charted medication.
 
@@ -235,18 +241,20 @@ def administer_medication(
                 "required_permission": e.required_permission,
                 "allergy": allergy_interlock.summarize(e.screen),
             },
-        )
+        ) from e
     except AllergyInterlockBlocked as e:
         raise HTTPException(
             status_code=428,
             detail={
-                "error": ("allergy_screen_unavailable"
-                          if e.screen.get("screen_failed")
-                          else "allergy_acknowledgement_required"),
+                "error": (
+                    "allergy_screen_unavailable"
+                    if e.screen.get("screen_failed")
+                    else "allergy_acknowledgement_required"
+                ),
                 "message": str(e),
                 "allergy": allergy_interlock.summarize(e.screen),
             },
-        )
+        ) from e
     except DoseGuardBlocked as e:
         raise HTTPException(
             status_code=428,
@@ -255,19 +263,21 @@ def administer_medication(
                 "message": str(e),
                 "dose": drug_safety_service.summarize_dose_check(e.check),
             },
-        )
+        ) from e
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
     return {"status": "success", "administration": record}
+
+
+_GET_PATIENT_ADMINISTRATIONS_USER_DEFAULT = Depends(
+    require_patient_access("patient.read_all", audit_action="emar_administrations_viewed")
+)
 
 
 @router.get("/patients/{patient_id}/administrations")
 def get_patient_administrations(
     patient_id: str,
-    user: dict = Depends(
-        require_patient_access("patient.read_all",
-                               audit_action="emar_administrations_viewed")
-    ),
+    user: dict = _GET_PATIENT_ADMINISTRATIONS_USER_DEFAULT,
 ):
     """Administration history for a patient, newest first."""
     with db_session() as db:

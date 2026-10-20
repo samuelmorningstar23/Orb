@@ -1,10 +1,12 @@
+# ruff: noqa: E402
+# Site configuration must be loaded before config and route imports bind environment values.
 """Orb Hospital OS — FastAPI Main Entry Point"""
+
 import asyncio
 import faulthandler
 import logging
 import os
 import signal
-import socketio
 
 # Ops hook: `kill -USR1 <pid>` dumps every thread's Python stack to stderr —
 # the way to identify a wedged writer/task in a live process without killing it.
@@ -33,100 +35,104 @@ logger = logging.getLogger("orb")
 # The message is printed plainly and the process exits — no traceback, because
 # the person reading it is hospital IT, not the author.
 from services.site_config_service import SiteConfigError, load_site_config  # noqa: E402
+
 try:
     load_site_config()
 except SiteConfigError as _site_config_error:
     print(str(_site_config_error), file=__import__("sys").stderr)
-    raise SystemExit(2)
+    raise SystemExit(2) from _site_config_error
 
-from fastapi import FastAPI, Depends
-from fastapi.middleware.cors import CORSMiddleware
-
-from config import HOST, PORT, CORS_ORIGINS, VITALS_INTERVAL_SECONDS, INGESTION_MODE
-from database import init_db
 from auth import get_current_user
+from config import HOST, INGESTION_MODE, PORT, VITALS_INTERVAL_SECONDS
+from database import init_db
+from fastapi import Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from models.user import UserOut
-
-# Import route modules
-from routes.auth_routes import router as auth_router
-from routes.vigil_routes import router as vigil_router
-from routes.relay_routes import router as relay_router
-from routes.sage_routes import router as sage_router
-from routes.sage_proactive_routes import router as sage_proactive_router
-from routes.scribe_routes import router as scribe_router
-from routes.bridge_routes import router as bridge_router
-from routes.lens_routes import router as lens_router
-from routes.forecast_routes import router as forecast_router
-from routes.surgery_routes import router as surgery_router
-from routes.ingestion_routes import router as ingestion_router
-from routes.admission_routes import router as admission_router
-from routes.audit_routes import router as audit_router
-from routes.admin_routes import router as admin_router
-from routes.discharge_access_routes import router as discharge_access_router
-from routes.helix_routes import router as helix_router
-from routes.pulse_routes import router as pulse_router
-from routes.clinical_records_routes import router as clinical_records_router
-from routes.model_governance_routes import router as model_governance_router
-from routes.bundle_routes import router as bundle_router
-from routes.ipass_routes import router as ipass_router
-from routes.downtime_routes import router as downtime_router
-from routes.fhir_export_routes import router as fhir_export_router
-from routes.pharmacy_routes import router as pharmacy_router
-from routes.orders_routes import router as orders_router
-from routes.flight_recorder_routes import router as flight_recorder_router
-from routes.appointments_routes import router as appointments_router
-from routes.search_routes import router as search_router
-from routes.patient_timeline_routes import router as chart_timeline_router
-from routes.admin_users_routes import router as admin_users_router
-from routes.roster_import_routes import router as roster_import_router
-from routes.backup_routes import router as backup_router
-from routes.metrics_routes import router as metrics_router
-# Investor / executive intelligence surfaces
-from routes.impact_routes import router as impact_router
-from routes.compliance_routes import router as compliance_router
-# DPDP Act 2023 consent capture — bedside, clinician-gated, NOT admin-gated.
-from routes.compliance_routes import consent_router
-from routes.coding_routes import router as coding_router
-from routes.command_center_routes import router as command_center_router
-from routes.capacity_sim_routes import router as capacity_sim_router
-from routes.emar_routes import router as emar_router
-from routes.nurse_routes import router as nurse_router
-from routes.shadow_routes import router as shadow_router
-from routes.ops_routes import router as ops_router
-from routes.billing_routes import router as billing_router
-from routes.frontdesk_routes import router as frontdesk_router
-from routes.payer_routes import router as payer_router
-from routes.procurement_routes import router as procurement_router
-from routes.nabh_routes import router as nabh_router
-from routes.ward_record_routes import router as ward_record_router
-from routes.dietary_routes import router as dietary_router
-from routes.workforce_routes import router as workforce_router
-from routes.biomedical_routes import router as biomedical_router
-from routes.housekeeping_routes import router as housekeeping_router
-from routes.payments_routes import router as payments_router
 from routes.abdm_routes import router as abdm_router
+from routes.admin_routes import router as admin_router
+from routes.admin_users_routes import router as admin_users_router
+from routes.admission_routes import router as admission_router
+
 # The hospital-system build's route packages and files (wave 1, 3 October 2026).
 # Registered once here, each behind its opt-in switch (routes/opt_in_gates.py),
 # so later increments add endpoints inside them and never edit this list.
 from routes.adt import router as adt_router
-from routes.lab import router as lab_router
-from routes.pharmacy_store import router as pharmacy_store_router
-from routes.opd_routes import router as opd_router
-from routes.registration_routes import router as registration_router
-from routes.schedule_routes import router as schedule_router
-# The medication-order store's package (wave 4), behind ORB_MED_ORDER_STORE.
-from routes.medorders import router as medorders_router
+from routes.appointments_routes import router as appointments_router
+from routes.audit_routes import router as audit_router
+
+# Import route modules
+from routes.auth_routes import router as auth_router
+from routes.backup_routes import router as backup_router
+from routes.billing_routes import router as billing_router
+from routes.biomedical_routes import router as biomedical_router
+from routes.bridge_routes import router as bridge_router
+from routes.bundle_routes import router as bundle_router
+from routes.capacity_sim_routes import router as capacity_sim_router
+from routes.clinical_records_routes import router as clinical_records_router
+from routes.coding_routes import router as coding_router
+from routes.command_center_routes import router as command_center_router
+
+# DPDP Act 2023 consent capture — bedside, clinician-gated, NOT admin-gated.
+from routes.compliance_routes import consent_router
+from routes.compliance_routes import router as compliance_router
+from routes.dietary_routes import router as dietary_router
+from routes.discharge_access_routes import router as discharge_access_router
+from routes.downtime_routes import router as downtime_router
+from routes.emar_routes import router as emar_router
+
 # Facility identity (multi-site, wave 7). Registered once; later increments add
 # routes inside it. Facility 1 works with ORB_MULTI_SITE off.
 from routes.facility_routes import router as facility_router
+from routes.fhir_export_routes import router as fhir_export_router
+from routes.flight_recorder_routes import router as flight_recorder_router
+from routes.forecast_routes import router as forecast_router
+from routes.frontdesk_routes import router as frontdesk_router
+from routes.helix_routes import router as helix_router
+from routes.housekeeping_routes import router as housekeeping_router
 
+# Investor / executive intelligence surfaces
+from routes.impact_routes import router as impact_router
+from routes.ingestion_routes import router as ingestion_router
+from routes.ipass_routes import router as ipass_router
+from routes.lab import router as lab_router
+from routes.lens_routes import router as lens_router
+
+# The medication-order store's package (wave 4), behind ORB_MED_ORDER_STORE.
+from routes.medorders import router as medorders_router
+from routes.metrics_routes import router as metrics_router
+from routes.model_governance_routes import router as model_governance_router
+from routes.nabh_routes import router as nabh_router
+from routes.nurse_routes import router as nurse_router
+from routes.opd_routes import router as opd_router
+from routes.ops_routes import router as ops_router
+from routes.orders_routes import router as orders_router
+from routes.patient_timeline_routes import router as chart_timeline_router
+from routes.payer_routes import router as payer_router
+from routes.payments_routes import router as payments_router
+from routes.pharmacy_routes import router as pharmacy_router
+from routes.pharmacy_store import router as pharmacy_store_router
+from routes.procurement_routes import router as procurement_router
+from routes.pulse_routes import router as pulse_router
+from routes.registration_routes import router as registration_router
+from routes.relay_routes import router as relay_router
+from routes.roster_import_routes import router as roster_import_router
+from routes.sage_proactive_routes import router as sage_proactive_router
+from routes.sage_routes import router as sage_router
+from routes.schedule_routes import router as schedule_router
+from routes.scribe_routes import router as scribe_router
+from routes.search_routes import router as search_router
+from routes.shadow_routes import router as shadow_router
+from routes.surgery_routes import router as surgery_router
+from routes.vigil_routes import router as vigil_router
+from routes.ward_record_routes import router as ward_record_router
+from routes.workforce_routes import router as workforce_router
+
+# run_vitals_bot is no longer imported here: it is owned by
+# services.vitals_source.SimulatorSource, which is what drives the tick now.
+from services.bot_service import run_lab_bot, run_reports_bot
 
 # Import WebSocket and Bots
 from ws.realtime import sio
-# run_vitals_bot is no longer imported here: it is owned by
-# services.vitals_source.SimulatorSource, which is what drives the tick now.
-from services.bot_service import run_reports_bot, run_lab_bot
-
 
 # ── Long-lived background tasks ──
 # The event loop keeps only a WEAK reference to a task, so a task whose
@@ -151,6 +157,7 @@ async def proactive_sweep():
     Always-on real analysis over whatever data exists; never raises."""
     from services.sage_proactive_service import evaluate_all_admitted
     from ws.realtime import sio
+
     await asyncio.sleep(8)  # let startup settle
     while True:
         try:
@@ -160,8 +167,10 @@ async def proactive_sweep():
             raised_again: list = []
             ids = await asyncio.to_thread(evaluate_all_admitted, raised_again)
             if ids or raised_again:
-                await sio.emit("sage:insight", {"event": "new", "count": len(ids),
-                                                "raised_again": len(raised_again)})
+                await sio.emit(
+                    "sage:insight",
+                    {"event": "new", "count": len(ids), "raised_again": len(raised_again)},
+                )
         except Exception as e:
             logger.error("Proactive sweep error: %s", e)
         await asyncio.sleep(15)
@@ -173,10 +182,11 @@ async def downtime_snapshot_sweep():
     patient so the ward has a recent read-only picture the instant the EHR/network/
     LLM goes down. Runs hourly; never raises."""
     from services.downtime_service import (
-        capture_all_admitted,
         build_ward_print_packs,
+        capture_all_admitted,
         run_nightly_fhir_self_export_async,
     )
+
     await asyncio.sleep(30)  # let startup settle
     hours = 0
     while True:
@@ -192,8 +202,12 @@ async def downtime_snapshot_sweep():
         # and a capture failure still leaves packs from the last good rows.
         try:
             packs = await asyncio.to_thread(build_ward_print_packs, "auto")
-            logger.info("[Downtime] ward pack(s): %s ward(s), %s patient(s) -> %s",
-                        packs.get("wards"), packs.get("patients"), packs.get("directory"))
+            logger.info(
+                "[Downtime] ward pack(s): %s ward(s), %s patient(s) -> %s",
+                packs.get("wards"),
+                packs.get("patients"),
+                packs.get("directory"),
+            )
         except Exception as e:
             logger.error("Downtime ward pack build error: %s", e)
         # Once every 24 hourly ticks, also write a durable FHIR $everything
@@ -206,8 +220,11 @@ async def downtime_snapshot_sweep():
                 # already completed within the last 24 h (so a restart loop
                 # cannot re-write ~282 MB on every boot).
                 fx = await run_nightly_fhir_self_export_async("auto")
-                logger.info("[Downtime] FHIR self-export wrote %s bundle(s) to %s",
-                            fx.get("count"), fx.get("directory"))
+                logger.info(
+                    "[Downtime] FHIR self-export wrote %s bundle(s) to %s",
+                    fx.get("count"),
+                    fx.get("directory"),
+                )
             except Exception as e:
                 logger.error("Downtime FHIR self-export error: %s", e)
         hours += 1
@@ -223,15 +240,20 @@ async def sage_provenance_prune_sweep():
     change the horizon without a restart. Logs COUNTS only — a retention log
     line must never carry the content it deleted. Runs daily; never raises."""
     from database import run_db
+
     from services import sage_provenance_service as sage_provenance
+
     await asyncio.sleep(120)  # let startup settle
     while True:
         try:
             if sage_provenance.enabled():
                 result = await run_db(sage_provenance.prune)
-                logger.info("[Provenance] retention prune: %s turn(s), %s blob(s), "
-                            "%s B reclaimed", result.get("turns_deleted"),
-                            result.get("blobs_deleted"), result.get("bytes_reclaimed"))
+                logger.info(
+                    "[Provenance] retention prune: %s turn(s), %s blob(s), %s B reclaimed",
+                    result.get("turns_deleted"),
+                    result.get("blobs_deleted"),
+                    result.get("bytes_reclaimed"),
+                )
         except Exception as e:
             logger.error("Sage provenance prune sweep error: %s", e)
         await asyncio.sleep(86400)  # daily
@@ -286,9 +308,9 @@ KEEP_WARM_MAX_BACKOFF_TICKS = 12
 
 
 from collections.abc import Collection, Iterable
-from services.warm_policy import warm_budget_seconds as _warm_budget_seconds
-from services.warm_policy import keep_warm_backoff_ticks
 
+from services.warm_policy import keep_warm_backoff_ticks
+from services.warm_policy import warm_budget_seconds as _warm_budget_seconds
 
 #: Tiers an administrator unloaded from the header AI panel. The unload route
 #: adds to it and the load route clears it. Before this set, `keep_warm_loop`
@@ -300,6 +322,7 @@ _OPERATOR_UNLOADED: set[str] = set()
 
 def models_to_warm(configured: Iterable[str], resident: Collection[str] = frozenset()) -> list[str]:
     from services.warm_policy import select_models_to_warm
+
     return select_models_to_warm(configured, resident, _OPERATOR_UNLOADED)
 
 
@@ -310,11 +333,14 @@ async def lifespan(app: FastAPI):
     # The Orb Ward Record's two clinical switches, stated once so an operator
     # can see from the log which mode this computer is in.
     import config as _clinical_config
-    logger.info("Clinical switches: scoring %s (ORB_SCORING_ENABLED), sepsis bundle "
-                "autostart %s (ORB_SEPSIS_AUTOSTART), models %s (ORB_MODELS_ENABLED)",
-                "on" if _clinical_config.SCORING_ENABLED else "off",
-                "on" if _clinical_config.SEPSIS_AUTOSTART else "off",
-                "on" if _clinical_config.MODELS_ENABLED else "off")
+
+    logger.info(
+        "Clinical switches: scoring %s (ORB_SCORING_ENABLED), sepsis bundle "
+        "autostart %s (ORB_SEPSIS_AUTOSTART), models %s (ORB_MODELS_ENABLED)",
+        "on" if _clinical_config.SCORING_ENABLED else "off",
+        "on" if _clinical_config.SEPSIS_AUTOSTART else "off",
+        "on" if _clinical_config.MODELS_ENABLED else "off",
+    )
     # ORB_WARD_RECORD: one line naming every setting the profile forced off.
     _ward_record_line = _clinical_config.ward_record_boot_line()
     if _ward_record_line:
@@ -327,6 +353,7 @@ async def lifespan(app: FastAPI):
     # wards must run whether or not the patient portal is reachable.
     try:
         from services.discharge_access_service import log_public_address_problem
+
         log_public_address_problem(logger)
     except Exception as e:
         logger.warning("Discharge link address check failed: %s", e)
@@ -339,10 +366,13 @@ async def lifespan(app: FastAPI):
     # read the facilities table once, so /api/health and the facility fence
     # start from the real answer.
     from services import facility_service as _facility_service
+
     _facility_service.assert_facility_one()
     if _facility_service.prime_cache():
-        logger.warning("More than one facility is on record: screens not yet ready to "
-                       "keep each facility's patients apart answer 503 (facility fence).")
+        logger.warning(
+            "More than one facility is on record: screens not yet ready to "
+            "keep each facility's patients apart answer 503 (facility fence)."
+        )
 
     # Reconcile the AI model registry with what Orb actually ships, once per boot.
     #
@@ -366,6 +396,7 @@ async def lifespan(app: FastAPI):
     # the status quo ante, not a new harm.
     try:
         from services.model_governance_service import seed_default_models
+
         seed_default_models()
     except Exception as e:
         logger.warning("Model registry reconcile failed; registry may be stale: %s", e)
@@ -375,6 +406,7 @@ async def lifespan(app: FastAPI):
     # Center / Forecast pillars, which both import WARD_CAPACITY.
     try:
         from services.forecast_service import refresh_ward_capacity
+
         refresh_ward_capacity()
     except Exception as e:
         logger.warning("Ward capacity discovery failed, using fallback map: %s", e)
@@ -386,6 +418,7 @@ async def lifespan(app: FastAPI):
     # Initialize reactive nervous system triggers
     try:
         from services.nervous_system_triggers import register_triggers
+
         register_triggers()
     except Exception as e:
         logger.warning("Failed to register event bus triggers: %s", e)
@@ -393,16 +426,20 @@ async def lifespan(app: FastAPI):
     # ORB_MODELS_ENABLED off (or the Orb Ward Record): no model lane starts at
     # boot. Read once here; services/model_switch.py is the one reader.
     from services.model_switch import models_enabled as _models_enabled
+
     _models_on = _models_enabled()
     if not _models_on:
-        logger.warning("Models switched off on this computer (ORB_MODELS_ENABLED or "
-                       "ORB_WARD_RECORD): no model is warmed and the ward narrator, Sage "
-                       "insights, the knowledge workers and the voice agent do not start.")
+        logger.warning(
+            "Models switched off on this computer (ORB_MODELS_ENABLED or "
+            "ORB_WARD_RECORD): no model is warmed and the ward narrator, Sage "
+            "insights, the knowledge workers and the voice agent do not start."
+        )
 
     # Situational-awareness ward narrator (event-driven; deterministic floor +
     # debounced local-LLM narrative at background priority)
     try:
         from services.sage_narrator_service import register_narrator, ward_narrator
+
         if _models_on:
             register_narrator()
             lifespan_tasks.append(_spawn(ward_narrator.idle_loop()))
@@ -414,12 +451,14 @@ async def lifespan(app: FastAPI):
     # all subscribers are registered so replay can find their callbacks.
     try:
         from services.event_bus import event_bus
+
         event_bus.start_replay_poller()
     except Exception as e:
         logger.warning("Failed to start event delivery poller: %s", e)
 
     try:
         from services.helix_db import init_helix_db
+
         init_helix_db()
     except Exception as e:
         logger.warning("Helix DB init failed (non-fatal): %s", e)
@@ -431,6 +470,7 @@ async def lifespan(app: FastAPI):
     # unadopted rows keep today's behaviour). Off the event loop, batch by batch.
     from database import run_db as _run_db
     from services.medorders.adoption import boot_adoption
+
     await _run_db(boot_adoption)
 
     # Fold the hospital's own formulary into Sage's deterministic mutation gate,
@@ -441,6 +481,7 @@ async def lifespan(app: FastAPI):
     # generic-drug lexicon is the floor.
     try:
         from services.sage_service import refresh_formulary_terms_from_db
+
         _n_formulary = refresh_formulary_terms_from_db()
         logger.info("Sage mutation gate: %d formulary terms registered", _n_formulary)
     except Exception as e:
@@ -449,6 +490,7 @@ async def lifespan(app: FastAPI):
     # Seed clinical terminology (LOINC/SNOMED/ICD-10) for CPOE order validation.
     try:
         from services.terminology_service import seed_terminology
+
         seed_terminology()
     except Exception as e:
         logger.warning("Terminology seed failed (non-fatal): %s", e)
@@ -458,11 +500,13 @@ async def lifespan(app: FastAPI):
     # event, starter catalogue while on, and its own background loops. See
     # services/lab_module.py. Never raises.
     from services import lab_module as _lab_module
+
     await _lab_module.startup()
 
     # Seed the built-in drug-interaction pairs (data-backed DDI screening).
     try:
         from services.interaction_db import ensure_seeded
+
         ensure_seeded()
     except Exception as e:
         logger.warning("Interaction DB seed failed (non-fatal): %s", e)
@@ -470,6 +514,7 @@ async def lifespan(app: FastAPI):
     # Reconcile any verification jobs orphaned by previous crash/restart
     try:
         from routes.scribe_routes import reconcile_stale_pending_verifications
+
         reconcile_stale_pending_verifications()
     except Exception as e:
         logger.warning("Scribe verification reconciliation failed (non-fatal): %s", e)
@@ -483,13 +528,14 @@ async def lifespan(app: FastAPI):
     async def _init_knowledge_background():
         try:
             from services.clinical_knowledge import init_knowledge_base
+
             await asyncio.to_thread(init_knowledge_base)
         except Exception as e:
             logger.warning("Clinical knowledge base init failed (non-fatal): %s", e)
 
     if _models_on:
         lifespan_tasks.append(_spawn(_init_knowledge_background()))
-    
+
     # Pre-load BOTH inference tiers into unified memory so first queries are
     # fast, and keep them there. ORB_OLLAMA_KEEP_ALIVE=-1 tells Ollama never to
     # idle-unload; the heartbeat below re-warms after an Ollama restart and
@@ -497,8 +543,9 @@ async def lifespan(app: FastAPI):
     # entirely when the queue is busy — a model actively serving IS warm.
     async def _warm_one(model: str, log_success: bool = True) -> bool:
         import httpx
-        from config import OLLAMA_BASE_URL, OLLAMA_KEEP_ALIVE, LLM_MODEL
+        from config import LLM_MODEL, OLLAMA_BASE_URL, OLLAMA_KEEP_ALIVE
         from services.sage_service import INTERACTIVE_NUM_CTX
+
         # Warm with SAGE'S OWN SYSTEM PROMPT, not "hi". llama.cpp keeps the KV
         # cache of the previous request and reuses the common prefix, so a
         # warmup that shares Sage's prefix makes the first clinician question
@@ -516,10 +563,14 @@ async def lifespan(app: FastAPI):
                 # most turns. Fast-simple is the prompt the overwhelming
                 # majority of turns use.
                 from services.sage_service import (
-                    SAGE_FAST_SIMPLE_PROMPT, SAGE_SIMPLE_SYSTEM_PROMPT,
+                    SAGE_FAST_SIMPLE_PROMPT,
+                    SAGE_SIMPLE_SYSTEM_PROMPT,
                     _xml_contract_forced,
                 )
-                _p = SAGE_SIMPLE_SYSTEM_PROMPT if _xml_contract_forced() else SAGE_FAST_SIMPLE_PROMPT
+
+                _p = (
+                    SAGE_SIMPLE_SYSTEM_PROMPT if _xml_contract_forced() else SAGE_FAST_SIMPLE_PROMPT
+                )
                 warm_messages = [
                     {"role": "system", "content": _p},
                     {"role": "user", "content": "hi"},
@@ -541,8 +592,7 @@ async def lifespan(app: FastAPI):
         # `keep_warm_loop` holds the one background LLM slot across this call —
         # so a warm ping that hangs is a two-minute blackout of Sage's alert
         # advice, not a slow no-op. See the loop below for what that measured.
-        async with httpx.AsyncClient(timeout=_warm_budget_seconds(),
-                                     trust_env=False) as client:
+        async with httpx.AsyncClient(timeout=_warm_budget_seconds(), trust_env=False) as client:
             resp = await client.post(
                 f"{OLLAMA_BASE_URL}/api/chat",
                 json={
@@ -558,7 +608,9 @@ async def lifespan(app: FastAPI):
             )
         if resp.status_code == 200:
             if log_success:
-                logger.info("Model '%s' pre-loaded (GPU warm, keep_alive=%s)", model, OLLAMA_KEEP_ALIVE)
+                logger.info(
+                    "Model '%s' pre-loaded (GPU warm, keep_alive=%s)", model, OLLAMA_KEEP_ALIVE
+                )
             return True
         # Loud, actionable error — a silent 404 here means Sage/Lens return empty
         # responses with no visible cause (the model name isn't pulled in Ollama).
@@ -566,14 +618,16 @@ async def lifespan(app: FastAPI):
             "Warmup got HTTP %s for model '%s'. It is likely not installed in "
             "Ollama — run `ollama list` and set ORB_LLM_MODEL / ORB_AMBIENT_LLM_MODEL "
             "to a pulled model. AI features using it will fail until fixed.",
-            resp.status_code, model,
+            resp.status_code,
+            model,
         )
         return False
 
     async def warmup_models():
         try:
-            from config import LLM_MODEL, AMBIENT_LLM_MODEL
+            from config import AMBIENT_LLM_MODEL, LLM_MODEL
             from services.llm_queue_service import llm_queue
+
             await llm_queue.acquire(priority=5)  # Lowest priority — defers to everything
             try:
                 for model in dict.fromkeys([LLM_MODEL, AMBIENT_LLM_MODEL]):
@@ -610,9 +664,11 @@ async def lifespan(app: FastAPI):
         pays for the attempt on a loop.
         """
         import asyncio as _aio
+
         import httpx
-        from config import OLLAMA_BASE_URL, LLM_MODEL, AMBIENT_LLM_MODEL
+        from config import AMBIENT_LLM_MODEL, LLM_MODEL, OLLAMA_BASE_URL
         from services.llm_queue_service import llm_queue
+
         backoff_ticks = 0
         failures = 0
         while True:
@@ -648,7 +704,7 @@ async def lifespan(app: FastAPI):
                     # process hung at "Waiting for application shutdown." while the
                     # worker kept writing to the encrypted DB. Observed 2026-08-14.
                     raise
-                except _aio.TimeoutError:
+                except TimeoutError:
                     continue
                 try:
                     ok = True
@@ -671,8 +727,10 @@ async def lifespan(app: FastAPI):
                                 "budget (%s); the background lane was held for "
                                 "that whole time and Tier-2 advice could not "
                                 "run. Leaving the tier evicted.",
-                                model, _warm_budget_seconds(),
-                                type(e).__name__, )
+                                model,
+                                _warm_budget_seconds(),
+                                type(e).__name__,
+                            )
                 finally:
                     llm_queue.release()
                 if ok:
@@ -684,8 +742,11 @@ async def lifespan(app: FastAPI):
                         "keep-warm: %d consecutive failure(s) — backing off for "
                         "%d interval(s) (~%.0f min) rather than blacking out the "
                         "alert lane every %ds.",
-                        failures, backoff_ticks,
-                        backoff_ticks * interval_seconds / 60.0, interval_seconds)
+                        failures,
+                        backoff_ticks,
+                        backoff_ticks * interval_seconds / 60.0,
+                        interval_seconds,
+                    )
             except _aio.CancelledError:
                 raise
             except Exception as e:
@@ -702,8 +763,10 @@ async def lifespan(app: FastAPI):
     async def warmup_torch_models():
         try:
             from services.vigil_service import _load_cfc_models
+
             await asyncio.to_thread(_load_cfc_models)
             from services.forecast_service import get_model
+
             await asyncio.to_thread(get_model)
             logger.info("CfC + forecast checkpoints pre-loaded")
         except Exception as e:
@@ -711,19 +774,21 @@ async def lifespan(app: FastAPI):
 
     if _models_on:
         lifespan_tasks.append(_spawn(warmup_torch_models()))
-    
+
     # Pre-load MedGemma 4B voice agent into Apple Silicon Unified Memory
     async def warmup_voice_agent():
         try:
             from config import VOICE
-            if VOICE.get('conversational', {}).get('enabled', False):
+
+            if VOICE.get("conversational", {}).get("enabled", False):
                 from services.voice_agent_service import get_voice_agent
+
                 agent = get_voice_agent()
                 await asyncio.get_event_loop().run_in_executor(None, agent.load)
                 logger.info("MedGemma 4B voice agent pre-loaded (Unified Memory)")
         except Exception as e:
             logger.warning("Voice agent warmup failed (non-fatal): %s", e)
-    
+
     if _models_on:
         lifespan_tasks.append(_spawn(warmup_voice_agent()))
 
@@ -753,6 +818,7 @@ async def lifespan(app: FastAPI):
     # how "the sweeper is not running" survived once already.
     try:
         from services.shadow_service import sweep_loop as _shadow_sweep_loop
+
         _shadow_sweep_interval = max(30, int(os.getenv("ORB_SHADOW_SWEEP_INTERVAL_S", "300")))
         lifespan_tasks.append(_spawn(_shadow_sweep_loop(_shadow_sweep_interval)))
         logger.info("Shadow sweeper started (every %ss)", _shadow_sweep_interval)
@@ -760,6 +826,7 @@ async def lifespan(app: FastAPI):
         logger.error("Shadow sweeper failed to start: %s", e, exc_info=True)
         try:
             from services.shadow_service import note_sweeper_unavailable
+
             note_sweeper_unavailable(str(e))
         except Exception:
             logger.error("Shadow sweeper failure could not be recorded", exc_info=True)
@@ -773,8 +840,11 @@ async def lifespan(app: FastAPI):
     try:
         from services.escalation_service import (
             sweep_interval_seconds as _escalation_sweep_interval,
+        )
+        from services.escalation_service import (
             sweep_loop as _escalation_sweeper,
         )
+
         _esc_interval = _escalation_sweep_interval()
         lifespan_tasks.append(_spawn(_escalation_sweeper(_esc_interval)))
         logger.info("Escalation sweep started (every %ss)", _esc_interval)
@@ -791,6 +861,7 @@ async def lifespan(app: FastAPI):
     # seeds above, so a slow first boot is never mistaken for a stall.
     try:
         from services.loop_watchdog import start_watchdog
+
         _wd_task = start_watchdog()
         if _wd_task is not None:
             lifespan_tasks.append(_wd_task)
@@ -807,6 +878,7 @@ async def lifespan(app: FastAPI):
     # it empties the admin roster.
     try:
         from services.bootstrap_service import start_bootstrap_check
+
         start_bootstrap_check()
     except Exception as e:
         logger.warning("Bootstrap access check failed to start (non-fatal): %s", e)
@@ -839,6 +911,7 @@ async def lifespan(app: FastAPI):
     # stall that never happened.
     try:
         from services.loop_watchdog import stop_watchdog
+
         stop_watchdog()
     except Exception:
         pass
@@ -875,12 +948,14 @@ async def lifespan(app: FastAPI):
             logger.error(
                 "shutdown: background task %s did not stop within 10s — abandoning it. "
                 "It is swallowing its CancelledError; find the `except` that does not "
-                "re-raise.", task.get_name() or task,
+                "re-raise.",
+                task.get_name() or task,
             )
     # Reap the knowledge worker child so reloads/shutdowns never leave an
     # orphaned 2-4 GB model process holding memory (the orphaned-worker class).
     try:
         from services.knowledge_worker import shutdown as _kw_shutdown
+
         _kw_shutdown()
     except Exception:
         pass
@@ -899,6 +974,7 @@ app = FastAPI(
 # Several routes call `await request.json()` directly; a malformed body raises
 # json.JSONDecodeError which would otherwise surface as a 500. Return a clean 400.
 import json as _json
+
 from fastapi import Request as _Request
 from fastapi.responses import JSONResponse as _JSONResponse
 
@@ -914,6 +990,7 @@ async def _json_decode_handler(request: _Request, exc: _json.JSONDecodeError):
 # with 413 up front. File uploads (Lens/Scribe) use their own multipart routes with a
 # higher ceiling, so this cap targets the JSON API surface.
 import os as _os_body
+
 _MAX_JSON_BODY_BYTES = int(_os_body.getenv("ORB_MAX_JSON_BODY_BYTES", str(512 * 1024)))  # 512 KB
 
 
@@ -926,7 +1003,9 @@ async def _limit_body_size(request: _Request, call_next):
         if cl is not None:
             try:
                 if int(cl) > _MAX_JSON_BODY_BYTES:
-                    return _JSONResponse(status_code=413, content={"detail": "Request body too large"})
+                    return _JSONResponse(
+                        status_code=413, content={"detail": "Request body too large"}
+                    )
             except ValueError:
                 return _JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"})
     return await call_next(request)
@@ -939,7 +1018,9 @@ async def _limit_body_size(request: _Request, call_next):
 # nothing but read a cached answer. Added BEFORE CORS and the security headers,
 # so both wrap the 503. A second copy in the Socket.IO app covers /socket.io/
 # (see socket_app below), which no FastAPI middleware sees.
-from facility_fence import FacilityFence, HTTP_ROOTS as _FENCE_HTTP_ROOTS
+from facility_fence import HTTP_ROOTS as _FENCE_HTTP_ROOTS
+from facility_fence import FacilityFence
+
 app.add_middleware(FacilityFence, roots=_FENCE_HTTP_ROOTS)
 
 
@@ -964,6 +1045,7 @@ _EXPOSE_HEADERS = [MFA_ENROLL_TICKET_HEADER]
 # Trust Center reads, so the posture report describes the policy installed here
 # and cannot claim an allow-list while the dev branch admits every origin.
 from config import cors_allow_origins as _cors_allow_origins
+
 _CORS_INSTALLED = _cors_allow_origins()
 app.add_middleware(
     CORSMiddleware,
@@ -987,13 +1069,13 @@ app.add_middleware(
 # HTTP, and a dev box on http://localhost must not be pinned to HTTPS.
 from security_headers import SecurityHeadersMiddleware as _SecurityHeadersMiddleware
 
-
 app.add_middleware(_SecurityHeadersMiddleware)
 
 # ── PHI mutation audit middleware (HIPAA §164.312(b) safety net) ──
 # Logs every state-changing API request generically so no mutation goes
 # unaudited, on top of the richer route-level audit events.
 from services.audit_middleware import audit_mutations
+
 app.middleware("http")(audit_mutations)
 
 
@@ -1083,6 +1165,7 @@ app.include_router(schedule_router)
 # of Orb Ward Record" first (services/drug_chart). Declared here, not in
 # routes/medorders, which another build owns.
 from services.drug_chart import require_drug_chart as _require_drug_chart
+
 app.include_router(medorders_router, dependencies=[Depends(_require_drug_chart)])
 # Facility identity: configuration, no patient data, open through the facility
 # fence (facility_fence.OPEN_SURFACES).
@@ -1096,9 +1179,9 @@ app.include_router(facility_router)
 # caller's ward scope against that patient, audit the access fail-closed, and
 # stream the file from disk, rejecting any path-traversal attempt.
 import os as _os
-from fastapi.responses import FileResponse
-from fastapi import HTTPException
+
 from config import UPLOAD_DIR
+from fastapi import HTTPException
 
 if not UPLOAD_DIR.exists():
     UPLOAD_DIR.mkdir(parents=True)
@@ -1111,6 +1194,7 @@ def _resolve_media_patient(filename: str):
     that reference it (Lens images, Scribe audio). Returns (patient_id, kind) or
     (None, None) if the file is not a registered PHI media record."""
     from database import db_session
+
     base = _os.path.basename(filename)
     like = f"%{base}"
     with db_session() as db:
@@ -1127,8 +1211,11 @@ def _resolve_media_patient(filename: str):
     return None, None
 
 
+_SERVE_UPLOAD_USER_DEFAULT = Depends(get_current_user)
+
+
 @app.get("/uploads/{filename:path}")
-def serve_upload(filename: str, user: dict = Depends(get_current_user)):
+def serve_upload(filename: str, user: dict = _SERVE_UPLOAD_USER_DEFAULT):
     """Authenticated, patient-scoped, audited access to uploaded PHI media.
 
     Requires a valid staff JWT, refuses path traversal, and now:
@@ -1163,7 +1250,7 @@ def serve_upload(filename: str, user: dict = Depends(get_current_user)):
     try:
         target.relative_to(_UPLOAD_ROOT)
     except ValueError:
-        raise HTTPException(status_code=404, detail="Not found")
+        raise HTTPException(status_code=404, detail="Not found") from None
     if not target.is_file():
         raise HTTPException(status_code=404, detail="Not found")
 
@@ -1182,17 +1269,20 @@ def serve_upload(filename: str, user: dict = Depends(get_current_user)):
     # an out-of-scope caller cannot even learn that the filename maps to a
     # registered clinical record.
     from permissions import enforce_patient_scope
+
     try:
         enforce_patient_scope(user, patient_id)
     except HTTPException:
-        raise HTTPException(status_code=404, detail="Not found")
+        raise HTTPException(status_code=404, detail="Not found") from None
 
     # Audit the PHI media access (resolved to the owning patient). phi_access is
     # a FAIL-CLOSED audit category: if the access cannot be durably recorded we
     # must NOT serve the PHI (that is the whole point of the control), so an
     # AuditWriteError aborts the request rather than being swallowed.
-    from services.audit_service import log_audit_event, AuditWriteError
     import uuid as _uuid
+
+    from services.audit_service import AuditWriteError, log_audit_event
+
     try:
         log_audit_event(
             correlation_id=str(_uuid.uuid4()),
@@ -1207,35 +1297,45 @@ def serve_upload(filename: str, user: dict = Depends(get_current_user)):
             target_id=_os.path.basename(filename),
         )
     except AuditWriteError:
-        raise HTTPException(status_code=503, detail="Audit temporarily unavailable; media not served")
+        raise HTTPException(
+            status_code=503, detail="Audit temporarily unavailable; media not served"
+        ) from None
 
     # Force download/non-executable handling to blunt stored-XSS via served HTML/SVG.
     # PHI media is encrypted at rest (crypto_service); decrypt transparently for
     # the authorized caller. read_decrypted passes plaintext files through
     # unchanged, so this is safe for legacy (pre-encryption) uploads too.
-    from services.crypto_service import read_decrypted
     from fastapi.responses import Response
+    from services.crypto_service import read_decrypted
+
     try:
         body = read_decrypted(str(target))
     except ValueError:
         # Generic message — do not leak internal crypto exception detail. The
         # specific failure (tamper / wrong key / missing driver) is logged.
         logger.warning("Upload decrypt failed for %s", _os.path.basename(filename))
-        raise HTTPException(status_code=503, detail="Media temporarily unavailable")
+        raise HTTPException(status_code=503, detail="Media temporarily unavailable") from None
     return Response(
         content=body,
         media_type="application/octet-stream",
         headers={"Content-Disposition": f'attachment; filename="{_os.path.basename(filename)}"'},
     )
+
+
 # ── Auth-protected /me endpoint ──
+_GET_ME_USER_DEFAULT = Depends(get_current_user)
+
+
 @app.get("/api/auth/me", response_model=UserOut)
-async def get_me(user: dict = Depends(get_current_user)):
+async def get_me(user: dict = _GET_ME_USER_DEFAULT):
     # The same body the sign-in lanes return, facility included (multisite-5a).
     # The facility label may read the facilities tables on a cache miss, so it
     # is built off the event loop.
     from database import run_db
     from routes.auth_routes import user_out
+
     return await run_db(user_out, user)
+
 
 # ── Health check ──
 @app.get("/api/health")
@@ -1261,6 +1361,7 @@ async def health():
     """
     from config import enabled_modules, feature_flags, module_states
     from services.facility_service import platform_flags
+
     return {
         "status": "ok",
         "service": "orb-hospital-os",
@@ -1281,6 +1382,7 @@ def clinical_switches() -> dict:
     unauthenticated health endpoint. src/shellConfig.tsx
     currentClinicalSwitches() reads it."""
     import config
+
     return {
         "scoring_enabled": bool(getattr(config, "SCORING_ENABLED", True)),
         "lens_enabled": bool(getattr(config, "LENS_ENABLED", False)),
@@ -1305,16 +1407,19 @@ async def health_loop():
     it carries no PHI.
     """
     from services.loop_watchdog import watchdog_status
+
     return watchdog_status()
 
 
 from fastapi import HTTPException as _HTTPException
-from pydantic import BaseModel as _BaseModel
 from permissions import require_permission
+from pydantic import BaseModel as _BaseModel
+
+_HEALTH_ACCESS_USER_DEFAULT = Depends(require_permission("admin.overview"))
 
 
 @app.get("/api/health/access")
-def health_access(user: dict = Depends(require_permission("admin.overview"))):
+def health_access(user: dict = _HEALTH_ACCESS_USER_DEFAULT):
     """Fresh-install access posture, for an admin.
 
     Answers the two questions services/bootstrap_service.py checks at every
@@ -1328,11 +1433,15 @@ def health_access(user: dict = Depends(require_permission("admin.overview"))):
     used to make the box do minutes of work per request.
     """
     from services.bootstrap_service import bootstrap_snapshot
+
     return {"access": bootstrap_snapshot()}
 
 
+_HEALTH_MODELS_USER_DEFAULT = Depends(get_current_user)
+
+
 @app.get("/api/health/models")
-async def health_models(user: dict = Depends(get_current_user)):
+async def health_models(user: dict = _HEALTH_MODELS_USER_DEFAULT):
     """Warmth of the local inference tiers, for the shell's AI-status chip.
 
     Reports which configured models are resident in Ollama right now (via
@@ -1340,8 +1449,9 @@ async def health_models(user: dict = Depends(get_current_user)):
     will be instant (warm) or pay a cold-load. Authenticated: model topology is
     deployment metadata, not for anonymous callers."""
     import httpx
-    from config import OLLAMA_BASE_URL, LLM_MODEL, AMBIENT_LLM_MODEL
+    from config import AMBIENT_LLM_MODEL, LLM_MODEL, OLLAMA_BASE_URL
     from services.model_switch import models_enabled
+
     if not models_enabled():
         # Switched off on this computer: nothing is asked of Ollama, and the
         # chip has no tier to report.
@@ -1404,9 +1514,15 @@ def _model_impacts(name: str) -> list[str]:
     """MODEL_IMPACTS for the tier(s) `name` serves, plus the features that ask
     for it by name and so load it again on first use."""
     from config import (
-        AMBIENT_LLM_MODEL, LLM_MODEL, MODEL_FALLBACK_ENABLED, SCRIBE,
-        THINKING_FAST_MODE_ENABLED, THINKING_FAST_MODEL, VISION_MODEL,
+        AMBIENT_LLM_MODEL,
+        LLM_MODEL,
+        MODEL_FALLBACK_ENABLED,
+        SCRIBE,
+        THINKING_FAST_MODE_ENABLED,
+        THINKING_FAST_MODEL,
+        VISION_MODEL,
     )
+
     impacts: list[str] = []
     reloads: list[str] = []
     if name == LLM_MODEL:
@@ -1420,17 +1536,23 @@ def _model_impacts(name: str) -> list[str]:
         impacts += MODEL_IMPACTS["ambient"]
     if name == VISION_MODEL:
         reloads.append("Lens image analysis")
-    for stage, label in (("draft", "Scribe note structuring"),
-                         ("correction", "Scribe transcript correction"),
-                         ("verify", "Scribe note checking")):
-        cfg = SCRIBE.get(stage) or {}
-        if (cfg.get("enabled", True) and cfg.get("provider") == "ollama"
-                and cfg.get("model") == name):
+    for cfg, label in (
+        (SCRIBE["draft"], "Scribe note structuring"),
+        (SCRIBE["correction"], "Scribe transcript correction"),
+        (SCRIBE["verify"], "Scribe note checking"),
+    ):
+        if (
+            cfg.get("enabled", True)
+            and cfg.get("provider") == "ollama"
+            and cfg.get("model") == name
+        ):
             reloads.append(label)
     if THINKING_FAST_MODE_ENABLED and THINKING_FAST_MODEL == name and name != LLM_MODEL:
         reloads.append("Sage fast mode")
     if reloads:
-        joined = reloads[0] if len(reloads) == 1 else ", ".join(reloads[:-1]) + " and " + reloads[-1]
+        joined = (
+            reloads[0] if len(reloads) == 1 else ", ".join(reloads[:-1]) + " and " + reloads[-1]
+        )
         impacts.append(f"{joined} load it again on first use, which can take a minute or two")
     return impacts
 
@@ -1443,6 +1565,7 @@ def _invalidate_router_cache() -> None:
     evicted."""
     try:
         from services.model_router import invalidate_residency_cache
+
         invalidate_residency_cache()
     except Exception:
         logger.debug("model router cache invalidation skipped", exc_info=True)
@@ -1458,7 +1581,8 @@ def _resolve_configured_model(name: str) -> str:
     Without this allowlist the endpoint would be an arbitrary
     load-anything-on-the-host primitive (memory-exhaustion DoS, and a way to
     pull unvetted weights into a clinical deployment)."""
-    from config import LLM_MODEL, AMBIENT_LLM_MODEL
+    from config import AMBIENT_LLM_MODEL, LLM_MODEL
+
     allowed = list(dict.fromkeys([LLM_MODEL, AMBIENT_LLM_MODEL]))
     if name not in allowed:
         raise _HTTPException(
@@ -1468,12 +1592,16 @@ def _resolve_configured_model(name: str) -> str:
     return name
 
 
+_LOAD_MODEL_USER_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @app.post("/api/health/models/load", dependencies=[Depends(_require_models_on)])
-async def load_model(req: ModelActionRequest, user: dict = Depends(require_permission("admin.overview"))):
+async def load_model(req: ModelActionRequest, user: dict = _LOAD_MODEL_USER_DEFAULT):
     """Pull a configured tier into memory and pin it (keep_alive from config)."""
     import httpx
-    from config import OLLAMA_BASE_URL, OLLAMA_KEEP_ALIVE, LLM_MODEL
+    from config import LLM_MODEL, OLLAMA_BASE_URL, OLLAMA_KEEP_ALIVE
     from services.sage_service import INTERACTIVE_NUM_CTX
+
     model = _resolve_configured_model(req.model)
     # Same window the live path uses for this tier — see _warm_one. Loading the
     # interactive tier at 4096 here would mean an operator "loading" the model
@@ -1495,16 +1623,21 @@ async def load_model(req: ModelActionRequest, user: dict = Depends(require_permi
                 },
             )
     except Exception as e:
-        raise _HTTPException(status_code=503, detail=f"Ollama unreachable: {e}")
+        raise _HTTPException(status_code=503, detail=f"Ollama unreachable: {e}") from e
     if resp.status_code != 200:
-        raise _HTTPException(status_code=502, detail=f"Ollama returned HTTP {resp.status_code} loading '{model}'")
+        raise _HTTPException(
+            status_code=502, detail=f"Ollama returned HTTP {resp.status_code} loading '{model}'"
+        )
     _invalidate_router_cache()
     logger.info("[Models] '%s' loaded on request by %s", model, user.get("id"))
     return {"status": "loaded", "model": model}
 
 
+_UNLOAD_MODEL_USER_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @app.post("/api/health/models/unload", dependencies=[Depends(_require_models_on)])
-async def unload_model(req: ModelActionRequest, user: dict = Depends(require_permission("admin.overview"))):
+async def unload_model(req: ModelActionRequest, user: dict = _UNLOAD_MODEL_USER_DEFAULT):
     """Evict a configured tier from memory.
 
     keep_alive=0 is Ollama's documented "unload now" signal. Non-destructive:
@@ -1513,6 +1646,7 @@ async def unload_model(req: ModelActionRequest, user: dict = Depends(require_per
     """
     import httpx
     from config import OLLAMA_BASE_URL
+
     model = _resolve_configured_model(req.model)
     # Held BEFORE the unload is sent, so a keep-warm pass already in flight
     # re-checks and skips it rather than reloading it straight after.
@@ -1525,10 +1659,12 @@ async def unload_model(req: ModelActionRequest, user: dict = Depends(require_per
             )
     except Exception as e:
         _OPERATOR_UNLOADED.discard(model)
-        raise _HTTPException(status_code=503, detail=f"Ollama unreachable: {e}")
+        raise _HTTPException(status_code=503, detail=f"Ollama unreachable: {e}") from e
     if resp.status_code != 200:
         _OPERATOR_UNLOADED.discard(model)
-        raise _HTTPException(status_code=502, detail=f"Ollama returned HTTP {resp.status_code} unloading '{model}'")
+        raise _HTTPException(
+            status_code=502, detail=f"Ollama returned HTTP {resp.status_code} unloading '{model}'"
+        )
 
     # Ollama's unload is ASYNCHRONOUS: the runner enters a "Stopping..." state
     # and the model keeps appearing in /api/ps for seconds afterwards. Returning
@@ -1548,10 +1684,14 @@ async def unload_model(req: ModelActionRequest, user: dict = Depends(require_per
         except Exception:
             break  # can't confirm; fall through and report what we know
     _invalidate_router_cache()
-    logger.info("[Models] '%s' unloaded on request by %s (confirmed=%s)", model, user.get("id"), freed)
+    logger.info(
+        "[Models] '%s' unloaded on request by %s (confirmed=%s)", model, user.get("id"), freed
+    )
     return {"status": "unloaded", "model": model, "confirmed": freed}
 
+
 # (uploads now served via the authenticated /uploads/{filename} route above)
+
 
 # ── Wrong-entrypoint tripwire (see also the argv guard by socket_app below) ──
 # The ASGI target MUST be `main:socket_app`, never `main:app`. socketio.ASGIApp
@@ -1601,6 +1741,7 @@ async def _socketio_wrong_entrypoint(_path: str):
 # and StaticFiles only handles GETs that didn't match an earlier route, so it
 # can't shadow /api, /uploads, or /socket.io. Absent (dev), it's simply skipped.
 from config import BASE_DIR as _BASE_DIR
+
 _DIST_DIR = _BASE_DIR.parent / "dist"
 
 
@@ -1614,6 +1755,7 @@ _DIST_DIR = _BASE_DIR.parent / "dist"
 def spa_switches() -> dict:
     """The same clinical, modules and features maps /api/health publishes."""
     from config import enabled_modules, feature_flags
+
     return {
         "clinical": clinical_switches(),
         "modules": enabled_modules(),
@@ -1621,8 +1763,8 @@ def spa_switches() -> dict:
     }
 
 
-from spa_bootstrap import spa_switches_script, spa_index_with_switches
-
+from spa_bootstrap import spa_index_with_switches
+from spa_bootstrap import spa_switches_script as spa_switches_script
 
 _SPA_INDEX_TEXT: str | None = None
 # The (modified time, size) of the index.html read into _SPA_INDEX_TEXT. A
@@ -1640,20 +1782,22 @@ def _spa_index_response():
     before a restart."""
     global _SPA_INDEX_TEXT, _SPA_INDEX_STAMP
     from starlette.responses import HTMLResponse
+
     index = _DIST_DIR / "index.html"
     stat_now = index.stat()
     stamp = (stat_now.st_mtime_ns, stat_now.st_size)
     if _SPA_INDEX_TEXT is None or _SPA_INDEX_STAMP != stamp:
         _SPA_INDEX_TEXT = index.read_text(encoding="utf-8")
         _SPA_INDEX_STAMP = stamp
-    return HTMLResponse(spa_index_with_switches(_SPA_INDEX_TEXT, spa_switches()),
-                        headers={"Cache-Control": "no-cache"})
+    return HTMLResponse(
+        spa_index_with_switches(_SPA_INDEX_TEXT, spa_switches()),
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 if _DIST_DIR.is_dir():
-    from starlette.staticfiles import StaticFiles as _StaticFiles
-    from starlette.responses import FileResponse as _FileResponse
     from starlette.exceptions import HTTPException as _StarletteHTTPException
+    from starlette.staticfiles import StaticFiles as _StaticFiles
 
     def _should_spa_fallback(path: str) -> bool:
         # Fall back to index.html only for client-route-shaped paths: no file
@@ -1673,6 +1817,7 @@ if _DIST_DIR.is_dir():
         Every path that serves index.html serves it with the computer's
         switches written in: the SPA fallback below, and file_response, which
         is how StaticFiles serves "/" (html=True) and "/index.html"."""
+
         def file_response(self, full_path, stat_result, scope, status_code=200):
             if os.path.realpath(full_path) == os.path.realpath(_DIST_DIR / "index.html"):
                 return _spa_index_response()
@@ -1707,11 +1852,12 @@ else:
 # FastAPI middleware runs, so this is the one place a check covers REST and the
 # socket. It refuses a Host name Orb was not told about (DNS rebinding); see
 # services/host_gate.py and config.allowed_host_names().
-from services.host_gate import HostGate
 # The Socket.IO app carries the facility fence for /socket.io/ (a subclass of
 # socketio.ASGIApp, facility_fence.fenced_socketio_app); /api/ and /uploads/
 # are fenced inside the FastAPI app.
 from facility_fence import fenced_socketio_app as _fenced_socketio_app
+from services.host_gate import HostGate
+
 socket_app = HostGate(_fenced_socketio_app(sio, app))
 
 
@@ -1727,14 +1873,11 @@ def _assert_correct_asgi_entrypoint() -> None:
 
     argv = _sys.argv
     joined = " ".join(argv)
-    server_cli = any(
-        s in joined for s in ("uvicorn", "gunicorn", "hypercorn")
-    )
+    server_cli = any(s in joined for s in ("uvicorn", "gunicorn", "hypercorn"))
     # Match the target token exactly — `main:app` must fail, `main:socket_app`
     # must not, and a substring test would wrongly flag the latter.
     names_bare_app = any(
-        tok == "main:app" or tok.endswith(("=main:app", " main:app"))
-        for tok in argv
+        tok == "main:app" or tok.endswith(("=main:app", " main:app")) for tok in argv
     )
     if server_cli and names_bare_app:
         raise RuntimeError(
@@ -1759,8 +1902,9 @@ _assert_correct_asgi_entrypoint()
 
 if __name__ == "__main__":
     import os
-    import uvicorn
     from pathlib import Path
+
+    import uvicorn
 
     # TLS in transit (HIPAA §164.312(e)). Opt-in: set ORB_TLS_CERT + ORB_TLS_KEY
     # to serve HTTPS directly (otherwise terminate TLS at a reverse proxy — see

@@ -11,6 +11,7 @@ Supported HL7 profile:
   - Handles optional missing fields safely
   - Tolerates malformed segments without crashing
 """
+
 from __future__ import annotations
 
 import csv
@@ -20,17 +21,21 @@ import math
 import re
 import uuid
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
-from enum import Enum
-from typing import Optional
-
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
+from enum import Enum, StrEnum
 
 # ════════════════════════════════════════════
 #  Canonical Event Model
 # ════════════════════════════════════════════
 
-class ObservationType(str, Enum):
+
+class ObservationType(StrEnum):
+    # Retain legacy diagnostic/display strings while using the standard string enum.
+    __str__ = Enum.__str__
+    __format__ = Enum.__format__
+
     VITAL = "vital"
     LAB = "lab"
     SCORE = "score"
@@ -39,7 +44,11 @@ class ObservationType(str, Enum):
     UNKNOWN = "unknown"
 
 
-class ValueType(str, Enum):
+class ValueType(StrEnum):
+    # Retain legacy diagnostic/display strings while using the standard string enum.
+    __str__ = Enum.__str__
+    __format__ = Enum.__format__
+
     NUMERIC = "numeric"
     TEXT = "text"
     COMPOSITE = "composite"
@@ -48,47 +57,48 @@ class ValueType(str, Enum):
 @dataclass
 class CanonicalEvent:
     """Single normalized observation from any source."""
+
     patient_identifier: str
     observation_name: str
-    value: str                                       # always stored as string; value_numeric parsed separately
+    value: str  # always stored as string; value_numeric parsed separately
     observation_type: ObservationType = ObservationType.UNKNOWN
-    encounter_identifier: Optional[str] = None
-    source_type: str = ""                            # hl7, json, csv_replay
-    source_name: Optional[str] = None
+    encounter_identifier: str | None = None
+    source_type: str = ""  # hl7, json, csv_replay
+    source_name: str | None = None
     event_type: str = "observation"
-    observation_code: Optional[str] = None
-    observation_code_system: Optional[str] = None
+    observation_code: str | None = None
+    observation_code_system: str | None = None
     value_type: ValueType = ValueType.NUMERIC
-    value_numeric: Optional[float] = None
-    unit: Optional[str] = None
-    reference_range: Optional[str] = None
-    abnormal_flag: Optional[str] = None
-    observed_at: Optional[str] = None                # ISO 8601
-    received_at: Optional[str] = None                # ISO 8601
-    status: Optional[str] = None                     # final, preliminary, corrected
-    raw_segment_ref: Optional[str] = None
-    raw_event_id: Optional[int] = None               # FK to ingestion_events.id
-    correlation_id: Optional[str] = None
-    panel_name: Optional[str] = None                 # OBR-level grouping
-    obr_group_id: Optional[str] = None
+    value_numeric: float | None = None
+    unit: str | None = None
+    reference_range: str | None = None
+    abnormal_flag: str | None = None
+    observed_at: str | None = None  # ISO 8601
+    received_at: str | None = None  # ISO 8601
+    status: str | None = None  # final, preliminary, corrected
+    raw_segment_ref: str | None = None
+    raw_event_id: int | None = None  # FK to ingestion_events.id
+    correlation_id: str | None = None
+    panel_name: str | None = None  # OBR-level grouping
+    obr_group_id: str | None = None
     # Internal mapping result
-    mapped_vital_key: Optional[str] = None           # HR, SBP, DBP, RR, Temp, SpO2
+    mapped_vital_key: str | None = None  # HR, SBP, DBP, RR, Temp, SpO2
     # ── Identity the sender put in the message (lis-19). Only the unmatched
     #    results queue uses these: laboratory staff see them, and attaching a
     #    result to a patient checks two of them against the patient's record.
-    patient_identifiers: Optional[list] = None       # every PID-3 repetition's ID
-    patient_name: Optional[str] = None               # PID-5 family, given, middle
-    patient_dob: Optional[str] = None                # PID-7 as YYYY-MM-DD
-    patient_sex: Optional[str] = None                # PID-8 as sent
+    patient_identifiers: list | None = None  # every PID-3 repetition's ID
+    patient_name: str | None = None  # PID-5 family, given, middle
+    patient_dob: str | None = None  # PID-7 as YYYY-MM-DD
+    patient_sex: str | None = None  # PID-8 as sent
     # ── Which order a result belongs to (lis-20). obr_group_id above keeps
     #    what it always held: OBR-2, or a random id when OBR-2 is empty.
     #    obr_placer is OBR-2 ONLY when the sender sent it, so the random
     #    fallback can never be matched by a correction.
-    obr_placer: Optional[str] = None                 # OBR-2, sender-supplied only
-    obr_filler: Optional[str] = None                 # OBR-3
-    group_id_generated: bool = False                 # obr_group_id was invented here
-    obx_sub_id: Optional[str] = None                 # OBX-4
-    hl7_sender: Optional[str] = None                 # MSH-3^MSH-4, the number's namespace
+    obr_placer: str | None = None  # OBR-2, sender-supplied only
+    obr_filler: str | None = None  # OBR-3
+    group_id_generated: bool = False  # obr_group_id was invented here
+    obx_sub_id: str | None = None  # OBX-4
+    hl7_sender: str | None = None  # MSH-3^MSH-4, the number's namespace
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -99,6 +109,7 @@ def canonical_event_from_dict(data: dict) -> CanonicalEvent:
     results queue stores it (payload_json). Keys this version does not know
     are ignored, and the two enum fields are read back from their values."""
     from dataclasses import fields as _fields
+
     known = {f.name for f in _fields(CanonicalEvent)}
     kwargs = {k: v for k, v in (data or {}).items() if k in known}
     for key, enum in (("observation_type", ObservationType), ("value_type", ValueType)):
@@ -121,12 +132,12 @@ def canonical_event_from_dict(data: dict) -> CanonicalEvent:
 # Keys: HR, SBP, DBP, RR, Temp, SpO2
 _VITAL_CODE_MAP: dict[str, str] = {
     # LOINC
-    "8867-4": "HR",     # Heart rate
-    "8480-6": "SBP",    # Systolic BP
-    "8462-4": "DBP",    # Diastolic BP
-    "9279-1": "RR",     # Respiratory rate
-    "8310-5": "Temp",   # Body temperature
-    "2708-6": "SpO2",   # Oxygen saturation
+    "8867-4": "HR",  # Heart rate
+    "8480-6": "SBP",  # Systolic BP
+    "8462-4": "DBP",  # Diastolic BP
+    "9279-1": "RR",  # Respiratory rate
+    "8310-5": "Temp",  # Body temperature
+    "2708-6": "SpO2",  # Oxygen saturation
     "59408-5": "SpO2",  # SpO2 by pulse oximetry
     # Common names (case-insensitive matching done at lookup time)
     "heart rate": "HR",
@@ -153,7 +164,7 @@ _VITAL_CODE_MAP: dict[str, str] = {
 }
 
 
-def map_to_vital_key(code: Optional[str], name: Optional[str]) -> Optional[str]:
+def map_to_vital_key(code: str | None, name: str | None) -> str | None:
     """Attempt to map an observation code/name to an Orb vital key."""
     if code and code in _VITAL_CODE_MAP:
         return _VITAL_CODE_MAP[code]
@@ -168,7 +179,8 @@ def map_to_vital_key(code: Optional[str], name: Optional[str]) -> Optional[str]:
 #  Unit Normalization
 # ════════════════════════════════════════════
 
-def normalize_temp_to_celsius(value: float, unit: Optional[str]) -> float:
+
+def normalize_temp_to_celsius(value: float, unit: str | None) -> float:
     """Convert Fahrenheit to Celsius if needed."""
     if unit and unit.upper() in ("F", "°F", "DEG F", "[DEGF]"):
         return round((value - 32) * 5 / 9, 1)
@@ -185,16 +197,16 @@ def normalize_temp_to_celsius(value: float, unit: Optional[str]) -> float:
 # reject the numeric value (return None) so the row falls back to carry-forward
 # rather than poisoning the clinical picture with a sensor/parse glitch.
 _VITAL_PLAUSIBLE_RANGE: dict[str, tuple[float, float]] = {
-    "HR": (10.0, 300.0),       # bpm
-    "SBP": (40.0, 300.0),      # mmHg
-    "DBP": (10.0, 200.0),      # mmHg
-    "RR": (2.0, 80.0),         # breaths/min
-    "Temp": (20.0, 45.0),      # °C (post-normalization)
-    "SpO2": (10.0, 100.0),     # %
+    "HR": (10.0, 300.0),  # bpm
+    "SBP": (40.0, 300.0),  # mmHg
+    "DBP": (10.0, 200.0),  # mmHg
+    "RR": (2.0, 80.0),  # breaths/min
+    "Temp": (20.0, 45.0),  # °C (post-normalization)
+    "SpO2": (10.0, 100.0),  # %
 }
 
 
-def validate_vital_value(vital_key: Optional[str], value: Optional[float]) -> Optional[float]:
+def validate_vital_value(vital_key: str | None, value: float | None) -> float | None:
     """Return value if it is a plausible reading for the vital, else None.
 
     Used by every adapter before a numeric value is emitted, so an out-of-range
@@ -218,7 +230,7 @@ def validate_vital_value(vital_key: Optional[str], value: Optional[float]) -> Op
     if vital_key is None:
         return value
     lo, hi = _VITAL_PLAUSIBLE_RANGE.get(vital_key, (None, None))
-    if lo is None:
+    if lo is None or hi is None:
         return value
     if value < lo or value > hi:
         return None
@@ -229,6 +241,7 @@ def validate_vital_value(vital_key: Optional[str], value: Optional[float]) -> Op
 #  Fingerprinting
 # ════════════════════════════════════════════
 
+
 def compute_fingerprint(raw_payload: str) -> str:
     """SHA-256 fingerprint for deduplication."""
     return hashlib.sha256(raw_payload.encode("utf-8", errors="replace")).hexdigest()
@@ -238,7 +251,8 @@ def compute_fingerprint(raw_payload: str) -> str:
 #  HL7 Timestamp Parsing
 # ════════════════════════════════════════════
 
-def parse_hl7_timestamp(ts: str, *, default_timezone=None) -> Optional[str]:
+
+def parse_hl7_timestamp(ts: str, *, default_timezone=None) -> str | None:
     """Parse an HL7 DTM (`yyyyMMddHHmmss[.S][+/-ZZZZ]`) into ISO 8601 UTC.
 
     Delegates to the real HL7 parser so the HTTP feed and the MLLP monitor feed
@@ -256,6 +270,7 @@ def parse_hl7_timestamp(ts: str, *, default_timezone=None) -> Optional[str]:
     configured in a different zone from the appliance.
     """
     from services.vitals_source.hl7v2 import parse_timestamp
+
     return parse_timestamp(ts, default_tz=default_timezone)
 
 
@@ -274,14 +289,14 @@ def hl7_patient_identity(pid) -> dict:
             if value and value not in out["identifiers"]:
                 out["identifiers"].append(value)
         family = pid.field(5, component=1)
-        given = " ".join(p for p in (pid.field(5, component=2),
-                                     pid.field(5, component=3)) if p)
+        given = " ".join(p for p in (pid.field(5, component=2), pid.field(5, component=3)) if p)
         out["name"] = ", ".join(p for p in (family, given) if p) or None
         match = re.match(r"^(\d{4})(\d{2})(\d{2})", pid.field(7) or "")
         if match:
             try:
-                out["dob"] = datetime(int(match.group(1)), int(match.group(2)),
-                                      int(match.group(3))).strftime("%Y-%m-%d")
+                out["dob"] = datetime(
+                    int(match.group(1)), int(match.group(2)), int(match.group(3))
+                ).strftime("%Y-%m-%d")
             except ValueError:
                 out["dob"] = None
         out["sex"] = pid.field(8) or None
@@ -293,6 +308,7 @@ def hl7_patient_identity(pid) -> dict:
 # ════════════════════════════════════════════
 #  Adapter Interface
 # ════════════════════════════════════════════
+
 
 class IngestionAdapter(ABC):
     """Abstract base for all ingestion adapters."""
@@ -306,25 +322,28 @@ class IngestionAdapter(ABC):
     def source_type(self) -> str: ...
 
     @abstractmethod
-    def can_handle(self, raw_payload: str, content_type: Optional[str] = None) -> bool:
+    def can_handle(self, raw_payload: str, content_type: str | None = None) -> bool:
         """Return True if this adapter can parse the given payload."""
         ...
 
     @abstractmethod
-    def parse(self, raw_payload: str, source_name: Optional[str] = None,
-              correlation_id: Optional[str] = None) -> list[CanonicalEvent]:
+    def parse(
+        self, raw_payload: str, source_name: str | None = None, correlation_id: str | None = None
+    ) -> list[CanonicalEvent]:
         """Parse the payload into canonical events. Must not raise on malformed input."""
         ...
 
 
 class ParseError(Exception):
     """Raised internally when a parse step fails; caught by the adapter."""
+
     pass
 
 
 # ════════════════════════════════════════════
 #  HL7 ORU Adapter
 # ════════════════════════════════════════════
+
 
 class HL7Adapter(IngestionAdapter):
     """Parses HL7 v2 ORU^R01 messages.
@@ -359,12 +378,13 @@ class HL7Adapter(IngestionAdapter):
     def source_type(self) -> str:
         return "hl7"
 
-    def can_handle(self, raw_payload: str, content_type: Optional[str] = None) -> bool:
+    def can_handle(self, raw_payload: str, content_type: str | None = None) -> bool:
         stripped = raw_payload.strip()
         return stripped.startswith("MSH|")
 
-    def parse(self, raw_payload: str, source_name: Optional[str] = None,
-              correlation_id: Optional[str] = None) -> list[CanonicalEvent]:
+    def parse(
+        self, raw_payload: str, source_name: str | None = None, correlation_id: str | None = None
+    ) -> list[CanonicalEvent]:
         from services.vitals_source import hl7v2
 
         events: list[CanonicalEvent] = []
@@ -373,11 +393,12 @@ class HL7Adapter(IngestionAdapter):
         try:
             message = hl7v2.parse(raw_payload)
         except hl7v2.Hl7ParseError as e:
-            raise ParseError(f"Not a valid HL7 message: {e}")
+            raise ParseError(f"Not a valid HL7 message: {e}") from e
 
         sending_app = message.sending_application
-        msg_timestamp = parse_hl7_timestamp(message.message_datetime,
-                                            default_timezone=self.default_timezone)
+        msg_timestamp = parse_hl7_timestamp(
+            message.message_datetime, default_timezone=self.default_timezone
+        )
 
         # PID-3 is the patient identifier LIST: repetitions of `id^^^authority^type`.
         # A monitor commonly sends the hospital MRN alongside its own local id;
@@ -388,15 +409,17 @@ class HL7Adapter(IngestionAdapter):
         if not patient_id:
             raise ParseError("No patient identifier found in PID segment")
         identity = hl7_patient_identity(pid)
-        sender = "^".join(p for p in (message.sending_application,
-                                      message.sending_facility) if p) or None
+        sender = (
+            "^".join(p for p in (message.sending_application, message.sending_facility) if p)
+            or None
+        )
 
         pv1 = message.first("PV1")
         encounter_id = (pv1.field(19, component=1) or None) if pv1 else None
 
         # Group OBX segments under the OBR that precedes them.
         obr_groups: list[dict] = []
-        current_obr: Optional[dict] = None
+        current_obr: dict | None = None
 
         for seg in message.segments:
             if seg.name == "OBR":
@@ -404,7 +427,8 @@ class HL7Adapter(IngestionAdapter):
                 current_obr = {
                     "panel_name": seg.field(4, component=2) or seg.field(4, component=1),
                     "observed_at": parse_hl7_timestamp(
-                        seg.field(7), default_timezone=self.default_timezone),
+                        seg.field(7), default_timezone=self.default_timezone
+                    ),
                     "group_id": placer or str(uuid.uuid4())[:8],
                     "placer": placer,
                     "filler": seg.field(3) or None,
@@ -465,23 +489,31 @@ class HL7Adapter(IngestionAdapter):
 
         return events
 
-    def _parse_obx(self, obx, *,
-                   patient_id: str, encounter_id: Optional[str],
-                   panel_name: str, obr_group_id: str,
-                   observed_at: Optional[str], source_name: Optional[str],
-                   correlation_id: Optional[str],
-                   msg_timestamp: Optional[str]) -> CanonicalEvent:
+    def _parse_obx(
+        self,
+        obx,
+        *,
+        patient_id: str,
+        encounter_id: str | None,
+        panel_name: str,
+        obr_group_id: str,
+        observed_at: str | None,
+        source_name: str | None,
+        correlation_id: str | None,
+        msg_timestamp: str | None,
+    ) -> CanonicalEvent:
         """Parse a single OBX segment into a CanonicalEvent."""
         obx_raw = obx.raw
 
-        value_type_raw = obx.field(2)                    # OBX-2: Value Type (NM, ST, CE, …)
-        value_raw = obx.field(5)                          # OBX-5: Observation Value
+        value_type_raw = obx.field(2)  # OBX-2: Value Type (NM, ST, CE, …)
+        value_raw = obx.field(5)  # OBX-5: Observation Value
         units = obx.field(6, component=1) or obx.field(6)  # OBX-6: Units (CE: code^text^system)
-        ref_range = obx.field(7)                          # OBX-7: Reference Range
-        abnormal_flag = obx.field(8)                      # OBX-8: Abnormal Flags
-        obs_status = obx.field(11)                        # OBX-11: Observation Result Status
-        obs_time = parse_hl7_timestamp(                   # OBX-14: Date/Time of Observation
-            obx.field(14), default_timezone=self.default_timezone)
+        ref_range = obx.field(7)  # OBX-7: Reference Range
+        abnormal_flag = obx.field(8)  # OBX-8: Abnormal Flags
+        obs_status = obx.field(11)  # OBX-11: Observation Result Status
+        obs_time = parse_hl7_timestamp(  # OBX-14: Date/Time of Observation
+            obx.field(14), default_timezone=self.default_timezone
+        )
 
         # OBX-3 is a CE: identifier^text^coding-system.
         obs_code = obx.field(3, component=1) or None
@@ -489,7 +521,7 @@ class HL7Adapter(IngestionAdapter):
         obs_code_system = obx.field(3, component=3) or None
 
         # Determine value type and parse numeric
-        value_numeric: Optional[float] = None
+        value_numeric: float | None = None
         vt = ValueType.TEXT
         if value_type_raw in ("NM", "SN") and value_raw:
             try:
@@ -531,7 +563,7 @@ class HL7Adapter(IngestionAdapter):
             reference_range=ref_range,
             abnormal_flag=abnormal_flag,
             observed_at=effective_time,
-            received_at=datetime.now(timezone.utc).isoformat(),
+            received_at=datetime.now(UTC).isoformat(),
             status=obs_status or "final",
             raw_segment_ref=obx_raw,
             correlation_id=correlation_id,
@@ -544,6 +576,7 @@ class HL7Adapter(IngestionAdapter):
 # ════════════════════════════════════════════
 #  JSON Webhook Adapter
 # ════════════════════════════════════════════
+
 
 class JSONAdapter(IngestionAdapter):
     """Parses structured JSON webhook payloads.
@@ -578,19 +611,21 @@ class JSONAdapter(IngestionAdapter):
     def source_type(self) -> str:
         return "json"
 
-    def can_handle(self, raw_payload: str, content_type: Optional[str] = None) -> bool:
+    def can_handle(self, raw_payload: str, content_type: str | None = None) -> bool:
         if content_type and "json" in content_type.lower():
             return True
         stripped = raw_payload.strip()
         return stripped.startswith("{") and stripped.endswith("}")
 
-    def parse(self, raw_payload: str, source_name: Optional[str] = None,
-              correlation_id: Optional[str] = None) -> list[CanonicalEvent]:
+    def parse(
+        self, raw_payload: str, source_name: str | None = None, correlation_id: str | None = None
+    ) -> list[CanonicalEvent]:
         import json
+
         try:
             data = json.loads(raw_payload)
         except json.JSONDecodeError as e:
-            raise ParseError(f"Invalid JSON: {e}")
+            raise ParseError(f"Invalid JSON: {e}") from e
 
         patient_id = data.get("patient_id")
         if not patient_id:
@@ -599,7 +634,7 @@ class JSONAdapter(IngestionAdapter):
         encounter_id = data.get("encounter_id")
         src_name = data.get("source_name") or source_name
         observed_at = data.get("observed_at")
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
         # Optional identity for the unmatched results queue (lis-19). A date of
         # birth is kept only when it is a real YYYY-MM-DD date.
         stated_name = data.get("patient_name")
@@ -628,7 +663,7 @@ class JSONAdapter(IngestionAdapter):
                 continue  # skip empty observations
 
             value_str = str(raw_value) if raw_value is not None else ""
-            value_numeric: Optional[float] = None
+            value_numeric: float | None = None
             vt = ValueType.TEXT
             if isinstance(raw_value, (int, float)):
                 value_numeric = float(raw_value)
@@ -651,32 +686,34 @@ class JSONAdapter(IngestionAdapter):
             # Reject implausible vital readings before they reach NEWS2/alerts.
             value_numeric = validate_vital_value(vital_key, value_numeric)
 
-            events.append(CanonicalEvent(
-                patient_identifier=str(patient_id),
-                encounter_identifier=encounter_id,
-                source_type="json",
-                source_name=src_name,
-                event_type="observation",
-                observation_type=obs_type,
-                observation_code=code,
-                observation_code_system=obs.get("code_system"),
-                observation_name=name or code or "Unknown",
-                value=value_str,
-                value_type=vt,
-                value_numeric=value_numeric,
-                unit=unit,
-                reference_range=obs.get("reference_range"),
-                abnormal_flag=obs.get("abnormal_flag"),
-                observed_at=obs.get("observed_at") or observed_at or now_iso,
-                received_at=now_iso,
-                status=obs.get("status", "final"),
-                raw_segment_ref=None,
-                correlation_id=correlation_id,
-                mapped_vital_key=vital_key,
-                patient_identifiers=[str(patient_id)],
-                patient_name=stated_name,
-                patient_dob=stated_dob,
-            ))
+            events.append(
+                CanonicalEvent(
+                    patient_identifier=str(patient_id),
+                    encounter_identifier=encounter_id,
+                    source_type="json",
+                    source_name=src_name,
+                    event_type="observation",
+                    observation_type=obs_type,
+                    observation_code=code,
+                    observation_code_system=obs.get("code_system"),
+                    observation_name=name or code or "Unknown",
+                    value=value_str,
+                    value_type=vt,
+                    value_numeric=value_numeric,
+                    unit=unit,
+                    reference_range=obs.get("reference_range"),
+                    abnormal_flag=obs.get("abnormal_flag"),
+                    observed_at=obs.get("observed_at") or observed_at or now_iso,
+                    received_at=now_iso,
+                    status=obs.get("status", "final"),
+                    raw_segment_ref=None,
+                    correlation_id=correlation_id,
+                    mapped_vital_key=vital_key,
+                    patient_identifiers=[str(patient_id)],
+                    patient_name=stated_name,
+                    patient_dob=stated_dob,
+                )
+            )
 
         if not events:
             raise ParseError("No valid observations found in payload")
@@ -687,6 +724,7 @@ class JSONAdapter(IngestionAdapter):
 # ════════════════════════════════════════════
 #  CSV Replay Adapter
 # ════════════════════════════════════════════
+
 
 class CSVAdapter(IngestionAdapter):
     """Parses CSV replay files for testing and demo backfill.
@@ -707,7 +745,7 @@ class CSVAdapter(IngestionAdapter):
     def source_type(self) -> str:
         return "csv_replay"
 
-    def can_handle(self, raw_payload: str, content_type: Optional[str] = None) -> bool:
+    def can_handle(self, raw_payload: str, content_type: str | None = None) -> bool:
         if content_type and "csv" in content_type.lower():
             return True
         # Check if it looks like CSV with a header row
@@ -716,13 +754,14 @@ class CSVAdapter(IngestionAdapter):
             return True
         return False
 
-    def parse(self, raw_payload: str, source_name: Optional[str] = None,
-              correlation_id: Optional[str] = None) -> list[CanonicalEvent]:
+    def parse(
+        self, raw_payload: str, source_name: str | None = None, correlation_id: str | None = None
+    ) -> list[CanonicalEvent]:
         reader = csv.DictReader(io.StringIO(raw_payload.strip()))
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
         events: list[CanonicalEvent] = []
 
-        for row_num, row in enumerate(reader, start=2):
+        for _row_num, row in enumerate(reader, start=2):
             patient_id = row.get("patient_id", "").strip()
             if not patient_id:
                 continue
@@ -733,7 +772,7 @@ class CSVAdapter(IngestionAdapter):
             unit = row.get("unit", "").strip() or None
             observed_at = row.get("observed_at", "").strip() or now_iso
 
-            value_numeric: Optional[float] = None
+            value_numeric: float | None = None
             vt = ValueType.TEXT
             try:
                 value_numeric = float(raw_value)
@@ -751,24 +790,26 @@ class CSVAdapter(IngestionAdapter):
             # Reject implausible vital readings before they reach NEWS2/alerts.
             value_numeric = validate_vital_value(vital_key, value_numeric)
 
-            events.append(CanonicalEvent(
-                patient_identifier=patient_id,
-                source_type="csv_replay",
-                source_name=source_name or "csv_replay",
-                event_type="observation",
-                observation_type=obs_type,
-                observation_code=code,
-                observation_name=name or code or "Unknown",
-                value=raw_value,
-                value_type=vt,
-                value_numeric=value_numeric,
-                unit=unit,
-                observed_at=observed_at,
-                received_at=now_iso,
-                status="final",
-                correlation_id=correlation_id,
-                mapped_vital_key=vital_key,
-            ))
+            events.append(
+                CanonicalEvent(
+                    patient_identifier=patient_id,
+                    source_type="csv_replay",
+                    source_name=source_name or "csv_replay",
+                    event_type="observation",
+                    observation_type=obs_type,
+                    observation_code=code,
+                    observation_name=name or code or "Unknown",
+                    value=raw_value,
+                    value_type=vt,
+                    value_numeric=value_numeric,
+                    unit=unit,
+                    observed_at=observed_at,
+                    received_at=now_iso,
+                    status="final",
+                    correlation_id=correlation_id,
+                    mapped_vital_key=vital_key,
+                )
+            )
 
         if not events:
             raise ParseError("No valid rows found in CSV")
@@ -779,6 +820,7 @@ class CSVAdapter(IngestionAdapter):
 # ════════════════════════════════════════════
 #  FHIR R4 Adapter
 # ════════════════════════════════════════════
+
 
 class FHIRAdapter(IngestionAdapter):
     """Parses FHIR R4 payloads — either a Bundle (transaction/collection/batch)
@@ -796,10 +838,16 @@ class FHIRAdapter(IngestionAdapter):
     adapter, so implausible feed values never reach NEWS2/alerts.
     """
 
-    _SUPPORTED_TYPES = frozenset({
-        "Bundle", "Observation", "Patient",
-        "Encounter", "MedicationRequest", "AllergyIntolerance",
-    })
+    _SUPPORTED_TYPES = frozenset(
+        {
+            "Bundle",
+            "Observation",
+            "Patient",
+            "Encounter",
+            "MedicationRequest",
+            "AllergyIntolerance",
+        }
+    )
     _LOINC_URI = "http://loinc.org"
 
     @property
@@ -810,26 +858,29 @@ class FHIRAdapter(IngestionAdapter):
     def source_type(self) -> str:
         return "fhir"
 
-    def can_handle(self, raw_payload: str, content_type: Optional[str] = None) -> bool:
+    def can_handle(self, raw_payload: str, content_type: str | None = None) -> bool:
         if content_type and "fhir" in content_type.lower():
             return True
         stripped = raw_payload.strip()
         if not (stripped.startswith("{") and stripped.endswith("}")):
             return False
         import json
+
         try:
             data = json.loads(raw_payload)
         except (json.JSONDecodeError, ValueError):
             return False
         return isinstance(data, dict) and data.get("resourceType") in self._SUPPORTED_TYPES
 
-    def parse(self, raw_payload: str, source_name: Optional[str] = None,
-              correlation_id: Optional[str] = None) -> list[CanonicalEvent]:
+    def parse(
+        self, raw_payload: str, source_name: str | None = None, correlation_id: str | None = None
+    ) -> list[CanonicalEvent]:
         import json
+
         try:
             data = json.loads(raw_payload)
         except json.JSONDecodeError as e:
-            raise ParseError(f"Invalid FHIR JSON: {e}")
+            raise ParseError(f"Invalid FHIR JSON: {e}") from e
 
         if not isinstance(data, dict):
             raise ParseError("FHIR payload must be a JSON object")
@@ -852,10 +903,10 @@ class FHIRAdapter(IngestionAdapter):
         else:
             resources.append(data)
 
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
         events: list[CanonicalEvent] = []
 
-        handlers = {
+        handlers: dict[str, Callable[..., CanonicalEvent | list[CanonicalEvent] | None]] = {
             "Observation": self._parse_observation,
             "Patient": self._parse_patient,
             "Encounter": self._parse_encounter,
@@ -864,7 +915,7 @@ class FHIRAdapter(IngestionAdapter):
         }
 
         for res in resources:
-            handler = handlers.get(res.get("resourceType"))
+            handler = handlers.get(res.get("resourceType") or "")
             if handler is None:
                 continue  # skip unknown resource types gracefully
             try:
@@ -886,8 +937,9 @@ class FHIRAdapter(IngestionAdapter):
 
     # ── Resource handlers ──
 
-    def _parse_observation(self, res: dict, source_name: Optional[str],
-                           correlation_id: Optional[str], now_iso: str) -> list[CanonicalEvent]:
+    def _parse_observation(
+        self, res: dict, source_name: str | None, correlation_id: str | None, now_iso: str
+    ) -> list[CanonicalEvent]:
         """Parse an Observation into one or more CanonicalEvents.
 
         Handles FHIR R4 vital-signs panels (e.g. Blood Pressure 85354-9) where the
@@ -903,7 +955,7 @@ class FHIRAdapter(IngestionAdapter):
         observed_at = self._extract_effective(res) or now_iso
         status = res.get("status") or "final"
 
-        def _make(code_obj: dict, value_res: dict) -> Optional[CanonicalEvent]:
+        def _make(code_obj: dict, value_res: dict) -> CanonicalEvent | None:
             code, display, code_system = self._extract_code(code_obj)
             value_str, value_numeric, vt, unit = self._extract_value(value_res)
             # Skip a component that carried no value at all.
@@ -938,7 +990,9 @@ class FHIRAdapter(IngestionAdapter):
                 mapped_vital_key=vital_key,
             )
 
-        code_obj = res.get("code") if isinstance(res.get("code"), dict) else {}
+        code_obj = res.get("code")
+        if not isinstance(code_obj, dict):
+            code_obj = {}
         components = res.get("component")
         events: list[CanonicalEvent] = []
 
@@ -952,15 +1006,18 @@ class FHIRAdapter(IngestionAdapter):
             for comp in components:
                 if not isinstance(comp, dict):
                     continue
-                comp_code = comp.get("code") if isinstance(comp.get("code"), dict) else {}
+                comp_code = comp.get("code")
+                if not isinstance(comp_code, dict):
+                    comp_code = {}
                 evt = _make(comp_code, comp)
                 if evt is not None:
                     events.append(evt)
 
         return events
 
-    def _parse_patient(self, res: dict, source_name: Optional[str],
-                       correlation_id: Optional[str], now_iso: str) -> CanonicalEvent:
+    def _parse_patient(
+        self, res: dict, source_name: str | None, correlation_id: str | None, now_iso: str
+    ) -> CanonicalEvent:
         patient_id = res.get("id")
         if not patient_id:
             idents = res.get("identifier")
@@ -982,9 +1039,12 @@ class FHIRAdapter(IngestionAdapter):
             correlation_id=correlation_id,
         )
 
-    def _parse_encounter(self, res: dict, source_name: Optional[str],
-                         correlation_id: Optional[str], now_iso: str) -> CanonicalEvent:
-        patient_id = self._ref_to_id(res.get("subject")) or self._ref_to_id(res.get("patient")) or ""
+    def _parse_encounter(
+        self, res: dict, source_name: str | None, correlation_id: str | None, now_iso: str
+    ) -> CanonicalEvent:
+        patient_id = (
+            self._ref_to_id(res.get("subject")) or self._ref_to_id(res.get("patient")) or ""
+        )
         status = res.get("status") or "unknown"
         return CanonicalEvent(
             patient_identifier=patient_id,
@@ -1002,8 +1062,9 @@ class FHIRAdapter(IngestionAdapter):
             correlation_id=correlation_id,
         )
 
-    def _parse_medication_request(self, res: dict, source_name: Optional[str],
-                                  correlation_id: Optional[str], now_iso: str) -> CanonicalEvent:
+    def _parse_medication_request(
+        self, res: dict, source_name: str | None, correlation_id: str | None, now_iso: str
+    ) -> CanonicalEvent:
         med = res.get("medicationCodeableConcept")
         med_name = None
         if isinstance(med, dict):
@@ -1029,9 +1090,12 @@ class FHIRAdapter(IngestionAdapter):
             correlation_id=correlation_id,
         )
 
-    def _parse_allergy(self, res: dict, source_name: Optional[str],
-                       correlation_id: Optional[str], now_iso: str) -> CanonicalEvent:
-        code_obj = res.get("code") if isinstance(res.get("code"), dict) else {}
+    def _parse_allergy(
+        self, res: dict, source_name: str | None, correlation_id: str | None, now_iso: str
+    ) -> CanonicalEvent:
+        code_obj = res.get("code")
+        if not isinstance(code_obj, dict):
+            code_obj = {}
         _, substance, _ = self._extract_code(code_obj)
         substance = substance or "Unknown substance"
         # clinicalStatus is a CodeableConcept; a conformant resource encodes the
@@ -1062,7 +1126,7 @@ class FHIRAdapter(IngestionAdapter):
 
     # ── Extraction helpers ──
 
-    def _extract_code(self, code_obj: dict) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    def _extract_code(self, code_obj: dict) -> tuple[str | None, str | None, str | None]:
         """Return (code, display, code_system) from a FHIR CodeableConcept.
 
         Prefers a LOINC coding for the code; display prefers ``code.text`` then a
@@ -1103,11 +1167,11 @@ class FHIRAdapter(IngestionAdapter):
         display = code_obj.get("text") or coding_display
         return code, display, code_system
 
-    def _extract_value(self, res: dict) -> tuple[str, Optional[float], ValueType, Optional[str]]:
+    def _extract_value(self, res: dict) -> tuple[str, float | None, ValueType, str | None]:
         """Extract (value_str, value_numeric, value_type, unit) from an Observation."""
         vq = res.get("valueQuantity")
         if isinstance(vq, dict) and vq.get("value") is not None:
-            raw = vq.get("value")
+            raw = vq["value"]
             unit = vq.get("unit") or vq.get("code")
             try:
                 return str(raw), float(raw), ValueType.NUMERIC, unit
@@ -1118,7 +1182,7 @@ class FHIRAdapter(IngestionAdapter):
             return str(res.get("valueString")), None, ValueType.TEXT, None
 
         if res.get("valueInteger") is not None:
-            raw = res.get("valueInteger")
+            raw = res["valueInteger"]
             try:
                 return str(raw), float(raw), ValueType.NUMERIC, None
             except (ValueError, TypeError):
@@ -1135,7 +1199,7 @@ class FHIRAdapter(IngestionAdapter):
 
         return "", None, ValueType.TEXT, None
 
-    def _extract_effective(self, res: dict) -> Optional[str]:
+    def _extract_effective(self, res: dict) -> str | None:
         if res.get("effectiveDateTime"):
             return res.get("effectiveDateTime")
         if res.get("effectiveInstant"):
@@ -1147,7 +1211,7 @@ class FHIRAdapter(IngestionAdapter):
             return res.get("issued")
         return None
 
-    def _extract_reference_range(self, res: dict) -> Optional[str]:
+    def _extract_reference_range(self, res: dict) -> str | None:
         ranges = res.get("referenceRange")
         if not (isinstance(ranges, list) and ranges):
             return None
@@ -1164,7 +1228,7 @@ class FHIRAdapter(IngestionAdapter):
             return f"<={high}"
         return r0.get("text")
 
-    def _extract_interpretation(self, res: dict) -> Optional[str]:
+    def _extract_interpretation(self, res: dict) -> str | None:
         interp = res.get("interpretation")
         if not (isinstance(interp, list) and interp):
             return None
@@ -1177,7 +1241,7 @@ class FHIRAdapter(IngestionAdapter):
         return i0.get("text")
 
     @staticmethod
-    def _ref_to_id(ref_obj) -> Optional[str]:
+    def _ref_to_id(ref_obj) -> str | None:
         """Resolve a FHIR Reference to a bare identifier.
 
         Handles ``{"reference": "Patient/123"}`` (strips the resource-type prefix)
@@ -1195,14 +1259,18 @@ class FHIRAdapter(IngestionAdapter):
         return None
 
     @staticmethod
-    def _human_name(name_list) -> Optional[str]:
+    def _human_name(name_list) -> str | None:
         if isinstance(name_list, list) and name_list:
             n0 = name_list[0]
             if isinstance(n0, dict):
                 if n0.get("text"):
                     return n0["text"]
                 given = n0.get("given")
-                given_str = " ".join(g for g in given if isinstance(g, str)) if isinstance(given, list) else ""
+                given_str = (
+                    " ".join(g for g in given if isinstance(g, str))
+                    if isinstance(given, list)
+                    else ""
+                )
                 family = n0.get("family") or ""
                 full = f"{given_str} {family}".strip()
                 return full or None
@@ -1221,7 +1289,7 @@ ADAPTERS: list[IngestionAdapter] = [
 ]
 
 
-def select_adapter(raw_payload: str, content_type: Optional[str] = None) -> Optional[IngestionAdapter]:
+def select_adapter(raw_payload: str, content_type: str | None = None) -> IngestionAdapter | None:
     """Select the first adapter that can handle the given payload."""
     for adapter in ADAPTERS:
         if adapter.can_handle(raw_payload, content_type):

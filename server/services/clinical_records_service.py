@@ -5,22 +5,25 @@ the product was missing: the free-text `patient_profiles.allergies` narrative is
 retained, but `patient_allergies` is the source of truth used for order-time
 allergy checking (services/drug_safety_service.py).
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import re
-from datetime import datetime, timezone
-from typing import Any, Iterable
+from collections.abc import Iterable
+from datetime import UTC, datetime
+from typing import Any
 
 from database import db_session
+
 from services.drug_safety_service import classify_drug
 
 logger = logging.getLogger("orb.clinical_records")
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 # ── Allergies typed outside the allergy form ─────────────────────────────────
@@ -34,10 +37,29 @@ def _now() -> str:
 # Entries that mean "nothing to record". Charting one would put "nkda" on the
 # chart as an allergen.
 _NO_ALLERGY_ENTRIES = {
-    "nkda", "nka", "nkfa", "nil", "nill", "none", "no", "na", "n/a", "-", "--",
-    "unknown", "not known", "nil known", "none known", "not applicable",
-    "no allergy", "no allergies", "no known allergy", "no known allergies",
-    "no known drug allergy", "no known drug allergies", "nil significant",
+    "nkda",
+    "nka",
+    "nkfa",
+    "nil",
+    "nill",
+    "none",
+    "no",
+    "na",
+    "n/a",
+    "-",
+    "--",
+    "unknown",
+    "not known",
+    "nil known",
+    "none known",
+    "not applicable",
+    "no allergy",
+    "no allergies",
+    "no known allergy",
+    "no known allergies",
+    "no known drug allergy",
+    "no known drug allergies",
+    "nil significant",
 }
 
 
@@ -80,9 +102,15 @@ def allergy_entries(raw: Any) -> list[str]:
     return out
 
 
-def record_allergies_on(db, patient_id: str, substances: Iterable[str], *,
-                        source: str, recorded_by: str | None = None,
-                        recorded_at: str | None = None) -> list[str]:
+def record_allergies_on(
+    db,
+    patient_id: str,
+    substances: Iterable[str],
+    *,
+    source: str,
+    recorded_by: str | None = None,
+    recorded_at: str | None = None,
+) -> list[str]:
     """Write each allergen as an ACTIVE structured allergy, on ``db``.
 
     Runs on the caller's connection: a second connection inside an open write
@@ -108,8 +136,14 @@ def record_allergies_on(db, patient_id: str, substances: Iterable[str], *,
                     status, source, recorded_by, recorded_at)
                VALUES (?, ?, ?, NULL, 'unknown', 'active', ?, ?, ?)
                ON CONFLICT(patient_id, substance) DO NOTHING""",
-            (patient_id, substance_norm, classes[0] if classes else None,
-             source, recorded_by, stamp),
+            (
+                patient_id,
+                substance_norm,
+                classes[0] if classes else None,
+                source,
+                recorded_by,
+                stamp,
+            ),
         )
         if cur.rowcount:
             written.append(substance_norm)
@@ -142,8 +176,12 @@ def backfill_profile_allergies(db) -> dict:
             skipped_free_text += 1
             continue
         written = record_allergies_on(
-            db, patient_id, allergy_entries(parsed),
-            source="admission", recorded_by=None, recorded_at=updated_at,
+            db,
+            patient_id,
+            allergy_entries(parsed),
+            source="admission",
+            recorded_by=None,
+            recorded_at=updated_at,
         )
         if written:
             added += len(written)
@@ -152,16 +190,23 @@ def backfill_profile_allergies(db) -> dict:
         logger.info(
             "Admission allergy backfill: %d allerg(ies) charted for %d patient(s); "
             "%d free-text profile(s) left for a clinician",
-            added, patients, skipped_free_text,
+            added,
+            patients,
+            skipped_free_text,
         )
-    return {"added": added, "patients": patients,
-            "skipped_free_text": skipped_free_text}
+    return {"added": added, "patients": patients, "skipped_free_text": skipped_free_text}
 
 
 # ── Allergies ────────────────────────────────────────────────────────────────
-def add_allergy(patient_id: str, substance: str, *, reaction: str | None = None,
-                severity: str = "unknown", recorded_by: str | None = None,
-                source: str = "clinician") -> dict:
+def add_allergy(
+    patient_id: str,
+    substance: str,
+    *,
+    reaction: str | None = None,
+    severity: str = "unknown",
+    recorded_by: str | None = None,
+    source: str = "clinician",
+) -> dict:
     """Add (or reactivate/update) a structured allergy. Idempotent per
     (patient, substance) via the UNIQUE constraint — an upsert."""
     substance_norm = (substance or "").strip().lower()
@@ -185,8 +230,16 @@ def add_allergy(patient_id: str, substance: str, *, reaction: str | None = None,
                    source=excluded.source,
                    recorded_by=excluded.recorded_by,
                    recorded_at=excluded.recorded_at""",
-            (patient_id, substance_norm, substance_class, reaction, severity,
-             source, recorded_by, _now()),
+            (
+                patient_id,
+                substance_norm,
+                substance_class,
+                reaction,
+                severity,
+                source,
+                recorded_by,
+                _now(),
+            ),
         )
         row = db.execute(
             "SELECT * FROM patient_allergies WHERE patient_id = ? AND substance = ?",
@@ -220,9 +273,16 @@ def deactivate_allergy(allergy_id: int, patient_id: str) -> bool:
 
 
 # ── Problem list ─────────────────────────────────────────────────────────────
-def add_problem(patient_id: str, problem: str, *, icd10_code: str | None = None,
-                snomed_code: str | None = None, onset_date: str | None = None,
-                recorded_by: str | None = None, source: str = "clinician") -> dict:
+def add_problem(
+    patient_id: str,
+    problem: str,
+    *,
+    icd10_code: str | None = None,
+    snomed_code: str | None = None,
+    onset_date: str | None = None,
+    recorded_by: str | None = None,
+    source: str = "clinician",
+) -> dict:
     if not (problem or "").strip():
         raise ValueError("problem is required")
     with db_session() as db:
@@ -230,8 +290,16 @@ def add_problem(patient_id: str, problem: str, *, icd10_code: str | None = None,
             """INSERT INTO problem_list
                    (patient_id, problem, icd10_code, snomed_code, status, onset_date, source, recorded_by, recorded_at)
                VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)""",
-            (patient_id, problem.strip(), icd10_code, snomed_code, onset_date,
-             source, recorded_by, _now()),
+            (
+                patient_id,
+                problem.strip(),
+                icd10_code,
+                snomed_code,
+                onset_date,
+                source,
+                recorded_by,
+                _now(),
+            ),
         )
         row = db.execute("SELECT * FROM problem_list WHERE id = ?", (cur.lastrowid,)).fetchone()
     return dict(row)

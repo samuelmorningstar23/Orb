@@ -51,24 +51,24 @@ All handlers are plain `def`, so FastAPI runs them in a threadpool: everything
 below opens SQLite, and blocking the event loop is the failure mode this repo
 has shipped three production freezes from.
 """
+
 from __future__ import annotations
 
 import logging
 import uuid
-from typing import Optional
-
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from pydantic import BaseModel, Field
 
 import config
 from auth import get_current_user
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from permissions import (
     ADMIN_OVERVIEW,
     enforce_patient_scope,
     require_permission,
 )
-from services import nabh_service as svc
+from pydantic import BaseModel, Field
 from services.audit_service import log_audit_event
+
+from services import nabh_service as svc
 
 logger = logging.getLogger("orb.nabh_routes")
 
@@ -91,15 +91,19 @@ router = APIRouter(prefix="/api/nabh", tags=["NABH Accreditation Evidence"])
 REPORTER_ROLES = frozenset({"doctor", "clinician", "nurse", "pharmacist", "admin"})
 
 
-def staff_reporter(user: dict = Depends(get_current_user)) -> dict:
+_STAFF_REPORTER_USER_DEFAULT = Depends(get_current_user)
+
+
+def staff_reporter(user: dict = _STAFF_REPORTER_USER_DEFAULT) -> dict:
     """Any staff account may file a report. A patient account may not."""
     if (user.get("role") or "") not in REPORTER_ROLES:
         raise HTTPException(
             status_code=403,
             detail={
                 "error": "not_staff",
-                "message": ("The incident register is a staff surface. This "
-                            "account cannot file a report."),
+                "message": (
+                    "The incident register is a staff surface. This account cannot file a report."
+                ),
             },
         )
     return user
@@ -142,13 +146,19 @@ def _fail(exc: svc.NabhError) -> HTTPException:
         "future_incident": 422,
         "future_disposition": 422,
     }.get(exc.code, 400)
-    return HTTPException(status_code=status,
-                         detail={"error": exc.code, "message": str(exc)})
+    return HTTPException(status_code=status, detail={"error": exc.code, "message": str(exc)})
 
 
-def _audit(request: Request, user: Optional[dict], action: str, *, summary: str,
-           target_type: str, target_id: Optional[str] = None,
-           metadata: Optional[dict] = None) -> None:
+def _audit(
+    request: Request,
+    user: dict | None,
+    action: str,
+    *,
+    summary: str,
+    target_type: str,
+    target_id: str | int | None = None,
+    metadata: dict | None = None,
+) -> None:
     """Every NABH write leaves a trail.
 
     Category is `security` (fail-closed, awaited) rather than `clinical_access`:
@@ -174,7 +184,7 @@ def _audit(request: Request, user: Optional[dict], action: str, *, summary: str,
         actor_user_id=(user or {}).get("id"),
         actor_role=(user or {}).get("role"),
         target_type=target_type,
-        target_id=target_id,
+        target_id=str(target_id) if target_id is not None else None,
         request_path=str(request.url.path),
         http_method=request.method,
         metadata=metadata,
@@ -183,43 +193,44 @@ def _audit(request: Request, user: Optional[dict], action: str, *, summary: str,
 
 # ── Request bodies ───────────────────────────────────────────────────────────
 
+
 class IncidentIn(BaseModel):
     incident_type: str
     severity: str
     title: str = Field(min_length=1, max_length=200)
     description: str = Field(min_length=1, max_length=8000)
-    occurred_at: Optional[str] = None
-    ward: Optional[str] = None
-    department: Optional[str] = None
-    location: Optional[str] = None
-    patient_id: Optional[str] = None
+    occurred_at: str | None = None
+    ward: str | None = None
+    department: str | None = None
+    location: str | None = None
+    patient_id: str | None = None
     #: When true the register stores no reporter id and no reporter role, and
     #: the reporting time is truncated to the day. See ANONYMITY_STATEMENT.
     is_anonymous: bool = False
-    externally_reportable: Optional[bool] = None
+    externally_reportable: bool | None = None
 
 
 class NoteIn(BaseModel):
-    note: Optional[str] = None
+    note: str | None = None
 
 
 class InvestigationIn(BaseModel):
     summary: str = Field(min_length=1, max_length=8000)
-    root_cause: Optional[str] = None
-    contributing_factors: Optional[list[str]] = None
+    root_cause: str | None = None
+    contributing_factors: list[str] | None = None
 
 
 class ActionIn(BaseModel):
     description: str = Field(min_length=1, max_length=2000)
     action_type: str = "corrective"
-    owner_user_id: Optional[str] = None
-    owner_description: Optional[str] = None
-    due_date: Optional[str] = None
+    owner_user_id: str | None = None
+    owner_description: str | None = None
+    due_date: str | None = None
 
 
 class CloseIn(BaseModel):
-    closure_note: Optional[str] = None
-    no_action_reason: Optional[str] = None
+    closure_note: str | None = None
+    no_action_reason: str | None = None
 
 
 class ReasonIn(BaseModel):
@@ -229,15 +240,15 @@ class ReasonIn(BaseModel):
 class DispositionIn(BaseModel):
     patient_id: str
     disposition: str
-    occurred_at: Optional[str] = None
-    admission_id: Optional[str] = None
-    notes: Optional[str] = None
+    occurred_at: str | None = None
+    admission_id: str | None = None
+    notes: str | None = None
 
 
 class ExportIn(BaseModel):
-    period_start: Optional[str] = None
-    period_end: Optional[str] = None
-    ward: Optional[str] = None
+    period_start: str | None = None
+    period_end: str | None = None
+    ward: str | None = None
     #: DEFAULT FALSE, and it stays false unless somebody deliberately asks. A
     #: pack that leaves the hospital is the wrong place to discover it carried
     #: patient identifiers nobody needed.
@@ -246,9 +257,13 @@ class ExportIn(BaseModel):
 
 # ── Meta ─────────────────────────────────────────────────────────────────────
 
+
+_GET_META__DEFAULT = Depends(require_module)
+_GET_META_USER_DEFAULT = Depends(staff_reporter)
+
+
 @router.get("/meta")
-def get_meta(_: None = Depends(require_module),
-             user: dict = Depends(staff_reporter)) -> dict:
+def get_meta(_: None = _GET_META__DEFAULT, user: dict = _GET_META_USER_DEFAULT) -> dict:
     """The vocabulary the client builds its forms from — types, severities, the
     lifecycle, the indicator catalogue, the thresholds each indicator was
     computed under, and the anonymity statement."""
@@ -257,13 +272,21 @@ def get_meta(_: None = Depends(require_module),
 
 # ── Indicators ───────────────────────────────────────────────────────────────
 
+
+_GET_INDICATORS__DEFAULT = Depends(require_module)
+_GET_INDICATORS_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+_GET_INDICATORS_PERIOD_START_DEFAULT = Query(None, description="ISO date, inclusive")
+_GET_INDICATORS_PERIOD_END_DEFAULT = Query(None, description="ISO date, inclusive")
+_GET_INDICATORS_WARD_DEFAULT = Query(None)
+
+
 @router.get("/indicators")
 def get_indicators(
-    _: None = Depends(require_module),
-    user: dict = Depends(require_permission(ADMIN_OVERVIEW)),
-    period_start: Optional[str] = Query(None, description="ISO date, inclusive"),
-    period_end: Optional[str] = Query(None, description="ISO date, inclusive"),
-    ward: Optional[str] = Query(None),
+    _: None = _GET_INDICATORS__DEFAULT,
+    user: dict = _GET_INDICATORS_USER_DEFAULT,
+    period_start: str | None = _GET_INDICATORS_PERIOD_START_DEFAULT,
+    period_end: str | None = _GET_INDICATORS_PERIOD_END_DEFAULT,
+    ward: str | None = _GET_INDICATORS_WARD_DEFAULT,
 ) -> dict:
     """The quality-indicator dashboard for one period.
 
@@ -272,18 +295,25 @@ def get_indicators(
     missing. That is the point of the module.
     """
     try:
-        return svc.indicators(period_start=period_start, period_end=period_end,
-                              ward=ward)
+        return svc.indicators(period_start=period_start, period_end=period_end, ward=ward)
     except svc.NabhError as exc:
         raise _fail(exc) from exc
 
 
 # ── Incident register ────────────────────────────────────────────────────────
 
+
+_REPORT__DEFAULT = Depends(require_module)
+_REPORT_USER_DEFAULT = Depends(staff_reporter)
+
+
 @router.post("/incidents", status_code=201)
-def report(request: Request, body: IncidentIn,
-           _: None = Depends(require_module),
-           user: dict = Depends(staff_reporter)) -> dict:
+def report(
+    request: Request,
+    body: IncidentIn,
+    _: None = _REPORT__DEFAULT,
+    user: dict = _REPORT_USER_DEFAULT,
+) -> dict:
     """Report an incident, adverse event or near miss.
 
     THE LOWEST-PERMISSION WRITE IN THIS MODULE, on purpose. A register that only
@@ -326,30 +356,52 @@ def report(request: Request, body: IncidentIn,
     except svc.NabhError as exc:
         raise _fail(exc) from exc
 
-    _audit(request, None if body.is_anonymous else user, "nabh_incident_reported",
-           summary=(f"Incident {incident['reference']} reported "
-                    f"({incident['incident_type']}, {incident['severity']})"
-                    + (", anonymous" if body.is_anonymous else "")),
-           target_type="nabh_incident", target_id=incident["reference"],
-           metadata={"anonymous": bool(body.is_anonymous),
-                     "severity": incident["severity"],
-                     "incident_type": incident["incident_type"]})
+    _audit(
+        request,
+        None if body.is_anonymous else user,
+        "nabh_incident_reported",
+        summary=(
+            f"Incident {incident['reference']} reported "
+            f"({incident['incident_type']}, {incident['severity']})"
+            + (", anonymous" if body.is_anonymous else "")
+        ),
+        target_type="nabh_incident",
+        target_id=incident["reference"],
+        metadata={
+            "anonymous": bool(body.is_anonymous),
+            "severity": incident["severity"],
+            "incident_type": incident["incident_type"],
+        },
+    )
     return {"incident": incident, "anonymity_statement": svc.ANONYMITY_STATEMENT}
+
+
+_LIST_REGISTER__DEFAULT = Depends(require_module)
+_LIST_REGISTER_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+_LIST_REGISTER_PERIOD_START_DEFAULT = Query(None)
+_LIST_REGISTER_PERIOD_END_DEFAULT = Query(None)
+_LIST_REGISTER_STATUS_DEFAULT = Query(None)
+_LIST_REGISTER_INCIDENT_TYPE_DEFAULT = Query(None)
+_LIST_REGISTER_SEVERITY_DEFAULT = Query(None)
+_LIST_REGISTER_WARD_DEFAULT = Query(None)
+_LIST_REGISTER_PATIENT_ID_DEFAULT = Query(None)
+_LIST_REGISTER_INCLUDE_VOID_DEFAULT = Query(False)
+_LIST_REGISTER_LIMIT_DEFAULT = Query(200, ge=1, le=1000)
 
 
 @router.get("/incidents")
 def list_register(
-    _: None = Depends(require_module),
-    user: dict = Depends(require_permission(ADMIN_OVERVIEW)),
-    period_start: Optional[str] = Query(None),
-    period_end: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
-    incident_type: Optional[str] = Query(None),
-    severity: Optional[str] = Query(None),
-    ward: Optional[str] = Query(None),
-    patient_id: Optional[str] = Query(None),
-    include_void: bool = Query(False),
-    limit: int = Query(200, ge=1, le=1000),
+    _: None = _LIST_REGISTER__DEFAULT,
+    user: dict = _LIST_REGISTER_USER_DEFAULT,
+    period_start: str | None = _LIST_REGISTER_PERIOD_START_DEFAULT,
+    period_end: str | None = _LIST_REGISTER_PERIOD_END_DEFAULT,
+    status: str | None = _LIST_REGISTER_STATUS_DEFAULT,
+    incident_type: str | None = _LIST_REGISTER_INCIDENT_TYPE_DEFAULT,
+    severity: str | None = _LIST_REGISTER_SEVERITY_DEFAULT,
+    ward: str | None = _LIST_REGISTER_WARD_DEFAULT,
+    patient_id: str | None = _LIST_REGISTER_PATIENT_ID_DEFAULT,
+    include_void: bool = _LIST_REGISTER_INCLUDE_VOID_DEFAULT,
+    limit: int = _LIST_REGISTER_LIMIT_DEFAULT,
 ) -> dict:
     """The register, filtered.
 
@@ -360,131 +412,242 @@ def list_register(
     enforce_patient_scope(user, patient_id)
     try:
         return svc.list_incidents(
-            period_start=period_start, period_end=period_end, status=status,
-            incident_type=incident_type, severity=severity, ward=ward,
-            patient_id=patient_id, include_void=include_void, limit=limit)
+            period_start=period_start,
+            period_end=period_end,
+            status=status,
+            incident_type=incident_type,
+            severity=severity,
+            ward=ward,
+            patient_id=patient_id,
+            include_void=include_void,
+            limit=limit,
+        )
     except svc.NabhError as exc:
         raise _fail(exc) from exc
 
 
+_GET_ONE__DEFAULT = Depends(require_module)
+_GET_ONE_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+
+
 @router.get("/incidents/{incident_id}")
-def get_one(incident_id: int, _: None = Depends(require_module),
-            user: dict = Depends(require_permission(ADMIN_OVERVIEW))) -> dict:
+def get_one(
+    incident_id: int,
+    _: None = _GET_ONE__DEFAULT,
+    user: dict = _GET_ONE_USER_DEFAULT,
+) -> dict:
     try:
         return svc.get_incident(incident_id)
     except svc.NabhError as exc:
         raise _fail(exc) from exc
 
 
+_INVESTIGATE__DEFAULT = Depends(require_module)
+_INVESTIGATE_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+
+
 @router.post("/incidents/{incident_id}/investigate")
-def investigate(request: Request, incident_id: int, body: NoteIn,
-                _: None = Depends(require_module),
-                user: dict = Depends(require_permission(ADMIN_OVERVIEW))) -> dict:
+def investigate(
+    request: Request,
+    incident_id: int,
+    body: NoteIn,
+    _: None = _INVESTIGATE__DEFAULT,
+    user: dict = _INVESTIGATE_USER_DEFAULT,
+) -> dict:
     """Take the incident on: `reported` → `under_investigation`. Also the
     REOPEN path from `closed`, which is recorded as a reopen, never as an edit
     that erases the closure."""
     try:
-        incident = svc.start_investigation(incident_id, actor_user_id=user["id"],
-                                           note=body.note)
+        incident = svc.start_investigation(incident_id, actor_user_id=user["id"], note=body.note)
     except svc.NabhError as exc:
         raise _fail(exc) from exc
-    _audit(request, user, "nabh_incident_investigation_started",
-           summary=f"Investigation started on {incident['reference']}",
-           target_type="nabh_incident", target_id=incident["reference"])
+    _audit(
+        request,
+        user,
+        "nabh_incident_investigation_started",
+        summary=f"Investigation started on {incident['reference']}",
+        target_type="nabh_incident",
+        target_id=incident["reference"],
+    )
     return incident
+
+
+_RECORD_INVESTIGATION__DEFAULT = Depends(require_module)
+_RECORD_INVESTIGATION_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
 @router.post("/incidents/{incident_id}/investigation")
-def record_investigation(request: Request, incident_id: int, body: InvestigationIn,
-                         _: None = Depends(require_module),
-                         user: dict = Depends(require_permission(ADMIN_OVERVIEW))) -> dict:
+def record_investigation(
+    request: Request,
+    incident_id: int,
+    body: InvestigationIn,
+    _: None = _RECORD_INVESTIGATION__DEFAULT,
+    user: dict = _RECORD_INVESTIGATION_USER_DEFAULT,
+) -> dict:
     try:
         incident = svc.record_investigation(
-            incident_id, actor_user_id=user["id"], summary=body.summary,
+            incident_id,
+            actor_user_id=user["id"],
+            summary=body.summary,
             root_cause=body.root_cause,
-            contributing_factors=body.contributing_factors)
+            contributing_factors=body.contributing_factors,
+        )
     except svc.NabhError as exc:
         raise _fail(exc) from exc
-    _audit(request, user, "nabh_incident_investigated",
-           summary=f"Investigation recorded on {incident['reference']}",
-           target_type="nabh_incident", target_id=incident["reference"])
+    _audit(
+        request,
+        user,
+        "nabh_incident_investigated",
+        summary=f"Investigation recorded on {incident['reference']}",
+        target_type="nabh_incident",
+        target_id=incident["reference"],
+    )
     return incident
+
+
+_ADD_ACTION__DEFAULT = Depends(require_module)
+_ADD_ACTION_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
 @router.post("/incidents/{incident_id}/actions", status_code=201)
-def add_action(request: Request, incident_id: int, body: ActionIn,
-               _: None = Depends(require_module),
-               user: dict = Depends(require_permission(ADMIN_OVERVIEW))) -> dict:
+def add_action(
+    request: Request,
+    incident_id: int,
+    body: ActionIn,
+    _: None = _ADD_ACTION__DEFAULT,
+    user: dict = _ADD_ACTION_USER_DEFAULT,
+) -> dict:
     try:
         incident = svc.add_action(
-            incident_id, actor_user_id=user["id"], description=body.description,
-            action_type=body.action_type, owner_user_id=body.owner_user_id,
-            owner_description=body.owner_description, due_date=body.due_date)
+            incident_id,
+            actor_user_id=user["id"],
+            description=body.description,
+            action_type=body.action_type,
+            owner_user_id=body.owner_user_id,
+            owner_description=body.owner_description,
+            due_date=body.due_date,
+        )
     except svc.NabhError as exc:
         raise _fail(exc) from exc
-    _audit(request, user, "nabh_incident_action_added",
-           summary=f"Corrective action added to {incident['reference']}",
-           target_type="nabh_incident", target_id=incident["reference"])
+    _audit(
+        request,
+        user,
+        "nabh_incident_action_added",
+        summary=f"Corrective action added to {incident['reference']}",
+        target_type="nabh_incident",
+        target_id=incident["reference"],
+    )
     return incident
+
+
+_COMPLETE_ACTION__DEFAULT = Depends(require_module)
+_COMPLETE_ACTION_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
 @router.post("/incidents/{incident_id}/actions/{action_id}/complete")
-def complete_action(request: Request, incident_id: int, action_id: int, body: NoteIn,
-                    _: None = Depends(require_module),
-                    user: dict = Depends(require_permission(ADMIN_OVERVIEW))) -> dict:
+def complete_action(
+    request: Request,
+    incident_id: int,
+    action_id: int,
+    body: NoteIn,
+    _: None = _COMPLETE_ACTION__DEFAULT,
+    user: dict = _COMPLETE_ACTION_USER_DEFAULT,
+) -> dict:
     try:
-        incident = svc.complete_action(incident_id, action_id,
-                                       actor_user_id=user["id"], note=body.note)
+        incident = svc.complete_action(
+            incident_id, action_id, actor_user_id=user["id"], note=body.note
+        )
     except svc.NabhError as exc:
         raise _fail(exc) from exc
-    _audit(request, user, "nabh_incident_action_completed",
-           summary=f"Action {action_id} completed on {incident['reference']}",
-           target_type="nabh_incident", target_id=incident["reference"])
+    _audit(
+        request,
+        user,
+        "nabh_incident_action_completed",
+        summary=f"Action {action_id} completed on {incident['reference']}",
+        target_type="nabh_incident",
+        target_id=incident["reference"],
+    )
     return incident
+
+
+_CLOSE__DEFAULT = Depends(require_module)
+_CLOSE_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
 @router.post("/incidents/{incident_id}/close")
-def close(request: Request, incident_id: int, body: CloseIn,
-          _: None = Depends(require_module),
-          user: dict = Depends(require_permission(ADMIN_OVERVIEW))) -> dict:
+def close(
+    request: Request,
+    incident_id: int,
+    body: CloseIn,
+    _: None = _CLOSE__DEFAULT,
+    user: dict = _CLOSE_USER_DEFAULT,
+) -> dict:
     """Close an incident. Refuses on an unrecorded investigation, on outstanding
     open actions, and on a closure with neither an action nor a reason."""
     try:
-        incident = svc.close_incident(incident_id, actor_user_id=user["id"],
-                                      closure_note=body.closure_note,
-                                      no_action_reason=body.no_action_reason)
+        incident = svc.close_incident(
+            incident_id,
+            actor_user_id=user["id"],
+            closure_note=body.closure_note,
+            no_action_reason=body.no_action_reason,
+        )
     except svc.NabhError as exc:
         raise _fail(exc) from exc
-    _audit(request, user, "nabh_incident_closed",
-           summary=f"Incident {incident['reference']} closed",
-           target_type="nabh_incident", target_id=incident["reference"])
+    _audit(
+        request,
+        user,
+        "nabh_incident_closed",
+        summary=f"Incident {incident['reference']} closed",
+        target_type="nabh_incident",
+        target_id=incident["reference"],
+    )
     return incident
 
 
+_VOID__DEFAULT = Depends(require_module)
+_VOID_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+
+
 @router.post("/incidents/{incident_id}/void")
-def void(request: Request, incident_id: int, body: ReasonIn,
-         _: None = Depends(require_module),
-         user: dict = Depends(require_permission(ADMIN_OVERVIEW))) -> dict:
+def void(
+    request: Request,
+    incident_id: int,
+    body: ReasonIn,
+    _: None = _VOID__DEFAULT,
+    user: dict = _VOID_USER_DEFAULT,
+) -> dict:
     """Mark a report void — a duplicate, or something that turned out not to
     have happened. THE ROW STAYS: there is no delete in this module."""
     try:
-        incident = svc.void_incident(incident_id, actor_user_id=user["id"],
-                                     reason=body.reason)
+        incident = svc.void_incident(incident_id, actor_user_id=user["id"], reason=body.reason)
     except svc.NabhError as exc:
         raise _fail(exc) from exc
-    _audit(request, user, "nabh_incident_voided",
-           summary=f"Incident {incident['reference']} voided",
-           target_type="nabh_incident", target_id=incident["reference"],
-           metadata={"reason": body.reason})
+    _audit(
+        request,
+        user,
+        "nabh_incident_voided",
+        summary=f"Incident {incident['reference']} voided",
+        target_type="nabh_incident",
+        target_id=incident["reference"],
+        metadata={"reason": body.reason},
+    )
     return incident
 
 
 # ── Discharge disposition ────────────────────────────────────────────────────
 
+
+_RECORD_DISPOSITION__DEFAULT = Depends(require_module)
+_RECORD_DISPOSITION_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+
+
 @router.post("/dispositions", status_code=201)
-def record_disposition(request: Request, body: DispositionIn,
-                       _: None = Depends(require_module),
-                       user: dict = Depends(require_permission(ADMIN_OVERVIEW))) -> dict:
+def record_disposition(
+    request: Request,
+    body: DispositionIn,
+    _: None = _RECORD_DISPOSITION__DEFAULT,
+    user: dict = _RECORD_DISPOSITION_USER_DEFAULT,
+) -> dict:
     """Record how one admission ended — routine, referred, LAMA, DAMA,
     absconded or death.
 
@@ -501,37 +664,62 @@ def record_disposition(request: Request, body: DispositionIn,
     enforce_patient_scope(user, body.patient_id)
     try:
         row = svc.record_disposition(
-            patient_id=body.patient_id, disposition=body.disposition,
-            occurred_at=body.occurred_at, admission_id=body.admission_id,
-            recorded_by=user["id"], notes=body.notes)
+            patient_id=body.patient_id,
+            disposition=body.disposition,
+            occurred_at=body.occurred_at,
+            admission_id=body.admission_id,
+            recorded_by=user["id"],
+            notes=body.notes,
+        )
     except svc.NabhError as exc:
         raise _fail(exc) from exc
-    _audit(request, user, "nabh_disposition_recorded",
-           summary=f"Discharge disposition recorded: {body.disposition}",
-           target_type="nabh_disposition", target_id=str(row.get("id")),
-           metadata={"disposition": body.disposition})
+    _audit(
+        request,
+        user,
+        "nabh_disposition_recorded",
+        summary=f"Discharge disposition recorded: {body.disposition}",
+        target_type="nabh_disposition",
+        target_id=str(row.get("id")),
+        metadata={"disposition": body.disposition},
+    )
     return row
 
 
+_LIST_DISPOSITIONS__DEFAULT = Depends(require_module)
+_LIST_DISPOSITIONS_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+_LIST_DISPOSITIONS_PERIOD_START_DEFAULT = Query(None)
+_LIST_DISPOSITIONS_PERIOD_END_DEFAULT = Query(None)
+_LIST_DISPOSITIONS_LIMIT_DEFAULT = Query(500, ge=1, le=2000)
+
+
 @router.get("/dispositions")
-def list_dispositions(_: None = Depends(require_module),
-                      user: dict = Depends(require_permission(ADMIN_OVERVIEW)),
-                      period_start: Optional[str] = Query(None),
-                      period_end: Optional[str] = Query(None),
-                      limit: int = Query(500, ge=1, le=2000)) -> dict:
+def list_dispositions(
+    _: None = _LIST_DISPOSITIONS__DEFAULT,
+    user: dict = _LIST_DISPOSITIONS_USER_DEFAULT,
+    period_start: str | None = _LIST_DISPOSITIONS_PERIOD_START_DEFAULT,
+    period_end: str | None = _LIST_DISPOSITIONS_PERIOD_END_DEFAULT,
+    limit: int = _LIST_DISPOSITIONS_LIMIT_DEFAULT,
+) -> dict:
     try:
-        return svc.list_dispositions(period_start=period_start,
-                                     period_end=period_end, limit=limit)
+        return svc.list_dispositions(period_start=period_start, period_end=period_end, limit=limit)
     except svc.NabhError as exc:
         raise _fail(exc) from exc
 
 
 # ── Evidence pack ────────────────────────────────────────────────────────────
 
+
+_EXPORT_PACK__DEFAULT = Depends(require_module)
+_EXPORT_PACK_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+
+
 @router.post("/export")
-def export_pack(request: Request, body: ExportIn,
-                _: None = Depends(require_module),
-                user: dict = Depends(require_permission(ADMIN_OVERVIEW))) -> dict:
+def export_pack(
+    request: Request,
+    body: ExportIn,
+    _: None = _EXPORT_PACK__DEFAULT,
+    user: dict = _EXPORT_PACK_USER_DEFAULT,
+) -> dict:
     """Generate the date-ranged evidence pack AND log that it was generated.
 
     POST, not GET, because it writes: `nabh_evidence_exports` records who
@@ -541,27 +729,45 @@ def export_pack(request: Request, body: ExportIn,
     """
     try:
         pack = svc.record_evidence_export(
-            period_start=body.period_start, period_end=body.period_end,
-            ward=body.ward, generated_by=user["id"],
-            include_patient_identifiers=body.include_patient_identifiers)
+            period_start=body.period_start,
+            period_end=body.period_end,
+            ward=body.ward,
+            generated_by=user["id"],
+            include_patient_identifiers=body.include_patient_identifiers,
+        )
     except svc.NabhError as exc:
         raise _fail(exc) from exc
-    _audit(request, user, "nabh_evidence_pack_generated",
-           summary=(f"NABH evidence pack {pack['reference']} generated for "
-                    f"{pack['period']['start_date']}..{pack['period']['end_date']}"),
-           target_type="nabh_evidence_pack", target_id=pack["reference"],
-           metadata={"sha256": pack["content_sha256"],
-                     "include_patient_identifiers": body.include_patient_identifiers,
-                     "indicators_reported": pack["indicator_summary"]["reported"],
-                     "indicators_not_collected":
-                         pack["indicator_summary"]["not_collected"]})
+    _audit(
+        request,
+        user,
+        "nabh_evidence_pack_generated",
+        summary=(
+            f"NABH evidence pack {pack['reference']} generated for "
+            f"{pack['period']['start_date']}..{pack['period']['end_date']}"
+        ),
+        target_type="nabh_evidence_pack",
+        target_id=pack["reference"],
+        metadata={
+            "sha256": pack["content_sha256"],
+            "include_patient_identifiers": body.include_patient_identifiers,
+            "indicators_reported": pack["indicator_summary"]["reported"],
+            "indicators_not_collected": pack["indicator_summary"]["not_collected"],
+        },
+    )
     return pack
 
 
+_EXPORT_PACK_MARKDOWN__DEFAULT = Depends(require_module)
+_EXPORT_PACK_MARKDOWN_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+
+
 @router.post("/export.md")
-def export_pack_markdown(request: Request, body: ExportIn,
-                         _: None = Depends(require_module),
-                         user: dict = Depends(require_permission(ADMIN_OVERVIEW))) -> Response:
+def export_pack_markdown(
+    request: Request,
+    body: ExportIn,
+    _: None = _EXPORT_PACK_MARKDOWN__DEFAULT,
+    user: dict = _EXPORT_PACK_MARKDOWN_USER_DEFAULT,
+) -> Response:
     """The same pack, rendered as a Markdown document a person can read.
 
     Same honesty rule as the JSON: a non-reported indicator prints INSUFFICIENT
@@ -570,26 +776,40 @@ def export_pack_markdown(request: Request, body: ExportIn,
     """
     try:
         pack = svc.record_evidence_export(
-            period_start=body.period_start, period_end=body.period_end,
-            ward=body.ward, generated_by=user["id"],
-            include_patient_identifiers=body.include_patient_identifiers)
+            period_start=body.period_start,
+            period_end=body.period_end,
+            ward=body.ward,
+            generated_by=user["id"],
+            include_patient_identifiers=body.include_patient_identifiers,
+        )
     except svc.NabhError as exc:
         raise _fail(exc) from exc
-    _audit(request, user, "nabh_evidence_pack_generated",
-           summary=f"NABH evidence pack {pack['reference']} generated (markdown)",
-           target_type="nabh_evidence_pack", target_id=pack["reference"],
-           metadata={"sha256": pack["content_sha256"], "format": "markdown"})
+    _audit(
+        request,
+        user,
+        "nabh_evidence_pack_generated",
+        summary=f"NABH evidence pack {pack['reference']} generated (markdown)",
+        target_type="nabh_evidence_pack",
+        target_id=pack["reference"],
+        metadata={"sha256": pack["content_sha256"], "format": "markdown"},
+    )
     return Response(
         content=svc.render_pack_markdown(pack),
         media_type="text/markdown; charset=utf-8",
-        headers={"Content-Disposition":
-                 f'attachment; filename="nabh-pack-{pack["reference"]}.md"'},
+        headers={"Content-Disposition": f'attachment; filename="nabh-pack-{pack["reference"]}.md"'},
     )
 
 
+_LIST_EXPORTS__DEFAULT = Depends(require_module)
+_LIST_EXPORTS_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+_LIST_EXPORTS_LIMIT_DEFAULT = Query(50, ge=1, le=500)
+
+
 @router.get("/exports")
-def list_exports(_: None = Depends(require_module),
-                 user: dict = Depends(require_permission(ADMIN_OVERVIEW)),
-                 limit: int = Query(50, ge=1, le=500)) -> dict:
+def list_exports(
+    _: None = _LIST_EXPORTS__DEFAULT,
+    user: dict = _LIST_EXPORTS_USER_DEFAULT,
+    limit: int = _LIST_EXPORTS_LIMIT_DEFAULT,
+) -> dict:
     """Every pack this hospital has produced, newest first, with its digest."""
     return svc.list_evidence_exports(limit=limit)

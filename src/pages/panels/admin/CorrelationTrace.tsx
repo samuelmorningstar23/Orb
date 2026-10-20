@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { getAuditLogs, type AuditLog } from '../../../api/client'
 import { actorLabel } from '../../../lib/actorLabel'
 import { OutcomeBadge } from './AdminBadges'
@@ -16,8 +16,7 @@ export default function CorrelationTrace({ correlationId }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [searchId, setSearchId] = useState(correlationId || '')
 
-  const fetchTrace = (id?: string) => {
-    const cid = id || searchId
+  const fetchTrace = useCallback((cid: string) => {
     if (!cid.trim()) return
     setLoading(true)
     setError(null)
@@ -25,7 +24,7 @@ export default function CorrelationTrace({ correlationId }: Props) {
       .then((res) => setEvents(res.logs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())))
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
-  }
+  }, [])
 
   useEffect(() => {
     if (correlationId) {
@@ -33,7 +32,7 @@ export default function CorrelationTrace({ correlationId }: Props) {
       setSearchId(correlationId)
       fetchTrace(correlationId)
     }
-  }, [correlationId])
+  }, [correlationId, fetchTrace])
 
   const formatTime = (ts: string) => {
     const d = new Date(ts)
@@ -63,16 +62,16 @@ export default function CorrelationTrace({ correlationId }: Props) {
           placeholder="Enter correlation ID to trace..."
           value={searchId}
           onChange={(e) => setSearchId(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && fetchTrace()}
+          onKeyDown={(e) => e.key === 'Enter' && fetchTrace(searchId)}
         />
-        <button className="admin-filter-btn" onClick={() => fetchTrace()}>Trace</button>
+        <button className="admin-filter-btn" onClick={() => fetchTrace(searchId)}>Trace</button>
       </div>
 
       {/* ── Timeline ── */}
       {loading ? (
         <AdminLoadingState message="Tracing pipeline..." />
       ) : error ? (
-        <AdminErrorState error={error} onRetry={() => fetchTrace()} />
+        <AdminErrorState error={error} onRetry={() => fetchTrace(searchId)} />
       ) : !searchId && events.length === 0 ? (
         <AdminEmptyState
           title="Enter a correlation ID"

@@ -71,14 +71,17 @@ CONVENTIONS (shared with services/billing_masters.py)
   * No foreign keys exist on these tables (migration 20), so a bad id yields an
     empty result and an explicit error, never a failed clinical write.
 """
+
 from __future__ import annotations
 
 import logging
 import uuid
-from datetime import date, datetime, timezone
-from typing import Any, Optional, Sequence
+from collections.abc import Sequence
+from datetime import UTC, date, datetime
+from typing import Any, Literal, overload
 
 from database import db_session
+
 from services import facility_identity
 from services.billing_masters import (
     MAIN_FACILITY_ID,
@@ -142,6 +145,7 @@ __all__ = [
 
 # ── Errors ───────────────────────────────────────────────────────────────────
 
+
 class PaymentError(ValueError):
     """A money operation the rules refuse: a zero receipt, a refund larger than
     what was paid, a discount approved by the person who asked for it."""
@@ -163,19 +167,40 @@ class ReconciliationError(PaymentError):
 # ── Vocabulary (mirrors the CHECK constraints in migration 20) ───────────────
 
 #: `payments.method`.
-PAYMENT_METHODS: frozenset[str] = frozenset({
-    "cash", "card", "upi", "netbanking", "cheque", "dd", "neft", "rtgs",
-    "wallet", "insurance", "scheme", "adjustment",
-})
+PAYMENT_METHODS: frozenset[str] = frozenset(
+    {
+        "cash",
+        "card",
+        "upi",
+        "netbanking",
+        "cheque",
+        "dd",
+        "neft",
+        "rtgs",
+        "wallet",
+        "insurance",
+        "scheme",
+        "adjustment",
+    }
+)
 
 #: Methods that MUST carry a reference number. A card slip, a UPI UTR, a cheque
 #: number — without one the payment cannot be matched to the bank statement at
 #: month end, and an unmatchable payment is indistinguishable from one that never
 #: arrived. Cash has nothing to reference; 'adjustment' is an internal transfer
 #: between Orb's own ledgers and references the document that caused it.
-REFERENCE_REQUIRED_METHODS: frozenset[str] = frozenset({
-    "card", "upi", "netbanking", "cheque", "dd", "neft", "rtgs", "wallet",
-})
+REFERENCE_REQUIRED_METHODS: frozenset[str] = frozenset(
+    {
+        "card",
+        "upi",
+        "netbanking",
+        "cheque",
+        "dd",
+        "neft",
+        "rtgs",
+        "wallet",
+    }
+)
 
 #: What lands in the cash drawer and therefore has to be counted at shift end.
 CASH_METHODS: frozenset[str] = frozenset({"cash"})
@@ -189,15 +214,30 @@ UNATTRIBUTED_CASH_NOTICE = (
 
 #: Purposes a MONEY-IN receipt may carry. 'refund' and 'write_off' are produced
 #: by their own paths and are not accepted from a caller here.
-RECEIPT_PURPOSES: frozenset[str] = frozenset({
-    "advance", "deposit", "invoice_payment", "settlement",
-})
+RECEIPT_PURPOSES: frozenset[str] = frozenset(
+    {
+        "advance",
+        "deposit",
+        "invoice_payment",
+        "settlement",
+    }
+)
 
 #: Refund methods (migration 20 excludes insurance/scheme — a TPA settlement is
 #: not refunded over a counter).
-REFUND_METHODS: frozenset[str] = frozenset({
-    "cash", "card", "upi", "netbanking", "cheque", "dd", "neft", "rtgs", "adjustment",
-})
+REFUND_METHODS: frozenset[str] = frozenset(
+    {
+        "cash",
+        "card",
+        "upi",
+        "netbanking",
+        "cheque",
+        "dd",
+        "neft",
+        "rtgs",
+        "adjustment",
+    }
+)
 
 #: Statuses whose money is REAL — counted, refundable, reconciled.
 LIVE_PAYMENT_STATUSES: tuple[str, ...] = ("received", "cleared")
@@ -225,15 +265,30 @@ UNALLOCATABLE_INVOICE_STATUSES: frozenset[str] = frozenset({"cancelled", "void"}
 #: The columns `amend_payment` exists to protect. Everything a receipt asserts
 #: about the transaction lives here; only the lifecycle columns (status,
 #: cancelled_*) are writable, and only by `reverse_payment`.
-IMMUTABLE_PAYMENT_FIELDS: frozenset[str] = frozenset({
-    "receipt_number", "patient_id", "admission_id", "invoice_id", "payer_id",
-    "direction", "amount_paise", "method", "reference_no", "bank_name",
-    "instrument_date", "purpose", "counter_session_id", "received_by",
-    "received_at", "idempotency_key", "notes",
-    # Who issued it, fixed when the number was assigned (migration 72, whose
-    # trigger refuses any later change).
-    *facility_identity.SNAPSHOT_COLUMNS,
-})
+IMMUTABLE_PAYMENT_FIELDS: frozenset[str] = frozenset(
+    {
+        "receipt_number",
+        "patient_id",
+        "admission_id",
+        "invoice_id",
+        "payer_id",
+        "direction",
+        "amount_paise",
+        "method",
+        "reference_no",
+        "bank_name",
+        "instrument_date",
+        "purpose",
+        "counter_session_id",
+        "received_by",
+        "received_at",
+        "idempotency_key",
+        "notes",
+        # Who issued it, fixed when the number was assigned (migration 72, whose
+        # trigger refuses any later change).
+        *facility_identity.SNAPSHOT_COLUMNS,
+    }
+)
 
 _MAX_TEXT = 2000
 _MAX_REF = 120
@@ -241,12 +296,32 @@ _MAX_REF = 120
 
 # ── Small helpers ────────────────────────────────────────────────────────────
 
+
 def _row(r) -> dict:
     return {k: r[k] for k in r.keys()}
 
 
-def _text(value: Optional[str], name: str, *, required: bool = False,
-          max_len: int = _MAX_TEXT) -> Optional[str]:
+@overload
+def _text(
+    value: str | None, name: str, *, required: Literal[True], max_len: int = _MAX_TEXT
+) -> str: ...
+
+
+@overload
+def _text(
+    value: str | None, name: str, *, required: Literal[False] = False, max_len: int = _MAX_TEXT
+) -> str | None: ...
+
+
+@overload
+def _text(
+    value: str | None, name: str, *, required: bool = False, max_len: int = _MAX_TEXT
+) -> str | None: ...
+
+
+def _text(
+    value: str | None, name: str, *, required: bool = False, max_len: int = _MAX_TEXT
+) -> str | None:
     if value is None:
         if required:
             raise PaymentError(f"{name} is required")
@@ -279,10 +354,10 @@ def _positive_paise(value: Any, name: str) -> int:
 def _utc_now_str() -> str:
     """The textual shape SQLite's CURRENT_TIMESTAMP writes, so rows inserted by
     this module sort and compare identically to rows inserted by a DEFAULT."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _iso_date(value: Optional[str], name: str) -> Optional[str]:
+def _iso_date(value: str | None, name: str) -> str | None:
     if value is None:
         return None
     text = _text(value, name, max_len=32)
@@ -304,8 +379,9 @@ def _receipt_series_is_configured(db, facility_id: int = MAIN_FACILITY_ID) -> bo
 _SERIES_WORDS = {"RCPT": "receipt", "REF": "refund"}
 
 
-def _next_number(series_code: str, *, patient_id: Optional[str],
-                 admission_id: Optional[str] = None) -> dict:
+def _next_number(
+    series_code: str, *, patient_id: str | None, admission_id: str | None = None
+) -> dict:
     """The next number of the series of the facility the document belongs to
     (multisite-7a): the facility its supplier snapshot is taken for, which is
     facility 1 while only one is on record. The answer adds `facility_id`.
@@ -315,7 +391,8 @@ def _next_number(series_code: str, *, patient_id: Optional[str],
     series."""
     with db_session() as db:
         facility_id = facility_identity.document_facility_id(
-            db, patient_id=patient_id, admission_id=admission_id)
+            db, patient_id=patient_id, admission_id=admission_id
+        )
     try:
         doc = next_document_number(series_code, facility_id=facility_id)
     except SeriesNotSetUp as exc:
@@ -329,6 +406,7 @@ def _next_number(series_code: str, *, patient_id: Optional[str],
 
 
 # ── Views (what a screen and an API response receive) ────────────────────────
+
 
 def is_unattributed_cash(row: Any) -> bool:
     """Cash that belongs to no drawer: a CASH method with no counter session.
@@ -492,10 +570,19 @@ def _session_view(row: dict) -> dict:
 
 # ── Audit ────────────────────────────────────────────────────────────────────
 
-def _audit(db, *, action: str, outcome: str, actor: Optional[str],
-           patient_id: Optional[str] = None, target_type: Optional[str] = None,
-           target_id: Optional[str] = None, summary: str = "",
-           metadata: Optional[dict] = None) -> None:
+
+def _audit(
+    db,
+    *,
+    action: str,
+    outcome: str,
+    actor: str | None,
+    patient_id: str | None = None,
+    target_type: str | None = None,
+    target_id: str | int | None = None,
+    summary: str = "",
+    metadata: dict | None = None,
+) -> None:
     """Attribute a money movement to a person, on the tamper-evident chain.
 
     Category 'financial' is deliberately NOT one of the fail-closed categories
@@ -525,6 +612,7 @@ def _audit(db, *, action: str, outcome: str, actor: Optional[str],
 
 # ── Invoice coupling (read-mostly; this module owns only the PAID columns) ───
 
+
 def _load_invoice(db, invoice_id: int) -> dict:
     row = db.execute("SELECT * FROM invoices WHERE id = ?", (int(invoice_id),)).fetchone()
     if row is None:
@@ -532,8 +620,9 @@ def _load_invoice(db, invoice_id: int) -> dict:
     return _row(row)
 
 
-def _load_patient_invoice(db, invoice_id: int, patient_id: str, *,
-                          then: str = "Nothing was taken.") -> dict:
+def _load_patient_invoice(
+    db, invoice_id: int, patient_id: str, *, then: str = "Nothing was taken."
+) -> dict:
     """The invoice, refused unless it is THIS patient's.
 
     Invoice ids are small sequential integers typed at a counter, so one
@@ -556,8 +645,9 @@ def invoice_for_payment(patient_id: str, invoice_id: int) -> dict:
     """
     patient_id = _text(patient_id, "patient_id", required=True, max_len=64)
     with db_session() as db:
-        invoice = _load_patient_invoice(db, int(invoice_id), patient_id,
-                                        then="Check the invoice number.")
+        invoice = _load_patient_invoice(
+            db, int(invoice_id), patient_id, then="Check the invoice number."
+        )
         due = _invoice_due_paise(db, invoice)
         person = db.execute("SELECT name FROM patients WHERE id = ?", (patient_id,)).fetchone()
     payable = int(invoice["payable_paise"] or 0)
@@ -587,8 +677,7 @@ OPEN_INVOICE_STATUSES: tuple[str, ...] = ("issued", "partially_paid")
 PATIENT_SEARCH_MIN_CHARS = 2
 
 
-def _require_registered_patient(db, patient_id: str, *,
-                                then: str = "Nothing was taken.") -> dict:
+def _require_registered_patient(db, patient_id: str, *, then: str = "Nothing was taken.") -> dict:
     """The patient row, or a refusal a clerk can act on.
 
     Money tables carry no foreign keys (migration 20, rule 1), so until this
@@ -596,9 +685,7 @@ def _require_registered_patient(db, patient_id: str, *,
     into the Patient ID box, and that money then belonged to nobody the
     hospital could find. Checked before a document number is spent.
     """
-    row = db.execute(
-        "SELECT id, name, mrn FROM patients WHERE id = ?", (patient_id,)
-    ).fetchone()
+    row = db.execute("SELECT id, name, mrn FROM patients WHERE id = ?", (patient_id,)).fetchone()
     if row is None:
         raise PaymentError(
             f"No patient with ID {patient_id} is registered. Check the ID, or "
@@ -610,11 +697,12 @@ def _require_registered_patient(db, patient_id: str, *,
 def _chunks(ids: Sequence[str], size: int = 400):
     """Keep an IN (...) list under SQLite's bound-variable ceiling."""
     for start in range(0, len(ids), size):
-        yield ids[start:start + size]
+        yield ids[start : start + size]
 
 
-def attach_people(rows: list[dict], *, dept: Optional[str] = None,
-                  staff_keys: Sequence[str] = ()) -> list[dict]:
+def attach_people(
+    rows: list[dict], *, dept: str | None = None, staff_keys: Sequence[str] = ()
+) -> list[dict]:
     """Put names on a list a person will read: the patient's name and MRN, and
     the name of each member of staff named in `staff_keys`.
 
@@ -633,11 +721,14 @@ def attach_people(rows: list[dict], *, dept: Optional[str] = None,
     staff: dict[str, str] = {}
     with db_session() as db:
         for chunk in _chunks(patient_ids):
-            sql = (f"SELECT p.id, p.name, p.mrn FROM patients p "
-                   f"WHERE p.id IN ({','.join('?' * len(chunk))})")
+            sql = (
+                f"SELECT p.id, p.name, p.mrn FROM patients p "
+                f"WHERE p.id IN ({','.join('?' * len(chunk))})"
+            )
             args: list = list(chunk)
             if dept is not None:
                 from permissions import PATIENT_DEPARTMENT_SQL
+
                 sql += f" AND {PATIENT_DEPARTMENT_SQL} = ?"
                 args.append(dept)
             for r in db.execute(sql, args).fetchall():
@@ -659,8 +750,7 @@ def attach_people(rows: list[dict], *, dept: Optional[str] = None,
     return rows
 
 
-def search_patients(query: Optional[str], *, dept: Optional[str] = None,
-                    limit: int = 20) -> list[dict]:
+def search_patients(query: str | None, *, dept: str | None = None, limit: int = 20) -> list[dict]:
     """Patients the counter can take money for, by name, MRN, bed or exact ID.
 
     Who they are and where they are, nothing clinical: no diagnosis, no risk.
@@ -683,6 +773,7 @@ def search_patients(query: Optional[str], *, dept: Optional[str] = None,
     args: list = [text, like, like, like]
     if dept is not None:
         from permissions import PATIENT_DEPARTMENT_SQL
+
         sql += f" AND {PATIENT_DEPARTMENT_SQL} = ?"
         args.append(dept)
     sql += (
@@ -692,8 +783,14 @@ def search_patients(query: Optional[str], *, dept: Optional[str] = None,
     args.extend([text, like, max(1, min(int(limit), 50))])
     with db_session() as db:
         return [
-            {"id": r["id"], "name": r["name"], "mrn": r["mrn"], "bed": r["bed"],
-             "ward": r["ward"], "status": r["status"]}
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "mrn": r["mrn"],
+                "bed": r["bed"],
+                "ward": r["ward"],
+                "status": r["status"],
+            }
             for r in db.execute(sql, args).fetchall()
         ]
 
@@ -706,28 +803,33 @@ def open_invoices_for_payment(patient_id: str) -> list[dict]:
     marks = ",".join("?" * len(OPEN_INVOICE_STATUSES))
     out: list[dict] = []
     with db_session() as db:
-        rows = [_row(r) for r in db.execute(
-            f"SELECT * FROM invoices WHERE patient_id = ? AND status IN ({marks}) "
-            "AND invoice_type != 'credit_note' "
-            "ORDER BY COALESCE(issued_at, created_at), id",
-            (patient_id, *OPEN_INVOICE_STATUSES),
-        ).fetchall()]
+        rows = [
+            _row(r)
+            for r in db.execute(
+                f"SELECT * FROM invoices WHERE patient_id = ? AND status IN ({marks}) "
+                "AND invoice_type != 'credit_note' "
+                "ORDER BY COALESCE(issued_at, created_at), id",
+                (patient_id, *OPEN_INVOICE_STATUSES),
+            ).fetchall()
+        ]
         for inv in rows:
             due = _invoice_due_paise(db, inv)
             if due <= 0:
                 continue
             payable = int(inv["payable_paise"] or 0)
-            out.append({
-                "invoice_id": int(inv["id"]),
-                "invoice_number": inv["invoice_number"],
-                "invoice_type": inv["invoice_type"],
-                "status": inv["status"],
-                "issued_at": inv["issued_at"],
-                "payable_paise": payable,
-                "payable_display": format_inr(payable),
-                "due_paise": due,
-                "due_display": format_inr(due),
-            })
+            out.append(
+                {
+                    "invoice_id": int(inv["id"]),
+                    "invoice_number": inv["invoice_number"],
+                    "invoice_type": inv["invoice_type"],
+                    "status": inv["status"],
+                    "issued_at": inv["issued_at"],
+                    "payable_paise": payable,
+                    "payable_display": format_inr(payable),
+                    "due_paise": due,
+                    "due_display": format_inr(due),
+                }
+            )
     return out
 
 
@@ -783,7 +885,8 @@ def _recompute_invoice(db, invoice_id: int) -> dict:
 
 # ── Deposits ─────────────────────────────────────────────────────────────────
 
-def _deposit_balance(db, patient_id: str, admission_id: Optional[str] = None) -> int:
+
+def _deposit_balance(db, patient_id: str, admission_id: str | None = None) -> int:
     """SUM of the signed ledger. `patient_deposits.amount_paise` is the one
     signed money column in the spine precisely so this is a single SUM."""
     sql = "SELECT COALESCE(SUM(amount_paise), 0) AS s FROM patient_deposits WHERE patient_id = ?"
@@ -794,28 +897,47 @@ def _deposit_balance(db, patient_id: str, admission_id: Optional[str] = None) ->
     return int(db.execute(sql, tuple(args)).fetchone()["s"])
 
 
-def _insert_deposit(db, *, patient_id: str, movement: str, amount_paise: int,
-                    admission_id: Optional[str] = None, payment_id: Optional[int] = None,
-                    invoice_id: Optional[int] = None, created_by: Optional[str] = None,
-                    notes: Optional[str] = None) -> int:
+def _insert_deposit(
+    db,
+    *,
+    patient_id: str,
+    movement: str,
+    amount_paise: int,
+    admission_id: str | None = None,
+    payment_id: int | None = None,
+    invoice_id: int | None = None,
+    created_by: str | None = None,
+    notes: str | None = None,
+) -> int:
     cur = db.execute(
         "INSERT INTO patient_deposits (patient_id, admission_id, movement, amount_paise, "
         "payment_id, invoice_id, created_by, created_at, notes) VALUES (?,?,?,?,?,?,?,?,?)",
-        (patient_id, admission_id, movement, assert_paise(amount_paise), payment_id,
-         invoice_id, created_by, _utc_now_str(), notes),
+        (
+            patient_id,
+            admission_id,
+            movement,
+            assert_paise(amount_paise),
+            payment_id,
+            invoice_id,
+            created_by,
+            _utc_now_str(),
+            notes,
+        ),
     )
     return int(cur.lastrowid)
 
 
-def deposit_balance(patient_id: str, *, admission_id: Optional[str] = None) -> dict:
+def deposit_balance(patient_id: str, *, admission_id: str | None = None) -> dict:
     """What the hospital is holding for this patient, right now."""
     patient_id = _text(patient_id, "patient_id", required=True, max_len=64)
     with db_session() as db:
         balance = _deposit_balance(db, patient_id, admission_id)
-        count = int(db.execute(
-            "SELECT COUNT(*) AS c FROM patient_deposits WHERE patient_id = ?",
-            (patient_id,),
-        ).fetchone()["c"])
+        count = int(
+            db.execute(
+                "SELECT COUNT(*) AS c FROM patient_deposits WHERE patient_id = ?",
+                (patient_id,),
+            ).fetchone()["c"]
+        )
     return {
         "patient_id": patient_id,
         "admission_id": admission_id,
@@ -825,8 +947,9 @@ def deposit_balance(patient_id: str, *, admission_id: Optional[str] = None) -> d
     }
 
 
-def list_deposit_entries(patient_id: str, *, admission_id: Optional[str] = None,
-                         limit: int = 200) -> list[dict]:
+def list_deposit_entries(
+    patient_id: str, *, admission_id: str | None = None, limit: int = 200
+) -> list[dict]:
     patient_id = _text(patient_id, "patient_id", required=True, max_len=64)
     sql = "SELECT * FROM patient_deposits WHERE patient_id = ?"
     args: list = [patient_id]
@@ -840,17 +963,19 @@ def list_deposit_entries(patient_id: str, *, admission_id: Optional[str] = None,
     out = []
     for r in rows:
         amount = int(r["amount_paise"])
-        out.append({
-            "id": int(r["id"]),
-            "movement": r["movement"],
-            "amount_paise": amount,
-            "amount_display": format_inr(amount),
-            "payment_id": r["payment_id"],
-            "invoice_id": r["invoice_id"],
-            "created_by": r["created_by"],
-            "created_at": r["created_at"],
-            "notes": r["notes"],
-        })
+        out.append(
+            {
+                "id": int(r["id"]),
+                "movement": r["movement"],
+                "amount_paise": amount,
+                "amount_display": format_inr(amount),
+                "payment_id": r["payment_id"],
+                "invoice_id": r["invoice_id"],
+                "created_by": r["created_by"],
+                "created_at": r["created_at"],
+                "notes": r["notes"],
+            }
+        )
     return out
 
 
@@ -900,10 +1025,9 @@ def plan_deposit_split(total_paise: int, dues_paise: Sequence[int]) -> list[int]
 
 # ── Receipts ─────────────────────────────────────────────────────────────────
 
-def _find_by_idempotency(db, key: str) -> Optional[dict]:
-    row = db.execute(
-        "SELECT * FROM payments WHERE idempotency_key = ?", (key,)
-    ).fetchone()
+
+def _find_by_idempotency(db, key: str) -> dict | None:
+    row = db.execute("SELECT * FROM payments WHERE idempotency_key = ?", (key,)).fetchone()
     return _row(row) if row else None
 
 
@@ -939,16 +1063,16 @@ def record_payment(
     amount_paise: int,
     method: str,
     purpose: str = "invoice_payment",
-    invoice_id: Optional[int] = None,
-    admission_id: Optional[str] = None,
-    payer_id: Optional[int] = None,
-    reference_no: Optional[str] = None,
-    bank_name: Optional[str] = None,
-    instrument_date: Optional[str] = None,
-    counter_session_id: Optional[int] = None,
-    received_by: Optional[str] = None,
-    notes: Optional[str] = None,
-    idempotency_key: Optional[str] = None,
+    invoice_id: int | None = None,
+    admission_id: str | None = None,
+    payer_id: int | None = None,
+    reference_no: str | None = None,
+    bank_name: str | None = None,
+    instrument_date: str | None = None,
+    counter_session_id: int | None = None,
+    received_by: str | None = None,
+    notes: str | None = None,
+    idempotency_key: str | None = None,
 ) -> dict:
     """Take money and issue a receipt. THE entry point for money coming in.
 
@@ -1048,7 +1172,7 @@ def record_payment(
         if counter_session_id is not None:
             _require_open_session(db, counter_session_id)
 
-        allocate_to: Optional[dict] = None
+        allocate_to: dict | None = None
         allocated = 0
         if invoice_id is not None:
             allocate_to = _allocatable_invoice(db, int(invoice_id), patient_id)
@@ -1060,15 +1184,31 @@ def record_payment(
             "INSERT INTO payments (receipt_number, patient_id, admission_id, invoice_id, "
             "payer_id, direction, amount_paise, method, reference_no, bank_name, "
             "instrument_date, purpose, status, counter_session_id, received_by, "
-            "received_at, idempotency_key, notes, "
-            + facility_identity.SNAPSHOT_COLUMNS_SQL + ") "
+            "received_at, idempotency_key, notes, " + facility_identity.SNAPSHOT_COLUMNS_SQL + ") "
             "VALUES (?,?,?,?,?,'in',?,?,?,?,?,?,'received',?,?,?,?,?,"
-            + facility_identity.SNAPSHOT_PLACEHOLDERS + ")",
-            (doc["number"], patient_id, admission_id, invoice_id, payer_id, amount,
-             method, reference_no, bank_name, instrument_date, purpose,
-             counter_session_id, received_by, now, idempotency_key, notes,
-             *facility_identity.supplier_snapshot(
-                 db, patient_id=patient_id, admission_id=admission_id)),
+            + facility_identity.SNAPSHOT_PLACEHOLDERS
+            + ")",
+            (
+                doc["number"],
+                patient_id,
+                admission_id,
+                invoice_id,
+                payer_id,
+                amount,
+                method,
+                reference_no,
+                bank_name,
+                instrument_date,
+                purpose,
+                counter_session_id,
+                received_by,
+                now,
+                idempotency_key,
+                notes,
+                *facility_identity.supplier_snapshot(
+                    db, patient_id=patient_id, admission_id=admission_id
+                ),
+            ),
         )
         payment_id = int(cur.lastrowid)
 
@@ -1092,7 +1232,8 @@ def record_payment(
                 created_by=received_by,
                 notes=(
                     f"over-payment on receipt {doc['number']} held as advance"
-                    if allocated > 0 else None
+                    if allocated > 0
+                    else None
                 ),
             )
 
@@ -1113,8 +1254,7 @@ def record_payment(
             target_id=payment_id,
             summary=(
                 f"Receipt {doc['number']}: {format_inr(amount)} by {method}"
-                + (". NO COUNTER SESSION: this cash is in no drawer"
-                   if orphan_cash else "")
+                + (". NO COUNTER SESSION: this cash is in no drawer" if orphan_cash else "")
             ),
             metadata={
                 "receipt_number": doc["number"],
@@ -1134,27 +1274,30 @@ def record_payment(
             "Receipt %s took %s in cash with no counter session open; it is in the "
             "day's takings and in no drawer, and the day-end cannot be finalised "
             "until it is explained.",
-            doc["number"], format_inr(amount),
+            doc["number"],
+            format_inr(amount),
         )
 
     view = _payment_view(row)
-    view.update({
-        "replayed": False,
-        "allocated_paise": allocated,
-        "allocated_display": format_inr(allocated),
-        "advance_paise": advance,
-        "advance_display": format_inr(advance),
-        "deposit_balance_paise": balance,
-        "deposit_balance_display": format_inr(balance),
-        # A site that has not set its real receipt series is printing a
-        # PLACEHOLDER number. Say so, everywhere it is shown.
-        "receipt_series_is_configured": series_configured,
-        "over_payment": advance > 0 and allocated > 0,
-    })
+    view.update(
+        {
+            "replayed": False,
+            "allocated_paise": allocated,
+            "allocated_display": format_inr(allocated),
+            "advance_paise": advance,
+            "advance_display": format_inr(advance),
+            "deposit_balance_paise": balance,
+            "deposit_balance_display": format_inr(balance),
+            # A site that has not set its real receipt series is printing a
+            # PLACEHOLDER number. Say so, everywhere it is shown.
+            "receipt_series_is_configured": series_configured,
+            "over_payment": advance > 0 and allocated > 0,
+        }
+    )
     return view
 
 
-def get_payment(payment_id: int) -> Optional[dict]:
+def get_payment(payment_id: int) -> dict | None:
     with db_session() as db:
         row = db.execute("SELECT * FROM payments WHERE id = ?", (int(payment_id),)).fetchone()
         if row is None:
@@ -1177,11 +1320,12 @@ def get_payment(payment_id: int) -> Optional[dict]:
         # The series of the facility the receipt was issued by (its snapshot).
         issued_by = row["supplier_facility_id"] if "supplier_facility_id" in row.keys() else None
         view["receipt_series_is_configured"] = _receipt_series_is_configured(
-            db, int(issued_by or MAIN_FACILITY_ID))
+            db, int(issued_by or MAIN_FACILITY_ID)
+        )
     return view
 
 
-def receipt_print_view(payment_id: int) -> Optional[dict]:
+def receipt_print_view(payment_id: int) -> dict | None:
     """Everything a printed receipt needs, and nothing it must invent
     (multisite-2). None when no receipt has that id.
 
@@ -1197,8 +1341,7 @@ def receipt_print_view(payment_id: int) -> Optional[dict]:
     if receipt is None:
         return None
     with db_session() as db:
-        row = _row(db.execute("SELECT * FROM payments WHERE id = ?",
-                              (int(payment_id),)).fetchone())
+        row = _row(db.execute("SELECT * FROM payments WHERE id = ?", (int(payment_id),)).fetchone())
     supplier = facility_identity.supplier_block(row, number_field="receipt_number")
     configured = bool(receipt.get("receipt_series_is_configured"))
     return {
@@ -1206,8 +1349,9 @@ def receipt_print_view(payment_id: int) -> Optional[dict]:
         "supplier": supplier,
         "number_series_configured": configured,
         "number_notice": (
-            None if configured else
-            "Receipt numbers come from a placeholder series. Set the hospital's real "
+            None
+            if configured
+            else "Receipt numbers come from a placeholder series. Set the hospital's real "
             "receipt series before treating these numbers as final."
         ),
         "amount_in_words": amount_in_words(int(receipt["amount_paise"])),
@@ -1217,11 +1361,11 @@ def receipt_print_view(payment_id: int) -> Optional[dict]:
 
 def list_payments(
     *,
-    patient_id: Optional[str] = None,
-    invoice_id: Optional[int] = None,
-    counter_session_id: Optional[int] = None,
-    status: Optional[str] = None,
-    direction: Optional[str] = None,
+    patient_id: str | None = None,
+    invoice_id: int | None = None,
+    counter_session_id: int | None = None,
+    status: str | None = None,
+    direction: str | None = None,
     limit: int = 100,
 ) -> list[dict]:
     clauses: list[str] = []
@@ -1269,7 +1413,7 @@ def amend_payment(payment_id: int, **changes: Any) -> dict:
         f"receipt {payment_id} cannot be edited"
         + (f" (attempted: {', '.join(fields)})" if fields else "")
         + ". A receipt is immutable once issued. Reverse it with "
-          "reverse_payment() and record a new one."
+        "reverse_payment() and record a new one."
     )
 
 
@@ -1318,16 +1462,17 @@ def reverse_payment(payment_id: int, *, reason: str, reversed_by: str) -> dict:
             "A second person must sign for a reversal"
         )
 
-    doc = _next_number("RCPT", patient_id=original["patient_id"],
-                       admission_id=original["admission_id"])
+    doc = _next_number(
+        "RCPT", patient_id=original["patient_id"], admission_id=original["admission_id"]
+    )
     now = _utc_now_str()
 
     with db_session(immediate=True) as db:
         # Re-read under the write lock: two clerks reversing the same receipt at
         # the same second must not both succeed.
-        current = _row(db.execute(
-            "SELECT * FROM payments WHERE id = ?", (int(payment_id),)
-        ).fetchone())
+        current = _row(
+            db.execute("SELECT * FROM payments WHERE id = ?", (int(payment_id),)).fetchone()
+        )
         if current["status"] not in LIVE_PAYMENT_STATUSES:
             raise PaymentError(
                 f"payment {payment_id} is {current['status']} and cannot be reversed again"
@@ -1339,16 +1484,32 @@ def reverse_payment(payment_id: int, *, reason: str, reversed_by: str) -> dict:
             "payer_id, direction, amount_paise, method, reference_no, bank_name, "
             "instrument_date, purpose, status, counter_session_id, "
             "reversal_of_payment_id, received_by, received_at, notes, "
-            + facility_identity.SNAPSHOT_COLUMNS_SQL + ") "
+            + facility_identity.SNAPSHOT_COLUMNS_SQL
+            + ") "
             "VALUES (?,?,?,?,?,'out',?,?,?,?,?,?,'received',?,?,?,?,?,"
-            + facility_identity.SNAPSHOT_PLACEHOLDERS + ")",
-            (doc["number"], current["patient_id"], current["admission_id"],
-             current["invoice_id"], current["payer_id"], amount, current["method"],
-             current["reference_no"], current["bank_name"], current["instrument_date"],
-             current["purpose"], current["counter_session_id"], int(payment_id),
-             reversed_by, now, f"Reversal of receipt {current['receipt_number']}: {reason}",
-             *facility_identity.supplier_snapshot(
-                 db, patient_id=current["patient_id"], admission_id=current["admission_id"])),
+            + facility_identity.SNAPSHOT_PLACEHOLDERS
+            + ")",
+            (
+                doc["number"],
+                current["patient_id"],
+                current["admission_id"],
+                current["invoice_id"],
+                current["payer_id"],
+                amount,
+                current["method"],
+                current["reference_no"],
+                current["bank_name"],
+                current["instrument_date"],
+                current["purpose"],
+                current["counter_session_id"],
+                int(payment_id),
+                reversed_by,
+                now,
+                f"Reversal of receipt {current['receipt_number']}: {reason}",
+                *facility_identity.supplier_snapshot(
+                    db, patient_id=current["patient_id"], admission_id=current["admission_id"]
+                ),
+            ),
         )
         reversal_id = int(cur.lastrowid)
 
@@ -1394,12 +1555,12 @@ def reverse_payment(payment_id: int, *, reason: str, reversed_by: str) -> dict:
                 notes=f"reversal of receipt {current['receipt_number']}",
             )
 
-        reversal = _row(db.execute(
-            "SELECT * FROM payments WHERE id = ?", (reversal_id,)
-        ).fetchone())
-        original_after = _row(db.execute(
-            "SELECT * FROM payments WHERE id = ?", (int(payment_id),)
-        ).fetchone())
+        reversal = _row(
+            db.execute("SELECT * FROM payments WHERE id = ?", (reversal_id,)).fetchone()
+        )
+        original_after = _row(
+            db.execute("SELECT * FROM payments WHERE id = ?", (int(payment_id),)).fetchone()
+        )
 
         _audit(
             db,
@@ -1434,8 +1595,8 @@ def apply_deposit_to_invoice(
     invoice_id: int,
     amount_paise: int,
     applied_by: str,
-    admission_id: Optional[str] = None,
-    notes: Optional[str] = None,
+    admission_id: str | None = None,
+    notes: str | None = None,
 ) -> dict:
     """Move money the hospital is already holding onto an invoice.
 
@@ -1456,8 +1617,7 @@ def apply_deposit_to_invoice(
         balance = _deposit_balance(db, patient_id, admission_id)
         if amount > balance:
             raise PaymentError(
-                f"advance balance is {format_inr(balance)}; cannot apply "
-                f"{format_inr(amount)}"
+                f"advance balance is {format_inr(balance)}; cannot apply {format_inr(amount)}"
             )
         due = _invoice_due_paise(db, invoice)
         if amount > due:
@@ -1478,18 +1638,29 @@ def apply_deposit_to_invoice(
     now = _utc_now_str()
 
     with db_session(immediate=True) as db:
-        invoice = check(db)
+        check(db)
 
         cur = db.execute(
             "INSERT INTO payments (receipt_number, patient_id, admission_id, invoice_id, "
             "direction, amount_paise, method, purpose, status, received_by, received_at, notes, "
-            + facility_identity.SNAPSHOT_COLUMNS_SQL + ") "
+            + facility_identity.SNAPSHOT_COLUMNS_SQL
+            + ") "
             "VALUES (?,?,?,?,'in',?,'adjustment','settlement','received',?,?,?,"
-            + facility_identity.SNAPSHOT_PLACEHOLDERS + ")",
-            (doc["number"], patient_id, admission_id, int(invoice_id), amount,
-             applied_by, now, notes or "advance applied to invoice",
-             *facility_identity.supplier_snapshot(
-                 db, patient_id=patient_id, admission_id=admission_id)),
+            + facility_identity.SNAPSHOT_PLACEHOLDERS
+            + ")",
+            (
+                doc["number"],
+                patient_id,
+                admission_id,
+                int(invoice_id),
+                amount,
+                applied_by,
+                now,
+                notes or "advance applied to invoice",
+                *facility_identity.supplier_snapshot(
+                    db, patient_id=patient_id, admission_id=admission_id
+                ),
+            ),
         )
         payment_id = int(cur.lastrowid)
         db.execute(
@@ -1521,28 +1692,38 @@ def apply_deposit_to_invoice(
             target_type="invoice",
             target_id=invoice_id,
             summary=f"Applied {format_inr(amount)} advance to invoice {invoice_id}",
-            metadata={"amount_paise": amount, "payment_id": payment_id,
-                      "deposit_balance_paise": remaining},
+            metadata={
+                "amount_paise": amount,
+                "payment_id": payment_id,
+                "deposit_balance_paise": remaining,
+            },
         )
 
     view = _payment_view(row)
-    view.update({
-        "allocated_paise": amount,
-        "advance_paise": 0,
-        "deposit_balance_paise": remaining,
-        "deposit_balance_display": format_inr(remaining),
-        "invoice_status": updated["status"],
-        "invoice_balance_paise": updated["balance_paise"],
-    })
+    view.update(
+        {
+            "allocated_paise": amount,
+            "advance_paise": 0,
+            "deposit_balance_paise": remaining,
+            "deposit_balance_display": format_inr(remaining),
+            "invoice_status": updated["status"],
+            "invoice_balance_paise": updated["balance_paise"],
+        }
+    )
     return view
 
 
 # ── Refunds ──────────────────────────────────────────────────────────────────
 
-def _open_refund_total(db, *, patient_id: Optional[str] = None,
-                       payment_id: Optional[int] = None,
-                       invoice_id: Optional[int] = None,
-                       include_paid: bool = True) -> int:
+
+def _open_refund_total(
+    db,
+    *,
+    patient_id: str | None = None,
+    payment_id: int | None = None,
+    invoice_id: int | None = None,
+    include_paid: bool = True,
+) -> int:
     """Refunds already claiming the same money. `requested` and `approved` are
     counted as well as `paid` — otherwise two clerks each raise a full refund
     against one payment and both pass the cap."""
@@ -1560,15 +1741,15 @@ def _open_refund_total(db, *, patient_id: Optional[str] = None,
         clauses.append("patient_id = ?")
         args.append(patient_id)
     row = db.execute(
-        "SELECT COALESCE(SUM(amount_paise), 0) AS s FROM refunds WHERE "
-        + " AND ".join(clauses),
+        "SELECT COALESCE(SUM(amount_paise), 0) AS s FROM refunds WHERE " + " AND ".join(clauses),
         tuple(args),
     ).fetchone()
     return int(row["s"])
 
 
-def _refundable(db, *, patient_id: str, payment_id: Optional[int] = None,
-                invoice_id: Optional[int] = None) -> dict:
+def _refundable(
+    db, *, patient_id: str, payment_id: int | None = None, invoice_id: int | None = None
+) -> dict:
     """The cap. THE RULE: you cannot give back more than you took.
 
     Three scopes, narrowest first:
@@ -1586,9 +1767,7 @@ def _refundable(db, *, patient_id: str, payment_id: Optional[int] = None,
             raise PaymentError(f"payment {payment_id} does not exist")
         payment = _row(row)
         if payment["patient_id"] != patient_id:
-            raise PaymentError(
-                f"payment {payment_id} belongs to a different patient"
-            )
+            raise PaymentError(f"payment {payment_id} belongs to a different patient")
         if payment["direction"] != "in" or payment["status"] not in LIVE_PAYMENT_STATUSES:
             paid = 0
         else:
@@ -1636,12 +1815,14 @@ def _refundable(db, *, patient_id: str, payment_id: Optional[int] = None,
     }
 
 
-def refundable_paise(patient_id: str, *, payment_id: Optional[int] = None,
-                     invoice_id: Optional[int] = None) -> dict:
+def refundable_paise(
+    patient_id: str, *, payment_id: int | None = None, invoice_id: int | None = None
+) -> dict:
     patient_id = _text(patient_id, "patient_id", required=True, max_len=64)
     with db_session() as db:
-        result = _refundable(db, patient_id=patient_id, payment_id=payment_id,
-                             invoice_id=invoice_id)
+        result = _refundable(
+            db, patient_id=patient_id, payment_id=payment_id, invoice_id=invoice_id
+        )
         result["deposit_balance_paise"] = _deposit_balance(db, patient_id)
     result["patient_id"] = patient_id
     result["refundable_display"] = format_inr(result["refundable_paise"])
@@ -1649,19 +1830,25 @@ def refundable_paise(patient_id: str, *, payment_id: Optional[int] = None,
     return result
 
 
-def _check_refund_ceiling(db, *, patient_id: str, amount: int,
-                          payment_id: Optional[int], invoice_id: Optional[int],
-                          admission_id: Optional[str]) -> tuple[dict, int]:
+def _check_refund_ceiling(
+    db,
+    *,
+    patient_id: str,
+    amount: int,
+    payment_id: int | None,
+    invoice_id: int | None,
+    admission_id: str | None,
+) -> tuple[dict, int]:
     """Refuse a refund above what can be handed back; return (cap, ceiling)."""
-    cap = _refundable(db, patient_id=patient_id, payment_id=payment_id,
-                      invoice_id=invoice_id)
+    cap = _refundable(db, patient_id=patient_id, payment_id=payment_id, invoice_id=invoice_id)
     deposit = _deposit_balance(db, patient_id, admission_id)
     is_deposit_refund = payment_id is None and invoice_id is None
     # A deposit refund is capped by the ADVANCE HELD, which is the narrower
     # and more honest number: money already spent on an invoice is not
     # sitting there to be handed back.
-    ceiling = min(cap["refundable_paise"], deposit) if is_deposit_refund \
-        else cap["refundable_paise"]
+    ceiling = (
+        min(cap["refundable_paise"], deposit) if is_deposit_refund else cap["refundable_paise"]
+    )
     if amount > ceiling:
         raise PaymentError(
             f"cannot refund {format_inr(amount)}, at most {format_inr(ceiling)} "
@@ -1680,11 +1867,11 @@ def request_refund(
     amount_paise: int,
     reason: str,
     requested_by: str,
-    payment_id: Optional[int] = None,
-    invoice_id: Optional[int] = None,
-    admission_id: Optional[str] = None,
-    reason_code: Optional[str] = None,
-    idempotency_key: Optional[str] = None,
+    payment_id: int | None = None,
+    invoice_id: int | None = None,
+    admission_id: str | None = None,
+    reason_code: str | None = None,
+    idempotency_key: str | None = None,
 ) -> dict:
     """Raise a refund. Never a bare negative entry — a refund always names what
     it refunds (a receipt, an invoice, or the patient's advance balance) and
@@ -1716,9 +1903,14 @@ def request_refund(
         _require_registered_patient(db, patient_id, then="No refund was raised.")
         # The cap too, so an over-sized request draws no refund number; it is
         # checked again under the write lock below.
-        _check_refund_ceiling(db, patient_id=patient_id, amount=amount,
-                              payment_id=payment_id, invoice_id=invoice_id,
-                              admission_id=admission_id)
+        _check_refund_ceiling(
+            db,
+            patient_id=patient_id,
+            amount=amount,
+            payment_id=payment_id,
+            invoice_id=invoice_id,
+            admission_id=admission_id,
+        )
 
     doc = _next_number("REF", patient_id=patient_id, admission_id=admission_id)
     now = _utc_now_str()
@@ -1734,15 +1926,31 @@ def request_refund(
                 return view
 
         cap, ceiling = _check_refund_ceiling(
-            db, patient_id=patient_id, amount=amount, payment_id=payment_id,
-            invoice_id=invoice_id, admission_id=admission_id)
+            db,
+            patient_id=patient_id,
+            amount=amount,
+            payment_id=payment_id,
+            invoice_id=invoice_id,
+            admission_id=admission_id,
+        )
 
         cur = db.execute(
             "INSERT INTO refunds (refund_number, patient_id, admission_id, invoice_id, "
             "payment_id, amount_paise, reason_code, reason, status, requested_by, "
             "requested_at, idempotency_key) VALUES (?,?,?,?,?,?,?,?,'requested',?,?,?)",
-            (doc["number"], patient_id, admission_id, invoice_id, payment_id, amount,
-             reason_code, reason, requested_by, now, idempotency_key),
+            (
+                doc["number"],
+                patient_id,
+                admission_id,
+                invoice_id,
+                payment_id,
+                amount,
+                reason_code,
+                reason,
+                requested_by,
+                now,
+                idempotency_key,
+            ),
         )
         refund_id = int(cur.lastrowid)
         row = _row(db.execute("SELECT * FROM refunds WHERE id = ?", (refund_id,)).fetchone())
@@ -1756,22 +1964,29 @@ def request_refund(
             target_type="refund",
             target_id=refund_id,
             summary=f"Refund {doc['number']} requested: {format_inr(amount)}: {reason}",
-            metadata={"amount_paise": amount, "payment_id": payment_id,
-                      "invoice_id": invoice_id, "cap_paise": ceiling,
-                      "scope": cap["scope"]},
+            metadata={
+                "amount_paise": amount,
+                "payment_id": payment_id,
+                "invoice_id": invoice_id,
+                "cap_paise": ceiling,
+                "scope": cap["scope"],
+            },
         )
 
     view = _refund_view(row)
-    view.update({
-        "replayed": False,
-        "refundable_ceiling_paise": ceiling,
-        "scope": cap["scope"],
-    })
+    view.update(
+        {
+            "replayed": False,
+            "refundable_ceiling_paise": ceiling,
+            "scope": cap["scope"],
+        }
+    )
     return view
 
 
-def decide_refund(refund_id: int, *, approve: bool, decided_by: str,
-                  decision_note: Optional[str] = None) -> dict:
+def decide_refund(
+    refund_id: int, *, approve: bool, decided_by: str, decision_note: str | None = None
+) -> dict:
     """Approve or reject. FOUR EYES: the approver may not be the requester.
 
     Money leaving a hospital on one person's say-so is the oldest fraud there is.
@@ -1789,8 +2004,7 @@ def decide_refund(refund_id: int, *, approve: bool, decided_by: str,
         refund = _row(row)
         if refund["status"] != "requested":
             raise PaymentError(
-                f"refund {refund_id} is {refund['status']}; only a requested refund "
-                "can be decided"
+                f"refund {refund_id} is {refund['status']}; only a requested refund can be decided"
             )
         if (refund["requested_by"] or "").strip().lower() == decided_by.strip().lower():
             raise PaymentError(
@@ -1803,9 +2017,9 @@ def decide_refund(refund_id: int, *, approve: bool, decided_by: str,
             "decision_note = ? WHERE id = ?",
             (status, decided_by, now, decision_note, int(refund_id)),
         )
-        updated = _row(db.execute(
-            "SELECT * FROM refunds WHERE id = ?", (int(refund_id),)
-        ).fetchone())
+        updated = _row(
+            db.execute("SELECT * FROM refunds WHERE id = ?", (int(refund_id),)).fetchone()
+        )
         _audit(
             db,
             action="refund_decided",
@@ -1815,16 +2029,24 @@ def decide_refund(refund_id: int, *, approve: bool, decided_by: str,
             target_type="refund",
             target_id=refund_id,
             summary=f"Refund {refund['refund_number']} {status} by {decided_by}",
-            metadata={"status": status, "requested_by": refund["requested_by"],
-                      "amount_paise": int(refund["amount_paise"]),
-                      "decision_note": decision_note},
+            metadata={
+                "status": status,
+                "requested_by": refund["requested_by"],
+                "amount_paise": int(refund["amount_paise"]),
+                "decision_note": decision_note,
+            },
         )
     return _refund_view(updated)
 
 
-def pay_refund(refund_id: int, *, method: str, paid_by: str,
-               reference_no: Optional[str] = None,
-               counter_session_id: Optional[int] = None) -> dict:
+def pay_refund(
+    refund_id: int,
+    *,
+    method: str,
+    paid_by: str,
+    reference_no: str | None = None,
+    counter_session_id: int | None = None,
+) -> dict:
     """Hand the money back and write the money-OUT receipt.
 
     The cap is re-checked here against everything EXCEPT this refund — approval
@@ -1862,15 +2084,14 @@ def pay_refund(refund_id: int, *, method: str, paid_by: str,
             f"refund {refund_id} is {refund['status']}; only an approved refund can be paid"
         )
 
-    doc = _next_number("RCPT", patient_id=refund["patient_id"],
-                       admission_id=refund["admission_id"])
+    doc = _next_number("RCPT", patient_id=refund["patient_id"], admission_id=refund["admission_id"])
     now = _utc_now_str()
     amount = int(refund["amount_paise"])
 
     with db_session(immediate=True) as db:
-        current = _row(db.execute(
-            "SELECT * FROM refunds WHERE id = ?", (int(refund_id),)
-        ).fetchone())
+        current = _row(
+            db.execute("SELECT * FROM refunds WHERE id = ?", (int(refund_id),)).fetchone()
+        )
         if current["status"] != "approved":
             raise PaymentError(f"refund {refund_id} is {current['status']} and cannot be paid")
         if counter_session_id is not None:
@@ -1878,9 +2099,12 @@ def pay_refund(refund_id: int, *, method: str, paid_by: str,
 
         # Re-check the cap, excluding THIS refund from the "already claimed"
         # figure (it is the one being settled).
-        cap = _refundable(db, patient_id=current["patient_id"],
-                          payment_id=current["payment_id"],
-                          invoice_id=current["invoice_id"])
+        cap = _refundable(
+            db,
+            patient_id=current["patient_id"],
+            payment_id=current["payment_id"],
+            invoice_id=current["invoice_id"],
+        )
         headroom = cap["refundable_paise"] + amount  # this refund is inside `already_refunded`
         if amount > headroom:  # pragma: no cover - defensive; the request already capped
             raise PaymentError("refund now exceeds what was paid; re-check before paying")
@@ -1890,23 +2114,35 @@ def pay_refund(refund_id: int, *, method: str, paid_by: str,
             held = _deposit_balance(db, current["patient_id"], current["admission_id"])
             if amount > held:
                 raise PaymentError(
-                    f"advance balance is now {format_inr(held)}; cannot refund "
-                    f"{format_inr(amount)}"
+                    f"advance balance is now {format_inr(held)}; cannot refund {format_inr(amount)}"
                 )
 
         cur = db.execute(
             "INSERT INTO payments (receipt_number, patient_id, admission_id, invoice_id, "
             "direction, amount_paise, method, reference_no, purpose, status, "
             "counter_session_id, refund_id, received_by, received_at, notes, "
-            + facility_identity.SNAPSHOT_COLUMNS_SQL + ") "
+            + facility_identity.SNAPSHOT_COLUMNS_SQL
+            + ") "
             "VALUES (?,?,?,?,'out',?,?,?,'refund','received',?,?,?,?,?,"
-            + facility_identity.SNAPSHOT_PLACEHOLDERS + ")",
-            (doc["number"], current["patient_id"], current["admission_id"],
-             current["invoice_id"], amount, method, reference_no, counter_session_id,
-             int(refund_id), paid_by, now,
-             f"Refund {current['refund_number']}: {current['reason']}",
-             *facility_identity.supplier_snapshot(
-                 db, patient_id=current["patient_id"], admission_id=current["admission_id"])),
+            + facility_identity.SNAPSHOT_PLACEHOLDERS
+            + ")",
+            (
+                doc["number"],
+                current["patient_id"],
+                current["admission_id"],
+                current["invoice_id"],
+                amount,
+                method,
+                reference_no,
+                counter_session_id,
+                int(refund_id),
+                paid_by,
+                now,
+                f"Refund {current['refund_number']}: {current['reason']}",
+                *facility_identity.supplier_snapshot(
+                    db, patient_id=current["patient_id"], admission_id=current["admission_id"]
+                ),
+            ),
         )
         payment_id = int(cur.lastrowid)
 
@@ -1927,12 +2163,12 @@ def pay_refund(refund_id: int, *, method: str, paid_by: str,
             "paid_by = ?, paid_at = ? WHERE id = ?",
             (method, reference_no, paid_by, now, int(refund_id)),
         )
-        updated = _row(db.execute(
-            "SELECT * FROM refunds WHERE id = ?", (int(refund_id),)
-        ).fetchone())
-        payment_row = _row(db.execute(
-            "SELECT * FROM payments WHERE id = ?", (payment_id,)
-        ).fetchone())
+        updated = _row(
+            db.execute("SELECT * FROM refunds WHERE id = ?", (int(refund_id),)).fetchone()
+        )
+        payment_row = _row(
+            db.execute("SELECT * FROM payments WHERE id = ?", (payment_id,)).fetchone()
+        )
 
         # Cash handed back with no session open is the same hole as cash taken
         # with none — money out of a drawer nobody opened. Marked identically so
@@ -1949,12 +2185,15 @@ def pay_refund(refund_id: int, *, method: str, paid_by: str,
             target_id=refund_id,
             summary=(
                 f"Refund {current['refund_number']} paid: {format_inr(amount)} by {method}"
-                + (". NO COUNTER SESSION: this cash left no drawer"
-                   if orphan_cash else "")
+                + (". NO COUNTER SESSION: this cash left no drawer" if orphan_cash else "")
             ),
-            metadata={"amount_paise": amount, "method": method,
-                      "payment_id": payment_id, "receipt_number": doc["number"],
-                      "unattributed_cash": orphan_cash},
+            metadata={
+                "amount_paise": amount,
+                "method": method,
+                "payment_id": payment_id,
+                "receipt_number": doc["number"],
+                "unattributed_cash": orphan_cash,
+            },
         )
 
     view = _refund_view(updated)
@@ -1962,14 +2201,16 @@ def pay_refund(refund_id: int, *, method: str, paid_by: str,
     return view
 
 
-def get_refund(refund_id: int) -> Optional[dict]:
+def get_refund(refund_id: int) -> dict | None:
     with db_session() as db:
         row = db.execute("SELECT * FROM refunds WHERE id = ?", (int(refund_id),)).fetchone()
     return _refund_view(_row(row)) if row else None
 
 
-def list_refunds(*, patient_id: Optional[str] = None, status: Optional[str] = None,
-                 limit: int = 100) -> list[dict]:
+def list_refunds(
+    *, patient_id: str | None = None, status: str | None = None, limit: int = 100
+) -> list[dict]:
+    args: list[str | int | float | bytes | None]
     clauses, args = [], []
     if patient_id:
         clauses.append("patient_id = ?")
@@ -1988,21 +2229,22 @@ def list_refunds(*, patient_id: Optional[str] = None, status: Optional[str] = No
 
 # ── Discount approvals ───────────────────────────────────────────────────────
 
+
 def request_discount(
     *,
     patient_id: str,
     reason: str,
     requested_by: str,
-    invoice_id: Optional[int] = None,
-    encounter_charge_id: Optional[int] = None,
+    invoice_id: int | None = None,
+    encounter_charge_id: int | None = None,
     scope: str = "invoice",
     discount_type: str = "amount",
-    requested_paise: Optional[int] = None,
+    requested_paise: int | None = None,
     percent_bp: int = 0,
-    base_paise: Optional[int] = None,
-    policy_limit_paise: Optional[int] = None,
-    reason_code: Optional[str] = None,
-    admission_id: Optional[str] = None,
+    base_paise: int | None = None,
+    policy_limit_paise: int | None = None,
+    reason_code: str | None = None,
+    admission_id: str | None = None,
 ) -> dict:
     """Ask for a reduction. A discount is a PERSON'S DECISION, so this records
     who asked, why, and (on decision) who agreed.
@@ -2061,14 +2303,27 @@ def request_discount(
             "encounter_charge_id, scope, discount_type, percent_bp, requested_paise, "
             "policy_limit_paise, exceeded_limit, reason_code, reason, status, "
             "requested_by, requested_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'requested',?,?)",
-            (patient_id, admission_id, invoice_id, encounter_charge_id, scope,
-             discount_type, bp, amount, limit, exceeded, reason_code, reason,
-             requested_by, now),
+            (
+                patient_id,
+                admission_id,
+                invoice_id,
+                encounter_charge_id,
+                scope,
+                discount_type,
+                bp,
+                amount,
+                limit,
+                exceeded,
+                reason_code,
+                reason,
+                requested_by,
+                now,
+            ),
         )
         discount_id = int(cur.lastrowid)
-        row = _row(db.execute(
-            "SELECT * FROM discount_approvals WHERE id = ?", (discount_id,)
-        ).fetchone())
+        row = _row(
+            db.execute("SELECT * FROM discount_approvals WHERE id = ?", (discount_id,)).fetchone()
+        )
         _audit(
             db,
             action="discount_requested",
@@ -2078,16 +2333,25 @@ def request_discount(
             target_type="discount_approval",
             target_id=discount_id,
             summary=f"Discount of {format_inr(amount)} requested: {reason}",
-            metadata={"requested_paise": amount, "percent_bp": bp,
-                      "invoice_id": invoice_id, "exceeded_limit": bool(exceeded),
-                      "policy_limit_paise": limit},
+            metadata={
+                "requested_paise": amount,
+                "percent_bp": bp,
+                "invoice_id": invoice_id,
+                "exceeded_limit": bool(exceeded),
+                "policy_limit_paise": limit,
+            },
         )
     return _discount_view(row)
 
 
-def decide_discount(discount_id: int, *, approve: bool, decided_by: str,
-                    approved_paise: Optional[int] = None,
-                    decision_note: Optional[str] = None) -> dict:
+def decide_discount(
+    discount_id: int,
+    *,
+    approve: bool,
+    decided_by: str,
+    approved_paise: int | None = None,
+    decision_note: str | None = None,
+) -> dict:
     """Approve (possibly for less) or reject.
 
     THE APPROVER IS THE POINT OF THIS RECORD. Two rules, both hard:
@@ -2124,8 +2388,10 @@ def decide_discount(discount_id: int, *, approve: bool, decided_by: str,
 
         requested = int(discount["requested_paise"] or 0)
         if approve:
-            granted = requested if approved_paise is None else _positive_paise(
-                approved_paise, "approved_paise"
+            granted = (
+                requested
+                if approved_paise is None
+                else _positive_paise(approved_paise, "approved_paise")
             )
             if granted > requested:
                 raise PaymentError(
@@ -2146,9 +2412,11 @@ def decide_discount(discount_id: int, *, approve: bool, decided_by: str,
             "WHERE id = ?",
             (status, granted, exceeded, decided_by, now, decision_note, int(discount_id)),
         )
-        updated = _row(db.execute(
-            "SELECT * FROM discount_approvals WHERE id = ?", (int(discount_id),)
-        ).fetchone())
+        updated = _row(
+            db.execute(
+                "SELECT * FROM discount_approvals WHERE id = ?", (int(discount_id),)
+            ).fetchone()
+        )
         _audit(
             db,
             action="discount_decided",
@@ -2161,17 +2429,26 @@ def decide_discount(discount_id: int, *, approve: bool, decided_by: str,
                 f"Discount {status} by {decided_by}: {format_inr(granted)} of "
                 f"{format_inr(requested)} requested"
             ),
-            metadata={"status": status, "approved_paise": granted,
-                      "requested_paise": requested,
-                      "requested_by": discount["requested_by"],
-                      "exceeded_limit": bool(exceeded),
-                      "decision_note": decision_note},
+            metadata={
+                "status": status,
+                "approved_paise": granted,
+                "requested_paise": requested,
+                "requested_by": discount["requested_by"],
+                "exceeded_limit": bool(exceeded),
+                "decision_note": decision_note,
+            },
         )
     return _discount_view(updated)
 
 
-def list_discounts(*, status: Optional[str] = None, invoice_id: Optional[int] = None,
-                   patient_id: Optional[str] = None, limit: int = 100) -> list[dict]:
+def list_discounts(
+    *,
+    status: str | None = None,
+    invoice_id: int | None = None,
+    patient_id: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    args: list[str | int | float | bytes | None]
     clauses, args = [], []
     if status:
         clauses.append("status = ?")
@@ -2193,9 +2470,14 @@ def list_discounts(*, status: Optional[str] = None, invoice_id: Optional[int] = 
 
 # ── Cash counter sessions and the day-end count ──────────────────────────────
 
-def open_counter_session(*, counter_code: str, opened_by: str,
-                         shift_label: Optional[str] = None,
-                         opening_float_paise: int = 0) -> dict:
+
+def open_counter_session(
+    *,
+    counter_code: str,
+    opened_by: str,
+    shift_label: str | None = None,
+    opening_float_paise: int = 0,
+) -> dict:
     """Open a till. ONE OPEN SESSION PER COUNTER, enforced: two open sessions on
     the same drawer means the same cash is counted twice, or not at all."""
     counter_code = _text(counter_code, "counter_code", required=True, max_len=64)
@@ -2222,9 +2504,9 @@ def open_counter_session(*, counter_code: str, opened_by: str,
             (counter_code, shift_label, opened_by, _utc_now_str(), opening),
         )
         session_id = int(cur.lastrowid)
-        row = _row(db.execute(
-            "SELECT * FROM cash_counter_sessions WHERE id = ?", (session_id,)
-        ).fetchone())
+        row = _row(
+            db.execute("SELECT * FROM cash_counter_sessions WHERE id = ?", (session_id,)).fetchone()
+        )
         _audit(
             db,
             action="counter_session_opened",
@@ -2233,8 +2515,11 @@ def open_counter_session(*, counter_code: str, opened_by: str,
             target_type="cash_counter_session",
             target_id=session_id,
             summary=f"Counter {counter_code} opened with float {format_inr(opening)}",
-            metadata={"counter_code": counter_code, "opening_float_paise": opening,
-                      "shift_label": shift_label},
+            metadata={
+                "counter_code": counter_code,
+                "opening_float_paise": opening,
+                "shift_label": shift_label,
+            },
         )
     return _session_view(row)
 
@@ -2255,11 +2540,17 @@ def _method_breakdown(db, where_sql: str, args: Sequence) -> tuple[list[dict], d
 
     by_method: dict[str, dict] = {}
     for r in rows:
-        entry = by_method.setdefault(r["method"], {
-            "method": r["method"],
-            "in_paise": 0, "out_paise": 0, "net_paise": 0,
-            "in_count": 0, "out_count": 0,
-        })
+        entry = by_method.setdefault(
+            r["method"],
+            {
+                "method": r["method"],
+                "in_paise": 0,
+                "out_paise": 0,
+                "net_paise": 0,
+                "in_count": 0,
+                "out_count": 0,
+            },
+        )
         if r["direction"] == "in":
             entry["in_paise"] += int(r["s"])
             entry["in_count"] += int(r["n"])
@@ -2284,8 +2575,9 @@ def _method_breakdown(db, where_sql: str, args: Sequence) -> tuple[list[dict], d
     return parts, totals
 
 
-def _assert_totals_reconcile(db, where_sql: str, args: Sequence, totals: dict,
-                             context: str) -> None:
+def _assert_totals_reconcile(
+    db, where_sql: str, args: Sequence, totals: dict, context: str
+) -> None:
     """THE INVARIANT: total == sum(parts). Checked against a query the breakdown
     did not produce, so a bug in the grouping cannot hide inside its own sum."""
     row = db.execute(
@@ -2360,8 +2652,9 @@ def counter_session_expected(session_id: int) -> dict:
     }
 
 
-def close_counter_session(session_id: int, *, declared_cash_paise: int,
-                          closed_by: str, notes: Optional[str] = None) -> dict:
+def close_counter_session(
+    session_id: int, *, declared_cash_paise: int, closed_by: str, notes: str | None = None
+) -> dict:
     """Count the drawer and close the shift.
 
     THE VARIANCE IS STORED, NEVER ABSORBED (rule 4). A session that does not
@@ -2388,9 +2681,11 @@ def close_counter_session(session_id: int, *, declared_cash_paise: int,
     now = _utc_now_str()
 
     with db_session(immediate=True) as db:
-        current = _row(db.execute(
-            "SELECT * FROM cash_counter_sessions WHERE id = ?", (int(session_id),)
-        ).fetchone())
+        current = _row(
+            db.execute(
+                "SELECT * FROM cash_counter_sessions WHERE id = ?", (int(session_id),)
+            ).fetchone()
+        )
         if current["status"] != "open":
             raise PaymentError(f"counter session {session_id} is already {current['status']}")
         status = "closed" if variance == 0 else "disputed"
@@ -2400,9 +2695,11 @@ def close_counter_session(session_id: int, *, declared_cash_paise: int,
             "status = ?, notes = ? WHERE id = ?",
             (closed_by, now, declared, expected, variance, status, notes, int(session_id)),
         )
-        row = _row(db.execute(
-            "SELECT * FROM cash_counter_sessions WHERE id = ?", (int(session_id),)
-        ).fetchone())
+        row = _row(
+            db.execute(
+                "SELECT * FROM cash_counter_sessions WHERE id = ?", (int(session_id),)
+            ).fetchone()
+        )
         _audit(
             db,
             action="counter_session_closed",
@@ -2415,24 +2712,31 @@ def close_counter_session(session_id: int, *, declared_cash_paise: int,
                 f"{format_inr(expected)}, counted {format_inr(declared)}, variance "
                 f"{format_inr(variance)}"
             ),
-            metadata={"expected_cash_paise": expected, "declared_cash_paise": declared,
-                      "variance_paise": variance, "status": status,
-                      "counter_code": current["counter_code"]},
+            metadata={
+                "expected_cash_paise": expected,
+                "declared_cash_paise": declared,
+                "variance_paise": variance,
+                "status": status,
+                "counter_code": current["counter_code"],
+            },
         )
 
     result = _session_view(row)
-    result.update({
-        "expected_cash_paise": expected,
-        "expected_cash_display": format_inr(expected),
-        "by_method": expected_report["by_method"],
-        "totals": expected_report["totals"],
-        "balanced": variance == 0,
-    })
+    result.update(
+        {
+            "expected_cash_paise": expected,
+            "expected_cash_display": format_inr(expected),
+            "by_method": expected_report["by_method"],
+            "totals": expected_report["totals"],
+            "balanced": variance == 0,
+        }
+    )
     return result
 
 
-def reconcile_counter_session(session_id: int, *, reconciled_by: str,
-                              notes: Optional[str] = None) -> dict:
+def reconcile_counter_session(
+    session_id: int, *, reconciled_by: str, notes: str | None = None
+) -> dict:
     """Sign off a closed (or disputed) session. The variance stays on the row —
     reconciling is somebody ACCEPTING the difference, not erasing it."""
     reconciled_by = _text(reconciled_by, "reconciled_by", required=True, max_len=120)
@@ -2459,9 +2763,11 @@ def reconcile_counter_session(session_id: int, *, reconciled_by: str,
             "reconciled_at = ?, notes = COALESCE(?, notes) WHERE id = ?",
             (reconciled_by, now, notes, int(session_id)),
         )
-        updated = _row(db.execute(
-            "SELECT * FROM cash_counter_sessions WHERE id = ?", (int(session_id),)
-        ).fetchone())
+        updated = _row(
+            db.execute(
+                "SELECT * FROM cash_counter_sessions WHERE id = ?", (int(session_id),)
+            ).fetchone()
+        )
         _audit(
             db,
             action="counter_session_reconciled",
@@ -2473,13 +2779,15 @@ def reconcile_counter_session(session_id: int, *, reconciled_by: str,
                 f"Counter {session['counter_code']} reconciled by {reconciled_by}; "
                 f"variance {format_inr(int(session['variance_paise'] or 0))} accepted"
             ),
-            metadata={"variance_paise": session["variance_paise"],
-                      "closed_by": session["closed_by"]},
+            metadata={
+                "variance_paise": session["variance_paise"],
+                "closed_by": session["closed_by"],
+            },
         )
     return _session_view(updated)
 
 
-def get_counter_session(session_id: int) -> Optional[dict]:
+def get_counter_session(session_id: int) -> dict | None:
     with db_session() as db:
         row = db.execute(
             "SELECT * FROM cash_counter_sessions WHERE id = ?", (int(session_id),)
@@ -2487,8 +2795,10 @@ def get_counter_session(session_id: int) -> Optional[dict]:
     return _session_view(_row(row)) if row else None
 
 
-def list_counter_sessions(*, counter_code: Optional[str] = None,
-                          status: Optional[str] = None, limit: int = 50) -> list[dict]:
+def list_counter_sessions(
+    *, counter_code: str | None = None, status: str | None = None, limit: int = 50
+) -> list[dict]:
+    args: list[str | int | float | bytes | None]
     clauses, args = [], []
     if counter_code:
         clauses.append("counter_code = ?")
@@ -2505,8 +2815,7 @@ def list_counter_sessions(*, counter_code: Optional[str] = None,
         return [_session_view(_row(r)) for r in db.execute(sql, tuple(args)).fetchall()]
 
 
-def day_end_summary(*, day: Optional[date | str] = None,
-                    counter_code: Optional[str] = None) -> dict:
+def day_end_summary(*, day: date | str | None = None, counter_code: str | None = None) -> dict:
     """The day's takings, by method, with the totals proved against the ledger.
 
     THE DAY IS A HOSPITAL-LOCAL DAY, converted to a UTC WINDOW. Stored timestamps
@@ -2563,8 +2872,7 @@ def day_end_summary(*, day: Optional[date | str] = None,
 
     placeholders = ",".join("?" * len(LEDGER_PAYMENT_STATUSES))
     where = (
-        f"datetime(received_at) >= ? AND datetime(received_at) < ? "
-        f"AND status IN ({placeholders})"
+        f"datetime(received_at) >= ? AND datetime(received_at) < ? AND status IN ({placeholders})"
     )
     args: list = [start_s, end_s, *LEDGER_PAYMENT_STATUSES]
     if counter_code:
@@ -2582,20 +2890,25 @@ def day_end_summary(*, day: Optional[date | str] = None,
         # the ORIGINAL receipt's session, so they are left out of the "holding a
         # receipt" test: reversing an old receipt today must not pull a shift
         # closed weeks ago, and its count, onto today's sheet.
-        session_rows = [_row(r) for r in db.execute(
-            "SELECT *, datetime(opened_at) < ? AS opened_before_day "
-            "FROM cash_counter_sessions WHERE ("
-            "(datetime(opened_at) >= ? AND datetime(opened_at) < ?) "
-            "OR (status = 'open' AND datetime(opened_at) < ?) "
-            "OR id IN (SELECT counter_session_id FROM payments "
-            "WHERE counter_session_id IS NOT NULL "
-            "AND datetime(received_at) >= ? AND datetime(received_at) < ? "
-            f"AND {_NOT_A_REVERSAL})) "
-            + ("AND counter_code = ? " if counter_code else "")
-            + "ORDER BY id DESC",
-            tuple([start_s, start_s, end_s, end_s, start_s, end_s]
-                  + ([counter_code] if counter_code else [])),
-        ).fetchall()]
+        session_rows = [
+            _row(r)
+            for r in db.execute(
+                "SELECT *, datetime(opened_at) < ? AS opened_before_day "
+                "FROM cash_counter_sessions WHERE ("
+                "(datetime(opened_at) >= ? AND datetime(opened_at) < ?) "
+                "OR (status = 'open' AND datetime(opened_at) < ?) "
+                "OR id IN (SELECT counter_session_id FROM payments "
+                "WHERE counter_session_id IS NOT NULL "
+                "AND datetime(received_at) >= ? AND datetime(received_at) < ? "
+                f"AND {_NOT_A_REVERSAL})) "
+                + ("AND counter_code = ? " if counter_code else "")
+                + "ORDER BY id DESC",
+                tuple(
+                    [start_s, start_s, end_s, end_s, start_s, end_s]
+                    + ([counter_code] if counter_code else [])
+                ),
+            ).fetchall()
+        ]
         sessions = [_session_view(r) for r in session_rows]
         opened_earlier = [
             r for r in session_rows if r["status"] == "open" and r["opened_before_day"]
@@ -2615,18 +2928,21 @@ def day_end_summary(*, day: Optional[date | str] = None,
             (start_s, end_s, *LEDGER_PAYMENT_STATUSES, *sorted(CASH_METHODS)),
         ).fetchone()
 
-        refunds_open = int(db.execute(
-            "SELECT COUNT(*) AS c FROM refunds WHERE status IN ('requested','approved')"
-        ).fetchone()["c"])
-        discounts_open = int(db.execute(
-            "SELECT COUNT(*) AS c FROM discount_approvals WHERE status = 'requested'"
-        ).fetchone()["c"])
+        refunds_open = int(
+            db.execute(
+                "SELECT COUNT(*) AS c FROM refunds WHERE status IN ('requested','approved')"
+            ).fetchone()["c"]
+        )
+        discounts_open = int(
+            db.execute(
+                "SELECT COUNT(*) AS c FROM discount_approvals WHERE status = 'requested'"
+            ).fetchone()["c"]
+        )
         series_configured = _receipt_series_is_configured(db)
 
     cash = next((p for p in parts if p["method"] == "cash"), None)
     counted = sum(
-        int(s["declared_cash_paise"]) for s in sessions
-        if s["declared_cash_paise"] is not None
+        int(s["declared_cash_paise"]) for s in sessions if s["declared_cash_paise"] is not None
     )
     variance_total = sum(
         int(s["variance_paise"]) for s in sessions if s["variance_paise"] is not None
@@ -2663,8 +2979,7 @@ def day_end_summary(*, day: Optional[date | str] = None,
         )
     # "Not counted" is true of an open drawer; unattributed cash is a different
     # fact and gets its own word, because the fix is a different action.
-    unset = "Not counted" if open_sessions or not unattributed_blocks \
-        else "Not attributable"
+    unset = "Not counted" if open_sessions or not unattributed_blocks else "Not attributable"
 
     return {
         "day": local_day.isoformat(),
@@ -2686,9 +3001,7 @@ def day_end_summary(*, day: Optional[date | str] = None,
         # NOT counted. Rendering the counted figure as if it were final would be
         # a fabricated day-end.
         "counted_cash_paise": None if uncountable else counted,
-        "counted_cash_display": format_inr_or_unset(
-            None if uncountable else counted, unset=unset
-        ),
+        "counted_cash_display": format_inr_or_unset(None if uncountable else counted, unset=unset),
         "variance_paise": None if uncountable else variance_total,
         "variance_display": format_inr_or_unset(
             None if uncountable else variance_total, unset=unset
@@ -2698,9 +3011,7 @@ def day_end_summary(*, day: Optional[date | str] = None,
         "unattributed_cash_net_paise": unattributed_in - unattributed_out,
         "unattributed_cash_display": format_inr(unattributed_in - unattributed_out),
         "unattributed_cash_count": unattributed_count,
-        "unattributed_cash_notice": (
-            UNATTRIBUTED_CASH_NOTICE if unattributed_count else None
-        ),
+        "unattributed_cash_notice": (UNATTRIBUTED_CASH_NOTICE if unattributed_count else None),
         "open_session_count": len(open_sessions),
         "finality_blockers": finality_blockers,
         "is_final": not uncountable,
@@ -2710,7 +3021,7 @@ def day_end_summary(*, day: Optional[date | str] = None,
     }
 
 
-def patient_financial_snapshot(patient_id: str, *, admission_id: Optional[str] = None) -> dict:
+def patient_financial_snapshot(patient_id: str, *, admission_id: str | None = None) -> dict:
     """What this patient has paid, what is held on account, what is in flight.
 
     ADVISORY ONLY. Nothing here may gate a clinical action; a discharge that
@@ -2732,14 +3043,20 @@ def patient_financial_snapshot(patient_id: str, *, admission_id: Optional[str] =
             (patient_id, *LIVE_PAYMENT_STATUSES),
         ).fetchone()
         deposit = _deposit_balance(db, patient_id, admission_id)
-        open_refunds = int(db.execute(
-            "SELECT COUNT(*) AS c FROM refunds WHERE patient_id = ? "
-            "AND status IN ('requested','approved')", (patient_id,),
-        ).fetchone()["c"])
-        open_discounts = int(db.execute(
-            "SELECT COUNT(*) AS c FROM discount_approvals WHERE patient_id = ? "
-            "AND status = 'requested'", (patient_id,),
-        ).fetchone()["c"])
+        open_refunds = int(
+            db.execute(
+                "SELECT COUNT(*) AS c FROM refunds WHERE patient_id = ? "
+                "AND status IN ('requested','approved')",
+                (patient_id,),
+            ).fetchone()["c"]
+        )
+        open_discounts = int(
+            db.execute(
+                "SELECT COUNT(*) AS c FROM discount_approvals WHERE patient_id = ? "
+                "AND status = 'requested'",
+                (patient_id,),
+            ).fetchone()["c"]
+        )
     paid = int(row["took"])
     refunded = int(row["gave"])
     return {

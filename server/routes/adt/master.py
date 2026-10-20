@@ -32,16 +32,15 @@ and each link is a fail-closed patient_movement audit written by the single
 location writer (services.adt.core.locate_admission_on). A permission refusal
 is a 403 with the denial audited by permissions.require_permission.
 """
+
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
-
 from permissions import ADT_READ, BED_MASTER, require_permission
-from services import bed_master_service as bm
+from pydantic import BaseModel
 from services.adt.core import AdtError, http_detail
+
+from services import bed_master_service as bm
 
 router = APIRouter()
 
@@ -49,43 +48,44 @@ router = APIRouter()
 # ── Request bodies ───────────────────────────────────────────────────────────
 # None of these carries a patient id, and none may ever grow one.
 
+
 class WardIn(BaseModel):
     code: str
     department: str
-    name: Optional[str] = None
+    name: str | None = None
     ward_type: str = "general"
-    default_bed_class: Optional[str] = None
+    default_bed_class: str | None = None
     cleaning_tracked: bool = True
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 class WardPatch(BaseModel):
-    code: Optional[str] = None
-    name: Optional[str] = None
-    department: Optional[str] = None
-    ward_type: Optional[str] = None
-    default_bed_class: Optional[str] = None
-    cleaning_tracked: Optional[bool] = None
-    is_active: Optional[bool] = None
-    reason: Optional[str] = None
+    code: str | None = None
+    name: str | None = None
+    department: str | None = None
+    ward_type: str | None = None
+    default_bed_class: str | None = None
+    cleaning_tracked: bool | None = None
+    is_active: bool | None = None
+    reason: str | None = None
 
 
 class RoomIn(BaseModel):
     ward_id: str
     code: str
-    name: Optional[str] = None
+    name: str | None = None
     room_type: str = "bay"
-    is_isolation: Optional[bool] = None
-    reason: Optional[str] = None
+    is_isolation: bool | None = None
+    reason: str | None = None
 
 
 class RoomPatch(BaseModel):
-    code: Optional[str] = None
-    name: Optional[str] = None
-    room_type: Optional[str] = None
-    is_isolation: Optional[bool] = None
-    is_active: Optional[bool] = None
-    reason: Optional[str] = None
+    code: str | None = None
+    name: str | None = None
+    room_type: str | None = None
+    is_isolation: bool | None = None
+    is_active: bool | None = None
+    reason: str | None = None
 
 
 class BedRange(BaseModel):
@@ -97,65 +97,66 @@ class BedRange(BaseModel):
 
 class BedsIn(BaseModel):
     ward_id: str
-    labels: Optional[list[str]] = None
-    range: Optional[BedRange] = None
-    room_id: Optional[str] = None
-    bed_class: Optional[str] = None
-    is_isolation_room: Optional[bool] = None
-    notes: Optional[str] = None
+    labels: list[str] | None = None
+    range: BedRange | None = None
+    room_id: str | None = None
+    bed_class: str | None = None
+    is_isolation_room: bool | None = None
+    notes: str | None = None
     #: Link beds already typed into the housekeeping register on this ward with
     #: the same label, keeping their cleaning state, instead of refusing.
     adopt_existing: bool = False
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 class BedPatch(BaseModel):
-    bed_label: Optional[str] = None
-    room_id: Optional[str] = None
-    bed_class: Optional[str] = None
-    is_isolation_room: Optional[bool] = None
-    notes: Optional[str] = None
-    reason: Optional[str] = None
+    bed_label: str | None = None
+    room_id: str | None = None
+    bed_class: str | None = None
+    is_isolation_room: bool | None = None
+    notes: str | None = None
+    reason: str | None = None
 
 
 class BedClassIn(BaseModel):
     code: str
     name: str
-    bed_day_service_code: Optional[str] = None
+    bed_day_service_code: str | None = None
     is_critical_care: bool = False
     counts_in_census: bool = True
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 class BedClassPatch(BaseModel):
-    code: Optional[str] = None
-    name: Optional[str] = None
-    bed_day_service_code: Optional[str] = None
-    is_critical_care: Optional[bool] = None
-    counts_in_census: Optional[bool] = None
-    is_active: Optional[bool] = None
-    reason: Optional[str] = None
+    code: str | None = None
+    name: str | None = None
+    bed_day_service_code: str | None = None
+    is_critical_care: bool | None = None
+    counts_in_census: bool | None = None
+    is_active: bool | None = None
+    reason: str | None = None
 
 
 class ReasonIn(BaseModel):
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 class LinkIn(BaseModel):
     #: Only admissions on this ward.
-    ward_id: Optional[str] = None
+    ward_id: str | None = None
     #: Only these admissions; every matched admission in scope when omitted.
-    admission_ids: Optional[list[str]] = None
+    admission_ids: list[str] | None = None
     #: The bed manager has read that host-ward nurses will not open a
     #: boarder's chart (ruling ADT-S6 is not applied).
     boarder_acknowledged: bool = False
     #: Typed reason for linking a patient already lying in a bed housekeeping
     #: records out of service.
-    out_of_service_reason: Optional[str] = None
-    reason: Optional[str] = None
+    out_of_service_reason: str | None = None
+    reason: str | None = None
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
 
 def _meta(request: Request) -> dict:
     return {
@@ -176,17 +177,22 @@ def _run(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
     except bm.BedMasterError as err:
-        raise _refused(err)
+        raise _refused(err) from err
     except AdtError as err:
-        raise HTTPException(status_code=err.http_status, detail=http_detail(err))
+        raise HTTPException(status_code=err.http_status, detail=http_detail(err)) from err
 
 
 # ── Read ─────────────────────────────────────────────────────────────────────
 
+
+_GET_MASTER_WARD_ID_DEFAULT = Query(None)
+_GET_MASTER_USER_DEFAULT = Depends(require_permission(ADT_READ))
+
+
 @router.get("/master")
 def get_master(
-    ward_id: Optional[str] = Query(None),
-    _user: dict = Depends(require_permission(ADT_READ)),
+    ward_id: str | None = _GET_MASTER_WARD_ID_DEFAULT,
+    _user: dict = _GET_MASTER_USER_DEFAULT,
 ):
     """Wards, rooms, beds and bed classes. Hospital structure only: no
     patient appears here, so there is no read audit."""
@@ -195,104 +201,202 @@ def get_master(
 
 # ── Wards ────────────────────────────────────────────────────────────────────
 
+
+_POST_WARD_USER_DEFAULT = Depends(require_permission(BED_MASTER))
+
+
 @router.post("/master/wards", status_code=201)
-def post_ward(body: WardIn, request: Request,
-              user: dict = Depends(require_permission(BED_MASTER))):
+def post_ward(body: WardIn, request: Request, user: dict = _POST_WARD_USER_DEFAULT):
     return _run(bm.save_ward, body.model_dump(), actor=user, request_meta=_meta(request))
 
 
+_PATCH_WARD_USER_DEFAULT = Depends(require_permission(BED_MASTER))
+
+
 @router.patch("/master/wards/{ward_id}")
-def patch_ward(ward_id: str, body: WardPatch, request: Request,
-               user: dict = Depends(require_permission(BED_MASTER))):
-    return _run(bm.save_ward, body.model_dump(exclude_unset=True), actor=user,
-                ward_id=ward_id, request_meta=_meta(request))
+def patch_ward(
+    ward_id: str,
+    body: WardPatch,
+    request: Request,
+    user: dict = _PATCH_WARD_USER_DEFAULT,
+):
+    return _run(
+        bm.save_ward,
+        body.model_dump(exclude_unset=True),
+        actor=user,
+        ward_id=ward_id,
+        request_meta=_meta(request),
+    )
 
 
 # ── Rooms ────────────────────────────────────────────────────────────────────
 
+
+_POST_ROOM_USER_DEFAULT = Depends(require_permission(BED_MASTER))
+
+
 @router.post("/master/rooms", status_code=201)
-def post_room(body: RoomIn, request: Request,
-              user: dict = Depends(require_permission(BED_MASTER))):
+def post_room(body: RoomIn, request: Request, user: dict = _POST_ROOM_USER_DEFAULT):
     return _run(bm.save_room, body.model_dump(), actor=user, request_meta=_meta(request))
 
 
+_PATCH_ROOM_USER_DEFAULT = Depends(require_permission(BED_MASTER))
+
+
 @router.patch("/master/rooms/{room_id}")
-def patch_room(room_id: str, body: RoomPatch, request: Request,
-               user: dict = Depends(require_permission(BED_MASTER))):
-    return _run(bm.save_room, body.model_dump(exclude_unset=True), actor=user,
-                room_id=room_id, request_meta=_meta(request))
+def patch_room(
+    room_id: str,
+    body: RoomPatch,
+    request: Request,
+    user: dict = _PATCH_ROOM_USER_DEFAULT,
+):
+    return _run(
+        bm.save_room,
+        body.model_dump(exclude_unset=True),
+        actor=user,
+        room_id=room_id,
+        request_meta=_meta(request),
+    )
 
 
 # ── Beds ─────────────────────────────────────────────────────────────────────
 
+
+_POST_BEDS_USER_DEFAULT = Depends(require_permission(BED_MASTER))
+
+
 @router.post("/master/beds", status_code=201)
-def post_beds(body: BedsIn, request: Request,
-              user: dict = Depends(require_permission(BED_MASTER))):
+def post_beds(body: BedsIn, request: Request, user: dict = _POST_BEDS_USER_DEFAULT):
     data = body.model_dump()
     if body.range is None:
         data.pop("range", None)
     return _run(bm.register_beds, data, actor=user, request_meta=_meta(request))
 
 
+_PATCH_BED_USER_DEFAULT = Depends(require_permission(BED_MASTER))
+
+
 @router.patch("/master/beds/{bed_id}")
-def patch_bed(bed_id: str, body: BedPatch, request: Request,
-              user: dict = Depends(require_permission(BED_MASTER))):
-    return _run(bm.update_bed, bed_id, body.model_dump(exclude_unset=True), actor=user,
-                request_meta=_meta(request))
+def patch_bed(
+    bed_id: str,
+    body: BedPatch,
+    request: Request,
+    user: dict = _PATCH_BED_USER_DEFAULT,
+):
+    return _run(
+        bm.update_bed,
+        bed_id,
+        body.model_dump(exclude_unset=True),
+        actor=user,
+        request_meta=_meta(request),
+    )
 
 
 # ── Bed classes ──────────────────────────────────────────────────────────────
 
+
+_POST_BED_CLASS_USER_DEFAULT = Depends(require_permission(BED_MASTER))
+
+
 @router.post("/master/bed-classes", status_code=201)
-def post_bed_class(body: BedClassIn, request: Request,
-                   user: dict = Depends(require_permission(BED_MASTER))):
+def post_bed_class(body: BedClassIn, request: Request, user: dict = _POST_BED_CLASS_USER_DEFAULT):
     return _run(bm.save_bed_class, body.model_dump(), actor=user, request_meta=_meta(request))
 
 
+_PATCH_BED_CLASS_USER_DEFAULT = Depends(require_permission(BED_MASTER))
+
+
 @router.patch("/master/bed-classes/{code}")
-def patch_bed_class(code: str, body: BedClassPatch, request: Request,
-                    user: dict = Depends(require_permission(BED_MASTER))):
-    return _run(bm.save_bed_class, body.model_dump(exclude_unset=True), actor=user,
-                code=code, request_meta=_meta(request))
+def patch_bed_class(
+    code: str,
+    body: BedClassPatch,
+    request: Request,
+    user: dict = _PATCH_BED_CLASS_USER_DEFAULT,
+):
+    return _run(
+        bm.save_bed_class,
+        body.model_dump(exclude_unset=True),
+        actor=user,
+        code=code,
+        request_meta=_meta(request),
+    )
 
 
 # ── Site configuration ───────────────────────────────────────────────────────
 
+
+_POST_IMPORT_SITE_CONFIG_USER_DEFAULT = Depends(require_permission(BED_MASTER))
+
+
 @router.post("/master/import-site-config")
-def post_import_site_config(request: Request,
-                            user: dict = Depends(require_permission(BED_MASTER))):
+def post_import_site_config(request: Request, user: dict = _POST_IMPORT_SITE_CONFIG_USER_DEFAULT):
     return _run(bm.import_site_config_wards, actor=user, request_meta=_meta(request))
 
 
 # ── Retire, reconciliation and register complete (adt-3) ─────────────────────
 
+
+_POST_RETIRE_BED_USER_DEFAULT = Depends(require_permission(BED_MASTER))
+
+
 @router.post("/master/beds/{bed_id}/retire")
-def post_retire_bed(bed_id: str, request: Request, body: Optional[ReasonIn] = None,
-                    user: dict = Depends(require_permission(BED_MASTER))):
+def post_retire_bed(
+    bed_id: str,
+    request: Request,
+    body: ReasonIn | None = None,
+    user: dict = _POST_RETIRE_BED_USER_DEFAULT,
+):
     """Retire a bed. Refused while a patient is in it or it is reserved."""
-    return _run(bm.retire_bed, bed_id, (body.model_dump() if body else {}), actor=user,
-                request_meta=_meta(request))
+    return _run(
+        bm.retire_bed,
+        bed_id,
+        (body.model_dump() if body else {}),
+        actor=user,
+        request_meta=_meta(request),
+    )
+
+
+_POST_REGISTER_COMPLETE_USER_DEFAULT = Depends(require_permission(BED_MASTER))
 
 
 @router.post("/master/wards/{ward_id}/register-complete")
-def post_register_complete(ward_id: str, request: Request, body: Optional[ReasonIn] = None,
-                           user: dict = Depends(require_permission(BED_MASTER))):
+def post_register_complete(
+    ward_id: str,
+    request: Request,
+    body: ReasonIn | None = None,
+    user: dict = _POST_REGISTER_COMPLETE_USER_DEFAULT,
+):
     """Mark the ward's bed register complete (stamps ledger_complete_from).
     Refused while an admission on the ward is unlinked or a bed is doubled."""
-    return _run(bm.mark_register_complete, ward_id, (body.model_dump() if body else {}),
-                actor=user, request_meta=_meta(request))
+    return _run(
+        bm.mark_register_complete,
+        ward_id,
+        (body.model_dump() if body else {}),
+        actor=user,
+        request_meta=_meta(request),
+    )
+
+
+_GET_RECONCILIATION_WARD_ID_DEFAULT = Query(None)
+_GET_RECONCILIATION_USER_DEFAULT = Depends(require_permission(BED_MASTER))
 
 
 @router.get("/master/reconciliation")
-def get_reconciliation(request: Request, ward_id: Optional[str] = Query(None),
-                       user: dict = Depends(require_permission(BED_MASTER))):
+def get_reconciliation(
+    request: Request,
+    ward_id: str | None = _GET_RECONCILIATION_WARD_ID_DEFAULT,
+    user: dict = _GET_RECONCILIATION_USER_DEFAULT,
+):
     """Active admissions sorted against the master. Audited as phi_access."""
-    return _run(bm.reconciliation_report, actor=user, ward_id=ward_id,
-                request_meta=_meta(request))
+    return _run(bm.reconciliation_report, actor=user, ward_id=ward_id, request_meta=_meta(request))
+
+
+_POST_RECONCILIATION_LINK_USER_DEFAULT = Depends(require_permission(BED_MASTER))
 
 
 @router.post("/master/reconciliation/link")
-def post_reconciliation_link(body: LinkIn, request: Request,
-                             user: dict = Depends(require_permission(BED_MASTER))):
+def post_reconciliation_link(
+    body: LinkIn, request: Request, user: dict = _POST_RECONCILIATION_LINK_USER_DEFAULT
+):
     """Link matched admissions to their master beds. Never a doubled bed."""
     return _run(bm.link_admissions, body.model_dump(), actor=user, request_meta=_meta(request))

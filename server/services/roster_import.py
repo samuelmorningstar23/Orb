@@ -81,6 +81,7 @@ path mints a one-time password that has to be handed to the patient), and it doe
 not discharge anybody. Roster import answers "who is on the ward"; leaving is a
 deliberate clinical action.
 """
+
 from __future__ import annotations
 
 import csv
@@ -88,11 +89,13 @@ import io
 import json
 import re
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
-from typing import Any, Iterable
+from datetime import UTC, date, datetime, timedelta, timezone
+from typing import Any
 
 from database import db_session
+
 from services.adt.core import AdtError, adt_on
 from services.adt.end_stay import end_stay_on
 from services.adt.transfer import roster_move_on, sync_housekeeping_after_commit
@@ -122,78 +125,247 @@ MAX_AGE = 130
 # `required` fields must resolve to a non-empty value or the row is an error.
 # `synonyms` drive mapping SUGGESTION only — never automatic import.
 
+
 @dataclass(frozen=True)
 class TargetField:
     name: str
     label: str
     required: bool
-    kind: str                     # text | int | date | enum | mrn
+    kind: str  # text | int | date | enum | mrn
     synonyms: tuple[str, ...]
     note: str = ""
 
 
 TARGET_FIELDS: tuple[TargetField, ...] = (
-    TargetField("mrn", "MRN / Hospital number", True, "mrn",
-                ("mrn", "mr no", "mrno", "mr number", "hospital number", "hospital no",
-                 "hosp no", "hosp number", "uhid no", "uhid number",
-                 "hospno", "uhid", "patient id", "patientid", "pid", "reg no",
-                 "regno", "registration number", "ip no", "ipno", "ip number",
-                 "ipd no", "file no", "case no", "cr no", "crno"),
-                "Natural key. Re-import matches on this."),
-    TargetField("name", "Patient name", True, "text",
-                ("name", "patient name", "patientname", "full name", "fullname",
-                 "pt name", "ptname", "patient"),
-                "Given+family as the HIS holds it; initials are accepted."),
-    TargetField("ward", "Ward", False, "text",
-                ("ward", "ward name", "unit", "ward/unit", "location", "room"),
-                "The physical ward. Written to the patient AND to the admission."),
-    TargetField("department", "Department / speciality", False, "text",
-                ("department", "dept", "speciality", "specialty", "service",
-                 "department name", "clinical unit", "under dept"),
-                "Written to the ADMISSION, not to the patient row. This is what "
-                "department-scoped boards (Vigil, the nurse shift board) filter on, "
-                "so a wrong or missing value hides the patient from staff in that "
-                "department. Defaults to `default_department`, then to the ward."),
-    TargetField("bed", "Bed", False, "text",
-                ("bed", "bed no", "bedno", "bed number", "bed_no", "cot"), ""),
-    TargetField("age", "Age (years)", False, "int",
-                ("age", "age (y)", "age_years", "age in years", "yrs", "years"),
-                "Ignored when date_of_birth is mapped and parses."),
-    TargetField("date_of_birth", "Date of birth", False, "date",
-                ("dob", "date of birth", "birth date", "birthdate", "d.o.b",
-                 "d.o.b.", "dateofbirth"), ""),
-    TargetField("sex", "Sex", False, "enum",
-                ("sex", "gender", "m/f", "sex/gender"), "Normalised to M / F / O."),
-    TargetField("phone", "Phone", False, "text",
-                ("phone", "mobile", "contact", "contact no", "contact number",
-                 "phone no", "phoneno", "mobile no", "cell"), ""),
-    TargetField("address", "Address", False, "text",
-                ("address", "addr", "residence"), ""),
-    TargetField("diagnosis", "Diagnosis", False, "text",
-                ("diagnosis", "provisional diagnosis", "dx", "final diagnosis",
-                 "chief complaint", "complaint", "reason for admission"), ""),
-    TargetField("admission_date", "Admission date", False, "date",
-                ("admission date", "admitted on", "doa", "date of admission",
-                 "admit date", "admissiondate", "adm date"), ""),
-    TargetField("attending_doctor_id", "Attending doctor (Orb user id)", False, "text",
-                ("attending", "attending doctor", "consultant", "doctor id",
-                 "doctor", "primary physician", "under care of"),
-                "Must be an existing Orb user id; unknown ids are reported, not created."),
-    TargetField("emergency_contact_name", "Emergency contact name", False, "text",
-                ("emergency contact", "emergency contact name", "next of kin",
-                 "nok", "kin name", "attendant name"), ""),
-    TargetField("emergency_contact_phone", "Emergency contact phone", False, "text",
-                ("emergency contact phone", "nok phone", "kin phone",
-                 "attendant contact", "emergency phone"), ""),
-    TargetField("status", "Status", False, "enum",
-                ("status", "patient status", "admission status"),
-                "Normalised to admitted / discharged / transferred."),
-    TargetField("allergies", "Allergies", False, "list",
-                ("allergies", "allergy", "known allergies", "drug allergies",
-                 "drug allergy", "allergic to", "allergy details"),
-                "Separate several with ';' or ','. Charted as active allergies "
-                "that the prescribing and bedside allergy checks screen against. "
-                "Never removes or changes an allergy already on the chart."),
+    TargetField(
+        "mrn",
+        "MRN / Hospital number",
+        True,
+        "mrn",
+        (
+            "mrn",
+            "mr no",
+            "mrno",
+            "mr number",
+            "hospital number",
+            "hospital no",
+            "hosp no",
+            "hosp number",
+            "uhid no",
+            "uhid number",
+            "hospno",
+            "uhid",
+            "patient id",
+            "patientid",
+            "pid",
+            "reg no",
+            "regno",
+            "registration number",
+            "ip no",
+            "ipno",
+            "ip number",
+            "ipd no",
+            "file no",
+            "case no",
+            "cr no",
+            "crno",
+        ),
+        "Natural key. Re-import matches on this.",
+    ),
+    TargetField(
+        "name",
+        "Patient name",
+        True,
+        "text",
+        (
+            "name",
+            "patient name",
+            "patientname",
+            "full name",
+            "fullname",
+            "pt name",
+            "ptname",
+            "patient",
+        ),
+        "Given+family as the HIS holds it; initials are accepted.",
+    ),
+    TargetField(
+        "ward",
+        "Ward",
+        False,
+        "text",
+        ("ward", "ward name", "unit", "ward/unit", "location", "room"),
+        "The physical ward. Written to the patient AND to the admission.",
+    ),
+    TargetField(
+        "department",
+        "Department / speciality",
+        False,
+        "text",
+        (
+            "department",
+            "dept",
+            "speciality",
+            "specialty",
+            "service",
+            "department name",
+            "clinical unit",
+            "under dept",
+        ),
+        "Written to the ADMISSION, not to the patient row. This is what "
+        "department-scoped boards (Vigil, the nurse shift board) filter on, "
+        "so a wrong or missing value hides the patient from staff in that "
+        "department. Defaults to `default_department`, then to the ward.",
+    ),
+    TargetField(
+        "bed", "Bed", False, "text", ("bed", "bed no", "bedno", "bed number", "bed_no", "cot"), ""
+    ),
+    TargetField(
+        "age",
+        "Age (years)",
+        False,
+        "int",
+        ("age", "age (y)", "age_years", "age in years", "yrs", "years"),
+        "Ignored when date_of_birth is mapped and parses.",
+    ),
+    TargetField(
+        "date_of_birth",
+        "Date of birth",
+        False,
+        "date",
+        ("dob", "date of birth", "birth date", "birthdate", "d.o.b", "d.o.b.", "dateofbirth"),
+        "",
+    ),
+    TargetField(
+        "sex",
+        "Sex",
+        False,
+        "enum",
+        ("sex", "gender", "m/f", "sex/gender"),
+        "Normalised to M / F / O.",
+    ),
+    TargetField(
+        "phone",
+        "Phone",
+        False,
+        "text",
+        (
+            "phone",
+            "mobile",
+            "contact",
+            "contact no",
+            "contact number",
+            "phone no",
+            "phoneno",
+            "mobile no",
+            "cell",
+        ),
+        "",
+    ),
+    TargetField("address", "Address", False, "text", ("address", "addr", "residence"), ""),
+    TargetField(
+        "diagnosis",
+        "Diagnosis",
+        False,
+        "text",
+        (
+            "diagnosis",
+            "provisional diagnosis",
+            "dx",
+            "final diagnosis",
+            "chief complaint",
+            "complaint",
+            "reason for admission",
+        ),
+        "",
+    ),
+    TargetField(
+        "admission_date",
+        "Admission date",
+        False,
+        "date",
+        (
+            "admission date",
+            "admitted on",
+            "doa",
+            "date of admission",
+            "admit date",
+            "admissiondate",
+            "adm date",
+        ),
+        "",
+    ),
+    TargetField(
+        "attending_doctor_id",
+        "Attending doctor (Orb user id)",
+        False,
+        "text",
+        (
+            "attending",
+            "attending doctor",
+            "consultant",
+            "doctor id",
+            "doctor",
+            "primary physician",
+            "under care of",
+        ),
+        "Must be an existing Orb user id; unknown ids are reported, not created.",
+    ),
+    TargetField(
+        "emergency_contact_name",
+        "Emergency contact name",
+        False,
+        "text",
+        (
+            "emergency contact",
+            "emergency contact name",
+            "next of kin",
+            "nok",
+            "kin name",
+            "attendant name",
+        ),
+        "",
+    ),
+    TargetField(
+        "emergency_contact_phone",
+        "Emergency contact phone",
+        False,
+        "text",
+        (
+            "emergency contact phone",
+            "nok phone",
+            "kin phone",
+            "attendant contact",
+            "emergency phone",
+        ),
+        "",
+    ),
+    TargetField(
+        "status",
+        "Status",
+        False,
+        "enum",
+        ("status", "patient status", "admission status"),
+        "Normalised to admitted / discharged / transferred.",
+    ),
+    TargetField(
+        "allergies",
+        "Allergies",
+        False,
+        "list",
+        (
+            "allergies",
+            "allergy",
+            "known allergies",
+            "drug allergies",
+            "drug allergy",
+            "allergic to",
+            "allergy details",
+        ),
+        "Separate several with ';' or ','. Charted as active allergies "
+        "that the prescribing and bedside allergy checks screen against. "
+        "Never removes or changes an allergy already on the chart.",
+    ),
 )
 
 _FIELDS_BY_NAME: dict[str, TargetField] = {f.name: f for f in TARGET_FIELDS}
@@ -202,33 +374,71 @@ REQUIRED_FIELDS: tuple[str, ...] = tuple(f.name for f in TARGET_FIELDS if f.requ
 # patients.status CHECK constraint — kept in sync with database.py SCHEMA.
 _STATUS_VALUES = {"admitted", "discharged", "transferred"}
 _STATUS_SYNONYMS = {
-    "admitted": "admitted", "admit": "admitted", "active": "admitted",
-    "inpatient": "admitted", "ip": "admitted", "in": "admitted",
-    "current": "admitted", "occupied": "admitted",
-    "discharged": "discharged", "discharge": "discharged", "dc": "discharged",
-    "d/c": "discharged", "out": "discharged", "closed": "discharged",
-    "transferred": "transferred", "transfer": "transferred", "xfer": "transferred",
+    "admitted": "admitted",
+    "admit": "admitted",
+    "active": "admitted",
+    "inpatient": "admitted",
+    "ip": "admitted",
+    "in": "admitted",
+    "current": "admitted",
+    "occupied": "admitted",
+    "discharged": "discharged",
+    "discharge": "discharged",
+    "dc": "discharged",
+    "d/c": "discharged",
+    "out": "discharged",
+    "closed": "discharged",
+    "transferred": "transferred",
+    "transfer": "transferred",
+    "xfer": "transferred",
     "referred out": "transferred",
 }
 
 _SEX_SYNONYMS = {
-    "m": "M", "male": "M", "man": "M", "boy": "M", "1": "M",
-    "f": "F", "female": "F", "woman": "F", "girl": "F", "2": "F",
-    "o": "O", "other": "O", "third gender": "O", "transgender": "O",
-    "tg": "O", "3": "O", "x": "O",
+    "m": "M",
+    "male": "M",
+    "man": "M",
+    "boy": "M",
+    "1": "M",
+    "f": "F",
+    "female": "F",
+    "woman": "F",
+    "girl": "F",
+    "2": "F",
+    "o": "O",
+    "other": "O",
+    "third gender": "O",
+    "transgender": "O",
+    "tg": "O",
+    "3": "O",
+    "x": "O",
 }
 
 # Tokens a basic HIS writes to mean "nothing here". Treated as blank, and — for
 # a REQUIRED field — reported as a placeholder rather than imported verbatim.
-_NULL_TOKENS = {"", "-", "--", "n/a", "na", "nil", "null", "none", "unknown",
-                "not known", "not available", "?", ".", "#n/a", "#value!"}
+_NULL_TOKENS = {
+    "",
+    "-",
+    "--",
+    "n/a",
+    "na",
+    "nil",
+    "null",
+    "none",
+    "unknown",
+    "not known",
+    "not available",
+    "?",
+    ".",
+    "#n/a",
+    "#value!",
+}
 
 
 def field_catalogue() -> list[dict]:
     """Serialisable target-field catalogue — drives the UI mapping step."""
     return [
-        {"name": f.name, "label": f.label, "required": f.required,
-         "kind": f.kind, "note": f.note}
+        {"name": f.name, "label": f.label, "required": f.required, "kind": f.kind, "note": f.note}
         for f in TARGET_FIELDS
     ]
 
@@ -237,6 +447,7 @@ def field_catalogue() -> list[dict]:
 #  Issues
 # ══════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class Issue:
     """One thing that was wrong with the input, tied to a physical line number.
@@ -244,6 +455,7 @@ class Issue:
     ``severity='error'`` means the row is NOT imported. ``severity='warning'``
     means it is imported, with the named field left NULL or the named caveat.
     """
+
     line: int | None
     code: str
     severity: str
@@ -252,13 +464,20 @@ class Issue:
     value: str | None = None
 
     def to_dict(self) -> dict:
-        return {"line": self.line, "code": self.code, "severity": self.severity,
-                "message": self.message, "field": self.field, "value": self.value}
+        return {
+            "line": self.line,
+            "code": self.code,
+            "severity": self.severity,
+            "message": self.message,
+            "field": self.field,
+            "value": self.value,
+        }
 
 
 # ══════════════════════════════════════════════════════════════════════════
 #  Value normalisation  (each returns (value, issues))
 # ══════════════════════════════════════════════════════════════════════════
+
 
 def _clean(raw: Any) -> str:
     """Trim, collapse internal whitespace, drop 'null' placeholder tokens."""
@@ -281,21 +500,36 @@ def _normalise_mrn(raw: str) -> str:
     return re.sub(r"\s+", "", raw or "")
 
 
-def _parse_int(value: str, fname: str, line: int,
-               lo: int, hi: int) -> tuple[int | None, list[Issue]]:
+def _parse_int(
+    value: str, fname: str, line: int, lo: int, hi: int
+) -> tuple[int | None, list[Issue]]:
     if not value:
         return None, []
     cleaned = value.replace(",", "").strip()
     m = re.fullmatch(r"(\d+)\s*(?:y|yr|yrs|year|years|/m|m|d)?", cleaned, re.IGNORECASE)
     if not m:
-        return None, [Issue(line, "unparseable_number", "warning",
-                            f"{fname} '{value}' is not a number, left blank rather than guessed.",
-                            fname, value)]
+        return None, [
+            Issue(
+                line,
+                "unparseable_number",
+                "warning",
+                f"{fname} '{value}' is not a number, left blank rather than guessed.",
+                fname,
+                value,
+            )
+        ]
     n = int(m.group(1))
     if n < lo or n > hi:
-        return None, [Issue(line, "out_of_range", "warning",
-                            f"{fname} {n} is outside the plausible range {lo}-{hi}, left blank.",
-                            fname, value)]
+        return None, [
+            Issue(
+                line,
+                "out_of_range",
+                "warning",
+                f"{fname} {n} is outside the plausible range {lo}-{hi}, left blank.",
+                fname,
+                value,
+            )
+        ]
     return n, []
 
 
@@ -306,19 +540,29 @@ _DATE_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"^(\d{4})/(\d{1,2})/(\d{1,2})$", "ymd"),
     (r"^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$", "ambiguous"),
 )
-_MONTH_NAMES = {m.lower(): i for i, m in enumerate(
-    ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
-     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"), start=1)}
+_MONTH_NAMES = {
+    m.lower(): i
+    for i, m in enumerate(
+        ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"),
+        start=1,
+    )
+}
 
 
 # Issue codes for a date that was in the file but is imported blank.
-_DATE_BLANKED_CODES = frozenset({
-    "ambiguous_date", "invalid_date", "two_digit_year", "unrecognised_date_format",
-})
+_DATE_BLANKED_CODES = frozenset(
+    {
+        "ambiguous_date",
+        "invalid_date",
+        "two_digit_year",
+        "unrecognised_date_format",
+    }
+)
 
 
-def _parse_date(value: str, fname: str, line: int,
-                date_order: str) -> tuple[str | None, list[Issue]]:
+def _parse_date(
+    value: str, fname: str, line: int, date_order: str
+) -> tuple[str | None, list[Issue]]:
     """Parse one date into YYYY-MM-DD.
 
     ``date_order`` is 'dmy', 'mdy' or 'auto'. Under 'auto' a value such as
@@ -334,20 +578,33 @@ def _parse_date(value: str, fname: str, line: int,
     # 12-Mar-2026 / 12 March 2026 / Mar 12, 2026 — unambiguous, take them first.
     m = re.fullmatch(r"(\d{1,2})[\s\-/]*([A-Za-z]{3,9})[\s\-/,]*(\d{4})", raw)
     if m and m.group(2)[:3].lower() in _MONTH_NAMES:
-        return _build_date(int(m.group(3)), _MONTH_NAMES[m.group(2)[:3].lower()],
-                           int(m.group(1)), fname, line, value)
+        return _build_date(
+            int(m.group(3)),
+            _MONTH_NAMES[m.group(2)[:3].lower()],
+            int(m.group(1)),
+            fname,
+            line,
+            value,
+        )
     m = re.fullmatch(r"([A-Za-z]{3,9})[\s\-/]*(\d{1,2})[\s\-/,]*(\d{4})", raw)
     if m and m.group(1)[:3].lower() in _MONTH_NAMES:
-        return _build_date(int(m.group(3)), _MONTH_NAMES[m.group(1)[:3].lower()],
-                           int(m.group(2)), fname, line, value)
+        return _build_date(
+            int(m.group(3)),
+            _MONTH_NAMES[m.group(1)[:3].lower()],
+            int(m.group(2)),
+            fname,
+            line,
+            value,
+        )
 
     for pattern, kind in _DATE_PATTERNS:
         m = re.fullmatch(pattern, raw)
         if not m:
             continue
         if kind == "ymd":
-            return _build_date(int(m.group(1)), int(m.group(2)), int(m.group(3)),
-                               fname, line, value)
+            return _build_date(
+                int(m.group(1)), int(m.group(2)), int(m.group(3)), fname, line, value
+            )
         a, b, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
         dmy_ok = _valid_ymd(year, b, a)
         mdy_ok = _valid_ymd(year, a, b)
@@ -356,30 +613,65 @@ def _parse_date(value: str, fname: str, line: int,
         if date_order == "mdy" and mdy_ok:
             return _build_date(year, a, b, fname, line, value)
         if date_order in ("dmy", "mdy"):
-            return None, [Issue(line, "invalid_date", "warning",
-                                f"{fname} '{value}' is not a valid date in {date_order.upper()} order, left blank.",
-                                fname, value)]
+            return None, [
+                Issue(
+                    line,
+                    "invalid_date",
+                    "warning",
+                    f"{fname} '{value}' is not a valid date in {date_order.upper()} order, left blank.",
+                    fname,
+                    value,
+                )
+            ]
         # auto
         if dmy_ok and mdy_ok and a != b:
-            return None, [Issue(line, "ambiguous_date", "warning",
-                                f"{fname} '{value}' is ambiguous (could be D/M/Y or M/D/Y), left blank. "
-                                f"Re-run with an explicit date order to import it.",
-                                fname, value)]
+            return None, [
+                Issue(
+                    line,
+                    "ambiguous_date",
+                    "warning",
+                    f"{fname} '{value}' is ambiguous (could be D/M/Y or M/D/Y), left blank. "
+                    f"Re-run with an explicit date order to import it.",
+                    fname,
+                    value,
+                )
+            ]
         if dmy_ok:
             return _build_date(year, b, a, fname, line, value)
         if mdy_ok:
             return _build_date(year, a, b, fname, line, value)
-        return None, [Issue(line, "invalid_date", "warning",
-                            f"{fname} '{value}' is not a valid calendar date, left blank.",
-                            fname, value)]
+        return None, [
+            Issue(
+                line,
+                "invalid_date",
+                "warning",
+                f"{fname} '{value}' is not a valid calendar date, left blank.",
+                fname,
+                value,
+            )
+        ]
 
     if re.fullmatch(r"\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2}", raw):
-        return None, [Issue(line, "two_digit_year", "warning",
-                            f"{fname} '{value}' uses a two-digit year: the century is a guess, so it was left blank.",
-                            fname, value)]
-    return None, [Issue(line, "unrecognised_date_format", "warning",
-                        f"{fname} '{value}' is not in a recognised date format, left blank.",
-                        fname, value)]
+        return None, [
+            Issue(
+                line,
+                "two_digit_year",
+                "warning",
+                f"{fname} '{value}' uses a two-digit year: the century is a guess, so it was left blank.",
+                fname,
+                value,
+            )
+        ]
+    return None, [
+        Issue(
+            line,
+            "unrecognised_date_format",
+            "warning",
+            f"{fname} '{value}' is not in a recognised date format, left blank.",
+            fname,
+            value,
+        )
+    ]
 
 
 def _valid_ymd(y: int, m: int, d: int) -> bool:
@@ -390,17 +682,32 @@ def _valid_ymd(y: int, m: int, d: int) -> bool:
         return False
 
 
-def _build_date(y: int, m: int, d: int, fname: str, line: int,
-                original: str) -> tuple[str | None, list[Issue]]:
+def _build_date(
+    y: int, m: int, d: int, fname: str, line: int, original: str
+) -> tuple[str | None, list[Issue]]:
     if not _valid_ymd(y, m, d):
-        return None, [Issue(line, "invalid_date", "warning",
-                            f"{fname} '{original}' is not a valid calendar date, left blank.",
-                            fname, original)]
+        return None, [
+            Issue(
+                line,
+                "invalid_date",
+                "warning",
+                f"{fname} '{original}' is not a valid calendar date, left blank.",
+                fname,
+                original,
+            )
+        ]
     parsed = date(y, m, d)
     if parsed > date.today():
-        return parsed.isoformat(), [Issue(line, "future_date", "warning",
-                                          f"{fname} '{original}' is in the future, imported as-is; verify against the HIS.",
-                                          fname, original)]
+        return parsed.isoformat(), [
+            Issue(
+                line,
+                "future_date",
+                "warning",
+                f"{fname} '{original}' is in the future, imported as-is; verify against the HIS.",
+                fname,
+                original,
+            )
+        ]
     return parsed.isoformat(), []
 
 
@@ -410,9 +717,16 @@ def _parse_sex(value: str, line: int) -> tuple[str | None, list[Issue]]:
     key = value.strip().lower().rstrip(".")
     if key in _SEX_SYNONYMS:
         return _SEX_SYNONYMS[key], []
-    return None, [Issue(line, "unrecognised_sex", "warning",
-                        f"sex '{value}' was not recognised, left blank rather than defaulted.",
-                        "sex", value)]
+    return None, [
+        Issue(
+            line,
+            "unrecognised_sex",
+            "warning",
+            f"sex '{value}' was not recognised, left blank rather than defaulted.",
+            "sex",
+            value,
+        )
+    ]
 
 
 def _parse_status(value: str, line: int) -> tuple[str | None, list[Issue]]:
@@ -423,13 +737,29 @@ def _parse_status(value: str, line: int) -> tuple[str | None, list[Issue]]:
         return key, []
     if key in _STATUS_SYNONYMS:
         return _STATUS_SYNONYMS[key], []
-    return None, [Issue(line, "unrecognised_status", "warning",
-                        f"status '{value}' was not recognised, defaulting to 'admitted' for a roster row.",
-                        "status", value)]
+    return None, [
+        Issue(
+            line,
+            "unrecognised_status",
+            "warning",
+            f"status '{value}' was not recognised, defaulting to 'admitted' for a roster row.",
+            "status",
+            value,
+        )
+    ]
 
 
-_NAME_PLACEHOLDERS = {"baby of", "b/o", "unknown", "unnamed", "test", "test patient",
-                      "xxx", "abc", "dummy"}
+_NAME_PLACEHOLDERS = {
+    "baby of",
+    "b/o",
+    "unknown",
+    "unnamed",
+    "test",
+    "test patient",
+    "xxx",
+    "abc",
+    "dummy",
+}
 
 
 def _check_name(value: str, line: int) -> list[Issue]:
@@ -437,18 +767,39 @@ def _check_name(value: str, line: int) -> list[Issue]:
     issues: list[Issue] = []
     stripped = value.replace(".", "").replace(" ", "")
     if value.lower() in _NAME_PLACEHOLDERS:
-        issues.append(Issue(line, "placeholder_name", "warning",
-                            f"name '{value}' looks like a placeholder, imported verbatim; confirm against the HIS.",
-                            "name", value))
+        issues.append(
+            Issue(
+                line,
+                "placeholder_name",
+                "warning",
+                f"name '{value}' looks like a placeholder, imported verbatim; confirm against the HIS.",
+                "name",
+                value,
+            )
+        )
     elif not re.search(r"[A-Za-zऀ-ॿ]", value):
-        issues.append(Issue(line, "name_without_letters", "warning",
-                            f"name '{value}' contains no letters, imported verbatim; confirm against the HIS.",
-                            "name", value))
+        issues.append(
+            Issue(
+                line,
+                "name_without_letters",
+                "warning",
+                f"name '{value}' contains no letters, imported verbatim; confirm against the HIS.",
+                "name",
+                value,
+            )
+        )
     elif len(stripped) <= 3 and re.fullmatch(r"[A-Za-z.\s]+", value):
-        issues.append(Issue(line, "initials_only_name", "warning",
-                            f"name '{value}' appears to be initials only, imported verbatim, "
-                            f"but a bedside identity check needs a full name.",
-                            "name", value))
+        issues.append(
+            Issue(
+                line,
+                "initials_only_name",
+                "warning",
+                f"name '{value}' appears to be initials only, imported verbatim, "
+                f"but a bedside identity check needs a full name.",
+                "name",
+                value,
+            )
+        )
     return issues
 
 
@@ -500,9 +851,14 @@ def _decode(content: bytes | str) -> tuple[str, list[Issue]]:
         # itself UTF-16, so a truncated tail is damage to report, not evidence
         # that it was really cp1252 all along.
         return content.decode("utf-16", errors="replace"), [
-            Issue(None, "non_utf8_encoding", "warning",
-                  "File is UTF-16 (it carries a byte-order mark). "
-                  "Check that non-Latin names came through correctly.")]
+            Issue(
+                None,
+                "non_utf8_encoding",
+                "warning",
+                "File is UTF-16 (it carries a byte-order mark). "
+                "Check that non-Latin names came through correctly.",
+            )
+        ]
 
     for encoding in ("utf-8-sig", "cp1252", "latin-1"):
         try:
@@ -511,13 +867,24 @@ def _decode(content: bytes | str) -> tuple[str, list[Issue]]:
             continue
         if encoding == "utf-8-sig":
             return text, []
-        return text, [Issue(None, "non_utf8_encoding", "warning",
-                            f"File is not UTF-8; decoded as {encoding}. "
-                            f"Check that non-Latin names came through correctly.")]
+        return text, [
+            Issue(
+                None,
+                "non_utf8_encoding",
+                "warning",
+                f"File is not UTF-8; decoded as {encoding}. "
+                f"Check that non-Latin names came through correctly.",
+            )
+        ]
     return content.decode("utf-8", errors="replace"), [
-        Issue(None, "undecodable_bytes", "warning",
-              "File contained bytes that are not valid in any tried encoding; "
-              "they were replaced. Names may be corrupted.")]
+        Issue(
+            None,
+            "undecodable_bytes",
+            "warning",
+            "File contained bytes that are not valid in any tried encoding; "
+            "they were replaced. Names may be corrupted.",
+        )
+    ]
 
 
 def _sniff_delimiter(sample: str) -> str:
@@ -552,8 +919,10 @@ def suggest_mapping(headers: Iterable[str]) -> dict[str, str]:
             for original, norm in normalised:
                 if original in taken or not norm:
                     continue
-                hit = (norm in f.synonyms) if exact_pass else any(
-                    s in norm or norm in s for s in f.synonyms if len(s) > 2
+                hit = (
+                    (norm in f.synonyms)
+                    if exact_pass
+                    else any(s in norm or norm in s for s in f.synonyms if len(s) > 2)
                 )
                 if hit:
                     mapping[f.name] = original
@@ -587,14 +956,26 @@ def sniff(content: bytes | str, *, header_line: int | None = None) -> dict:
     headers = [h.strip() for h in next(reader, [])]
     blank_headers = [i for i, h in enumerate(headers) if not h]
     if blank_headers:
-        issues.append(Issue(header_offset + 1, "blank_header", "warning",
-                            f"Column(s) {[i + 1 for i in blank_headers]} have no header name "
-                            f"and cannot be mapped."))
+        issues.append(
+            Issue(
+                header_offset + 1,
+                "blank_header",
+                "warning",
+                f"Column(s) {[i + 1 for i in blank_headers]} have no header name "
+                f"and cannot be mapped.",
+            )
+        )
     dupes = sorted({h for h in headers if h and headers.count(h) > 1})
     if dupes:
-        issues.append(Issue(header_offset + 1, "duplicate_header", "warning",
-                            f"Duplicate column header(s) {dupes}; only the LAST column with "
-                            f"each name is readable."))
+        issues.append(
+            Issue(
+                header_offset + 1,
+                "duplicate_header",
+                "warning",
+                f"Duplicate column header(s) {dupes}; only the LAST column with "
+                f"each name is readable.",
+            )
+        )
 
     mapping = suggest_mapping(headers)
     rows, row_issues, _ = _read_rows(text, delimiter, header_offset)
@@ -636,12 +1017,12 @@ def sniff(content: bytes | str, *, header_line: int | None = None) -> dict:
 # candidates and `plan` refuses until the admin names the line via `header_line`.
 
 _MIN_HEADER_HITS = 2
-_HEADER_SEARCH_LINES = 100      # a header is near the top or it is not a header
+_HEADER_SEARCH_LINES = 100  # a header is near the top or it is not a header
 
 
 @dataclass
 class HeaderCandidate:
-    index: int                  # 0-based line index in the file
+    index: int  # 0-based line index in the file
     line: str
     fields: list[str]
     exact_hits: tuple[str, ...]
@@ -652,15 +1033,18 @@ class HeaderCandidate:
         return sum(1 for f in self.fields if f.strip())
 
     def to_dict(self) -> dict:
-        return {"line": self.index + 1, "text": self.line[:200],
-                "fields": self.fields,
-                "recognised_columns": list(self.exact_hits),
-                "possible_columns": list(self.loose_hits)}
+        return {
+            "line": self.index + 1,
+            "text": self.line[:200],
+            "fields": self.fields,
+            "recognised_columns": list(self.exact_hits),
+            "possible_columns": list(self.loose_hits),
+        }
 
 
 @dataclass
 class HeaderLocation:
-    index: int                  # 0-based line index of the chosen header
+    index: int  # 0-based line index of the chosen header
     line: str
     delimiter: str
     confident: bool
@@ -687,9 +1071,9 @@ def _exact_header_hits(fields: Iterable[str]) -> tuple[str, ...]:
 def _header_candidate(index: int, line: str, delimiter: str) -> HeaderCandidate:
     parts = next(csv.reader(io.StringIO(line), delimiter=delimiter), [])
     fields = [p.strip() for p in parts]
-    return HeaderCandidate(index, line, fields,
-                           _exact_header_hits(fields),
-                           tuple(suggest_mapping(fields)))
+    return HeaderCandidate(
+        index, line, fields, _exact_header_hits(fields), tuple(suggest_mapping(fields))
+    )
 
 
 def _locate_header(text: str, header_line: int | None = None) -> HeaderLocation:
@@ -723,19 +1107,26 @@ def _locate_header(text: str, header_line: int | None = None) -> HeaderLocation:
                 f"under delimiter '{delimiter}'. That cannot be a header row."
             )
         if not chosen.exact_hits and not chosen.loose_hits:
-            issues.append(Issue(
-                header_line, "header_line_unrecognised", "warning",
-                f"Line {header_line} was used as the header on your instruction, but none of its "
-                f"{chosen.named_fields} column name(s) match anything Orb recognises. Check the "
-                f"mapping column by column before committing."))
+            issues.append(
+                Issue(
+                    header_line,
+                    "header_line_unrecognised",
+                    "warning",
+                    f"Line {header_line} was used as the header on your instruction, but none of its "
+                    f"{chosen.named_fields} column name(s) match anything Orb recognises. Check the "
+                    f"mapping column by column before committing.",
+                )
+            )
         if idx > 0:
             issues.append(_preamble_issue(idx))
         return HeaderLocation(idx, lines[idx], delimiter, True, [chosen], issues)
 
-    candidates = [_header_candidate(i, lines[i], delimiter)
-                  for i in non_blank[:_HEADER_SEARCH_LINES]]
-    strong = [c for c in candidates
-              if c.named_fields >= 2 and len(set(c.exact_hits)) >= _MIN_HEADER_HITS]
+    candidates = [
+        _header_candidate(i, lines[i], delimiter) for i in non_blank[:_HEADER_SEARCH_LINES]
+    ]
+    strong = [
+        c for c in candidates if c.named_fields >= 2 and len(set(c.exact_hits)) >= _MIN_HEADER_HITS
+    ]
     if strong:
         chosen = strong[0]
         if chosen.index > 0:
@@ -745,24 +1136,34 @@ def _locate_header(text: str, header_line: int | None = None) -> HeaderLocation:
     weak = [c for c in candidates if c.named_fields >= 2 and (c.exact_hits or c.loose_hits)]
     ranked = weak or [candidates[0]]
     best = ranked[0]
-    issues.append(Issue(
-        best.index + 1, "header_ambiguous", "error",
-        f"No line in this file clearly looks like a column-header row: a header is expected to name "
-        f"at least {_MIN_HEADER_HITS} columns Orb recognises (MRN, Patient Name, Ward, …). Reading "
-        f"the wrong line as the header shifts EVERY column into the wrong field, so Orb will not "
-        f"guess. Best candidate is line {best.index + 1}: {best.line[:120]!r}. Re-run with "
-        f"header_line set to the 1-based line number that holds the column names."))
+    issues.append(
+        Issue(
+            best.index + 1,
+            "header_ambiguous",
+            "error",
+            f"No line in this file clearly looks like a column-header row: a header is expected to name "
+            f"at least {_MIN_HEADER_HITS} columns Orb recognises (MRN, Patient Name, Ward, …). Reading "
+            f"the wrong line as the header shifts EVERY column into the wrong field, so Orb will not "
+            f"guess. Best candidate is line {best.index + 1}: {best.line[:120]!r}. Re-run with "
+            f"header_line set to the 1-based line number that holds the column names.",
+        )
+    )
     return HeaderLocation(best.index, best.line, delimiter, False, ranked[:5], issues)
 
 
 def _preamble_issue(header_index: int) -> Issue:
-    return Issue(header_index, "preamble_skipped", "warning",
-                 f"{header_index} line(s) before the header row were ignored "
-                 f"(they did not look like column headers).")
+    return Issue(
+        header_index,
+        "preamble_skipped",
+        "warning",
+        f"{header_index} line(s) before the header row were ignored "
+        f"(they did not look like column headers).",
+    )
 
 
-def _read_rows(text: str, delimiter: str, header_offset: int
-               ) -> tuple[list[tuple[int, dict, Issue | None]], list[Issue], list[str]]:
+def _read_rows(
+    text: str, delimiter: str, header_offset: int
+) -> tuple[list[tuple[int, dict, Issue | None]], list[Issue], list[str]]:
     """Read data rows as (physical_line_number, {header: value}, rejection).
 
     Blank and ragged rows are reported, not dropped silently. Line numbers are
@@ -796,9 +1197,15 @@ def _read_rows(text: str, delimiter: str, header_offset: int
             blank_count += 1
             continue
         if len(rows) >= MAX_ROWS:
-            issues.append(Issue(line_no, "row_limit", "error",
-                                f"File exceeds the {MAX_ROWS}-row limit; rows from line "
-                                f"{line_no} onward were not read."))
+            issues.append(
+                Issue(
+                    line_no,
+                    "row_limit",
+                    "error",
+                    f"File exceeds the {MAX_ROWS}-row limit; rows from line "
+                    f"{line_no} onward were not read.",
+                )
+            )
             break
 
         rejection: Issue | None = None
@@ -806,30 +1213,46 @@ def _read_rows(text: str, delimiter: str, header_offset: int
             surplus = [p.strip() for p in parts[width:] if p.strip()]
             if surplus:
                 rejection = Issue(
-                    line_no, "field_count_mismatch", "error",
+                    line_no,
+                    "field_count_mismatch",
+                    "error",
                     f"Row has {len(parts)} fields but the header has {width}, and the surplus "
                     f"value(s) {surplus[:3]} are not empty, so Orb cannot tell which column each "
                     f"value belongs to. The usual cause is an unquoted '{delimiter}' inside a "
                     f"field (an address such as '12 Nehru Street, New Delhi'), which shifts every "
                     f"later column one place and would file the patient under the wrong ward and "
                     f"bed. The row was NOT imported. Re-export with fields quoted, or fix this row.",
-                    value=delimiter.join(parts)[:200])
+                    value=delimiter.join(parts)[:200],
+                )
             else:
-                issues.append(Issue(line_no, "trailing_empty_fields", "warning",
-                                    f"Row has {len(parts)} fields but the header has {width}; the "
-                                    f"surplus field(s) are empty, so nothing shifted and they were "
-                                    f"ignored."))
+                issues.append(
+                    Issue(
+                        line_no,
+                        "trailing_empty_fields",
+                        "warning",
+                        f"Row has {len(parts)} fields but the header has {width}; the "
+                        f"surplus field(s) are empty, so nothing shifted and they were "
+                        f"ignored.",
+                    )
+                )
         elif len(parts) < width:
-            issues.append(Issue(line_no, "ragged_row", "warning",
-                                f"Row has {len(parts)} fields but the header has {width}; "
-                                f"missing fields read as blank."))
+            issues.append(
+                Issue(
+                    line_no,
+                    "ragged_row",
+                    "warning",
+                    f"Row has {len(parts)} fields but the header has {width}; "
+                    f"missing fields read as blank.",
+                )
+            )
 
         row = {headers[i]: (parts[i] if i < len(parts) else "") for i in range(width)}
         rows.append((line_no, row, rejection))
 
     if blank_count:
-        issues.append(Issue(None, "blank_rows", "warning",
-                            f"{blank_count} blank row(s) were skipped."))
+        issues.append(
+            Issue(None, "blank_rows", "warning", f"{blank_count} blank row(s) were skipped.")
+        )
     return rows, issues, headers
 
 
@@ -837,15 +1260,16 @@ def _read_rows(text: str, delimiter: str, header_offset: int
 #  Planning
 # ══════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class PlannedRow:
     line: int
     mrn: str | None
     name: str | None
-    action: str                                  # create | update | unchanged | skip
+    action: str  # create | update | unchanged | skip
     reason: str = ""
     patient_id: str | None = None
-    values: dict[str, Any] = field(default_factory=dict)   # normalised, non-null only
+    values: dict[str, Any] = field(default_factory=dict)  # normalised, non-null only
     changes: dict[str, dict] = field(default_factory=dict)  # field -> {from, to}
     issues: list[Issue] = field(default_factory=list)
     # What happens to this patient's ENCOUNTER — planned and reported separately
@@ -859,26 +1283,51 @@ class PlannedRow:
     allergies: dict[str, list[str]] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        return {"line": self.line, "mrn": self.mrn, "name": self.name,
-                "action": self.action, "reason": self.reason,
-                "patient_id": self.patient_id, "values": self.values,
-                "changes": self.changes, "admission": self.admission,
-                "allergies": self.allergies,
-                "issues": [i.to_dict() for i in self.issues]}
+        return {
+            "line": self.line,
+            "mrn": self.mrn,
+            "name": self.name,
+            "action": self.action,
+            "reason": self.reason,
+            "patient_id": self.patient_id,
+            "values": self.values,
+            "changes": self.changes,
+            "admission": self.admission,
+            "allergies": self.allergies,
+            "issues": [i.to_dict() for i in self.issues],
+        }
 
 
 # Orb columns a roster import is allowed to write. `mrn` is the key, not a
 # payload — it is never updated on an existing row. `department` is deliberately
 # absent: there is no such column on `patients`, it belongs to the admission.
-_WRITABLE = ("name", "ward", "bed", "age", "date_of_birth", "sex", "phone",
-             "address", "diagnosis", "admission_date", "attending_doctor_id",
-             "emergency_contact_name", "emergency_contact_phone", "status")
+_WRITABLE = (
+    "name",
+    "ward",
+    "bed",
+    "age",
+    "date_of_birth",
+    "sex",
+    "phone",
+    "address",
+    "diagnosis",
+    "admission_date",
+    "attending_doctor_id",
+    "emergency_contact_name",
+    "emergency_contact_phone",
+    "status",
+)
 
 
-def plan(content: bytes | str, mapping: dict[str, str], *,
-         date_order: str = "auto", update_existing: bool = True,
-         header_line: int | None = None,
-         default_department: str | None = None) -> dict:
+def plan(
+    content: bytes | str,
+    mapping: dict[str, str],
+    *,
+    date_order: str = "auto",
+    update_existing: bool = True,
+    header_line: int | None = None,
+    default_department: str | None = None,
+) -> dict:
     """Build the full import plan. Reads the DB; writes NOTHING.
 
     ``mapping`` is ``{orb_field: csv_header}``. ``date_order`` is 'auto', 'dmy'
@@ -936,9 +1385,9 @@ def plan(content: bytes | str, mapping: dict[str, str], *,
 
     # ── Pass 1: normalise every row ─────────────────────────────────────────
     planned: list[PlannedRow] = []
-    seen_mrn: dict[str, int] = {}          # exact mrn -> first line
+    seen_mrn: dict[str, int] = {}  # exact mrn -> first line
     seen_folded: dict[str, tuple[str, int]] = {}  # casefolded -> (mrn, line)
-    mrns_in_file: set[str] = set()         # incl. rejected rows: they ARE in the file
+    mrns_in_file: set[str] = set()  # incl. rejected rows: they ARE in the file
 
     for line_no, raw, rejection in rows:
         if rejection is not None:
@@ -948,8 +1397,11 @@ def plan(content: bytes | str, mapping: dict[str, str], *,
             mrn_cell = _normalise_mrn(_clean(raw.get(mapping.get("mrn", "")))) or None
             if mrn_cell:
                 mrns_in_file.add(mrn_cell)
-            planned.append(PlannedRow(line_no, mrn_cell, None, "skip",
-                                      "field_count_mismatch", issues=[rejection]))
+            planned.append(
+                PlannedRow(
+                    line_no, mrn_cell, None, "skip", "field_count_mismatch", issues=[rejection]
+                )
+            )
             continue
 
         pr = _normalise_row(raw, mapping, line_no, date_order)
@@ -963,19 +1415,34 @@ def plan(content: bytes | str, mapping: dict[str, str], *,
         if mrn in seen_mrn:
             pr.action = "skip"
             pr.reason = "duplicate_mrn_in_file"
-            pr.issues.append(Issue(line_no, "duplicate_mrn_in_file", "error",
-                                   f"MRN '{mrn}' already appeared on line {seen_mrn[mrn]}. "
-                                   f"Only the first row is used. The rows were NOT merged.",
-                                   "mrn", mrn))
+            pr.issues.append(
+                Issue(
+                    line_no,
+                    "duplicate_mrn_in_file",
+                    "error",
+                    f"MRN '{mrn}' already appeared on line {seen_mrn[mrn]}. "
+                    f"Only the first row is used. The rows were NOT merged.",
+                    "mrn",
+                    mrn,
+                )
+            )
             planned.append(pr)
             continue
         folded = mrn.casefold()
         if folded in seen_folded and seen_folded[folded][0] != mrn:
             other_mrn, other_line = seen_folded[folded]
-            pr.issues.append(Issue(line_no, "near_duplicate_mrn", "warning",
-                                   f"MRN '{mrn}' differs only by case from '{other_mrn}' on line "
-                                   f"{other_line}. Treated as SEPARATE patients: confirm they are not "
-                                   f"the same person.", "mrn", mrn))
+            pr.issues.append(
+                Issue(
+                    line_no,
+                    "near_duplicate_mrn",
+                    "warning",
+                    f"MRN '{mrn}' differs only by case from '{other_mrn}' on line "
+                    f"{other_line}. Treated as SEPARATE patients: confirm they are not "
+                    f"the same person.",
+                    "mrn",
+                    mrn,
+                )
+            )
         seen_mrn[mrn] = line_no
         seen_folded.setdefault(folded, (mrn, line_no))
         planned.append(pr)
@@ -984,9 +1451,10 @@ def plan(content: bytes | str, mapping: dict[str, str], *,
     candidate_mrns = [p.mrn for p in planned if p.action != "skip" and p.mrn]
     existing = _load_existing(candidate_mrns)
     open_admissions = _load_open_admissions([r["id"] for r in existing.values()])
-    doctor_ids = {p.values.get("attending_doctor_id") for p in planned
-                  if p.values.get("attending_doctor_id")}
-    known_doctors = _load_users(doctor_ids)
+    doctor_ids = {
+        p.values.get("attending_doctor_id") for p in planned if p.values.get("attending_doctor_id")
+    }
+    known_doctors = _load_users(d for d in doctor_ids if d is not None)
     charted = _load_allergies([r["id"] for r in existing.values()])
 
     for pr in planned:
@@ -995,18 +1463,32 @@ def plan(content: bytes | str, mapping: dict[str, str], *,
 
         did = pr.values.get("attending_doctor_id")
         if did and did not in known_doctors:
-            pr.issues.append(Issue(pr.line, "unknown_attending_doctor", "warning",
-                                   f"attending_doctor_id '{did}' is not an Orb user, left blank. "
-                                   f"Create the user first, then re-run the import to attach them.",
-                                   "attending_doctor_id", did))
+            pr.issues.append(
+                Issue(
+                    pr.line,
+                    "unknown_attending_doctor",
+                    "warning",
+                    f"attending_doctor_id '{did}' is not an Orb user, left blank. "
+                    f"Create the user first, then re-run the import to attach them.",
+                    "attending_doctor_id",
+                    did,
+                )
+            )
             pr.values.pop("attending_doctor_id", None)
         elif did and known_doctors[did] not in ("doctor", "clinician"):
-            pr.issues.append(Issue(pr.line, "attending_not_a_doctor", "warning",
-                                   f"attending_doctor_id '{did}' is an Orb user with role "
-                                   f"'{known_doctors[did]}', not a doctor, linked anyway; verify.",
-                                   "attending_doctor_id", did))
+            pr.issues.append(
+                Issue(
+                    pr.line,
+                    "attending_not_a_doctor",
+                    "warning",
+                    f"attending_doctor_id '{did}' is an Orb user with role "
+                    f"'{known_doctors[did]}', not a doctor, linked anyway; verify.",
+                    "attending_doctor_id",
+                    did,
+                )
+            )
 
-        row = existing.get(pr.mrn)
+        row = existing.get(pr.mrn or "")
         if row is None:
             pr.action = "create"
             _plan_admission(pr, None, None, default_department)
@@ -1017,9 +1499,15 @@ def plan(content: bytes | str, mapping: dict[str, str], *,
         if not update_existing:
             pr.action = "skip"
             pr.reason = "already_exists"
-            pr.issues.append(Issue(pr.line, "already_exists", "warning",
-                                   f"MRN '{pr.mrn}' already exists (patient {row['id']}) and "
-                                   f"update_existing is off, row skipped."))
+            pr.issues.append(
+                Issue(
+                    pr.line,
+                    "already_exists",
+                    "warning",
+                    f"MRN '{pr.mrn}' already exists (patient {row['id']}) and "
+                    f"update_existing is off, row skipped.",
+                )
+            )
             continue
 
         changes: dict[str, dict] = {}
@@ -1043,24 +1531,29 @@ def plan(content: bytes | str, mapping: dict[str, str], *,
     # same rows). Off: nothing here runs and the plan is exactly as before.
     location_rejects = _reject_unlisted_places(planned) if _strict_locations() else None
 
-    counts = {a: sum(1 for p in planned if p.action == a)
-              for a in ("create", "update", "unchanged", "skip")}
+    counts = {
+        a: sum(1 for p in planned if p.action == a)
+        for a in ("create", "update", "unchanged", "skip")
+    }
     counts["total_rows"] = len(planned)
-    counts["errors"] = sum(1 for p in planned
-                           for i in p.issues if i.severity == "error")
-    counts["warnings"] = (sum(1 for p in planned for i in p.issues if i.severity == "warning")
-                          + sum(1 for i in issues if i.severity == "warning"))
+    counts["errors"] = sum(1 for p in planned for i in p.issues if i.severity == "error")
+    counts["warnings"] = sum(1 for p in planned for i in p.issues if i.severity == "warning") + sum(
+        1 for i in issues if i.severity == "warning"
+    )
     for adm_action in ("create", "update", "close"):
         counts[f"admissions_{adm_action}"] = sum(
-            1 for p in planned if p.admission.get("action") == adm_action)
-    counts["allergies_add"] = sum(len(p.allergies.get("add", [])) for p in planned
-                                  if p.action != "skip")
+            1 for p in planned if p.admission.get("action") == adm_action
+        )
+    counts["allergies_add"] = sum(
+        len(p.allergies.get("add", [])) for p in planned if p.action != "skip"
+    )
     # Dates the file gave that will be written BLANK. The admin UI holds Apply
     # on this until a date order is chosen or the blanks are accepted: the
     # warnings used to be counted and never shown, and a blank DOB is a
     # discharge link that cannot open.
-    counts["dates_left_blank"] = sum(1 for p in planned if p.action != "skip"
-                                     for i in p.issues if i.code in _DATE_BLANKED_CODES)
+    counts["dates_left_blank"] = sum(
+        1 for p in planned if p.action != "skip" for i in p.issues if i.code in _DATE_BLANKED_CODES
+    )
 
     out = {
         "delimiter": delimiter,
@@ -1085,6 +1578,7 @@ def plan(content: bytes | str, mapping: dict[str, str], *,
 # ══════════════════════════════════════════════════════════════════════════
 #  Strict locations (adt-16, ORB_ADT_STRICT_LOCATIONS, ruling F104)
 # ══════════════════════════════════════════════════════════════════════════
+
 
 def _strict_locations() -> bool:
     """True while ORB_ADT and ORB_ADT_STRICT_LOCATIONS are both on."""
@@ -1112,8 +1606,11 @@ def _reject_unlisted_places(planned: list[PlannedRow]) -> list[dict]:
     rejected row, for the dry run. Reads only."""
     from services.adt.core import match_location_on, strict_place_refusal
 
-    rows = [p for p in planned if p.action != "skip"
-            and p.admission.get("action") in ("create", "update")]
+    rows = [
+        p
+        for p in planned
+        if p.action != "skip" and p.admission.get("action") in ("create", "update")
+    ]
     rejects: list[dict] = []
     if not rows:
         return rejects
@@ -1128,7 +1625,8 @@ def _reject_unlisted_places(planned: list[PlannedRow]) -> list[dict]:
                     continue
                 current = db.execute(
                     "SELECT ward, bed, ward_id, bed_id FROM admissions WHERE id = ?",
-                    (adm.get("admission_id"),)).fetchone()
+                    (adm.get("admission_id"),),
+                ).fetchone()
                 recorded = dict(current) if current is not None else {}
                 # The same place roster_move_on resolves: the new value, else
                 # the one recorded.
@@ -1136,9 +1634,14 @@ def _reject_unlisted_places(planned: list[PlannedRow]) -> list[dict]:
                 bed_text = (changes.get("bed") or {}).get("to") or recorded.get("bed")
             place = match_location_on(db, ward_text, bed_text)
             refusal = strict_place_refusal(
-                {"ward": place["ward"], "bed": place["bed"],
-                 "ward_text": place["ward_text"], "bed_text": place["bed_text"]},
-                recorded=recorded)
+                {
+                    "ward": place["ward"],
+                    "bed": place["bed"],
+                    "ward_text": place["ward_text"],
+                    "bed_text": place["bed_text"],
+                },
+                recorded=recorded,
+            )
             if refusal is None:
                 continue
             where = "ward" if refusal.code == "ward_not_in_setup" else "bed"
@@ -1146,20 +1649,47 @@ def _reject_unlisted_places(planned: list[PlannedRow]) -> list[dict]:
             if adm["action"] == "create":
                 pr.action = "skip"
                 pr.reason = refusal.code
-                pr.issues.append(Issue(pr.line, refusal.code, "error",
-                                       f"{refusal} The row was not imported.", where, value))
-                pr.admission = {"action": "rejected",
-                                "refusal": {"code": refusal.code, "message": str(refusal)}}
+                pr.issues.append(
+                    Issue(
+                        pr.line,
+                        refusal.code,
+                        "error",
+                        f"{refusal} The row was not imported.",
+                        where,
+                        value,
+                    )
+                )
+                pr.admission = {
+                    "action": "rejected",
+                    "refusal": {"code": refusal.code, "message": str(refusal)},
+                }
             else:
-                pr.issues.append(Issue(pr.line, refusal.code, "warning",
-                                       f"{refusal} The patient stays where they were recorded.",
-                                       where, value))
-                pr.admission = {**adm, "action": "update_refused",
-                                "refusal": {"code": refusal.code, "message": str(refusal)}}
-            rejects.append({"line": pr.line, "mrn": pr.mrn,
-                            "admission_id": pr.admission.get("admission_id"),
-                            "code": refusal.code, "message": str(refusal),
-                            "ward": place["ward_text"], "bed": place["bed_text"]})
+                pr.issues.append(
+                    Issue(
+                        pr.line,
+                        refusal.code,
+                        "warning",
+                        f"{refusal} The patient stays where they were recorded.",
+                        where,
+                        value,
+                    )
+                )
+                pr.admission = {
+                    **adm,
+                    "action": "update_refused",
+                    "refusal": {"code": refusal.code, "message": str(refusal)},
+                }
+            rejects.append(
+                {
+                    "line": pr.line,
+                    "mrn": pr.mrn,
+                    "admission_id": pr.admission.get("admission_id"),
+                    "code": refusal.code,
+                    "message": str(refusal),
+                    "ward": place["ward_text"],
+                    "bed": place["bed_text"],
+                }
+            )
     return rejects
 
 
@@ -1167,8 +1697,10 @@ def _reject_unlisted_places(planned: list[PlannedRow]) -> list[dict]:
 #  Admissions — the difference between "imported" and "on the ward board"
 # ══════════════════════════════════════════════════════════════════════════
 
-def _resolve_department(values: dict, patient_row: Any,
-                        default_department: str | None) -> tuple[str | None, str]:
+
+def _resolve_department(
+    values: dict, patient_row: Any, default_department: str | None
+) -> tuple[str | None, str]:
     """The department to file the encounter under, and where it came from.
 
     Both ward boards filter on ``admissions.department``, so NULL here means the
@@ -1211,12 +1743,13 @@ def _admission_timestamp(admission_date: str | None) -> str:
         except (ValueError, TypeError):
             d = None
         if d is not None:
-            return datetime(d.year, d.month, d.day, tzinfo=IST).astimezone(timezone.utc).isoformat()
-    return datetime.now(timezone.utc).isoformat()
+            return datetime(d.year, d.month, d.day, tzinfo=IST).astimezone(UTC).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
-def _plan_admission(pr: PlannedRow, patient_row: Any, open_adm: Any,
-                    default_department: str | None) -> None:
+def _plan_admission(
+    pr: PlannedRow, patient_row: Any, open_adm: Any, default_department: str | None
+) -> None:
     """Decide what happens to this patient's encounter. Sets ``pr.admission``.
 
     Independent of the patient action on purpose: a patient imported before this
@@ -1224,7 +1757,7 @@ def _plan_admission(pr: PlannedRow, patient_row: Any, open_adm: Any,
     encounter that puts them on the board, so a repair run fixes them.
     """
     values = pr.values
-    csv_status = values.get("status")           # present only if the file said so
+    csv_status = values.get("status")  # present only if the file said so
     db_status = _row_value(patient_row, "status")
     status = csv_status or db_status or "admitted"
     department, dept_source = _resolve_department(values, patient_row, default_department)
@@ -1233,18 +1766,27 @@ def _plan_admission(pr: PlannedRow, patient_row: Any, open_adm: Any,
         # The file EXPLICITLY says this patient is no longer an inpatient. That is
         # a statement, not an inference from absence, so it is safe to act on.
         if open_adm is None:
-            pr.admission = {"action": "none",
-                            "reason": f"file gives status '{csv_status}' and no admission is open"}
+            pr.admission = {
+                "action": "none",
+                "reason": f"file gives status '{csv_status}' and no admission is open",
+            }
             return
         pr.admission = {
             "action": "close",
             "admission_id": open_adm["id"],
             "to_status": "discharged" if csv_status == "discharged" else "transferred",
         }
-        pr.issues.append(Issue(
-            pr.line, "admission_closed", "warning",
-            f"The file gives status '{csv_status}', so the open admission {open_adm['id']} is being "
-            f"closed. The patient leaves the ward board.", "status", csv_status))
+        pr.issues.append(
+            Issue(
+                pr.line,
+                "admission_closed",
+                "warning",
+                f"The file gives status '{csv_status}', so the open admission {open_adm['id']} is being "
+                f"closed. The patient leaves the ward board.",
+                "status",
+                csv_status,
+            )
+        )
         return
 
     if status != "admitted":
@@ -1252,14 +1794,23 @@ def _plan_admission(pr: PlannedRow, patient_row: Any, open_adm: Any,
         # listed in an export is not a readmission — it might be a month-to-date
         # report — so nothing is inferred, but the consequence is stated because
         # both ward boards also require patients.status = 'admitted'.
-        pr.admission = {"action": "none",
-                        "reason": f"Orb holds this patient as '{status}' and the file has no status column"}
-        pr.issues.append(Issue(
-            pr.line, "not_admitted_in_orb", "warning",
-            f"Orb currently holds MRN '{pr.mrn}' as '{status}' and this file carries no status "
-            f"column, so no admission was opened and the patient will not appear on the ward "
-            f"boards. If the export means they are back on the ward, map a status column and "
-            f"re-run.", "status", status))
+        pr.admission = {
+            "action": "none",
+            "reason": f"Orb holds this patient as '{status}' and the file has no status column",
+        }
+        pr.issues.append(
+            Issue(
+                pr.line,
+                "not_admitted_in_orb",
+                "warning",
+                f"Orb currently holds MRN '{pr.mrn}' as '{status}' and this file carries no status "
+                f"column, so no admission was opened and the patient will not appear on the ward "
+                f"boards. If the export means they are back on the ward, map a status column and "
+                f"re-run.",
+                "status",
+                status,
+            )
+        )
         return
 
     if open_adm is None:
@@ -1272,18 +1823,25 @@ def _plan_admission(pr: PlannedRow, patient_row: Any, open_adm: Any,
             "department": department,
             "department_source": dept_source,
             "admitted_at": _admission_timestamp(
-                values.get("admission_date") or _row_value(patient_row, "admission_date")),
-            "attending_doctor_id": (values.get("attending_doctor_id")
-                                    or _row_value(patient_row, "attending_doctor_id")),
+                values.get("admission_date") or _row_value(patient_row, "admission_date")
+            ),
+            "attending_doctor_id": (
+                values.get("attending_doctor_id") or _row_value(patient_row, "attending_doctor_id")
+            ),
             "initial_diagnosis": values.get("diagnosis") or _row_value(patient_row, "diagnosis"),
         }
         if department is None:
-            pr.issues.append(Issue(
-                pr.line, "admission_without_department", "warning",
-                "No department and no ward for this row, so the admission is filed with a NULL "
-                "department. The patient will NOT appear on any department-scoped board (Vigil, "
-                "the nurse shift board) for staff who have a department on record. Map a department "
-                "column or pass a default department."))
+            pr.issues.append(
+                Issue(
+                    pr.line,
+                    "admission_without_department",
+                    "warning",
+                    "No department and no ward for this row, so the admission is filed with a NULL "
+                    "department. The patient will NOT appear on any department-scoped board (Vigil, "
+                    "the nurse shift board) for staff who have a department on record. Map a department "
+                    "column or pass a default department.",
+                )
+            )
         return
 
     # An open encounter already exists. A ward/bed move is a move WITHIN it.
@@ -1307,18 +1865,27 @@ def _plan_admission(pr: PlannedRow, patient_row: Any, open_adm: Any,
         "department_source": dept_source,
     }
     if "ward" in changes:
-        pr.issues.append(Issue(
-            pr.line, "ward_transfer", "warning",
-            f"Ward changed from '{changes['ward']['from']}' to '{changes['ward']['to']}'"
-            + (f" (bed '{changes['bed']['from']}' → '{changes['bed']['to']}')"
-               if "bed" in changes else "")
-            + f". Treated as a MOVE inside the existing admission {open_adm['id']}, the admission "
-              f"is updated in place, not closed and re-opened, so the encounter and everything "
-              f"hanging off it stays intact.", "ward", changes["ward"]["to"]))
+        pr.issues.append(
+            Issue(
+                pr.line,
+                "ward_transfer",
+                "warning",
+                f"Ward changed from '{changes['ward']['from']}' to '{changes['ward']['to']}'"
+                + (
+                    f" (bed '{changes['bed']['from']}' → '{changes['bed']['to']}')"
+                    if "bed" in changes
+                    else ""
+                )
+                + f". Treated as a MOVE inside the existing admission {open_adm['id']}, the admission "
+                f"is updated in place, not closed and re-opened, so the encounter and everything "
+                f"hanging off it stays intact.",
+                "ward",
+                changes["ward"]["to"],
+            )
+        )
 
 
-def _plan_allergies(pr: PlannedRow, patient_row: Any,
-                    charted: dict[str, dict[str, str]]) -> None:
+def _plan_allergies(pr: PlannedRow, patient_row: Any, charted: dict[str, dict[str, str]]) -> None:
     """Split the row's allergies into ones to chart and ones Orb already holds.
 
     Add-only: an allergy a clinician deactivated in Orb stays deactivated (they
@@ -1338,11 +1905,17 @@ def _plan_allergies(pr: PlannedRow, patient_row: Any,
             already.append(substance)
         else:
             inactive.append(substance)
-            pr.issues.append(Issue(
-                pr.line, "allergy_inactive_in_orb", "warning",
-                f"The file lists an allergy to '{substance}', but it is marked inactive on "
-                f"this patient's chart in Orb. Left as it is: review the chart.",
-                "allergies", substance))
+            pr.issues.append(
+                Issue(
+                    pr.line,
+                    "allergy_inactive_in_orb",
+                    "warning",
+                    f"The file lists an allergy to '{substance}', but it is marked inactive on "
+                    f"this patient's chart in Orb. Left as it is: review the chart.",
+                    "allergies",
+                    substance,
+                )
+            )
     pr.allergies = {"add": add, "already_charted": already, "inactive_in_orb": inactive}
 
 
@@ -1353,11 +1926,12 @@ def _load_allergies(patient_ids: list[str]) -> dict[str, dict[str, str]]:
         return out
     with db_session() as db:
         for i in range(0, len(patient_ids), 500):
-            chunk = patient_ids[i:i + 500]
+            chunk = patient_ids[i : i + 500]
             placeholders = ",".join("?" * len(chunk))
             for r in db.execute(
                 f"SELECT patient_id, substance, status FROM patient_allergies "
-                f"WHERE patient_id IN ({placeholders})", chunk,
+                f"WHERE patient_id IN ({placeholders})",
+                chunk,
             ).fetchall():
                 out.setdefault(r["patient_id"], {})[(r["substance"] or "").lower()] = r["status"]
     return out
@@ -1372,11 +1946,13 @@ def _absent_from_roster(planned: list[PlannedRow], mrns_in_file: set[str]) -> di
     module exists to avoid. Scoped to the wards the file actually covers so a
     single-ward roster does not accuse the rest of the hospital of absence.
     """
-    wards = sorted({p.values.get("ward") for p in planned if p.values.get("ward")})[:400]
-    note = ("These patients hold an OPEN admission in a ward this file covers but have no row in "
-            "the file. Orb has NOT discharged them: an absent row is not evidence of a discharge, "
-            "and a partial export would otherwise empty the ward board. Discharge them through the "
-            "discharge workflow, or map a status column and re-run.")
+    wards = sorted({p.values["ward"] for p in planned if p.values.get("ward")})[:400]
+    note = (
+        "These patients hold an OPEN admission in a ward this file covers but have no row in "
+        "the file. Orb has NOT discharged them: an absent row is not evidence of a discharge, "
+        "and a partial export would otherwise empty the ward board. Discharge them through the "
+        "discharge workflow, or map a status column and re-run."
+    )
     if not wards:
         return {"wards": [], "patients": [], "note": note}
 
@@ -1406,8 +1982,7 @@ def _same(current: Any, new: Any) -> bool:
     return str(current).strip() == str(new).strip()
 
 
-def _normalise_row(raw: dict, mapping: dict[str, str], line_no: int,
-                   date_order: str) -> PlannedRow:
+def _normalise_row(raw: dict, mapping: dict[str, str], line_no: int, date_order: str) -> PlannedRow:
     """Normalise one CSV row into Orb values + issues."""
     issues: list[Issue] = []
     values: dict[str, Any] = {}
@@ -1420,35 +1995,84 @@ def _normalise_row(raw: dict, mapping: dict[str, str], line_no: int,
     name = cell("name")
 
     if not mrn:
-        return PlannedRow(line_no, None, name or None, "skip", "missing_mrn", issues=[
-            Issue(line_no, "missing_mrn", "error",
-                  "Row has no MRN: it cannot be matched or safely re-imported, so it was not imported.",
-                  "mrn", str(raw.get(mapping.get("mrn", "")) or ""))])
+        return PlannedRow(
+            line_no,
+            None,
+            name or None,
+            "skip",
+            "missing_mrn",
+            issues=[
+                Issue(
+                    line_no,
+                    "missing_mrn",
+                    "error",
+                    "Row has no MRN: it cannot be matched or safely re-imported, so it was not imported.",
+                    "mrn",
+                    str(raw.get(mapping.get("mrn", "")) or ""),
+                )
+            ],
+        )
     if not name:
-        return PlannedRow(line_no, mrn, None, "skip", "missing_name", issues=[
-            Issue(line_no, "missing_name", "error",
-                  f"Row for MRN '{mrn}' has no patient name, not imported "
-                  f"(a bedside identity check needs a name).", "name", "")])
+        return PlannedRow(
+            line_no,
+            mrn,
+            None,
+            "skip",
+            "missing_name",
+            issues=[
+                Issue(
+                    line_no,
+                    "missing_name",
+                    "error",
+                    f"Row for MRN '{mrn}' has no patient name, not imported "
+                    f"(a bedside identity check needs a name).",
+                    "name",
+                    "",
+                )
+            ],
+        )
 
     # THE registration name rule (services/patient_name_rule.py), applied at
     # import exactly as at the admit desk: a name with fewer than two letters
     # cannot identify anyone at the bedside, so the row is reported and not
     # imported. Initials-only names ("S. R.") still import with a warning.
     from services.patient_name_rule import MIN_NAME_LETTERS, name_is_too_short
+
     if name_is_too_short(name):
-        return PlannedRow(line_no, mrn, name, "skip", "name_too_short", issues=[
-            Issue(line_no, "name_too_short", "error",
-                  f"Row for MRN '{mrn}' has the name '{name}', which has fewer than "
-                  f"{MIN_NAME_LETTERS} letters and cannot identify a patient at the "
-                  f"bedside; not imported. Correct it in the export and re-run.",
-                  "name", name)])
+        return PlannedRow(
+            line_no,
+            mrn,
+            name,
+            "skip",
+            "name_too_short",
+            issues=[
+                Issue(
+                    line_no,
+                    "name_too_short",
+                    "error",
+                    f"Row for MRN '{mrn}' has the name '{name}', which has fewer than "
+                    f"{MIN_NAME_LETTERS} letters and cannot identify a patient at the "
+                    f"bedside; not imported. Correct it in the export and re-run.",
+                    "name",
+                    name,
+                )
+            ],
+        )
 
     values["name"] = name
     issues.extend(_check_name(name, line_no))
 
-    for fname in ("ward", "department", "bed", "phone", "address", "diagnosis",
-                  "emergency_contact_name", "emergency_contact_phone",
-                  "attending_doctor_id"):
+    for fname in (
+        "ward",
+        "department",
+        "bed",
+        "phone",
+        "address",
+        "diagnosis",
+        "emergency_contact_name",
+        "emergency_contact_phone",
+        "attending_doctor_id",
+    ):
         v = cell(fname)
         if v:
             values[fname] = v
@@ -1472,10 +2096,18 @@ def _normalise_row(raw: dict, mapping: dict[str, str], line_no: int,
     if values.get("date_of_birth") and values.get("age") is not None:
         derived = _age_from_dob(values["date_of_birth"])
         if derived is not None and abs(derived - values["age"]) > 1:
-            issues.append(Issue(line_no, "age_dob_mismatch", "warning",
-                                f"age {values['age']} disagrees with date_of_birth "
-                                f"{values['date_of_birth']} (implies {derived}). Both imported as given; "
-                                f"reconcile in the HIS.", "age", age_raw))
+            issues.append(
+                Issue(
+                    line_no,
+                    "age_dob_mismatch",
+                    "warning",
+                    f"age {values['age']} disagrees with date_of_birth "
+                    f"{values['date_of_birth']} (implies {derived}). Both imported as given; "
+                    f"reconcile in the HIS.",
+                    "age",
+                    age_raw,
+                )
+            )
 
     adm_raw = cell("admission_date")
     if adm_raw:
@@ -1520,7 +2152,7 @@ def _load_existing(mrns: list[str]) -> dict[str, Any]:
         return out
     with db_session() as db:
         for i in range(0, len(mrns), 500):
-            chunk = mrns[i:i + 500]
+            chunk = mrns[i : i + 500]
             placeholders = ",".join("?" * len(chunk))
             for r in db.execute(
                 f"SELECT * FROM patients WHERE mrn IN ({placeholders})", chunk
@@ -1540,7 +2172,7 @@ def _load_open_admissions(patient_ids: list[str]) -> dict[str, Any]:
         return out
     with db_session() as db:
         for i in range(0, len(patient_ids), 500):
-            chunk = patient_ids[i:i + 500]
+            chunk = patient_ids[i : i + 500]
             placeholders = ",".join("?" * len(chunk))
             for r in db.execute(
                 f"""SELECT * FROM admissions
@@ -1559,7 +2191,7 @@ def _load_users(user_ids: Iterable[str]) -> dict[str, str]:
     out: dict[str, str] = {}
     with db_session() as db:
         for i in range(0, len(ids), 500):
-            chunk = ids[i:i + 500]
+            chunk = ids[i : i + 500]
             placeholders = ",".join("?" * len(chunk))
             for r in db.execute(
                 f"SELECT id, role FROM users WHERE id IN ({placeholders})", chunk
@@ -1572,11 +2204,19 @@ def _load_users(user_ids: Iterable[str]) -> dict[str, str]:
 #  Apply
 # ══════════════════════════════════════════════════════════════════════════
 
-def apply_import(content: bytes | str, mapping: dict[str, str], *,
-                 actor_user_id: str, source_filename: str | None = None,
-                 date_order: str = "auto", update_existing: bool = True,
-                 note: str | None = None, header_line: int | None = None,
-                 default_department: str | None = None) -> dict:
+
+def apply_import(
+    content: bytes | str,
+    mapping: dict[str, str],
+    *,
+    actor_user_id: str,
+    source_filename: str | None = None,
+    date_order: str = "auto",
+    update_existing: bool = True,
+    note: str | None = None,
+    header_line: int | None = None,
+    default_department: str | None = None,
+) -> dict:
     """Execute the plan for ``content`` in ONE transaction.
 
     Re-plans from the same bytes rather than trusting a plan posted back by the
@@ -1618,9 +2258,14 @@ def apply_import(content: bytes | str, mapping: dict[str, str], *,
     applies); the dry run lists both under location_rejects. Off: unchanged.
     """
     adt = adt_on()
-    result = plan(content, mapping, date_order=date_order,
-                  update_existing=update_existing, header_line=header_line,
-                  default_department=default_department)
+    result = plan(
+        content,
+        mapping,
+        date_order=date_order,
+        update_existing=update_existing,
+        header_line=header_line,
+        default_department=default_department,
+    )
 
     # ORB_ADT on: what the ADT writer needs, read BEFORE the immediate session
     # (each opens a session of its own): the departments with clinical cover,
@@ -1628,23 +2273,27 @@ def apply_import(content: bytes | str, mapping: dict[str, str], *,
     # bed changed since by someone else is refused as state_changed.
     covering: list[str] = []
     planned_beds: dict[str, Any] = {}
-    moving = [r["admission"]["admission_id"] for r in result["rows"]
-              if (r.get("admission") or {}).get("action") == "update"
-              and (r.get("admission") or {}).get("admission_id")]
+    moving = [
+        r["admission"]["admission_id"]
+        for r in result["rows"]
+        if (r.get("admission") or {}).get("action") == "update"
+        and (r.get("admission") or {}).get("admission_id")
+    ]
     if adt and moving:
         from services.frontdesk_service import list_covering_departments
 
         covering = list_covering_departments()
         with db_session() as db:
             for i in range(0, len(moving), 500):
-                chunk = moving[i:i + 500]
+                chunk = moving[i : i + 500]
                 for r in db.execute(
-                        f"SELECT id, bed_id FROM admissions WHERE id IN ({','.join('?' * len(chunk))})",
-                        chunk).fetchall():
+                    f"SELECT id, bed_id FROM admissions WHERE id IN ({','.join('?' * len(chunk))})",
+                    chunk,
+                ).fetchall():
                     planned_beds[r["id"]] = r["bed_id"]
 
     run_id = f"RI-{uuid.uuid4().hex[:10].upper()}"
-    started = datetime.now(timezone.utc).isoformat()
+    started = datetime.now(UTC).isoformat()
     created_ids: list[str] = []
     updated_ids: list[str] = []
     admissions_created: list[str] = []
@@ -1657,7 +2306,9 @@ def apply_import(content: bytes | str, mapping: dict[str, str], *,
     with db_session(immediate=adt) as db:
         actor_role = None
         if adt:
-            role_row = db.execute("SELECT role FROM users WHERE id = ?", (actor_user_id,)).fetchone()
+            role_row = db.execute(
+                "SELECT role FROM users WHERE id = ?", (actor_user_id,)
+            ).fetchone()
             actor_role = role_row["role"] if role_row else None
         for row in result["rows"]:
             if row["action"] == "create":
@@ -1675,9 +2326,12 @@ def apply_import(content: bytes | str, mapping: dict[str, str], *,
                 created_ids.append(patient_id)
             elif row["action"] == "update":
                 changed = [c for c in _WRITABLE if c in row["changes"]]
-                if (adt and (row.get("admission") or {}).get("action")
-                        in ("update", "unchanged", "update_refused")
-                        and (row.get("admission") or {}).get("admission_id")):
+                if (
+                    adt
+                    and (row.get("admission") or {}).get("action")
+                    in ("update", "unchanged", "update_refused")
+                    and (row.get("admission") or {}).get("admission_id")
+                ):
                     # The patient has an open admission: its ward and bed
                     # mirror is written by the ADT writer alone (below), so a
                     # move it refuses never leaves this row naming a new place.
@@ -1702,10 +2356,15 @@ def apply_import(content: bytes | str, mapping: dict[str, str], *,
             if patient_id and to_chart:
                 # Same transaction as the patient row: an import that rolls back
                 # must not leave allergies on a chart that does not exist.
-                allergies_charted += len(record_allergies_on(
-                    db, patient_id, to_chart, source="roster_import",
-                    recorded_by=actor_user_id,
-                ))
+                allergies_charted += len(
+                    record_allergies_on(
+                        db,
+                        patient_id,
+                        to_chart,
+                        source="roster_import",
+                        recorded_by=actor_user_id,
+                    )
+                )
             adm = row.get("admission") or {}
             if not patient_id or not adm:
                 continue
@@ -1731,12 +2390,19 @@ def apply_import(content: bytes | str, mapping: dict[str, str], *,
                             ward, bed, attending_doctor_id, initial_diagnosis,
                             admitting_notes, status, created_at)
                        VALUES (?, ?, ?, 'roster_import', ?, ?, ?, ?, ?, ?, 'active', ?)""",
-                    (admission_id, patient_id, actor_user_id, adm.get("department"),
-                     adm.get("ward"), adm.get("bed"), adm.get("attending_doctor_id"),
-                     adm.get("initial_diagnosis"),
-                     f"Opened by roster import {run_id}"
-                     + (f" from '{source_filename}'." if source_filename else "."),
-                     adm.get("admitted_at")),
+                    (
+                        admission_id,
+                        patient_id,
+                        actor_user_id,
+                        adm.get("department"),
+                        adm.get("ward"),
+                        adm.get("bed"),
+                        adm.get("attending_doctor_id"),
+                        adm.get("initial_diagnosis"),
+                        f"Opened by roster import {run_id}"
+                        + (f" from '{source_filename}'." if source_filename else "."),
+                        adm.get("admitted_at"),
+                    ),
                 )
                 adm["admission_id"] = admission_id
                 admissions_created.append(admission_id)
@@ -1747,11 +2413,13 @@ def apply_import(content: bytes | str, mapping: dict[str, str], *,
                 db.execute("SAVEPOINT roster_move")
                 try:
                     moved = roster_move_on(
-                        db, admission_id=adm["admission_id"],
+                        db,
+                        admission_id=adm["admission_id"],
                         actor={"id": actor_user_id, "role": actor_role},
-                        changes=adm.get("changes", {}), covering=covering,
+                        changes=adm.get("changes", {}),
+                        covering=covering,
                         reason=f"Roster import {run_id}"
-                               + (f" from '{source_filename}'" if source_filename else ""),
+                        + (f" from '{source_filename}'" if source_filename else ""),
                         expected_bed_id=planned_beds.get(adm["admission_id"]),
                     )
                 except AdtError as exc:
@@ -1789,13 +2457,15 @@ def apply_import(content: bytes | str, mapping: dict[str, str], *,
                 # ORB_ADT on: the same end of stay every other door records.
                 try:
                     ended = end_stay_on(
-                        db, admission_id=adm["admission_id"],
+                        db,
+                        admission_id=adm["admission_id"],
                         end_type="transferred_out" if adm["to_status"] == "transferred" else None,
                         actor={"id": actor_user_id, "role": actor_role},
-                        require_read_back=False, admission_status=adm["to_status"],
+                        require_read_back=False,
+                        admission_status=adm["to_status"],
                         door="roster_import",
                         reason=f"Closed by roster import {run_id}"
-                               + (f" from '{source_filename}'" if source_filename else ""),
+                        + (f" from '{source_filename}'" if source_filename else ""),
                     )
                 except AdtError as exc:
                     # Refused before anything was written for this row (a
@@ -1836,12 +2506,29 @@ def apply_import(content: bytes | str, mapping: dict[str, str], *,
                     update_existing, rows_total, rows_created, rows_updated,
                     rows_unchanged, rows_skipped, issue_count, summary_json, note, started_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (run_id, actor_user_id, source_filename, json.dumps(result["mapping"]),
-             date_order, 1 if update_existing else 0, result["counts"]["total_rows"],
-             summary["created"], summary["updated"], summary["unchanged"],
-             summary["skipped"], summary["errors"] + summary["warnings"],
-             json.dumps({**summary, "admissions": admissions,
-                         "allergies": {"charted": allergies_charted}}), note, started),
+            (
+                run_id,
+                actor_user_id,
+                source_filename,
+                json.dumps(result["mapping"]),
+                date_order,
+                1 if update_existing else 0,
+                result["counts"]["total_rows"],
+                summary["created"],
+                summary["updated"],
+                summary["unchanged"],
+                summary["skipped"],
+                summary["errors"] + summary["warnings"],
+                json.dumps(
+                    {
+                        **summary,
+                        "admissions": admissions,
+                        "allergies": {"charted": allergies_charted},
+                    }
+                ),
+                note,
+                started,
+            ),
         )
 
     if adt and (admissions_updated or admissions_closed):

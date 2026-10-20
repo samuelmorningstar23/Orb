@@ -88,14 +88,15 @@ it runs inside the transaction that creates the assessment row, and a bug in a
 convenience must not take a clinical record with it (same argument as
 ``sage_assessment_service._compute_tier1``).
 """
+
 from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
-from services.drug_safety_service import classify_allergen, classify_drug, _norm
+from services.drug_safety_service import _norm, classify_allergen, classify_drug
 
 logger = logging.getLogger("orb.patient_specific_screen")
 
@@ -146,10 +147,16 @@ _SPO2_PARAMS = frozenset({P_SPO2, P_SPO2_SCALE2})
 #: The classes an infective deterioration is likely to be treated with, and
 #: therefore the allergies that can rule out the obvious first-line agent. Taken
 #: from `classify_allergen`'s own vocabulary — no new terms.
-ANTIMICROBIAL_CLASSES = frozenset({
-    "penicillins", "cephalosporins", "carbapenems", "sulfonamides",
-    "macrolides", "aminoglycosides",
-})
+ANTIMICROBIAL_CLASSES = frozenset(
+    {
+        "penicillins",
+        "cephalosporins",
+        "carbapenems",
+        "sulfonamides",
+        "macrolides",
+        "aminoglycosides",
+    }
+)
 
 #: An infective picture, read off the working diagnosis / problem list. Word
 #: fragments rather than whole words on purpose: charts write "pneumonia",
@@ -159,7 +166,8 @@ _INFECTIVE_RE = re.compile(
     r"cellulit|abscess|empyema|meningit|endocardit|pyelonephrit|\buti\b|"
     r"urinary tract infection|cholangit|cholecystit|peritonit|osteomyelit|"
     r"febrile neutropen|covid|dengue|malaria|typhoid|tubercul|\btb\b",
-    re.IGNORECASE)
+    re.IGNORECASE,
+)
 
 #: Heart failure as a charted problem. Deliberately narrow — "cardiac" and
 #: "CCF-like" wording that could mean anything is not in here, because a
@@ -169,7 +177,8 @@ _HEART_FAILURE_RE = re.compile(
     r"heart failure|cardiac failure|\bccf\b|\bchf\b|\bhfref\b|\bhfpef\b|"
     r"congestive cardiac|left ventricular (?:systolic )?(?:dys)?function|"
     r"\blvsd\b|cardiomyopath|pulmonary oedema|pulmonary edema",
-    re.IGNORECASE)
+    re.IGNORECASE,
+)
 
 #: THE FOUR CONCEPTS `classify_drug` HAS NO CLASS FOR. See the module docstring:
 #: this is not a second drug knowledge base, it is the short list of things this
@@ -193,11 +202,26 @@ _SCREEN_LEXICON: dict[str, list[str]] = {
     # against. Enumerated rather than stemmed: "-sone"/"-olone" would catch
     # unrelated agents, and over-firing here is worse than missing one.
     "immunosuppression": [
-        "prednisolone", "prednisone", "methylprednisolone", "dexamethasone",
-        "hydrocortisone", "betamethasone", "deflazacort", "budesonide",
-        "azathioprine", "ciclosporin", "cyclosporine", "tacrolimus",
-        "mycophenolate", "methotrexate", "cyclophosphamide", "rituximab",
-        "infliximab", "adalimumab", "etanercept", "tocilizumab",
+        "prednisolone",
+        "prednisone",
+        "methylprednisolone",
+        "dexamethasone",
+        "hydrocortisone",
+        "betamethasone",
+        "deflazacort",
+        "budesonide",
+        "azathioprine",
+        "ciclosporin",
+        "cyclosporine",
+        "tacrolimus",
+        "mycophenolate",
+        "methotrexate",
+        "cyclophosphamide",
+        "rituximab",
+        "infliximab",
+        "adalimumab",
+        "etanercept",
+        "tocilizumab",
     ],
     # RENALLY HANDLED / NARROW THERAPEUTIC INDEX. `classify_drug` already covers
     # ace_inhibitors, nsaids and aminoglycosides — those come from IT, and only
@@ -220,7 +244,7 @@ def _lexicon_hit(med: dict, key: str) -> bool:
 # ═════════════════════════════════════════════════════════════════════════════
 #  THE SCREEN
 # ═════════════════════════════════════════════════════════════════════════════
-def screen(db, patient_id: str, tier1: dict, *, facts: Optional[dict] = None) -> dict:
+def screen(db, patient_id: str, tier1: dict, *, facts: dict | None = None) -> dict:
     """Candidate patient-specific facts for THIS deterioration. NEVER RAISES.
 
     Blocking — the caller is already inside a ``run_db`` dispatch and this runs
@@ -256,14 +280,21 @@ def screen(db, patient_id: str, tier1: dict, *, facts: Optional[dict] = None) ->
         return _empty(screened=False, error="screen_failed")
 
 
-def _empty(*, screened: bool, error: Optional[str] = None) -> dict:
-    return {"screened": screened, "candidates": [], "rules_fired": [],
-            "allowed_terms": frozenset(), "allowed_numbers": frozenset(),
-            "supplied_tokens": frozenset(),
-            "known_drug_tokens": frozenset(), "picture": {}, "screen_error": error}
+def _empty(*, screened: bool, error: str | None = None) -> dict:
+    return {
+        "screened": screened,
+        "candidates": [],
+        "rules_fired": [],
+        "allowed_terms": frozenset(),
+        "allowed_numbers": frozenset(),
+        "supplied_tokens": frozenset(),
+        "known_drug_tokens": frozenset(),
+        "picture": {},
+        "screen_error": error,
+    }
 
 
-def _screen(db, patient_id: str, tier1: dict, facts: Optional[dict]) -> dict:
+def _screen(db, patient_id: str, tier1: dict, facts: dict | None) -> dict:
     if not tier1 or not tier1.get("available"):
         # No scoreable observation, so there is no deterioration to hook a fact
         # to. Every rule below is of the form "this chart fact AND this thing the
@@ -279,16 +310,23 @@ def _screen(db, patient_id: str, tier1: dict, facts: Optional[dict]) -> dict:
     creatinine = _latest_creatinine(db, patient_id)
 
     candidates: list[dict] = []
-    for rule in (_rule_rate_control, _rule_anticoagulation, _rule_antimicrobial_allergy,
-                 _rule_renal_volume, _rule_renal_drug, _rule_heart_failure,
-                 _rule_blunted_fever):
+    for rule in (
+        _rule_rate_control,
+        _rule_anticoagulation,
+        _rule_antimicrobial_allergy,
+        _rule_renal_volume,
+        _rule_renal_drug,
+        _rule_heart_failure,
+        _rule_blunted_fever,
+    ):
         try:
             found = rule(picture, meds, allergies, problems, creatinine) or []
         except Exception:
             # ONE BROKEN RULE IS NOT A BROKEN SCREEN. The others still describe
             # the patient, and a flag lost is better than every flag lost.
-            logger.exception("[PatientScreen] rule %s failed for %s",
-                             getattr(rule, "__name__", rule), patient_id)
+            logger.exception(
+                "[PatientScreen] rule %s failed for %s", getattr(rule, "__name__", rule), patient_id
+            )
             found = []
         candidates.extend(found)
 
@@ -337,7 +375,7 @@ def _other_drivers(picture: dict, *exclude: str) -> list[str]:
     return sorted(n for n in picture["scoring_names"] if n not in exclude)
 
 
-def _shown(param: Optional[dict]) -> str:
+def _shown(param: dict | None) -> str:
     """A parameter's value the way the clinician's own panel renders it. Falls
     back to the raw value so a rule can still name the fact if Tier 1's display
     string is ever absent."""
@@ -370,11 +408,13 @@ def _active_medications(db, patient_id: str) -> list[dict]:
         "SELECT id, drug_name, dosage, route, frequency, status, started_at "
         "FROM medications WHERE patient_id = ? AND status != 'discontinued' "
         "ORDER BY id",
-        (patient_id,)).fetchall()
+        (patient_id,),
+    ).fetchall()
     charted = [(r, (r["drug_name"] or "").strip()) for r in rows]
     charted = [(r, n) for r, n in charted if n]
 
     from services.allergy_interlock import resolve_ingredients_bulk
+
     try:
         # ONE query for the whole drug list — the helper's own N+1 guarantee.
         resolved = resolve_ingredients_bulk(db, [n for _, n in charted])
@@ -382,8 +422,9 @@ def _active_medications(db, patient_id: str) -> list[dict]:
         # The formulary is an ENRICHMENT. Losing it costs brand resolution and
         # nothing else; the charted name is still classified. Same posture the
         # interlock takes, and the same one `_known_drug_tokens` takes below.
-        logger.debug("[PatientScreen] formulary resolution unavailable for %s",
-                     patient_id, exc_info=True)
+        logger.debug(
+            "[PatientScreen] formulary resolution unavailable for %s", patient_id, exc_info=True
+        )
         resolved = {}
 
     meds = []
@@ -392,20 +433,27 @@ def _active_medications(db, patient_id: str) -> list[dict]:
         classes: set[str] = set()
         for candidate in [name, *generics]:
             classes.update(classify_drug(candidate))
-        meds.append({
-            "name": name,
-            "dose": " ".join(x for x in [(r["dosage"] or "").strip(),
-                                         (r["route"] or "").strip(),
-                                         (r["frequency"] or "").strip()] if x),
-            "classes": classes,
-            # WHEN IT WAS STARTED, for the rendered block's "where to check it"
-            # line. Phrased here; never composed in a client.
-            "recorded": _recorded_phrase(_row_value(r, "started_at")),
-            # Normalised, deduplicated, charted name first. `_lexicon_hit`
-            # matches over all of them.
-            "names": list(dict.fromkeys(
-                n for n in (_norm(x) for x in [name, *generics]) if n)),
-        })
+        meds.append(
+            {
+                "name": name,
+                "dose": " ".join(
+                    x
+                    for x in [
+                        (r["dosage"] or "").strip(),
+                        (r["route"] or "").strip(),
+                        (r["frequency"] or "").strip(),
+                    ]
+                    if x
+                ),
+                "classes": classes,
+                # WHEN IT WAS STARTED, for the rendered block's "where to check it"
+                # line. Phrased here; never composed in a client.
+                "recorded": _recorded_phrase(_row_value(r, "started_at")),
+                # Normalised, deduplicated, charted name first. `_lexicon_hit`
+                # matches over all of them.
+                "names": list(dict.fromkeys(n for n in (_norm(x) for x in [name, *generics]) if n)),
+            }
+        )
     return meds
 
 
@@ -427,6 +475,7 @@ def _row_value(row, column: str):
 def _allergies(db, patient_id: str) -> list[dict]:
     """THE SAME active-allergy read the bedside interlock screens against."""
     from services.allergy_interlock import read_active_allergies
+
     # WHEN EACH ONE WAS CHARTED, read here rather than widened into the
     # interlock's own SELECT. That function is the fail-closed read a bedside
     # block depends on; adding a display field to it would put a rendering
@@ -434,12 +483,18 @@ def _allergies(db, patient_id: str) -> list[dict]:
     # (idx_allergies_patient) is the cheaper mistake.
     stamps: dict = {}
     try:
-        stamps = {r["id"]: r["recorded_at"] for r in db.execute(
-            "SELECT id, recorded_at FROM patient_allergies "
-            "WHERE patient_id = ? AND status = 'active'", (patient_id,)).fetchall()}
+        stamps = {
+            r["id"]: r["recorded_at"]
+            for r in db.execute(
+                "SELECT id, recorded_at FROM patient_allergies "
+                "WHERE patient_id = ? AND status = 'active'",
+                (patient_id,),
+            ).fetchall()
+        }
     except Exception:
-        logger.debug("[PatientScreen] allergy timestamps unavailable for %s",
-                     patient_id, exc_info=True)
+        logger.debug(
+            "[PatientScreen] allergy timestamps unavailable for %s", patient_id, exc_info=True
+        )
     out = []
     for a in read_active_allergies(db, patient_id):
         substance = (a.get("substance") or "").strip()
@@ -448,14 +503,19 @@ def _allergies(db, patient_id: str) -> list[dict]:
         classes = set(classify_allergen(substance))
         if a.get("substance_class"):
             classes.add(str(a["substance_class"]))
-        out.append({"substance": substance, "reaction": (a.get("reaction") or "").strip(),
-                    "severity": (a.get("severity") or "unknown").strip(),
-                    "recorded": _recorded_phrase(stamps.get(a.get("id"))),
-                    "classes": classes})
+        out.append(
+            {
+                "substance": substance,
+                "reaction": (a.get("reaction") or "").strip(),
+                "severity": (a.get("severity") or "unknown").strip(),
+                "recorded": _recorded_phrase(stamps.get(a.get("id"))),
+                "classes": classes,
+            }
+        )
     return out
 
 
-def _problems(db, patient_id: str, facts: Optional[dict]) -> list[dict]:
+def _problems(db, patient_id: str, facts: dict | None) -> list[dict]:
     """The working diagnosis and the active problem list, as charted.
 
     Read off `facts` when the caller already assembled the chart — the alert path
@@ -469,7 +529,9 @@ def _problems(db, patient_id: str, facts: Optional[dict]) -> list[dict]:
     timestamp, and inventing one would be worse than saying nothing.
     """
     if facts:
-        items = [str(facts.get("diagnosis") or "")] + [str(p) for p in (facts.get("problems") or [])]
+        items = [str(facts.get("diagnosis") or "")] + [
+            str(p) for p in (facts.get("problems") or [])
+        ]
         return [{"text": i.strip(), "recorded": None} for i in items if i and i.strip()]
     out: list[dict] = []
     row = db.execute("SELECT diagnosis FROM patients WHERE id = ?", (patient_id,)).fetchone()
@@ -479,15 +541,16 @@ def _problems(db, patient_id: str, facts: Optional[dict]) -> list[dict]:
         for r in db.execute(
             "SELECT problem, recorded_at FROM problem_list WHERE patient_id = ? "
             "AND status = 'active' ORDER BY recorded_at DESC LIMIT 8",
-            (patient_id,)).fetchall():
+            (patient_id,),
+        ).fetchall():
             text = (r["problem"] or "").strip()
             if text:
-                out.append({"text": text,
-                            "recorded": _recorded_phrase(_row_value(r, "recorded_at"))})
+                out.append(
+                    {"text": text, "recorded": _recorded_phrase(_row_value(r, "recorded_at"))}
+                )
     except Exception:
         # `problem_list` is a table migrations treats as possibly absent.
-        logger.debug("[PatientScreen] problem list unavailable for %s", patient_id,
-                     exc_info=True)
+        logger.debug("[PatientScreen] problem list unavailable for %s", patient_id, exc_info=True)
     return out
 
 
@@ -502,7 +565,7 @@ _CREATININE_RE = re.compile(r"creatinin|\bcreat\b|\bs\.?\s?cr\b", re.IGNORECASE)
 _HIGH_FLAGS = frozenset({"h", "hh", "high", "a", "ah", "abnormal", "*", "+"})
 
 
-def _latest_creatinine(db, patient_id: str) -> Optional[dict]:
+def _latest_creatinine(db, patient_id: str) -> dict | None:
     """The most recent creatinine inside the lab window, and whether it is raised.
 
     Returns None when there is no creatinine, when it is older than
@@ -526,11 +589,12 @@ def _latest_creatinine(db, patient_id: str) -> Optional[dict]:
     it is the better source, it carries the analyser's own abnormal flag, and
     nothing about it needed fixing.
     """
-    return (_creatinine_from_observations(db, patient_id)
-            or _creatinine_from_lab_report(db, patient_id))
+    return _creatinine_from_observations(db, patient_id) or _creatinine_from_lab_report(
+        db, patient_id
+    )
 
 
-def _creatinine_from_observations(db, patient_id: str) -> Optional[dict]:
+def _creatinine_from_observations(db, patient_id: str) -> dict | None:
     """The structured lane: OBX results the ingestion adapters wrote.
 
     Read through services/lab_observations.py, the one reader the chart's lab
@@ -548,13 +612,13 @@ def _creatinine_from_observations(db, patient_id: str) -> Optional[dict]:
         renal flags must not vanish silently.
     """
     from services import lab_observations
+
     try:
         rows = lab_observations.recent_observations(
-            db, patient_id, limit=60,
-            exclude_simulated=lab_observations.tier1_excludes_simulated())
+            db, patient_id, limit=60, exclude_simulated=lab_observations.tier1_excludes_simulated()
+        )
     except Exception:
-        logger.debug("[PatientScreen] observations unavailable for %s", patient_id,
-                     exc_info=True)
+        logger.debug("[PatientScreen] observations unavailable for %s", patient_id, exc_info=True)
         return None
 
     for r in rows:
@@ -567,10 +631,10 @@ def _creatinine_from_observations(db, patient_id: str) -> Optional[dict]:
         stamp = r["observed_at"] or r["recorded_at"]
         age_days = _age_days(stamp)
         if age_days is None or age_days > LAB_WINDOW_DAYS:
-            return None            # the latest one is stale; an older one is worse
+            return None  # the latest one is stale; an older one is worse
         unit = (r["unit"] or "").strip()
         if not _is_raised_creatinine(float(value), unit, r["abnormal_flag"]):
-            return None            # the latest one is normal — nothing to flag
+            return None  # the latest one is normal — nothing to flag
         return {
             "name": name or "Creatinine",
             "value": float(value),
@@ -607,7 +671,8 @@ _LAB_LINE_RE = re.compile(
     r"(?P<unit>[A-Za-zµμ%][A-Za-zµμ%/\d]{0,11})\s+"
     r"(?P<flag>.*?)\s*"
     r"\(\s*ref\s*:\s*(?P<ref>[^)]{1,40})\)\s*$",
-    re.IGNORECASE | re.MULTILINE)
+    re.IGNORECASE | re.MULTILINE,
+)
 
 #: The reference range as those reports write it: "0.7-1.3", "70-110".
 _REF_RANGE_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)\s*$")
@@ -622,7 +687,7 @@ _REF_RANGE_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)\s*$"
 _LAB_REPORTS_SCANNED = 3
 
 
-def _creatinine_from_lab_report(db, patient_id: str) -> Optional[dict]:
+def _creatinine_from_lab_report(db, patient_id: str) -> dict | None:
     """The document lane: a creatinine off Orb's OWN rendered lab report.
 
     THIS IS THE LANE THAT ACTUALLY HAS DATA (see :func:`_latest_creatinine`), and
@@ -667,10 +732,10 @@ def _creatinine_from_lab_report(db, patient_id: str) -> Optional[dict]:
             "WHERE patient_id = ? AND doc_type = 'lab_result' "
             "AND COALESCE(source, '') != 'simulated' "
             "ORDER BY REPLACE(created_at, ' ', 'T') DESC LIMIT ?",
-            (patient_id, _LAB_REPORTS_SCANNED)).fetchall()
+            (patient_id, _LAB_REPORTS_SCANNED),
+        ).fetchall()
     except Exception:
-        logger.debug("[PatientScreen] lab reports unavailable for %s", patient_id,
-                     exc_info=True)
+        logger.debug("[PatientScreen] lab reports unavailable for %s", patient_id, exc_info=True)
         return None
 
     for r in rows:
@@ -679,21 +744,23 @@ def _creatinine_from_lab_report(db, patient_id: str) -> Optional[dict]:
             # Ambiguous report — two different creatinine values in one document.
             # Refuse the whole patient rather than fall through to an older
             # report, which would answer a question this data cannot answer.
-            logger.warning("[PatientScreen] ambiguous creatinine in lab report for %s "
-                           "— no renal flag", patient_id)
+            logger.warning(
+                "[PatientScreen] ambiguous creatinine in lab report for %s — no renal flag",
+                patient_id,
+            )
             return None
         if not found:
             continue
         name, value, unit, flag, ref = found
         age_days = _age_days(r["created_at"])
         if age_days is None or age_days > LAB_WINDOW_DAYS:
-            return None            # the latest one is stale; an older one is worse
+            return None  # the latest one is stale; an older one is worse
         # THE REPORT'S OWN RANGE IS CONSULTED BEFORE ANY THRESHOLD OF OURS, and
         # only where the printed flag column did not already answer. Same
         # preference order the structured lane gives the analyser's flag.
         verdict = flag if str(flag).strip().lower() in _KNOWN_FLAGS else _ref_verdict(value, ref)
         if not _is_raised_creatinine(value, unit, verdict):
-            return None            # the latest one is normal — nothing to flag
+            return None  # the latest one is normal — nothing to flag
         return {
             "name": name,
             "value": value,
@@ -727,8 +794,15 @@ def _creatinine_lines(content: str):
         # them optional would otherwise raise AttributeError here, and `screen`'s
         # blanket guard would turn that into a "screen_failed" — a silent, total
         # loss of the renal rules that looks exactly like a chart with no labs.
-        hits.append((name, float(m.group("value")), (m.group("unit") or "").strip(),
-                     _flag_letter(m.group("flag")), (m.group("ref") or "").strip()))
+        hits.append(
+            (
+                name,
+                float(m.group("value")),
+                (m.group("unit") or "").strip(),
+                _flag_letter(m.group("flag")),
+                (m.group("ref") or "").strip(),
+            )
+        )
     if not hits:
         return ()
     if len({h[1] for h in hits}) > 1:
@@ -747,7 +821,7 @@ _FLAG_LETTER_RE = re.compile(r"[A-Za-z]+")
 _KNOWN_FLAGS = _HIGH_FLAGS | frozenset({"n", "normal", "l", "low"})
 
 
-def _flag_letter(flag: Optional[str]) -> str:
+def _flag_letter(flag: str | None) -> str:
     """The bare flag letter the structured lane already understands, so ONE
     function decides "raised" for both lanes."""
     m = _FLAG_LETTER_RE.search(flag or "")
@@ -755,7 +829,7 @@ def _flag_letter(flag: Optional[str]) -> str:
 
 
 def _ref_verdict(value: float, ref: str) -> str:
-    """"h"/"n" from the report's OWN reference range, or "" when it cannot be read.
+    """ "h"/"n" from the report's OWN reference range, or "" when it cannot be read.
 
     Fed to :func:`_is_raised_creatinine` in the flag position so the range is
     consulted BEFORE any threshold this file holds. An empty string means "the
@@ -767,7 +841,7 @@ def _ref_verdict(value: float, ref: str) -> str:
         return ""
     try:
         return "h" if value > float(m.group(2)) else "n"
-    except (TypeError, ValueError):        # pragma: no cover — the regex guarantees floats
+    except (TypeError, ValueError):  # pragma: no cover — the regex guarantees floats
         return ""
 
 
@@ -786,21 +860,20 @@ def _is_raised_creatinine(value: float, unit: str, flag) -> bool:
     if f in ("n", "normal", "l", "low"):
         return False
     u = unit.lower().replace(" ", "")
-    if "mg" in u:                      # mg/dL
+    if "mg" in u:  # mg/dL
         return value > 1.3
-    if "mol" in u:                     # µmol/L, umol/l, mcmol/L
+    if "mol" in u:  # µmol/L, umol/l, mcmol/L
         return value > 110.0
     return value > 1.3 if value <= 20 else value > 110.0
 
 
 def _lab_display(name: str, value: float, unit: str, age_days: int) -> str:
     figure = f"{value:g}"
-    when = ("today" if age_days <= 0 else
-            "yesterday" if age_days == 1 else f"{age_days} days ago")
+    when = "today" if age_days <= 0 else "yesterday" if age_days == 1 else f"{age_days} days ago"
     return f"{name} {figure}{(' ' + unit) if unit else ''}, {when}"
 
 
-def _age_days(stamp) -> Optional[int]:
+def _age_days(stamp) -> int | None:
     if not stamp:
         return None
     try:
@@ -808,11 +881,11 @@ def _age_days(stamp) -> Optional[int]:
     except (TypeError, ValueError):
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return max(0, int((datetime.now(timezone.utc) - parsed).total_seconds() // 86400))
+        parsed = parsed.replace(tzinfo=UTC)
+    return max(0, int((datetime.now(UTC) - parsed).total_seconds() // 86400))
 
 
-def _recorded_phrase(stamp) -> Optional[str]:
+def _recorded_phrase(stamp) -> str | None:
     """WHEN THIS WAS CHARTED, as the sentence the ward will read.
 
     Composed here rather than in the client for the same reason
@@ -837,7 +910,7 @@ def _recorded_phrase(stamp) -> Optional[str]:
         return f"charted {days} days ago"
     try:
         parsed = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
-    except (TypeError, ValueError):        # pragma: no cover — _age_days already parsed it
+    except (TypeError, ValueError):  # pragma: no cover — _age_days already parsed it
         return f"charted {days} days ago"
     return f"charted {parsed.day} {parsed.strftime('%b')}"
 
@@ -865,10 +938,19 @@ SOURCE_PROBLEMS = "Problems"
 SOURCE_MEDICATIONS_AND_RESULTS = "Medications and results"
 
 
-def _candidate(rule: str, *, fact: str, hook: str, question: str,
-               terms: list[str], numbers: list[Any], evidence: dict,
-               source: str, recorded: Optional[str] = None,
-               relates_to: Optional[str] = None) -> dict:
+def _candidate(
+    rule: str,
+    *,
+    fact: str,
+    hook: str,
+    question: str,
+    terms: list[str],
+    numbers: list[Any],
+    evidence: dict,
+    source: str,
+    recorded: str | None = None,
+    relates_to: str | None = None,
+) -> dict:
     # EVERY NUMBER THE MODEL IS SHOWN IS A NUMBER IT MAY QUOTE. The explicit
     # `numbers` list carries the ones a rule reasons about; these two lines
     # harvest the rest out of the rendered text — the dose, the lab figure, the
@@ -968,21 +1050,27 @@ def _rule_rate_control(picture, meds, allergies, problems, creatinine) -> list[d
     for med in meds:
         if not _lexicon_hit(med, "rate_control"):
             continue
-        out.append(_candidate(
-            RULE_RATE_CONTROL,
-            fact=f"{med['name']} {med['dose']}".strip() + " (rate-controlling, on the chart)",
-            hook=f"{P_HR} {_shown(hr)} scoring {hr.get('points')} while "
-                 f"{', '.join(others)} {'is' if len(others) == 1 else 'are'} driving the score",
-            question="does the rate control make this heart rate unreliable as reassurance?",
-            terms=[*_name_terms(med["name"]), "heart rate", "pulse"],
-            numbers=[hr.get("value"), hr.get("points")],
-            evidence={"drug": med["name"], "dose": med["dose"],
-                      "parameter": P_HR, "value": hr.get("value")},
-            source=SOURCE_MEDICATIONS,
-            recorded=med.get("recorded"),
-            relates_to=f"{P_HR} {_shown(hr)}",
-        ))
-        break        # one rate-control flag per patient; two is a drug list
+        out.append(
+            _candidate(
+                RULE_RATE_CONTROL,
+                fact=f"{med['name']} {med['dose']}".strip() + " (rate-controlling, on the chart)",
+                hook=f"{P_HR} {_shown(hr)} scoring {hr.get('points')} while "
+                f"{', '.join(others)} {'is' if len(others) == 1 else 'are'} driving the score",
+                question="does the rate control make this heart rate unreliable as reassurance?",
+                terms=[*_name_terms(med["name"]), "heart rate", "pulse"],
+                numbers=[hr.get("value"), hr.get("points")],
+                evidence={
+                    "drug": med["name"],
+                    "dose": med["dose"],
+                    "parameter": P_HR,
+                    "value": hr.get("value"),
+                },
+                source=SOURCE_MEDICATIONS,
+                recorded=med.get("recorded"),
+                relates_to=f"{P_HR} {_shown(hr)}",
+            )
+        )
+        break  # one rate-control flag per patient; two is a drug list
     return out
 
 
@@ -1007,20 +1095,28 @@ def _rule_anticoagulation(picture, meds, allergies, problems, creatinine) -> lis
     for med in meds:
         if "anticoagulants" not in med["classes"]:
             continue
-        out.append(_candidate(
-            RULE_ANTICOAGULATION,
-            fact=f"{med['name']} {med['dose']}".strip() + " (anticoagulant, on the chart)",
-            hook=f"{driver} {_shown(param)} scoring {param.get('points') if param else '—'}",
-            question="does anticoagulation change what this could be, or what may safely be done?",
-            terms=[*_name_terms(med["name"]), "anticoagul"],
-            numbers=[param.get("value") if param else None,
-                     param.get("points") if param else None],
-            evidence={"drug": med["name"], "dose": med["dose"], "parameter": driver,
-                      "value": param.get("value") if param else None},
-            source=SOURCE_MEDICATIONS,
-            recorded=med.get("recorded"),
-            relates_to=f"{driver} {_shown(param)}",
-        ))
+        out.append(
+            _candidate(
+                RULE_ANTICOAGULATION,
+                fact=f"{med['name']} {med['dose']}".strip() + " (anticoagulant, on the chart)",
+                hook=f"{driver} {_shown(param)} scoring {param.get('points') if param else '—'}",
+                question="does anticoagulation change what this could be, or what may safely be done?",
+                terms=[*_name_terms(med["name"]), "anticoagul"],
+                numbers=[
+                    param.get("value") if param else None,
+                    param.get("points") if param else None,
+                ],
+                evidence={
+                    "drug": med["name"],
+                    "dose": med["dose"],
+                    "parameter": driver,
+                    "value": param.get("value") if param else None,
+                },
+                source=SOURCE_MEDICATIONS,
+                recorded=med.get("recorded"),
+                relates_to=f"{driver} {_shown(param)}",
+            )
+        )
         break
     return out
 
@@ -1039,8 +1135,7 @@ def _rule_antimicrobial_allergy(picture, meds, allergies, problems, creatinine) 
     substance is named back EXACTLY AS CHARTED with its reaction so it can be
     checked in one glance.
     """
-    infective = picture["febrile"] or any(
-        _INFECTIVE_RE.search(p["text"]) for p in problems)
+    infective = picture["febrile"] or any(_INFECTIVE_RE.search(p["text"]) for p in problems)
     if not infective:
         return []
     out = []
@@ -1051,29 +1146,41 @@ def _rule_antimicrobial_allergy(picture, meds, allergies, problems, creatinine) 
         reaction = allergy["reaction"] or "reaction not recorded"
         # A whole clause: "an infective picture: temperature is scoring" read
         # as a line cut off mid-sentence once it was echoed back on the panel.
-        why = ("temperature is in the scoring range" if picture["febrile"]
-               else "the working diagnosis is infective")
-        out.append(_candidate(
-            RULE_ANTIMICROBIAL_ALLERGY,
-            fact=f"Allergy: {allergy['substance']} ({reaction}) "
-                 f"(severity {allergy['severity']}, charted; class "
-                 f"{', '.join(sorted(shared))})",
-            hook=f"Infective picture: {why}",
-            question="does this allergy rule out the obvious first-line agent here?",
-            terms=[*_name_terms(allergy["substance"]), "allerg", *sorted(shared)],
-            numbers=[],
-            evidence={"allergy": allergy["substance"], "reaction": allergy["reaction"],
-                      "severity": allergy["severity"], "classes": sorted(shared)},
-            source=SOURCE_ALLERGIES,
-            recorded=allergy.get("recorded"),
-            # ONLY WHEN A SCORING PARAMETER IS WHAT MATCHED. Fired off the
-            # working diagnosis instead, this flag bears on no number on the
-            # panel above it, and pointing at one would be a link Orb did not
-            # make.
-            relates_to=(f"{P_TEMP} {_shown(picture['scoring'].get(P_TEMP))}"
-                        if picture["febrile"] else None),
-        ))
-        break        # the first antimicrobial allergy is the point; a list is not
+        why = (
+            "temperature is in the scoring range"
+            if picture["febrile"]
+            else "the working diagnosis is infective"
+        )
+        out.append(
+            _candidate(
+                RULE_ANTIMICROBIAL_ALLERGY,
+                fact=f"Allergy: {allergy['substance']} ({reaction}) "
+                f"(severity {allergy['severity']}, charted; class "
+                f"{', '.join(sorted(shared))})",
+                hook=f"Infective picture: {why}",
+                question="does this allergy rule out the obvious first-line agent here?",
+                terms=[*_name_terms(allergy["substance"]), "allerg", *sorted(shared)],
+                numbers=[],
+                evidence={
+                    "allergy": allergy["substance"],
+                    "reaction": allergy["reaction"],
+                    "severity": allergy["severity"],
+                    "classes": sorted(shared),
+                },
+                source=SOURCE_ALLERGIES,
+                recorded=allergy.get("recorded"),
+                # ONLY WHEN A SCORING PARAMETER IS WHAT MATCHED. Fired off the
+                # working diagnosis instead, this flag bears on no number on the
+                # panel above it, and pointing at one would be a link Orb did not
+                # make.
+                relates_to=(
+                    f"{P_TEMP} {_shown(picture['scoring'].get(P_TEMP))}"
+                    if picture["febrile"]
+                    else None
+                ),
+            )
+        )
+        break  # the first antimicrobial allergy is the point; a list is not
     return out
 
 
@@ -1095,24 +1202,37 @@ def _rule_renal_volume(picture, meds, allergies, problems, creatinine) -> list[d
         return []
     driver = P_SBP if picture["hypotensive"] else P_HR
     param = picture["scoring"].get(driver)
-    return [_candidate(
-        RULE_RENAL_VOLUME,
-        fact=creatinine["display"] + " (raised)",
-        hook=f"{driver} {_shown(param)} scoring {param.get('points') if param else '—'}",
-        question="does this renal function change the calculus on volume here?",
-        terms=[creatinine["name"], "creatinine", "renal"],
-        numbers=[creatinine["value"], param.get("value") if param else None,
-                 param.get("points") if param else None],
-        evidence={"lab": creatinine["name"], "value": creatinine["value"],
-                  "unit": creatinine["unit"], "age_days": creatinine["age_days"],
-                  "parameter": driver, "panel": creatinine.get("panel")},
-        source=(f"{SOURCE_RESULTS}: {creatinine['panel']}" if creatinine.get("panel")
-                else SOURCE_RESULTS),
-        # `recorded` is deliberately None on both renal rules: `_lab_display`
-        # already puts the age INSIDE the fact ("creatinine 2.5 mg/dL, today"),
-        # and a meta line repeating the sentence above it is noise.
-        relates_to=f"{driver} {_shown(param)}",
-    )]
+    return [
+        _candidate(
+            RULE_RENAL_VOLUME,
+            fact=creatinine["display"] + " (raised)",
+            hook=f"{driver} {_shown(param)} scoring {param.get('points') if param else '—'}",
+            question="does this renal function change the calculus on volume here?",
+            terms=[creatinine["name"], "creatinine", "renal"],
+            numbers=[
+                creatinine["value"],
+                param.get("value") if param else None,
+                param.get("points") if param else None,
+            ],
+            evidence={
+                "lab": creatinine["name"],
+                "value": creatinine["value"],
+                "unit": creatinine["unit"],
+                "age_days": creatinine["age_days"],
+                "parameter": driver,
+                "panel": creatinine.get("panel"),
+            },
+            source=(
+                f"{SOURCE_RESULTS}: {creatinine['panel']}"
+                if creatinine.get("panel")
+                else SOURCE_RESULTS
+            ),
+            # `recorded` is deliberately None on both renal rules: `_lab_display`
+            # already puts the age INSIDE the fact ("creatinine 2.5 mg/dL, today"),
+            # and a meta line repeating the sentence above it is noise.
+            relates_to=f"{driver} {_shown(param)}",
+        )
+    ]
 
 
 def _rule_renal_drug(picture, meds, allergies, problems, creatinine) -> list[dict]:
@@ -1136,25 +1256,34 @@ def _rule_renal_drug(picture, meds, allergies, problems, creatinine) -> list[dic
         shared = med["classes"] & renal_classes
         if not (shared or _lexicon_hit(med, "renally_handled")):
             continue
-        out.append(_candidate(
-            RULE_RENAL_DRUG,
-            fact=f"{med['name']} {med['dose']}".strip() + " (on the chart) with "
-                 + creatinine["display"] + " (raised)",
-            hook="both are on this patient's own chart",
-            question="does this drug need holding, changing or re-dosing at this renal function?",
-            terms=[*_name_terms(med["name"]), creatinine["name"], "creatinine"],
-            numbers=[creatinine["value"]],
-            evidence={"drug": med["name"], "dose": med["dose"],
-                      "lab": creatinine["name"], "value": creatinine["value"],
-                      "unit": creatinine["unit"], "age_days": creatinine["age_days"],
-                      "panel": creatinine.get("panel")},
-            source=SOURCE_MEDICATIONS_AND_RESULTS,
-            recorded=med.get("recorded"),
-            # None, and that is the rule's own docstring in a field: this flag
-            # deliberately does NOT need the picture, so it bears on no scoring
-            # parameter and must not appear to.
-            relates_to=None,
-        ))
+        out.append(
+            _candidate(
+                RULE_RENAL_DRUG,
+                fact=f"{med['name']} {med['dose']}".strip()
+                + " (on the chart) with "
+                + creatinine["display"]
+                + " (raised)",
+                hook="both are on this patient's own chart",
+                question="does this drug need holding, changing or re-dosing at this renal function?",
+                terms=[*_name_terms(med["name"]), creatinine["name"], "creatinine"],
+                numbers=[creatinine["value"]],
+                evidence={
+                    "drug": med["name"],
+                    "dose": med["dose"],
+                    "lab": creatinine["name"],
+                    "value": creatinine["value"],
+                    "unit": creatinine["unit"],
+                    "age_days": creatinine["age_days"],
+                    "panel": creatinine.get("panel"),
+                },
+                source=SOURCE_MEDICATIONS_AND_RESULTS,
+                recorded=med.get("recorded"),
+                # None, and that is the rule's own docstring in a field: this flag
+                # deliberately does NOT need the picture, so it bears on no scoring
+                # parameter and must not appear to.
+                relates_to=None,
+            )
+        )
         break
     return out
 
@@ -1182,21 +1311,27 @@ def _rule_heart_failure(picture, meds, allergies, problems, creatinine) -> list[
         # parameter and belongs in the hook; `relates_to` names the single
         # parameter that made this rule fire, because that is the number on the
         # panel a clinician should read the flag against.
-        gate = (P_SBP if picture["hypotensive"]
-                else next(iter(sorted(_SPO2_PARAMS & picture["scoring_names"])), P_O2)
-                if picture["hypoxic"] else P_RR)
-        return [_candidate(
-            RULE_HEART_FAILURE,
-            fact=f"Charted problem: {text}",
-            hook=f"{', '.join(drivers) or 'the current picture'} scoring",
-            question="does this change the volume or oxygenation decision here?",
-            terms=[text, "heart failure", "cardiac"],
-            numbers=[],
-            evidence={"problem": text},
-            source=SOURCE_PROBLEMS,
-            recorded=problem.get("recorded"),
-            relates_to=f"{gate} {_shown(picture['scoring'].get(gate))}",
-        )]
+        gate = (
+            P_SBP
+            if picture["hypotensive"]
+            else next(iter(sorted(_SPO2_PARAMS & picture["scoring_names"])), P_O2)
+            if picture["hypoxic"]
+            else P_RR
+        )
+        return [
+            _candidate(
+                RULE_HEART_FAILURE,
+                fact=f"Charted problem: {text}",
+                hook=f"{', '.join(drivers) or 'the current picture'} scoring",
+                question="does this change the volume or oxygenation decision here?",
+                terms=[text, "heart failure", "cardiac"],
+                numbers=[],
+                evidence={"problem": text},
+                source=SOURCE_PROBLEMS,
+                recorded=problem.get("recorded"),
+                relates_to=f"{gate} {_shown(picture['scoring'].get(gate))}",
+            )
+        ]
     return []
 
 
@@ -1223,21 +1358,27 @@ def _rule_blunted_fever(picture, meds, allergies, problems, creatinine) -> list[
     for med in meds:
         if not _lexicon_hit(med, "immunosuppression"):
             continue
-        out.append(_candidate(
-            RULE_BLUNTED_FEVER,
-            fact=f"{med['name']} {med['dose']}".strip()
-                 + " (immunosuppressant/steroid, on the chart)",
-            hook=f"{P_TEMP} {_shown(temp)} is not scoring while "
-                 f"{', '.join(others)} {'is' if len(others) == 1 else 'are'}",
-            question="could this be blunting the febrile response?",
-            terms=[*_name_terms(med["name"]), "temperature", "fever", "afebrile"],
-            numbers=[temp.get("value")],
-            evidence={"drug": med["name"], "dose": med["dose"],
-                      "parameter": P_TEMP, "value": temp.get("value")},
-            source=SOURCE_MEDICATIONS,
-            recorded=med.get("recorded"),
-            relates_to=f"{P_TEMP} {_shown(temp)}",
-        ))
+        out.append(
+            _candidate(
+                RULE_BLUNTED_FEVER,
+                fact=f"{med['name']} {med['dose']}".strip()
+                + " (immunosuppressant/steroid, on the chart)",
+                hook=f"{P_TEMP} {_shown(temp)} is not scoring while "
+                f"{', '.join(others)} {'is' if len(others) == 1 else 'are'}",
+                question="could this be blunting the febrile response?",
+                terms=[*_name_terms(med["name"]), "temperature", "fever", "afebrile"],
+                numbers=[temp.get("value")],
+                evidence={
+                    "drug": med["name"],
+                    "dose": med["dose"],
+                    "parameter": P_TEMP,
+                    "value": temp.get("value"),
+                },
+                source=SOURCE_MEDICATIONS,
+                recorded=med.get("recorded"),
+                relates_to=f"{P_TEMP} {_shown(temp)}",
+            )
+        )
         break
     return out
 
@@ -1252,12 +1393,11 @@ def render_candidates(result: dict) -> list[str]:
     the chart did not hand it."""
     lines = []
     for cand in result.get("candidates") or []:
-        lines.append(f"{cand['id']}. {cand['fact']}: {cand['hook']}. "
-                     f"[{cand['question']}]")
+        lines.append(f"{cand['id']}. {cand['fact']}: {cand['hook']}. [{cand['question']}]")
     return lines
 
 
-def flag_signature(result: dict) -> Optional[str]:
+def flag_signature(result: dict) -> str | None:
     """WHICH CHART FACTS ARE IN PLAY FOR THIS PATIENT, as one comparable string.
 
     THE PROBLEM IT EXISTS FOR, measured on the ward 2026-08-15: Suresh Reddy
@@ -1289,9 +1429,12 @@ def flag_signature(result: dict) -> Optional[str]:
     """
     if not isinstance(result, dict) or result.get("screen_error"):
         return None
-    return "\n".join(sorted(
-        f"{c.get('rule')}|{_norm(str(c.get('fact') or ''))}"
-        for c in (result.get("candidates") or [])))
+    return "\n".join(
+        sorted(
+            f"{c.get('rule')}|{_norm(str(c.get('fact') or ''))}"
+            for c in (result.get("candidates") or [])
+        )
+    )
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1363,8 +1506,7 @@ _GENERIC_PHRASES: tuple[str, ...] = (
     "review the patient",
 )
 
-_GENERIC_RE = re.compile("|".join(re.escape(p) for p in _GENERIC_PHRASES),
-                         re.IGNORECASE)
+_GENERIC_RE = re.compile("|".join(re.escape(p) for p in _GENERIC_PHRASES), re.IGNORECASE)
 
 #: Tokens for the fabrication guard. Words shorter than this are not checked as
 #: drug names — the same floor `drug_safety_service._MIN_SUBSTRING_MATCH` uses,
@@ -1835,15 +1977,33 @@ def _fold(word: str) -> str:
 #: that deleted the line for the difference would be deleting true output over
 #: grammar.
 _SUFFIX_RULES: tuple[tuple[str, str], ...] = (
-    ("'s", ""), ("s'", ""),
-    ("ies", "y"), ("ied", "y"), ("iest", "y"), ("ier", "y"), ("ily", "y"),
-    ("es", ""), ("s", ""),
-    ("ing", ""), ("ing", "e"),
-    ("ed", ""), ("ed", "e"),
-    ("est", ""), ("er", ""), ("er", "e"),
-    ("ically", "ic"), ("ally", "al"), ("ly", ""),
-    ("ion", ""), ("ion", "e"), ("ive", ""), ("ive", "e"), ("ness", ""),
-    ("able", ""), ("able", "e"), ("ible", ""),
+    ("'s", ""),
+    ("s'", ""),
+    ("ies", "y"),
+    ("ied", "y"),
+    ("iest", "y"),
+    ("ier", "y"),
+    ("ily", "y"),
+    ("es", ""),
+    ("s", ""),
+    ("ing", ""),
+    ("ing", "e"),
+    ("ed", ""),
+    ("ed", "e"),
+    ("est", ""),
+    ("er", ""),
+    ("er", "e"),
+    ("ically", "ic"),
+    ("ally", "al"),
+    ("ly", ""),
+    ("ion", ""),
+    ("ion", "e"),
+    ("ive", ""),
+    ("ive", "e"),
+    ("ness", ""),
+    ("able", ""),
+    ("able", "e"),
+    ("ible", ""),
 )
 
 
@@ -1856,12 +2016,41 @@ _SUFFIX_RULES: tuple[tuple[str, str], ...] = (
 #: "un" leads, because negation is the commonest of them and was measured
 #: costing a true flag on its own.
 _PROSE_PREFIXES: tuple[str, ...] = (
-    "un", "re", "non", "pre", "post", "over", "under", "anti", "inter", "intra",
-    "sub", "multi", "semi", "self", "mis", "dis", "hyper", "hypo", "ultra",
+    "un",
+    "re",
+    "non",
+    "pre",
+    "post",
+    "over",
+    "under",
+    "anti",
+    "inter",
+    "intra",
+    "sub",
+    "multi",
+    "semi",
+    "self",
+    "mis",
+    "dis",
+    "hyper",
+    "hypo",
+    "ultra",
     # Clinical combining forms. Same rule: "nephro" + "toxic" survives because
     # "toxic" is prose; "nephro" + anything that is not prose does not.
-    "nephro", "cardio", "hepato", "neuro", "gastro", "broncho", "pulmo",
-    "thrombo", "vaso", "angio", "cerebro", "immuno", "electro", "myo",
+    "nephro",
+    "cardio",
+    "hepato",
+    "neuro",
+    "gastro",
+    "broncho",
+    "pulmo",
+    "thrombo",
+    "vaso",
+    "angio",
+    "cerebro",
+    "immuno",
+    "electro",
+    "myo",
 )
 
 
@@ -1899,23 +2088,22 @@ def _one_stem(word: str):
     # the same argument `is_prose` already makes about hyphens.
     for prefix in _PROSE_PREFIXES:
         if word.startswith(prefix) and len(word) - len(prefix) >= 4:
-            yield word[len(prefix):]
+            yield word[len(prefix) :]
     for suffix, replacement in _SUFFIX_RULES:
         if not word.endswith(suffix) or len(word) - len(suffix) < 3:
             continue
         base = word[: -len(suffix)] + replacement
         yield base
         # "stopped" → "stop", "occurring" → "occur".
-        if (not replacement and len(base) >= 4 and base[-1] == base[-2]
-                and base[-1] not in "aeiou"):
+        if not replacement and len(base) >= 4 and base[-1] == base[-2] and base[-1] not in "aeiou":
             yield base[:-1]
 
 
 _PROSE = frozenset(
     _fold(w)
-    for chunk in (_PROSE_ORDINARY, _PROSE_ORDINARY_2, _PROSE_CLINICAL,
-                  _PROSE_CLASSES, _PROSE_ORB)
-    for w in chunk.split())
+    for chunk in (_PROSE_ORDINARY, _PROSE_ORDINARY_2, _PROSE_CLINICAL, _PROSE_CLASSES, _PROSE_ORB)
+    for w in chunk.split()
+)
 
 #: The class block on its own. `_known_drug_tokens` subtracts it, because the
 #: interaction seed types a few class names ("diuretics", "statins",
@@ -1958,15 +2146,56 @@ def _is_class_term(token: str) -> bool:
 #: section exists to close. The false positives that motivated the gate are real
 #: and are fixed where they belong: in :data:`_PROSE_ORDINARY`.
 _DRUG_SUFFIXES: tuple[str, ...] = (
-    "cillin", "mycin", "micin", "cycline", "azole", "oxacin", "floxacin",
-    "penem", "cephem", "ceph", "cef", "sulfa", "pril", "sartan", "olol",
-    "dipine", "statin", "parin", "xaban", "gatran", "azepam", "azolam",
-    "barbital", "caine", "profen", "coxib", "tinib", "ximab", "zumab", "mab",
-    "vir", "navir", "ovir", "prazole", "tidine", "setron", "triptan",
-    "glitazone", "gliptin", "gliflozin", "formin", "phylline",
+    "cillin",
+    "mycin",
+    "micin",
+    "cycline",
+    "azole",
+    "oxacin",
+    "floxacin",
+    "penem",
+    "cephem",
+    "ceph",
+    "cef",
+    "sulfa",
+    "pril",
+    "sartan",
+    "olol",
+    "dipine",
+    "statin",
+    "parin",
+    "xaban",
+    "gatran",
+    "azepam",
+    "azolam",
+    "barbital",
+    "caine",
+    "profen",
+    "coxib",
+    "tinib",
+    "ximab",
+    "zumab",
+    "mab",
+    "vir",
+    "navir",
+    "ovir",
+    "prazole",
+    "tidine",
+    "setron",
+    "triptan",
+    "glitazone",
+    "gliptin",
+    "gliflozin",
+    "formin",
+    "phylline",
     # Specific -ide class endings only. A bare "ide" matches "provide",
     # "guide" and "outside" — measured, and it deleted a true line.
-    "emide", "izide", "amide", "onide", "oxide", "apride",
+    "emide",
+    "izide",
+    "amide",
+    "onide",
+    "oxide",
+    "apride",
 )
 
 
@@ -2053,7 +2282,7 @@ def names_a_fact(line: str, result: dict) -> bool:
     return False
 
 
-def verify_line(line: str, result: dict) -> Optional[str]:
+def verify_line(line: str, result: dict) -> str | None:
     """THE FABRICATION GUARD. Returns the drop reason, or None to keep the line.
 
     Every drug name and every number in the output must have come from the
@@ -2139,9 +2368,7 @@ def verify_line(line: str, result: dict) -> Optional[str]:
         # comparison deleted the line for it (measured 2026-08-15). `supplied`
         # is only ever the text the model was actually shown, so widening it to
         # inflections cannot admit anything the chart did not supply.
-        if token in supplied or any(
-            form in supplied for form in _stem_forms(token)
-        ):
+        if token in supplied or any(form in supplied for form in _stem_forms(token)):
             continue
         if token in known or classify_drug(token):
             return DROP_FABRICATED
@@ -2200,7 +2427,7 @@ def _allowed_terms(candidates: list[dict]) -> frozenset:
     return frozenset(terms)
 
 
-def _supplied_tokens(candidates: list[dict], tier1: Optional[dict] = None) -> frozenset:
+def _supplied_tokens(candidates: list[dict], tier1: dict | None = None) -> frozenset:
     """Every word the model was actually SHOWN — the facts, and Orb's own block.
 
     The fabrication guard's question is "did this come from the chart, or from
@@ -2226,17 +2453,19 @@ def _supplied_tokens(candidates: list[dict], tier1: Optional[dict] = None) -> fr
     tokens: set[str] = set()
 
     def _add(text: str) -> None:
-        tokens.update(t for t in _TOKEN_RE.findall(_norm(text or ""))
-                      if len(t) >= _MIN_DRUG_TOKEN)
+        tokens.update(t for t in _TOKEN_RE.findall(_norm(text or "")) if len(t) >= _MIN_DRUG_TOKEN)
 
     for cand in candidates:
         _add(f"{cand.get('fact') or ''} {cand.get('hook') or ''}")
     for key in ("news2_band", "trend", "coverage_note", "movement"):
         _add(str((tier1 or {}).get(key) or ""))
-    for param in (list((tier1 or {}).get("parameters") or [])
-                  + list((tier1 or {}).get("non_scoring") or [])):
-        _add(f"{param.get('parameter') or ''} {param.get('display') or ''} "
-             f"{param.get('movement') or ''}")
+    for param in list((tier1 or {}).get("parameters") or []) + list(
+        (tier1 or {}).get("non_scoring") or []
+    ):
+        _add(
+            f"{param.get('parameter') or ''} {param.get('display') or ''} "
+            f"{param.get('movement') or ''}"
+        )
     return frozenset(tokens)
 
 
@@ -2259,13 +2488,43 @@ def _allowed_numbers(candidates: list[dict], tier1: dict) -> frozenset:
 #: Words that appear in a formulary entry without being a drug name. Excluded
 #: from the DETECTOR so an ordinary English sentence ("give it by injection") is
 #: not deleted as a fabricated medication.
-_FORMULARY_NOISE = frozenset({
-    "injection", "tablet", "tablets", "capsule", "capsules", "syrup", "solution",
-    "suspension", "infusion", "sodium", "chloride", "sulphate", "sulfate",
-    "hydrochloride", "phosphate", "acetate", "citrate", "succinate", "tartrate",
-    "maleate", "oral", "intravenous", "cream", "ointment", "drops", "spray",
-    "inhaler", "nebuliser", "nebulizer", "vial", "ampoule", "gram", "grams",
-})
+_FORMULARY_NOISE = frozenset(
+    {
+        "injection",
+        "tablet",
+        "tablets",
+        "capsule",
+        "capsules",
+        "syrup",
+        "solution",
+        "suspension",
+        "infusion",
+        "sodium",
+        "chloride",
+        "sulphate",
+        "sulfate",
+        "hydrochloride",
+        "phosphate",
+        "acetate",
+        "citrate",
+        "succinate",
+        "tartrate",
+        "maleate",
+        "oral",
+        "intravenous",
+        "cream",
+        "ointment",
+        "drops",
+        "spray",
+        "inhaler",
+        "nebuliser",
+        "nebulizer",
+        "vial",
+        "ampoule",
+        "gram",
+        "grams",
+    }
+)
 
 
 def _known_drug_tokens(db, meds: list[dict]) -> frozenset:
@@ -2273,17 +2532,19 @@ def _known_drug_tokens(db, meds: list[dict]) -> frozenset:
     is on this patient's chart. Used only as a DETECTOR by the fabrication guard —
     being on this list does not make a name allowed, it makes an unexplained one
     suspicious."""
+
     def _add(into: set, text: str) -> None:
-        into.update(t for t in _TOKEN_RE.findall(_norm(text or ""))
-                    if len(t) >= _MIN_DRUG_TOKEN and t not in _FORMULARY_NOISE
-                    and not _is_class_term(t))
+        into.update(
+            t
+            for t in _TOKEN_RE.findall(_norm(text or ""))
+            if len(t) >= _MIN_DRUG_TOKEN and t not in _FORMULARY_NOISE and not _is_class_term(t)
+        )
 
     tokens: set[str] = set()
     for med in meds:
         _add(tokens, med["name"])
     try:
-        rows = db.execute(
-            "SELECT name, generic_name FROM helix_medication_master").fetchall()
+        rows = db.execute("SELECT name, generic_name FROM helix_medication_master").fetchall()
     except Exception:
         # The formulary is an enrichment; `classify_drug` still detects the
         # families it knows. Same posture allergy_interlock takes.
@@ -2308,8 +2569,8 @@ def _known_drug_tokens(db, meds: list[dict]) -> frozenset:
     # mentioning a class read as a fabricated medication.
     try:
         for r in db.execute(
-                "SELECT term_a, term_b FROM drug_interactions "
-                "WHERE match_type = 'ingredient'").fetchall():
+            "SELECT term_a, term_b FROM drug_interactions WHERE match_type = 'ingredient'"
+        ).fetchall():
             _add(tokens, r["term_a"])
             _add(tokens, r["term_b"])
     except Exception:

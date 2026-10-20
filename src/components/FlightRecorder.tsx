@@ -139,7 +139,7 @@ export default function FlightRecorder() {
       .catch(() => { if (alive) setDetail(null) })
       .finally(() => { if (alive) setDetailLoading(false) })
     return () => { alive = false }
-  }, [selected?.source, selected?.id])
+  }, [selected])
 
   // Play/step: advance through events on a timer.
   useEffect(() => {

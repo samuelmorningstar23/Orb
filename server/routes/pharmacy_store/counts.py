@@ -7,6 +7,7 @@ router has neither, so every endpoint added here inherits both.
 Planned endpoints (docs/his_design/grn.json, section E):
   counts, plus submit and approve; adjustments   approver differs from the counter
 """
+
 from fastapi import APIRouter
 
 router = APIRouter()

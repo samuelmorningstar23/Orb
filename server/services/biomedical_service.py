@@ -115,17 +115,20 @@ exists and is populated for exactly this purpose, and is read by nothing.
     is this module's job; a dangling vendor id yields "unknown", never a failed
     write.
 """
+
 from __future__ import annotations
 
 import logging
-from db_backend import DBIntegrityError  # sqlcipher3 raises its OWN hierarchy:
+
 # sqlcipher3.dbapi2.IntegrityError is NOT a subclass of sqlite3.IntegrityError, so
 # `except sqlite3.IntegrityError` is DEAD CODE whenever ORB_DB_ENCRYPTION_KEY is
 # set — i.e. in the shipping config. Guarded by tests/test_db_exception_aliases.
-from datetime import date, datetime, timedelta, timezone
-from typing import Any, Optional
+from datetime import UTC, date, datetime, timedelta
+from typing import Any, Literal, overload
 
 from database import db_session
+from db_backend import DBIntegrityError  # sqlcipher3 raises its OWN hierarchy:
+
 from services.hospital_time import hospital_today
 from services.money import assert_non_negative_paise, format_inr_or_unset
 
@@ -189,13 +192,14 @@ __all__ = [
 #  Errors
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class BiomedicalError(ValueError):
     """Anything a caller did wrong. Carries a stable machine-readable `code` so
     the route layer maps it to an HTTP status without string-matching English."""
 
     code = "biomedical_error"
 
-    def __init__(self, message: str, *, code: Optional[str] = None):
+    def __init__(self, message: str, *, code: str | None = None):
         super().__init__(message)
         if code:
             self.code = code
@@ -203,6 +207,7 @@ class BiomedicalError(ValueError):
 
 class UnknownAsset(BiomedicalError):
     """A schedule, call or contract named an asset that is not in the register."""
+
     code = "unknown_asset"
 
 
@@ -214,19 +219,42 @@ class UnknownAsset(BiomedicalError):
 #: no list anybody writes tonight covers what a hospital actually owns, and a
 #: CHECK that refuses "cryo-cautery" teaches people to type "other".
 ASSET_CATEGORIES: tuple[str, ...] = (
-    "ventilator", "patient_monitor", "infusion_pump", "syringe_pump",
-    "defibrillator", "anaesthesia_machine", "dialysis_machine", "ecg",
-    "ultrasound", "xray", "ct", "mri", "c_arm", "oxygen_concentrator",
-    "suction", "warmer", "phototherapy", "autoclave", "lab_analyser",
-    "centrifuge", "refrigerator", "surgical_table", "electrosurgical_unit",
-    "endoscope", "other",
+    "ventilator",
+    "patient_monitor",
+    "infusion_pump",
+    "syringe_pump",
+    "defibrillator",
+    "anaesthesia_machine",
+    "dialysis_machine",
+    "ecg",
+    "ultrasound",
+    "xray",
+    "ct",
+    "mri",
+    "c_arm",
+    "oxygen_concentrator",
+    "suction",
+    "warmer",
+    "phototherapy",
+    "autoclave",
+    "lab_analyser",
+    "centrifuge",
+    "refrigerator",
+    "surgical_table",
+    "electrosurgical_unit",
+    "endoscope",
+    "other",
 )
 
 #: Enforced by CHECK constraints in migration 21.
 CRITICALITIES: tuple[str, ...] = ("life_support", "critical", "routine")
 
 ASSET_STATUSES: tuple[str, ...] = (
-    "in_service", "standby", "under_maintenance", "down", "condemned",
+    "in_service",
+    "standby",
+    "under_maintenance",
+    "down",
+    "condemned",
 )
 
 #: The statuses in which an asset is NOT available to a ward. Used by the ward
@@ -234,7 +262,9 @@ ASSET_STATUSES: tuple[str, ...] = (
 UNAVAILABLE_STATUSES: frozenset[str] = frozenset({"under_maintenance", "down", "condemned"})
 
 SCHEDULE_TYPES: tuple[str, ...] = (
-    "preventive_maintenance", "calibration", "electrical_safety",
+    "preventive_maintenance",
+    "calibration",
+    "electrical_safety",
 )
 
 SCHEDULE_TYPE_LABELS: dict[str, str] = {
@@ -246,7 +276,11 @@ SCHEDULE_TYPE_LABELS: dict[str, str] = {
 SCHEDULE_RESULTS: tuple[str, ...] = ("pass", "pass_with_adjustment", "fail")
 
 SERVICE_CALL_STATUSES: tuple[str, ...] = (
-    "open", "in_progress", "awaiting_parts", "closed", "cancelled",
+    "open",
+    "in_progress",
+    "awaiting_parts",
+    "closed",
+    "cancelled",
 )
 
 #: A call in one of these is still accruing downtime.
@@ -274,6 +308,7 @@ DEFAULT_NOTICE_DAYS = 60
 #  the entire class of defect this module can have is an off-by-one on a day.
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def compute_next_due(last_done: date, interval_days: int) -> date:
     """The next due date for work completed on `last_done`.
 
@@ -284,8 +319,7 @@ def compute_next_due(last_done: date, interval_days: int) -> date:
     Sites that think in months set 30/90/180/365.
     """
     if not isinstance(last_done, date) or isinstance(last_done, datetime):
-        raise BiomedicalError(
-            f"last_done must be a date (got {last_done!r})", code="bad_date")
+        raise BiomedicalError(f"last_done must be a date (got {last_done!r})", code="bad_date")
     interval = _positive_int(interval_days, "interval_days")
     return last_done + timedelta(days=interval)
 
@@ -347,13 +381,13 @@ def contract_in_notice_window(end_date: date, notice_days: int, today: date) -> 
     """
     if contract_is_expired(end_date, today):
         return False
-    return contract_days_remaining(end_date, today) <= _non_negative_int(
-        notice_days, "notice_days")
+    return contract_days_remaining(end_date, today) <= _non_negative_int(notice_days, "notice_days")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  Small helpers
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def _row(row) -> dict:
     return {k: row[k] for k in row.keys()} if row is not None else {}
@@ -363,10 +397,24 @@ def _now() -> str:
     """UTC, second resolution, matching the CURRENT_TIMESTAMP format SQLite
     writes for the columns that default. Mixed formats in one column are how a
     date range silently drops rows."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _clean(value: Optional[str], *, field_name: str, required: bool = False) -> Optional[str]:
+@overload
+def _clean(value: str | None, *, field_name: str, required: Literal[True]) -> str: ...
+
+
+@overload
+def _clean(
+    value: str | None, *, field_name: str, required: Literal[False] = False
+) -> str | None: ...
+
+
+@overload
+def _clean(value: str | None, *, field_name: str, required: bool = False) -> str | None: ...
+
+
+def _clean(value: str | None, *, field_name: str, required: bool = False) -> str | None:
     value = (value or "").strip() if value is not None else None
     if not value:
         if required:
@@ -377,25 +425,25 @@ def _clean(value: Optional[str], *, field_name: str, required: bool = False) -> 
 
 def _positive_int(value: object, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
-        raise BiomedicalError(f"{name} must be a whole number of days (got {value!r})",
-                              code="bad_interval")
+        raise BiomedicalError(
+            f"{name} must be a whole number of days (got {value!r})", code="bad_interval"
+        )
     if value <= 0:
-        raise BiomedicalError(f"{name} must be greater than zero (got {value})",
-                              code="bad_interval")
+        raise BiomedicalError(
+            f"{name} must be greater than zero (got {value})", code="bad_interval"
+        )
     return value
 
 
 def _non_negative_int(value: object, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
-        raise BiomedicalError(f"{name} must be a whole number (got {value!r})",
-                              code="bad_number")
+        raise BiomedicalError(f"{name} must be a whole number (got {value!r})", code="bad_number")
     if value < 0:
-        raise BiomedicalError(f"{name} cannot be negative (got {value})",
-                              code="bad_number")
+        raise BiomedicalError(f"{name} cannot be negative (got {value})", code="bad_number")
     return value
 
 
-def as_date(value: Optional[date | datetime | str], field_name: str) -> Optional[date]:
+def as_date(value: date | datetime | str | None, field_name: str) -> date | None:
     """Anything a caller can plausibly send → a `date`, or a refusal that names
     the field. Never guesses a format: an unparseable date is a data-entry error
     and silently coercing it is how 01/02 becomes the wrong month."""
@@ -410,8 +458,8 @@ def as_date(value: Optional[date | datetime | str], field_name: str) -> Optional
         return date.fromisoformat(text[:10])
     except ValueError as exc:
         raise BiomedicalError(
-            f"{field_name} is not a date in YYYY-MM-DD form: {value!r}",
-            code="bad_date") from exc
+            f"{field_name} is not a date in YYYY-MM-DD form: {value!r}", code="bad_date"
+        ) from exc
 
 
 def _require_date(value, field_name: str) -> date:
@@ -421,7 +469,7 @@ def _require_date(value, field_name: str) -> date:
     return parsed
 
 
-def _as_dt(value: Optional[datetime | str], field_name: str) -> Optional[datetime]:
+def _as_dt(value: datetime | str | None, field_name: str) -> datetime | None:
     """A timestamp → aware UTC datetime. Accepts the `YYYY-MM-DD HH:MM:SS` form
     SQLite writes and ISO-8601 with or without an offset. A NAIVE value is read
     as UTC, because every timestamp Orb persists is UTC."""
@@ -436,24 +484,25 @@ def _as_dt(value: Optional[datetime | str], field_name: str) -> Optional[datetim
         try:
             dt = datetime.fromisoformat(text)
         except ValueError as exc:
-            raise BiomedicalError(f"{field_name} is not a timestamp: {value!r}",
-                                  code="bad_timestamp") from exc
+            raise BiomedicalError(
+                f"{field_name} is not a timestamp: {value!r}", code="bad_timestamp"
+            ) from exc
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
-def _dt_str(dt: Optional[datetime]) -> Optional[str]:
+def _dt_str(dt: datetime | None) -> str | None:
     if dt is None:
         return None
-    return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return dt.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _today(today: Optional[date]) -> date:
+def _today(today: date | None) -> date:
     return today or hospital_today()
 
 
-def _optional_paise(value: object, name: str) -> tuple[Optional[int], int]:
+def _optional_paise(value: object, name: str) -> tuple[int | None, int]:
     """`(paise, is_configured)`. A cost nobody typed is (None, 0) — NOT (0, 1).
     Zero is a price; absence is not."""
     if value is None:
@@ -461,13 +510,14 @@ def _optional_paise(value: object, name: str) -> tuple[Optional[int], int]:
     return assert_non_negative_paise(value, name), 1
 
 
-def _one_of(value: Optional[str], allowed: tuple[str, ...], name: str,
-            default: Optional[str] = None) -> str:
+def _one_of(
+    value: str | None, allowed: tuple[str, ...], name: str, default: str | None = None
+) -> str:
     text = (value or default or "").strip().lower()
     if text not in allowed:
         raise BiomedicalError(
-            f"unknown {name} {value!r}; expected one of {list(allowed)}",
-            code=f"bad_{name}")
+            f"unknown {name} {value!r}; expected one of {list(allowed)}", code=f"bad_{name}"
+        )
     return text
 
 
@@ -475,28 +525,29 @@ def _one_of(value: Optional[str], allowed: tuple[str, ...], name: str,
 #  Assets — the register
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def upsert_asset(
     *,
     asset_tag: str,
     name: str,
     category: str = "other",
-    manufacturer: Optional[str] = None,
-    model: Optional[str] = None,
-    serial_number: Optional[str] = None,
-    department: Optional[str] = None,
-    ward: Optional[str] = None,
-    location_detail: Optional[str] = None,
+    manufacturer: str | None = None,
+    model: str | None = None,
+    serial_number: str | None = None,
+    department: str | None = None,
+    ward: str | None = None,
+    location_detail: str | None = None,
     criticality: str = "routine",
     status: str = "in_service",
-    purchase_date: Optional[date | str] = None,
-    commissioned_date: Optional[date | str] = None,
-    purchase_cost_paise: Optional[int] = None,
-    warranty_expiry_date: Optional[date | str] = None,
-    vendor_id: Optional[int] = None,
+    purchase_date: date | str | None = None,
+    commissioned_date: date | str | None = None,
+    purchase_cost_paise: int | None = None,
+    warranty_expiry_date: date | str | None = None,
+    vendor_id: int | None = None,
     produces_clinical_readings: bool = False,
-    notes: Optional[str] = None,
+    notes: str | None = None,
     is_active: bool = True,
-    actor: Optional[str] = None,
+    actor: str | None = None,
     create_only: bool = False,
 ) -> dict:
     """Create or update one asset, keyed on `asset_tag`.
@@ -523,19 +574,23 @@ def upsert_asset(
     if purchase and commissioned and commissioned < purchase:
         raise BiomedicalError(
             "commissioned_date is before purchase_date. A machine cannot be put "
-            "into service before it was bought", code="bad_date_order")
+            "into service before it was bought",
+            code="bad_date_order",
+        )
 
     with db_session() as db:
         if create_only:
             existing = db.execute(
-                "SELECT name, ward FROM biomedical_assets WHERE asset_tag = ?",
-                (asset_tag,)).fetchone()
+                "SELECT name, ward FROM biomedical_assets WHERE asset_tag = ?", (asset_tag,)
+            ).fetchone()
             if existing:
                 where = f" on ward {existing['ward']}" if existing["ward"] else ""
                 raise BiomedicalError(
                     f"{asset_tag} already exists as {existing['name']}{where}. "
                     "Nothing was changed. Use a different tag, or open that record "
-                    "to edit it.", code="already_exists")
+                    "to edit it.",
+                    code="already_exists",
+                )
         db.execute(
             """INSERT INTO biomedical_assets (
                    asset_tag, name, category, manufacturer, model, serial_number,
@@ -567,26 +622,37 @@ def upsert_asset(
                    is_active = excluded.is_active,
                    updated_by = excluded.created_by,
                    updated_at = CURRENT_TIMESTAMP""",
-            (asset_tag, name, category, _clean(manufacturer, field_name="manufacturer"),
-             _clean(model, field_name="model"), _clean(serial_number, field_name="serial_number"),
-             _clean(department, field_name="department"), _clean(ward, field_name="ward"),
-             _clean(location_detail, field_name="location_detail"),
-             criticality, status,
-             purchase.isoformat() if purchase else None,
-             commissioned.isoformat() if commissioned else None,
-             cost_paise, cost_configured,
-             warranty.isoformat() if warranty else None,
-             int(vendor_id) if vendor_id is not None else None,
-             1 if produces_clinical_readings else 0,
-             _clean(notes, field_name="notes"),
-             1 if is_active else 0, actor),
+            (
+                asset_tag,
+                name,
+                category,
+                _clean(manufacturer, field_name="manufacturer"),
+                _clean(model, field_name="model"),
+                _clean(serial_number, field_name="serial_number"),
+                _clean(department, field_name="department"),
+                _clean(ward, field_name="ward"),
+                _clean(location_detail, field_name="location_detail"),
+                criticality,
+                status,
+                purchase.isoformat() if purchase else None,
+                commissioned.isoformat() if commissioned else None,
+                cost_paise,
+                cost_configured,
+                warranty.isoformat() if warranty else None,
+                int(vendor_id) if vendor_id is not None else None,
+                1 if produces_clinical_readings else 0,
+                _clean(notes, field_name="notes"),
+                1 if is_active else 0,
+                actor,
+            ),
         )
-        row = db.execute("SELECT * FROM biomedical_assets WHERE asset_tag = ?",
-                         (asset_tag,)).fetchone()
+        row = db.execute(
+            "SELECT * FROM biomedical_assets WHERE asset_tag = ?", (asset_tag,)
+        ).fetchone()
     return _asset_view(_row(row))
 
 
-def _asset_view(row: dict, today: Optional[date] = None) -> dict:
+def _asset_view(row: dict, today: date | None = None) -> dict:
     """One asset as a screen wants it. Adds only DERIVED fields — never invents
     a stored one."""
     if not row:
@@ -594,23 +660,27 @@ def _asset_view(row: dict, today: Optional[date] = None) -> dict:
     day = _today(today)
     out = dict(row)
     out["criticality_label"] = {
-        "life_support": "Life support", "critical": "Critical", "routine": "Routine",
+        "life_support": "Life support",
+        "critical": "Critical",
+        "routine": "Routine",
     }.get(row.get("criticality") or "", row.get("criticality"))
     out["cost_display"] = format_inr_or_unset(
-        row.get("purchase_cost_paise") if row.get("cost_is_configured") else None)
+        row.get("purchase_cost_paise") if row.get("cost_is_configured") else None
+    )
     warranty = as_date(row.get("warranty_expiry_date"), "warranty_expiry_date")
     # Warranty uses the CONTRACT rule (end_date is the last covered day), not the
     # schedule rule — a warranty is a contract, whatever column it lives in.
-    out["warranty_active"] = bool(warranty) and not contract_is_expired(warranty, day)
-    out["warranty_days_remaining"] = (
-        contract_days_remaining(warranty, day) if warranty else None)
-    out["is_available"] = (
-        bool(row.get("is_active")) and (row.get("status") not in UNAVAILABLE_STATUSES))
+    out["warranty_active"] = warranty is not None and not contract_is_expired(warranty, day)
+    out["warranty_days_remaining"] = contract_days_remaining(warranty, day) if warranty else None
+    out["is_available"] = bool(row.get("is_active")) and (
+        row.get("status") not in UNAVAILABLE_STATUSES
+    )
     return out
 
 
-def get_asset(asset_id: Optional[int] = None, *, asset_tag: Optional[str] = None,
-              today: Optional[date] = None) -> dict:
+def get_asset(
+    asset_id: int | None = None, *, asset_tag: str | None = None, today: date | None = None
+) -> dict:
     """One asset with its schedules, open calls and contracts. Empty dict if it
     does not exist — callers that need a refusal use `_resolve_asset`."""
     day = _today(today)
@@ -624,63 +694,74 @@ def get_asset(asset_id: Optional[int] = None, *, asset_tag: Optional[str] = None
             _schedule_view(_row(r), day)
             for r in db.execute(
                 "SELECT * FROM biomedical_schedules WHERE asset_id = ? "
-                "ORDER BY next_due_date, schedule_type", (aid,)).fetchall()
+                "ORDER BY next_due_date, schedule_type",
+                (aid,),
+            ).fetchall()
         ]
         asset["service_calls"] = [
             _call_view(_row(r))
             for r in db.execute(
                 "SELECT * FROM biomedical_service_calls WHERE asset_id = ? "
-                "ORDER BY reported_at DESC, id DESC LIMIT 50", (aid,)).fetchall()
+                "ORDER BY reported_at DESC, id DESC LIMIT 50",
+                (aid,),
+            ).fetchall()
         ]
         asset["contracts"] = [
             _contract_view(_row(r), day)
             for r in db.execute(
                 "SELECT c.* FROM biomedical_contracts c "
                 "JOIN biomedical_contract_assets ca ON ca.contract_id = c.id "
-                "WHERE ca.asset_id = ? ORDER BY c.end_date DESC", (aid,)).fetchall()
+                "WHERE ca.asset_id = ? ORDER BY c.end_date DESC",
+                (aid,),
+            ).fetchall()
         ]
         asset["history"] = [
             _row(r)
             for r in db.execute(
                 "SELECT * FROM biomedical_schedule_events WHERE asset_id = ? "
-                "ORDER BY performed_date DESC, id DESC LIMIT 50", (aid,)).fetchall()
+                "ORDER BY performed_date DESC, id DESC LIMIT 50",
+                (aid,),
+            ).fetchall()
         ]
     asset["downtime_minutes_90d"] = asset_downtime_minutes(
-        asset["id"], since=day - timedelta(days=90))
+        asset["id"], since=day - timedelta(days=90)
+    )
     return asset
 
 
-def _fetch_asset(db, *, asset_id: Optional[int] = None, asset_tag: Optional[str] = None):
+def _fetch_asset(db, *, asset_id: int | None = None, asset_tag: str | None = None):
     if asset_id is not None:
-        return db.execute("SELECT * FROM biomedical_assets WHERE id = ?",
-                          (int(asset_id),)).fetchone()
+        return db.execute(
+            "SELECT * FROM biomedical_assets WHERE id = ?", (int(asset_id),)
+        ).fetchone()
     if asset_tag:
-        return db.execute("SELECT * FROM biomedical_assets WHERE asset_tag = ?",
-                          (str(asset_tag).strip().upper(),)).fetchone()
+        return db.execute(
+            "SELECT * FROM biomedical_assets WHERE asset_tag = ?", (str(asset_tag).strip().upper(),)
+        ).fetchone()
     raise BiomedicalError("an asset id or asset tag is required", code="missing_field")
 
 
-def _resolve_asset_id(db, *, asset_id: Optional[int] = None,
-                      asset_tag: Optional[str] = None) -> int:
+def _resolve_asset_id(db, *, asset_id: int | None = None, asset_tag: str | None = None) -> int:
     row = _fetch_asset(db, asset_id=asset_id, asset_tag=asset_tag)
     if row is None:
         raise UnknownAsset(
             f"no asset with {'id ' + str(asset_id) if asset_id is not None else 'tag ' + repr(asset_tag)} "
-            "in the equipment register")
+            "in the equipment register"
+        )
     return int(row["id"])
 
 
 def list_assets(
     *,
-    ward: Optional[str] = None,
-    department: Optional[str] = None,
-    category: Optional[str] = None,
-    criticality: Optional[str] = None,
-    status: Optional[str] = None,
-    search: Optional[str] = None,
+    ward: str | None = None,
+    department: str | None = None,
+    category: str | None = None,
+    criticality: str | None = None,
+    status: str | None = None,
+    search: str | None = None,
     include_inactive: bool = False,
     limit: int = 200,
-    today: Optional[date] = None,
+    today: date | None = None,
 ) -> list[dict]:
     """The register, filtered. Ordered by criticality then tag so the machines
     that matter most are at the top of the page an assessor is handed."""
@@ -706,8 +787,10 @@ def list_assets(
         params.append(_one_of(status, ASSET_STATUSES, "status"))
     if search:
         needle = f"%{search.strip()}%"
-        clauses.append("(asset_tag LIKE ? OR name LIKE ? OR model LIKE ? "
-                       "OR serial_number LIKE ? OR manufacturer LIKE ?)")
+        clauses.append(
+            "(asset_tag LIKE ? OR name LIKE ? OR model LIKE ? "
+            "OR serial_number LIKE ? OR manufacturer LIKE ?)"
+        )
         params.extend([needle] * 5)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     # CASE, not a lookup table, because SQLite has no enum ordering and the three
@@ -724,8 +807,12 @@ def list_assets(
 
 
 def set_asset_status(
-    *, asset_id: Optional[int] = None, asset_tag: Optional[str] = None,
-    status: str, reason: Optional[str] = None, actor: Optional[str] = None,
+    *,
+    asset_id: int | None = None,
+    asset_tag: str | None = None,
+    status: str,
+    reason: str | None = None,
+    actor: str | None = None,
 ) -> dict:
     """Move an asset between in_service / standby / under_maintenance / down /
     condemned.
@@ -757,21 +844,22 @@ def set_asset_status(
 #  Schedules — preventive maintenance and CALIBRATION
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def upsert_schedule(
     *,
-    asset_id: Optional[int] = None,
-    asset_tag: Optional[str] = None,
+    asset_id: int | None = None,
+    asset_tag: str | None = None,
     schedule_type: str,
     interval_days: int,
-    last_done_date: Optional[date | str] = None,
-    first_due_date: Optional[date | str] = None,
+    last_done_date: date | str | None = None,
+    first_due_date: date | str | None = None,
     grace_days: int = 0,
     lead_days: int = DEFAULT_LEAD_DAYS,
-    responsible: Optional[str] = None,
-    vendor_id: Optional[int] = None,
-    certificate_reference: Optional[str] = None,
+    responsible: str | None = None,
+    vendor_id: int | None = None,
+    certificate_reference: str | None = None,
     is_active: bool = True,
-    actor: Optional[str] = None,
+    actor: str | None = None,
 ) -> dict:
     """Create or replace the PM / calibration / electrical-safety schedule for one
     asset. One schedule per (asset, type) — enforced by a unique index.
@@ -807,7 +895,8 @@ def upsert_schedule(
             "from it) or first_due_date (for equipment whose last service Orb "
             "has no record of). Orb will not assume a machine was serviced "
             "today just because it was entered today.",
-            code="missing_due_basis")
+            code="missing_due_basis",
+        )
 
     with db_session() as db:
         aid = _resolve_asset_id(db, asset_id=asset_id, asset_tag=asset_tag)
@@ -828,22 +917,29 @@ def upsert_schedule(
                    last_certificate_reference = excluded.last_certificate_reference,
                    is_active = excluded.is_active,
                    updated_at = CURRENT_TIMESTAMP""",
-            (aid, schedule_type, interval,
-             last_done.isoformat() if last_done else None,
-             next_due.isoformat(), grace, lead,
-             _clean(responsible, field_name="responsible"),
-             int(vendor_id) if vendor_id is not None else None,
-             _clean(certificate_reference, field_name="certificate_reference"),
-             1 if is_active else 0, actor),
+            (
+                aid,
+                schedule_type,
+                interval,
+                last_done.isoformat() if last_done else None,
+                next_due.isoformat(),
+                grace,
+                lead,
+                _clean(responsible, field_name="responsible"),
+                int(vendor_id) if vendor_id is not None else None,
+                _clean(certificate_reference, field_name="certificate_reference"),
+                1 if is_active else 0,
+                actor,
+            ),
         )
         row = db.execute(
             "SELECT * FROM biomedical_schedules WHERE asset_id = ? AND schedule_type = ?",
-            (aid, schedule_type)).fetchone()
+            (aid, schedule_type),
+        ).fetchone()
     return _schedule_view(_row(row))
 
 
-def _schedule_view(row: dict, today: Optional[date] = None,
-                   asset: Optional[dict] = None) -> dict:
+def _schedule_view(row: dict, today: date | None = None, asset: dict | None = None) -> dict:
     """One schedule with its compliance state resolved. THE ONLY PLACE the panel
     and the API learn whether something is overdue."""
     if not row:
@@ -856,20 +952,25 @@ def _schedule_view(row: dict, today: Optional[date] = None,
 
     out = dict(row)
     out["schedule_type_label"] = SCHEDULE_TYPE_LABELS.get(
-        row.get("schedule_type") or "", row.get("schedule_type"))
+        row.get("schedule_type") or "", row.get("schedule_type")
+    )
     out["never_done"] = row.get("last_done_date") in (None, "")
     out["effective_due_date"] = (
-        (next_due + timedelta(days=grace)).isoformat() if next_due and grace else
-        (next_due.isoformat() if next_due else None))
+        (next_due + timedelta(days=grace)).isoformat()
+        if next_due and grace
+        else (next_due.isoformat() if next_due else None)
+    )
 
-    overdue = bool(next_due) and active and is_overdue(next_due, day, grace)
+    overdue = next_due is not None and active and is_overdue(next_due, day, grace)
     out["is_overdue"] = overdue
     out["days_overdue"] = days_overdue(next_due, day, grace) if next_due else 0
-    out["days_until_due"] = (
-        (next_due + timedelta(days=grace) - day).days if next_due else None)
+    out["days_until_due"] = (next_due + timedelta(days=grace) - day).days if next_due else None
     out["due_soon"] = bool(
-        next_due and active and not overdue
-        and (next_due + timedelta(days=grace) - day).days <= lead)
+        next_due
+        and active
+        and not overdue
+        and (next_due + timedelta(days=grace) - day).days <= lead
+    )
     if not active:
         out["compliance"] = "inactive"
     elif overdue:
@@ -882,29 +983,45 @@ def _schedule_view(row: dict, today: Optional[date] = None,
     # thing this module was built to surface. Flagged here so no caller has to
     # rediscover the combination.
     out["measurement_at_risk"] = bool(
-        overdue and row.get("schedule_type") == "calibration"
-        and (asset or {}).get("produces_clinical_readings"))
+        overdue
+        and row.get("schedule_type") == "calibration"
+        and (asset or {}).get("produces_clinical_readings")
+    )
     if asset:
-        for key in ("asset_tag", "name", "ward", "department", "criticality",
-                    "status", "produces_clinical_readings"):
+        for key in (
+            "asset_tag",
+            "name",
+            "ward",
+            "department",
+            "criticality",
+            "status",
+            "produces_clinical_readings",
+        ):
             out[f"asset_{key}" if key != "name" else "asset_name"] = asset.get(key)
     return out
 
 
-def get_schedule(schedule_id: int, today: Optional[date] = None) -> dict:
+def get_schedule(schedule_id: int, today: date | None = None) -> dict:
     with db_session() as db:
-        row = db.execute("SELECT * FROM biomedical_schedules WHERE id = ?",
-                         (int(schedule_id),)).fetchone()
+        row = db.execute(
+            "SELECT * FROM biomedical_schedules WHERE id = ?", (int(schedule_id),)
+        ).fetchone()
         if row is None:
             return {}
-        asset = _row(db.execute("SELECT * FROM biomedical_assets WHERE id = ?",
-                                (row["asset_id"],)).fetchone())
+        asset = _row(
+            db.execute(
+                "SELECT * FROM biomedical_assets WHERE id = ?", (row["asset_id"],)
+            ).fetchone()
+        )
     return _schedule_view(_row(row), _today(today), asset)
 
 
 def list_schedules(
-    *, asset_id: Optional[int] = None, schedule_type: Optional[str] = None,
-    ward: Optional[str] = None, today: Optional[date] = None,
+    *,
+    asset_id: int | None = None,
+    schedule_type: str | None = None,
+    ward: str | None = None,
+    today: date | None = None,
 ) -> list[dict]:
     clauses = ["1=1"]
     params: list[Any] = []
@@ -924,7 +1041,8 @@ def list_schedules(
             f"FROM biomedical_schedules s "
             f"JOIN biomedical_assets a ON a.id = s.asset_id "
             f"WHERE {' AND '.join(clauses)} ORDER BY s.next_due_date, a.asset_tag",
-            params).fetchall()
+            params,
+        ).fetchall()
     day = _today(today)
     return [_schedule_view(_row(r), day, _asset_from_join(_row(r))) for r in rows]
 
@@ -944,19 +1062,19 @@ def _asset_from_join(row: dict) -> dict:
 
 def record_schedule_completion(
     *,
-    schedule_id: Optional[int] = None,
-    asset_id: Optional[int] = None,
-    asset_tag: Optional[str] = None,
-    schedule_type: Optional[str] = None,
-    performed_date: Optional[date | str] = None,
+    schedule_id: int | None = None,
+    asset_id: int | None = None,
+    asset_tag: str | None = None,
+    schedule_type: str | None = None,
+    performed_date: date | str | None = None,
     result: str = "pass",
-    certificate_reference: Optional[str] = None,
-    performed_by: Optional[str] = None,
-    vendor_id: Optional[int] = None,
-    cost_paise: Optional[int] = None,
-    notes: Optional[str] = None,
-    actor: Optional[str] = None,
-    today: Optional[date] = None,
+    certificate_reference: str | None = None,
+    performed_by: str | None = None,
+    vendor_id: int | None = None,
+    cost_paise: int | None = None,
+    notes: str | None = None,
+    actor: str | None = None,
+    today: date | None = None,
 ) -> dict:
     """Record that a PM / calibration was done, and roll the schedule forward.
 
@@ -976,27 +1094,30 @@ def record_schedule_completion(
     performed = as_date(performed_date, "performed_date") or day
     if performed > day:
         raise BiomedicalError(
-            f"performed_date {performed.isoformat()} is in the future "
-            f"(today is {day.isoformat()})", code="future_date")
+            f"performed_date {performed.isoformat()} is in the future (today is {day.isoformat()})",
+            code="future_date",
+        )
     result = _one_of(result, SCHEDULE_RESULTS, "result", "pass")
 
     with db_session() as db:
         if schedule_id is not None:
-            row = db.execute("SELECT * FROM biomedical_schedules WHERE id = ?",
-                             (int(schedule_id),)).fetchone()
+            row = db.execute(
+                "SELECT * FROM biomedical_schedules WHERE id = ?", (int(schedule_id),)
+            ).fetchone()
         else:
             aid = _resolve_asset_id(db, asset_id=asset_id, asset_tag=asset_tag)
             stype = _one_of(schedule_type, SCHEDULE_TYPES, "schedule_type")
             row = db.execute(
                 "SELECT * FROM biomedical_schedules WHERE asset_id = ? AND schedule_type = ?",
-                (aid, stype)).fetchone()
+                (aid, stype),
+            ).fetchone()
         if row is None:
             raise BiomedicalError("no such schedule", code="not_found")
 
         sched = _row(row)
         previous_due = as_date(sched.get("next_due_date"), "next_due_date")
         grace = int(sched.get("grace_days") or 0)
-        was_late = bool(previous_due) and is_overdue(previous_due, performed, grace)
+        was_late = previous_due is not None and is_overdue(previous_due, performed, grace)
         late_by = days_overdue(previous_due, performed, grace) if previous_due else 0
 
         if result == "fail":
@@ -1007,14 +1128,18 @@ def record_schedule_completion(
             new_due = compute_next_due(performed, int(sched["interval_days"]))
             last_done_for_schedule = performed.isoformat()
             certificate_for_schedule = _clean(
-                certificate_reference, field_name="certificate_reference")
+                certificate_reference, field_name="certificate_reference"
+            )
 
         db.execute(
             "UPDATE biomedical_schedules SET last_done_date = ?, next_due_date = ?, "
             "last_certificate_reference = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (last_done_for_schedule,
-             new_due.isoformat() if new_due else sched.get("next_due_date"),
-             certificate_for_schedule, sched["id"]),
+            (
+                last_done_for_schedule,
+                new_due.isoformat() if new_due else sched.get("next_due_date"),
+                certificate_for_schedule,
+                sched["id"],
+            ),
         )
         db.execute(
             """INSERT INTO biomedical_schedule_events (
@@ -1023,23 +1148,41 @@ def record_schedule_completion(
                    result, certificate_reference, performed_by, vendor_id,
                    cost_paise, notes, recorded_by)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (sched["id"], sched["asset_id"], sched["schedule_type"],
-             performed.isoformat(),
-             previous_due.isoformat() if previous_due else None,
-             (new_due or previous_due).isoformat() if (new_due or previous_due) else None,
-             1 if was_late else 0, late_by, result,
-             _clean(certificate_reference, field_name="certificate_reference"),
-             _clean(performed_by, field_name="performed_by"),
-             int(vendor_id) if vendor_id is not None else None,
-             _optional_paise(cost_paise, "cost_paise")[0],
-             _clean(notes, field_name="notes"), actor),
+            (
+                sched["id"],
+                sched["asset_id"],
+                sched["schedule_type"],
+                performed.isoformat(),
+                previous_due.isoformat() if previous_due else None,
+                effective_due.isoformat()
+                if (effective_due := new_due or previous_due) is not None
+                else None,
+                1 if was_late else 0,
+                late_by,
+                result,
+                _clean(certificate_reference, field_name="certificate_reference"),
+                _clean(performed_by, field_name="performed_by"),
+                int(vendor_id) if vendor_id is not None else None,
+                _optional_paise(cost_paise, "cost_paise")[0],
+                _clean(notes, field_name="notes"),
+                actor,
+            ),
         )
-        fresh = db.execute("SELECT * FROM biomedical_schedules WHERE id = ?",
-                           (sched["id"],)).fetchone()
-        asset = _row(db.execute("SELECT * FROM biomedical_assets WHERE id = ?",
-                                (sched["asset_id"],)).fetchone())
-    logger.info("biomedical %s recorded for asset %s (result=%s, late=%s)",
-                sched["schedule_type"], sched["asset_id"], result, was_late)
+        fresh = db.execute(
+            "SELECT * FROM biomedical_schedules WHERE id = ?", (sched["id"],)
+        ).fetchone()
+        asset = _row(
+            db.execute(
+                "SELECT * FROM biomedical_assets WHERE id = ?", (sched["asset_id"],)
+            ).fetchone()
+        )
+    logger.info(
+        "biomedical %s recorded for asset %s (result=%s, late=%s)",
+        sched["schedule_type"],
+        sched["asset_id"],
+        result,
+        was_late,
+    )
     view = _schedule_view(_row(fresh), day, asset)
     view["recorded_result"] = result
     view["recorded_was_overdue"] = was_late
@@ -1049,9 +1192,9 @@ def record_schedule_completion(
 
 def due_register(
     *,
-    today: Optional[date] = None,
-    schedule_type: Optional[str] = None,
-    ward: Optional[str] = None,
+    today: date | None = None,
+    schedule_type: str | None = None,
+    ward: str | None = None,
     include_due_soon: bool = True,
     only_overdue: bool = False,
 ) -> dict:
@@ -1069,11 +1212,19 @@ def due_register(
     due_soon = [r for r in rows if r["compliance"] == "due_soon"]
 
     crit_rank = {"life_support": 0, "critical": 1, "routine": 2}
-    overdue.sort(key=lambda r: (-r["days_overdue"],
-                                crit_rank.get(r.get("asset_criticality"), 3),
-                                r.get("asset_asset_tag") or ""))
-    due_soon.sort(key=lambda r: (r["days_until_due"] if r["days_until_due"] is not None else 9999,
-                                 crit_rank.get(r.get("asset_criticality"), 3)))
+    overdue.sort(
+        key=lambda r: (
+            -r["days_overdue"],
+            crit_rank.get((r.get("asset_criticality") or ""), 3),
+            r.get("asset_asset_tag") or "",
+        )
+    )
+    due_soon.sort(
+        key=lambda r: (
+            r["days_until_due"] if r["days_until_due"] is not None else 9999,
+            crit_rank.get((r.get("asset_criticality") or ""), 3),
+        )
+    )
 
     return {
         "as_of": day.isoformat(),
@@ -1082,15 +1233,17 @@ def due_register(
         "due_soon": [] if (only_overdue or not include_due_soon) else due_soon,
         "due_soon_count": len(due_soon),
         "overdue_calibration_count": sum(
-            1 for r in overdue if r.get("schedule_type") == "calibration"),
+            1 for r in overdue if r.get("schedule_type") == "calibration"
+        ),
         "overdue_life_support_count": sum(
-            1 for r in overdue if r.get("asset_criticality") == "life_support"),
+            1 for r in overdue if r.get("asset_criticality") == "life_support"
+        ),
         "never_done_count": sum(1 for r in overdue if r.get("never_done")),
         "measurement_at_risk_count": sum(1 for r in overdue if r.get("measurement_at_risk")),
     }
 
 
-def coverage_gaps(*, today: Optional[date] = None) -> list[dict]:
+def coverage_gaps(*, today: date | None = None) -> list[dict]:
     """Active assets with NO schedule of a given type.
 
     The register's blind spot, made explicit. An overdue view can only ever
@@ -1116,20 +1269,21 @@ def coverage_gaps(*, today: Optional[date] = None) -> list[dict]:
 #  Service calls and downtime
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def open_service_call(
     *,
-    asset_id: Optional[int] = None,
-    asset_tag: Optional[str] = None,
+    asset_id: int | None = None,
+    asset_tag: str | None = None,
     fault_description: str,
     severity: str = "breakdown",
-    reported_at: Optional[datetime | str] = None,
-    reported_by: Optional[str] = None,
-    ward: Optional[str] = None,
+    reported_at: datetime | str | None = None,
+    reported_by: str | None = None,
+    ward: str | None = None,
     took_out_of_service: bool = True,
-    down_from: Optional[datetime | str] = None,
-    call_number: Optional[str] = None,
-    vendor_id: Optional[int] = None,
-    actor: Optional[str] = None,
+    down_from: datetime | str | None = None,
+    call_number: str | None = None,
+    vendor_id: int | None = None,
+    actor: str | None = None,
 ) -> dict:
     """Log a breakdown or service call.
 
@@ -1147,7 +1301,7 @@ def open_service_call(
     """
     severity = _one_of(severity, SERVICE_CALL_SEVERITIES, "severity", "breakdown")
     fault = _clean(fault_description, field_name="fault_description", required=True)
-    reported = _as_dt(reported_at, "reported_at") or datetime.now(timezone.utc)
+    reported = _as_dt(reported_at, "reported_at") or datetime.now(UTC)
     down = _as_dt(down_from, "down_from")
     assumed = down is None
     if took_out_of_service:
@@ -1155,14 +1309,15 @@ def open_service_call(
         if down > reported:
             raise BiomedicalError(
                 "down_from is after reported_at. A machine cannot go out of "
-                "service after the fault was reported", code="bad_date_order")
+                "service after the fault was reported",
+                code="bad_date_order",
+            )
     else:
         down = None
 
     with db_session() as db:
         aid = _resolve_asset_id(db, asset_id=asset_id, asset_tag=asset_tag)
-        asset = _row(db.execute("SELECT * FROM biomedical_assets WHERE id = ?",
-                                (aid,)).fetchone())
+        asset = _row(db.execute("SELECT * FROM biomedical_assets WHERE id = ?", (aid,)).fetchone())
         try:
             cur = db.execute(
                 """INSERT INTO biomedical_service_calls (
@@ -1170,16 +1325,25 @@ def open_service_call(
                        fault_description, severity, took_out_of_service, down_from,
                        status, vendor_id, created_by)
                    VALUES (?,?,?,?,?,?,?,?,?,'open',?,?)""",
-                (_clean(call_number, field_name="call_number"), aid, _dt_str(reported),
-                 _clean(reported_by, field_name="reported_by"),
-                 _clean(ward, field_name="ward") or asset.get("ward"),
-                 fault, severity, 1 if took_out_of_service else 0, _dt_str(down),
-                 int(vendor_id) if vendor_id is not None else None, actor),
+                (
+                    _clean(call_number, field_name="call_number"),
+                    aid,
+                    _dt_str(reported),
+                    _clean(reported_by, field_name="reported_by"),
+                    _clean(ward, field_name="ward") or asset.get("ward"),
+                    fault,
+                    severity,
+                    1 if took_out_of_service else 0,
+                    _dt_str(down),
+                    int(vendor_id) if vendor_id is not None else None,
+                    actor,
+                ),
             )
         except DBIntegrityError as exc:
             raise BiomedicalError(
                 f"a service call numbered {call_number!r} already exists",
-                code="duplicate_call_number") from exc
+                code="duplicate_call_number",
+            ) from exc
         call_id = cur.lastrowid
         # A breakdown that took the machine out of service moves the ASSET to
         # 'down' as well, so the register and the ward view agree without anybody
@@ -1187,20 +1351,27 @@ def open_service_call(
         if took_out_of_service and asset.get("status") != "condemned":
             db.execute(
                 "UPDATE biomedical_assets SET status = 'down', "
-                "updated_at = CURRENT_TIMESTAMP WHERE id = ?", (aid,))
-        row = db.execute("SELECT * FROM biomedical_service_calls WHERE id = ?",
-                         (call_id,)).fetchone()
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (aid,),
+            )
+        row = db.execute(
+            "SELECT * FROM biomedical_service_calls WHERE id = ?", (call_id,)
+        ).fetchone()
     view = _call_view(_row(row))
     view["down_from_assumed"] = assumed and took_out_of_service
-    logger.info("biomedical service call %s opened on asset %s (%s)",
-                call_id, aid, severity)
+    logger.info("biomedical service call %s opened on asset %s (%s)", call_id, aid, severity)
     return view
 
 
 def update_service_call(
-    *, call_id: int, status: Optional[str] = None, resolution: Optional[str] = None,
-    attended_by: Optional[str] = None, vendor_id: Optional[int] = None,
-    contract_id: Optional[int] = None, actor: Optional[str] = None,
+    *,
+    call_id: int,
+    status: str | None = None,
+    resolution: str | None = None,
+    attended_by: str | None = None,
+    vendor_id: int | None = None,
+    contract_id: int | None = None,
+    actor: str | None = None,
 ) -> dict:
     """Progress an open call without closing it (parts ordered, engineer on site).
 
@@ -1215,43 +1386,51 @@ def update_service_call(
             raise BiomedicalError(
                 "close a service call with close_service_call, which records when "
                 "the machine was back in service and computes the downtime",
-                code="use_close")
+                code="use_close",
+            )
     with db_session() as db:
-        row = db.execute("SELECT * FROM biomedical_service_calls WHERE id = ?",
-                         (int(call_id),)).fetchone()
+        row = db.execute(
+            "SELECT * FROM biomedical_service_calls WHERE id = ?", (int(call_id),)
+        ).fetchone()
         if row is None:
             raise BiomedicalError(f"no service call {call_id}", code="not_found")
         current = _row(row)
         if current["status"] in ("closed", "cancelled") and status not in (None, current["status"]):
             raise BiomedicalError(
                 f"service call {call_id} is {current['status']} and cannot be reopened",
-                code="call_closed")
+                code="call_closed",
+            )
         db.execute(
             "UPDATE biomedical_service_calls SET status = COALESCE(?, status), "
             "resolution = COALESCE(?, resolution), attended_by = COALESCE(?, attended_by), "
             "vendor_id = COALESCE(?, vendor_id), contract_id = COALESCE(?, contract_id) "
             "WHERE id = ?",
-            (status, _clean(resolution, field_name="resolution"),
-             _clean(attended_by, field_name="attended_by"),
-             int(vendor_id) if vendor_id is not None else None,
-             int(contract_id) if contract_id is not None else None, int(call_id)),
+            (
+                status,
+                _clean(resolution, field_name="resolution"),
+                _clean(attended_by, field_name="attended_by"),
+                int(vendor_id) if vendor_id is not None else None,
+                int(contract_id) if contract_id is not None else None,
+                int(call_id),
+            ),
         )
-        fresh = db.execute("SELECT * FROM biomedical_service_calls WHERE id = ?",
-                           (int(call_id),)).fetchone()
+        fresh = db.execute(
+            "SELECT * FROM biomedical_service_calls WHERE id = ?", (int(call_id),)
+        ).fetchone()
     return _call_view(_row(fresh))
 
 
 def close_service_call(
     *,
     call_id: int,
-    restored_at: Optional[datetime | str] = None,
-    resolution: Optional[str] = None,
-    attended_by: Optional[str] = None,
-    vendor_id: Optional[int] = None,
-    contract_id: Optional[int] = None,
-    cost_paise: Optional[int] = None,
+    restored_at: datetime | str | None = None,
+    resolution: str | None = None,
+    attended_by: str | None = None,
+    vendor_id: int | None = None,
+    contract_id: int | None = None,
+    cost_paise: int | None = None,
     return_to_service: bool = True,
-    actor: Optional[str] = None,
+    actor: str | None = None,
 ) -> dict:
     """Close a call, stamp the restoration time, and freeze the downtime.
 
@@ -1265,19 +1444,20 @@ def close_service_call(
     `downtime_minutes = 0`, not NULL — zero downtime is a measured fact here,
     unlike a cost nobody typed.
     """
-    restored = _as_dt(restored_at, "restored_at") or datetime.now(timezone.utc)
+    restored = _as_dt(restored_at, "restored_at") or datetime.now(UTC)
     with db_session() as db:
-        row = db.execute("SELECT * FROM biomedical_service_calls WHERE id = ?",
-                         (int(call_id),)).fetchone()
+        row = db.execute(
+            "SELECT * FROM biomedical_service_calls WHERE id = ?", (int(call_id),)
+        ).fetchone()
         if row is None:
             raise BiomedicalError(f"no service call {call_id}", code="not_found")
         call = _row(row)
         if call["status"] == "closed":
-            raise BiomedicalError(f"service call {call_id} is already closed",
-                                  code="already_closed")
+            raise BiomedicalError(
+                f"service call {call_id} is already closed", code="already_closed"
+            )
         if call["status"] == "cancelled":
-            raise BiomedicalError(f"service call {call_id} was cancelled",
-                                  code="call_closed")
+            raise BiomedicalError(f"service call {call_id} was cancelled", code="call_closed")
 
         down = _as_dt(call.get("down_from"), "down_from")
         if down is None:
@@ -1285,8 +1465,8 @@ def close_service_call(
         else:
             if restored < down:
                 raise BiomedicalError(
-                    "restored_at is before the machine went out of service",
-                    code="bad_date_order")
+                    "restored_at is before the machine went out of service", code="bad_date_order"
+                )
             minutes = int((restored - down).total_seconds() // 60)
 
         cost, cost_configured = _optional_paise(cost_paise, "cost_paise")
@@ -1297,11 +1477,19 @@ def close_service_call(
             "contract_id = COALESCE(?, contract_id), cost_paise = COALESCE(?, cost_paise), "
             "cost_is_configured = CASE WHEN ? = 1 THEN 1 ELSE cost_is_configured END, "
             "closed_by = ?, closed_at = ? WHERE id = ?",
-            (_dt_str(restored), minutes, _clean(resolution, field_name="resolution"),
-             _clean(attended_by, field_name="attended_by"),
-             int(vendor_id) if vendor_id is not None else None,
-             int(contract_id) if contract_id is not None else None,
-             cost, cost_configured, actor, _now(), int(call_id)),
+            (
+                _dt_str(restored),
+                minutes,
+                _clean(resolution, field_name="resolution"),
+                _clean(attended_by, field_name="attended_by"),
+                int(vendor_id) if vendor_id is not None else None,
+                int(contract_id) if contract_id is not None else None,
+                cost,
+                cost_configured,
+                actor,
+                _now(),
+                int(call_id),
+            ),
         )
         # Back in service only when the caller says so AND nothing else is still
         # holding the machine down. A second open call on the same asset means it
@@ -1317,14 +1505,16 @@ def close_service_call(
                 db.execute(
                     "UPDATE biomedical_assets SET status = 'in_service', "
                     "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'down'",
-                    (call["asset_id"],))
-        fresh = db.execute("SELECT * FROM biomedical_service_calls WHERE id = ?",
-                           (int(call_id),)).fetchone()
+                    (call["asset_id"],),
+                )
+        fresh = db.execute(
+            "SELECT * FROM biomedical_service_calls WHERE id = ?", (int(call_id),)
+        ).fetchone()
     logger.info("biomedical service call %s closed, downtime %s min", call_id, minutes)
     return _call_view(_row(fresh))
 
 
-def _call_view(row: dict, now: Optional[datetime] = None) -> dict:
+def _call_view(row: dict, now: datetime | None = None) -> dict:
     """One service call, with downtime resolved.
 
     A call that is still OPEN has no stored downtime — it is still accruing — so
@@ -1339,21 +1529,26 @@ def _call_view(row: dict, now: Optional[datetime] = None) -> dict:
     down = _as_dt(row.get("down_from"), "down_from")
     running = row.get("status") in OPEN_CALL_STATUSES and down is not None
     if running:
-        current = now or datetime.now(timezone.utc)
-        out["downtime_minutes_effective"] = max(
-            0, int((current - down).total_seconds() // 60))
+        assert down is not None
+        current = now or datetime.now(UTC)
+        out["downtime_minutes_effective"] = max(0, int((current - down).total_seconds() // 60))
     else:
         out["downtime_minutes_effective"] = int(stored or 0)
     out["downtime_is_running"] = running
     out["is_open"] = row.get("status") in OPEN_CALL_STATUSES
     out["cost_display"] = format_inr_or_unset(
-        row.get("cost_paise") if row.get("cost_is_configured") else None)
+        row.get("cost_paise") if row.get("cost_is_configured") else None
+    )
     return out
 
 
 def asset_downtime_minutes(
-    asset_id: int, *, since: Optional[date] = None, until: Optional[date] = None,
-    include_open: bool = True, now: Optional[datetime] = None,
+    asset_id: int,
+    *,
+    since: date | None = None,
+    until: date | None = None,
+    include_open: bool = True,
+    now: datetime | None = None,
 ) -> int:
     """Total downtime for one asset, ACCUMULATED ACROSS EVERY SERVICE CALL.
 
@@ -1378,8 +1573,10 @@ def asset_downtime_minutes(
     with db_session() as db:
         rows = db.execute(
             f"SELECT status, down_from, downtime_minutes FROM biomedical_service_calls "
-            f"WHERE {' AND '.join(clauses)}", params).fetchall()
-    current = now or datetime.now(timezone.utc)
+            f"WHERE {' AND '.join(clauses)}",
+            params,
+        ).fetchall()
+    current = now or datetime.now(UTC)
     total = 0
     for r in rows:
         row = _row(r)
@@ -1387,6 +1584,7 @@ def asset_downtime_minutes(
             if not include_open:
                 continue
             down = _as_dt(row["down_from"], "down_from")
+            assert down is not None
             total += max(0, int((current - down).total_seconds() // 60))
         elif row["status"] == "cancelled":
             # A cancelled call is one that should never have been raised. It did
@@ -1398,8 +1596,12 @@ def asset_downtime_minutes(
 
 
 def downtime_summary(
-    *, since: Optional[date] = None, until: Optional[date] = None,
-    ward: Optional[str] = None, limit: int = 25, now: Optional[datetime] = None,
+    *,
+    since: date | None = None,
+    until: date | None = None,
+    ward: str | None = None,
+    limit: int = 25,
+    now: datetime | None = None,
 ) -> list[dict]:
     """Per-asset downtime over a window, worst first. The list a biomedical
     engineer takes into a vendor review."""
@@ -1410,35 +1612,46 @@ def downtime_summary(
         params.append(ward.strip())
     with db_session() as db:
         assets = db.execute(
-            f"SELECT * FROM biomedical_assets a WHERE {' AND '.join(clauses)}",
-            params).fetchall()
+            f"SELECT * FROM biomedical_assets a WHERE {' AND '.join(clauses)}", params
+        ).fetchall()
     out = []
     for a in assets:
         row = _row(a)
         minutes = asset_downtime_minutes(row["id"], since=since, until=until, now=now)
         if minutes <= 0:
             continue
-        out.append({
-            "asset_id": row["id"], "asset_tag": row["asset_tag"],
-            "asset_name": row["name"], "ward": row["ward"],
-            "department": row["department"], "criticality": row["criticality"],
-            "status": row["status"], "downtime_minutes": minutes,
-            "downtime_hours": round(minutes / 60, 1),
-        })
+        out.append(
+            {
+                "asset_id": row["id"],
+                "asset_tag": row["asset_tag"],
+                "asset_name": row["name"],
+                "ward": row["ward"],
+                "department": row["department"],
+                "criticality": row["criticality"],
+                "status": row["status"],
+                "downtime_minutes": minutes,
+                "downtime_hours": round(minutes / 60, 1),
+            }
+        )
     out.sort(key=lambda r: -r["downtime_minutes"])
-    return out[:max(1, min(int(limit), 200))]
+    return out[: max(1, min(int(limit), 200))]
 
 
 def get_service_call(call_id: int) -> dict:
     with db_session() as db:
-        row = db.execute("SELECT * FROM biomedical_service_calls WHERE id = ?",
-                         (int(call_id),)).fetchone()
+        row = db.execute(
+            "SELECT * FROM biomedical_service_calls WHERE id = ?", (int(call_id),)
+        ).fetchone()
     return _call_view(_row(row))
 
 
 def list_service_calls(
-    *, asset_id: Optional[int] = None, ward: Optional[str] = None,
-    status: Optional[str] = None, open_only: bool = False, limit: int = 100,
+    *,
+    asset_id: int | None = None,
+    ward: str | None = None,
+    status: str | None = None,
+    open_only: bool = False,
+    limit: int = 100,
 ) -> list[dict]:
     clauses = ["1=1"]
     params: list[Any] = []
@@ -1460,7 +1673,8 @@ def list_service_calls(
             f"FROM biomedical_service_calls c "
             f"JOIN biomedical_assets a ON a.id = c.asset_id "
             f"WHERE {' AND '.join(clauses)} ORDER BY c.reported_at DESC, c.id DESC LIMIT ?",
-            [*params, max(1, min(int(limit), 500))]).fetchall()
+            [*params, max(1, min(int(limit), 500))],
+        ).fetchall()
     return [_call_view(_row(r)) for r in rows]
 
 
@@ -1468,24 +1682,25 @@ def list_service_calls(
 #  AMC / CMC contracts
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def upsert_contract(
     *,
     contract_number: str,
     contract_type: str = "amc",
     start_date: date | str,
     end_date: date | str,
-    vendor_id: Optional[int] = None,
-    vendor_name: Optional[str] = None,
-    value_paise: Optional[int] = None,
+    vendor_id: int | None = None,
+    vendor_name: str | None = None,
+    value_paise: int | None = None,
     notice_days: int = DEFAULT_NOTICE_DAYS,
     covers_calibration: bool = False,
     covers_parts: bool = False,
-    response_hours: Optional[int] = None,
+    response_hours: int | None = None,
     status: str = "active",
-    scope_notes: Optional[str] = None,
-    asset_ids: Optional[list[int]] = None,
-    asset_tags: Optional[list[str]] = None,
-    actor: Optional[str] = None,
+    scope_notes: str | None = None,
+    asset_ids: list[int] | None = None,
+    asset_tags: list[str] | None = None,
+    actor: str | None = None,
 ) -> dict:
     """Create or update an AMC/CMC/warranty contract, keyed on `contract_number`.
 
@@ -1527,51 +1742,74 @@ def upsert_contract(
                    status = excluded.status,
                    scope_notes = excluded.scope_notes,
                    updated_at = CURRENT_TIMESTAMP""",
-            (number, ctype, int(vendor_id) if vendor_id is not None else None,
-             _clean(vendor_name, field_name="vendor_name"),
-             start.isoformat(), end.isoformat(), value, value_configured, notice,
-             1 if covers_calibration else 0, 1 if covers_parts else 0,
-             int(response_hours) if response_hours is not None else None,
-             cstatus, _clean(scope_notes, field_name="scope_notes"), actor),
+            (
+                number,
+                ctype,
+                int(vendor_id) if vendor_id is not None else None,
+                _clean(vendor_name, field_name="vendor_name"),
+                start.isoformat(),
+                end.isoformat(),
+                value,
+                value_configured,
+                notice,
+                1 if covers_calibration else 0,
+                1 if covers_parts else 0,
+                int(response_hours) if response_hours is not None else None,
+                cstatus,
+                _clean(scope_notes, field_name="scope_notes"),
+                actor,
+            ),
         )
-        row = db.execute("SELECT * FROM biomedical_contracts WHERE contract_number = ?",
-                         (number,)).fetchone()
+        row = db.execute(
+            "SELECT * FROM biomedical_contracts WHERE contract_number = ?", (number,)
+        ).fetchone()
         contract_id = int(row["id"])
 
     if asset_ids is not None or asset_tags is not None:
-        link_contract_assets(contract_id=contract_id, asset_ids=asset_ids or [],
-                             asset_tags=asset_tags or [], replace=True)
+        link_contract_assets(
+            contract_id=contract_id,
+            asset_ids=asset_ids or [],
+            asset_tags=asset_tags or [],
+            replace=True,
+        )
     return get_contract(contract_id)
 
 
 def link_contract_assets(
-    *, contract_id: int, asset_ids: Optional[list[int]] = None,
-    asset_tags: Optional[list[str]] = None, replace: bool = False,
+    *,
+    contract_id: int,
+    asset_ids: list[int] | None = None,
+    asset_tags: list[str] | None = None,
+    replace: bool = False,
 ) -> dict:
     """Attach assets to a contract. Every id/tag must resolve — a coverage list
     that silently dropped the one machine somebody mistyped is worse than a
     refusal, because the gap only surfaces when the vendor declines a call."""
     with db_session() as db:
-        exists = db.execute("SELECT id FROM biomedical_contracts WHERE id = ?",
-                            (int(contract_id),)).fetchone()
+        exists = db.execute(
+            "SELECT id FROM biomedical_contracts WHERE id = ?", (int(contract_id),)
+        ).fetchone()
         if exists is None:
             raise BiomedicalError(f"no contract {contract_id}", code="not_found")
         resolved: list[int] = []
-        for aid in (asset_ids or []):
+        for aid in asset_ids or []:
             resolved.append(_resolve_asset_id(db, asset_id=int(aid)))
-        for tag in (asset_tags or []):
+        for tag in asset_tags or []:
             resolved.append(_resolve_asset_id(db, asset_tag=tag))
         if replace:
-            db.execute("DELETE FROM biomedical_contract_assets WHERE contract_id = ?",
-                       (int(contract_id),))
+            db.execute(
+                "DELETE FROM biomedical_contract_assets WHERE contract_id = ?", (int(contract_id),)
+            )
         for aid in dict.fromkeys(resolved):
             db.execute(
                 "INSERT OR IGNORE INTO biomedical_contract_assets (contract_id, asset_id) "
-                "VALUES (?,?)", (int(contract_id), aid))
+                "VALUES (?,?)",
+                (int(contract_id), aid),
+            )
     return get_contract(contract_id)
 
 
-def _contract_view(row: dict, today: Optional[date] = None) -> dict:
+def _contract_view(row: dict, today: date | None = None) -> dict:
     if not row:
         return {}
     day = _today(today)
@@ -1579,11 +1817,12 @@ def _contract_view(row: dict, today: Optional[date] = None) -> dict:
     notice = int(row.get("notice_days") or DEFAULT_NOTICE_DAYS)
     out = dict(row)
     out["value_display"] = format_inr_or_unset(
-        row.get("value_paise") if row.get("value_is_configured") else None)
-    expired = bool(end) and contract_is_expired(end, day)
+        row.get("value_paise") if row.get("value_is_configured") else None
+    )
+    expired = end is not None and contract_is_expired(end, day)
     out["is_expired"] = expired
     out["days_remaining"] = contract_days_remaining(end, day) if end else None
-    out["in_notice_window"] = bool(end) and contract_in_notice_window(end, notice, day)
+    out["in_notice_window"] = end is not None and contract_in_notice_window(end, notice, day)
     # A contract someone TERMINATED is not "expiring soon", whatever its dates
     # say. Status wins over arithmetic here because a human made a decision.
     if row.get("status") in ("terminated", "renewed"):
@@ -1597,25 +1836,29 @@ def _contract_view(row: dict, today: Optional[date] = None) -> dict:
     return out
 
 
-def get_contract(contract_id: int, today: Optional[date] = None) -> dict:
+def get_contract(contract_id: int, today: date | None = None) -> dict:
     with db_session() as db:
-        row = db.execute("SELECT * FROM biomedical_contracts WHERE id = ?",
-                         (int(contract_id),)).fetchone()
+        row = db.execute(
+            "SELECT * FROM biomedical_contracts WHERE id = ?", (int(contract_id),)
+        ).fetchone()
         if row is None:
             return {}
         assets = db.execute(
             "SELECT a.id, a.asset_tag, a.name, a.ward, a.criticality "
             "FROM biomedical_contract_assets ca "
             "JOIN biomedical_assets a ON a.id = ca.asset_id "
-            "WHERE ca.contract_id = ? ORDER BY a.asset_tag", (int(contract_id),)).fetchall()
+            "WHERE ca.contract_id = ? ORDER BY a.asset_tag",
+            (int(contract_id),),
+        ).fetchall()
     view = _contract_view(_row(row), _today(today))
     view["assets"] = [_row(a) for a in assets]
     view["asset_count"] = len(view["assets"])
     return view
 
 
-def list_contracts(*, status: Optional[str] = None, contract_type: Optional[str] = None,
-                   today: Optional[date] = None) -> list[dict]:
+def list_contracts(
+    *, status: str | None = None, contract_type: str | None = None, today: date | None = None
+) -> list[dict]:
     clauses = ["1=1"]
     params: list[Any] = []
     if status:
@@ -1629,13 +1872,14 @@ def list_contracts(*, status: Optional[str] = None, contract_type: Optional[str]
             f"SELECT c.*, (SELECT COUNT(*) FROM biomedical_contract_assets ca "
             f"              WHERE ca.contract_id = c.id) AS asset_count "
             f"FROM biomedical_contracts c WHERE {' AND '.join(clauses)} "
-            f"ORDER BY c.end_date", params).fetchall()
+            f"ORDER BY c.end_date",
+            params,
+        ).fetchall()
     day = _today(today)
     return [_contract_view(_row(r), day) for r in rows]
 
 
-def expiring_contracts(*, today: Optional[date] = None,
-                       within_days: Optional[int] = None) -> dict:
+def expiring_contracts(*, today: date | None = None, within_days: int | None = None) -> dict:
     """Contracts inside their own notice window, plus the ones already expired.
 
     Each contract carries its OWN `notice_days`, because a 90-day CT scanner AMC
@@ -1650,15 +1894,18 @@ def expiring_contracts(*, today: Optional[date] = None,
         expiring = [r for r in live if r["cover_state"] == "expiring"]
     else:
         horizon = _non_negative_int(within_days, "within_days")
-        expiring = [r for r in live
-                    if not r["is_expired"] and (r["days_remaining"] or 0) <= horizon]
+        expiring = [
+            r for r in live if not r["is_expired"] and (r["days_remaining"] or 0) <= horizon
+        ]
     expired = [r for r in live if r["is_expired"]]
     expiring.sort(key=lambda r: r["days_remaining"] if r["days_remaining"] is not None else 9999)
     expired.sort(key=lambda r: r["days_remaining"] if r["days_remaining"] is not None else 0)
     return {
         "as_of": day.isoformat(),
-        "expiring": expiring, "expiring_count": len(expiring),
-        "expired": expired, "expired_count": len(expired),
+        "expiring": expiring,
+        "expiring_count": len(expiring),
+        "expired": expired,
+        "expired_count": len(expired),
     }
 
 
@@ -1666,7 +1913,8 @@ def expiring_contracts(*, today: Optional[date] = None,
 #  Composite reads
 # ═════════════════════════════════════════════════════════════════════════════
 
-def biomedical_overview(*, today: Optional[date] = None) -> dict:
+
+def biomedical_overview(*, today: date | None = None) -> dict:
     """The department's first screen, ordered by what would hurt.
 
     Overdue calibration first, then equipment that is down, then contracts, then
@@ -1679,13 +1927,16 @@ def biomedical_overview(*, today: Optional[date] = None) -> dict:
     gaps = coverage_gaps(today=day)
     open_calls = list_service_calls(open_only=True, limit=100)
     with db_session() as db:
-        totals = _row(db.execute(
-            "SELECT COUNT(*) AS total, "
-            "SUM(CASE WHEN status = 'down' THEN 1 ELSE 0 END) AS down, "
-            "SUM(CASE WHEN status = 'under_maintenance' THEN 1 ELSE 0 END) AS maintenance, "
-            "SUM(CASE WHEN criticality = 'life_support' THEN 1 ELSE 0 END) AS life_support, "
-            "SUM(CASE WHEN produces_clinical_readings = 1 THEN 1 ELSE 0 END) AS measuring "
-            "FROM biomedical_assets WHERE is_active = 1").fetchone())
+        totals = _row(
+            db.execute(
+                "SELECT COUNT(*) AS total, "
+                "SUM(CASE WHEN status = 'down' THEN 1 ELSE 0 END) AS down, "
+                "SUM(CASE WHEN status = 'under_maintenance' THEN 1 ELSE 0 END) AS maintenance, "
+                "SUM(CASE WHEN criticality = 'life_support' THEN 1 ELSE 0 END) AS life_support, "
+                "SUM(CASE WHEN produces_clinical_readings = 1 THEN 1 ELSE 0 END) AS measuring "
+                "FROM biomedical_assets WHERE is_active = 1"
+            ).fetchone()
+        )
     return {
         "as_of": day.isoformat(),
         "assets_total": int(totals.get("total") or 0),
@@ -1712,7 +1963,7 @@ def biomedical_overview(*, today: Optional[date] = None) -> dict:
     }
 
 
-def ward_attention(ward: str, *, today: Optional[date] = None) -> dict:
+def ward_attention(ward: str, *, today: date | None = None) -> dict:
     """What a WARD needs to know about its own equipment.
 
     Deliberately narrow. A ward does not want the register; it wants three
@@ -1755,7 +2006,8 @@ def _ward_headline(due: dict, unavailable: list[dict]) -> str:
     if due["overdue_calibration_count"]:
         parts.append(
             f"{due['overdue_calibration_count']} device"
-            f"{'s' if due['overdue_calibration_count'] != 1 else ''} overdue for calibration")
+            f"{'s' if due['overdue_calibration_count'] != 1 else ''} overdue for calibration"
+        )
     other_overdue = due["overdue_count"] - due["overdue_calibration_count"]
     if other_overdue > 0:
         parts.append(f"{other_overdue} overdue for maintenance")

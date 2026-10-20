@@ -21,10 +21,11 @@ Priority Levels:
   2 = SCRIBE    — User-initiated document generation (can tolerate ~1s wait)
   3 = BACKGROUND — Vigil CfC scoring, Forecast LSTM (nobody is staring)
 """
-import gc
-import time
+
 import asyncio
+import gc
 import logging
+import time
 from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ logger = logging.getLogger(__name__)
 # ══════════════════════════════════════════════════════════════════════
 # VramGuard — Sync context manager for GPU memory hygiene
 # ══════════════════════════════════════════════════════════════════════
+
 
 @contextmanager
 def vram_guard(label: str = ""):
@@ -60,6 +62,7 @@ def vram_guard(label: str = ""):
         # 2. PyTorch MPS allocator flush
         try:
             import torch
+
             if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
                 torch.mps.empty_cache()
         except (ImportError, RuntimeError):
@@ -68,6 +71,7 @@ def vram_guard(label: str = ""):
         # 3. MLX Metal cache & clean evaluation flush
         try:
             import mlx.core as mx
+
             if hasattr(mx, "metal") and hasattr(mx.metal, "clear_cache"):
                 mx.metal.clear_cache()
             if hasattr(mx, "clean_eval"):
@@ -88,8 +92,8 @@ def vram_guard(label: str = ""):
 # same thing everywhere: services/llm_queue_service.py imports these constants
 # (instead of redefining 1/2/3) so the Ollama queue and the Metal/MLX queue
 # agree on priority ordering. Lower number = higher priority.
-PRIORITY_SAGE = 1        # Real-time voice / interactive — always wins
-PRIORITY_SCRIBE = 2      # User-initiated document gen
+PRIORITY_SAGE = 1  # Real-time voice / interactive — always wins
+PRIORITY_SCRIBE = 2  # User-initiated document gen
 PRIORITY_BACKGROUND = 3  # Vigil CfC, Forecast LSTM (nobody is staring)
 
 # ══════════════════════════════════════════════════════════════════════
@@ -148,6 +152,10 @@ def release_gpu_gate(owner: object) -> None:
         pass
 
 
+class _QueueEvent(asyncio.Event):
+    _is_cancelled: bool = False
+
+
 class MetalQueueCoordinator:
     """Priority-aware serialization lock for Apple Silicon's single GPU.
 
@@ -193,10 +201,10 @@ class MetalQueueCoordinator:
             self._t0: float = 0
             self._acquired = False
             self._gate_held = False
-            self._event = None
+            self._event: _QueueEvent | None = None
 
         async def __aenter__(self):
-            self._event = asyncio.Event()
+            self._event = _QueueEvent()
 
             async with self._coord.guard_lock:
                 self._coord._counter += 1
@@ -206,13 +214,16 @@ class MetalQueueCoordinator:
                 if self._coord._active:
                     logger.info(
                         "[UMSQ] %s (P%s) queued — GPU busy with '%s'",
-                        self._task_name, self._priority, self._coord._active_task,
+                        self._task_name,
+                        self._priority,
+                        self._coord._active_task,
                     )
                 else:
                     self._coord._wake_next()
 
             try:
                 # Wait until we're granted the GPU by our own lane...
+                assert self._event is not None
                 await self._event.wait()
                 self._acquired = True
                 # ...then hold the shared hardware gate so no LLM (Ollama) stream
@@ -222,7 +233,7 @@ class MetalQueueCoordinator:
                 self._gate_held = True
                 self._t0 = time.monotonic()
                 return self
-            except (asyncio.TimeoutError, asyncio.CancelledError):
+            except (TimeoutError, asyncio.CancelledError):
                 # Clean up if timed out or cancelled during event.wait()/gate wait.
                 if self._gate_held:
                     release_gpu_gate(self)

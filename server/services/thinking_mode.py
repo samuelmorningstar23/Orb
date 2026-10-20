@@ -29,6 +29,7 @@ file). Everything above it — `resolve_thinking_flag`, `classify_floor`,
 `decide` — is a pure function of its arguments, so the policy is testable
 without an event loop, a GPU, or a database.
 """
+
 from __future__ import annotations
 
 import logging
@@ -96,14 +97,10 @@ TIER_FAST = "fast"
 
 #: Human-readable name -> one-line reason, shown to the clinician when it fires.
 _FLOOR_RULES: dict[str, str] = {
-    "patient_specific":
-        "this question is about a specific patient",
-    "dosing_or_medication":
-        "this question involves a medication or a dose",
-    "orb_computed_score":
-        "this question is about a score Orb computes itself",
-    "work_request_imperative":
-        "this asks for hospital work to be arranged",
+    "patient_specific": "this question is about a specific patient",
+    "dosing_or_medication": "this question involves a medication or a dose",
+    "orb_computed_score": "this question is about a score Orb computes itself",
+    "work_request_imperative": "this asks for hospital work to be arranged",
 }
 
 
@@ -156,7 +153,6 @@ _DOSE_WORDS = re.compile(
     # costs a few seconds; a false pass costs a dosing error.
     r"how much\b|how many\b|how fast\b|how quickly\b|"
     r"what (?:rate|volume|amount|concentration|strength)\b|"
-
     r"per kg|/kg|"
     r"bd|tds|qds|nocte|prn|"
     r"prescribe|prescribing|prescription|administer|administration|"
@@ -185,47 +181,164 @@ _DOSE_QUANTITY = re.compile(
 # path of every Sage turn and must cost microseconds, not a query.
 _EXTRA_DRUG_TERMS: tuple[str, ...] = (
     # the recorded failures
-    "protamine", "vitamin k", "phytomenadione", "pcc", "prothrombin complex",
-    "octaplex", "beriplex", "idarucizumab", "andexanet", "naloxone", "flumazenil",
+    "protamine",
+    "vitamin k",
+    "phytomenadione",
+    "pcc",
+    "prothrombin complex",
+    "octaplex",
+    "beriplex",
+    "idarucizumab",
+    "andexanet",
+    "naloxone",
+    "flumazenil",
     # resuscitation / critical care
-    "adrenaline", "epinephrine", "noradrenaline", "norepinephrine", "dopamine",
-    "dobutamine", "vasopressin", "metaraminol", "phenylephrine", "atropine",
-    "amiodarone", "adenosine", "digoxin", "magnesium", "calcium gluconate",
-    "sodium bicarbonate", "hartmann", "hartmann's", "ringer", "normal saline",
-    "0.9% saline", "dextrose", "glucose", "colloid", "crystalloid",
+    "adrenaline",
+    "epinephrine",
+    "noradrenaline",
+    "norepinephrine",
+    "dopamine",
+    "dobutamine",
+    "vasopressin",
+    "metaraminol",
+    "phenylephrine",
+    "atropine",
+    "amiodarone",
+    "adenosine",
+    "digoxin",
+    "magnesium",
+    "calcium gluconate",
+    "sodium bicarbonate",
+    "hartmann",
+    "hartmann's",
+    "ringer",
+    "normal saline",
+    "0.9% saline",
+    "dextrose",
+    "glucose",
+    "colloid",
+    "crystalloid",
     # endocrine / common wards
-    "insulin", "actrapid", "novorapid", "lantus", "metformin", "gliclazide",
-    "levothyroxine", "hydrocortisone", "prednisolone", "dexamethasone",
+    "insulin",
+    "actrapid",
+    "novorapid",
+    "lantus",
+    "metformin",
+    "gliclazide",
+    "levothyroxine",
+    "hydrocortisone",
+    "prednisolone",
+    "dexamethasone",
     # cardiac / respiratory
-    "furosemide", "frusemide", "bisoprolol", "metoprolol", "atenolol",
-    "amlodipine", "spironolactone", "salbutamol", "ipratropium", "theophylline",
-    "aminophylline", "gtn", "glyceryl trinitrate", "nitrate", "clopidogrel",
-    "ticagrelor", "alteplase", "tenecteplase",
+    "furosemide",
+    "frusemide",
+    "bisoprolol",
+    "metoprolol",
+    "atenolol",
+    "amlodipine",
+    "spironolactone",
+    "salbutamol",
+    "ipratropium",
+    "theophylline",
+    "aminophylline",
+    "gtn",
+    "glyceryl trinitrate",
+    "nitrate",
+    "clopidogrel",
+    "ticagrelor",
+    "alteplase",
+    "tenecteplase",
     # antimicrobials not in the class table
-    "vancomycin", "teicoplanin", "metronidazole", "ciprofloxacin", "levofloxacin",
-    "linezolid", "daptomycin", "colistin", "fluconazole", "acyclovir",
-    "aciclovir", "oseltamivir", "doxycycline", "clindamycin", "nitrofurantoin",
-    "rifampicin", "isoniazid", "pyrazinamide", "ethambutol",
+    "vancomycin",
+    "teicoplanin",
+    "metronidazole",
+    "ciprofloxacin",
+    "levofloxacin",
+    "linezolid",
+    "daptomycin",
+    "colistin",
+    "fluconazole",
+    "acyclovir",
+    "aciclovir",
+    "oseltamivir",
+    "doxycycline",
+    "clindamycin",
+    "nitrofurantoin",
+    "rifampicin",
+    "isoniazid",
+    "pyrazinamide",
+    "ethambutol",
     # neuro / sedation / analgesia
-    "paracetamol", "acetaminophen", "propofol", "midazolam", "lorazepam",
-    "diazepam", "haloperidol", "olanzapine", "quetiapine", "phenytoin",
-    "levetiracetam", "valproate", "keppra", "ketamine", "dexmedetomidine",
-    "rocuronium", "suxamethonium", "succinylcholine", "neostigmine", "sugammadex",
+    "paracetamol",
+    "acetaminophen",
+    "propofol",
+    "midazolam",
+    "lorazepam",
+    "diazepam",
+    "haloperidol",
+    "olanzapine",
+    "quetiapine",
+    "phenytoin",
+    "levetiracetam",
+    "valproate",
+    "keppra",
+    "ketamine",
+    "dexmedetomidine",
+    "rocuronium",
+    "suxamethonium",
+    "succinylcholine",
+    "neostigmine",
+    "sugammadex",
     # gastro / other
-    "omeprazole", "pantoprazole", "ondansetron", "metoclopramide", "lactulose",
-    "terlipressin", "tranexamic", "protamine sulfate", "allopurinol", "colchicine",
+    "omeprazole",
+    "pantoprazole",
+    "ondansetron",
+    "metoclopramide",
+    "lactulose",
+    "terlipressin",
+    "tranexamic",
+    "protamine sulfate",
+    "allopurinol",
+    "colchicine",
     # DRUG CLASSES BY THEIR SPOKEN NAME. "what is the mechanism of action of beta
     # blockers" names no molecule and carries no dose, and is squarely a
     # medication question — the class a clinician says out loud has to be in the
     # vocabulary or rule 2 has a hole the width of pharmacology teaching.
-    "beta blocker", "beta-blocker", "ace inhibitor", "ace-inhibitor",
-    "calcium channel blocker", "arb", "angiotensin receptor blocker",
-    "statin", "diuretic", "loop diuretic", "thiazide", "ppi",
-    "proton pump inhibitor", "ssri", "snri", "tricyclic", "opioid", "opiate",
-    "benzodiazepine", "steroid", "corticosteroid", "nsaid", "antiemetic",
-    "antihypertensive", "antiplatelet", "anticoagulant", "antipsychotic",
-    "antidepressant", "antiarrhythmic", "antifungal", "antiviral", "laxative",
-    "bronchodilator", "muscle relaxant", "neuromuscular blocker",
+    "beta blocker",
+    "beta-blocker",
+    "ace inhibitor",
+    "ace-inhibitor",
+    "calcium channel blocker",
+    "arb",
+    "angiotensin receptor blocker",
+    "statin",
+    "diuretic",
+    "loop diuretic",
+    "thiazide",
+    "ppi",
+    "proton pump inhibitor",
+    "ssri",
+    "snri",
+    "tricyclic",
+    "opioid",
+    "opiate",
+    "benzodiazepine",
+    "steroid",
+    "corticosteroid",
+    "nsaid",
+    "antiemetic",
+    "antihypertensive",
+    "antiplatelet",
+    "anticoagulant",
+    "antipsychotic",
+    "antidepressant",
+    "antiarrhythmic",
+    "antifungal",
+    "antiviral",
+    "laxative",
+    "bronchodilator",
+    "muscle relaxant",
+    "neuromuscular blocker",
 )
 
 
@@ -240,6 +353,7 @@ def _build_drug_vocabulary() -> frozenset[str]:
     terms: set[str] = {t.lower() for t in _EXTRA_DRUG_TERMS}
     try:
         from services import drug_safety_service as _dss
+
         for table_name in ("_DRUG_CLASS_PATTERNS", "_ALLERGEN_CLASS_TERMS"):
             table = getattr(_dss, table_name, None) or {}
             for values in table.values():
@@ -259,7 +373,9 @@ _DRUG_VOCABULARY = _build_drug_vocabulary()
 # "blockers", and the commonest phrasing of a medication question walks past
 # the floor.
 _DRUG_NAMES = re.compile(
-    r"\b(" + "|".join(re.escape(t) for t in sorted(_DRUG_VOCABULARY, key=len, reverse=True)) + r")s?\b",
+    r"\b("
+    + "|".join(re.escape(t) for t in sorted(_DRUG_VOCABULARY, key=len, reverse=True))
+    + r")s?\b",
     re.IGNORECASE,
 )
 
@@ -467,7 +583,8 @@ def classify_floor(
         if getattr(classification, "contains_phi", False):
             patient_signal = True
         elif str(getattr(classification, "query_class", "")) in (
-            "patient_scoped", "patient_enumeration",
+            "patient_scoped",
+            "patient_enumeration",
         ):
             patient_signal = True
     if not patient_signal and context:
@@ -509,22 +626,29 @@ def safety_setting_warnings() -> list[str]:
         out.append(
             "ORB_FAST_MODE_SAFETY_FLOOR is off: fast mode answers medication, dose "
             "and patient questions on the small model. Read services/thinking_mode.py "
-            "before running a ward like this.")
+            "before running a ward like this."
+        )
     # Lazy: sage_service is heavy, and these readers are its own, so the
     # warning cannot disagree with what the replay actually does.
     from services.sage_service import (
-        SAGE_FAST_MARKER_ACT, _history_mutation_marker, _history_replay_enabled,
+        SAGE_FAST_MARKER_ACT,
+        _history_mutation_marker,
+        _history_replay_enabled,
     )
+
     if _history_mutation_marker() != SAGE_FAST_MARKER_ACT:
         out.append(
-            "ORB_SAGE_HISTORY_MUTATION_MARKER is %r: a replayed chart request no "
+            "ORB_SAGE_HISTORY_MUTATION_MARKER is {!r}: a replayed chart request no "
             "longer carries ACT|, which silenced the model's second opinion on a "
-            "real chart request 10 times in 10 (docs/perf/FAST_LANE_MARKER_2026-09-07.md)."
-            % os.getenv("ORB_SAGE_HISTORY_MUTATION_MARKER", ""))
+            "real chart request 10 times in 10 (docs/perf/FAST_LANE_MARKER_2026-09-07.md).".format(
+                os.getenv("ORB_SAGE_HISTORY_MUTATION_MARKER", "")
+            )
+        )
     if not _history_replay_enabled():
         out.append(
             "ORB_SAGE_HISTORY_MARKER is off: a chart request is replayed as the "
-            "model's own narration instead of the safe message the clinician read.")
+            "model's own narration instead of the safe message the clinician read."
+        )
     return out
 
 
@@ -568,8 +692,11 @@ def decide(
 
     if requested:
         return ThinkingDecision(
-            requested_thinking=True, tier=TIER_CAREFUL, model=LLM_MODEL,
-            floor_fired=False, floor_enabled=FAST_MODE_SAFETY_FLOOR,
+            requested_thinking=True,
+            tier=TIER_CAREFUL,
+            model=LLM_MODEL,
+            floor_fired=False,
+            floor_enabled=FAST_MODE_SAFETY_FLOOR,
             fast_mode_available=available,
             reason="Thinking mode on, answered by the careful model.",
         )
@@ -578,36 +705,49 @@ def decide(
         # The clinician asked for fast and there is nothing faster to give them.
         # Say so rather than pretending the toggle worked.
         return ThinkingDecision(
-            requested_thinking=False, tier=TIER_CAREFUL, model=LLM_MODEL,
-            floor_fired=False, floor_enabled=FAST_MODE_SAFETY_FLOOR,
+            requested_thinking=False,
+            tier=TIER_CAREFUL,
+            model=LLM_MODEL,
+            floor_fired=False,
+            floor_enabled=FAST_MODE_SAFETY_FLOOR,
             fast_mode_available=False,
-            reason="Fast mode is not available on this appliance, answered by "
-                   "the careful model.",
+            reason="Fast mode is not available on this appliance, answered by the careful model.",
         )
 
-    rules = classify_floor(query, patient_id, classification, context) if FAST_MODE_SAFETY_FLOOR else ()
+    rules = (
+        classify_floor(query, patient_id, classification, context) if FAST_MODE_SAFETY_FLOOR else ()
+    )
     if rules:
         return ThinkingDecision(
-            requested_thinking=False, tier=TIER_CAREFUL, model=LLM_MODEL,
-            floor_fired=True, floor_rules=rules, floor_enabled=True,
+            requested_thinking=False,
+            tier=TIER_CAREFUL,
+            model=LLM_MODEL,
+            floor_fired=True,
+            floor_rules=rules,
+            floor_enabled=True,
             fast_mode_available=True,
             reason=f"Fast mode was on, but {_floor_sentence(rules)}, so this one "
-                   f"was answered by the careful model.",
+            f"was answered by the careful model.",
         )
 
     return ThinkingDecision(
-        requested_thinking=False, tier=TIER_FAST, model=THINKING_FAST_MODEL,
-        floor_fired=False, floor_enabled=FAST_MODE_SAFETY_FLOOR,
+        requested_thinking=False,
+        tier=TIER_FAST,
+        model=THINKING_FAST_MODEL,
+        floor_fired=False,
+        floor_enabled=FAST_MODE_SAFETY_FLOOR,
         fast_mode_available=True,
         reason="Fast mode, answered by the small model. Lower accuracy; verify "
-               "anything you would act on.",
+        "anything you would act on.",
     )
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  route_info stamping — how the clinician finds out
 # ═════════════════════════════════════════════════════════════════════════════
-def stamp(route_info: dict | None, decision: ThinkingDecision, served_model: str | None = None) -> dict:
+def stamp(
+    route_info: dict | None, decision: ThinkingDecision, served_model: str | None = None
+) -> dict:
     """Write the decision into the dict the Sage route ships as `metadata.provider`.
 
     `served_model` is the model that will ACTUALLY run the turn, after the
@@ -676,7 +816,9 @@ async def select_provider(
         # Log the RULES, never the query — this line would otherwise carry PHI.
         logger.info(
             "thinking-mode floor fired (%s) — routing to %s instead of %s",
-            ",".join(decision.floor_rules), choice.model, THINKING_FAST_MODEL,
+            ",".join(decision.floor_rules),
+            choice.model,
+            THINKING_FAST_MODEL,
         )
     return choice, provider_for_model(choice.model)
 

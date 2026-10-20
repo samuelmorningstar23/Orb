@@ -11,8 +11,8 @@ Usage:
     python scripts/replay_ingestion.py --url http://host   # custom target
     python scripts/replay_ingestion.py --key MY_API_KEY    # custom API key
 """
+
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -63,7 +63,7 @@ def replay_json(base_url: str, api_key: str):
         print(f"  Duplicates:   {counts.get('duplicates', 0)}")
         if data.get("errors"):
             print(f"  Errors:       {data['errors']}")
-    except Exception as e:
+    except Exception:
         print(f"  Response: {resp.text[:200]}")
     print()
 
@@ -102,7 +102,7 @@ def replay_hl7(base_url: str, api_key: str):
         print(f"  Duplicates:   {counts.get('duplicates', 0)}")
         if data.get("errors"):
             print(f"  Errors:       {data['errors']}")
-    except Exception as e:
+    except Exception:
         print(f"  Response: {resp.text[:200]}")
     print()
 
@@ -139,7 +139,7 @@ def replay_csv(base_url: str, api_key: str):
         print(f"  Duplicates:   {counts.get('duplicates', 0)}")
         if data.get("errors"):
             print(f"  Errors:       {data['errors']}")
-    except Exception as e:
+    except Exception:
         print(f"  Response: {resp.text[:200]}")
     print()
 
@@ -155,9 +155,11 @@ def check_status(base_url: str):
         print(f"  Mode:   {data.get('ingestion_mode')}")
         print(f"  Events: {data.get('count')}")
         for evt in data.get("events", []):
-            print(f"    [{evt['id']}] {evt['source_type']:>10} | {evt['parse_status']:<18} | "
-                  f"vitals={evt.get('vitals_inserted', 0)} obs={evt.get('observations_inserted', 0)} | "
-                  f"{evt.get('received_at', '')}")
+            print(
+                f"    [{evt['id']}] {evt['source_type']:>10} | {evt['parse_status']:<18} | "
+                f"vitals={evt.get('vitals_inserted', 0)} obs={evt.get('observations_inserted', 0)} | "
+                f"{evt.get('received_at', '')}"
+            )
     else:
         print(f"  Error: {resp.status_code} — {resp.text[:200]}")
     print()
@@ -167,11 +169,15 @@ def main():
     parser = argparse.ArgumentParser(description="Orb Ingestion Replay Tool")
     parser.add_argument("--url", default=DEFAULT_URL, help="Target server URL")
     parser.add_argument("--key", default=DEFAULT_KEY, help="Ingestion API key")
-    parser.add_argument("--type", choices=["json", "hl7", "csv", "all"], default="all",
-                        help="Which fixture to replay")
+    parser.add_argument(
+        "--type",
+        choices=["json", "hl7", "csv", "all"],
+        default="all",
+        help="Which fixture to replay",
+    )
     args = parser.parse_args()
 
-    print(f"\n═══ Orb Ingestion Replay ═══")
+    print("\n═══ Orb Ingestion Replay ═══")
     print(f"  Target: {args.url}")
     print()
 

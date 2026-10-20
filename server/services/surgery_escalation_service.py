@@ -1,7 +1,8 @@
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 from database import db_session, run_db
 
 logger = logging.getLogger("orb.surgery_escalation")
@@ -24,6 +25,7 @@ logger = logging.getLogger("orb.surgery_escalation")
 # num_ctx makes Ollama spawn a new runner and reload the tier), and record
 # model_choice.model as provenance rather than a hardcoded name.
 
+
 def create_surgery_prep_request(
     patient_id: str,
     channel_id: str,
@@ -32,7 +34,7 @@ def create_surgery_prep_request(
     procedure_name: str,
     indication: str,
     urgency: str,
-    clinical_context: str
+    clinical_context: str,
 ) -> dict:
     """Creates a drafted prep request (audit trail)."""
     # The key was channel_id + whole-second timestamp, and the column is UNIQUE:
@@ -41,7 +43,7 @@ def create_surgery_prep_request(
     # happens at CONFIRM time (on this key), so making creation collision-free
     # costs nothing.
     idempotency_key = (
-        f"prep_{channel_id}_{int(datetime.now(timezone.utc).timestamp())}_{uuid.uuid4().hex[:8]}"
+        f"prep_{channel_id}_{int(datetime.now(UTC).timestamp())}_{uuid.uuid4().hex[:8]}"
     )
 
     with db_session() as db:
@@ -49,14 +51,22 @@ def create_surgery_prep_request(
             """INSERT INTO surgery_prep_requests 
                (patient_id, channel_id, requested_by, requested_by_name, procedure_name, indication, urgency, clinical_context, state, idempotency_key)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'drafted', ?)""",
-            (patient_id, channel_id, requested_by, requested_by_name, procedure_name, indication, urgency, clinical_context, idempotency_key)
+            (
+                patient_id,
+                channel_id,
+                requested_by,
+                requested_by_name,
+                procedure_name,
+                indication,
+                urgency,
+                clinical_context,
+                idempotency_key,
+            ),
         )
         req_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
-    
-    return {
-        "id": req_id,
-        "idempotency_key": idempotency_key
-    }
+
+    return {"id": req_id, "idempotency_key": idempotency_key}
+
 
 _DOCTOR_ROLES = ("doctor", "clinician")
 
@@ -93,7 +103,8 @@ def _resolve_emergency_surgeon(db, patient_id: str, confirmed_by: str) -> str:
         logger.warning(
             "[SurgeryEscalation] No attending or confirming doctor for patient %s — "
             "assigning %s; reassign the case in the Surgical Suite.",
-            patient_id, any_doctor["id"],
+            patient_id,
+            any_doctor["id"],
         )
         return any_doctor["id"]
 
@@ -104,23 +115,20 @@ def _resolve_emergency_surgeon(db, patient_id: str, confirmed_by: str) -> str:
 
 
 def confirm_surgery_prep(
-    prep_id: int,
-    confirmed_by: str,
-    confirmed_by_name: str,
-    idempotency_key: str
+    prep_id: int, confirmed_by: str, confirmed_by_name: str, idempotency_key: str
 ) -> dict:
     """
-    Idempotent confirmation. 
+    Idempotent confirmation.
     If already resolved for this key, returns existing surgery_id.
     Otherwise creates an emergency surgery row and marks request resolved.
     """
     with db_session() as db:
         # 1. Check idempotency
         existing = db.execute(
-            "SELECT surgery_id, state FROM surgery_prep_requests WHERE idempotency_key = ?", 
-            (idempotency_key,)
+            "SELECT surgery_id, state FROM surgery_prep_requests WHERE idempotency_key = ?",
+            (idempotency_key,),
         ).fetchone()
-        
+
         if existing and existing["state"] == "resolved" and existing["surgery_id"]:
             return {"surgery_id": existing["surgery_id"], "status": "already_created"}
 
@@ -129,7 +137,9 @@ def confirm_surgery_prep(
         if not prep:
             raise ValueError("Prep request not found")
 
-        patient = db.execute("SELECT name, diagnosis FROM patients WHERE id = ?", (prep["patient_id"],)).fetchone()
+        patient = db.execute(
+            "SELECT name, diagnosis FROM patients WHERE id = ?", (prep["patient_id"],)
+        ).fetchone()
         if not patient:
             raise ValueError("Patient not found")
 
@@ -138,6 +148,7 @@ def confirm_surgery_prep(
         #    hospital that happened to mint the patient id PAT007 would have its
         #    emergency case silently attached to a pre-seeded demo surgery row.
         from config import DEMO_MODE
+
         surgery_id = f"surg_{uuid.uuid4().hex[:8]}"
         if DEMO_MODE and prep["patient_id"] == "PAT007":
             seeded = db.execute("SELECT id FROM surgeries WHERE id = 'SURG-ALEX-EM'").fetchone()
@@ -149,6 +160,7 @@ def confirm_surgery_prep(
         # hospital_today). Stamped in UTC, a case raised 00:00-05:30 IST was
         # filed under yesterday and missing from today's list.
         from services.hospital_time import hospital_now
+
         now = hospital_now()
         date_str = now.strftime("%Y-%m-%d")
         time_str = now.strftime("%H:%M")
@@ -165,7 +177,17 @@ def confirm_surgery_prep(
                 """INSERT INTO surgeries 
                    (id, patient_id, surgeon_id, procedure_name, diagnosis, scheduled_date, scheduled_time, estimated_duration_min, operating_room, status)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'emergency_pending')""",
-                (surgery_id, prep["patient_id"], surgeon_id, prep["procedure_name"], patient["diagnosis"], date_str, time_str, 120, "OR-E (Emergency)",)
+                (
+                    surgery_id,
+                    prep["patient_id"],
+                    surgeon_id,
+                    prep["procedure_name"],
+                    patient["diagnosis"],
+                    date_str,
+                    time_str,
+                    120,
+                    "OR-E (Emergency)",
+                ),
             )
 
         # 4. Mark prep request as resolved
@@ -173,10 +195,11 @@ def confirm_surgery_prep(
             """UPDATE surgery_prep_requests 
                SET state = 'resolved', surgery_id = ?, resolved_by = ?, resolved_at = CURRENT_TIMESTAMP
                WHERE id = ?""",
-            (surgery_id, confirmed_by, prep_id)
+            (surgery_id, confirmed_by, prep_id),
         )
 
     return {"surgery_id": surgery_id, "status": "created"}
+
 
 # The prep package written when an emergency case is opened. No model reads the
 # patient on this path, so nothing in it may read as an assessment of THIS
@@ -186,7 +209,11 @@ def confirm_surgery_prep(
 # every real case. Generic prep steps are fine; patient claims are not.
 PREP_PACKAGE = {
     "risk_assessment": "Pre-operative risk assessment pending clinical review.",
-    "possible_complications": ["Standard surgical complications", "Anaesthesia risks", "Post-operative infection"],
+    "possible_complications": [
+        "Standard surgical complications",
+        "Anaesthesia risks",
+        "Post-operative infection",
+    ],
     "success_probability": None,
     "surgical_checklist": [
         "Verify patient identity and consent",
@@ -225,7 +252,7 @@ def _finalize_surgery(surgery_id: str, data: dict, ai_status: str, reason: str =
     notes_payload = {"ai_package_status": ai_status}
     if reason:
         notes_payload["reason"] = reason
-    notes_payload["finalized_at"] = datetime.now(timezone.utc).isoformat()
+    notes_payload["finalized_at"] = datetime.now(UTC).isoformat()
 
     with db_session() as db:
         db.execute(
@@ -241,7 +268,9 @@ def _finalize_surgery(surgery_id: str, data: dict, ai_status: str, reason: str =
                WHERE id = ?""",
             (
                 data.get("risk_assessment", FALLBACK_DATA["risk_assessment"]),
-                json.dumps(data.get("possible_complications", FALLBACK_DATA["possible_complications"])),
+                json.dumps(
+                    data.get("possible_complications", FALLBACK_DATA["possible_complications"])
+                ),
                 # No default: an absent estimate stays NULL. A made-up 80 here
                 # rendered as "80% success" on cases nobody had assessed.
                 data.get("success_probability"),
@@ -250,7 +279,7 @@ def _finalize_surgery(surgery_id: str, data: dict, ai_status: str, reason: str =
                 json.dumps(data.get("staff_required", FALLBACK_DATA["staff_required"])),
                 json.dumps(notes_payload),
                 surgery_id,
-            )
+            ),
         )
 
 
@@ -263,7 +292,10 @@ def _mark_generating(surgery_id: str, prep_id: int):
     a prep row that no longer matches the status it just wrote.
     """
     with db_session() as db:
-        db.execute("UPDATE surgeries SET status = 'emergency_context_generating' WHERE id = ?", (surgery_id,))
+        db.execute(
+            "UPDATE surgeries SET status = 'emergency_context_generating' WHERE id = ?",
+            (surgery_id,),
+        )
         prep = db.execute(
             "SELECT clinical_context, procedure_name, indication FROM surgery_prep_requests WHERE id = ?",
             (prep_id,),
@@ -309,12 +341,18 @@ def get_emergency_queue() -> list:
                WHERE s.status LIKE 'emergency_%'
                ORDER BY s.created_at DESC"""
         ).fetchall()
-    
+
     results = []
     for r in rows:
         d = dict(r)
         # Parse JSON fields
-        for f in ['co_morbidities', 'surgical_checklist', 'instruments_required', 'staff_required', 'possible_complications']:
+        for f in [
+            "co_morbidities",
+            "surgical_checklist",
+            "instruments_required",
+            "staff_required",
+            "possible_complications",
+        ]:
             if d.get(f):
                 try:
                     d[f] = json.loads(d[f])
@@ -326,6 +364,9 @@ def get_emergency_queue() -> list:
         results.append(d)
     return results
 
+
 def acknowledge_emergency(surgery_id: str):
     with db_session() as db:
-        db.execute("UPDATE surgeries SET status = 'emergency_acknowledged' WHERE id = ?", (surgery_id,))
+        db.execute(
+            "UPDATE surgeries SET status = 'emergency_acknowledged' WHERE id = ?", (surgery_id,)
+        )

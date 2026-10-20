@@ -1,19 +1,34 @@
 """Orb Relay — Messaging Routes"""
+
 import asyncio
 import json
 import uuid
 from contextlib import asynccontextmanager
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Header, Query
-from auth import get_current_user, require_role
-from permissions import require_permission
+
+from database import db_session, run_db
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query
 from models.message import MessageCreate
+from permissions import require_permission
 from pydantic import BaseModel
-from typing import Optional
+from services.relay_service import (
+    ChannelAccessError,
+    add_channel_member,
+    can_access_channel,
+    create_direct_channel,
+    get_channel_messages,
+    get_channels_for_user,
+    get_user_alerts,
+    list_channel_members,
+    mark_channel_read,
+    send_message,
+)
+from ws.realtime import sio
+
 
 class ActionTransitionRequest(BaseModel):
     state: str
     version: int
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 class AssessmentTransitionRequest(BaseModel):
@@ -30,9 +45,10 @@ class AssessmentTransitionRequest(BaseModel):
     `reason` matters most on a decline: everything else in Orb records what a
     clinician accepted, and the disagreements are the informative rows.
     """
+
     state: str
     version: int
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 class RoomFitResolveRequest(BaseModel):
@@ -47,27 +63,24 @@ class RoomFitResolveRequest(BaseModel):
     `target_channel_id` is only honoured for `redirected`, and only when the
     sender may post there.
     """
+
     decision: str
-    reason: Optional[str] = None
-    target_channel_id: Optional[str] = None
+    reason: str | None = None
+    target_channel_id: str | None = None
 
 
 class ChannelMemberRequest(BaseModel):
     """Add someone to a direct conversation. Only a current member may do this."""
+
     user_id: str
 
 
 class DirectChannelRequest(BaseModel):
     """Open a direct conversation. The caller is always its first member."""
+
     user_ids: list[str]
-    name: Optional[str] = None
-from services.relay_service import (
-    get_channels_for_user, get_channel_messages, send_message, get_user_alerts,
-    mark_channel_read, can_access_channel, add_channel_member,
-    create_direct_channel, list_channel_members, ChannelAccessError,
-)
-from database import db_session, run_db
-from ws.realtime import sio
+    name: str | None = None
+
 
 router = APIRouter(prefix="/api/relay", tags=["relay"])
 
@@ -88,14 +101,20 @@ router = APIRouter(prefix="/api/relay", tags=["relay"])
 # the exact row content that was read), never by trusting the earlier SELECT.
 
 
+_LIST_CHANNELS_USER_DEFAULT = Depends(require_permission("relay.read"))
+
+
 @router.get("/channels")
-def list_channels(user: dict = Depends(require_permission("relay.read"))):
+def list_channels(user: dict = _LIST_CHANNELS_USER_DEFAULT):
     """Get all channels accessible to this user."""
     return get_channels_for_user(user["id"], user["role"])
 
 
+_LIST_ALERTS_USER_DEFAULT = Depends(require_permission("relay.read"))
+
+
 @router.get("/alerts")
-def list_alerts(user: dict = Depends(require_permission("relay.read"))):
+def list_alerts(user: dict = _LIST_ALERTS_USER_DEFAULT):
     """Get targeted active alerts for this user."""
     return get_user_alerts(user["id"], user["role"])
 
@@ -109,6 +128,7 @@ def _messages_before(channel_id: str, before_id: int, limit: int) -> list:
     by one with every arrival, repeating or skipping a message at the page
     edge. An anchor from another channel matches nothing."""
     from services.relay_service import _message_row_to_dict
+
     with db_session() as db:
         anchor = db.execute(
             "SELECT timestamp, id FROM messages WHERE id = ? AND channel_id = ?",
@@ -127,11 +147,19 @@ def _messages_before(channel_id: str, before_id: int, limit: int) -> list:
     return [_message_row_to_dict(r) for r in reversed(rows)]
 
 
+_GET_MESSAGES_LIMIT_DEFAULT = Query(50, ge=1, le=200)
+_GET_MESSAGES_OFFSET_DEFAULT = Query(0, ge=0)
+_GET_MESSAGES_BEFORE_ID_DEFAULT = Query(None, ge=1)
+_GET_MESSAGES_USER_DEFAULT = Depends(require_permission("relay.read"))
+
+
 @router.get("/channels/{channel_id}/messages")
 def get_messages(
-    channel_id: str, limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0),
-    before_id: Optional[int] = Query(None, ge=1),
-    user: dict = Depends(require_permission("relay.read")),
+    channel_id: str,
+    limit: int = _GET_MESSAGES_LIMIT_DEFAULT,
+    offset: int = _GET_MESSAGES_OFFSET_DEFAULT,
+    before_id: int | None = _GET_MESSAGES_BEFORE_ID_DEFAULT,
+    user: dict = _GET_MESSAGES_USER_DEFAULT,
 ):
     """Get messages for a channel: the newest `limit`, oldest first, or with
     `before_id` the page of older messages just before that one ("Show earlier
@@ -143,10 +171,13 @@ def get_messages(
     return get_channel_messages(channel_id, limit, offset)
 
 
+_MARK_READ_USER_DEFAULT = Depends(require_permission("relay.read"))
+
+
 @router.post("/channels/{channel_id}/read")
 def mark_read(
     channel_id: str,
-    user: dict = Depends(require_permission("relay.read")),
+    user: dict = _MARK_READ_USER_DEFAULT,
 ):
     """Mark every message in a channel as read by the caller (clears the unread badge)."""
     if not can_access_channel(user["id"], user["role"], channel_id):
@@ -171,10 +202,13 @@ def _membership_error(exc: ChannelAccessError) -> HTTPException:
     return HTTPException(status_code=exc.status, detail=exc.detail)
 
 
+_OPEN_DIRECT_CHANNEL_USER_DEFAULT = Depends(require_permission("relay.send"))
+
+
 @router.post("/channels/direct")
 def open_direct_channel(
     req: DirectChannelRequest,
-    user: dict = Depends(require_permission("relay.send")),
+    user: dict = _OPEN_DIRECT_CHANNEL_USER_DEFAULT,
 ):
     """Open (or re-open) a direct conversation. The caller is its first member.
 
@@ -185,13 +219,16 @@ def open_direct_channel(
     try:
         return create_direct_channel(user, req.user_ids, req.name)
     except ChannelAccessError as exc:
-        raise _membership_error(exc)
+        raise _membership_error(exc) from exc
+
+
+_GET_CHANNEL_MEMBERS_USER_DEFAULT = Depends(require_permission("relay.read"))
 
 
 @router.get("/channels/{channel_id}/members")
 def get_channel_members(
     channel_id: str,
-    user: dict = Depends(require_permission("relay.read")),
+    user: dict = _GET_CHANNEL_MEMBERS_USER_DEFAULT,
 ):
     """Who is in this channel. Gated on the SAME boundary as its messages."""
     if not can_access_channel(user["id"], user["role"], channel_id):
@@ -199,11 +236,14 @@ def get_channel_members(
     return list_channel_members(channel_id)
 
 
+_ADD_MEMBER_USER_DEFAULT = Depends(require_permission("relay.send"))
+
+
 @router.post("/channels/{channel_id}/members")
 def add_member(
     channel_id: str,
     req: ChannelMemberRequest,
-    user: dict = Depends(require_permission("relay.send")),
+    user: dict = _ADD_MEMBER_USER_DEFAULT,
 ):
     """Add someone to a direct conversation.
 
@@ -215,7 +255,7 @@ def add_member(
     try:
         return add_channel_member(channel_id, user, req.user_id)
     except ChannelAccessError as exc:
-        raise _membership_error(exc)
+        raise _membership_error(exc) from exc
 
 
 def _ambient_switched_on() -> None:
@@ -223,36 +263,45 @@ def _ambient_switched_on() -> None:
     case room: 404 while the models are switched off (ORB_MODELS_ENABLED, or
     the Orb Ward Record). Declared above the first route that uses it."""
     from services.model_switch import require_models_on
+
     require_models_on()
+
+
+_GET_SAGE_MEMORY_USER_DEFAULT = Depends(require_permission("relay.read"))
 
 
 @router.get("/channels/{channel_id}/sage_memory", dependencies=[Depends(_ambient_switched_on)])
 def get_sage_memory(
     channel_id: str,
-    user: dict = Depends(require_permission("relay.read")),
+    user: dict = _GET_SAGE_MEMORY_USER_DEFAULT,
 ):
     """Get the latest Sage Ambient memory for a patient-linked channel."""
     # Ensure user has access to this channel by checking if they are a member
     if not can_access_channel(user["id"], user["role"], channel_id):
-        raise HTTPException(status_code=403, detail="Not authorized to access this channel's memory")
-        
+        raise HTTPException(
+            status_code=403, detail="Not authorized to access this channel's memory"
+        )
+
     with db_session() as db:
         row = db.execute(
-            "SELECT * FROM sage_room_memory WHERE room_id = ?",
-            (channel_id,)
+            "SELECT * FROM sage_room_memory WHERE room_id = ?", (channel_id,)
         ).fetchone()
-        
+
         if not row:
             return None
-            
+
         return {
             "room_id": row["room_id"],
             "patient_id": row["patient_id"],
             "patient_summary": row["patient_summary"],
             "discussion_summary": row["discussion_summary"],
             "current_concern": row["current_concern"],
-            "likely_next_steps": json.loads(row["likely_next_steps"]) if row["likely_next_steps"] else [],
-            "unresolved_questions": json.loads(row["unresolved_questions"]) if row["unresolved_questions"] else [],
+            "likely_next_steps": json.loads(row["likely_next_steps"])
+            if row["likely_next_steps"]
+            else [],
+            "unresolved_questions": json.loads(row["unresolved_questions"])
+            if row["unresolved_questions"]
+            else [],
             "active_intents": json.loads(row["active_intents"]) if row["active_intents"] else [],
             "risk_flags": json.loads(row["risk_flags"]) if row["risk_flags"] else [],
             "last_processed_at": row["last_processed_at"],
@@ -260,10 +309,13 @@ def get_sage_memory(
         }
 
 
+_GET_SAGE_ACTIONS_USER_DEFAULT = Depends(require_permission("relay.read"))
+
+
 @router.get("/channels/{channel_id}/sage_actions", dependencies=[Depends(_ambient_switched_on)])
 def get_sage_actions(
     channel_id: str,
-    user: dict = Depends(require_permission("relay.read")),
+    user: dict = _GET_SAGE_ACTIONS_USER_DEFAULT,
 ):
     """Get Sage actions for a channel."""
     if not can_access_channel(user["id"], user["role"], channel_id):
@@ -282,9 +334,9 @@ def get_sage_actions(
                    SELECT id FROM sage_handoffs h2 WHERE h2.source_action_id = a.id ORDER BY created_at DESC LIMIT 1
                )
                WHERE a.room_id = ? ORDER BY a.created_at DESC""",
-            (channel_id,)
+            (channel_id,),
         ).fetchall()
-        
+
         result = []
         for r in rows:
             d = dict(r)
@@ -305,8 +357,9 @@ def get_sage_actions(
                 d.pop("downstream_ref_id", None)
                 d.pop("handoff_safety_json", None)
             result.append(d)
-        
+
         return result
+
 
 def _transition_action(action_id, channel_id, req, user):
     with db_session() as db:
@@ -320,7 +373,7 @@ def _apply_transition(db, action_id, channel_id, req, user):
     # Check current state and version
     action = db.execute(
         "SELECT state, version FROM sage_actions WHERE id = ? AND room_id = ?",
-        (action_id, channel_id)
+        (action_id, channel_id),
     ).fetchone()
 
     if not action:
@@ -339,18 +392,20 @@ def _apply_transition(db, action_id, channel_id, req, user):
     # is what stops a parallel transition from being overwritten.
     res = db.execute(
         "UPDATE sage_actions SET state = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND version = ?",
-        (req.state, action_id, req.version)
+        (req.state, action_id, req.version),
     )
 
     if res.rowcount == 0:
-        raise HTTPException(status_code=409, detail="Action was modified concurrently. Please refresh.")
+        raise HTTPException(
+            status_code=409, detail="Action was modified concurrently. Please refresh."
+        )
 
     # Log event
     db.execute(
         """INSERT INTO sage_action_events
            (action_id, prior_state, new_state, actor_id, actor_name, actor_role, reason, source)
            VALUES (?, ?, ?, ?, ?, ?, ?, 'ui')""",
-        (action_id, current_state, req.state, user["id"], user["name"], user["role"], req.reason)
+        (action_id, current_state, req.state, user["id"], user["name"], user["role"], req.reason),
     )
 
     updated_action = db.execute("SELECT * FROM sage_actions WHERE id = ?", (action_id,)).fetchone()
@@ -385,6 +440,7 @@ def _emit_action_resolution(db, action_dict: dict, req, user: dict) -> None:
 def _emit_action_outcome(db, kind: str, action_dict: dict, user: dict, decline_reason) -> None:
     try:
         from services import shadow_service
+
         patient_id = action_dict.get("patient_id")
         if not patient_id:
             return
@@ -403,24 +459,34 @@ def _emit_action_outcome(db, kind: str, action_dict: dict, user: dict, decline_r
         episode_id = origin["episode_id"] if origin else None
         if not episode_id:
             episode_id, _ = shadow_service.open_episode(
-                patient_id, lane, trigger="sage_ambient_action", db=db)
+                patient_id, lane, trigger="sage_ambient_action", db=db
+            )
         if not episode_id:
             return
-        shadow_service.emit_many([shadow_service.build(
-            kind, episode_id, lane,
-            patient_id=patient_id,
-            actor_user_id=user.get("id"), actor_role=user.get("role"),
-            subject_type="sage_actions", subject_id=action_dict.get("id"),
-            payload={
-                "action_class": action_dict.get("action_type"),
-                # `order_id` is left None unless a downstream order really
-                # exists; the handoff that creates one runs AFTER this
-                # transaction commits, and a placeholder here would claim a
-                # clinical record that may never be written.
-                "order_id": None,
-                "decline_reason": (str(decline_reason)[:200] if decline_reason else None),
-            },
-        )], db=db)
+        shadow_service.emit_many(
+            [
+                shadow_service.build(
+                    kind,
+                    episode_id,
+                    lane,
+                    patient_id=patient_id,
+                    actor_user_id=user.get("id"),
+                    actor_role=user.get("role"),
+                    subject_type="sage_actions",
+                    subject_id=action_dict.get("id"),
+                    payload={
+                        "action_class": action_dict.get("action_type"),
+                        # `order_id` is left None unless a downstream order really
+                        # exists; the handoff that creates one runs AFTER this
+                        # transaction commits, and a placeholder here would claim a
+                        # clinical record that may never be written.
+                        "order_id": None,
+                        "decline_reason": (str(decline_reason)[:200] if decline_reason else None),
+                    },
+                )
+            ],
+            db=db,
+        )
     except Exception:
         # Rule 1: a clinician's decision must land even if the log cannot.
         pass
@@ -462,17 +528,23 @@ def _confirm_and_hand_off(action_id, channel_id, req, user):
     return action_dict, handoff_dict, package_for
 
 
-@router.post("/channels/{channel_id}/sage_actions/{action_id}/transition", dependencies=[Depends(_ambient_switched_on)])
+_TRANSITION_SAGE_ACTION_USER_DEFAULT = Depends(require_permission("relay.execute_action"))
+
+
+@router.post(
+    "/channels/{channel_id}/sage_actions/{action_id}/transition",
+    dependencies=[Depends(_ambient_switched_on)],
+)
 async def transition_sage_action(
     channel_id: str,
     action_id: str,
     req: ActionTransitionRequest,
-    user: dict = Depends(require_permission("relay.execute_action")),
+    user: dict = _TRANSITION_SAGE_ACTION_USER_DEFAULT,
 ):
     """Transition a Sage action's state."""
     if not can_access_channel(user["id"], user["role"], channel_id):
         raise HTTPException(status_code=403, detail="Not authorized")
-        
+
     valid_states = {"suggested", "acknowledged", "dismissed", "confirmed", "failed"}
     if req.state not in valid_states:
         raise HTTPException(status_code=400, detail="Invalid state")
@@ -480,8 +552,10 @@ async def transition_sage_action(
     handoff_dict = None
     if req.state == "confirmed":
         from services.sage_handoff_service import schedule_prep_package
+
         action_dict, handoff_dict, package_for = await run_db(
-            _confirm_and_hand_off, action_id, channel_id, req, user)
+            _confirm_and_hand_off, action_id, channel_id, req, user
+        )
         # Committed: a newly booked case can have its prep package now, from
         # the loop thread (the only place get_running_loop() works).
         if package_for:
@@ -489,9 +563,16 @@ async def transition_sage_action(
 
         # If this confirmation created/staged a surgery, deliver the targeted
         # team alerts LIVE (the rows were persisted inside the handoff dispatch).
-        if handoff_dict and handoff_dict.get("target_module") == "admissions" and handoff_dict.get("downstream_ref_id"):
+        if (
+            handoff_dict
+            and handoff_dict.get("target_module") == "admissions"
+            and handoff_dict.get("downstream_ref_id")
+        ):
             from services.sage_handoff_service import emit_team_alerts_live
-            await emit_team_alerts_live(handoff_dict["downstream_ref_id"], action_dict["patient_id"])
+
+            await emit_team_alerts_live(
+                handoff_dict["downstream_ref_id"], action_dict["patient_id"]
+            )
     else:
         action_dict = await run_db(_transition_action, action_id, channel_id, req, user)
 
@@ -525,16 +606,21 @@ def _assessment_switched_on() -> None:
     404 here, before any assessment is read or rendered."""
     from services.model_switch import SWITCHED_OFF_DETAIL, models_enabled
     from services.vigil_service import scoring_enabled
+
     if not scoring_enabled() or not models_enabled():
         raise HTTPException(status_code=404, detail=SWITCHED_OFF_DETAIL)
 
 
-@router.get("/channels/{channel_id}/sage_assessments",
-            dependencies=[Depends(_assessment_switched_on)])
+_GET_SAGE_ASSESSMENTS_USER_DEFAULT = Depends(require_permission("relay.read"))
+
+
+@router.get(
+    "/channels/{channel_id}/sage_assessments", dependencies=[Depends(_assessment_switched_on)]
+)
 async def get_sage_assessments(
     channel_id: str,
     message_id: int | None = None,
-    user: dict = Depends(require_permission("relay.read")),
+    user: dict = _GET_SAGE_ASSESSMENTS_USER_DEFAULT,
 ):
     """Drafted assessments for a case room, newest first.
 
@@ -544,14 +630,17 @@ async def get_sage_assessments(
     if not can_access_channel(user["id"], user["role"], channel_id):
         raise HTTPException(status_code=403, detail="Not authorized")
     from services import sage_assessment_service
+
     return await run_db(sage_assessment_service.list_for_channel, channel_id, message_id)
 
 
-@router.get("/sage_assessments/{assessment_id}",
-            dependencies=[Depends(_assessment_switched_on)])
+_GET_SAGE_ASSESSMENT_USER_DEFAULT = Depends(require_permission("relay.read"))
+
+
+@router.get("/sage_assessments/{assessment_id}", dependencies=[Depends(_assessment_switched_on)])
 async def get_sage_assessment(
     assessment_id: str,
-    user: dict = Depends(require_permission("relay.read")),
+    user: dict = _GET_SAGE_ASSESSMENT_USER_DEFAULT,
 ):
     """One drafted assessment.
 
@@ -561,22 +650,29 @@ async def get_sage_assessment(
     there is no membership to check it against.
     """
     from services import sage_assessment_service
+
     row = await run_db(sage_assessment_service.get_assessment, assessment_id)
     if not row:
         raise HTTPException(status_code=404, detail="Assessment not found")
     if not row.get("channel_id") or not can_access_channel(
-            user["id"], user["role"], row["channel_id"]):
+        user["id"], user["role"], row["channel_id"]
+    ):
         raise HTTPException(status_code=403, detail="Not authorized")
     return sage_assessment_service.render(row)
 
 
-@router.post("/channels/{channel_id}/sage_assessments/{assessment_id}/transition",
-             dependencies=[Depends(_assessment_switched_on)])
+_TRANSITION_SAGE_ASSESSMENT_USER_DEFAULT = Depends(require_permission("relay.execute_action"))
+
+
+@router.post(
+    "/channels/{channel_id}/sage_assessments/{assessment_id}/transition",
+    dependencies=[Depends(_assessment_switched_on)],
+)
 async def transition_sage_assessment(
     channel_id: str,
     assessment_id: str,
     req: AssessmentTransitionRequest,
-    user: dict = Depends(require_permission("relay.execute_action")),
+    user: dict = _TRANSITION_SAGE_ASSESSMENT_USER_DEFAULT,
 ):
     """Approve or decline a drafted assessment. EXECUTES NOTHING.
 
@@ -587,22 +683,35 @@ async def transition_sage_assessment(
     if not can_access_channel(user["id"], user["role"], channel_id):
         raise HTTPException(status_code=403, detail="Not authorized")
     from services import sage_assessment_service
+
     assessment = await run_db(
-        sage_assessment_service.transition, assessment_id, channel_id,
-        req.state, req.version, req.reason, user)
-    await sio.emit("sage:assessment_update",
-                   {"channel_id": channel_id, "assessment_id": assessment_id,
-                    "state": assessment["state"]}, room=channel_id)
+        sage_assessment_service.transition,
+        assessment_id,
+        channel_id,
+        req.state,
+        req.version,
+        req.reason,
+        user,
+    )
+    await sio.emit(
+        "sage:assessment_update",
+        {"channel_id": channel_id, "assessment_id": assessment_id, "state": assessment["state"]},
+        room=channel_id,
+    )
     return {"status": "ok", "assessment": assessment}
 
+
+_POST_MESSAGE_USER_DEFAULT = Depends(require_permission("relay.send"))
+_POST_MESSAGE_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempotency-Key")
 
 
 @router.post("/channels/{channel_id}/messages")
 async def post_message(
-    channel_id: str, msg: MessageCreate,
+    channel_id: str,
+    msg: MessageCreate,
     background_tasks: BackgroundTasks,
-    user: dict = Depends(require_permission("relay.send")),
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    user: dict = _POST_MESSAGE_USER_DEFAULT,
+    idempotency_key: str | None = _POST_MESSAGE_IDEMPOTENCY_KEY_DEFAULT,
 ):
     """Send a message to a channel. Broadcasts live + fires ambient AI analysis.
 
@@ -642,7 +751,7 @@ async def post_message(
         # relay_service.send_message. Surfaced as its 409 rather than a 500 so a
         # genuinely confused offline client gets an actionable answer, and a
         # prober gets no message content either way.
-        raise _membership_error(exc)
+        raise _membership_error(exc) from exc
 
     # On an idempotent replay the message already exists (and was already
     # broadcast + observed on the first attempt) — return it without side effects.
@@ -656,8 +765,10 @@ async def post_message(
     # Sage Ambient: passive observation (no UI output, independent pipeline).
     # Not while the models are switched off (ORB_MODELS_ENABLED, Ward Record).
     from services.model_switch import models_enabled
+
     if models_enabled():
         from services.sage_ambient_service import sage_ambient_observe
+
         background_tasks.add_task(sage_ambient_observe, channel_id, result["id"])
 
     room_fit = await _run_room_fit(channel, visible_channels, msg, result, user)
@@ -670,6 +781,7 @@ async def post_message(
 #  WRONG-ROOM DETECTION — wiring
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def _room_fit_prepare():
     """Refresh the identity snapshot if it has aged out. SYNC — via run_db.
 
@@ -677,6 +789,7 @@ def _room_fit_prepare():
     TTL (120 s), so the common send pays a dictionary lookup and nothing else.
     """
     from services import room_fit_service as rf
+
     return rf.refresh_snapshot()
 
 
@@ -705,8 +818,11 @@ async def _run_room_fit(channel: dict, visible_channels: list, msg, result: dict
         else:
             snapshot = rf.peek_snapshot() or await run_db(_room_fit_prepare)
         room = next(
-            (p for p in rf.build_roster([channel], snapshot)
-             if p.patient_id == channel["patient_id"]),
+            (
+                p
+                for p in rf.build_roster([channel], snapshot)
+                if p.patient_id == channel["patient_id"]
+            ),
             None,
         )
         if room is None:
@@ -720,7 +836,9 @@ async def _run_room_fit(channel: dict, visible_channels: list, msg, result: dict
         if verdict.band == "flag":
             # Deterministic evidence is strong enough on its own — warn now, and
             # let the model try to knock it down in the background.
-            payload = await _room_fit_publish(channel, room, verdict, result, user, stage="deterministic")
+            payload = await _room_fit_publish(
+                channel, room, verdict, result, user, stage="deterministic"
+            )
             _spawn_room_fit_adjudication(msg.content, channel, room, verdict, result, user)
             return payload
 
@@ -730,23 +848,37 @@ async def _run_room_fit(channel: dict, visible_channels: list, msg, result: dict
         return None
     except Exception:
         import logging
+
         logging.getLogger("orb.relay").warning(
             "room_fit check failed for message %s, message already delivered",
-            result.get("id"), exc_info=True,
+            result.get("id"),
+            exc_info=True,
         )
         return None
 
 
 async def _room_fit_publish(channel: dict, room, verdict, result: dict, user: dict, stage: str):
     """Persist the flag, audit it, push it to the room, and return the wire shape."""
-    from services import room_fit_service as rf
     from services.audit_service import log_audit_event
+
+    from services import room_fit_service as rf
+
     flag_id = await run_db(
-        rf.persist_flag, result["id"], channel["id"], channel["patient_id"],
-        user["id"], verdict, stage,
+        rf.persist_flag,
+        result["id"],
+        channel["id"],
+        channel["patient_id"],
+        user["id"],
+        verdict,
+        stage,
     )
-    payload = {**verdict.to_public(), "flag_id": flag_id, "message_id": result["id"],
-               "stage": stage, "resolution": "open"}
+    payload = {
+        **verdict.to_public(),
+        "flag_id": flag_id,
+        "message_id": result["id"],
+        "stage": stage,
+        "resolution": "open",
+    }
 
     # AUDIT (constraint 6): a warning SHOWN is a clinical event in its own right.
     # 'clinical_access' is fail-closed — deliberately not used here, because an
@@ -767,12 +899,16 @@ async def _room_fit_publish(channel: dict, room, verdict, result: dict, user: di
             f"Wrong-room warning shown on message {result['id']} in {channel.get('name')}"
         ),
         metadata={
-            "band": verdict.band, "stage": stage, "score": round(verdict.score, 2),
-            "reasons": verdict.reasons, "markers": verdict.markers,
+            "band": verdict.band,
+            "stage": stage,
+            "score": round(verdict.score, 2),
+            "reasons": verdict.reasons,
+            "markers": verdict.markers,
             "suppressors": verdict.suppressors,
             "suspected_patient_id": verdict.suspected_patient_id,
             "suggested_channel_id": verdict.suggested_channel_id,
-            "ambiguous": verdict.ambiguous, "flag_id": flag_id,
+            "ambiguous": verdict.ambiguous,
+            "flag_id": flag_id,
         },
     )
     # Room-scoped broadcast, carrying the suspected patient's NAME to everyone in
@@ -828,7 +964,9 @@ def _spawn_room_fit_adjudication(content, channel, room, verdict, result, user) 
 _ROOM_FIT_TASKS: set = set()
 
 
-async def _room_fit_adjudicate_later(content: str, channel: dict, room, verdict, result: dict, user: dict):
+async def _room_fit_adjudicate_later(
+    content: str, channel: dict, room, verdict, result: dict, user: dict
+):
     """Ambient-tier (4B) adjudication, entirely off the send path.
 
     PROMOTES a silent `review` into a visible flag. It can never invent a
@@ -843,9 +981,11 @@ async def _room_fit_adjudicate_later(content: str, channel: dict, room, verdict,
     durable and room-visible rather than a toast the sender might have missed.
     """
     import logging
+
     log = logging.getLogger("orb.relay")
     try:
         from services import room_fit_service as rf
+
         adjudication = await rf.adjudicate(
             content, room, verdict.suspected_patient_name, verdict.matched_surface
         )
@@ -860,7 +1000,9 @@ async def _room_fit_adjudicate_later(content: str, channel: dict, room, verdict,
             # not deleted — a retracted warning is still evidence about the
             # detector's precision.
             cleared = await run_db(
-                rf.auto_clear_flag, result["id"], final.reasons,
+                rf.auto_clear_flag,
+                result["id"],
+                final.reasons,
             )
             await sio.emit(
                 "relay:room_fit_resolved",
@@ -871,10 +1013,13 @@ async def _room_fit_adjudicate_later(content: str, channel: dict, room, verdict,
         log.debug("room_fit adjudication failed for message %s", result.get("id"), exc_info=True)
 
 
+_LIST_ROOM_FIT_FLAGS_USER_DEFAULT = Depends(require_permission("relay.read"))
+
+
 @router.get("/channels/{channel_id}/room_fit")
 async def list_room_fit_flags(
     channel_id: str,
-    user: dict = Depends(require_permission("relay.read")),
+    user: dict = _LIST_ROOM_FIT_FLAGS_USER_DEFAULT,
 ):
     """Wrong-room flags on this channel's messages.
 
@@ -889,6 +1034,7 @@ async def list_room_fit_flags(
     if not any(c["id"] == channel_id for c in channels):
         raise HTTPException(status_code=403, detail="Not authorized to access this channel")
     from services import room_fit_service as rf
+
     flags = await run_db(rf.get_flags_for_channel, channel_id)
 
     # PER-READER REDACTION. The flag was computed against the SENDER's PHI
@@ -919,6 +1065,7 @@ def _room_fit_redirect_txn(flag: dict, target_channel_id: str, user: dict):
     """
     from database import db_session
     from services.relay_service import send_message as _send
+
     with db_session() as db:
         row = db.execute(
             "SELECT content FROM messages WHERE id = ?", (flag["message_id"],)
@@ -937,11 +1084,14 @@ def _room_fit_redirect_txn(flag: dict, target_channel_id: str, user: dict):
     return posted
 
 
+_RESOLVE_ROOM_FIT_FLAG_USER_DEFAULT = Depends(require_permission("relay.send"))
+
+
 @router.post("/room_fit/{flag_id}/resolve")
 async def resolve_room_fit_flag(
     flag_id: int,
     req: RoomFitResolveRequest,
-    user: dict = Depends(require_permission("relay.send")),
+    user: dict = _RESOLVE_ROOM_FIT_FLAG_USER_DEFAULT,
 ):
     """Close a wrong-room warning — override it, or act on it.
 
@@ -950,10 +1100,14 @@ async def resolve_room_fit_flag(
     knows which patient the line belongs to.
     """
     if req.decision not in ("confirmed_correct", "redirected"):
-        raise HTTPException(status_code=400, detail="decision must be confirmed_correct or redirected")
+        raise HTTPException(
+            status_code=400, detail="decision must be confirmed_correct or redirected"
+        )
+
+    from services.audit_service import log_audit_event
 
     from services import room_fit_service as rf
-    from services.audit_service import log_audit_event
+
     flag = await run_db(rf.get_flag, flag_id)
     if not flag:
         raise HTTPException(status_code=404, detail="Flag not found")
@@ -986,7 +1140,13 @@ async def resolve_room_fit_flag(
     # outcome than the reverse failure (a flag marked redirected whose copy did
     # not land, which is visible and re-doable).
     resolved = await run_db(
-        rf.resolve_flag, flag_id, req.decision, user["id"], user["name"], req.reason, None,
+        rf.resolve_flag,
+        flag_id,
+        req.decision,
+        user["id"],
+        user["name"],
+        req.reason,
+        None,
     )
     if resolved is None:
         # Lost the compare-and-swap to a concurrent resolver.
@@ -999,7 +1159,9 @@ async def resolve_room_fit_flag(
         if not posted:
             raise HTTPException(status_code=404, detail="Original message no longer exists")
         redirected_message_id = posted["id"]
-        resolved = await run_db(rf.link_redirected_message, flag_id, redirected_message_id) or resolved
+        resolved = (
+            await run_db(rf.link_redirected_message, flag_id, redirected_message_id) or resolved
+        )
         await sio.emit("message:new", posted, room=target)
 
     # AUDIT (constraint 6). An OVERRIDE is the row that matters most: it says a
@@ -1008,23 +1170,26 @@ async def resolve_room_fit_flag(
         log_audit_event,
         correlation_id=str(uuid.uuid4()),
         event_category="clinical_safety",
-        action_type=("room_fit.overridden" if req.decision == "confirmed_correct"
-                     else "room_fit.redirected"),
+        action_type=(
+            "room_fit.overridden" if req.decision == "confirmed_correct" else "room_fit.redirected"
+        ),
         outcome="success",
         actor_user_id=user["id"],
         actor_role=user["role"],
         target_type="messages",
         target_id=str(flag["message_id"]),
         patient_id=flag["room_patient_id"],
-        summary_message=(
-            f"Wrong-room warning {req.decision} on message {flag['message_id']}"
-        ),
+        summary_message=(f"Wrong-room warning {req.decision} on message {flag['message_id']}"),
         metadata={
-            "flag_id": flag_id, "band": flag["band"], "stage": flag["stage"],
-            "decision": req.decision, "reason": req.reason,
+            "flag_id": flag_id,
+            "band": flag["band"],
+            "stage": flag["stage"],
+            "decision": req.decision,
+            "reason": req.reason,
             "suspected_patient_id": flag["suspected_patient_id"],
             "redirected_to_channel_id": (req.target_channel_id or flag["suggested_channel_id"])
-                                        if req.decision == "redirected" else None,
+            if req.decision == "redirected"
+            else None,
             "redirected_message_id": redirected_message_id,
         },
     )
@@ -1041,15 +1206,14 @@ async def resolve_room_fit_flag(
 # the chart. Legacy rows stay in the table and the readers keep skipping them.
 
 
-from pydantic import BaseModel
 class AlertActionPayload(BaseModel):
     action: str
+
 
 def _apply_alert_resolution(message_id, payload, user):
     with db_session() as db:
         row = db.execute(
-            "SELECT * FROM messages WHERE id = ? AND message_type = 'alert'",
-            (message_id,)
+            "SELECT * FROM messages WHERE id = ? AND message_type = 'alert'", (message_id,)
         ).fetchone()
 
         if not row:
@@ -1106,40 +1270,63 @@ def _emit_alert_acknowledged(db, message_id, disposition: str, user: dict) -> No
     ground truth would let Orb supply both halves of its own lead-time metric.
     """
     try:
-        from services import shadow_service
         from services.relay_service import shadow_alert_episodes
+
+        from services import shadow_service
+
         info = shadow_alert_episodes(db, [message_id]).get(int(message_id))
         if not info:
             return
         now = shadow_service.utc_now()
-        events = [shadow_service.build(
-            "alert.acknowledged", info["episode_id"], info["lane"],
-            occurred_at=now, patient_id=info["patient_id"], ward=info["ward"],
-            actor_user_id=user.get("id"), actor_role=user.get("role"),
-            subject_type="messages", subject_id=message_id,
-            payload={"message_id": message_id, "disposition": disposition},
-        )]
+        events = [
+            shadow_service.build(
+                "alert.acknowledged",
+                info["episode_id"],
+                info["lane"],
+                occurred_at=now,
+                patient_id=info["patient_id"],
+                ward=info["ward"],
+                actor_user_id=user.get("id"),
+                actor_role=user.get("role"),
+                subject_type="messages",
+                subject_id=message_id,
+                payload={"message_id": message_id, "disposition": disposition},
+            )
+        ]
         if disposition == "escalated":
-            events.append(shadow_service.build(
-                "outcome.candidate", info["episode_id"], info["lane"],
-                occurred_at=now, patient_id=info["patient_id"], ward=info["ward"],
-                actor_user_id=user.get("id"), actor_role=user.get("role"),
-                subject_type="messages", subject_id=message_id,
-                payload={"event_type": "unplanned_escalation_of_care",
-                         "source": "system",
-                         "detected_by": "relay_alert_escalation"},
-            ))
+            events.append(
+                shadow_service.build(
+                    "outcome.candidate",
+                    info["episode_id"],
+                    info["lane"],
+                    occurred_at=now,
+                    patient_id=info["patient_id"],
+                    ward=info["ward"],
+                    actor_user_id=user.get("id"),
+                    actor_role=user.get("role"),
+                    subject_type="messages",
+                    subject_id=message_id,
+                    payload={
+                        "event_type": "unplanned_escalation_of_care",
+                        "source": "system",
+                        "detected_by": "relay_alert_escalation",
+                    },
+                )
+            )
         shadow_service.emit_many(events, db=db)
     except Exception:
         # Rule 1: acting on an alert must never fail because the log did.
         pass
 
 
+_RESOLVE_ALERT_USER_DEFAULT = Depends(require_permission("relay.send"))
+
+
 @router.post("/alerts/{message_id}/resolve")
 async def resolve_alert(
     message_id: int,
     payload: AlertActionPayload,
-    user: dict = Depends(require_permission("relay.send")),
+    user: dict = _RESOLVE_ALERT_USER_DEFAULT,
 ):
     """Resolve or escalate an alert message."""
     row, content, channel_id = await run_db(_apply_alert_resolution, message_id, payload, user)
@@ -1148,6 +1335,7 @@ async def resolve_alert(
     # with this body, so it must be the whole message as the history serves it:
     # without `is_bot` the alert lost its AUTO chip on resolve (2026-10-03).
     from services.relay_service import _message_row_to_dict
+
     msg_data = {**_message_row_to_dict(row), "content": json.dumps(content)}
     await sio.emit("message:update", msg_data, room=channel_id)
 
@@ -1156,13 +1344,15 @@ async def resolve_alert(
 
 # ── Agentic Order Confirmation & Pre-Flight Endpoints ──
 
+
 class DoseConfirmation(BaseModel):
     """Explicit dose/frequency supplied by the confirming clinician. Agentic
     suggestions carry no machine-resolved dose, so dispatch without this would
     silently write a 'TBD' order to Helix."""
+
     dose: str
     frequency: str
-    route: Optional[str] = None
+    route: str | None = None
 
 
 class ConfirmAgenticRequest(BaseModel):
@@ -1172,19 +1362,26 @@ class ConfirmAgenticRequest(BaseModel):
     # it may be written to the tamper-evident audit chain — an unverified name
     # recorded there would be an unrepudiable attestation the named clinician
     # never made.
-    co_signer_id: Optional[str] = None
-    co_signer_pin: Optional[str] = None
-    override_reason: Optional[str] = None
-    dose_confirmation: Optional[DoseConfirmation] = None
+    co_signer_id: str | None = None
+    co_signer_pin: str | None = None
+    override_reason: str | None = None
+    dose_confirmation: DoseConfirmation | None = None
     # Drug-safety override contract ({"acknowledged": true, "reason": "..."}),
     # required to re-submit after a 428 from the medication safety gate.
-    safety_ack: Optional[dict] = None
+    safety_ack: dict | None = None
 
-@router.get("/channels/{channel_id}/sage_actions/{action_id}/pre_flight", dependencies=[Depends(_ambient_switched_on)])
+
+_PRE_FLIGHT_SAGE_ACTION_USER_DEFAULT = Depends(require_permission("relay.execute_action"))
+
+
+@router.get(
+    "/channels/{channel_id}/sage_actions/{action_id}/pre_flight",
+    dependencies=[Depends(_ambient_switched_on)],
+)
 def pre_flight_sage_action(
     channel_id: str,
     action_id: str,
-    user: dict = Depends(require_permission("relay.execute_action")),
+    user: dict = _PRE_FLIGHT_SAGE_ACTION_USER_DEFAULT,
 ):
     """Run reconciler, check stock levels, identify if high-risk, and fetch alternatives if out-of-stock."""
     if not can_access_channel(user["id"], user["role"], channel_id):
@@ -1192,40 +1389,55 @@ def pre_flight_sage_action(
 
     with db_session() as db:
         action = db.execute(
-            "SELECT * FROM sage_actions WHERE id = ? AND room_id = ?",
-            (action_id, channel_id)
+            "SELECT * FROM sage_actions WHERE id = ? AND room_id = ?", (action_id, channel_id)
         ).fetchone()
-        
+
         if not action:
             raise HTTPException(status_code=404, detail="Action not found")
-            
+
         action_dict = dict(action)
-        
+
     target_med = action_dict["target"]
-    
+
     # 1. Phonetic RxNorm/Catalog Reconciliation
     from services.rxnorm_reconciler import reconcile_medication
+
     matched_med, score = reconcile_medication(target_med)
-    
+
     resolved_medication = None
     stock_status = None
     alternative_suggestion = None
     is_high_risk = False
-    
+
     if matched_med:
         resolved_medication = matched_med
         medication_id = matched_med["id"]
-        
+
         # 2. Inventory check
-        from services.helix_service import pre_flight_inventory_check, pre_flight_alternative_suggestion
+        from services.helix_service import (
+            pre_flight_alternative_suggestion,
+            pre_flight_inventory_check,
+        )
+
         stock_status = pre_flight_inventory_check(medication_id)
-        
+
         # 3. Alternative suggestion if out of stock
         if not stock_status["in_stock"]:
             alternative_suggestion = pre_flight_alternative_suggestion(medication_id)
-            
+
         # 4. High-risk drug detection
-        high_risk_names = {"epinephrine", "heparin", "insulin", "potassium", "tpa", "morphine", "fentanyl", "oxycodone", "hydromorphone", "opioid"}
+        high_risk_names = {
+            "epinephrine",
+            "heparin",
+            "insulin",
+            "potassium",
+            "tpa",
+            "morphine",
+            "fentanyl",
+            "oxycodone",
+            "hydromorphone",
+            "opioid",
+        }
         generic_name = (matched_med.get("generic_name", "") or "").lower()
         name_lower = matched_med["name"].lower()
         is_high_risk = any(hr in name_lower or hr in generic_name for hr in high_risk_names)
@@ -1236,8 +1448,9 @@ def pre_flight_sage_action(
         "reconciliation_score": score,
         "stock_status": stock_status,
         "alternative_suggestion": alternative_suggestion,
-        "is_high_risk": is_high_risk
+        "is_high_risk": is_high_risk,
     }
+
 
 def _load_user_and_action(user, action_id, channel_id):
     with db_session() as db:
@@ -1247,17 +1460,14 @@ def _load_user_and_action(user, action_id, channel_id):
 
         # Fetch action details
         action = db.execute(
-            "SELECT * FROM sage_actions WHERE id = ? AND room_id = ?",
-            (action_id, channel_id)
+            "SELECT * FROM sage_actions WHERE id = ? AND room_id = ?", (action_id, channel_id)
         ).fetchone()
         return user_row, action
 
 
 def _reread_pin_hash(user):
     with db_session() as db:
-        fresh = db.execute(
-            "SELECT pin_hash FROM users WHERE id = ?", (user["id"],)
-        ).fetchone()
+        fresh = db.execute("SELECT pin_hash FROM users WHERE id = ?", (user["id"],)).fetchone()
         return fresh
 
 
@@ -1309,11 +1519,25 @@ async def _confirm_lock(action_id: str):
             _CONFIRM_LOCKS.pop(action_id, None)
 
 
-def _persist_confirmation(action_id, user, delegation_hash, correlation_id,
-                          order_medication_name, action_dict, is_high_risk,
-                          co_signer_id, co_signer_role, req, target_med,
-                          medication_id, dose, frequency, route, safety,
-                          out_of_stock=False):
+def _persist_confirmation(
+    action_id,
+    user,
+    delegation_hash,
+    correlation_id,
+    order_medication_name,
+    action_dict,
+    is_high_risk,
+    co_signer_id,
+    co_signer_role,
+    req,
+    target_med,
+    medication_id,
+    dose,
+    frequency,
+    route,
+    safety,
+    out_of_stock=False,
+):
     """Claim the action, place the Helix order, and record both, in ONE
     transaction. Returns the order id.
 
@@ -1347,7 +1571,7 @@ def _persist_confirmation(action_id, user, delegation_hash, correlation_id,
             "UPDATE sage_actions SET state = 'confirmed', version = version + 1, "
             "updated_at = CURRENT_TIMESTAMP "
             "WHERE id = ? AND state NOT IN ('confirmed', 'dismissed')",
-            (action_id,)
+            (action_id,),
         )
         if res.rowcount == 0:
             # Resolved by someone else between our read and this write. Nothing
@@ -1370,15 +1594,22 @@ def _persist_confirmation(action_id, user, delegation_hash, correlation_id,
                 prescribed_by=user["id"],
             )
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to create order in Helix backend: {e}")
+            raise HTTPException(
+                status_code=500, detail=f"Failed to create order in Helix backend: {e}"
+            ) from e
         order_id = order["id"]
 
         db.execute(
             """INSERT INTO sage_action_events
                (action_id, prior_state, new_state, actor_id, actor_name, actor_role, reason, source)
                VALUES (?, 'suggested', 'confirmed', ?, ?, ?, ?, 'ui')""",
-            (action_id, user["id"], user["name"], user["role"],
-             f"Confirmed agentic order. Helix Order: {order_id}. Hash Chain: {delegation_hash}")
+            (
+                action_id,
+                user["id"],
+                user["name"],
+                user["role"],
+                f"Confirmed agentic order. Helix Order: {order_id}. Hash Chain: {delegation_hash}",
+            ),
         )
 
         # Audit on the tamper-evident hash chain, atomically with the state
@@ -1392,7 +1623,7 @@ def _persist_confirmation(action_id, user, delegation_hash, correlation_id,
             outcome="success",
             db=db,
             summary_message=f"Agentic order confirmed and dispatched for {order_medication_name}. "
-                            f"Delegation hash: {delegation_hash}",
+            f"Delegation hash: {delegation_hash}",
             actor_user_id=user["id"],
             actor_role=user["role"],
             target_type="medication_order",
@@ -1426,12 +1657,18 @@ def _persist_confirmation(action_id, user, delegation_hash, correlation_id,
     return order_id
 
 
-@router.post("/channels/{channel_id}/sage_actions/{action_id}/confirm_agentic", dependencies=[Depends(_ambient_switched_on)])
+_CONFIRM_AGENTIC_ACTION_USER_DEFAULT = Depends(require_permission("relay.execute_action"))
+
+
+@router.post(
+    "/channels/{channel_id}/sage_actions/{action_id}/confirm_agentic",
+    dependencies=[Depends(_ambient_switched_on)],
+)
 async def confirm_agentic_action(
     channel_id: str,
     action_id: str,
     req: ConfirmAgenticRequest,
-    user: dict = Depends(require_permission("relay.execute_action")),
+    user: dict = _CONFIRM_AGENTIC_ACTION_USER_DEFAULT,
 ):
     """Confirm an agentic order. Serialised per action — see _confirm_lock."""
     async with _confirm_lock(action_id):
@@ -1454,8 +1691,9 @@ async def _confirm_agentic_action(
     """
     import hashlib
 
-    from services import pin_security
     from services.audit_service import log_audit_event
+
+    from services import pin_security
 
     if not can_access_channel(user["id"], user["role"], channel_id):
         raise HTTPException(status_code=403, detail="Not authorized")
@@ -1491,13 +1729,13 @@ async def _confirm_agentic_action(
         raise HTTPException(
             status_code=403,
             detail="No signing PIN is provisioned for your account, so agentic confirmation is "
-                   "unavailable. Ask an administrator to provision one (POST /api/admin/users/{user_id}/pin).",
+            "unavailable. Ask an administrator to provision one (POST /api/admin/users/{user_id}/pin).",
         )
     # verify_pin is a bcrypt check that may also rewrite a legacy hash: off
     # the loop like every other blocking step in this handler.
     if not await run_db(pin_security.verify_pin, user_row, req.clinician_pin):
         pin_security.record_pin_failure(user["id"])
-        await run_db(          # fail-closed security audit, off the loop but awaited
+        await run_db(  # fail-closed security audit, off the loop but awaited
             log_audit_event,
             correlation_id=str(uuid.uuid4()),
             event_category="security",
@@ -1543,11 +1781,11 @@ async def _confirm_agentic_action(
             raise HTTPException(
                 status_code=403,
                 detail="No signing PIN is provisioned for the co-signer, so they cannot co-sign. "
-                       "Ask an administrator to provision one (POST /api/admin/users/{user_id}/pin).",
+                "Ask an administrator to provision one (POST /api/admin/users/{user_id}/pin).",
             )
         if not await run_db(pin_security.verify_pin, co_row, req.co_signer_pin or ""):
             pin_security.record_pin_failure(co_signer_id)
-            await run_db(      # fail-closed security audit, off the loop but awaited
+            await run_db(  # fail-closed security audit, off the loop but awaited
                 log_audit_event,
                 correlation_id=str(uuid.uuid4()),
                 event_category="security",
@@ -1575,28 +1813,47 @@ async def _confirm_agentic_action(
         raise HTTPException(status_code=400, detail="Action already resolved")
 
     target_med = action_dict["target"]
-    
+
     # Reconcile target drug to Helix master (catalogue reads: off the loop)
     from services.rxnorm_reconciler import reconcile_medication
+
     matched_med, score = await run_db(reconcile_medication, target_med)
-    
+
     if not matched_med:
-        raise HTTPException(status_code=400, detail=f"Medication '{target_med}' could not be reconciled in Helix Master catalog.")
-        
+        raise HTTPException(
+            status_code=400,
+            detail=f"Medication '{target_med}' could not be reconciled in Helix Master catalog.",
+        )
+
     medication_id = matched_med["id"]
     medication_name = matched_med["name"]
-    
+
     # 2. Check if drug is high-risk (high-alert meds require an explicit
     # safety_ack at step 5, on top of the universal drug-safety screen)
-    high_risk_names = {"epinephrine", "heparin", "insulin", "potassium", "tpa", "morphine", "fentanyl", "oxycodone", "hydromorphone", "opioid"}
+    high_risk_names = {
+        "epinephrine",
+        "heparin",
+        "insulin",
+        "potassium",
+        "tpa",
+        "morphine",
+        "fentanyl",
+        "oxycodone",
+        "hydromorphone",
+        "opioid",
+    }
     generic_name = (matched_med.get("generic_name", "") or "").lower()
     name_lower = matched_med["name"].lower()
     is_high_risk = any(hr in name_lower or hr in generic_name for hr in high_risk_names)
 
     # 3. Check stock level
-    from services.helix_service import pre_flight_inventory_check, pre_flight_alternative_suggestion
+    from services.helix_service import (
+        pre_flight_alternative_suggestion,
+        pre_flight_inventory_check,
+    )
+
     stock = await run_db(pre_flight_inventory_check, medication_id)
-    
+
     # The order is ALWAYS for the drug the clinician confirmed. On a stockout
     # this used to switch the order silently to whatever the alternative lookup
     # returned (heparin to warfarin, potassium to sodium chloride), carry the
@@ -1626,11 +1883,14 @@ async def _confirm_agentic_action(
                 "error": "out_of_stock",
                 "message": (
                     f"{medication_name} has no in-date stock. Nothing was ordered. "
-                    + (f"{suggestion['name']} is the same molecule, strength and form and is in stock; "
-                       "prescribe it as a new order if you want it. "
-                       if suggestion else "")
+                    + (
+                        f"{suggestion['name']} is the same molecule, strength and form and is in stock; "
+                        "prescribe it as a new order if you want it. "
+                        if suggestion
+                        else ""
+                    )
                     + f"To order {medication_name} as written for pharmacy to source, "
-                      "confirm again with an override reason."
+                    "confirm again with an override reason."
                 ),
                 "medication": medication_name,
                 "alternative_suggestion": suggestion,
@@ -1645,10 +1905,14 @@ async def _confirm_agentic_action(
     frequency = "TBD"
 
     import re
-    clean_rat = re.sub(r'[^\w\s]', ' ', action_dict.get("rationale", "").lower())
-    if " iv " in f" {clean_rat} ": route = "IV"
-    elif " im " in f" {clean_rat} ": route = "IM"
-    elif " sc " in f" {clean_rat} ": route = "SC"
+
+    clean_rat = re.sub(r"[^\w\s]", " ", action_dict.get("rationale", "").lower())
+    if " iv " in f" {clean_rat} ":
+        route = "IV"
+    elif " im " in f" {clean_rat} ":
+        route = "IM"
+    elif " sc " in f" {clean_rat} ":
+        route = "SC"
 
     if req.dose_confirmation:
         dose = (req.dose_confirmation.dose or "").strip()
@@ -1662,9 +1926,9 @@ async def _confirm_agentic_action(
             detail={
                 "error": "dose_confirmation_required",
                 "message": f"The agentic suggestion for {order_medication_name} carries no resolved "
-                           "dose/frequency. Supply dose_confirmation "
-                           "({\"dose\": \"...\", \"frequency\": \"...\"}): orders are never "
-                           "dispatched with a TBD dose.",
+                "dose/frequency. Supply dose_confirmation "
+                '({"dose": "...", "frequency": "..."}): orders are never '
+                "dispatched with a TBD dose.",
                 "medication": order_medication_name,
             },
         )
@@ -1676,9 +1940,11 @@ async def _confirm_agentic_action(
     # Off the loop: the screen reads the chart (allergies, active medications),
     # and sync SQLite on the event loop stalls every other request.
     from services.medication_safety_gate import enforce_medication_safety
+
     safety = await run_db(
         enforce_medication_safety,
-        action_dict["patient_id"], order_medication_name,
+        action_dict["patient_id"],
+        order_medication_name,
         actor_id=user["id"],
         entry_point="relay.confirm_agentic",
         safety_ack=req.safety_ack,
@@ -1688,22 +1954,28 @@ async def _confirm_agentic_action(
         route=route,
         actor_role=user.get("role"),
     )
-    ack_ok = bool(req.safety_ack) and bool(req.safety_ack.get("acknowledged")) \
+    ack_ok = (
+        req.safety_ack is not None
+        and bool(req.safety_ack)
+        and bool(req.safety_ack.get("acknowledged"))
         and bool((req.safety_ack.get("reason") or "").strip())
+    )
     if is_high_risk and not ack_ok:
         raise HTTPException(
             status_code=428,
             detail={
                 "error": "drug_safety_acknowledgement_required",
                 "message": f"{order_medication_name} is a high-alert medication, agentic dispatch "
-                           "requires an explicit safety_ack with a reason.",
+                "requires an explicit safety_ack with a reason.",
                 "safety": {**safety, "high_risk": True},
             },
         )
 
     # 6. Create Cryptographic Correlation Hash Chain
     source_msg_id = str(action_dict.get("source_msg_id", "0"))
-    llm_prompt_signature = hashlib.sha256(f"{target_med}:{action_dict.get('rationale','')}".encode()).hexdigest()
+    llm_prompt_signature = hashlib.sha256(
+        f"{target_med}:{action_dict.get('rationale', '')}".encode()
+    ).hexdigest()
     # The verifier component hashes the STORED pin hash, never the raw PIN — a
     # 4-8 digit PIN folded into a persisted hash would be offline-brute-forceable.
     verification_hash = hashlib.sha256(f"{user['id']}:{pin_hash_at_signing}".encode()).hexdigest()
@@ -1716,15 +1988,33 @@ async def _confirm_agentic_action(
     # 7. Claim the action and place the Helix order, in one transaction: a
     # confirm that loses a race to a dismissal or another worker leaves no order.
     order_id = await run_db(
-        _persist_confirmation, action_id, user, delegation_hash, correlation_id,
-        order_medication_name, action_dict, is_high_risk, co_signer_id, co_signer_role,
-        req, target_med, medication_id, dose, frequency, route, safety,
+        _persist_confirmation,
+        action_id,
+        user,
+        delegation_hash,
+        correlation_id,
+        order_medication_name,
+        action_dict,
+        is_high_risk,
+        co_signer_id,
+        co_signer_role,
+        req,
+        target_med,
+        medication_id,
+        dose,
+        frequency,
+        route,
+        safety,
         out_of_stock,
     )
 
     # 8. WebSocket Notifications
     await sio.emit("sage:action_update", {"channel_id": channel_id}, room=channel_id)
-    await sio.emit("patient:timeline_updated", {"patient_id": action_dict["patient_id"], "source": "agentic_confirm"}, room=channel_id)
+    await sio.emit(
+        "patient:timeline_updated",
+        {"patient_id": action_dict["patient_id"], "source": "agentic_confirm"},
+        room=channel_id,
+    )
 
     return {
         "status": "ok",
@@ -1735,4 +2025,3 @@ async def _confirm_agentic_action(
         # Sub-severe alerts + interaction-coverage note, for display.
         "safety": safety,
     }
-

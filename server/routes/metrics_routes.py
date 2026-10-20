@@ -22,8 +22,7 @@ import os
 
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import PlainTextResponse
-
-from services.metrics_service import render_metrics, CONTENT_TYPE
+from services.metrics_service import CONTENT_TYPE, render_metrics
 
 router = APIRouter(tags=["metrics"])
 
@@ -39,12 +38,15 @@ def _authorized(authorization: str | None) -> bool:
         return True
     if not authorization or not authorization.startswith("Bearer "):
         return False
-    presented = authorization[len("Bearer "):].strip()
+    presented = authorization[len("Bearer ") :].strip()
     return hmac.compare_digest(presented, token)
 
 
+_METRICS_AUTHORIZATION_DEFAULT = Header(default=None)
+
+
 @router.get("/metrics")
-def metrics(authorization: str | None = Header(default=None)):
+def metrics(authorization: str | None = _METRICS_AUTHORIZATION_DEFAULT):
     """Prometheus scrape endpoint. Returns text/plain exposition."""
     if not _authorized(authorization):
         raise HTTPException(status_code=401, detail="Unauthorized")

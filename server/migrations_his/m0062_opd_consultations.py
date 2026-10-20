@@ -52,6 +52,7 @@ Both tables are registered for retention review in consent_service
 (_RETENTION_SOURCES, wave 1) and in the restore verifier's manifest
 (scripts/lib/verify_restore.py, group 'outpatient consultations').
 """
+
 from migrations import Migration
 
 CONSULTATIONS_DDL = """CREATE TABLE IF NOT EXISTS opd_consultations (
@@ -94,8 +95,7 @@ ADDENDA_DDL = """CREATE TABLE IF NOT EXISTS opd_consultation_addenda (
 TABLE_NAMES = ("opd_consultations", "opd_consultation_addenda")
 
 INDEXES = (
-    "CREATE UNIQUE INDEX IF NOT EXISTS ux_opd_consultations_visit "
-    "ON opd_consultations(visit_id)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_opd_consultations_visit ON opd_consultations(visit_id)",
     "CREATE INDEX IF NOT EXISTS idx_opd_consultations_patient "
     "ON opd_consultations(patient_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_opd_consultations_signed "

@@ -16,14 +16,15 @@ chat and vision — lower quality, not a different product.
 Nothing here loads or unloads a model; it only observes what Ollama currently
 holds (`GET /api/ps`) and picks a name.
 """
+
 from __future__ import annotations
 
 import logging
 import time
+from datetime import UTC
 from typing import NamedTuple
 
 import httpx
-
 from config import AMBIENT_LLM_MODEL, LLM_MODEL, MODEL_FALLBACK_ENABLED, OLLAMA_BASE_URL
 
 logger = logging.getLogger("orb.model_router")
@@ -46,11 +47,12 @@ def _is_expiring(expires_at) -> bool:
     if not expires_at:
         return False
     try:
-        from datetime import datetime, timezone
+        from datetime import datetime
+
         dt = datetime.fromisoformat(str(expires_at))
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt <= datetime.now(timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
+        return dt <= datetime.now(UTC)
     except Exception:
         return False
 
@@ -77,6 +79,7 @@ async def probe_residency(timeout: float = 2.0) -> frozenset[str] | None:
     # is not asked. None reads as "cannot tell", and every ambient caller then
     # skips its optional work.
     from services.model_switch import models_enabled
+
     if not models_enabled():
         return None
     now = time.monotonic()
@@ -191,6 +194,7 @@ async def select_chat_model(
 
     logger.info(
         "'%s' is not resident — routing this request to '%s' (fallback tier)",
-        preferred, fallback,
+        preferred,
+        fallback,
     )
     return ModelChoice(fallback, True, preferred)

@@ -48,15 +48,26 @@ leaves out the row just written), so two nurses cannot both give the 'first'
 dose. 'not_given' is never refused. Unlike a hold (keyed on the order), this
 rule follows the switch: switching it off returns the ward to today's rule.
 """
+
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from collections.abc import Mapping
+from typing import Any
 
 from services.medorders import core
 
-__all__ = ["ENTRY_POINT", "OrderStateRefused", "check_dose_in_txn", "record_bedside_event_in_txn",
-           "NOT_VERIFIED_CODE", "FIRST_DOSE_RULES", "FIRST_DOSE_PRIORITIES",
-           "verify_before_dose_rule", "pharmacist_check", "given_doses_in_txn"]
+__all__ = [
+    "ENTRY_POINT",
+    "OrderStateRefused",
+    "check_dose_in_txn",
+    "record_bedside_event_in_txn",
+    "NOT_VERIFIED_CODE",
+    "FIRST_DOSE_RULES",
+    "FIRST_DOSE_PRIORITIES",
+    "verify_before_dose_rule",
+    "pharmacist_check",
+    "given_doses_in_txn",
+]
 
 ENTRY_POINT = "emar.administer"
 
@@ -70,11 +81,15 @@ FIRST_DOSE_RULES = ("none", "stat_urgent")
 #: routine order does not count (the strict reading).
 FIRST_DOSE_PRIORITIES = ("stat", "urgent")
 
-_NOT_VERIFIED_WORDS = ("A pharmacist has not checked this order yet, so a dose cannot be given. "
-                       "You can still record it as not given.")
-_NEXT_DOSE_WORDS = ("The first dose of this {priority} order was given before the pharmacist "
-                    "check. The next dose waits until a pharmacist has checked the order. "
-                    "You can still record it as not given.")
+_NOT_VERIFIED_WORDS = (
+    "A pharmacist has not checked this order yet, so a dose cannot be given. "
+    "You can still record it as not given."
+)
+_NEXT_DOSE_WORDS = (
+    "The first dose of this {priority} order was given before the pharmacist "
+    "check. The next dose waits until a pharmacist has checked the order. "
+    "You can still record it as not given."
+)
 
 
 class OrderStateRefused(ValueError):
@@ -83,12 +98,14 @@ class OrderStateRefused(ValueError):
     which are written for the nurse at the bedside."""
 
     def __init__(self, verdict: Mapping):
-        super().__init__(verdict.get("message") or
-                         "The state of this order could not be read, so a dose cannot be given.")
+        super().__init__(
+            verdict.get("message")
+            or "The state of this order could not be read, so a dose cannot be given."
+        )
         self.verdict = dict(verdict)
 
 
-def _link(row: Any) -> Optional[str]:
+def _link(row: Any) -> str | None:
     if row is None:
         return None
     try:
@@ -109,19 +126,19 @@ def _field(row: Any, name: str) -> Any:
         return None
 
 
-def verify_before_dose_rule() -> Optional[str]:
+def verify_before_dose_rule() -> str | None:
     """None while ORB_MED_ORDER_VERIFY_BEFORE_DOSE is off (or its lifecycle
     is); otherwise which first doses may go before the check: 'none' or
     'stat_urgent'. Read at call time. An unknown setting reads as 'none'."""
     import config
+
     if not config.feature_enabled("med_order_verify_before_dose"):
         return None
     rule = getattr(config, "MED_ORDER_FIRST_DOSE_BEFORE_CHECK", "none")
     return rule if rule in FIRST_DOSE_RULES else "none"
 
 
-def pharmacist_check(order: Any, ward_row: Any, *, given_doses: int,
-                     rule: Optional[str]) -> dict:
+def pharmacist_check(order: Any, ward_row: Any, *, given_doses: int, rule: str | None) -> dict:
     """Does the pharmacist check allow a 'given' dose of this LINKED order?
     Pure, so the shift board can show the bedside's answer before the walk to
     the bed. `given_doses` counts the ward row's earlier 'given' records.
@@ -131,28 +148,40 @@ def pharmacist_check(order: Any, ward_row: Any, *, given_doses: int,
     `before_check` is True only for a first stat or urgent dose let through
     under rule 'stat_urgent'."""
     priority = _field(order, "priority")
-    out = {"required": rule is not None, "checked": bool(_field(ward_row, "verified_by")),
-           "allowed": True, "before_check": False, "code": None, "message": None,
-           "priority": priority}
+    out = {
+        "required": rule is not None,
+        "checked": bool(_field(ward_row, "verified_by")),
+        "allowed": True,
+        "before_check": False,
+        "code": None,
+        "message": None,
+        "priority": priority,
+    }
     if rule is None or out["checked"]:
         return out
     if rule == "stat_urgent" and priority in FIRST_DOSE_PRIORITIES:
         if not given_doses:
             out["before_check"] = True
             return out
-        out.update(allowed=False, code=NOT_VERIFIED_CODE,
-                   message=_NEXT_DOSE_WORDS.format(priority=priority))
+        out.update(
+            allowed=False,
+            code=NOT_VERIFIED_CODE,
+            message=_NEXT_DOSE_WORDS.format(priority=priority),
+        )
         return out
     out.update(allowed=False, code=NOT_VERIFIED_CODE, message=_NOT_VERIFIED_WORDS)
     return out
 
 
-def given_doses_in_txn(conn, medication_id: int, *,
-                       exclude_administration_id: Optional[int] = None) -> int:
+def given_doses_in_txn(
+    conn, medication_id: int, *, exclude_administration_id: int | None = None
+) -> int:
     """How many 'given' records the ward row has, leaving one out (the row
     the dose's own transaction has just written)."""
-    sql = ("SELECT COUNT(*) FROM medication_administrations "
-           "WHERE medication_id = ? AND status = 'given'")
+    sql = (
+        "SELECT COUNT(*) FROM medication_administrations "
+        "WHERE medication_id = ? AND status = 'given'"
+    )
     args: list = [medication_id]
     if exclude_administration_id is not None:
         sql += " AND id != ?"
@@ -160,8 +189,13 @@ def given_doses_in_txn(conn, medication_id: int, *,
     return int(conn.execute(sql, args).fetchone()[0])
 
 
-def check_dose_in_txn(conn, medication_id: int, administration_status: str, *,
-                      exclude_administration_id: Optional[int] = None) -> Optional[dict]:
+def check_dose_in_txn(
+    conn,
+    medication_id: int,
+    administration_status: str,
+    *,
+    exclude_administration_id: int | None = None,
+) -> dict | None:
     """None for an unlinked ward row. For a linked one, {med_order_id, order}
     (order None when the link names an order that does not exist), after
     raising OrderStateRefused when the order refuses this record.
@@ -183,30 +217,47 @@ def check_dose_in_txn(conn, medication_id: int, administration_status: str, *,
     verdict = core.order_allows_dose(order, administration_status)
     if not verdict["allowed"]:
         raise OrderStateRefused({**verdict, "med_order_id": link})
-    linked = {"med_order_id": link, "order": order}
+    linked: dict[str, Any] = {"med_order_id": link, "order": order}
     if administration_status == "given":
         rule = verify_before_dose_rule()
         if rule is not None:
             check = pharmacist_check(
-                order, row, rule=rule,
+                order,
+                row,
+                rule=rule,
                 given_doses=given_doses_in_txn(
-                    conn, medication_id, exclude_administration_id=exclude_administration_id))
+                    conn, medication_id, exclude_administration_id=exclude_administration_id
+                ),
+            )
             if not check["allowed"]:
-                raise OrderStateRefused({
-                    "allowed": False, "code": check["code"], "message": check["message"],
-                    "priority": check["priority"], "med_order_id": link})
+                raise OrderStateRefused(
+                    {
+                        "allowed": False,
+                        "code": check["code"],
+                        "message": check["message"],
+                        "priority": check["priority"],
+                        "med_order_id": link,
+                    }
+                )
             if check["before_check"]:
-                linked.update(before_pharmacist_check=True, first_dose_rule=rule,
-                              priority=check["priority"])
+                linked.update(
+                    before_pharmacist_check=True, first_dose_rule=rule, priority=check["priority"]
+                )
     return linked
 
 
-def record_bedside_event_in_txn(conn, linked: Optional[Mapping], *, medication_id: int,
-                                administration_id: int, administration_status: str,
-                                actor_id: Optional[str],
-                                not_given_reason: Optional[str] = None,
-                                confirmation_method: Optional[str] = None,
-                                custody: Optional[Mapping] = None) -> Optional[int]:
+def record_bedside_event_in_txn(
+    conn,
+    linked: Mapping | None,
+    *,
+    medication_id: int,
+    administration_id: int,
+    administration_status: str,
+    actor_id: str | None,
+    not_given_reason: str | None = None,
+    confirmation_method: str | None = None,
+    custody: Mapping | None = None,
+) -> int | None:
     """Append the 'administered' or 'not_given' event for a linked ward row,
     in the dose's transaction. Returns the event id, or None for an unlinked
     row or a broken link (nothing to append to).
@@ -217,9 +268,15 @@ def record_bedside_event_in_txn(conn, linked: Optional[Mapping], *, medication_i
     if not linked or not linked.get("order"):
         return None
     order = linked["order"]
-    role = conn.execute("SELECT role FROM users WHERE id = ?", (actor_id,)).fetchone() \
-        if actor_id else None
-    payload = {"medication_id": medication_id, "confirmation_method": confirmation_method}
+    role = (
+        conn.execute("SELECT role FROM users WHERE id = ?", (actor_id,)).fetchone()
+        if actor_id
+        else None
+    )
+    payload: dict[str, Any] = {
+        "medication_id": medication_id,
+        "confirmation_method": confirmation_method,
+    }
     if custody is not None:
         payload["supply"] = dict(custody)
     if administration_status == "given" and linked.get("before_pharmacist_check"):

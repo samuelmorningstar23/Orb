@@ -142,9 +142,10 @@ import os
 import sys
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional
+from types import FrameType
+from typing import Any, TextIO
 
 logger = logging.getLogger("orb.watchdog")
 
@@ -187,7 +188,7 @@ def _env_flag(name: str, default: bool) -> bool:
 
 
 def _utc_stamp() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 def _default_dir() -> Path:
@@ -222,18 +223,22 @@ class LoopWatchdog:
             logger.warning(
                 "Watchdog re-arm interval %.1fs is too close to the dead-man "
                 "timeout %.1fs (would fire on a healthy loop) — clamping to %.1fs",
-                self.deadman_rearm_s, self.deadman_s, clamped,
+                self.deadman_rearm_s,
+                self.deadman_s,
+                clamped,
             )
             self.deadman_rearm_s = clamped
         if self.stall_s <= self.beat_s * 3:
             logger.warning(
                 "Watchdog stall threshold %.1fs is within noise of the beat "
-                "interval %.1fs — expect false positives", self.stall_s, self.beat_s,
+                "interval %.1fs — expect false positives",
+                self.stall_s,
+                self.beat_s,
             )
 
         self.dir = _default_dir()
         self.status_path = self.dir / "status.json"
-        self.deadman_path: Optional[Path] = None
+        self.deadman_path: Path | None = None
 
         # `_last_beat` is written ONLY by the loop and read ONLY by the daemon
         # thread. A float store/load is atomic under the GIL, so no lock: taking
@@ -244,9 +249,9 @@ class LoopWatchdog:
         self._started_wall = time.time()
 
         self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
-        self._beat_task: Optional[asyncio.Task] = None
-        self._deadman_file = None  # kept open for the C timer's fd
+        self._thread: threading.Thread | None = None
+        self._beat_task: asyncio.Task | None = None
+        self._deadman_file: TextIO | None = None  # kept open for the C timer's fd
         self._deadman_bytes = 0
         self._retired_files: list = []  # superseded handles, see _ensure_deadman_file
 
@@ -254,11 +259,11 @@ class LoopWatchdog:
         self.stall_active = False
         self.stalls_total = 0
         self.max_stall_s = 0.0
-        self.last_stall_wall: Optional[float] = None
-        self.last_stall_duration_s: Optional[float] = None
-        self.last_dump_path: Optional[str] = None
+        self.last_stall_wall: float | None = None
+        self.last_stall_duration_s: float | None = None
+        self.last_dump_path: str | None = None
         self.deadman_fired = False
-        self.last_error: Optional[str] = None
+        self.last_error: str | None = None
 
     # ── Loop side ───────────────────────────────────────────────────────────
     def beat(self) -> None:
@@ -358,7 +363,9 @@ class LoopWatchdog:
             "EVENT LOOP STALLED: no heartbeat for %.1fs (threshold %.0fs). "
             "The API is not serving requests. Thread dump: %s . "
             "Orb has NOT restarted anything — this is an observation only.",
-            age, self.stall_s, self.last_dump_path or "<unavailable>",
+            age,
+            self.stall_s,
+            self.last_dump_path or "<unavailable>",
         )
         self._write_status(age)
 
@@ -371,7 +378,9 @@ class LoopWatchdog:
         logger.critical(
             "EVENT LOOP RECOVERED after ~%.1fs stalled (beat age now %.2fs). "
             "Evidence retained at %s",
-            stalled_for or -1.0, age, self.last_dump_path or "<none>",
+            stalled_for or -1.0,
+            age,
+            self.last_dump_path or "<none>",
         )
         self._write_status(age)
 
@@ -390,7 +399,7 @@ class LoopWatchdog:
         for tid, frame in sys._current_frames().items():
             stack: list[str] = []
             in_db = False
-            f = frame
+            f: FrameType | None = frame
             depth = 0
             while f is not None and depth < 40:
                 code = f.f_code
@@ -425,7 +434,7 @@ class LoopWatchdog:
             "═" * 78,
             "ORB EVENT-LOOP STALL: automatic capture (observe-only, nothing was restarted)",
             "═" * 78,
-            f"captured_utc      : {datetime.now(timezone.utc).isoformat()}",
+            f"captured_utc      : {datetime.now(UTC).isoformat()}",
             f"pid               : {os.getpid()}",
             f"beat_age_seconds  : {age:.2f}",
             f"threshold_seconds : {self.stall_s:.1f}",
@@ -463,20 +472,18 @@ class LoopWatchdog:
             faulthandler.dump_traceback(file=fh, all_threads=True)
             fh.flush()
             fh.write(
-                "\n"
-                + "═" * 78
-                + "\nNOTE: Python stacks only. If a thread's top frame is a C call "
-                  "(conn.close(),\njson.dump, take_gil) run `sample <pid> 3` for C "
-                  "frames while the process is\nstill alive. Do NOT kill -9 before "
-                  "sampling. The C stack is the other half of\nthe 2026-08-01 "
-                  "diagnosis.\n"
+                "\n" + "═" * 78 + "\nNOTE: Python stacks only. If a thread's top frame is a C call "
+                "(conn.close(),\njson.dump, take_gil) run `sample <pid> 3` for C "
+                "frames while the process is\nstill alive. Do NOT kill -9 before "
+                "sampling. The C stack is the other half of\nthe 2026-08-01 "
+                "diagnosis.\n"
             )
         return path
 
     def _deadman_header(self) -> str:
         return (
             f"# Orb dead-man traceback lane, pid {os.getpid()} armed "
-            f"{datetime.now(timezone.utc).isoformat()} "
+            f"{datetime.now(UTC).isoformat()} "
             f"(timeout {self.deadman_s:.0f}s, repeat={self.deadman_repeat}).\n"
             f"# Anything below this line was written by CPython's faulthandler "
             f"timer thread WITHOUT the GIL,\n# because the event loop stopped "
@@ -517,7 +524,8 @@ class LoopWatchdog:
             logger.warning(
                 "Watchdog dead-man file %s had disappeared — re-created. The "
                 "GIL-free lane was writing to an unlinked file and would have "
-                "lost a freeze dump.", self.deadman_path,
+                "lost a freeze dump.",
+                self.deadman_path,
             )
         except Exception as exc:
             self.last_error = f"deadman re-open failed: {exc!r}"
@@ -541,8 +549,10 @@ class LoopWatchdog:
             self.deadman_fired = True
             try:
                 from services.metrics_service import set_gauge
+
                 set_gauge(
-                    "orb_loop_deadman_dump_bytes", size,
+                    "orb_loop_deadman_dump_bytes",
+                    size,
                     help_text="Bytes written by the GIL-free dead-man thread dump file.",
                 )
             except Exception:
@@ -552,7 +562,9 @@ class LoopWatchdog:
                 "so the GIL-free faulthandler thread dumped %d bytes of stacks to %s. "
                 "This is the hard case — the interpreter was too wedged for the "
                 "Python watchdog to run. Read that file first.",
-                self.deadman_s, grew, self.deadman_path,
+                self.deadman_s,
+                grew,
+                self.deadman_path,
             )
 
     # ── Surfacing ───────────────────────────────────────────────────────────
@@ -568,22 +580,43 @@ class LoopWatchdog:
             from services.metrics_service import set_gauge
         except Exception:
             return
-        set_gauge("orb_loop_watchdog_running", 1,
-                  help_text="1 when the event-loop stall watchdog thread is alive.")
-        set_gauge("orb_loop_beat_age_seconds", age,
-                  help_text="Seconds since the event loop last stamped its heartbeat.")
-        set_gauge("orb_loop_stall_active", 1 if self.stall_active else 0,
-                  help_text="1 while the event loop is stalled beyond the watchdog threshold.")
-        set_gauge("orb_loop_stalls_total", self.stalls_total,
-                  help_text="Number of event-loop stalls observed since process start.")
-        set_gauge("orb_loop_stall_seconds_max", self.max_stall_s,
-                  help_text="Longest observed event-loop stall in seconds.")
-        set_gauge("orb_loop_last_stall_unixtime", self.last_stall_wall or 0,
-                  help_text="Unix time of the most recent event-loop stall (0 = never).")
-        set_gauge("orb_loop_deadman_armed", 1 if self._deadman_file is not None else 0,
-                  help_text="1 when the GIL-free dead-man traceback timer is armed.")
+        set_gauge(
+            "orb_loop_watchdog_running",
+            1,
+            help_text="1 when the event-loop stall watchdog thread is alive.",
+        )
+        set_gauge(
+            "orb_loop_beat_age_seconds",
+            age,
+            help_text="Seconds since the event loop last stamped its heartbeat.",
+        )
+        set_gauge(
+            "orb_loop_stall_active",
+            1 if self.stall_active else 0,
+            help_text="1 while the event loop is stalled beyond the watchdog threshold.",
+        )
+        set_gauge(
+            "orb_loop_stalls_total",
+            self.stalls_total,
+            help_text="Number of event-loop stalls observed since process start.",
+        )
+        set_gauge(
+            "orb_loop_stall_seconds_max",
+            self.max_stall_s,
+            help_text="Longest observed event-loop stall in seconds.",
+        )
+        set_gauge(
+            "orb_loop_last_stall_unixtime",
+            self.last_stall_wall or 0,
+            help_text="Unix time of the most recent event-loop stall (0 = never).",
+        )
+        set_gauge(
+            "orb_loop_deadman_armed",
+            1 if self._deadman_file is not None else 0,
+            help_text="1 when the GIL-free dead-man traceback timer is armed.",
+        )
 
-    def snapshot(self, age: Optional[float] = None) -> dict[str, Any]:
+    def snapshot(self, age: float | None = None) -> dict[str, Any]:
         """Current watchdog state as a plain dict (safe to call from anywhere)."""
         if age is None:
             age = time.monotonic() - self._last_beat
@@ -611,10 +644,10 @@ class LoopWatchdog:
             # `written_unixtime` here means even the watchdog thread is starved,
             # which is itself the alarm.
             "written_unixtime": time.time(),
-            "written_utc": datetime.now(timezone.utc).isoformat(),
+            "written_utc": datetime.now(UTC).isoformat(),
         }
 
-    def _write_status(self, age: Optional[float] = None) -> None:
+    def _write_status(self, age: float | None = None) -> None:
         """Atomically refresh status.json — the out-of-process alarm surface.
 
         Anyone on the box can read this file even while the API is frozen and
@@ -643,9 +676,7 @@ class LoopWatchdog:
         or crash-looping appliance would otherwise pile up forever.
         """
         try:
-            files = sorted(
-                self.dir.glob(glob), key=lambda p: p.stat().st_mtime, reverse=True
-            )
+            files = sorted(self.dir.glob(glob), key=lambda p: p.stat().st_mtime, reverse=True)
             for stale in files[keep:]:
                 try:
                     stale.unlink()
@@ -663,9 +694,7 @@ class LoopWatchdog:
         self.dir.mkdir(parents=True, exist_ok=True)
         self._prune("deadman-*.log", keep=20)
         self._prune("stall-*.txt", keep=100)
-        self.deadman_path = (
-            self.dir / f"deadman-pid{os.getpid()}-{_utc_stamp()}.log"
-        )
+        self.deadman_path = self.dir / f"deadman-pid{os.getpid()}-{_utc_stamp()}.log"
         try:
             # Line-buffered append. faulthandler writes to the raw fd, so this
             # object exists to own the fd for the process lifetime — closing it
@@ -697,7 +726,10 @@ class LoopWatchdog:
         logger.info(
             "Loop watchdog armed — stall threshold %.0fs (python lane), dead-man %.0fs "
             "(GIL-free lane, re-armed every %.0fs). Evidence dir: %s",
-            self.stall_s, self.deadman_s, self.deadman_rearm_s, self.dir,
+            self.stall_s,
+            self.deadman_s,
+            self.deadman_rearm_s,
+            self.dir,
         )
         return self._beat_task
 
@@ -732,11 +764,11 @@ class LoopWatchdog:
 
 
 # ── Module-level singleton + helpers used by main.py ─────────────────────────
-_watchdog: Optional[LoopWatchdog] = None
+_watchdog: LoopWatchdog | None = None
 _start_lock = threading.Lock()
 
 
-def start_watchdog() -> Optional[asyncio.Task]:
+def start_watchdog() -> asyncio.Task | None:
     """Start the watchdog and return its loop-side beat task (or None if off).
 
     Call from the FastAPI lifespan AFTER the synchronous startup work (init_db,
@@ -766,7 +798,7 @@ def stop_watchdog() -> None:
         _watchdog = None
 
 
-def get_watchdog() -> Optional[LoopWatchdog]:
+def get_watchdog() -> LoopWatchdog | None:
     return _watchdog
 
 

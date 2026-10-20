@@ -6,21 +6,25 @@ Pipeline stages:
   3. Drafting     — Structured note generation (SOAP / discharge / handoff)
   4. Verification — Optional transcript-vs-note consistency check
 """
-from fastapi import HTTPException
+
 import asyncio
+import json
 import logging
 import os
-import sys
-import json
 import re
 import subprocess
+import sys
 import time
+from collections.abc import AsyncGenerator, Mapping
 from contextlib import aclosing
-from typing import Optional, AsyncGenerator
+from datetime import UTC
+from typing import Any
 
-from config import SCRIBE, UPLOAD_DIR
+from config import SCRIBE
 from database import db_session
-from services.scribe_providers import get_provider, StageTimer
+from fastapi import HTTPException
+
+from services.scribe_providers import StageTimer, get_provider
 
 logger = logging.getLogger("orb.scribe")
 
@@ -29,9 +33,17 @@ WORKER_SCRIPT = os.path.join(os.path.dirname(__file__), "..", "scripts", "transc
 PYTHON_BIN = sys.executable  # Use same Python as server
 
 
-def _inference_record(cfg: dict, purpose: str, system: str, prompt: str, answered: bool,
-                      t0: float, patient_id: Optional[str], user_id: Optional[str],
-                      error: Optional[str] = None) -> dict:
+def _inference_record(
+    cfg: Mapping[str, Any],
+    purpose: str,
+    system: str,
+    prompt: str,
+    answered: bool,
+    t0: float,
+    patient_id: str | None,
+    user_id: str | None,
+    error: str | None = None,
+) -> dict:
     """The audit row for one Scribe LLM stage (ai_governance.record_inference).
 
     Written here rather than in scribe_providers because the stage, the patient
@@ -40,14 +52,19 @@ def _inference_record(cfg: dict, purpose: str, system: str, prompt: str, answere
     answer is recorded as an error.
     """
     from services.ai_governance import hash_prompt
+
     if error is None and not answered:
         error = "empty response"
     return dict(
-        provider=cfg.get("provider") or "", model=cfg.get("model") or "",
-        purpose=purpose, outcome="error" if error else "served",
-        patient_id=patient_id, user_id=user_id,
+        provider=cfg.get("provider") or "",
+        model=cfg.get("model") or "",
+        purpose=purpose,
+        outcome="error" if error else "served",
+        patient_id=patient_id,
+        user_id=user_id,
         timing_ms={"total": round((time.monotonic() - t0) * 1000)},
-        detail=error, prompt_sha256=hash_prompt({"system": system, "prompt": prompt}),
+        detail=error,
+        prompt_sha256=hash_prompt({"system": system, "prompt": prompt}),
     )
 
 
@@ -55,15 +72,16 @@ def _inference_record(cfg: dict, purpose: str, system: str, prompt: str, answere
 # Stage 0: Hint Building (shared utility)
 # ═══════════════════════════════════════════════════
 
-def build_whisper_hints(patient_id: Optional[str] = None) -> str:
+
+def build_whisper_hints(patient_id: str | None = None) -> str:
     """Build a clinical vocabulary string from the DB to bias Whisper's decoder.
-    
+
     Pulls patient name, diagnosis, active medication names, and attending doctor
     to help Whisper correctly transcribe domain-specific terms.
     """
     if not patient_id:
         return ""
-    
+
     try:
         hints_parts = []
         with db_session() as db:
@@ -104,6 +122,7 @@ def build_whisper_hints(patient_id: Optional[str] = None) -> str:
 # Stage 1: ASR — Transcription
 # ═══════════════════════════════════════════════════
 
+
 def _resolve_language(language: str | None) -> str:
     """Resolve the transcription language: explicit override, else the configured
     default. Whisper's own auto-detection is requested by passing 'auto'."""
@@ -112,8 +131,9 @@ def _resolve_language(language: str | None) -> str:
     return lang if lang in supported or lang == "auto" else "en"
 
 
-def transcribe_audio(audio_path: str, apply_correction: bool = True, hints: str = "",
-                     language: str | None = None) -> str:
+def transcribe_audio(
+    audio_path: str, apply_correction: bool = True, hints: str = "", language: str | None = None
+) -> str:
     """Transcribe audio — tries warm daemon first, falls back to subprocess worker.
 
     `language` selects the Whisper transcription language (e.g. 'en', 'hi', or
@@ -129,6 +149,7 @@ def transcribe_audio(audio_path: str, apply_correction: bool = True, hints: str 
     a model too (ORB_MODELS_ENABLED, or the Orb Ward Record).
     """
     from services.model_switch import refuse_when_models_off
+
     refuse_when_models_off("Whisper transcription")
     asr_cfg = SCRIBE["asr"]
     lang = _resolve_language(language)
@@ -140,18 +161,18 @@ def transcribe_audio(audio_path: str, apply_correction: bool = True, hints: str 
     else:
         # ── Fallback: subprocess worker ──
         draft = _transcribe_via_subprocess(audio_path, hints, asr_cfg, lang)
-    
+
     if not draft:
         return ""
-    
+
     # ── Stage 1.5: RxNorm phonetic correction ──
     draft = _apply_rxnorm_correction(draft)
-    
+
     # ── Stage 2: LLM correction (optional) ──
     correction_cfg = SCRIBE["correction"]
     if apply_correction and draft and correction_cfg["enabled"]:
         return correct_transcript(draft)
-    
+
     return draft
 
 
@@ -159,38 +180,42 @@ def _transcribe_via_daemon(audio_path: str, hints: str = "", language: str = "en
     """Try transcription via warm ZMQ daemon. Returns None if daemon unavailable.
     Refused while the models are switched off, like transcribe_audio."""
     from services.model_switch import refuse_when_models_off
+
     refuse_when_models_off("Whisper transcription (daemon)")
     try:
         from config import VOICE
+
         if not VOICE["daemon"]["enabled"]:
             return None
-        
+
         import zmq
-        
+
         context = zmq.Context()
         socket = context.socket(zmq.REQ)
         socket.setsockopt(zmq.RCVTIMEO, VOICE["daemon"]["timeout_ms"])
         socket.setsockopt(zmq.SNDTIMEO, 2000)
         socket.setsockopt(zmq.LINGER, 0)
-        
+
         try:
             socket.connect(VOICE["daemon"]["socket"])
-            
-            request = json.dumps({
-                "audio_path": audio_path,
-                "hints": hints,
-                "language": language,
-            })
-            
+
+            request = json.dumps(
+                {
+                    "audio_path": audio_path,
+                    "hints": hints,
+                    "language": language,
+                }
+            )
+
             socket.send_string(request)
             response = socket.recv_string()
             data = json.loads(response)
-            
+
             if data.get("status") == "ok":
-                logger.info("Daemon transcription: %sms", data.get('duration_ms', '?'))
+                logger.info("Daemon transcription: %sms", data.get("duration_ms", "?"))
                 return data.get("text", "")
             else:
-                logger.warning("Daemon error: %s", data.get('error', 'unknown'))
+                logger.warning("Daemon error: %s", data.get("error", "unknown"))
                 return None
         except zmq.Again:
             logger.warning("Daemon timeout — falling back to subprocess")
@@ -216,20 +241,24 @@ class TranscriptionError(RuntimeError):
         super().__init__("Speech transcription could not be completed. Please retry.")
 
 
-
-def _transcribe_via_subprocess(audio_path: str, hints: str, asr_cfg: dict, language: str = "en") -> str:
+def _transcribe_via_subprocess(
+    audio_path: str, hints: str, asr_cfg: Mapping[str, Any], language: str = "en"
+) -> str:
     """Return worker text (including genuine silence), or raise a typed failure.
 
     Refused while the models are switched off, like transcribe_audio. Worker
     output and filesystem/model errors stay in server logs, never exception text.
     """
     from services.model_switch import refuse_when_models_off
+
     refuse_when_models_off("Whisper transcription (worker)")
     try:
         from services.asr_worker_protocol import STDIN_HINTS_FLAG, encode_hints
+
         server_dir = os.path.dirname(os.path.dirname(WORKER_SCRIPT))
         cmd = [
-            PYTHON_BIN, WORKER_SCRIPT,
+            PYTHON_BIN,
+            WORKER_SCRIPT,
             audio_path,
             asr_cfg["model"],
             STDIN_HINTS_FLAG,
@@ -240,8 +269,11 @@ def _transcribe_via_subprocess(audio_path: str, hints: str, asr_cfg: dict, langu
 
         result = subprocess.run(
             cmd,
-            capture_output=True, text=True, timeout=120,
-            input=encode_hints(hints or ""), cwd=server_dir,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            input=encode_hints(hints or ""),
+            cwd=server_dir,
         )
         if result.returncode != 0:
             logger.error("Speech worker failed (exit %s)", result.returncode)
@@ -259,11 +291,18 @@ def _transcribe_via_subprocess(audio_path: str, hints: str, asr_cfg: dict, langu
                     raise
                 framed, closing, _ = body.rpartition(marker)
                 data = json.loads(framed if closing else body, strict=False)
-            if not isinstance(data, dict) or not isinstance(data.get("text"), str) or data.get("error"):
+            if (
+                not isinstance(data, dict)
+                or not isinstance(data.get("text"), str)
+                or data.get("error")
+            ):
                 raise ValueError("ASR worker returned an invalid text result")
             return data["text"]
         except (ValueError, TypeError):
-            logger.exception("ASR worker returned an invalid result", extra={"event": "asr_worker_protocol_failed"})
+            logger.exception(
+                "ASR worker returned an invalid result",
+                extra={"event": "asr_worker_protocol_failed"},
+            )
             raise TranscriptionError("asr_worker_protocol_failed") from None
     except TranscriptionError:
         raise
@@ -279,11 +318,12 @@ def _apply_rxnorm_correction(text: str) -> str:
     """Apply RxNorm phonetic drug name correction if enabled."""
     try:
         from config import VOICE
+
         if not VOICE["corrector"]["enabled"]:
             return text
-        
+
         from services.rxnorm_corrector import RxNormCorrector
-        
+
         corrector = RxNormCorrector(
             db_path=VOICE["corrector"]["rxnorm_db"],
             csv_path=VOICE["corrector"]["rxnorm_csv"],
@@ -330,7 +370,7 @@ RULES (last, where the model obeys them): correct spelling and mishearings only.
 
 def correct_transcript(draft: str) -> str:
     """Use LLM to grammatically correct and clinically ground the transcript draft.
-    
+
     Uses SCRIBE["correction"] config for model, temperature, max_tokens.
     """
     if not draft.strip():
@@ -366,8 +406,12 @@ def correct_transcript(draft: str) -> str:
         # (asyncio.to_thread in scribe_routes), never on the event loop.
         try:
             from services.ai_governance import record_inference
-            record_inference(**_inference_record(cfg, "scribe_correction", "", prompt,
-                                                 bool(result), t0, None, None, error))
+
+            record_inference(
+                **_inference_record(
+                    cfg, "scribe_correction", "", prompt, bool(result), t0, None, None, error
+                )
+            )
         except Exception:
             logger.exception("Scribe correction inference audit failed")
 
@@ -403,7 +447,6 @@ DICTATION:
 {transcript}
 
 {rules}""",
-
     "discharge": """Convert the following raw clinical dictation into a discharge summary.
 
 FORMAT:
@@ -433,7 +476,6 @@ DICTATION:
 {transcript}
 
 {rules}""",
-
     "handoff": """Convert the following raw clinical dictation into an I-PASS handoff document.
 
 FORMAT (I-PASS):
@@ -485,7 +527,9 @@ def has_speaker_turns(transcript: str) -> bool:
     """True when the dictation is a labelled conversation: at least two turns
     by at least two different speakers. A single "Patient: Ravi Kumar" header
     on a dictated note is not a conversation."""
-    labels = [m.group(1).lower().replace("_", " ") for m in _SPEAKER_TURN_RE.finditer(transcript or "")]
+    labels = [
+        m.group(1).lower().replace("_", " ") for m in _SPEAKER_TURN_RE.finditer(transcript or "")
+    ]
     speakers = {_SPEAKER_ALIASES.get(label, label) for label in labels}
     return len(labels) >= 2 and len(speakers) >= 2
 
@@ -493,17 +537,21 @@ def has_speaker_turns(transcript: str) -> bool:
 def _structuring_rules(fmt: str, dialogue: bool) -> str:
     name = _DOCUMENT_NAMES.get(fmt, _DOCUMENT_NAMES["soap"])
     if dialogue:
-        dialogue_rule = ("4. Write the DIALOGUE section only from the speaker-labelled turns in the "
-                         "dictation. Keep each line with the speaker the dictation gives it. Never "
-                         "invent a line, a question or a speaker.")
+        dialogue_rule = (
+            "4. Write the DIALOGUE section only from the speaker-labelled turns in the "
+            "dictation. Keep each line with the speaker the dictation gives it. Never "
+            "invent a line, a question or a speaker."
+        )
     else:
-        dialogue_rule = ("4. The dictation is one speaker. Do not write a DIALOGUE section and do not "
-                         "invent a conversation.")
+        dialogue_rule = (
+            "4. The dictation is one speaker. Do not write a DIALOGUE section and do not "
+            "invent a conversation."
+        )
     return (
         "RULES. Follow every one of them; they override anything above.\n"
         "1. Write only what the dictation states. Never add a symptom, finding, value, "
         "diagnosis, drug, dose, date or plan that is not in it. A section the dictation says "
-        "nothing about gets \"[Not stated in dictation]\".\n"
+        'nothing about gets "[Not stated in dictation]".\n'
         "2. Copy every number with its unit exactly as dictated. Never convert units: a "
         "temperature dictated in Fahrenheit stays in Fahrenheit, mg stays mg, mmol/L stays mmol/L.\n"
         "3. Copy abbreviations exactly as dictated. Never expand them: SOB, BD, c/o stay as written.\n"
@@ -524,6 +572,7 @@ def build_structuring_prompt(transcript: str, fmt: str = "soap") -> str:
         rules=_structuring_rules(fmt, dialogue),
     )
 
+
 DRAFT_SYSTEM_PROMPT = (
     "You are a medical documentation specialist. Structure clinical dictations into "
     "properly formatted medical documents. Be precise and maintain all clinical "
@@ -540,15 +589,20 @@ def _fence_transcript(transcript: str) -> str:
     return f"<<<BEGIN_DICTATION>>>\n{safe}\n<<<END_DICTATION>>>"
 
 
-async def structure_transcript(transcript: str, format: str = "soap", *,
-                               patient_id: Optional[str] = None,
-                               user_id: Optional[str] = None) -> str:
+async def structure_transcript(
+    transcript: str,
+    format: str = "soap",
+    *,
+    patient_id: str | None = None,
+    user_id: str | None = None,
+) -> str:
     """Use LLM to structure a raw transcript into a clinical document (non-streaming).
-    
+
     Uses SCRIBE["draft"] config for model, temperature, max_tokens.
     `patient_id` / `user_id` only label the inference's audit row.
     """
     from services.ai_governance import record_inference_async
+
     cfg = SCRIBE["draft"]
     provider = get_provider(cfg["provider"])
     prompt = build_structuring_prompt(transcript, format)
@@ -557,6 +611,7 @@ async def structure_transcript(transcript: str, format: str = "soap", *,
     # queue for them would serialize hosted calls behind local ones for nothing.
     is_hosted = getattr(provider, "hosted", False)
     from services.llm_queue_service import llm_queue
+
     if not is_hosted:
         await llm_queue.acquire(priority=2)
     t0 = time.monotonic()
@@ -577,22 +632,37 @@ async def structure_transcript(transcript: str, format: str = "soap", *,
     finally:
         if not is_hosted:
             llm_queue.release()
-        await record_inference_async(**_inference_record(
-            cfg, "scribe_draft", DRAFT_SYSTEM_PROMPT, prompt, bool(result), t0,
-            patient_id, user_id, error))
+        await record_inference_async(
+            **_inference_record(
+                cfg,
+                "scribe_draft",
+                DRAFT_SYSTEM_PROMPT,
+                prompt,
+                bool(result),
+                t0,
+                patient_id,
+                user_id,
+                error,
+            )
+        )
 
     return result
 
 
-async def structure_transcript_stream(transcript: str, format: str = "soap", *,
-                                      patient_id: Optional[str] = None,
-                                      user_id: Optional[str] = None) -> AsyncGenerator[str, None]:
+async def structure_transcript_stream(
+    transcript: str,
+    format: str = "soap",
+    *,
+    patient_id: str | None = None,
+    user_id: str | None = None,
+) -> AsyncGenerator[str, None]:
     """Use LLM to structure a raw transcript — streams tokens as they arrive.
-    
+
     Uses SCRIBE["draft"] config for model, temperature, max_tokens.
     `patient_id` / `user_id` only label the inference's audit row.
     """
     from services.ai_governance import record_inference_soon
+
     cfg = SCRIBE["draft"]
     provider = get_provider(cfg["provider"])
     prompt = build_structuring_prompt(transcript, format)
@@ -600,20 +670,23 @@ async def structure_transcript_stream(transcript: str, format: str = "soap", *,
     # Hosted providers skip the single-slot local queue (no GPU to protect).
     is_hosted = getattr(provider, "hosted", False)
     from services.llm_queue_service import llm_queue
+
     if not is_hosted:
         await llm_queue.acquire(priority=2)
     t0 = time.monotonic()
     produced, error = False, None
     try:
-        async with aclosing(provider.agenerate_stream(
-            prompt=prompt,
-            system=DRAFT_SYSTEM_PROMPT,
-            model=cfg["model"],
-            temperature=cfg["temperature"],
-            max_tokens=cfg["max_tokens"],
-            ctx_size=cfg["ctx_size"],
-            purpose="scribe_draft",
-        )) as tokens:
+        async with aclosing(
+            provider.agenerate_stream(
+                prompt=prompt,
+                system=DRAFT_SYSTEM_PROMPT,
+                model=cfg["model"],
+                temperature=cfg["temperature"],
+                max_tokens=cfg["max_tokens"],
+                ctx_size=cfg["ctx_size"],
+                purpose="scribe_draft",
+            )
+        ) as tokens:
             async for token in tokens:
                 produced = produced or bool(token.strip())
                 yield token
@@ -631,9 +704,19 @@ async def structure_transcript_stream(transcript: str, format: str = "soap", *,
             llm_queue.release()
         # Scheduled, not awaited: this runs in a generator's teardown.
         try:
-            record_inference_soon(**_inference_record(
-                cfg, "scribe_draft", DRAFT_SYSTEM_PROMPT, prompt, produced,
-                t0, patient_id, user_id, error))
+            record_inference_soon(
+                **_inference_record(
+                    cfg,
+                    "scribe_draft",
+                    DRAFT_SYSTEM_PROMPT,
+                    prompt,
+                    produced,
+                    t0,
+                    patient_id,
+                    user_id,
+                    error,
+                )
+            )
         except Exception:
             logger.exception("Scribe draft inference audit could not be scheduled")
 
@@ -641,6 +724,7 @@ async def structure_transcript_stream(transcript: str, format: str = "soap", *,
 # ═══════════════════════════════════════════════════
 # Stage 4: Verification (optional)
 # ═══════════════════════════════════════════════════
+
 
 def _fence_note(note: str) -> str:
     """Fence an untrusted structured note. Uses note-specific delimiters so the
@@ -707,7 +791,7 @@ def _unverified_report(reason: str) -> dict:
                 "type": "verification_failed",
                 "section": "ALL",
                 "text": f"Automated hallucination verification could not complete ({reason}). "
-                        "This note has NOT been checked against the transcript. Manual review required before signing.",
+                "This note has NOT been checked against the transcript. Manual review required before signing.",
                 "severity": "high",
             }
         ],
@@ -716,9 +800,13 @@ def _unverified_report(reason: str) -> dict:
     }
 
 
-async def verify_note(transcript: str, structured_note: str, *,
-                      patient_id: Optional[str] = None,
-                      user_id: Optional[str] = None) -> Optional[dict]:
+async def verify_note(
+    transcript: str,
+    structured_note: str,
+    *,
+    patient_id: str | None = None,
+    user_id: str | None = None,
+) -> dict | None:
     """Compare transcript vs generated note and return a verification report.
 
     Uses SCRIBE["verify"] config. `patient_id` / `user_id` only label the
@@ -747,18 +835,20 @@ async def verify_note(transcript: str, structured_note: str, *,
 
     is_hosted = getattr(provider, "hosted", False)
     from services.llm_queue_service import llm_queue
+
     # Verification runs at P3 (low priority) — never blocks interactive workflows.
     # Hosted providers skip the single-slot local queue (no GPU to protect).
     if not is_hosted:
         try:
             await llm_queue.acquire(priority=3)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # Queue timeout or a BackgroundGovernor shed (subclass of
             # TimeoutError): degrade to the same deterministic fallback as a
             # backend error — an acquire failure must never escape past the
             # verification report contract.
             return _unverified_report("verifier unavailable under load")
     from services.ai_governance import record_inference_async
+
     t0 = time.monotonic()
     raw, error = "", None
     try:
@@ -778,9 +868,19 @@ async def verify_note(transcript: str, structured_note: str, *,
     finally:
         if not is_hosted:
             llm_queue.release()
-        await record_inference_async(**_inference_record(
-            verify_cfg, "scribe_verify", VERIFY_SYSTEM_PROMPT, prompt, bool(raw), t0,
-            patient_id, user_id, error))
+        await record_inference_async(
+            **_inference_record(
+                verify_cfg,
+                "scribe_verify",
+                VERIFY_SYSTEM_PROMPT,
+                prompt,
+                bool(raw),
+                t0,
+                patient_id,
+                user_id,
+                error,
+            )
+        )
 
     if not raw:
         logger.warning("Verification returned empty response")
@@ -789,10 +889,11 @@ async def verify_note(transcript: str, structured_note: str, *,
     # Parse JSON from response (may contain markdown fences)
     try:
         import re
+
         cleaned = raw.strip()
         # Strip markdown code fences if present
-        cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned)
-        cleaned = re.sub(r'\s*```$', '', cleaned)
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
         report = json.loads(cleaned)
 
         # Validate required fields with safe defaults
@@ -814,13 +915,16 @@ async def verify_note(transcript: str, structured_note: str, *,
 # Pipeline Metadata
 # ═══════════════════════════════════════════════════
 
+
 def build_pipeline_meta(timer: StageTimer) -> dict:
     """Build pipeline metadata for storage in scribe_notes.pipeline_meta_json."""
     return {
         "timings": timer.to_dict(),
         "models": {
             "asr": SCRIBE["asr"]["model"],
-            "correction": SCRIBE["correction"]["model"] if SCRIBE["correction"]["enabled"] else None,
+            "correction": SCRIBE["correction"]["model"]
+            if SCRIBE["correction"]["enabled"]
+            else None,
             "draft": SCRIBE["draft"]["model"],
             "verify": SCRIBE["verify"]["model"] if SCRIBE["verify"]["enabled"] else None,
         },
@@ -838,7 +942,7 @@ def build_pipeline_meta(timer: StageTimer) -> dict:
 # A section body the model filled with its own scaffolding rather than content:
 # "[Not explicitly stated in dictation]", "[None]", "[N/A]", "[Not documented]".
 _PLACEHOLDER_LINE_RE = re.compile(
-    r"^\s*(?:[A-Za-z][A-Za-z /'-]{0,30}:\s*)?"      # optional "Doctor:" / "Patient:" label
+    r"^\s*(?:[A-Za-z][A-Za-z /'-]{0,30}:\s*)?"  # optional "Doctor:" / "Patient:" label
     r"\[\s*(?:not\b[^\]]*|none|n/?a|unknown|unspecified|empty)\s*\]\s*$",
     re.IGNORECASE,
 )
@@ -846,7 +950,7 @@ _PLACEHOLDER_LINE_RE = re.compile(
 _SECTION_HEADING_RE = re.compile(r"^\s*([A-Z][A-Z /&-]{2,40}):\s*$")
 
 
-def prune_placeholder_sections(note: Optional[str]) -> Optional[str]:
+def prune_placeholder_sections(note: str | None) -> str | None:
     """Drop note sections whose entire body is model scaffolding.
 
     Every structured note opened with:
@@ -903,17 +1007,17 @@ def prune_placeholder_sections(note: Optional[str]) -> Optional[str]:
 
 
 def save_scribe_note(
-    patient_id: Optional[str],
+    patient_id: str | None,
     author_id: str,
     raw_transcript: str,
-    structured_note: Optional[str],
+    structured_note: str | None,
     note_format: str,
-    audio_path: Optional[str] = None,
-    verification_json: Optional[str] = None,
-    pipeline_meta_json: Optional[str] = None,
+    audio_path: str | None = None,
+    verification_json: str | None = None,
+    pipeline_meta_json: str | None = None,
     status: str = "draft",
     version: int = 1,
-    supersedes_note_id: Optional[int] = None,
+    supersedes_note_id: int | None = None,
     ai_generated: bool = True,
     db=None,
     scope_user=None,
@@ -935,9 +1039,20 @@ def save_scribe_note(
                 audio_path, verification_json, pipeline_meta_json,
                 status, version, supersedes_note_id, ai_generated)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (patient_id, author_id, raw_transcript, structured_note, note_format,
-             audio_path, verification_json, pipeline_meta_json,
-             status, version, supersedes_note_id, 1 if ai_generated else 0),
+            (
+                patient_id,
+                author_id,
+                raw_transcript,
+                structured_note,
+                note_format,
+                audio_path,
+                verification_json,
+                pipeline_meta_json,
+                status,
+                version,
+                supersedes_note_id,
+                1 if ai_generated else 0,
+            ),
         )
         return cursor.lastrowid
 
@@ -949,9 +1064,9 @@ def save_scribe_note(
 
 
 def get_scribe_notes(
-    patient_id: Optional[str] = None,
-    author_id: Optional[str] = None,
-    status: Optional[str] = None,
+    patient_id: str | None = None,
+    author_id: str | None = None,
+    status: str | None = None,
 ) -> list:
     """Get scribe notes, optionally filtered by patient, author, or status."""
     base = "SELECT * FROM scribe_notes"
@@ -983,46 +1098,66 @@ def get_scribe_notes(
 # Note Lifecycle Operations
 # ═══════════════════════════════════════════════════
 
+
 def _authorize_patient_write(db, patient_id, user):
-    from permissions import department_scope, facility_scope, facility_denial, patient_in_scope
+    from permissions import (
+        department_scope,
+        facility_denial,
+        facility_scope,
+        patient_in_scope,
+    )
+
     row = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
     if row is None or not row["is_active"]:
         raise HTTPException(status_code=404, detail="Patient not found")
     current = dict(row)
     dept, facilities = department_scope(current), facility_scope(current)
-    if patient_id and ((facilities is not None and facility_denial(db, patient_id, facilities)[0])
-                       or (dept is not None and not patient_in_scope(db, patient_id, dept))):
+    if patient_id and (
+        (facilities is not None and facility_denial(db, patient_id, facilities)[0])
+        or (dept is not None and not patient_in_scope(db, patient_id, dept))
+    ):
         raise HTTPException(status_code=404, detail="Patient not found")
-
 
 
 def _authorize_note_write(db, note_id: int, user: dict) -> None:
     """Recheck ownership and current patient access inside the write transaction."""
     from fastapi import HTTPException
-    from permissions import department_scope, facility_scope, facility_denial, patient_in_scope
+    from permissions import (
+        department_scope,
+        facility_denial,
+        facility_scope,
+        patient_in_scope,
+    )
+
     actor = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
-    note = db.execute("SELECT patient_id, author_id FROM scribe_notes WHERE id = ?", (note_id,)).fetchone()
+    note = db.execute(
+        "SELECT patient_id, author_id FROM scribe_notes WHERE id = ?", (note_id,)
+    ).fetchone()
     if actor is None or not actor["is_active"] or note is None:
         raise HTTPException(status_code=404, detail="Note not found")
     actor = dict(actor)
     dept, facilities = department_scope(actor), facility_scope(actor)
     pid = note["patient_id"]
     if pid:
-        if ((facilities is not None and facility_denial(db, pid, facilities)[0])
-                or (dept is not None and not patient_in_scope(db, pid, dept))):
+        if (facilities is not None and facility_denial(db, pid, facilities)[0]) or (
+            dept is not None and not patient_in_scope(db, pid, dept)
+        ):
             raise HTTPException(status_code=404, detail="Note not found")
     elif dept is not None and note["author_id"] != actor["id"]:
         raise HTTPException(status_code=404, detail="Note not found")
 
 
-
-def update_scribe_note_content(note_id: int, structured_note: str, editor_id: str, *, scope_user=None) -> dict:
+def update_scribe_note_content(
+    note_id: int, structured_note: str, editor_id: str, *, scope_user=None
+) -> dict:
     """Update draft note content. Only allowed when status='draft'.
 
     Returns {"ok": True} or {"error": "reason"}.
     """
+    from datetime import datetime
+
     from database import db_session
-    from datetime import datetime, timezone
+
     try:
         with db_session(immediate=scope_user is not None) as db:
             if scope_user is not None:
@@ -1031,9 +1166,11 @@ def update_scribe_note_content(note_id: int, structured_note: str, editor_id: st
             if not row:
                 return {"error": "Note not found"}
             if row["status"] != "draft":
-                return {"error": f"Cannot edit a note with status '{row['status']}'. Only drafts can be edited."}
+                return {
+                    "error": f"Cannot edit a note with status '{row['status']}'. Only drafts can be edited."
+                }
 
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             db.execute(
                 "UPDATE scribe_notes SET structured_note = ?, last_edited_by = ?, last_edited_at = ? WHERE id = ?",
                 (structured_note, editor_id, now, note_id),
@@ -1054,8 +1191,10 @@ def sign_scribe_note(note_id: int, signer_id: str, *, scope_user=None) -> dict:
     If this note supersedes another signed note, marks the original as superseded.
     Returns {"ok": True, "superseded_note_id": int|None} or {"error": "reason"}.
     """
+    from datetime import datetime
+
     from database import db_session
-    from datetime import datetime, timezone
+
     try:
         with db_session(immediate=scope_user is not None) as db:
             if scope_user is not None:
@@ -1066,9 +1205,11 @@ def sign_scribe_note(note_id: int, signer_id: str, *, scope_user=None) -> dict:
             if not row:
                 return {"error": "Note not found"}
             if row["status"] != "draft":
-                return {"error": f"Cannot sign a note with status '{row['status']}'. Only drafts can be signed."}
+                return {
+                    "error": f"Cannot sign a note with status '{row['status']}'. Only drafts can be signed."
+                }
 
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             db.execute(
                 """UPDATE scribe_notes
                    SET status = 'signed', signed_by = ?, signed_at = ?, finalized_at = ?
@@ -1087,22 +1228,22 @@ def sign_scribe_note(note_id: int, signer_id: str, *, scope_user=None) -> dict:
         # Get patient_id for this note to include in event
         patient_id = None
         with db_session() as db:
-            p_row = db.execute("SELECT patient_id FROM scribe_notes WHERE id = ?", (note_id,)).fetchone()
+            p_row = db.execute(
+                "SELECT patient_id FROM scribe_notes WHERE id = ?", (note_id,)
+            ).fetchone()
             if p_row:
                 patient_id = p_row["patient_id"]
 
         # Publish event
         try:
-            from services.event_bus import event_bus, StateEvent
+            from services.event_bus import StateEvent, event_bus
+
             evt = StateEvent(
                 topic="scribe.note.signed",
                 source_node="scribe",
                 event_type="note_signed",
                 patient_id=patient_id,
-                payload={
-                    "note_id": note_id,
-                    "signer_id": signer_id
-                }
+                payload={"note_id": note_id, "signer_id": signer_id},
             )
             try:
                 loop = asyncio.get_running_loop()
@@ -1122,7 +1263,9 @@ def sign_scribe_note(note_id: int, signer_id: str, *, scope_user=None) -> dict:
         return {"error": str(e)}
 
 
-def record_unverified_ack(note_id: int, signer_id: str, acknowledged_at: str, *, scope_user=None) -> bool:
+def record_unverified_ack(
+    note_id: int, signer_id: str, acknowledged_at: str, *, scope_user=None
+) -> bool:
     """Record WHO accepted a failed hallucination verdict on this note, and WHEN.
 
     Its own columns, not a key inside verification_json: the verification
@@ -1135,6 +1278,7 @@ def record_unverified_ack(note_id: int, signer_id: str, acknowledged_at: str, *,
     refuse the signature rather than sign an unattested override.
     """
     from database import db_session
+
     try:
         with db_session(immediate=scope_user is not None) as db:
             if scope_user is not None:
@@ -1156,8 +1300,10 @@ def reject_scribe_note(note_id: int, rejector_id: str, reason: str, *, scope_use
 
     Returns {"ok": True} or {"error": "reason"}.
     """
+    from datetime import datetime
+
     from database import db_session
-    from datetime import datetime, timezone
+
     try:
         with db_session(immediate=scope_user is not None) as db:
             if scope_user is not None:
@@ -1166,9 +1312,11 @@ def reject_scribe_note(note_id: int, rejector_id: str, reason: str, *, scope_use
             if not row:
                 return {"error": "Note not found"}
             if row["status"] != "draft":
-                return {"error": f"Cannot reject a note with status '{row['status']}'. Only drafts can be rejected."}
+                return {
+                    "error": f"Cannot reject a note with status '{row['status']}'. Only drafts can be rejected."
+                }
 
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             db.execute(
                 """UPDATE scribe_notes
                    SET status = 'rejected', rejected_by = ?, rejected_at = ?, rejection_reason = ?
@@ -1182,7 +1330,7 @@ def reject_scribe_note(note_id: int, rejector_id: str, reason: str, *, scope_use
         return {"error": str(e)}
 
 
-def _verification_without_ack(verification_json: Optional[str]) -> Optional[str]:
+def _verification_without_ack(verification_json: str | None) -> str | None:
     """Strip the legacy ``signer_acknowledged_unverified`` marker from a
     verification report before it is copied onto another note.
 
@@ -1222,6 +1370,7 @@ def create_revision_from_signed(original_note_id: int, editor_id: str, *, scope_
     Returns {"ok": True, "new_note_id": int, "version": int} or {"error": "reason"}.
     """
     from database import db_session
+
     try:
         with db_session(immediate=scope_user is not None) as db:
             if scope_user is not None:
@@ -1244,12 +1393,16 @@ def create_revision_from_signed(original_note_id: int, editor_id: str, *, scope_
                     status, version, supersedes_note_id, ai_generated)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)""",
                 (
-                    original["patient_id"], editor_id,
-                    original["raw_transcript"], original["structured_note"],
-                    original["note_format"], original.get("audio_path"),
+                    original["patient_id"],
+                    editor_id,
+                    original["raw_transcript"],
+                    original["structured_note"],
+                    original["note_format"],
+                    original.get("audio_path"),
                     _verification_without_ack(original.get("verification_json")),
                     original.get("pipeline_meta_json"),
-                    new_version, original_note_id,
+                    new_version,
+                    original_note_id,
                     original.get("ai_generated", 1),
                 ),
             )
@@ -1262,7 +1415,10 @@ def create_revision_from_signed(original_note_id: int, editor_id: str, *, scope_
     except Exception as e:
         return {"error": str(e)}
 
-def update_scribe_note_verification(note_id: int, verification_json: str, pipeline_meta_json: Optional[str] = None, *, scope_user=None) -> bool:
+
+def update_scribe_note_verification(
+    note_id: int, verification_json: str, pipeline_meta_json: str | None = None, *, scope_user=None
+) -> bool:
     """Update an existing scribe note with verification results (and optionally pipeline meta).
 
     Uses db_session for safe transaction handling. Includes a state-transition
@@ -1270,6 +1426,7 @@ def update_scribe_note_verification(note_id: int, verification_json: str, pipeli
     Idempotent — safe to retry the same terminal state.
     """
     from database import db_session
+
     try:
         # Parse the incoming status to determine if we need transition guards
         try:
@@ -1304,12 +1461,12 @@ def update_scribe_note_verification(note_id: int, verification_json: str, pipeli
             if pipeline_meta_json:
                 db.execute(
                     "UPDATE scribe_notes SET verification_json = ?, pipeline_meta_json = ? WHERE id = ?",
-                    (verification_json, pipeline_meta_json, note_id)
+                    (verification_json, pipeline_meta_json, note_id),
                 )
             else:
                 db.execute(
                     "UPDATE scribe_notes SET verification_json = ? WHERE id = ?",
-                    (verification_json, note_id)
+                    (verification_json, note_id),
                 )
         return True
     except HTTPException:
@@ -1319,7 +1476,7 @@ def update_scribe_note_verification(note_id: int, verification_json: str, pipeli
         return False
 
 
-def get_scribe_note_by_id(note_id: int) -> Optional[dict]:
+def get_scribe_note_by_id(note_id: int) -> dict | None:
     """Get a single scribe note by ID. Returns None if not found."""
     try:
         with db_session() as db:

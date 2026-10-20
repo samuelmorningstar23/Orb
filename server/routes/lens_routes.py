@@ -1,23 +1,35 @@
 """Orb Lens — Medical Image Analysis Routes"""
+
 import asyncio
-import anyio
-import logging
-from pathlib import Path
-from contextlib import aclosing
 import json
+import logging
 import os
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
-from fastapi.responses import StreamingResponse
-from permissions import (department_scope, enforce_patient_scope, log_phi_read,
-                         require_permission, scope_patient_ids_sql)
-from datetime import datetime, timezone
+from contextlib import aclosing
+from datetime import UTC, datetime
+from pathlib import Path
+
+import anyio
 from config import UPLOAD_DIR
 from database import db_session, run_db
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import StreamingResponse
+from permissions import (
+    department_scope,
+    enforce_patient_scope,
+    log_phi_read,
+    require_permission,
+    scope_patient_ids_sql,
+)
 from services.audit_service import log_audit_event
-from services.lens_service import (LENS_DISCLAIMER_BANNER, MAX_REVIEWED_TEXT,
-                                   analyze_image_stream, decorate_analysis,
-                                   get_lens_analyses, save_lens_analysis)
+from services.lens_service import (
+    LENS_DISCLAIMER_BANNER,
+    MAX_REVIEWED_TEXT,
+    analyze_image_stream,
+    decorate_analysis,
+    get_lens_analyses,
+    save_lens_analysis,
+)
 
 router = APIRouter(prefix="/api/lens", tags=["lens"])
 logger = logging.getLogger("orb.lens")
@@ -28,6 +40,7 @@ logger = logging.getLogger("orb.lens")
 # mechanically checkable that no `with db_session()` sits inside an `async def`,
 # which is the shape that wedged the API on 2026-07-30. Each must stay PURE SYNC
 # and is only ever reached through run_db().
+
 
 def _load_patient_row(patient_id: str):
     with db_session() as db:
@@ -63,27 +76,35 @@ def _assign_analysis(analysis_id: int, patient_id: str, user: dict, reviewed_tex
     """
     with db_session() as db:
         # Verify patient exists
-        patient = db.execute("SELECT id, name, bed FROM patients WHERE id = ?", (patient_id,)).fetchone()
+        patient = db.execute(
+            "SELECT id, name, bed FROM patients WHERE id = ?", (patient_id,)
+        ).fetchone()
         if not patient:
             raise HTTPException(status_code=404, detail="Patient not found")
 
         current = db.execute(
             "SELECT id, patient_id, author_id FROM lens_analyses WHERE id = ?", (analysis_id,)
         ).fetchone()
-        if current is None or (current["patient_id"] is None and current["author_id"] != user["id"]):
+        if current is None or (
+            current["patient_id"] is None and current["author_id"] != user["id"]
+        ):
             # 404 for another clinician's unfiled read too: it is theirs alone.
             raise HTTPException(status_code=404, detail="Analysis not found")
         if current["patient_id"] is not None:
-            raise HTTPException(status_code=409, detail="This read is already filed to a patient record.")
+            raise HTTPException(
+                status_code=409, detail="This read is already filed to a patient record."
+            )
 
-        reviewed_at = datetime.now(timezone.utc).isoformat()
+        reviewed_at = datetime.now(UTC).isoformat()
         filed = db.execute(
             "UPDATE lens_analyses SET patient_id = ?, reviewed_by = ?, reviewed_at = ?, "
             "reviewed_text = ? WHERE id = ? AND patient_id IS NULL",
             (patient_id, user["id"], reviewed_at, reviewed_text, analysis_id),
         )
         if filed.rowcount == 0:
-            raise HTTPException(status_code=409, detail="This read is already filed to a patient record.")
+            raise HTTPException(
+                status_code=409, detail="This read is already filed to a patient record."
+            )
         # Same transaction as the filing (clinical_access is fail-closed): an
         # AI imaging read never lands on a record without a named reviewer row.
         log_audit_event(
@@ -105,11 +126,11 @@ def _assign_analysis(analysis_id: int, patient_id: str, user: dict, reviewed_tex
 
         # Post notification to patient's Relay case room
         channel = db.execute(
-            "SELECT id FROM channels WHERE type = 'case_room' AND patient_id = ?",
-            (patient_id,)
+            "SELECT id FROM channels WHERE type = 'case_room' AND patient_id = ?", (patient_id,)
         ).fetchone()
         patient_name = patient["name"]
         return analysis, channel, patient_name
+
 
 # The banner without its markdown rule: one line for a chat message.
 _DISCLAIMER_LINE = LENS_DISCLAIMER_BANNER.replace("---", "").strip()
@@ -125,11 +146,16 @@ def _filed_message(analysis, reviewed_text: str | None, filer_name: str) -> str:
     if _DISCLAIMER_LINE in reviewed:
         # An older client still sends the banner inside the text; say it once.
         reviewed = reviewed.replace(_DISCLAIMER_LINE, "").rstrip(" -\n")
-    header = ("🩻 Clinician-reviewed AI imaging reference" if reviewed
-              else "🩻 AI imaging reference (investigational, not a diagnostic read)")
-    body = (f"{header}: {analysis['image_type'].upper()} scan\n"
-            f"Context: {analysis['clinical_context'] or 'N/A'}\n"
-            f"Reviewed & filed by {filer_name}")
+    header = (
+        "🩻 Clinician-reviewed AI imaging reference"
+        if reviewed
+        else "🩻 AI imaging reference (investigational, not a diagnostic read)"
+    )
+    body = (
+        f"{header}: {analysis['image_type'].upper()} scan\n"
+        f"Context: {analysis['clinical_context'] or 'N/A'}\n"
+        f"Reviewed & filed by {filer_name}"
+    )
     if reviewed:
         body += f"\n\nClinician-confirmed findings:\n{reviewed[:1500]}"
     return f"{body}\n\n{_DISCLAIMER_LINE}"
@@ -140,17 +166,24 @@ def _filed_message(analysis, reviewed_text: str | None, filer_name: str) -> str:
 # We never trust the client-supplied extension (could be .html/.svg/.js which,
 # if served same-origin, becomes stored-XSS). The value is the canonical ext.
 _ALLOWED_IMAGE_EXTS = {
-    ".jpg": ".jpg", ".jpeg": ".jpg", ".png": ".png",
-    ".webp": ".webp", ".gif": ".gif", ".bmp": ".bmp",
-    ".tif": ".tiff", ".tiff": ".tiff",
+    ".jpg": ".jpg",
+    ".jpeg": ".jpg",
+    ".png": ".png",
+    ".webp": ".webp",
+    ".gif": ".gif",
+    ".bmp": ".bmp",
+    ".tif": ".tiff",
+    ".tiff": ".tiff",
 }
 # Magic-byte signatures for the formats we accept.
 _IMAGE_MAGIC = [
-    (b"\xff\xd8\xff", ".jpg"),          # JPEG
-    (b"\x89PNG\r\n\x1a\n", ".png"),     # PNG
-    (b"GIF87a", ".gif"), (b"GIF89a", ".gif"),
-    (b"BM", ".bmp"),                    # BMP
-    (b"II*\x00", ".tiff"), (b"MM\x00*", ".tiff"),  # TIFF
+    (b"\xff\xd8\xff", ".jpg"),  # JPEG
+    (b"\x89PNG\r\n\x1a\n", ".png"),  # PNG
+    (b"GIF87a", ".gif"),
+    (b"GIF89a", ".gif"),
+    (b"BM", ".bmp"),  # BMP
+    (b"II*\x00", ".tiff"),
+    (b"MM\x00*", ".tiff"),  # TIFF
 ]
 MAX_IMAGE_BYTES = 25 * 1024 * 1024  # 25 MB cap — reject oversized uploads (DoS)
 
@@ -168,13 +201,20 @@ def _detect_image_ext(data: bytes) -> str | None:
     return None
 
 
+_ANALYZE_IMAGE_IMAGE_DEFAULT = File(...)
+_ANALYZE_IMAGE_CLINICAL_CONTEXT_DEFAULT = Form(default="")
+_ANALYZE_IMAGE_PATIENT_ID_DEFAULT = Form(default="")
+_ANALYZE_IMAGE_IMAGE_TYPE_DEFAULT = Form(default="other")
+_ANALYZE_IMAGE_USER_DEFAULT = Depends(require_permission("lens.analyze"))
+
+
 @router.post("/analyze")
 async def analyze_image(
-    image: UploadFile = File(...),
-    clinical_context: str = Form(default=""),
-    patient_id: str = Form(default=""),
-    image_type: str = Form(default="other"),
-    user: dict = Depends(require_permission("lens.analyze")),
+    image: UploadFile = _ANALYZE_IMAGE_IMAGE_DEFAULT,
+    clinical_context: str = _ANALYZE_IMAGE_CLINICAL_CONTEXT_DEFAULT,
+    patient_id: str = _ANALYZE_IMAGE_PATIENT_ID_DEFAULT,
+    image_type: str = _ANALYZE_IMAGE_IMAGE_TYPE_DEFAULT,
+    user: dict = _ANALYZE_IMAGE_USER_DEFAULT,
 ):
     """Analyze a medical image using vision LLM. Returns streaming response."""
     # ── Demo-only gate ──
@@ -182,12 +222,15 @@ async def analyze_image(
     # operator explicitly opts in, so an unvalidated vision LLM can never silently
     # read PHI images in a real deployment.
     from config import LENS_ENABLED
+
     if not LENS_ENABLED:
         raise HTTPException(
             status_code=403,
-            detail=("Lens image analysis is disabled in this deployment. It has no "
-                    "validated imaging model and is decision-support reference only. "
-                    "Set ORB_LENS_ENABLED=true to enable it explicitly."),
+            detail=(
+                "Lens image analysis is disabled in this deployment. It has no "
+                "validated imaging model and is decision-support reference only. "
+                "Set ORB_LENS_ENABLED=true to enable it explicitly."
+            ),
         )
 
     # ── Validate upload: extension allowlist + magic bytes + size cap ──
@@ -226,7 +269,6 @@ async def analyze_image(
         if patient:
             patient_context = f"Patient: {patient['name']}, Age: {patient['age']}, Sex: {patient['sex']}, Diagnosis: {patient['diagnosis']}"
 
-
     # Use a SERVER-CHOSEN safe extension and a FULL uuid (128 bits, not the old
     # brute-forceable 32-bit [:8]) so PHI filenames can't be enumerated.
     filename = f"lens_{uuid.uuid4().hex}{detected_ext}"
@@ -235,6 +277,7 @@ async def analyze_image(
     # Keep ownership through thread cancellation: a worker may finish its
     # atomic publication after the request was cancelled.
     from services.crypto_service import write_encrypted
+
     write_task = asyncio.create_task(asyncio.to_thread(write_encrypted, image_path, content))
     try:
         await asyncio.shield(write_task)
@@ -262,10 +305,15 @@ async def analyze_image(
         try:
             # The service decrypts and encodes in a worker. JSON token frames
             # preserve newlines and distinguish model prose from control events.
-            async with aclosing(analyze_image_stream(
-                image_path, clinical_context or None, patient_context,
-                patient_id=patient_id or None, user_id=user["id"],
-            )) as chunks:
+            async with aclosing(
+                analyze_image_stream(
+                    image_path,
+                    clinical_context or None,
+                    patient_context,
+                    patient_id=patient_id or None,
+                    user_id=user["id"],
+                )
+            ) as chunks:
                 async for chunk in chunks:
                     full_response += chunk
                     yield f"data: {json.dumps({'content': chunk})}\n\n"
@@ -275,15 +323,17 @@ async def analyze_image(
 
             # Always unfiled: only a completed read may be saved, and only the
             # separate clinician-review step can file it onto a patient chart.
-            save_task = asyncio.create_task(run_db(
-                save_lens_analysis,
-                patient_id=None,
-                author_id=user["id"],
-                image_path=image_path,
-                image_type=image_type,
-                clinical_context=clinical_context or None,
-                analysis=full_response,
-            ))
+            save_task = asyncio.create_task(
+                run_db(
+                    save_lens_analysis,
+                    patient_id=None,
+                    author_id=user["id"],
+                    image_path=image_path,
+                    image_type=image_type,
+                    clinical_context=clinical_context or None,
+                    analysis=full_response,
+                )
+            )
             try:
                 new_id = await asyncio.shield(save_task)
             except asyncio.CancelledError:
@@ -306,8 +356,15 @@ async def analyze_image(
 
     # Also clean a response whose body iterator was never entered.
     from starlette.background import BackgroundTask
-    return StreamingResponse(stream_analysis(), media_type="text/event-stream",
-                             background=BackgroundTask(cleanup_unregistered))
+
+    return StreamingResponse(
+        stream_analysis(),
+        media_type="text/event-stream",
+        background=BackgroundTask(cleanup_unregistered),
+    )
+
+
+_LIST_ANALYSES_USER_DEFAULT = Depends(require_permission("lens.read"))
 
 
 @router.get("/analyses")
@@ -315,8 +372,8 @@ async def analyze_image(
 # threadpool rather than on the asyncio event loop.
 def list_analyses(
     request: Request,
-    patient_id: str = None,
-    user: dict = Depends(require_permission("lens.read")),
+    patient_id: str | None = None,
+    user: dict = _LIST_ANALYSES_USER_DEFAULT,
 ):
     """Saved Lens analyses — the caller's department only.
 
@@ -342,13 +399,16 @@ def list_analyses(
     else:
         ids_sql, ids_params = scope_patient_ids_sql(dept)
         with db_session() as db:
-            rows = [decorate_analysis(r) for r in db.execute(
-                f"""SELECT * FROM lens_analyses
+            rows = [
+                decorate_analysis(r)
+                for r in db.execute(
+                    f"""SELECT * FROM lens_analyses
                     WHERE patient_id IN ({ids_sql})
                        OR (patient_id IS NULL AND author_id = ?)
                     ORDER BY created_at DESC LIMIT 50""",
-                ids_params + (user["id"],),
-            ).fetchall()]
+                    ids_params + (user["id"],),
+                ).fetchall()
+            ]
 
     if rows:
         log_phi_read(
@@ -368,12 +428,17 @@ def list_analyses(
     return rows
 
 
+_ASSIGN_TO_PATIENT_PATIENT_ID_DEFAULT = Form(...)
+_ASSIGN_TO_PATIENT_REVIEWED_TEXT_DEFAULT = Form(None)
+_ASSIGN_TO_PATIENT_USER_DEFAULT = Depends(require_permission("lens.analyze"))
+
+
 @router.patch("/analyses/{analysis_id}/assign")
 async def assign_to_patient(
     analysis_id: int,
-    patient_id: str = Form(...),
-    reviewed_text: str = Form(None),
-    user: dict = Depends(require_permission("lens.analyze")),
+    patient_id: str = _ASSIGN_TO_PATIENT_PATIENT_ID_DEFAULT,
+    reviewed_text: str = _ASSIGN_TO_PATIENT_REVIEWED_TEXT_DEFAULT,
+    user: dict = _ASSIGN_TO_PATIENT_USER_DEFAULT,
 ):
     """File a clinician-reviewed lens analysis to a patient's Vigil record."""
     # SCOPING LAW — the patient is named in a FORM FIELD (2026-08-14).
@@ -395,7 +460,8 @@ async def assign_to_patient(
     # Use db_session so the connection is always closed / rolled back on error
     # (the previous raw get_db() leaked the connection on the 404 branch).
     analysis, channel, patient_name = await run_db(
-        _assign_analysis, analysis_id, patient_id, user, reviewed)
+        _assign_analysis, analysis_id, patient_id, user, reviewed
+    )
 
     if channel and analysis:
         from services.relay_service import send_message
@@ -413,9 +479,8 @@ async def assign_to_patient(
             sender_name=user["name"],
             sender_role=user["role"],
             content=body,
-            message_type="system"
+            message_type="system",
         )
         await sio.emit("message:new", msg, room=channel["id"])
 
     return {"status": "ok", "patient_name": patient_name}
-

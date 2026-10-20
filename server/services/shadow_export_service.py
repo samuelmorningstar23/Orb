@@ -53,6 +53,7 @@ disclosure that cannot be audited must not happen. The route audits under the
 bytes are returned. Know which side of that line you are on before adding to
 either file.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -61,8 +62,8 @@ import json
 import logging
 import os
 import re
-from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from database import db_session
 
@@ -100,6 +101,7 @@ def _sage() -> Any:
     """
     try:
         from services import sage_service  # noqa: WPS433 (deliberate lazy import)
+
         return sage_service
     except Exception:  # pragma: no cover - defensive
         logger.warning("shadow export: sage_service unavailable; using local k", exc_info=True)
@@ -111,7 +113,7 @@ def small_cell_k() -> int:
     svc = _sage()
     k = getattr(svc, "AGGREGATE_SMALL_CELL", None) if svc else None
     try:
-        k = int(k)
+        k = int(k) if k is not None else 5
     except (TypeError, ValueError):
         k = 5
     return max(2, k)
@@ -183,10 +185,7 @@ def suppress_counts(counts: dict[str, int]) -> tuple[dict[str, str], int]:
         survivors = [(key, int(n)) for key, n in items if key not in masked and int(n) > 0]
         if survivors:
             masked.add(min(survivors, key=lambda kv: kv[1])[0])
-    display = {
-        key: (f"<{k}" if key in masked else str(int(n)))
-        for key, n in items
-    }
+    display = {key: (f"<{k}" if key in masked else str(int(n))) for key, n in items}
     return display, len(masked)
 
 
@@ -208,15 +207,46 @@ def is_degenerate(counts: dict[str, int]) -> bool:
 #: Keys removed at ANY depth. Includes `episode_id`: an episode id is a stable
 #: per-patient-episode handle, i.e. a pseudonymous identifier, and a pseudonym
 #: that is also the join key back into our own database is not de-identified.
-_DENY_KEYS = frozenset({
-    "patient_id", "patient", "patients", "mrn", "uhid", "nhs_number",
-    "encounter_id", "episode_id", "episode_ids", "subject_id", "subject",
-    "actor_user_id", "user_id", "employee_id", "actor", "adjudicator",
-    "phi", "phi_json", "name", "patient_name", "full_name", "dob",
-    "date_of_birth", "age", "sex", "gender", "bed", "bed_number", "room",
-    "address", "phone", "email", "identifier", "identifiers",
-    "source_correlation_id", "correlation_id",
-})
+_DENY_KEYS = frozenset(
+    {
+        "patient_id",
+        "patient",
+        "patients",
+        "mrn",
+        "uhid",
+        "nhs_number",
+        "encounter_id",
+        "episode_id",
+        "episode_ids",
+        "subject_id",
+        "subject",
+        "actor_user_id",
+        "user_id",
+        "employee_id",
+        "actor",
+        "adjudicator",
+        "phi",
+        "phi_json",
+        "name",
+        "patient_name",
+        "full_name",
+        "dob",
+        "date_of_birth",
+        "age",
+        "sex",
+        "gender",
+        "bed",
+        "bed_number",
+        "room",
+        "address",
+        "phone",
+        "email",
+        "identifier",
+        "identifiers",
+        "source_correlation_id",
+        "correlation_id",
+    }
+)
 
 #: Identifier-shaped tokens redacted inside any string that survives the
 #: whitelist. These are the id FORMATS this codebase actually mints:
@@ -225,8 +255,8 @@ _TOKEN_PATTERNS = (
     re.compile(r"\bep_[0-9a-fA-F]{8,}\b"),
     re.compile(r"\bP\d{3,}\b"),
     re.compile(r"\bpatient[_-]?\d+\b", re.IGNORECASE),
-    re.compile(r"\b[A-Z]{2,4}\d{3,}\b"),          # DOC001 / N001-style staff ids
-    re.compile(r"\b\d{10,}\b"),                    # long numeric ids / phone
+    re.compile(r"\b[A-Z]{2,4}\d{3,}\b"),  # DOC001 / N001-style staff ids
+    re.compile(r"\b\d{10,}\b"),  # long numeric ids / phone
 )
 
 REDACTED = "[redacted]"
@@ -244,11 +274,7 @@ def _scrub(obj: Any) -> Any:
     also covers anything a future contributor adds to the whitelist by mistake.
     """
     if isinstance(obj, dict):
-        return {
-            k: _scrub(v)
-            for k, v in obj.items()
-            if str(k).lower() not in _DENY_KEYS
-        }
+        return {k: _scrub(v) for k, v in obj.items() if str(k).lower() not in _DENY_KEYS}
     if isinstance(obj, (list, tuple)):
         return [_scrub(v) for v in obj]
     if isinstance(obj, str):
@@ -268,31 +294,58 @@ def deidentification_manifest() -> list[dict[str, Any]]:
     """
     k = small_cell_k()
     return [
-        {"field": "patient_id", "treatment": "removed",
-         "note": "No patient identifier, direct or pseudonymous, appears in any row."},
-        {"field": "episode_id", "treatment": "removed",
-         "note": "Episode ids are stable per-patient handles and join back to the source database; they are dropped, not hashed."},
-        {"field": "phi_json", "treatment": "dropped",
-         "note": "The free-text PHI column of shadow_events is never read by the export query."},
-        {"field": "actor_user_id", "treatment": "removed",
-         "note": "Individual staff are not identified. Roles are retained only where a role is itself the measurement (adjudicator role)."},
-        {"field": "ward", "treatment": "coarsened",
-         "note": "Ward names are replaced with sequential pseudonyms (Ward 1…n) assigned by descending event volume. The mapping is not exported."},
-        {"field": "occurred_at", "treatment": "coarsened",
-         "note": "No event timestamps are exported. Only the aggregate period bounds and elapsed-time statistics are."},
-        {"field": "aggregate counts (counts.*, provenance.row_counts, instrument volume)",
-         "treatment": "coarsened",
-         "note": f"Small-cell suppression at k={k}: any non-zero count below {k} is shown as \"<{k}\". Where that would mask exactly one cell in a breakdown, a second (smallest) cell is masked too, so no masked value in a breakdown of two or more populated cells can be recovered by differencing against the published total. A breakdown with a single populated cell is inherently equal to that total; those are named in provenance.suppression.masking_is_cosmetic_in."},
+        {
+            "field": "patient_id",
+            "treatment": "removed",
+            "note": "No patient identifier, direct or pseudonymous, appears in any row.",
+        },
+        {
+            "field": "episode_id",
+            "treatment": "removed",
+            "note": "Episode ids are stable per-patient handles and join back to the source database; they are dropped, not hashed.",
+        },
+        {
+            "field": "phi_json",
+            "treatment": "dropped",
+            "note": "The free-text PHI column of shadow_events is never read by the export query.",
+        },
+        {
+            "field": "actor_user_id",
+            "treatment": "removed",
+            "note": "Individual staff are not identified. Roles are retained only where a role is itself the measurement (adjudicator role).",
+        },
+        {
+            "field": "ward",
+            "treatment": "coarsened",
+            "note": "Ward names are replaced with sequential pseudonyms (Ward 1…n) assigned by descending event volume. The mapping is not exported.",
+        },
+        {
+            "field": "occurred_at",
+            "treatment": "coarsened",
+            "note": "No event timestamps are exported. Only the aggregate period bounds and elapsed-time statistics are.",
+        },
+        {
+            "field": "aggregate counts (counts.*, provenance.row_counts, instrument volume)",
+            "treatment": "coarsened",
+            "note": f'Small-cell suppression at k={k}: any non-zero count below {k} is shown as "<{k}". Where that would mask exactly one cell in a breakdown, a second (smallest) cell is masked too, so no masked value in a breakdown of two or more populated cells can be recovered by differencing against the published total. A breakdown with a single populated cell is inherently equal to that total; those are named in provenance.suppression.masking_is_cosmetic_in.',
+        },
         # `treatment` is a single lowercase token by convention (the admin view
         # turns it into a CSS modifier); the honest detail belongs in the note.
-        {"field": "metric denominators, n_observed and method notes",
-         "treatment": "published",
-         "note": f"NOT SUPPRESSED. A rate whose denominator is hidden cannot be checked, so scorecard.metrics[*] and provenance.denominators publish their numerators, denominators and observation counts exactly, including counts below {k}. The metrics' caveat, assumptions, alternative_denominators and provisional_reason text restates those same counts in words. Whenever any of them is below {k} this export therefore does NOT achieve k-anonymity, and provenance.suppression.k_anonymity_achieved says so and names every field involved."},
-        {"field": "ward-shift coverage and instrument health counters",
-         "treatment": "published",
-         "note": "NOT SUPPRESSED. Covered/uncovered ward-shifts are counts of time periods, and dropped/error event counters are counts of instrument failures. Neither counts individuals, and suppressing them would hide the two facts most likely to weaken a claim made from this document."},
-        {"field": "free text", "treatment": "removed",
-         "note": "No clinical narrative, alert text, Sage draft or adjudicator comment is exported. Method notes and caveats are the only prose, and they are token-redacted."},
+        {
+            "field": "metric denominators, n_observed and method notes",
+            "treatment": "published",
+            "note": f"NOT SUPPRESSED. A rate whose denominator is hidden cannot be checked, so scorecard.metrics[*] and provenance.denominators publish their numerators, denominators and observation counts exactly, including counts below {k}. The metrics' caveat, assumptions, alternative_denominators and provisional_reason text restates those same counts in words. Whenever any of them is below {k} this export therefore does NOT achieve k-anonymity, and provenance.suppression.k_anonymity_achieved says so and names every field involved.",
+        },
+        {
+            "field": "ward-shift coverage and instrument health counters",
+            "treatment": "published",
+            "note": "NOT SUPPRESSED. Covered/uncovered ward-shifts are counts of time periods, and dropped/error event counters are counts of instrument failures. Neither counts individuals, and suppressing them would hide the two facts most likely to weaken a claim made from this document.",
+        },
+        {
+            "field": "free text",
+            "treatment": "removed",
+            "note": "No clinical narrative, alert text, Sage draft or adjudicator comment is exported. Method notes and caveats are the only prose, and they are token-redacted.",
+        },
     ]
 
 
@@ -301,11 +354,9 @@ def deidentification_manifest() -> list[dict[str, Any]]:
 # ══════════════════════════════════════════════════════════════════════════════
 def _period(days: int) -> tuple[str, str, int]:
     days = max(1, min(int(days or 30), 365))
-    end = datetime.now(timezone.utc)
+    end = datetime.now(UTC)
     start = end - timedelta(days=days)
-    return (start.isoformat(timespec="milliseconds"),
-            end.isoformat(timespec="milliseconds"),
-            days)
+    return (start.isoformat(timespec="milliseconds"), end.isoformat(timespec="milliseconds"), days)
 
 
 def _instrument_present(db) -> bool:
@@ -320,7 +371,7 @@ def _instrument_present(db) -> bool:
 APPEND_ONLY_TRIGGERS = ("trg_shadow_no_update", "trg_shadow_no_delete")
 
 
-def _append_only(db) -> Optional[bool]:
+def _append_only(db) -> bool | None:
     """Is the shadow log append-only RIGHT NOW? None when it cannot be checked.
 
     The export verifies this itself instead of trusting the value handed in.
@@ -341,7 +392,7 @@ def _append_only(db) -> Optional[bool]:
     return set(APPEND_ONLY_TRIGGERS) <= {r[0] for r in rows}
 
 
-def _payloads(db, kind: str, start: str, end: str, ward: Optional[str]) -> list[dict]:
+def _payloads(db, kind: str, start: str, end: str, ward: str | None) -> list[dict]:
     """Fetch payload_json for one kind and parse in Python.
 
     Deliberately NOT json_extract(): the payload keys we need vary by kind, the
@@ -349,8 +400,10 @@ def _payloads(db, kind: str, start: str, end: str, ward: Optional[str]) -> list[
     and a Python parse cannot be broken by a build of SQLite compiled without
     the JSON1 extension.
     """
-    sql = ("SELECT payload_json, ward, episode_id FROM shadow_events_current "
-           "WHERE kind = ? AND occurred_at >= ? AND occurred_at < ?")
+    sql = (
+        "SELECT payload_json, ward, episode_id FROM shadow_events_current "
+        "WHERE kind = ? AND occurred_at >= ? AND occurred_at < ?"
+    )
     args: list[Any] = [kind, start, end]
     if ward:
         sql += " AND ward = ?"
@@ -368,11 +421,13 @@ def _payloads(db, kind: str, start: str, end: str, ward: Optional[str]) -> list[
     return out
 
 
-def _counts_by(db, column: str, start: str, end: str, ward: Optional[str]) -> dict[str, int]:
+def _counts_by(db, column: str, start: str, end: str, ward: str | None) -> dict[str, int]:
     if column not in ("kind", "lane", "ward"):  # never interpolate free text
         raise ValueError(f"illegal group column {column!r}")
-    sql = (f"SELECT {column} AS g, COUNT(*) AS n FROM shadow_events_current "
-           "WHERE occurred_at >= ? AND occurred_at < ?")
+    sql = (
+        f"SELECT {column} AS g, COUNT(*) AS n FROM shadow_events_current "
+        "WHERE occurred_at >= ? AND occurred_at < ?"
+    )
     args: list[Any] = [start, end]
     if ward:
         sql += " AND ward = ?"
@@ -381,18 +436,26 @@ def _counts_by(db, column: str, start: str, end: str, ward: Optional[str]) -> di
     return {(r["g"] or "unattributed"): int(r["n"]) for r in db.execute(sql, args).fetchall()}
 
 
-def collect_aggregates(days: int = 30, ward: Optional[str] = None) -> dict[str, Any]:
+def collect_aggregates(days: int = 30, ward: str | None = None) -> dict[str, Any]:
     """Every DB read the export makes, in one place. COUNT/GROUP BY only.
 
     SYNC and heavy — worker thread only, never the event loop.
     """
     start, end, days = _period(days)
     blank = {
-        "instrument_present": False, "period": {"start": start, "end": end, "days": days},
-        "events_total": 0, "episodes_total": 0, "corrections": 0,
+        "instrument_present": False,
+        "period": {"start": start, "end": end, "days": days},
+        "events_total": 0,
+        "episodes_total": 0,
+        "corrections": 0,
         "append_only": None,
-        "by_kind": {}, "by_lane": {}, "by_ward": {}, "ward_pseudonyms": {},
-        "outcomes": {}, "outcome_sources": {}, "adjudications": {},
+        "by_kind": {},
+        "by_lane": {},
+        "by_ward": {},
+        "ward_pseudonyms": {},
+        "outcomes": {},
+        "outcome_sources": {},
+        "adjudications": {},
         "coverage": _empty_coverage(days),
     }
     try:
@@ -412,7 +475,8 @@ def collect_aggregates(days: int = 30, ward: Optional[str] = None) -> dict[str, 
                 args.append(ward)
             episodes = db.execute(
                 "SELECT COUNT(DISTINCT episode_id) AS n FROM shadow_events_current "
-                "WHERE occurred_at >= ? AND occurred_at < ?" + ward_clause, args
+                "WHERE occurred_at >= ? AND occurred_at < ?" + ward_clause,
+                args,
             ).fetchone()
             corrections = db.execute(
                 "SELECT COUNT(*) AS n FROM shadow_events "
@@ -446,8 +510,9 @@ def collect_aggregates(days: int = 30, ward: Optional[str] = None) -> dict[str, 
     outcomes: dict[str, int] = {}
     outcome_sources: dict[str, int] = {}
     for p in outcome_rows:
-        outcomes[str(p.get("event_type") or "unspecified")] = \
+        outcomes[str(p.get("event_type") or "unspecified")] = (
             outcomes.get(str(p.get("event_type") or "unspecified"), 0) + 1
+        )
         src = str(p.get("source") or "unspecified")
         outcome_sources[src] = outcome_sources.get(src, 0) + 1
 
@@ -470,8 +535,7 @@ def collect_aggregates(days: int = 30, ward: Optional[str] = None) -> dict[str, 
         "outcomes": outcomes,
         "outcome_sources": outcome_sources,
         "adjudications": adjudications,
-        "coverage": _coverage_from(none_rows, outcome_rows, by_ward_raw, days,
-                                   start, end),
+        "coverage": _coverage_from(none_rows, outcome_rows, by_ward_raw, days, start, end),
     }
 
 
@@ -487,9 +551,14 @@ def _empty_coverage(days: int) -> dict[str, Any]:
     }
 
 
-def _coverage_from(none_rows: list[dict], outcome_rows: list[dict],
-                   by_ward_raw: dict[str, int], days: int,
-                   start: str, end: str) -> dict[str, Any]:
+def _coverage_from(
+    none_rows: list[dict],
+    outcome_rows: list[dict],
+    by_ward_raw: dict[str, int],
+    days: int,
+    start: str,
+    end: str,
+) -> dict[str, Any]:
     """Ward-shift coverage: the thing everybody forgets.
 
     `outcome.none_confirmed` is what distinguishes "nothing happened on that
@@ -509,11 +578,13 @@ def _coverage_from(none_rows: list[dict], outcome_rows: list[dict],
         day = str(p.get("period_start") or "")[:10]
         if day and not (win_start <= day <= win_end):
             continue
-        covered.add((
-            str(p.get("ward") or p.get("_ward") or "unattributed"),
-            day,
-            str(p.get("shift") or "unspecified"),
-        ))
+        covered.add(
+            (
+                str(p.get("ward") or p.get("_ward") or "unattributed"),
+                day,
+                str(p.get("shift") or "unspecified"),
+            )
+        )
     # A recorded outcome also proves someone was looking at that ward that day,
     # but it cannot name the shift, so it covers the DAY, not a specific shift.
     outcome_days: set[tuple[str, str]] = set()
@@ -542,11 +613,33 @@ def _coverage_from(none_rows: list[dict], outcome_rows: list[dict],
 #: Exactly the fields of `ScorecardMetric` (src/api/scorecard.ts) that are
 #: aggregate by nature. Anything else a metric carries is dropped unread.
 _METRIC_FIELDS = (
-    "id", "label", "definition", "state", "value", "unit", "display",
-    "numerator", "denominator", "denominator_label", "alternative_denominators",
-    "n_observed", "n_required", "spread", "caveat", "blockers", "is_proxy",
-    "assumptions", "adjudication", "disagreements", "segments", "phase",
-    "misses", "sensitivity", "witnessed_only", "provisional", "provisional_reason",
+    "id",
+    "label",
+    "definition",
+    "state",
+    "value",
+    "unit",
+    "display",
+    "numerator",
+    "denominator",
+    "denominator_label",
+    "alternative_denominators",
+    "n_observed",
+    "n_required",
+    "spread",
+    "caveat",
+    "blockers",
+    "is_proxy",
+    "assumptions",
+    "adjudication",
+    "disagreements",
+    "segments",
+    "phase",
+    "misses",
+    "sensitivity",
+    "witnessed_only",
+    "provisional",
+    "provisional_reason",
 )
 # NOT whitelisted, deliberately: `detail`. The sibling package uses it as a
 # free-form bag (withheld values, working sets), and a free-form bag is exactly
@@ -583,6 +676,7 @@ def _orb_version() -> str:
         return v
     try:
         import main  # already resident; lazy to avoid an import cycle
+
         return str(getattr(main.app, "version", "") or "unknown")
     except Exception:
         return "unknown"
@@ -616,9 +710,9 @@ _EVIDENTIARY = (
 )
 
 
-def _evidentiary_status(verified: Optional[bool], claimed: Optional[bool],
-                        instrument_present: bool,
-                        instrument_warnings: Any) -> dict[str, Any]:
+def _evidentiary_status(
+    verified: bool | None, claimed: bool | None, instrument_present: bool, instrument_warnings: Any
+) -> dict[str, Any]:
     """Combine the export's own trigger check with the aggregation layer's.
 
     A `False` from EITHER source wins: two independent readings of the same
@@ -626,7 +720,7 @@ def _evidentiary_status(verified: Optional[bool], claimed: Optional[bool],
     is not protected is the one a reader must be shown.
     """
     if verified is False or claimed is False:
-        append_only: Optional[bool] = False
+        append_only: bool | None = False
     elif verified is True or claimed is True:
         append_only = True
     else:
@@ -642,13 +736,17 @@ def _evidentiary_status(verified: Optional[bool], claimed: Optional[bool],
         status, statement = "unverified", _UNVERIFIED
 
     if verified is not None:
-        verified_by = ("append-only triggers read from sqlite_master by the export itself, "
-                       "at export time")
+        verified_by = (
+            "append-only triggers read from sqlite_master by the export itself, at export time"
+        )
     elif claimed is not None:
-        verified_by = ("reported by the aggregation layer; the export could not re-read the "
-                       "triggers itself")
+        verified_by = (
+            "reported by the aggregation layer; the export could not re-read the triggers itself"
+        )
     else:
-        verified_by = "not checked, neither the export nor the aggregation layer could read the triggers"
+        verified_by = (
+            "not checked, neither the export nor the aggregation layer could read the triggers"
+        )
 
     warnings = [w for w in (instrument_warnings or []) if isinstance(w, str)][:20]
     return {
@@ -660,9 +758,11 @@ def _evidentiary_status(verified: Optional[bool], claimed: Optional[bool],
         "append_only_reported_by_aggregation_layer": claimed,
         "statement": statement,
         "instrument_warnings": warnings,
-        "note": ("This block is the export's statement about ITSELF and is deliberately not "
-                 "a constant: an artefact that always certifies its own integrity certifies "
-                 "nothing."),
+        "note": (
+            "This block is the export's statement about ITSELF and is deliberately not "
+            "a constant: an artefact that always certifies its own integrity certifies "
+            "nothing."
+        ),
     }
 
 
@@ -706,12 +806,12 @@ def _exact_small_counts(metrics: list[dict], denominators: dict) -> list[str]:
 # ══════════════════════════════════════════════════════════════════════════════
 def build_export(
     days: int = 30,
-    ward: Optional[str] = None,
+    ward: str | None = None,
     *,
-    scorecard: Optional[dict] = None,
-    instrument: Optional[dict] = None,
-    actor_role: Optional[str] = None,
-    aggregates: Optional[dict] = None,
+    scorecard: dict | None = None,
+    instrument: dict | None = None,
+    actor_role: str | None = None,
+    aggregates: dict | None = None,
 ) -> dict[str, Any]:
     """Assemble the de-identified aggregate export.
 
@@ -745,7 +845,7 @@ def build_export(
 
     metrics = _metric_list((scorecard or {}).get("metrics"))
 
-    denominators = {}
+    denominators: dict[str, Any] = {}
     for m in metrics:
         if m.get("denominator") is not None:
             denominators[str(m.get("id"))] = {
@@ -777,24 +877,27 @@ def build_export(
             "phase_label": (scorecard or {}).get("phase_label"),
             "metrics": metrics,
             "metrics_available": bool(metrics),
-            "note": None if metrics else
-                    "The aggregation layer did not supply metrics for this export. "
-                    "Instrument volume, coverage and provenance below are still exact.",
+            "note": None
+            if metrics
+            else "The aggregation layer did not supply metrics for this export. "
+            "Instrument volume, coverage and provenance below are still exact.",
         },
         "instrument": {
             "source": "shadow_events_current",
-            "schema_v": inst.get("schema_v", INSTRUMENT_SCHEMA_V if agg["instrument_present"] else None),
+            "schema_v": inst.get(
+                "schema_v", INSTRUMENT_SCHEMA_V if agg["instrument_present"] else None
+            ),
             "present": agg["instrument_present"],
             # The real, checked value — never a constant. See evidentiary_status.
             "append_only": evidentiary["append_only"],
             "append_only_enforced_by": (
                 "database triggers (trg_shadow_no_update, trg_shadow_no_delete), verified "
                 "present at export time"
-                if evidentiary["append_only"] is True else
-                "NOTHING: the append-only triggers (trg_shadow_no_update, "
+                if evidentiary["append_only"] is True
+                else "NOTHING: the append-only triggers (trg_shadow_no_update, "
                 "trg_shadow_no_delete) were absent when this export was produced"
-                if evidentiary["append_only"] is False else
-                "UNKNOWN: the append-only triggers could not be checked when this export "
+                if evidentiary["append_only"] is False
+                else "UNKNOWN: the append-only triggers could not be checked when this export "
                 "was produced"
             ),
             # Volume totals go through the same k as the breakdowns that sum to
@@ -811,7 +914,7 @@ def build_export(
         "coverage": agg["coverage"],
         "provenance": {
             "orb_version": _orb_version(),
-            "exported_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            "exported_at": datetime.now(UTC).isoformat(timespec="milliseconds"),
             "exported_by_role": actor_role or "unknown",
             "period": period,
             "ward_filter": "single ward (pseudonymised)" if ward else "all observed wards",
@@ -828,9 +931,10 @@ def build_export(
                 "adjudications_recorded": mask_count(sum(agg["adjudications"].values())),
             },
             "row_counts_note": (
-                f"Counts below k={k} are shown as \"<{k}\"; every other count here is exact."
+                f'Counts below k={k} are shown as "<{k}"; every other count here is exact.'
             ),
-            "denominators": denominators or {
+            "denominators": denominators
+            or {
                 "note": "No metric supplied a denominator; nothing in this export is a rate.",
             },
             "coverage": {
@@ -852,16 +956,26 @@ def build_export(
                     "instrument.events_total, instrument.episodes_total, instrument.corrections",
                 ],
                 "not_applied_to": [
-                    {"path": "scorecard.metrics[*].numerator / denominator / n_observed / disagreements",
-                     "why": "A rate whose denominator is masked cannot be checked by the reader, and masking it would make this document unfalsifiable rather than private."},
-                    {"path": "scorecard.metrics[*].caveat / assumptions / alternative_denominators / provisional_reason",
-                     "why": "Method notes restate the same counts in prose. They are not masked, so masking the numeric fields beside them would buy a claim of protection this export could not honour."},
-                    {"path": "provenance.denominators.*",
-                     "why": "Same reason: this block exists so a reader can reconstruct every denominator."},
-                    {"path": "coverage.* and provenance.coverage.*",
-                     "why": "Ward-shifts are periods of time, not individuals."},
-                    {"path": "instrument.dropped_events / error_events / lag_ms_*",
-                     "why": "Instrument-failure counters and latencies. Hiding them would hide the facts most likely to weaken a claim made from this document."},
+                    {
+                        "path": "scorecard.metrics[*].numerator / denominator / n_observed / disagreements",
+                        "why": "A rate whose denominator is masked cannot be checked by the reader, and masking it would make this document unfalsifiable rather than private.",
+                    },
+                    {
+                        "path": "scorecard.metrics[*].caveat / assumptions / alternative_denominators / provisional_reason",
+                        "why": "Method notes restate the same counts in prose. They are not masked, so masking the numeric fields beside them would buy a claim of protection this export could not honour.",
+                    },
+                    {
+                        "path": "provenance.denominators.*",
+                        "why": "Same reason: this block exists so a reader can reconstruct every denominator.",
+                    },
+                    {
+                        "path": "coverage.* and provenance.coverage.*",
+                        "why": "Ward-shifts are periods of time, not individuals.",
+                    },
+                    {
+                        "path": "instrument.dropped_events / error_events / lag_ms_*",
+                        "why": "Instrument-failure counters and latencies. Hiding them would hide the facts most likely to weaken a claim made from this document.",
+                    },
                 ],
                 # Computed, not asserted: does the k rule actually hold across
                 # the WHOLE document, or is it defeated by a field this export
@@ -871,9 +985,11 @@ def build_export(
                 "k_anonymity_note": (
                     f"This export publishes {len(exact_small)} field(s) holding an exact "
                     f"observation count below k={k} (named above), so a cell masked as "
-                    f"\"<{k}\" elsewhere in this document may be recoverable from them. The "
+                    f'"<{k}" elsewhere in this document may be recoverable from them. The '
                     "export states this rather than claiming a control it is not providing."
-                ) if exact_small else (
+                )
+                if exact_small
+                else (
                     f"No field in this export publishes an exact observation count below "
                     f"k={k}, so the masked cells are not recoverable from elsewhere in this "
                     "document."
@@ -886,7 +1002,9 @@ def build_export(
                     "The listed breakdowns have a single populated cell, so the masked "
                     "value equals the breakdown total and can be inferred. They are "
                     "masked for consistency, not for protection."
-                ) if degenerate else None,
+                )
+                if degenerate
+                else None,
             },
             "removed": deidentification_manifest(),
             "limits": [
@@ -894,11 +1012,14 @@ def build_export(
                 "Counts are suppressed below k and are therefore not additive; do not reconstruct totals from breakdowns.",
                 "Shadow-mode observations are not a randomised comparison and do not establish causation.",
                 "Uncovered ward-shifts are excluded from denominators, not counted as event-free.",
-                ("Small-cell suppression covers the breakdowns and row counts only. Metric "
-                 "denominators, observation counts and method notes are published exactly; "
-                 "see provenance.suppression.k_anonymity_achieved for whether that defeats "
-                 "the mask in this particular export."),
-            ] + ([] if evidentiary["evidentiary"] else [evidentiary["statement"]]),
+                (
+                    "Small-cell suppression covers the breakdowns and row counts only. Metric "
+                    "denominators, observation counts and method notes are published exactly; "
+                    "see provenance.suppression.k_anonymity_achieved for whether that defeats "
+                    "the mask in this particular export."
+                ),
+            ]
+            + ([] if evidentiary["evidentiary"] else [evidentiary["statement"]]),
         },
     }
 
@@ -972,5 +1093,5 @@ def _is_leaf(v: Any) -> bool:
 
 
 def filename(days: int, fmt: str) -> str:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     return f"orb-shadow-scorecard-{days}d-{stamp}.{fmt}"

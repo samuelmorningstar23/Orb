@@ -38,18 +38,19 @@ async, but ALL parsing and DB work goes through ``database.run_db`` onto the
 private DB pool. Nothing that can block runs on the loop (see the standing laws
 in the repo README).
 """
+
 from __future__ import annotations
 
 import json
 import logging
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-
 from database import run_db
 from db_backend import DBIntegrityError
-from permissions import require_permission, ADMIN_OVERVIEW
-from services import roster_import
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from permissions import ADMIN_OVERVIEW, require_permission
 from services.audit_service import log_audit_event
+
+from services import roster_import
 
 logger = logging.getLogger("orb.roster_import")
 
@@ -57,6 +58,7 @@ router = APIRouter(prefix="/api/admin/roster-import", tags=["roster-import"])
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
 
 async def _read_upload(file: UploadFile) -> bytes:
     """Read the upload with a hard size cap before anything else touches it."""
@@ -76,21 +78,32 @@ def _parse_mapping(mapping: str) -> dict[str, str]:
     try:
         parsed = json.loads(mapping or "{}")
     except json.JSONDecodeError as e:
-        raise HTTPException(status_code=422, detail=f"mapping must be valid JSON: {e}")
+        raise HTTPException(status_code=422, detail=f"mapping must be valid JSON: {e}") from e
     if not isinstance(parsed, dict):
-        raise HTTPException(status_code=422, detail="mapping must be a JSON object of {orb_field: csv_column}")
+        raise HTTPException(
+            status_code=422, detail="mapping must be a JSON object of {orb_field: csv_column}"
+        )
     out: dict[str, str] = {}
     for k, v in parsed.items():
         if v is None or v == "":
             continue
         if not isinstance(k, str) or not isinstance(v, str):
-            raise HTTPException(status_code=422, detail="mapping keys and values must both be strings")
+            raise HTTPException(
+                status_code=422, detail="mapping keys and values must both be strings"
+            )
         out[k] = v
     return out
 
 
-def _audit(request: Request, user: dict, action_type: str, outcome: str,
-           summary: str, metadata: dict, target_id: str | None = None) -> None:
+def _audit(
+    request: Request,
+    user: dict,
+    action_type: str,
+    outcome: str,
+    summary: str,
+    metadata: dict,
+    target_id: str | int | None = None,
+) -> None:
     log_audit_event(
         correlation_id=f"roster-import-{target_id or 'dryrun'}-{id(request):x}",
         event_category="data_management",
@@ -100,7 +113,7 @@ def _audit(request: Request, user: dict, action_type: str, outcome: str,
         actor_user_id=user.get("id"),
         actor_role=user.get("role"),
         target_type="roster_import",
-        target_id=target_id,
+        target_id=str(target_id) if target_id is not None else None,
         request_path=request.url.path,
         http_method=request.method,
         ip_address=request.client.host if request.client else None,
@@ -110,8 +123,12 @@ def _audit(request: Request, user: dict, action_type: str, outcome: str,
 
 # ── Field catalogue ──────────────────────────────────────────────────────────
 
+
+_GET_FIELDS_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+
+
 @router.get("/fields")
-def get_fields(user: dict = Depends(require_permission(ADMIN_OVERVIEW))):
+def get_fields(user: dict = _GET_FIELDS_USER_DEFAULT):
     """Target fields an import can populate, for the mapping UI."""
     return {
         "fields": roster_import.field_catalogue(),
@@ -124,12 +141,18 @@ def get_fields(user: dict = Depends(require_permission(ADMIN_OVERVIEW))):
 
 # ── Step 1: preview ──────────────────────────────────────────────────────────
 
+
+_PREVIEW_FILE_DEFAULT = File(...)
+_PREVIEW_HEADER_LINE_DEFAULT = Form(None)
+_PREVIEW_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+
+
 @router.post("/preview")
 async def preview(
     request: Request,
-    file: UploadFile = File(...),
-    header_line: int | None = Form(None),
-    user: dict = Depends(require_permission(ADMIN_OVERVIEW)),
+    file: UploadFile = _PREVIEW_FILE_DEFAULT,
+    header_line: int | None = _PREVIEW_HEADER_LINE_DEFAULT,
+    user: dict = _PREVIEW_USER_DEFAULT,
 ):
     """Sniff an uploaded roster: delimiter, headers, suggested mapping, samples.
 
@@ -144,23 +167,33 @@ async def preview(
     try:
         result = await run_db(roster_import.sniff, content, header_line=header_line)
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
     result["filename"] = file.filename
     return result
 
 
 # ── Step 2: dry run ──────────────────────────────────────────────────────────
 
+
+_DRY_RUN_FILE_DEFAULT = File(...)
+_DRY_RUN_MAPPING_DEFAULT = Form(...)
+_DRY_RUN_DATE_ORDER_DEFAULT = Form("auto")
+_DRY_RUN_UPDATE_EXISTING_DEFAULT = Form(True)
+_DRY_RUN_HEADER_LINE_DEFAULT = Form(None)
+_DRY_RUN_DEFAULT_DEPARTMENT_DEFAULT = Form(None)
+_DRY_RUN_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+
+
 @router.post("/dry-run")
 async def dry_run(
     request: Request,
-    file: UploadFile = File(...),
-    mapping: str = Form(...),
-    date_order: str = Form("auto"),
-    update_existing: bool = Form(True),
-    header_line: int | None = Form(None),
-    default_department: str | None = Form(None),
-    user: dict = Depends(require_permission(ADMIN_OVERVIEW)),
+    file: UploadFile = _DRY_RUN_FILE_DEFAULT,
+    mapping: str = _DRY_RUN_MAPPING_DEFAULT,
+    date_order: str = _DRY_RUN_DATE_ORDER_DEFAULT,
+    update_existing: bool = _DRY_RUN_UPDATE_EXISTING_DEFAULT,
+    header_line: int | None = _DRY_RUN_HEADER_LINE_DEFAULT,
+    default_department: str | None = _DRY_RUN_DEFAULT_DEPARTMENT_DEFAULT,
+    user: dict = _DRY_RUN_USER_DEFAULT,
 ):
     """Report exactly what an import WOULD create, update and skip. Writes nothing.
 
@@ -176,37 +209,61 @@ async def dry_run(
     parsed_mapping = _parse_mapping(mapping)
     try:
         result = await run_db(
-            roster_import.plan, content, parsed_mapping,
-            date_order=date_order, update_existing=update_existing,
-            header_line=header_line, default_department=default_department,
+            roster_import.plan,
+            content,
+            parsed_mapping,
+            date_order=date_order,
+            update_existing=update_existing,
+            header_line=header_line,
+            default_department=default_department,
         )
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
 
     result["applied"] = False
     result["filename"] = file.filename
-    _audit(request, user, "roster_import_dry_run", "success",
-           f"Roster import dry run over '{file.filename}': {result['counts']}",
-           {"filename": file.filename, "counts": result["counts"],
-            "mapping": parsed_mapping, "date_order": date_order,
+    _audit(
+        request,
+        user,
+        "roster_import_dry_run",
+        "success",
+        f"Roster import dry run over '{file.filename}': {result['counts']}",
+        {
+            "filename": file.filename,
+            "counts": result["counts"],
+            "mapping": parsed_mapping,
+            "date_order": date_order,
             "header_line": result.get("header_line"),
-            "default_department": default_department})
+            "default_department": default_department,
+        },
+    )
     return result
 
 
 # ── Step 3: commit ───────────────────────────────────────────────────────────
 
+
+_COMMIT_FILE_DEFAULT = File(...)
+_COMMIT_MAPPING_DEFAULT = Form(...)
+_COMMIT_DATE_ORDER_DEFAULT = Form("auto")
+_COMMIT_UPDATE_EXISTING_DEFAULT = Form(True)
+_COMMIT_NOTE_DEFAULT = Form(None)
+_COMMIT_HEADER_LINE_DEFAULT = Form(None)
+_COMMIT_DEFAULT_DEPARTMENT_DEFAULT = Form(None)
+_COMMIT_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+
+
 @router.post("/commit")
 async def commit(
     request: Request,
-    file: UploadFile = File(...),
-    mapping: str = Form(...),
-    date_order: str = Form("auto"),
-    update_existing: bool = Form(True),
-    note: str | None = Form(None),
-    header_line: int | None = Form(None),
-    default_department: str | None = Form(None),
-    user: dict = Depends(require_permission(ADMIN_OVERVIEW)),
+    file: UploadFile = _COMMIT_FILE_DEFAULT,
+    mapping: str = _COMMIT_MAPPING_DEFAULT,
+    date_order: str = _COMMIT_DATE_ORDER_DEFAULT,
+    update_existing: bool = _COMMIT_UPDATE_EXISTING_DEFAULT,
+    note: str | None = _COMMIT_NOTE_DEFAULT,
+    header_line: int | None = _COMMIT_HEADER_LINE_DEFAULT,
+    default_department: str | None = _COMMIT_DEFAULT_DEPARTMENT_DEFAULT,
+    user: dict = _COMMIT_USER_DEFAULT,
 ):
     """Apply the import. Idempotent: re-running the same file changes nothing.
 
@@ -223,13 +280,19 @@ async def commit(
     parsed_mapping = _parse_mapping(mapping)
     try:
         result = await run_db(
-            roster_import.apply_import, content, parsed_mapping,
-            actor_user_id=user["id"], source_filename=file.filename,
-            date_order=date_order, update_existing=update_existing, note=note,
-            header_line=header_line, default_department=default_department,
+            roster_import.apply_import,
+            content,
+            parsed_mapping,
+            actor_user_id=user["id"],
+            source_filename=file.filename,
+            date_order=date_order,
+            update_existing=update_existing,
+            note=note,
+            header_line=header_line,
+            default_department=default_department,
         )
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except DBIntegrityError as e:
         # The whole import is one transaction, so nothing was written. Report the
         # constraint rather than a bare 500 — it is almost always a duplicate MRN
@@ -238,29 +301,42 @@ async def commit(
         raise HTTPException(
             status_code=409,
             detail=f"Import rejected by a database constraint and NOTHING was written: {e}",
-        )
+        ) from e
 
-    _audit(request, user, "roster_import_committed", "success",
-           f"Roster import '{file.filename}' applied: {result['summary']} "
-           f"admissions={result['admissions']}",
-           {"filename": file.filename, "summary": result["summary"],
+    _audit(
+        request,
+        user,
+        "roster_import_committed",
+        "success",
+        f"Roster import '{file.filename}' applied: {result['summary']} "
+        f"admissions={result['admissions']}",
+        {
+            "filename": file.filename,
+            "summary": result["summary"],
             "admissions": result["admissions"],
-            "mapping": parsed_mapping, "date_order": date_order,
+            "mapping": parsed_mapping,
+            "date_order": date_order,
             "header_line": result.get("header_line"),
             "default_department": default_department,
             "created_patient_ids": result["created_patient_ids"],
             "updated_patient_ids": result["updated_patient_ids"],
-            "created_admission_ids": result["created_admission_ids"]},
-           target_id=result["run_id"])
+            "created_admission_ids": result["created_admission_ids"],
+        },
+        target_id=result["run_id"],
+    )
     return result
 
 
 # ── History ──────────────────────────────────────────────────────────────────
 
+
+_RUNS_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+
+
 @router.get("/runs")
 async def runs(
     limit: int = 50,
-    user: dict = Depends(require_permission(ADMIN_OVERVIEW)),
+    user: dict = _RUNS_USER_DEFAULT,
 ):
     """Applied-import history, newest first. Dry runs are not recorded here."""
     return {"runs": await run_db(roster_import.list_runs, limit)}

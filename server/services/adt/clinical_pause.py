@@ -47,17 +47,23 @@ return clears presence_status, so the patient is simply on the ward again.
 The obs-due clock then runs from the last set a person took, so a patient back
 from a long leave reads overdue until a set is taken on return.
 """
+
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from services.adt.core import parse_instant
 from services.adt.presence import presence_by_patient
 
 __all__ = [
-    "AWAY_STATUSES", "AWAY_WORDS", "away_by_patient", "away_for", "left_ward_at",
-    "observed_after_leaving", "pause_reason",
+    "AWAY_STATUSES",
+    "AWAY_WORDS",
+    "away_by_patient",
+    "away_for",
+    "left_ward_at",
+    "observed_after_leaving",
+    "pause_reason",
 ]
 
 #: The presences that mean the patient is not on the ward.
@@ -67,7 +73,7 @@ AWAY_STATUSES = ("on_leave", "absconded")
 AWAY_WORDS: dict[str, str] = {"on_leave": "on leave", "absconded": "absconded"}
 
 
-def away_by_patient(patient_ids: Any, *, db: Any = None) -> Optional[dict]:
+def away_by_patient(patient_ids: Any, *, db: Any = None) -> dict | None:
     """patient id -> {presence_status, presence_since} for the patients asked
     about who are recorded off the ward. Patients on the ward are left out.
 
@@ -80,12 +86,14 @@ def away_by_patient(patient_ids: Any, *, db: Any = None) -> Optional[dict]:
     for pid, here in presence.items():
         status = (here or {}).get("presence_status")
         if status in AWAY_STATUSES:
-            out[pid] = {"presence_status": status,
-                        "presence_since": (here or {}).get("presence_since")}
+            out[pid] = {
+                "presence_status": status,
+                "presence_since": (here or {}).get("presence_since"),
+            }
     return out
 
 
-def away_for(patient_id: Optional[str], *, db: Any = None) -> Optional[dict]:
+def away_for(patient_id: str | None, *, db: Any = None) -> dict | None:
     """{presence_status, presence_since} when this patient is recorded off the
     ward and the module is on; None otherwise."""
     if not patient_id:
@@ -94,13 +102,13 @@ def away_for(patient_id: Optional[str], *, db: Any = None) -> Optional[dict]:
     return (found or {}).get(patient_id)
 
 
-def left_ward_at(away: Optional[dict]) -> Optional[datetime]:
+def left_ward_at(away: dict | None) -> datetime | None:
     """When the patient was last on the ward, as an aware UTC datetime, or
     None when it is not recorded or cannot be read."""
     return parse_instant((away or {}).get("presence_since"))
 
 
-def observed_after_leaving(away: Optional[dict], observed_at: Any) -> bool:
+def observed_after_leaving(away: dict | None, observed_at: Any) -> bool:
     """True when a set observed at `observed_at` was taken after the patient
     left the ward, which makes it live (see the module docstring).
 
@@ -115,7 +123,7 @@ def observed_after_leaving(away: Optional[dict], observed_at: Any) -> bool:
     return left is None or when > left
 
 
-def pause_reason(away: Optional[dict], *, medication_round: bool = True) -> Optional[str]:
+def pause_reason(away: dict | None, *, medication_round: bool = True) -> str | None:
     """The sentence a board shows beside a paused patient, or None when the
     patient is on the ward. No time in it: a screen prints the time from
     presence_since in its own clock."""
@@ -123,5 +131,7 @@ def pause_reason(away: Optional[dict], *, medication_round: bool = True) -> Opti
         return None
     words = AWAY_WORDS.get(away.get("presence_status") or "", "off the ward")
     what = "Observations and doses are" if medication_round else "Observations are"
-    return (f"{what} paused while the patient is {words}. They restart when the "
-            "return to the ward is recorded.")
+    return (
+        f"{what} paused while the patient is {words}. They restart when the "
+        "return to the ward is recorded."
+    )

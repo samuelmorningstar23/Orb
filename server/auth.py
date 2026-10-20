@@ -1,16 +1,17 @@
 """Orb Hospital OS — JWT Authentication"""
-import jwt
+
 import hashlib
 import hmac
 import os
 import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Optional
-from fastapi import Request, Response, HTTPException, Depends
-from config import JWT_SECRET, JWT_ALGORITHM, JWT_EXPIRY_HOURS
-from database import get_db, db_session, run_db
+from datetime import UTC, datetime, timedelta
+
 import bcrypt
+import jwt
+from config import JWT_ALGORITHM, JWT_EXPIRY_HOURS, JWT_SECRET
+from database import db_session, run_db
+from fastapi import Depends, HTTPException, Request, Response
 
 # ── Cookie-based session (Deferred A) ─────────────────────────────────────────
 # The JWT can be delivered EITHER as an `Authorization: Bearer` header (machine
@@ -92,8 +93,11 @@ def cookie_secure(request: Request) -> bool:
 
 
 def set_session_cookies(
-    response: Response, request: Request, token: str, csrf: str,
-    max_age: Optional[int] = None,
+    response: Response,
+    request: Request,
+    token: str,
+    csrf: str,
+    max_age: int | None = None,
 ) -> None:
     """Set the session + CSRF cookies.
 
@@ -108,14 +112,24 @@ def set_session_cookies(
         max_age = JWT_EXPIRY_HOURS * 3600
     # HttpOnly session (JS cannot read it) — the actual credential.
     response.set_cookie(
-        SESSION_COOKIE, token, max_age=max_age, httponly=True,
-        secure=secure, samesite="lax", path="/",
+        SESSION_COOKIE,
+        token,
+        max_age=max_age,
+        httponly=True,
+        secure=secure,
+        samesite="lax",
+        path="/",
     )
     # CSRF token — deliberately readable by JS so the SPA can echo it back in the
     # X-CSRF-Token header (double-submit). It is NOT a credential on its own.
     response.set_cookie(
-        CSRF_COOKIE, csrf, max_age=max_age, httponly=False,
-        secure=secure, samesite="lax", path="/",
+        CSRF_COOKIE,
+        csrf,
+        max_age=max_age,
+        httponly=False,
+        secure=secure,
+        samesite="lax",
+        path="/",
     )
 
 
@@ -140,7 +154,7 @@ def request_has_bearer(request: Request) -> bool:
     return auth.lower().startswith("bearer ")
 
 
-def _extract_token(request: Request) -> tuple[Optional[str], str]:
+def _extract_token(request: Request) -> tuple[str | None, str]:
     """Pull the JWT from the Authorization header (preferred) or the session
     cookie. Returns (token, source) where source is 'header' | 'cookie' | 'none'."""
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
@@ -154,22 +168,22 @@ def _extract_token(request: Request) -> tuple[Optional[str], str]:
 
 def hash_password(password: str) -> str:
     """Hash password using salted bcrypt."""
-    pwd_bytes = password.encode('utf-8')
+    pwd_bytes = password.encode("utf-8")
     salt = bcrypt.gensalt()
     hashed = bcrypt.hashpw(pwd_bytes, salt)
-    return hashed.decode('utf-8')
+    return hashed.decode("utf-8")
 
 
 def verify_password(password: str, hashed: str) -> bool:
     """Verify password against hashed. Supports legacy SHA-256 and bcrypt hashes."""
-    if not hashed.startswith('$2'):
+    if not hashed.startswith("$2"):
         # Fallback to legacy SHA-256 hash. Use a constant-time comparison so the
         # legacy path does not leak hash length/prefix via short-circuit timing.
         legacy_hash = hashlib.sha256(password.encode()).hexdigest()
         return hmac.compare_digest(legacy_hash, hashed)
 
     try:
-        return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
+        return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
     except Exception:
         return False
 
@@ -223,7 +237,7 @@ def count_legacy_password_hashes() -> int:
 _DUMMY_BCRYPT_HASH = bcrypt.hashpw(b"orb-timing-equalizer-not-a-real-password", bcrypt.gensalt())
 
 
-def verify_password_ct(password: str, hashed: Optional[str]) -> bool:
+def verify_password_ct(password: str, hashed: str | None) -> bool:
     """Constant-work password check that does NOT reveal whether the account exists.
 
     The plain login path used to read `not user or not verify_password(...)`,
@@ -244,15 +258,14 @@ def verify_password_ct(password: str, hashed: Optional[str]) -> bool:
         # result is discarded — an unknown user can never authenticate — but the
         # work makes the timing indistinguishable from a real wrong-password.
         try:
-            bcrypt.checkpw(password.encode('utf-8'), _DUMMY_BCRYPT_HASH)
+            bcrypt.checkpw(password.encode("utf-8"), _DUMMY_BCRYPT_HASH)
         except Exception:
             pass
         return False
     return verify_password(password, hashed)
 
 
-
-def verify_device_pin_ct(pin: Optional[str], hashed: Optional[str]) -> bool:
+def verify_device_pin_ct(pin: str | None, hashed: str | None) -> bool:
     """Constant-work PIN check that reveals NOTHING about the account.
 
     A 4-6 digit PIN is trivially guessable, so the online path is rate-limited —
@@ -289,6 +302,7 @@ def verify_device_pin_ct(pin: Optional[str], hashed: Optional[str]) -> bool:
 
 # ── Device credential helpers ────────────────────────────────────────────────
 
+
 def generate_device_secret() -> str:
     """A 256-bit random device credential, shown to the administrator once."""
     return secrets.token_urlsafe(32)
@@ -308,7 +322,7 @@ def hash_device_secret(secret: str) -> str:
     return hashlib.sha256((secret or "").encode("utf-8")).hexdigest()
 
 
-def extract_device_token(request: Request) -> Optional[str]:
+def extract_device_token(request: Request) -> str | None:
     """The tablet's device credential: HttpOnly cookie first, header as fallback.
 
     The cookie is the steady state (set by /api/auth/device/bind). The header is
@@ -328,8 +342,13 @@ def extract_device_token(request: Request) -> Optional[str]:
 
 def set_device_cookie(response: Response, request: Request, secret: str) -> None:
     response.set_cookie(
-        DEVICE_COOKIE, secret, max_age=DEVICE_COOKIE_MAX_AGE, httponly=True,
-        secure=cookie_secure(request), samesite="lax", path="/",
+        DEVICE_COOKIE,
+        secret,
+        max_age=DEVICE_COOKIE_MAX_AGE,
+        httponly=True,
+        secure=cookie_secure(request),
+        samesite="lax",
+        path="/",
     )
 
 
@@ -364,11 +383,11 @@ def load_active_device(secret: str):
 def create_token(
     user_id: str,
     role: str,
-    token_version: Optional[int] = None,
+    token_version: int | None = None,
     *,
-    device_id: Optional[str] = None,
-    auth_method: Optional[str] = None,
-    expires_in_minutes: Optional[int] = None,
+    device_id: str | None = None,
+    auth_method: str | None = None,
+    expires_in_minutes: int | None = None,
 ) -> str:
     # Include a unique jti so tokens are individually identifiable, plus the
     # user's token_version so all outstanding sessions can be revoked at once by
@@ -380,11 +399,9 @@ def create_token(
         # Read the current version so the freshly minted token is valid. Callers
         # that already hold the users row should pass it to avoid this query.
         with db_session() as db:
-            row = db.execute(
-                "SELECT token_version FROM users WHERE id = ?", (user_id,)
-            ).fetchone()
-        token_version = (row["token_version"] if row and row["token_version"] is not None else 0)
-    now = datetime.now(timezone.utc)
+            row = db.execute("SELECT token_version FROM users WHERE id = ?", (user_id,)).fetchone()
+        token_version = row["token_version"] if row and row["token_version"] is not None else 0
+    now = datetime.now(UTC)
     lifetime = (
         timedelta(minutes=expires_in_minutes)
         if expires_in_minutes is not None
@@ -417,12 +434,12 @@ def decode_token(token: str) -> dict:
             raise jwt.InvalidTokenError("Unsupported critical header")
         return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
+        raise HTTPException(status_code=401, detail="Token expired") from None
     except (jwt.InvalidTokenError, TypeError, ValueError, RecursionError, OverflowError):
         raise HTTPException(status_code=401, detail="Invalid token") from None
 
 
-def _load_session_context(user_id: str, device_id: Optional[str]):
+def _load_session_context(user_id: str, device_id: str | None):
     """Blocking read of the authoritative users row, plus the enrolled-device row
     when the session is bound to a tablet. Always call via run_db().
 
@@ -451,8 +468,7 @@ def _load_session_context(user_id: str, device_id: Optional[str]):
         if device_id:
             try:
                 device = db.execute(
-                    "SELECT id, label, department, revoked_at FROM enrolled_devices "
-                    "WHERE id = ?",
+                    "SELECT id, label, department, revoked_at FROM enrolled_devices WHERE id = ?",
                     (device_id,),
                 ).fetchone()
             except Exception:
@@ -462,6 +478,7 @@ def _load_session_context(user_id: str, device_id: Optional[str]):
         portal = None
         if row is not None and row["role"] == "patient":
             from services.patient_portal_access import portal_access
+
             portal = portal_access(db, row["id"])
         return row, device, portal
 
@@ -564,8 +581,12 @@ def require_role(*roles: str):
     get_current_user, which is the authoritative DB row (not the JWT payload),
     so a stale token role cannot widen access here.
     """
-    async def checker(user: dict = Depends(get_current_user)):
+
+    _CHECKER_USER_DEFAULT = Depends(get_current_user)
+
+    async def checker(user: dict = _CHECKER_USER_DEFAULT):
         if user.get("role") not in roles:
             raise HTTPException(status_code=403, detail="Insufficient permissions")
         return user
+
     return checker

@@ -64,6 +64,7 @@ UTC spelling from services/clinical_time), and an index is created only when
 its table has every column it names, so an unusual table of the same name
 cannot stop boot.
 """
+
 from migrations import Migration
 
 INSTRUMENTS_DDL = """CREATE TABLE IF NOT EXISTS lab_instruments (
@@ -124,17 +125,33 @@ TABLE_NAMES = ("lab_instruments", "lab_instrument_test_map")
 # (index name, table, column expressions, the bare columns they need,
 #  WHERE clause or "", unique)
 _INDEXES = (
-    ("idx_lab_instruments_section", "lab_instruments", ("section_id",),
-     ("section_id",), "", False),
-    ("idx_lab_instrument_test_map_test", "lab_instrument_test_map", ("test_id",),
-     ("test_id",), "", False),
+    ("idx_lab_instruments_section", "lab_instruments", ("section_id",), ("section_id",), "", False),
+    (
+        "idx_lab_instrument_test_map_test",
+        "lab_instrument_test_map",
+        ("test_id",),
+        ("test_id",),
+        "",
+        False,
+    ),
     # One live code per test on one analyser.
-    ("ux_lab_instrument_test_map_live_test", "lab_instrument_test_map",
-     ("instrument_id", "test_id"), ("instrument_id", "test_id", "active"), "active = 1", True),
+    (
+        "ux_lab_instrument_test_map_live_test",
+        "lab_instrument_test_map",
+        ("instrument_id", "test_id"),
+        ("instrument_id", "test_id", "active"),
+        "active = 1",
+        True,
+    ),
     # 'HB' and 'Hb' are never two mappings on one analyser.
-    ("ux_lab_instrument_test_map_code_nocase", "lab_instrument_test_map",
-     ("instrument_id", "instrument_code COLLATE NOCASE"),
-     ("instrument_id", "instrument_code"), "", True),
+    (
+        "ux_lab_instrument_test_map_code_nocase",
+        "lab_instrument_test_map",
+        ("instrument_id", "instrument_code COLLATE NOCASE"),
+        ("instrument_id", "instrument_code"),
+        "",
+        True,
+    ),
 )
 
 

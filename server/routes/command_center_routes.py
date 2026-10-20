@@ -7,9 +7,9 @@ downtime-readiness. Read-only aggregation over existing services.
 Gated on `forecast.read` (clinicians + admin have it) — the same operational
 read permission that guards the Forecast pillar.
 """
-from fastapi import APIRouter, Depends, Request
 
 from database import db_session
+from fastapi import APIRouter, Depends, Request
 from permissions import (
     FORECAST_READ,
     department_scope,
@@ -17,16 +17,20 @@ from permissions import (
     require_permission,
     scope_patient_ids_sql,
 )
+
 from services import command_center_service
 
 router = APIRouter(prefix="/api/command-center", tags=["Command Center"])
+
+
+_GET_HOUSE_SNAPSHOT_USER_DEFAULT = Depends(require_permission(FORECAST_READ))
 
 
 @router.get("")
 @router.get("/")
 def get_house_snapshot(
     request: Request,
-    user=Depends(require_permission(FORECAST_READ)),
+    user=_GET_HOUSE_SNAPSHOT_USER_DEFAULT,
 ):
     """Return the command-center snapshot.
 
@@ -58,9 +62,7 @@ def get_house_snapshot(
             sql, params = scope_patient_ids_sql(dept)
             with db_session() as db:
                 in_scope = {r["id"] for r in db.execute(sql, params).fetchall()}
-            snapshot["deteriorations"] = [
-                r for r in rows if r.get("patient_id") in in_scope
-            ]
+            snapshot["deteriorations"] = [r for r in rows if r.get("patient_id") in in_scope]
         # State the boundary in the payload rather than leaving the reader to
         # infer from a short list that the hospital is quiet.
         snapshot["deteriorations_scope"] = dept

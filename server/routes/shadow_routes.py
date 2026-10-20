@@ -82,6 +82,7 @@ package exists to prevent.
    the REAL scorecard, with no fake service, because a stub on the far side of
    the seam is what let the mismatch ship.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -89,19 +90,23 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, time as dt_time, timedelta, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime, timedelta
+from datetime import time as dt_time
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
+from permissions import (
+    ADMIN_OVERVIEW,
+    OUTCOME_RECORD,
+    enforce_patient_scope,
+    require_permission,
+)
 from pydantic import BaseModel, Field
+from services.audit_service import AuditWriteError, log_audit_event
 
-from permissions import (require_permission, enforce_patient_scope,
-                         ADMIN_OVERVIEW, OUTCOME_RECORD)
-from services import shadow_service
-from services import shadow_verdicts
 from services import shadow_export_service as exporter
-from services.audit_service import log_audit_event, AuditWriteError
+from services import shadow_service, shadow_verdicts
 
 logger = logging.getLogger("orb.shadow.routes")
 
@@ -137,6 +142,7 @@ _HEALTH_FNS = ("instrument_health", "health", "instrument_status")
 def _service() -> Any:
     try:
         from services import shadow_scorecard_service  # noqa: WPS433 (deliberate)
+
         return shadow_scorecard_service
     except ImportError:
         return None
@@ -199,7 +205,10 @@ def _days(days: int) -> int:
 #: Mirrors the outcome vocabulary the lead-time metric joins on. A free-text
 #: event type would make the metric uncountable, so it is closed here.
 OUTCOME_EVENT_TYPES = (
-    "icu_transfer", "rapid_response_call", "code_blue", "death",
+    "icu_transfer",
+    "rapid_response_call",
+    "code_blue",
+    "death",
     "unplanned_escalation_of_care",
 )
 #: `witnessed` is the conservative source. `chart_review` is systematically
@@ -237,13 +246,13 @@ SHIFTS = ("morning", "evening", "night", "day", "unspecified")
 class OutcomeIn(BaseModel):
     patient_id: str = Field(min_length=1, max_length=64)
     event_type: str
-    occurred_at: Optional[str] = None
+    occurred_at: str | None = None
     source: str = "witnessed"
-    recognised_by: Optional[str] = Field(default=None, max_length=64)
-    confirmed_by_role: Optional[str] = Field(default=None, max_length=32)
+    recognised_by: str | None = Field(default=None, max_length=64)
+    confirmed_by_role: str | None = Field(default=None, max_length=32)
     #: The recorder's own words. Stored in `phi_json`, never in the payload the
     #: export reads — see `shadow_service.record_outcome`.
-    note: Optional[str] = Field(default=None, max_length=1000)
+    note: str | None = Field(default=None, max_length=1000)
 
 
 class NoOutcomeIn(BaseModel):
@@ -257,8 +266,8 @@ class AdjudicationIn(BaseModel):
     episode_id: str = Field(min_length=1, max_length=64)
     verdict: str
     blinded: bool = True
-    review_seconds: Optional[int] = Field(default=None, ge=0, le=86400)
-    adjudicator_role: Optional[str] = Field(default=None, max_length=32)
+    review_seconds: int | None = Field(default=None, ge=0, le=86400)
+    adjudicator_role: str | None = Field(default=None, max_length=32)
 
 
 def _choice(value: str, allowed: tuple[str, ...], field: str) -> str:
@@ -302,10 +311,14 @@ def _verdict(value: str) -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 #  READ
 # ══════════════════════════════════════════════════════════════════════════════
+_GET_SCORECARD_DAYS_DEFAULT = Query(30, ge=1, le=365)
+_GET_SCORECARD_WARD_DEFAULT = Query(None, max_length=64)
+
+
 @router.get("/scorecard")
 def get_scorecard(
-    days: int = Query(30, ge=1, le=365),
-    ward: Optional[str] = Query(None, max_length=64),
+    days: int = _GET_SCORECARD_DAYS_DEFAULT,
+    ward: str | None = _GET_SCORECARD_WARD_DEFAULT,
     user: dict = _ADMIN,
 ):
     """The four metrics, the instrument's own health, and the export descriptor.
@@ -329,16 +342,19 @@ def get_scorecard(
         # replaced with what the export code ACTUALLY does: the manifest shown
         # to the reader must be the one `shadow_export_service` enforces, not a
         # second copy that can drift away from it silently.
-        desc.update({
-            "available": desc.get("available", True),
-            "formats": list(exporter.FORMATS),
-            "deidentification": exporter.deidentification_manifest(),
-            "note": desc.get("note") or (
-                f"Aggregate only, de-identified, small-cell suppressed at "
-                f"k={exporter.small_cell_k()} with complementary suppression. "
-                "Every export is audited."
-            ),
-        })
+        desc.update(
+            {
+                "available": desc.get("available", True),
+                "formats": list(exporter.FORMATS),
+                "deidentification": exporter.deidentification_manifest(),
+                "note": desc.get("note")
+                or (
+                    f"Aggregate only, de-identified, small-cell suppressed at "
+                    f"k={exporter.small_cell_k()} with complementary suppression. "
+                    "Every export is audited."
+                ),
+            }
+        )
 
     health = _resolve(_HEALTH_FNS)
     if health is not None:
@@ -370,9 +386,11 @@ def _attach_stats(card: dict) -> None:
         inst = {}
         card["instrument"] = inst
     stats = dict(shadow_service.STATS)
-    dropped = (stats.get("dropped_error", 0)
-               + stats.get("dropped_backpressure", 0)
-               + stats.get("dropped_invalid", 0))
+    dropped = (
+        stats.get("dropped_error", 0)
+        + stats.get("dropped_backpressure", 0)
+        + stats.get("dropped_invalid", 0)
+    )
     inst["process_stats"] = stats
     inst.setdefault("dropped_events", dropped)
     inst.setdefault("error_events", stats.get("dropped_error", 0))
@@ -385,13 +403,20 @@ def _attach_stats(card: dict) -> None:
         )
 
 
+_LIST_EPISODES_DAYS_DEFAULT = Query(30, ge=1, le=365)
+_LIST_EPISODES_WARD_DEFAULT = Query(None, max_length=64)
+_LIST_EPISODES_STATUS_DEFAULT = Query("pending", pattern="^(pending|adjudicated|all)$")
+_LIST_EPISODES_LIMIT_DEFAULT = Query(50, ge=1, le=500)
+_LIST_EPISODES_OFFSET_DEFAULT = Query(0, ge=0)
+
+
 @router.get("/episodes")
 def list_episodes(
-    days: int = Query(30, ge=1, le=365),
-    ward: Optional[str] = Query(None, max_length=64),
-    status: str = Query("pending", pattern="^(pending|adjudicated|all)$"),
-    limit: int = Query(50, ge=1, le=500),
-    offset: int = Query(0, ge=0),
+    days: int = _LIST_EPISODES_DAYS_DEFAULT,
+    ward: str | None = _LIST_EPISODES_WARD_DEFAULT,
+    status: str = _LIST_EPISODES_STATUS_DEFAULT,
+    limit: int = _LIST_EPISODES_LIMIT_DEFAULT,
+    offset: int = _LIST_EPISODES_OFFSET_DEFAULT,
     user: dict = _ADMIN,
 ):
     """The adjudication queue — **BLINDED**.
@@ -416,9 +441,15 @@ def list_episodes(
     # `status` is passed too and harmlessly dropped if it does not take it. The
     # complementary filter (already adjudicated) has no server-side flag, so it
     # is applied here on the verdict the row carries.
-    rows = _call(fn, days=_days(days), ward=ward, status=status,
-                 only_unadjudicated=(status == "pending"),
-                 limit=limit, offset=offset)
+    rows = _call(
+        fn,
+        days=_days(days),
+        ward=ward,
+        status=status,
+        only_unadjudicated=(status == "pending"),
+        limit=limit,
+        offset=offset,
+    )
 
     items = rows.get("episodes") if isinstance(rows, dict) else rows
     if not isinstance(items, list):
@@ -436,8 +467,8 @@ def list_episodes(
         "blinding_note": (
             "Orb's level, score, drivers and draft are withheld until a verdict is "
             "recorded. Adjudicate from the clinical record, not from this row."
-            if blinded else
-            "Already adjudicated: Orb's assessment is shown for comparison."
+            if blinded
+            else "Already adjudicated: Orb's assessment is shown for comparison."
         ),
         "status": status,
         "count": len(projected),
@@ -449,8 +480,11 @@ def list_episodes(
         # the UI cannot offer a verdict the scorecard would discard.
         "verdicts": list(ADJUDICATION_VERDICTS),
         "verdict_meanings": [
-            {"verdict": v, "label": shadow_verdicts.VERDICT_LABEL[v],
-             "counts_as": shadow_verdicts.VERDICT_CLASS[v]}
+            {
+                "verdict": v,
+                "label": shadow_verdicts.VERDICT_LABEL[v],
+                "counts_as": shadow_verdicts.VERDICT_CLASS[v],
+            }
             for v in ADJUDICATION_VERDICTS
         ],
     }
@@ -473,9 +507,20 @@ def list_episodes(
 #: would not be blinding, it would be preventing adjudication. This endpoint is
 #: admin-only and is not the export.
 _BLIND_KEEP = (
-    "episode_id", "patient_id", "ward", "phase", "lane",
-    "opened_at", "last_at", "closed_at", "closed", "duration_min",
-    "events_n", "alerts", "alerts_n", "sage_drafts",
+    "episode_id",
+    "patient_id",
+    "ward",
+    "phase",
+    "lane",
+    "opened_at",
+    "last_at",
+    "closed_at",
+    "closed",
+    "duration_min",
+    "events_n",
+    "alerts",
+    "alerts_n",
+    "sage_drafts",
 )
 
 
@@ -531,8 +576,11 @@ def post_outcome(body: OutcomeIn, request: Request, user: dict = _RECORDER):
     """
     event_type = _choice(body.event_type, OUTCOME_EVENT_TYPES, "event_type")
     source = _choice(body.source, OUTCOME_SOURCES, "source")
-    recognised_by = (_choice(body.recognised_by, OUTCOME_RECOGNITION, "recognised_by")
-                     if body.recognised_by else None)
+    recognised_by = (
+        _choice(body.recognised_by, OUTCOME_RECOGNITION, "recognised_by")
+        if body.recognised_by
+        else None
+    )
     occurred_at = _event_time(body.occurred_at)
 
     # SCOPING LAW — the patient is named in the BODY (2026-08-14).
@@ -569,18 +617,31 @@ def post_outcome(body: OutcomeIn, request: Request, user: dict = _RECORDER):
             status_code=503,
             detail="The outcome was NOT recorded (shadow instrument unavailable or disabled). Do not treat it as logged.",
         )
-    _audit_entry(request, user, "shadow_outcome_recorded",
-                 f"Ground-truth outcome {event_type} recorded (source={source})",
-                 patient_id=body.patient_id,
-                 metadata={"event_type": event_type, "source": source,
-                           "recognised_by": recognised_by, "backdated": occurred_at is not None,
-                           "shadow_event_id": row_id})
+    _audit_entry(
+        request,
+        user,
+        "shadow_outcome_recorded",
+        f"Ground-truth outcome {event_type} recorded (source={source})",
+        patient_id=body.patient_id,
+        metadata={
+            "event_type": event_type,
+            "source": source,
+            "recognised_by": recognised_by,
+            "backdated": occurred_at is not None,
+            "shadow_event_id": row_id,
+        },
+    )
     return {
-        "recorded": True, "shadow_event_id": row_id,
-        "event_type": event_type, "source": source, "recognised_by": recognised_by,
+        "recorded": True,
+        "shadow_event_id": row_id,
+        "event_type": event_type,
+        "source": source,
+        "recognised_by": recognised_by,
         "occurred_at": occurred_at,
-        "note": ("Recorded as ground truth. `witnessed` is the conservative source; "
-                 "`chart_review` is biased late and is reported separately because it inflates lead time."),
+        "note": (
+            "Recorded as ground truth. `witnessed` is the conservative source; "
+            "`chart_review` is biased late and is reported separately because it inflates lead time."
+        ),
     }
 
 
@@ -621,20 +682,39 @@ def post_no_outcome(body: NoOutcomeIn, request: Request, user: dict = _RECORDER)
         # recently confirmed. The shift itself is fully described by the
         # payload, which is what coverage is keyed on.
         row_id = shadow_service.emit(
-            "outcome.none_confirmed", episode_id, "manual",
+            "outcome.none_confirmed",
+            episode_id,
+            "manual",
             ward=ward,
             actor_user_id=user.get("id"),
             actor_role=user.get("role"),
-            payload={"ward": ward, "period_start": body.period_start,
-                     "period_end": body.period_end, "shift": shift},
+            payload={
+                "ward": ward,
+                "period_start": body.period_start,
+                "period_end": body.period_end,
+                "shift": shift,
+            },
         )
         if row_id is not None:
-            _audit_entry(request, user, "shadow_shift_confirmed",
-                         f"No-deterioration confirmation for {ward} {shift}",
-                         metadata={"ward": ward, "shift": shift,
-                                   "period_start": body.period_start, "shadow_event_id": row_id})
-            return {"recorded": True, "shadow_event_id": row_id,
-                    "episode_id": episode_id, "ward": ward, "shift": shift}
+            _audit_entry(
+                request,
+                user,
+                "shadow_shift_confirmed",
+                f"No-deterioration confirmation for {ward} {shift}",
+                metadata={
+                    "ward": ward,
+                    "shift": shift,
+                    "period_start": body.period_start,
+                    "shadow_event_id": row_id,
+                },
+            )
+            return {
+                "recorded": True,
+                "shadow_event_id": row_id,
+                "episode_id": episode_id,
+                "ward": ward,
+                "shift": shift,
+            }
         # The emit was refused. Two very different states share that return
         # value: the instrument is down (the nurse must be told, loudly), or a
         # concurrent resubmission just won the race on idx_shadow_once (the
@@ -646,17 +726,23 @@ def post_no_outcome(body: NoOutcomeIn, request: Request, user: dict = _RECORDER)
                 status_code=503,
                 detail="The shift confirmation was NOT recorded (shadow instrument unavailable or disabled). This ward-shift will count as uncovered time.",
             )
-    return JSONResponse(status_code=200, content={
-        "recorded": False, "already_confirmed": True,
-        "episode_id": episode_id, "ward": ward, "shift": shift,
-        "shadow_event_id": existing.get("id"),
-        "confirmed_at": existing.get("occurred_at"),
-        "confirmed_by_role": existing.get("actor_role"),
-        "note": "This ward-shift was already confirmed; the original confirmation stands and nothing was written.",
-    })
+    return JSONResponse(
+        status_code=200,
+        content={
+            "recorded": False,
+            "already_confirmed": True,
+            "episode_id": episode_id,
+            "ward": ward,
+            "shift": shift,
+            "shadow_event_id": existing.get("id"),
+            "confirmed_at": existing.get("occurred_at"),
+            "confirmed_by_role": existing.get("actor_role"),
+            "note": "This ward-shift was already confirmed; the original confirmation stands and nothing was written.",
+        },
+    )
 
 
-def _existing_confirmation(episode_id: str) -> Optional[dict]:
+def _existing_confirmation(episode_id: str) -> dict | None:
     """The current (unsuperseded) confirmation row for a coverage episode.
 
     Read failures return None rather than raising: recording must never be
@@ -666,6 +752,7 @@ def _existing_confirmation(episode_id: str) -> Optional[dict]:
     """
     try:
         from database import db_session
+
         with db_session() as db:
             row = db.execute(
                 "SELECT id, occurred_at, actor_role FROM shadow_events_current "
@@ -679,7 +766,7 @@ def _existing_confirmation(episode_id: str) -> Optional[dict]:
         return None
 
 
-def _event_time(raw: Optional[str]) -> Optional[str]:
+def _event_time(raw: str | None) -> str | None:
     """Validate an edited event time. None means "now" (the service's default).
 
     Two failure modes this closes, both of which silently destroy a row rather
@@ -706,25 +793,29 @@ def _event_time(raw: Optional[str]) -> Optional[str]:
         raise HTTPException(
             status_code=422,
             detail=f"occurred_at must be an ISO-8601 timestamp (got {raw!r})",
-        )
+        ) from None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    now = datetime.now(timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
+    now = datetime.now(UTC)
     if parsed > now + timedelta(minutes=MAX_FUTURE_MINUTES):
         raise HTTPException(
             status_code=422,
-            detail=("The event time is in the future. It would fall outside every "
-                    "reporting window and the event would count for nothing."),
+            detail=(
+                "The event time is in the future. It would fall outside every "
+                "reporting window and the event would count for nothing."
+            ),
         )
     if parsed < now - timedelta(hours=MAX_BACKDATE_HOURS):
         raise HTTPException(
             status_code=422,
-            detail=(f"The event time is more than {MAX_BACKDATE_HOURS} hours ago. Record it "
-                    "with source=chart_review through an administrator if it is genuinely "
-                    "that old. A date this far back is usually a typo, and it would not "
-                    "match the episode it belongs to."),
+            detail=(
+                f"The event time is more than {MAX_BACKDATE_HOURS} hours ago. Record it "
+                "with source=chart_review through an administrator if it is genuinely "
+                "that old. A date this far back is usually a typo, and it would not "
+                "match the episode it belongs to."
+            ),
         )
-    return parsed.astimezone(timezone.utc).isoformat(timespec="milliseconds")
+    return parsed.astimezone(UTC).isoformat(timespec="milliseconds")
 
 
 def _coverage_episode_id(ward: str, period_start: str, shift: str) -> str:
@@ -732,6 +823,7 @@ def _coverage_episode_id(ward: str, period_start: str, shift: str) -> str:
     retried confirmation must land on the SAME episode, or the coverage
     numerator counts submissions instead of shifts."""
     import hashlib
+
     key = f"{ward}|{str(period_start)[:10]}|{shift}".lower()
     return "cov_" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
 
@@ -805,6 +897,7 @@ def _windows_around(now: datetime) -> list[dict]:
     `_ward_shift_windows`; the two must produce identical period strings.
     """
     from services.hospital_time import hospital_timezone
+
     tz = hospital_timezone()
     local_now = now.astimezone(tz)
     shifts = _shift_definitions()
@@ -813,7 +906,7 @@ def _windows_around(now: datetime) -> list[dict]:
         day = (local_now + timedelta(days=day_offset)).date()
         for start_time, length in shifts:
             local_start = datetime.combine(day, start_time, tzinfo=tz)
-            start = local_start.astimezone(timezone.utc)
+            start = local_start.astimezone(UTC)
             end = start + timedelta(hours=length)
             candidates.append({"start": start, "end": end, "shift": _shift_label(local_start)})
     candidates.sort(key=lambda w: w["start"])
@@ -829,9 +922,12 @@ def _windows_around(now: datetime) -> list[dict]:
     return [w for w in (previous, window) if w is not None]
 
 
+_GET_SHIFT_STATUS_WARD_DEFAULT = Query(default=[])
+
+
 @router.get("/outcome/shift-status")
 def get_shift_status(
-    ward: list[str] = Query(default=[]),
+    ward: list[str] = _GET_SHIFT_STATUS_WARD_DEFAULT,
     user: dict = _RECORDER,
 ):
     """What this ward-shift still owes the pilot: the read half of the nurse's
@@ -855,21 +951,25 @@ def get_shift_status(
         if name and name not in wards:
             wards.append(name)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     windows = _windows_around(now)
     oldest = min(w["start"] for w in windows)
 
     rows: list[dict] = []
     try:
         from database import db_session
+
         with db_session() as db:
-            rows = [dict(r) for r in db.execute(
-                "SELECT kind, ward, occurred_at, payload_json, actor_role "
-                "FROM shadow_events_current "
-                "WHERE kind IN ('outcome.none_confirmed', 'outcome.recorded') "
-                "  AND occurred_at >= ? ORDER BY id",
-                (_iso(oldest - timedelta(hours=12)),),
-            ).fetchall()]
+            rows = [
+                dict(r)
+                for r in db.execute(
+                    "SELECT kind, ward, occurred_at, payload_json, actor_role "
+                    "FROM shadow_events_current "
+                    "WHERE kind IN ('outcome.none_confirmed', 'outcome.recorded') "
+                    "  AND occurred_at >= ? ORDER BY id",
+                    (_iso(oldest - timedelta(hours=12)),),
+                ).fetchall()
+            ]
     except Exception:
         # Fail SOFT on the read: a nurse must still be able to record. The
         # response says the status is unknown rather than claiming "confirmed",
@@ -879,8 +979,10 @@ def get_shift_status(
             "generated_at": _iso(now),
             "status_available": False,
             "shifts": [_window_body(w, wards, [], unknown=True) for w in windows],
-            "note": ("The confirmation history could not be read. Recording still works: "
-                     "confirm the shift anyway; a duplicate confirmation is deduplicated."),
+            "note": (
+                "The confirmation history could not be read. Recording still works: "
+                "confirm the shift anyway; a duplicate confirmation is deduplicated."
+            ),
             "event_types": list(OUTCOME_EVENT_TYPES),
             "sources": list(OUTCOME_SOURCES),
             "recognition": list(OUTCOME_RECOGNITION),
@@ -899,19 +1001,23 @@ def get_shift_status(
         "status_available": True,
         "shifts": [_window_body(w, wards, parsed) for w in windows],
         "shift_definition": ", ".join(
-            f"{s.strftime('%H:%M')}+{h:g}h" for s, h in _shift_definitions()),
+            f"{s.strftime('%H:%M')}+{h:g}h" for s, h in _shift_definitions()
+        ),
         "max_backdate_hours": MAX_BACKDATE_HOURS,
         "event_types": list(OUTCOME_EVENT_TYPES),
         "sources": list(OUTCOME_SOURCES),
         "recognition": list(OUTCOME_RECOGNITION),
-        "why": ("A ward-shift with neither a recorded event nor a no-events confirmation is "
-                "excluded from every denominator in the pilot and reported as uncovered "
-                "time. Silence is not evidence that nothing happened."),
+        "why": (
+            "A ward-shift with neither a recorded event nor a no-events confirmation is "
+            "excluded from every denominator in the pilot and reported as uncovered "
+            "time. Silence is not evidence that nothing happened."
+        ),
     }
 
 
-def _window_body(window: dict, wards: list[str], rows: list[dict],
-                 *, unknown: bool = False) -> dict:
+def _window_body(
+    window: dict, wards: list[str], rows: list[dict], *, unknown: bool = False
+) -> dict:
     start, end = window["start"], window["end"]
     body = {
         "shift": window["shift"],
@@ -920,7 +1026,7 @@ def _window_body(window: dict, wards: list[str], rows: list[dict],
         # Hospital time, not the server process's zone (UTC on an appliance
         # that was never told otherwise).
         "label": f"{_hospital_clock(start)}–{_hospital_clock(end)}",
-        "is_current": start <= datetime.now(timezone.utc) < end,
+        "is_current": start <= datetime.now(UTC) < end,
         "wards": [],
     }
     for ward in wards:
@@ -943,39 +1049,48 @@ def _window_body(window: dict, wards: list[str], rows: list[dict],
                     when = _parse_iso(row.get("occurred_at"))
                     if when is not None and start <= when < end:
                         events += 1
-        body["wards"].append({
-            "ward": ward,
-            "confirmed": confirmed_at is not None,
-            "confirmed_at": confirmed_at,
-            # Role only, never a name: the capture screen says "already
-            # confirmed by the charge nurse at 06:55", and a name here would
-            # put staff identity on every poll of a recorder-scoped endpoint.
-            "confirmed_by_role": confirmed_by,
-            "events_recorded": events,
-            "status": ("unknown" if unknown else
-                       "confirmed" if confirmed_at else
-                       "events_recorded" if events else "outstanding"),
-        })
+        body["wards"].append(
+            {
+                "ward": ward,
+                "confirmed": confirmed_at is not None,
+                "confirmed_at": confirmed_at,
+                # Role only, never a name: the capture screen says "already
+                # confirmed by the charge nurse at 06:55", and a name here would
+                # put staff identity on every poll of a recorder-scoped endpoint.
+                "confirmed_by_role": confirmed_by,
+                "events_recorded": events,
+                "status": (
+                    "unknown"
+                    if unknown
+                    else "confirmed"
+                    if confirmed_at
+                    else "events_recorded"
+                    if events
+                    else "outstanding"
+                ),
+            }
+        )
     return body
 
 
 def _iso(when: datetime) -> str:
-    return when.astimezone(timezone.utc).isoformat(timespec="milliseconds")
+    return when.astimezone(UTC).isoformat(timespec="milliseconds")
 
 
 def _hospital_clock(when: datetime) -> str:
     from services.hospital_time import hospital_timezone
+
     return when.astimezone(hospital_timezone()).strftime("%H:%M")
 
 
-def _parse_iso(raw: Optional[str]) -> Optional[datetime]:
+def _parse_iso(raw: str | None) -> datetime | None:
     if not raw:
         return None
     try:
         parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
     except ValueError:
         return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 @router.post("/adjudication", status_code=201)
@@ -1008,26 +1123,44 @@ def post_adjudication(body: AdjudicationIn, request: Request, user: dict = _ADMI
             detail="The adjudication was NOT recorded (shadow instrument unavailable or disabled). Do not treat it as logged.",
         )
     submitted = (body.verdict or "").strip()
-    _audit_entry(request, user, "shadow_adjudication_recorded",
-                 f"Adjudication {verdict} recorded",
-                 metadata={"verdict": verdict, "verdict_as_submitted": submitted,
-                           "blinded": bool(body.blinded), "shadow_event_id": row_id})
+    _audit_entry(
+        request,
+        user,
+        "shadow_adjudication_recorded",
+        f"Adjudication {verdict} recorded",
+        metadata={
+            "verdict": verdict,
+            "verdict_as_submitted": submitted,
+            "blinded": bool(body.blinded),
+            "shadow_event_id": row_id,
+        },
+    )
     return {
-        "recorded": True, "shadow_event_id": row_id, "verdict": verdict,
+        "recorded": True,
+        "shadow_event_id": row_id,
+        "verdict": verdict,
         # Stated back when it differs, so an integration posting a historical
         # spelling is told what was actually written rather than assuming.
         "verdict_as_submitted": (submitted if submitted.lower() != verdict else None),
         "verdict_label": shadow_verdicts.label(verdict),
         "counts_as": shadow_verdicts.classify(verdict),
         "blinded": bool(body.blinded),
-        "note": ("artefact and indeterminate verdicts are excluded from the false-alert "
-                 "rate and reported separately."),
+        "note": (
+            "artefact and indeterminate verdicts are excluded from the false-alert "
+            "rate and reported separately."
+        ),
     }
 
 
-def _audit_entry(request: Request, user: dict, action: str, summary: str,
-                 *, patient_id: Optional[str] = None,
-                 metadata: Optional[dict] = None) -> None:
+def _audit_entry(
+    request: Request,
+    user: dict,
+    action: str,
+    summary: str,
+    *,
+    patient_id: str | None = None,
+    metadata: dict | None = None,
+) -> None:
     """Audit a human entry. Fail-SOFT (`governance` category).
 
     The row it accompanies is already durably written in `shadow_events`, which
@@ -1059,12 +1192,17 @@ def _audit_entry(request: Request, user: dict, action: str, summary: str,
 # ══════════════════════════════════════════════════════════════════════════════
 #  EXPORT — audited FAIL-CLOSED
 # ══════════════════════════════════════════════════════════════════════════════
+_EXPORT_SCORECARD_DAYS_DEFAULT = Query(30, ge=1, le=365)
+_EXPORT_SCORECARD_WARD_DEFAULT = Query(None, max_length=64)
+_EXPORT_SCORECARD_FORMAT_DEFAULT = Query("json", pattern="^(json|csv)$")
+
+
 @router.get("/export/scorecard")
 def export_scorecard(
     request: Request,
-    days: int = Query(30, ge=1, le=365),
-    ward: Optional[str] = Query(None, max_length=64),
-    format: str = Query("json", pattern="^(json|csv)$"),
+    days: int = _EXPORT_SCORECARD_DAYS_DEFAULT,
+    ward: str | None = _EXPORT_SCORECARD_WARD_DEFAULT,
+    format: str = _EXPORT_SCORECARD_FORMAT_DEFAULT,
     user: dict = _ADMIN,
 ):
     """De-identified aggregate export, with a mandatory provenance block.
@@ -1081,7 +1219,7 @@ def export_scorecard(
     """
     days = _days(days)
 
-    card: Optional[dict] = None
+    card: dict | None = None
     fn = _resolve(_SCORECARD_FNS)
     if fn is not None:
         try:
@@ -1090,7 +1228,7 @@ def export_scorecard(
         except Exception:
             logger.warning("shadow export: scorecard computation failed", exc_info=True)
 
-    health: Optional[dict] = None
+    health: dict | None = None
     hfn = _resolve(_HEALTH_FNS)
     if hfn is not None:
         try:
@@ -1100,7 +1238,11 @@ def export_scorecard(
             logger.warning("shadow export: instrument_health failed", exc_info=True)
 
     payload = exporter.build_export(
-        days, ward, scorecard=card, instrument=health, actor_role=user.get("role"),
+        days,
+        ward,
+        scorecard=card,
+        instrument=health,
+        actor_role=user.get("role"),
     )
     prov = payload.get("provenance", {})
     if not prov or "integrity" not in prov or "removed" not in prov:
@@ -1110,7 +1252,7 @@ def export_scorecard(
     try:
         log_audit_event(
             correlation_id=str(uuid.uuid4()),
-            event_category="phi_access",           # fail-closed category
+            event_category="phi_access",  # fail-closed category
             action_type="shadow_scorecard_export",
             outcome="success",
             summary_message=(
@@ -1126,7 +1268,9 @@ def export_scorecard(
             ip_address=request.client.host if request.client else None,
             user_agent=request.headers.get("user-agent"),
             metadata={
-                "format": format, "days": days, "ward_filtered": bool(ward),
+                "format": format,
+                "days": days,
+                "ward_filtered": bool(ward),
                 "deidentified": True,
                 "suppression_k": prov["suppression"]["k"],
                 "cells_suppressed": prov["suppression"]["cells_suppressed"],
@@ -1139,12 +1283,14 @@ def export_scorecard(
         raise HTTPException(
             status_code=503,
             detail="Export refused: the disclosure could not be audited, and an unaudited export must not leave the appliance.",
-        )
+        ) from e
 
     if format == "csv":
         return PlainTextResponse(
             exporter.to_csv(payload),
             media_type="text/csv; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{exporter.filename(days, "csv")}"'},
+            headers={
+                "Content-Disposition": f'attachment; filename="{exporter.filename(days, "csv")}"'
+            },
         )
     return payload

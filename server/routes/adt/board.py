@@ -22,15 +22,14 @@ the caller may not see is 404, never 403.
 
 Every handler is a plain def (FastAPI threadpools it).
 """
+
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-
 from permissions import ADT_READ, require_permission
-from services import bed_master_service as bm
 from services.audit_service import AuditWriteError
+
+from services import bed_master_service as bm
 
 router = APIRouter()
 
@@ -49,41 +48,58 @@ def _run(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
     except bm.BedMasterError as err:
-        raise HTTPException(status_code=err.http_status,
-                            detail={"error": err.code, "message": str(err), **err.detail})
+        raise HTTPException(
+            status_code=err.http_status,
+            detail={"error": err.code, "message": str(err), **err.detail},
+        ) from err
     except AuditWriteError:
-        raise HTTPException(status_code=503, detail={
-            "error": "audit_unavailable",
-            "message": "The record of who viewed these patients could not be written, so the "
-                       "list is not shown. Try again in a moment.",
-        })
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "audit_unavailable",
+                "message": "The record of who viewed these patients could not be written, so the "
+                "list is not shown. Try again in a moment.",
+            },
+        ) from None
+
+
+_GET_BOARD_WARD_ID_DEFAULT = Query(None)
+_GET_BOARD_USER_DEFAULT = Depends(require_permission(ADT_READ))
 
 
 @router.get("/board")
 def get_board(
     request: Request,
-    ward_id: Optional[str] = Query(None),
-    user: dict = Depends(require_permission(ADT_READ)),
+    ward_id: str | None = _GET_BOARD_WARD_ID_DEFAULT,
+    user: dict = _GET_BOARD_USER_DEFAULT,
 ):
     """The bed board for the caller's wards, or one of them."""
     return _run(bm.bed_board, actor=user, ward_id=ward_id or None, request_meta=_meta(request))
 
 
+_GET_AWAITING_BED_WARD_ID_DEFAULT = Query(None)
+_GET_AWAITING_BED_USER_DEFAULT = Depends(require_permission(ADT_READ))
+
+
 @router.get("/awaiting-bed")
 def get_awaiting_bed(
     request: Request,
-    ward_id: Optional[str] = Query(None),
-    user: dict = Depends(require_permission(ADT_READ)),
+    ward_id: str | None = _GET_AWAITING_BED_WARD_ID_DEFAULT,
+    user: dict = _GET_AWAITING_BED_USER_DEFAULT,
 ):
     """Admissions in the caller's scope awaiting a bed, and those whose typed
     bed is not linked to bed setup, as two separate lists."""
     return _run(bm.awaiting_bed, actor=user, ward_id=ward_id or None, request_meta=_meta(request))
 
 
+_GET_AVAILABLE_BEDS_WARD_ID_DEFAULT = Query(None)
+_GET_AVAILABLE_BEDS_USER_DEFAULT = Depends(require_permission(ADT_READ))
+
+
 @router.get("/beds/available")
 def get_available_beds(
-    ward_id: Optional[str] = Query(None),
-    user: dict = Depends(require_permission(ADT_READ)),
+    ward_id: str | None = _GET_AVAILABLE_BEDS_WARD_ID_DEFAULT,
+    user: dict = _GET_AVAILABLE_BEDS_USER_DEFAULT,
 ):
     """Beds free now, and beds waiting for or under a clean, for a picker."""
     return _run(bm.available_beds, actor=user, ward_id=ward_id or None)

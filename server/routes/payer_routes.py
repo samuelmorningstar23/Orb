@@ -24,21 +24,20 @@ THREE THINGS THIS FILE IS CAREFUL ABOUT
    (ORB_PAYER=0) does not have an insurance desk; a 403 would say "you are not
    allowed", which is a different and wrong statement.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Optional
-
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
 
 import config
+from fastapi import APIRouter, Depends, HTTPException, Query
 from permissions import (
     PAYER_READ,
     PAYER_WRITE,
     enforce_patient_scope,
     require_permission,
 )
+from pydantic import BaseModel, Field
 from services.audit_service import log_audit_event
 from services.payer_service import (
     AGING_BUCKETS,
@@ -83,6 +82,7 @@ router = APIRouter(prefix="/api/payer", tags=["payer"])
 
 
 # ── The module switch ────────────────────────────────────────────────────────
+
 
 def require_module() -> None:
     """404 the whole desk when a deployment has hidden this module.
@@ -129,9 +129,9 @@ def _audit(
     *,
     outcome: str = "success",
     summary: str,
-    target_id: Optional[str] = None,
-    patient_id: Optional[str] = None,
-    metadata: Optional[dict] = None,
+    target_id: str | int | None = None,
+    patient_id: str | None = None,
+    metadata: dict | None = None,
     category: str = "financial_administration",
 ) -> None:
     """One audit line per desk action.
@@ -169,13 +169,16 @@ def _handle(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
     except IllegalTransition as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (ClaimError, PayerError) as exc:
         message = str(exc)
-        if "not found" in message or message.startswith("unknown patient") \
-                or message.startswith("unknown payer"):
-            raise HTTPException(status_code=404, detail=message)
-        raise HTTPException(status_code=400, detail=message)
+        if (
+            "not found" in message
+            or message.startswith("unknown patient")
+            or message.startswith("unknown payer")
+        ):
+            raise HTTPException(status_code=404, detail=message) from exc
+        raise HTTPException(status_code=400, detail=message) from exc
 
 
 def _wrap(payload: dict) -> dict:
@@ -195,23 +198,24 @@ def _wrap(payload: dict) -> dict:
 #  Request bodies
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class PayerIn(BaseModel):
     code: str
     name: str
     payer_type: str = "tpa"
-    tariff_plan_id: Optional[int] = None
-    gstin: Optional[str] = None
-    state_code: Optional[str] = None
-    address: Optional[str] = None
-    contact_name: Optional[str] = None
-    contact_phone: Optional[str] = None
-    contact_email: Optional[str] = None
-    claim_submission_mode: Optional[str] = None
-    portal_url: Optional[str] = None
-    credit_days: Optional[int] = None
+    tariff_plan_id: int | None = None
+    gstin: str | None = None
+    state_code: str | None = None
+    address: str | None = None
+    contact_name: str | None = None
+    contact_phone: str | None = None
+    contact_email: str | None = None
+    claim_submission_mode: str | None = None
+    portal_url: str | None = None
+    credit_days: int | None = None
     preauth_required: bool = False
     is_active: bool = True
-    notes: Optional[str] = None
+    notes: str | None = None
     #: Removing an existing tariff link has to be asked for; a missing or null
     #: tariff_plan_id never removes it (payer_service.upsert_payer).
     clear_tariff_plan: bool = False
@@ -220,18 +224,18 @@ class PayerIn(BaseModel):
 class PolicyIn(BaseModel):
     patient_id: str
     payer_code: str
-    admission_id: Optional[str] = None
-    policy_number: Optional[str] = None
-    member_id: Optional[str] = None
-    scheme_beneficiary_id: Optional[str] = None
-    subscriber_name: Optional[str] = None
-    relationship_to_subscriber: Optional[str] = None
-    valid_from: Optional[str] = None
-    valid_to: Optional[str] = None
+    admission_id: str | None = None
+    policy_number: str | None = None
+    member_id: str | None = None
+    scheme_beneficiary_id: str | None = None
+    subscriber_name: str | None = None
+    relationship_to_subscriber: str | None = None
+    valid_from: str | None = None
+    valid_to: str | None = None
     # None means NOT KNOWN and is stored as such. It is NOT zero cover.
-    sum_insured_paise: Optional[int] = None
+    sum_insured_paise: int | None = None
     copay_percent_bp: int = 0
-    preauth_required: Optional[bool] = None
+    preauth_required: bool | None = None
     is_primary: bool = True
 
 
@@ -242,15 +246,15 @@ class PolicyStatusIn(BaseModel):
 class ClaimIn(BaseModel):
     patient_id: str
     claim_type: str = "cashless"
-    payer_code: Optional[str] = None
-    policy_id: Optional[int] = None
-    admission_id: Optional[str] = None
-    invoice_id: Optional[int] = None
-    claimed_paise: Optional[int] = None
-    package_code: Optional[str] = None
-    notes: Optional[str] = None
+    payer_code: str | None = None
+    policy_id: int | None = None
+    admission_id: str | None = None
+    invoice_id: int | None = None
+    claimed_paise: int | None = None
+    package_code: str | None = None
+    notes: str | None = None
     #: The same key again returns the claim it opened instead of a second one.
-    idempotency_key: Optional[str] = None
+    idempotency_key: str | None = None
 
 
 class ClaimedAmountIn(BaseModel):
@@ -259,63 +263,64 @@ class ClaimedAmountIn(BaseModel):
 
 class PreauthIn(BaseModel):
     requested_paise: int
-    reference: Optional[str] = None
-    remark: Optional[str] = None
-    occurred_at: Optional[str] = None
+    reference: str | None = None
+    remark: str | None = None
+    occurred_at: str | None = None
 
 
 class PreauthDecisionIn(BaseModel):
     decision: str = Field(description="approved | partially_approved | denied")
-    approved_paise: Optional[int] = None
-    reference: Optional[str] = None
-    denial_code: Optional[str] = None
-    denial_reason: Optional[str] = None
-    remark: Optional[str] = None
-    occurred_at: Optional[str] = None
+    approved_paise: int | None = None
+    reference: str | None = None
+    denial_code: str | None = None
+    denial_reason: str | None = None
+    remark: str | None = None
+    occurred_at: str | None = None
 
 
 class SubmissionIn(BaseModel):
     """Recording a submission the desk made ELSEWHERE. Orb sends nothing."""
-    claimed_paise: Optional[int] = None
-    external_ref: Optional[str] = None
-    submitted_at: Optional[str] = None
-    remark: Optional[str] = None
+
+    claimed_paise: int | None = None
+    external_ref: str | None = None
+    submitted_at: str | None = None
+    remark: str | None = None
 
 
 class QueryIn(BaseModel):
     query_text: str
     answered: bool = False
-    document_ref: Optional[str] = None
-    occurred_at: Optional[str] = None
+    document_ref: str | None = None
+    occurred_at: str | None = None
 
 
 class DecisionIn(BaseModel):
     decision: str = Field(description="approved | partially_approved | denied")
-    approved_paise: Optional[int] = None
+    approved_paise: int | None = None
     tds_paise: int = 0
-    denial_code: Optional[str] = None
-    denial_reason: Optional[str] = None
-    external_ref: Optional[str] = None
-    remark: Optional[str] = None
-    occurred_at: Optional[str] = None
+    denial_code: str | None = None
+    denial_reason: str | None = None
+    external_ref: str | None = None
+    remark: str | None = None
+    occurred_at: str | None = None
 
 
 class SettlementIn(BaseModel):
     settled_paise: int
-    tds_paise: Optional[int] = None
-    utr_reference: Optional[str] = None
-    remark: Optional[str] = None
-    occurred_at: Optional[str] = None
+    tds_paise: int | None = None
+    utr_reference: str | None = None
+    remark: str | None = None
+    occurred_at: str | None = None
 
 
 class AppealIn(BaseModel):
     grounds: str
-    document_ref: Optional[str] = None
-    occurred_at: Optional[str] = None
+    document_ref: str | None = None
+    occurred_at: str | None = None
 
 
 class ReasonIn(BaseModel):
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 class NoteIn(BaseModel):
@@ -326,23 +331,36 @@ class NoteIn(BaseModel):
 #  Reference / meta
 # ══════════════════════════════════════════════════════════════════════════════
 
+
+_META_USER_DEFAULT = Depends(_DESK_READ)
+_META_M_DEFAULT = Depends(require_module)
+
+
 @router.get("/meta")
-def meta(user: dict = Depends(_DESK_READ), _m: None = Depends(require_module)) -> dict:
+def meta(user: dict = _META_USER_DEFAULT, _m: None = _META_M_DEFAULT) -> dict:
     """Everything the panel needs to render its forms without hard-coding a
     vocabulary that could drift from the server's."""
-    return _wrap({
-        "payer_types": sorted(PAYER_TYPES),
-        "claim_types": sorted(CLAIM_TYPES),
-        "claim_statuses": list(CLAIM_STATUSES),
-        "legal_transitions": {k: sorted(v) for k, v in LEGAL_TRANSITIONS.items()},
-        "aging_buckets": [b[0] for b in AGING_BUCKETS],
-        "denial_reason_codes": [{"code": c, "label": l} for c, l in DENIAL_REASON_CODES],
-        "denial_codes_are_local": True,
-    })
+    return _wrap(
+        {
+            "payer_types": sorted(PAYER_TYPES),
+            "claim_types": sorted(CLAIM_TYPES),
+            "claim_statuses": list(CLAIM_STATUSES),
+            "legal_transitions": {k: sorted(v) for k, v in LEGAL_TRANSITIONS.items()},
+            "aging_buckets": [b[0] for b in AGING_BUCKETS],
+            "denial_reason_codes": [
+                {"code": c, "label": left_item} for c, left_item in DENIAL_REASON_CODES
+            ],
+            "denial_codes_are_local": True,
+        }
+    )
+
+
+_SUMMARY_USER_DEFAULT = Depends(_DESK_READ)
+_SUMMARY_M_DEFAULT = Depends(require_module)
 
 
 @router.get("/summary")
-def summary(user: dict = Depends(_DESK_READ), _m: None = Depends(require_module)) -> dict:
+def summary(user: dict = _SUMMARY_USER_DEFAULT, _m: None = _SUMMARY_M_DEFAULT) -> dict:
     return _wrap(desk_summary())
 
 
@@ -350,34 +368,46 @@ def summary(user: dict = Depends(_DESK_READ), _m: None = Depends(require_module)
 #  Payer master
 # ══════════════════════════════════════════════════════════════════════════════
 
+
+_PAYERS_USER_DEFAULT = Depends(_DESK_READ)
+_PAYERS_M_DEFAULT = Depends(require_module)
+
+
 @router.get("/payers")
 def payers(
     active_only: bool = True,
-    payer_type: Optional[str] = None,
+    payer_type: str | None = None,
     include_self_pay: bool = True,
-    user: dict = Depends(_DESK_READ),
-    _m: None = Depends(require_module),
+    user: dict = _PAYERS_USER_DEFAULT,
+    _m: None = _PAYERS_M_DEFAULT,
 ) -> dict:
-    return _wrap({
-        "payers": list_payers(
-            active_only=active_only,
-            payer_type=payer_type,
-            include_self_pay=include_self_pay,
-        ),
-    })
+    return _wrap(
+        {
+            "payers": list_payers(
+                active_only=active_only,
+                payer_type=payer_type,
+                include_self_pay=include_self_pay,
+            ),
+        }
+    )
+
+
+_SAVE_PAYER_USER_DEFAULT = Depends(_DESK_WRITE)
+_SAVE_PAYER_M_DEFAULT = Depends(require_module)
 
 
 @router.post("/payers")
 def save_payer(
     body: PayerIn,
-    user: dict = Depends(_DESK_WRITE),
-    _m: None = Depends(require_module),
+    user: dict = _SAVE_PAYER_USER_DEFAULT,
+    _m: None = _SAVE_PAYER_M_DEFAULT,
 ) -> dict:
     # Only the fields the client sent: a payer update is partial, so a form that
     # does not show a column cannot overwrite it with a default.
     row = _handle(upsert_payer, **body.model_dump(exclude_unset=True))
     _audit(
-        user, "payer_saved",
+        user,
+        "payer_saved",
         summary=f"Payer {row['code']} ({row['payer_type']}) saved",
         target_id=str(row["id"]),
         metadata={"code": row["code"], "payer_type": row["payer_type"]},
@@ -389,13 +419,18 @@ def save_payer(
 #  Patient policies — the capture path the admission form does not have
 # ══════════════════════════════════════════════════════════════════════════════
 
+
+_POLICIES_USER_DEFAULT = Depends(_DESK_READ)
+_POLICIES_M_DEFAULT = Depends(require_module)
+
+
 @router.get("/policies")
 def policies(
-    patient_id: Optional[str] = None,
-    admission_id: Optional[str] = None,
+    patient_id: str | None = None,
+    admission_id: str | None = None,
     active_only: bool = False,
-    user: dict = Depends(_DESK_READ),
-    _m: None = Depends(require_module),
+    user: dict = _POLICIES_USER_DEFAULT,
+    _m: None = _POLICIES_M_DEFAULT,
 ) -> dict:
     # PHI SCOPE (2026-08-12). patient_id arrives on the QUERY STRING, so
     # require_patient_access — which resolves it from the PATH — cannot guard
@@ -404,14 +439,13 @@ def policies(
     # disclosure as a chart read. 404, never 403: a 403 confirms the patient
     # exists. Plain `def` route, so FastAPI threadpools this blocking check.
     enforce_patient_scope(user, patient_id)
-    rows = list_policies(
-        patient_id=patient_id, admission_id=admission_id, active_only=active_only
-    )
+    rows = list_policies(patient_id=patient_id, admission_id=admission_id, active_only=active_only)
     if patient_id:
         # Fail-closed: a named patient's insurance file is PHI, and a read that
         # cannot be audited is a read that does not happen.
         _audit(
-            user, "policies_read",
+            user,
+            "policies_read",
             category="phi_access",
             summary=f"Insurance policies read for {patient_id}",
             patient_id=patient_id,
@@ -420,11 +454,15 @@ def policies(
     return _wrap({"policies": rows})
 
 
+_SAVE_POLICY_USER_DEFAULT = Depends(_DESK_WRITE)
+_SAVE_POLICY_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/policies")
 def save_policy(
     body: PolicyIn,
-    user: dict = Depends(_DESK_WRITE),
-    _m: None = Depends(require_module),
+    user: dict = _SAVE_POLICY_USER_DEFAULT,
+    _m: None = _SAVE_POLICY_M_DEFAULT,
 ) -> dict:
     """Capture a patient's cover.
 
@@ -440,7 +478,8 @@ def save_policy(
     enforce_patient_scope(user, body.patient_id)
     row = _handle(capture_policy, created_by=user.get("id"), **body.model_dump())
     _audit(
-        user, "policy_captured",
+        user,
+        "policy_captured",
         category="phi_access",
         summary=(
             f"Insurance policy captured for {body.patient_id}: "
@@ -456,15 +495,20 @@ def save_policy(
     return _wrap({"policy": row})
 
 
+_DO_VERIFY_POLICY_USER_DEFAULT = Depends(_DESK_WRITE)
+_DO_VERIFY_POLICY_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/policies/{policy_id}/verify")
 def do_verify_policy(
     policy_id: int,
-    user: dict = Depends(_DESK_WRITE),
-    _m: None = Depends(require_module),
+    user: dict = _DO_VERIFY_POLICY_USER_DEFAULT,
+    _m: None = _DO_VERIFY_POLICY_M_DEFAULT,
 ) -> dict:
     row = _handle(verify_policy, policy_id=policy_id, verified_by=user.get("id") or "unknown")
     _audit(
-        user, "policy_verified",
+        user,
+        "policy_verified",
         summary=f"Policy #{policy_id} marked verified with the payer (outside Orb)",
         patient_id=row.get("patient_id"),
         target_id=str(policy_id),
@@ -472,16 +516,21 @@ def do_verify_policy(
     return _wrap({"policy": row})
 
 
+_DO_POLICY_STATUS_USER_DEFAULT = Depends(_DESK_WRITE)
+_DO_POLICY_STATUS_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/policies/{policy_id}/status")
 def do_policy_status(
     policy_id: int,
     body: PolicyStatusIn,
-    user: dict = Depends(_DESK_WRITE),
-    _m: None = Depends(require_module),
+    user: dict = _DO_POLICY_STATUS_USER_DEFAULT,
+    _m: None = _DO_POLICY_STATUS_M_DEFAULT,
 ) -> dict:
     row = _handle(set_policy_status, policy_id=policy_id, status=body.status)
     _audit(
-        user, "policy_status",
+        user,
+        "policy_status",
         summary=f"Policy #{policy_id} set to {body.status}",
         patient_id=row.get("patient_id"),
         target_id=str(policy_id),
@@ -494,17 +543,23 @@ def do_policy_status(
 #  Claims
 # ══════════════════════════════════════════════════════════════════════════════
 
+
+_CLAIMS_LIMIT_DEFAULT = Query(200, ge=1, le=1000)
+_CLAIMS_USER_DEFAULT = Depends(_DESK_READ)
+_CLAIMS_M_DEFAULT = Depends(require_module)
+
+
 @router.get("/claims")
 def claims(
-    status: Optional[str] = None,
-    payer_code: Optional[str] = None,
-    patient_id: Optional[str] = None,
-    claim_type: Optional[str] = None,
+    status: str | None = None,
+    payer_code: str | None = None,
+    patient_id: str | None = None,
+    claim_type: str | None = None,
     open_only: bool = False,
-    search: Optional[str] = None,
-    limit: int = Query(200, ge=1, le=1000),
-    user: dict = Depends(_DESK_READ),
-    _m: None = Depends(require_module),
+    search: str | None = None,
+    limit: int = _CLAIMS_LIMIT_DEFAULT,
+    user: dict = _CLAIMS_USER_DEFAULT,
+    _m: None = _CLAIMS_M_DEFAULT,
 ) -> dict:
     # PHI SCOPE (2026-08-12). patient_id arrives on the QUERY STRING, so
     # require_patient_access — which resolves it from the PATH — cannot guard
@@ -514,21 +569,31 @@ def claims(
     # exists. Plain `def` route, so FastAPI threadpools this blocking check.
     enforce_patient_scope(user, patient_id)
     rows = list_claims(
-        status=status, payer_code=payer_code, patient_id=patient_id,
-        claim_type=claim_type, open_only=open_only, search=search, limit=limit,
+        status=status,
+        payer_code=payer_code,
+        patient_id=patient_id,
+        claim_type=claim_type,
+        open_only=open_only,
+        search=search,
+        limit=limit,
     )
     return _wrap({"claims": rows, "total": len(rows)})
+
+
+_CLAIM_DETAIL_USER_DEFAULT = Depends(_DESK_READ)
+_CLAIM_DETAIL_M_DEFAULT = Depends(require_module)
 
 
 @router.get("/claims/{claim_id}")
 def claim_detail(
     claim_id: int,
-    user: dict = Depends(_DESK_READ),
-    _m: None = Depends(require_module),
+    user: dict = _CLAIM_DETAIL_USER_DEFAULT,
+    _m: None = _CLAIM_DETAIL_M_DEFAULT,
 ) -> dict:
     claim = _handle(get_claim, claim_id)
     _audit(
-        user, "claim_read",
+        user,
+        "claim_read",
         category="phi_access",
         summary=f"Claim {claim.get('claim_number') or claim_id} opened",
         patient_id=claim.get("patient_id"),
@@ -537,11 +602,15 @@ def claim_detail(
     return _wrap({"claim": claim})
 
 
+_NEW_CLAIM_USER_DEFAULT = Depends(_DESK_WRITE)
+_NEW_CLAIM_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/claims")
 def new_claim(
     body: ClaimIn,
-    user: dict = Depends(_DESK_WRITE),
-    _m: None = Depends(require_module),
+    user: dict = _NEW_CLAIM_USER_DEFAULT,
+    _m: None = _NEW_CLAIM_M_DEFAULT,
 ) -> dict:
     # PHI SCOPE (2026-08-12). The patient is named in the REQUEST BODY, so no
     # path-based guard can see it. Writing a financial record against another
@@ -551,37 +620,48 @@ def new_claim(
     claim = _handle(create_claim, created_by=user.get("id"), **body.model_dump())
     replayed = bool(claim.get("replayed"))
     _audit(
-        user, "claim_create_replayed" if replayed else "claim_created",
+        user,
+        "claim_create_replayed" if replayed else "claim_created",
         summary=(
             f"Repeat of the request that opened claim {claim.get('claim_number') or claim['id']}; "
             "no new claim"
-            if replayed else
-            f"Claim {claim.get('claim_number') or claim['id']} opened for "
+            if replayed
+            else f"Claim {claim.get('claim_number') or claim['id']} opened for "
             f"{claim['patient_id']} against {claim.get('payer_name')}"
         ),
         patient_id=claim["patient_id"],
         target_id=str(claim["id"]),
-        metadata={"claim_type": claim["claim_type"], "payer_code": claim.get("payer_code"),
-                  "replayed": replayed},
+        metadata={
+            "claim_type": claim["claim_type"],
+            "payer_code": claim.get("payer_code"),
+            "replayed": replayed,
+        },
     )
     return _wrap({"claim": claim})
+
+
+_SET_AMOUNT_USER_DEFAULT = Depends(_DESK_WRITE)
+_SET_AMOUNT_M_DEFAULT = Depends(require_module)
 
 
 @router.post("/claims/{claim_id}/amount")
 def set_amount(
     claim_id: int,
     body: ClaimedAmountIn,
-    user: dict = Depends(_DESK_WRITE),
-    _m: None = Depends(require_module),
+    user: dict = _SET_AMOUNT_USER_DEFAULT,
+    _m: None = _SET_AMOUNT_M_DEFAULT,
 ) -> dict:
     claim = _handle(
         set_claimed_amount,
-        claim_id=claim_id, claimed_paise=body.claimed_paise, actor_id=user.get("id"),
+        claim_id=claim_id,
+        claimed_paise=body.claimed_paise,
+        actor_id=user.get("id"),
     )
     _audit(
-        user, "claim_amount_set",
+        user,
+        "claim_amount_set",
         summary=f"Claim {claim.get('claim_number') or claim_id} amount set to "
-                f"{claim['settlement']['claimed_display']}",
+        f"{claim['settlement']['claimed_display']}",
         patient_id=claim.get("patient_id"),
         target_id=str(claim_id),
         metadata={"claimed_paise": body.claimed_paise},
@@ -589,12 +669,16 @@ def set_amount(
     return _wrap({"claim": claim})
 
 
+_PREAUTH_USER_DEFAULT = Depends(_DESK_WRITE)
+_PREAUTH_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/claims/{claim_id}/preauth")
 def preauth(
     claim_id: int,
     body: PreauthIn,
-    user: dict = Depends(_DESK_WRITE),
-    _m: None = Depends(require_module),
+    user: dict = _PREAUTH_USER_DEFAULT,
+    _m: None = _PREAUTH_M_DEFAULT,
 ) -> dict:
     """RECORD that a pre-authorisation was raised with the payer elsewhere.
 
@@ -603,12 +687,15 @@ def preauth(
     """
     claim = _handle(
         record_preauth_request,
-        claim_id=claim_id, actor_id=user.get("id"), **body.model_dump(),
+        claim_id=claim_id,
+        actor_id=user.get("id"),
+        **body.model_dump(),
     )
     _audit(
-        user, "preauth_recorded",
+        user,
+        "preauth_recorded",
         summary=f"Pre-auth request RECORDED (not transmitted) on claim "
-                f"{claim.get('claim_number') or claim_id}",
+        f"{claim.get('claim_number') or claim_id}",
         patient_id=claim.get("patient_id"),
         target_id=str(claim_id),
         metadata={"requested_paise": body.requested_paise, "transmitted": False},
@@ -616,21 +703,28 @@ def preauth(
     return _wrap({"claim": claim})
 
 
+_PREAUTH_DECISION_USER_DEFAULT = Depends(_DESK_WRITE)
+_PREAUTH_DECISION_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/claims/{claim_id}/preauth/decision")
 def preauth_decision(
     claim_id: int,
     body: PreauthDecisionIn,
-    user: dict = Depends(_DESK_WRITE),
-    _m: None = Depends(require_module),
+    user: dict = _PREAUTH_DECISION_USER_DEFAULT,
+    _m: None = _PREAUTH_DECISION_M_DEFAULT,
 ) -> dict:
     claim = _handle(
         record_preauth_decision,
-        claim_id=claim_id, actor_id=user.get("id"), **body.model_dump(),
+        claim_id=claim_id,
+        actor_id=user.get("id"),
+        **body.model_dump(),
     )
     _audit(
-        user, "preauth_decision",
+        user,
+        "preauth_decision",
         summary=f"Pre-auth {body.decision} recorded on claim "
-                f"{claim.get('claim_number') or claim_id}",
+        f"{claim.get('claim_number') or claim_id}",
         patient_id=claim.get("patient_id"),
         target_id=str(claim_id),
         metadata={"decision": body.decision, "approved_paise": body.approved_paise},
@@ -638,24 +732,31 @@ def preauth_decision(
     return _wrap({"claim": claim})
 
 
+_SUBMISSION_USER_DEFAULT = Depends(_DESK_WRITE)
+_SUBMISSION_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/claims/{claim_id}/submission")
 def submission(
     claim_id: int,
     body: SubmissionIn,
-    user: dict = Depends(_DESK_WRITE),
-    _m: None = Depends(require_module),
+    user: dict = _SUBMISSION_USER_DEFAULT,
+    _m: None = _SUBMISSION_M_DEFAULT,
 ) -> dict:
     """RECORD a submission the desk made on the payer's portal / by e-mail /
     on paper. The route is `/submission`, not `/submit`, on purpose: it records
     a noun that already happened, it does not perform a verb."""
     claim = _handle(
         record_submission,
-        claim_id=claim_id, actor_id=user.get("id"), **body.model_dump(),
+        claim_id=claim_id,
+        actor_id=user.get("id"),
+        **body.model_dump(),
     )
     _audit(
-        user, "submission_recorded",
+        user,
+        "submission_recorded",
         summary=f"Claim {claim.get('claim_number') or claim_id} RECORDED as submitted "
-                f"to {claim.get('payer_name')} (recorded in Orb only: Orb did not transmit)",
+        f"to {claim.get('payer_name')} (recorded in Orb only: Orb did not transmit)",
         patient_id=claim.get("patient_id"),
         target_id=str(claim_id),
         metadata={"external_ref": body.external_ref, "transmitted": False},
@@ -663,21 +764,28 @@ def submission(
     return _wrap({"claim": claim})
 
 
+_QUERY_USER_DEFAULT = Depends(_DESK_WRITE)
+_QUERY_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/claims/{claim_id}/query")
 def query(
     claim_id: int,
     body: QueryIn,
-    user: dict = Depends(_DESK_WRITE),
-    _m: None = Depends(require_module),
+    user: dict = _QUERY_USER_DEFAULT,
+    _m: None = _QUERY_M_DEFAULT,
 ) -> dict:
     claim = _handle(
         record_query,
-        claim_id=claim_id, actor_id=user.get("id"), **body.model_dump(),
+        claim_id=claim_id,
+        actor_id=user.get("id"),
+        **body.model_dump(),
     )
     _audit(
-        user, "query_recorded",
+        user,
+        "query_recorded",
         summary=("Query answered on claim " if body.answered else "Payer query recorded on claim ")
-                + str(claim.get("claim_number") or claim_id),
+        + str(claim.get("claim_number") or claim_id),
         patient_id=claim.get("patient_id"),
         target_id=str(claim_id),
         metadata={"answered": body.answered},
@@ -685,21 +793,28 @@ def query(
     return _wrap({"claim": claim})
 
 
+_DECISION_USER_DEFAULT = Depends(_DESK_WRITE)
+_DECISION_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/claims/{claim_id}/decision")
 def decision(
     claim_id: int,
     body: DecisionIn,
-    user: dict = Depends(_DESK_WRITE),
-    _m: None = Depends(require_module),
+    user: dict = _DECISION_USER_DEFAULT,
+    _m: None = _DECISION_M_DEFAULT,
 ) -> dict:
     claim = _handle(
         record_decision,
-        claim_id=claim_id, actor_id=user.get("id"), **body.model_dump(),
+        claim_id=claim_id,
+        actor_id=user.get("id"),
+        **body.model_dump(),
     )
     _audit(
-        user, "decision_recorded",
+        user,
+        "decision_recorded",
         summary=f"Payer decision '{body.decision}' recorded on claim "
-                f"{claim.get('claim_number') or claim_id}",
+        f"{claim.get('claim_number') or claim_id}",
         patient_id=claim.get("patient_id"),
         target_id=str(claim_id),
         metadata={
@@ -711,22 +826,29 @@ def decision(
     return _wrap({"claim": claim})
 
 
+_SETTLEMENT_USER_DEFAULT = Depends(_DESK_WRITE)
+_SETTLEMENT_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/claims/{claim_id}/settlement")
 def settlement(
     claim_id: int,
     body: SettlementIn,
-    user: dict = Depends(_DESK_WRITE),
-    _m: None = Depends(require_module),
+    user: dict = _SETTLEMENT_USER_DEFAULT,
+    _m: None = _SETTLEMENT_M_DEFAULT,
 ) -> dict:
     """Record money that arrived. Short settlement is COMPUTED from the approved
     amount, the co-pay and the TDS — never typed in."""
     claim = _handle(
         record_settlement,
-        claim_id=claim_id, actor_id=user.get("id"), **body.model_dump(),
+        claim_id=claim_id,
+        actor_id=user.get("id"),
+        **body.model_dump(),
     )
     short = claim["settlement"]["short_settled_paise"] or 0
     _audit(
-        user, "settlement_recorded",
+        user,
+        "settlement_recorded",
         summary=(
             f"Settlement recorded on claim {claim.get('claim_number') or claim_id}: "
             f"{claim['settlement']['settled_display']} received"
@@ -743,19 +865,26 @@ def settlement(
     return _wrap({"claim": claim})
 
 
+_APPEAL_USER_DEFAULT = Depends(_DESK_WRITE)
+_APPEAL_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/claims/{claim_id}/appeal")
 def appeal(
     claim_id: int,
     body: AppealIn,
-    user: dict = Depends(_DESK_WRITE),
-    _m: None = Depends(require_module),
+    user: dict = _APPEAL_USER_DEFAULT,
+    _m: None = _APPEAL_M_DEFAULT,
 ) -> dict:
     claim = _handle(
         record_appeal,
-        claim_id=claim_id, actor_id=user.get("id"), **body.model_dump(),
+        claim_id=claim_id,
+        actor_id=user.get("id"),
+        **body.model_dump(),
     )
     _audit(
-        user, "appeal_recorded",
+        user,
+        "appeal_recorded",
         summary=f"Appeal recorded on claim {claim.get('claim_number') or claim_id}",
         patient_id=claim.get("patient_id"),
         target_id=str(claim_id),
@@ -763,16 +892,21 @@ def appeal(
     return _wrap({"claim": claim})
 
 
+_CLOSE_USER_DEFAULT = Depends(_DESK_WRITE)
+_CLOSE_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/claims/{claim_id}/close")
 def close(
     claim_id: int,
     body: ReasonIn,
-    user: dict = Depends(_DESK_WRITE),
-    _m: None = Depends(require_module),
+    user: dict = _CLOSE_USER_DEFAULT,
+    _m: None = _CLOSE_M_DEFAULT,
 ) -> dict:
     claim = _handle(close_claim, claim_id=claim_id, reason=body.reason, actor_id=user.get("id"))
     _audit(
-        user, "claim_closed",
+        user,
+        "claim_closed",
         summary=f"Claim {claim.get('claim_number') or claim_id} closed",
         patient_id=claim.get("patient_id"),
         target_id=str(claim_id),
@@ -780,18 +914,23 @@ def close(
     return _wrap({"claim": claim})
 
 
+_CANCEL_USER_DEFAULT = Depends(_DESK_WRITE)
+_CANCEL_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/claims/{claim_id}/cancel")
 def cancel(
     claim_id: int,
     body: ReasonIn,
-    user: dict = Depends(_DESK_WRITE),
-    _m: None = Depends(require_module),
+    user: dict = _CANCEL_USER_DEFAULT,
+    _m: None = _CANCEL_M_DEFAULT,
 ) -> dict:
     claim = _handle(
         cancel_claim, claim_id=claim_id, reason=body.reason or "", actor_id=user.get("id")
     )
     _audit(
-        user, "claim_cancelled",
+        user,
+        "claim_cancelled",
         summary=f"Claim {claim.get('claim_number') or claim_id} cancelled",
         patient_id=claim.get("patient_id"),
         target_id=str(claim_id),
@@ -800,12 +939,16 @@ def cancel(
     return _wrap({"claim": claim})
 
 
+_NOTE_USER_DEFAULT = Depends(_DESK_WRITE)
+_NOTE_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/claims/{claim_id}/note")
 def note(
     claim_id: int,
     body: NoteIn,
-    user: dict = Depends(_DESK_WRITE),
-    _m: None = Depends(require_module),
+    user: dict = _NOTE_USER_DEFAULT,
+    _m: None = _NOTE_M_DEFAULT,
 ) -> dict:
     claim = _handle(add_note, claim_id=claim_id, note=body.note, actor_id=user.get("id"))
     return _wrap({"claim": claim})
@@ -815,22 +958,33 @@ def note(
 #  The work queue + the denial log
 # ══════════════════════════════════════════════════════════════════════════════
 
+
+_QUEUE_LIMIT_DEFAULT = Query(300, ge=1, le=1000)
+_QUEUE_USER_DEFAULT = Depends(_DESK_READ)
+_QUEUE_M_DEFAULT = Depends(require_module)
+
+
 @router.get("/work-queue")
 def queue(
-    payer_code: Optional[str] = None,
-    bucket: Optional[str] = None,
-    limit: int = Query(300, ge=1, le=1000),
-    user: dict = Depends(_DESK_READ),
-    _m: None = Depends(require_module),
+    payer_code: str | None = None,
+    bucket: str | None = None,
+    limit: int = _QUEUE_LIMIT_DEFAULT,
+    user: dict = _QUEUE_USER_DEFAULT,
+    _m: None = _QUEUE_M_DEFAULT,
 ) -> dict:
     return _wrap(work_queue(payer_code=payer_code, bucket=bucket, limit=limit))
 
 
+_DENIALS_LIMIT_DEFAULT = Query(200, ge=1, le=1000)
+_DENIALS_USER_DEFAULT = Depends(_DESK_READ)
+_DENIALS_M_DEFAULT = Depends(require_module)
+
+
 @router.get("/denials")
 def denials(
-    payer_code: Optional[str] = None,
-    limit: int = Query(200, ge=1, le=1000),
-    user: dict = Depends(_DESK_READ),
-    _m: None = Depends(require_module),
+    payer_code: str | None = None,
+    limit: int = _DENIALS_LIMIT_DEFAULT,
+    user: dict = _DENIALS_USER_DEFAULT,
+    _m: None = _DENIALS_M_DEFAULT,
 ) -> dict:
     return _wrap(denial_log(payer_code=payer_code, limit=limit))

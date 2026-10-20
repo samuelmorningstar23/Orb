@@ -20,6 +20,7 @@ goes through `database.run_db`, and the middleware still AWAITS it: the response
 is not returned until the audit row is durable, exactly as before. Off-loop is
 not the same as fire-and-forget.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -41,20 +42,43 @@ _SKIP_PATHS = {"/api/auth/login"}
 # names the area in words. Only segments that do not read well humanised are
 # listed; anything else falls back to the segment itself.
 _AREA_NAMES = {
-    "abdm": "ABDM", "admin": "administration", "audit": "the audit log",
-    "auth": "sign-in", "bridge": "the patient portal", "bundles": "care bundles",
-    "capacity-sim": "capacity planning", "chart": "the chart",
-    "command-center": "the command centre", "consent": "the consent register",
-    "discharge-access": "discharge access", "downtime": "downtime records",
-    "emar": "medication administration", "fhir": "FHIR export",
-    "flight-recorder": "the flight recorder", "frontdesk": "the front desk",
-    "helix": "pharmacy", "ingest": "data ingestion", "ipass": "I-PASS handoffs",
-    "lens": "Lens imaging", "nabh": "NABH", "nurse": "nursing", "ops": "operations",
-    "patients": "patient records", "payer": "insurance claims", "pulse": "Pulse",
-    "relay": "Relay", "sage": "Sage", "scribe": "Scribe", "vigil": "Vigil",
+    "abdm": "ABDM",
+    "admin": "administration",
+    "audit": "the audit log",
+    "auth": "sign-in",
+    "bridge": "the patient portal",
+    "bundles": "care bundles",
+    "capacity-sim": "capacity planning",
+    "chart": "the chart",
+    "command-center": "the command centre",
+    "consent": "the consent register",
+    "discharge-access": "discharge access",
+    "downtime": "downtime records",
+    "emar": "medication administration",
+    "fhir": "FHIR export",
+    "flight-recorder": "the flight recorder",
+    "frontdesk": "the front desk",
+    "helix": "pharmacy",
+    "ingest": "data ingestion",
+    "ipass": "I-PASS handoffs",
+    "lens": "Lens imaging",
+    "nabh": "NABH",
+    "nurse": "nursing",
+    "ops": "operations",
+    "patients": "patient records",
+    "payer": "insurance claims",
+    "pulse": "Pulse",
+    "relay": "Relay",
+    "sage": "Sage",
+    "scribe": "Scribe",
+    "vigil": "Vigil",
 }
-_METHOD_WORDS = {"POST": "Submitted to", "PUT": "Updated in",
-                 "PATCH": "Updated in", "DELETE": "Deleted from"}
+_METHOD_WORDS = {
+    "POST": "Submitted to",
+    "PUT": "Updated in",
+    "PATCH": "Updated in",
+    "DELETE": "Deleted from",
+}
 
 
 def _readable_summary(method: str, path: str, status: int) -> str:
@@ -101,6 +125,7 @@ def _actor_from_request(request) -> tuple[str | None, str | None]:
     """
     try:
         from auth import _extract_token, decode_token
+
         token, _source = _extract_token(request)
         if not token:
             return None, None
@@ -117,11 +142,7 @@ async def audit_mutations(request, call_next):
     path = request.url.path
     method = request.method
 
-    should_audit = (
-        method in _AUDIT_METHODS
-        and path.startswith("/api/")
-        and path not in _SKIP_PATHS
-    )
+    should_audit = method in _AUDIT_METHODS and path.startswith("/api/") and path not in _SKIP_PATHS
 
     if not should_audit:
         return await call_next(request)
@@ -139,7 +160,9 @@ async def audit_mutations(request, call_next):
         return response
     finally:
         from database import run_db
+
         from services.audit_service import log_audit_event
+
         outcome = "success" if status < 400 else ("denied" if status in (401, 403) else "failure")
         # shield(): the write is submitted to the DB executor and allowed to
         # finish even if THIS request is cancelled (client disconnect, timeout).

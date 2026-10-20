@@ -3,6 +3,7 @@
 Matches routes/relay_routes.post_message, which reads msg.content and
 msg.message_type and passes them to services.relay_service.send_message.
 """
+
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, StringConstraints
@@ -21,6 +22,7 @@ MessageContent = Annotated[
 
 class MessageCreate(BaseModel):
     """Body for POST /relay/channels/{channel_id}/messages."""
+
     # Stripped, then 1 to MAX_MESSAGE_CHARS. An empty or whitespace-only post
     # used to be stored and broadcast as a blank message.
     content: MessageContent

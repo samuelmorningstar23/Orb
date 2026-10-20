@@ -30,6 +30,7 @@ Interface (call sites depend on it):
     risks = model(vitals, dt)        # vitals (B,T,input_dim), dt (B,T,1)
                                      #   -> (B, num_horizons) sigmoid risks
 """
+
 from __future__ import annotations
 
 import torch
@@ -46,8 +47,15 @@ VIGIL_OUTCOMES: tuple[str, ...] = ("deterioration", "sepsis", "mortality")
 # trained with this exact order + normalization can run on live vitals.
 # MUST stay in sync with services/vigil_service.py (_CFC_FEATURE_*).
 PRODUCTION_FEATURE_ORDER: tuple[str, ...] = (
-    "heart_rate", "spo2", "temperature", "systolic_bp",
-    "map", "diastolic_bp", "respiratory_rate", "avpu", "age",
+    "heart_rate",
+    "spo2",
+    "temperature",
+    "systolic_bp",
+    "map",
+    "diastolic_bp",
+    "respiratory_rate",
+    "avpu",
+    "age",
 )
 PRODUCTION_FEATURE_MEAN: tuple[float, ...] = (83.0, 96.5, 36.9, 122.0, 82.0, 63.0, 19.0, 0.2, 62.0)
 PRODUCTION_FEATURE_STD: tuple[float, ...] = (18.0, 3.0, 0.7, 23.0, 17.0, 13.0, 5.0, 0.6, 18.0)
@@ -67,20 +75,22 @@ class CfCCell(nn.Module):
         backbone_in = input_dim + hidden_dim
         # f -> positive continuous-time decay constant; g -> steady-state target.
         self.f = nn.Sequential(
-            nn.Linear(backbone_in, hidden_dim), nn.Tanh(),
+            nn.Linear(backbone_in, hidden_dim),
+            nn.Tanh(),
             nn.Linear(hidden_dim, hidden_dim),
         )
         self.g = nn.Sequential(
-            nn.Linear(backbone_in, hidden_dim), nn.Tanh(),
+            nn.Linear(backbone_in, hidden_dim),
+            nn.Tanh(),
             nn.Linear(hidden_dim, hidden_dim),
         )
 
     def forward(self, x: torch.Tensor, h: torch.Tensor, dt: torch.Tensor) -> torch.Tensor:
         # x: (B, input_dim) | h: (B, hidden_dim) | dt: (B, 1)
         combined = torch.cat([x, h], dim=-1)
-        decay_rate = F.softplus(self.f(combined))     # strictly positive
+        decay_rate = F.softplus(self.f(combined))  # strictly positive
         steady = self.g(combined)
-        decay = torch.exp(-decay_rate * dt)           # dt broadcasts over hidden
+        decay = torch.exp(-decay_rate * dt)  # dt broadcasts over hidden
         return self.Wx(x) * decay + steady
 
 
@@ -103,12 +113,15 @@ class OrbVigilCfC(nn.Module):
 
         self.cell = CfCCell(input_dim, hidden_dim)
         self.readout = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim), nn.ReLU(), nn.Dropout(0.2),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(0.2),
             nn.Linear(hidden_dim, self.num_horizons),
         )
 
-    def forward(self, vitals: torch.Tensor, dt: torch.Tensor,
-                return_logits: bool = False) -> torch.Tensor:
+    def forward(
+        self, vitals: torch.Tensor, dt: torch.Tensor, return_logits: bool = False
+    ) -> torch.Tensor:
         """vitals (B,T,input_dim), dt (B,T,1) -> risk (B, num_horizons).
 
         By default returns sigmoid probabilities in [0,1] (inference). Pass
@@ -138,9 +151,10 @@ class OrbVigilCfC(nn.Module):
     def predict_trajectory(self, vitals: torch.Tensor, dt: torch.Tensor) -> dict:
         """Single-sample convenience: returns {outcome, risk_by_horizon, peak_risk}."""
         self.eval()
-        probs = self.forward(vitals, dt)[0]   # (num_horizons,) sigmoid risks
-        risk_by_horizon = {f"{h}h": round(float(probs[i].item()), 4)
-                           for i, h in enumerate(self.horizons)}
+        probs = self.forward(vitals, dt)[0]  # (num_horizons,) sigmoid risks
+        risk_by_horizon = {
+            f"{h}h": round(float(probs[i].item()), 4) for i, h in enumerate(self.horizons)
+        }
         return {
             "outcome": self.outcome,
             "risk_by_horizon": risk_by_horizon,

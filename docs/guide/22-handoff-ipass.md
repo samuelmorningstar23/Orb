@@ -116,7 +116,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Change guide:** to widen the look-back to 24h, change `HANDOFF_WINDOW_HOURS = 12` (`:68`), but note the endpoint calls `build_ipass(patient_id)` with the default, and `get_vitals_trend` is passed `window_hours // 2` (`:1328`), so both windows move together. To rename "Watcher" to "Guarded", edit `_SEVERITY_MAP` values *and* the frontend `SEVERITY_COLOR` map (`src/components/handoff/IpassHandoffView.tsx:20`) or the colour lookup falls back to grey.
 **Gotchas:** `_SEVERITY_MAP.get(level, "Watcher")` (`:910`) defaults *unknown* levels to Watcher, not Stable, a garbage risk level presents as amber, not green (arguably the safer default, but non-obvious).
 
-#### `_get_patient`: `server/services/ipass_service.py:271`
+#### `_get_patient`: `server/services/ipass_service.py:291`
 **Signature:** `(db, patient_id: str) → dict | None`
 **Does:** fetch the whole `patients` row as a dict, or `None`.
 **How it works:** `SELECT * FROM patients WHERE id = ?`, `dict(row)` if found.
@@ -126,7 +126,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Change guide:** none needed for normal use.
 **Gotchas:** parameterised (`?`), no SQL injection risk. `SELECT *` means the returned dict's keys depend on the live `patients` schema.
 
-#### `_compute_age`: `server/services/ipass_service.py:276`
+#### `_compute_age`: `server/services/ipass_service.py:296`
 **Signature:** `(patient: dict) → int | None`
 **Does:** return the patient's age, preferring a stored `age` column, else computing from `date_of_birth`.
 **How it works:** if `age` present, `int(age)`. Else parse `date_of_birth` (tolerating a trailing `Z`), and compute `today.year - born.year - ((today.month, today.day) < (born.month, born.day))`, the standard "have they had their birthday yet this year" correction.
@@ -135,7 +135,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** `_build_patient_summary`.
 **Gotchas:** uses `date.today()` (local server date, not UTC) for the birthday comparison, a one-day edge case around midnight, immaterial clinically.
 
-#### `_get_vitals_window`: `server/services/ipass_service.py:291`
+#### `_get_vitals_window`: `server/services/ipass_service.py:311`
 **Signature:** `(db, patient_id, cutoff_iso) → list[dict]`
 **Does:** return all vitals since the cutoff (chronological), or the single most-recent reading if none fall in the window.
 **How it works:** `SELECT * … WHERE timestamp >= ? ORDER BY timestamp ASC, id ASC`; if empty, a fallback to the single latest reading. The `id ASC` tie-break means a correction charted at the same bedside time as the set it supersedes comes last, so `vitals[-1]` is the reading the handoff prints and scores.
@@ -144,7 +144,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** `_build_situation_awareness` (uses `vitals[-1]` as "latest").
 **Gotchas:** **string comparison of timestamps.** `timestamp >= cutoff_iso` is a raw lexical compare, which is correct *only if* stored `vitals.timestamp` is ISO-8601 in the same format as `cutoff_iso`. The neighbouring `_get_recent_notes` deliberately wraps both sides in `datetime()` to avoid exactly this trap, this function does not. See Discrepancies.
 
-#### `_get_active_meds`: `server/services/ipass_service.py:312`
+#### `_get_active_meds`: `server/services/ipass_service.py:334`
 **Signature:** `(db, patient_id) → list[dict]`
 **Does:** list `active` and `prn` (as-needed) medications, active first.
 **How it works:** `WHERE status IN ('active','prn')` ordered by a `CASE` that puts active before prn, then newest `started_at`.
@@ -153,7 +153,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** `_build_action_list`.
 **Gotchas:** the test explicitly seeds a `discontinued` med and asserts it is absent (`server/tests/test_ipass.py:133`), do not broaden the status filter without updating that test.
 
-#### `_get_active_problems` / `_get_active_allergies`: `server/services/ipass_service.py:328` / `:338`
+#### `_get_active_problems` / `_get_active_allergies`: `server/services/ipass_service.py:347` / `:338`
 **Signature:** `(db, patient_id) → list[dict]`
 **Does:** list active problem-list entries (`problem`, `icd10_code`) and active allergies (`substance`, `reaction`, `severity`), newest first.
 **Why they exist:** feed the Patient-Summary section's "active problems" and "allergies" lines.
@@ -161,7 +161,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** `_build_patient_summary`.
 **Gotchas:** none noteworthy; both are parameterised single-table reads.
 
-#### `_get_recent_notes`: `server/services/ipass_service.py:348`
+#### `_get_recent_notes`: `server/services/ipass_service.py:367`
 **Signature:** `(db, patient_id, cutoff_iso) → list[dict]`
 **Does:** fetch up to 5 recent `scribe_notes` in the window.
 **How it works:** `WHERE datetime(created_at) >= datetime(?)`, both sides normalised through SQLite's `datetime()` so a stored `'YYYY-MM-DD HH:MM:SS'` and an ISO `'…T…+00:00'` cutoff compare correctly. The inline comment (`:345-346`) explains that a raw string compare would always fail because a space (0x20) sorts before `T` (0x54) at position 10.
@@ -170,7 +170,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** `build_ipass`, but **only `len(recent_notes)` is ever used** (in `source_summary`, `:1361`). The note *contents* are fetched and then discarded. See Discrepancies.
 **Gotchas:** the `datetime()` normalisation here is the *correct* pattern that `_get_vitals_window` omits, a good worked contrast if you are auditing timestamp handling.
 
-#### `_build_illness_severity`: `server/services/ipass_service.py:914` (the "I")
+#### `_build_illness_severity`: `server/services/ipass_service.py:973` (the "I")
 **Signature:** `(risk: dict) → dict`
 **Does:** turn Vigil's risk dict into the I-PASS Illness-Severity section.
 **How it works:** lower-cases `risk['level']`, maps via `_SEVERITY_MAP` (default Watcher), pulls `raw_news2` (falling back to `raw_mews`), builds a one-line `text` like `"Unstable, NEWS2 9 (critical). Key drivers: …"`. Since 2026-10-03 the other `news2_text` qualifiers follow the band, separated by ` · ` (`news2_qualifiers(risk, scale=False)`): a single parameter scoring 3, and an incomplete set whose aggregate is only a minimum.
@@ -180,7 +180,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Change guide:** to show the MEWS score when NEWS2 is absent it already falls back to `raw_mews` (`:911`); to change the amber/red/green colours edit the frontend `SEVERITY_COLOR`, not here.
 **Gotchas:** `drivers` may be `None` from the risk service; `risk.get("drivers", []) or []` (`:912`) guards that.
 
-#### `_build_patient_summary`: `server/services/ipass_service.py:948` (the "P")
+#### `_build_patient_summary`: `server/services/ipass_service.py:1018` (the "P")
 **Signature:** `(patient, problems, allergies) → dict`
 **Does:** compose demographics + diagnosis + active problems + allergies.
 **How it works:** computes age, builds `problem_labels` and `allergy_labels` (`"substance (reaction)"`), a demographic string, and a full-sentence `text`. With no allergy rows the sentence reads `NO_ALLERGIES_RECORDED`, "No allergies recorded. Confirm with the patient." (`:72`, `:956-957`), never "NKDA": NKDA is a clinician's assertion that the patient was asked, and an empty `patient_allergies` is also every patient nobody asked.
@@ -189,7 +189,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** rendered by both the plain-text renderer and the React P-section.
 **Gotchas:** `allergies` **can be an empty list** downstream (it used to be `allergy_labels or ["NKDA"]`); an empty list means none recorded, and the UI words that state itself. Do not reintroduce a default.
 
-#### `_build_action_list`: `server/services/ipass_service.py:1003` (the "A")
+#### `_build_action_list`: `server/services/ipass_service.py:1077` (the "A")
 **Signature:** `(meds, bundles, risk) → dict`
 **Does:** assemble active meds + open care bundles + a derived "outstanding items" to-do list.
 **How it works:**
@@ -203,7 +203,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Change guide:** to add a monitoring instruction for `stable` sick-ish patients, add an `elif level == "stable"` branch near `:1017`; knock-on: the empty-list fallback at `:1019` would then rarely fire. Watch out: bundle element `state` strings come from `_decorate` (`server/services/sepsis_bundle_service.py:144-149`), only `overdue`/`pending` are treated as outstanding; if you add a new element state there, update this filter too.
 **Gotchas:** depends on the exact string values `"overdue"`/`"pending"`; a typo silently drops items.
 
-#### `_contingencies`: `server/services/ipass_service.py:1119`
+#### `_contingencies`: `server/services/ipass_service.py:1219`
 **Signature:** `(risk: dict) → list[str]`
 **Does:** derive "if X then Y" escalation instructions, one line per vital that scored on the NEWS2 chart.
 **How it works:** reads `risk['breakdown']` and keeps every row with points above 0 (`:1100-1101`), so a vital that scored gets its line whatever the drivers list kept. Oxygenation comes first: a scoring SpO2 row or a scoring "Supplemental O2" row adds the SpO2 line. Then systolic BP, heart rate and temperature, then ACVPU (`_ACVPU_LINE`, `:1080`), then respiratory rate. `_vital_line` (`:1084`) picks the low or high line by which side of the zero-scoring band (`_ZERO_BAND`, `:1055`) the charted value sits on, and `_VITAL_LINES` (`:1064`) holds the text: each number is the first charted value the RCP chart scores 3 on that side, so the sheet and the Vigil bar call the same reading red. The four directions with no line of their own give the RCP red-score response (`_URGENT_REVIEW`, `:1050`); temperature has no 3-point band above normal, so the fever line names no number. If nothing scored (or there is no breakdown), it emits a generic line keyed to the risk level (`:1131`). **SpO2 Scale 2 (2026-10-02):** when `risk['spo2_scale'] == 2` (`:1110`) the SpO2 line uses the patient's 88-92% target ("If SpO2 falls below 88% ... titrate O2 to this patient's 88-92% target") instead of the Scale 1 line, and a scoring SpO2 above 92 on oxygen adds "If SpO2 stays above this patient's 88-92% target on oxygen ..., reduce O2 to target" first. The comment block above the tables (`:1029-1049`, ruled 2026-10-03) records why the old driver keyword match was replaced: it lost the direction ("(hr" matched bradycardia, "sbp" matched hypertension) and could drop a vital the drivers list had cut.
@@ -213,7 +213,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Change guide:** to add a contingency for a new breakdown parameter, add its zero-scoring band to `_ZERO_BAND` and its low/high lines to `_VITAL_LINES`, then add it to the parameter loop in `_contingencies`. Watch out: `test_ipass_news2_contingency.py` sweeps `compute_news2` and fails if a number in a line stops being where the 3 points start, and `test_build_ipass_...` asserts every contingency `startswith("if ")` (`server/tests/test_ipass.py:144`), keep the "If " prefix.
 **Gotchas:** the lines depend on the exact breakdown `parameter` strings from the scorer ("Systolic BP", "Heart rate", "Consciousness (ACVPU)", "SpO2 (Scale 2)"); a renamed parameter silently drops its line. The generic fallback prevents an empty list.
 
-#### `_build_situation_awareness`: `server/services/ipass_service.py:1167` (the first "S")
+#### `_build_situation_awareness`: `server/services/ipass_service.py:1278` (the first "S")
 **Signature:** `(vitals, trend, risk) → dict`
 **Does:** report latest vitals, the shift trend, whether the patient is actively deteriorating, and the contingency list.
 **How it works:** takes `vitals[-1]` as latest; `active_deterioration` is true if level is critical/elevated *or* `trend=='deteriorating'` (`:1145`); builds `trend_detail` from `hr_delta`/`sbp_delta`/`spo2_delta` (`:1158-1163`); formats a vitals sentence via `_num`; calls `_contingencies`.
@@ -222,7 +222,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** consumes `get_vitals_trend` deltas (`server/services/vigil_service.py:1137`).
 **Gotchas:** if `get_vitals_trend` returned only `{"trend":"insufficient_data", "reason": ...}` (its no-data paths, `server/services/vigil_service.py:1179`, `:1183`), the delta keys are absent and `trend_detail` prints the trend service's own reason ("no earlier vitals to compare against"), or "insufficient recent data" when it gave none (`:1164-1169`): the reason tells the oncoming nurse this is a newly arrived patient rather than a broken feed.
 
-#### `_build_synthesis`: `server/services/ipass_service.py:1232` (the second "S")
+#### `_build_synthesis`: `server/services/ipass_service.py:1344` (the second "S")
 **Signature:** `(patient, severity: str) → dict`
 **Does:** produce the receiver read-back placeholder.
 **How it works:** returns a fixed sentence asking the receiver to read back the severity, the action list and the contingency plans, then record outstanding questions, their name and the time, plus `read_back_required=True`, `confirmed=False` and `prompts` = `READ_BACK_PROMPTS` ("Outstanding questions", "Confirmed by", "Time", `:77`). The plain-text render prints one labelled line per prompt, left open for the receiver's pen.
@@ -231,7 +231,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** `build_ipass` (passes in the already-computed severity).
 **Gotchas:** despite the module docstring's claim that "an optional best-effort LLM synthesis line can be layered on top" (`:14`), **no LLM is ever invoked**, this section is 100% static. See Discrepancies.
 
-#### `_render_plain_text`: `server/services/ipass_service.py:1251`
+#### `_render_plain_text`: `server/services/ipass_service.py:1363`
 **Signature:** `(sections, patient, generated_at) → str`
 **Does:** flatten the five section dicts into a monospace, printable/copy-pasteable text block.
 **How it works:** appends header lines (title, patient, MRN, "Auto-drafted … Window: last 12h"), then one block per I-PASS letter, iterating meds (an unverified med carries `(AI-extracted, awaiting pharmacist verification)`, `UNVERIFIED_MED_LABEL`, `:976`), bundles, outstanding items and contingencies, and ends with the read-back prompts as open labelled lines.
@@ -240,7 +240,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** the string is returned as `plain_text` and rendered verbatim in `IpassHandoffView` (`src/components/handoff/IpassHandoffView.tsx:295`).
 **Gotchas:** the section headers (`"ILLNESS SEVERITY"`, `"SYNTHESIS BY RECEIVER"`, …) are asserted by `test_plain_text_contains_all_section_headers` (`server/tests/test_ipass.py:150`), renaming a header breaks that test.
 
-#### `build_ipass`: `server/services/ipass_service.py:1331` (public entry point)
+#### `build_ipass`: `server/services/ipass_service.py:1447` (public entry point)
 **Signature:** `(patient_id: str, window_hours=12, *, include_assessment=True) → dict`
 **Does:** orchestrate the whole draft assembly.
 **How it works:**
@@ -258,7 +258,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Change guide:** *Worked example, add a "recent notes" section to the handoff.* Right now `recent_notes` is fetched but only counted. To surface it: (a) write a `_build_recent_documentation(recent_notes)` builder returning `{text, notes[]}`; (b) add it to the `sections` dict at `:1347`; (c) add a block in `_render_plain_text`; (d) add the field to `IpassSections` in `src/api/ipass.ts:140` and a `<Section>` in `IpassHandoffView`. Knock-on: `test_build_ipass_has_all_five_sections_populated` iterates a fixed 5-key list (`server/tests/test_ipass.py:109`), extend it. Footgun: keep the deterministic-only contract; do not call an LLM inside `build_ipass` or you reintroduce hallucination risk and the "safe when Ollama is down" guarantee breaks.
 **Gotchas:** the two try/except blocks are the reason a partially-configured system (no CfC models, no bundles) still returns a usable draft rather than a 500.
 
-#### `save_ipass_handoff`: `server/services/ipass_service.py:1428`
+#### `save_ipass_handoff`: `server/services/ipass_service.py:1555`
 **Signature:** `(patient_id, author_id, content) → int`
 **Does:** persist a handoff draft as a `scribe_notes` row.
 **How it works:** accepts either the `build_ipass` dict *or* a plain string. From a dict it takes `source_summary`→`raw_transcript` and `plain_text`→`structured_note`, with JSON-of-sections and default-string fallbacks so the note is never empty (`:1400-1407`). Calls `save_scribe_note(note_format="handoff", status="draft", ai_generated=True)` and returns the new note id.
@@ -268,7 +268,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Change guide:** to store the structured JSON instead of plain text, swap what goes into `structured_note`, but the round-trip readers (`get_recent_handoffs`, and `test_save_..._persists` which asserts `"I-PASS" in structured_note`, `server/tests/test_ipass.py:176`) expect the rendered text.
 **Gotchas:** raises `ValueError` for a non-dict/non-str `content`, which the route turns into HTTP 400 (`server/routes/ipass_routes.py:50`).
 
-#### `get_recent_handoffs`: `server/services/ipass_service.py:1465`
+#### `get_recent_handoffs`: `server/services/ipass_service.py:1594`
 **Signature:** `(patient_id, limit=10) → list[dict]`
 **Does:** list saved handoff notes for a patient (`note_format='handoff'`, newest first).
 **How it works:** one parameterised `SELECT … LEFT JOIN users … ORDER BY created_at DESC, id DESC LIMIT ?`, so each note carries `author_name` (the incoming nurse reads a name, not a user id) and `id` breaks a same-second tie.
@@ -281,7 +281,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 
 > Router prefix `APIRouter(prefix="/api/ipass", tags=["ipass"])` (`server/routes/ipass_routes.py:21`), registered by `app.include_router(ipass_router)` (`server/main.py:316`). So every path below is under `/api/ipass`.
 
-#### `get_draft`: `server/routes/ipass_routes.py:57`
+#### `get_draft`: `server/routes/ipass_routes.py:63`
 **Signature:** `GET /api/ipass/{patient_id}/draft`, `Depends(require_permission("vitals.read"))` → `IpassDraft`
 **Does:** return a freshly assembled I-PASS draft.
 **How it works:** calls `build_ipass(patient_id)`; a `ValueError` (unknown patient) becomes HTTP 404 (`:32`).
@@ -290,7 +290,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** `build_ipass`; RBAC `require_permission` (guide 03-auth-rbac). Called by `getIpassDraft` (`src/api/ipass.ts:216`).
 **Gotchas:** requires `vitals.read`, not a bespoke handoff permission, reusing an existing capability. A `patient`-role JWT would be rejected both here (no permission) and at the route guard in `AppRoot.tsx:186`.
 
-#### `save_draft`: `server/routes/ipass_routes.py:76`
+#### `save_draft`: `server/routes/ipass_routes.py:83`
 **Signature:** `POST /api/ipass/{patient_id}/save`, body `{content}`, `Depends(require_permission("scribe.create_draft"))` → `{id,status,note_format}`
 **Does:** persist the draft and write an audit event.
 **How it works:** rejects missing `content` with 400 (`:46`); calls `save_ipass_handoff(patient_id, user["id"], content)` (400 on `ValueError`); then `log_audit_event(...)` with category `scribe`, action `ipass_handoff_saved`, capturing actor, path, method, client IP (`:53`); returns `{id, status:"draft", note_format:"handoff"}`.
@@ -300,7 +300,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Change guide:** to require a distinct `handoff.create` permission, define it in `permissions.py` and swap the dependency here; knock-on: every role that should save handoffs must be granted it, or Save silently 403s in the panel.
 **Gotchas:** it saves whatever `content` the client posts (`IpassHandoffView` posts the exact `draft` it received, `src/components/handoff/IpassHandoffView.tsx:95`), so a tampered client could persist arbitrary text. It is gated by `scribe.create_draft` and audited, which is the mitigating control.
 
-#### `recent_handoffs`: `server/routes/ipass_routes.py:189`
+#### `recent_handoffs`: `server/routes/ipass_routes.py:206`
 **Signature:** `GET /api/ipass/{patient_id}/recent`, `Depends(require_permission("vitals.read"))` → `{handoffs: [...]}`
 **Does:** list recent saved handoffs.
 **How it works:** wraps `get_recent_handoffs(patient_id)` in `{"handoffs": …}`.
@@ -383,19 +383,19 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Why it exists:** until 2026-10-04 the confirm and every handoff step committed separately (guide 08-relay, `transition_sage_action`).
 **Gotchas:** an adapter must write only on the `db` it is handed. A `db_session()` of its own escapes the transaction, and on an unpooled connection it would deadlock against the transaction's write lock. Pinned by `test_a_step_that_loses_the_whole_transaction_is_not_swallowed` (`server/tests/test_handoff_confirm_transaction.py`).
 
-#### `prescreen_handoff`: `server/services/sage_handoff_service.py:201`
+#### `prescreen_handoff`: `server/services/sage_handoff_service.py:212`
 **Signature:** `(action: dict, actor_id: str) → dict | HandoffBlocked | None`
 **Does:** run the one part of a dispatch that must happen BEFORE the write transaction opens: the drug-safety screen for a Helix-bound card.
 **How it works:** returns `None` unless the verb routes to `helix`; otherwise runs `_screen_helix` and returns its payload, or the `HandoffBlocked` it raised (`:159`), for `dispatch_in_transaction` to act on.
 **Why it exists:** the screen writes its own audit rows, which must stand whatever happens to the confirm, and on an unpooled connection those writes would deadlock against the transaction's write lock.
 
-#### `create_and_dispatch_handoff`: `server/services/sage_handoff_service.py:222`
+#### `create_and_dispatch_handoff`: `server/services/sage_handoff_service.py:233`
 **Signature:** `(action: dict, actor_id: str) → dict`
 **Does:** create a durable `sage_handoffs` record for an ALREADY confirmed action and dispatch it, in one transaction of its own.
 **How it works:** `prescreen_handoff`, then one `db_session` around `dispatch_in_transaction`, then `schedule_prep_package` for a newly booked case once that has committed.
 **Talks to:** direct callers and the tests (`server/tests/test_handoff.py`). The Relay transition endpoint does NOT come through here: it runs `dispatch_in_transaction` on the confirm's own transaction (`server/routes/relay_routes.py:407`, guide 08-relay).
 
-#### `dispatch_in_transaction`: `server/services/sage_handoff_service.py:228`
+#### `dispatch_in_transaction`: `server/services/sage_handoff_service.py:252`
 **Signature:** `(db, action: dict, actor_id: str, screened) → (dict, str | None)`
 **Does:** record and dispatch a confirmed action on the caller's transaction, idempotently. Never commits.
 **How it works:**
@@ -408,7 +408,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Change guide:** *Worked example, make failed dispatches retry-safe.* A first attempt that ends `unsupported`/`failed` is **not** short-circuited (only `pending`/`accepted`/`blocked` are), so a second dispatch creates a *new* handoff row and re-attempts, intentional. To also short-circuit `failed`, add it to the tuple at `:207`; footgun: you would then block manual retries.
 **Gotchas:** on the transition endpoint the claim's version-guarded UPDATE (`server/routes/relay_routes.py:332-338`) runs first on the same transaction, so it already holds the write lock when the idempotency SELECT runs and two confirms cannot both insert. A direct caller of `create_and_dispatch_handoff` has no such claim in front of it.
 
-#### `_dispatch_handoff`: `server/services/sage_handoff_service.py:287`
+#### `_dispatch_handoff`: `server/services/sage_handoff_service.py:308`
 **Signature:** `(db, handoff_id, action, actor_id, screened) → (dict, str | None)`
 **Does:** route the action to one adapter by its exact verb, then update status + write an event, all on `db`.
 **How it works:** normalises `action_type` (`normalize_action_verb`, `:49`) and looks it up with `route_for_action` (`:54`) in `ACTION_ROUTES`; `admissions` → `_dispatch_to_transfer`, `helix` → `_write_helix`, `scribe` → `_dispatch_to_scribe`, each under `_savepoint(db, "handoff_adapter")` (`:249`, `:255`, `:261`). A verb not in the table is stored `unsupported` with the summary "Needs manual dispatch: Orb has no automatic route for ..., so nothing was sent or changed" (`:269`). `TransactionLost` is re-raised (`:273`). `HandoffBlocked` → status `blocked`, the reason as `error_summary` and the screen summary as `safety_json` (`:275`); any other adapter exception → status `failed` with the message, and the savepoint has already undone whatever the adapter wrote. Then `UPDATE sage_handoffs` and `INSERT sage_handoff_events` with prior/new status; returns the fresh row and the surgery to package.
@@ -418,7 +418,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Change guide:** to add an "order lab" route, add its verbs to `ACTION_ROUTES` with a new module name, an `elif module == ...` branch under `_savepoint`, and a `_dispatch_to_labs(action, actor_id, db)` adapter that writes only on `db` and returns a ref id. Watch out: a verb that is not in the table is never routed, so a classifier phrasing you did not list falls to `unsupported` (the safe direction).
 **Gotchas:** `stop_medication` is deliberately absent (no adapter discontinues a drug), and so is a bare `transfer` (it could mean the ICU or a ward). Pinned by `test_handoff.py`: `test_create_and_dispatch_handoff_unsupported_action` (`:358`), `test_a_verb_that_only_contains_a_medication_word_reaches_no_module` (`:428`), `test_a_stop_card_never_starts_the_drug` (`:440`), `test_a_bare_transfer_books_no_surgery` (`:451`).
 
-#### `_dispatch_to_helix`: `server/services/sage_handoff_service.py:369` (with `_screen_helix`, `:407`, and `_write_helix`, `:511`)
+#### `_dispatch_to_helix`: `server/services/sage_handoff_service.py:405` (with `_screen_helix`, `:407`, and `_write_helix`, `:511`)
 **Signature:** `(action, actor_id) → tuple[str, dict, str | None]` (order id or `"charted-only"`, drug-safety summary, note)
 **Does:** safely chart an AI-extracted medication and create a pharmacy order, or raise `HandoffBlocked` and chart nothing. `_dispatch_to_helix` is the standalone form (screen, then `_write_helix` in a session of its own); the transition endpoint screens through `prescreen_handoff` and writes through `_write_helix` on the confirm's transaction.
 **How it works:**
@@ -432,7 +432,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** `medication_safety_gate.enforce_medication_safety`, `helix_service.insert_order` (guides 14-helix / 15-pharmacy-verify), and with the store on `services/medorders/ai_lanes`.
 **Gotchas:** a non-formulary drug is *charted but not ordered*, the handoff is still `accepted` with ref `charted-only` (`test_create_and_dispatch_handoff_prescribe_noncatalog_still_charts`, `server/tests/test_handoff.py:314`). The charted med carries `source='llm_extracted'` so Vigil shows it as unverified. Until 2026-10-02 a severe allergy returned `"blocked-allergy"` as if it were an order id and the handoff was stored `accepted`, so the Relay card read "Sent to Helix" for an order that never left; `server/tests/test_handoff_blocked.py` pins the `blocked` outcome, the failed-screen case and the terminal status. Until 2026-10-04 the chart row and the order each committed on their own, before the handoff's final status; a failure there left a pending order behind a handoff stuck at `pending` (`server/tests/test_handoff_confirm_transaction.py`).
 
-#### `_dispatch_to_scribe`: `server/services/sage_handoff_service.py:626`
+#### `_dispatch_to_scribe`: `server/services/sage_handoff_service.py:706`
 **Signature:** `(action, actor_id, db) → str` (note id)
 **Does:** create a SOAP draft note from the action's `target`+`rationale`, on `db`.
 **How it works:** builds `raw_transcript = f"Sage Ambient Observation: {target}. {rationale}"`, calls `save_scribe_note(note_format="soap", structured_note=None, ai_generated=True, db=db)` so the note joins the confirm's transaction, returns the id; re-raises as `RuntimeError` on failure.
@@ -441,7 +441,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** `save_scribe_note` (guide 11-scribe). Verified by `test_..._document_success` (`server/tests/test_handoff.py:194`).
 **Gotchas:** note_format is hard-coded `"soap"`; the `target`'s hint ("… soap notes") is ignored.
 
-#### `_resolve_surgeon_id`: `server/services/sage_handoff_service.py:651`
+#### `_resolve_surgeon_id`: `server/services/sage_handoff_service.py:732`
 **Signature:** `(db, patient_id, actor_id) → str`
 **Does:** pick the lead surgeon for an emergency transfer.
 **How it works:** precedence: (1) the attending doctor *iff* they are a Surgery-dept doctor; (2) the on-call Surgery-dept doctor; (3) the attending doctor (any dept); (4) the confirming clinician.
@@ -450,7 +450,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** `_dispatch_to_transfer`.
 **Gotchas:** `department LIKE '%Surg%'` is a substring match; a department literally named "SurgX" would qualify. `ORDER BY id LIMIT 1` is deterministic-but-arbitrary "on-call" selection.
 
-#### `_dispatch_to_transfer`: `server/services/sage_handoff_service.py:831`
+#### `_dispatch_to_transfer`: `server/services/sage_handoff_service.py:941`
 **Signature:** `(action, actor_id, db) → (surgery_id, needs_package)`
 **Does:** move the active admission to the target department, post a Relay system message, and create/advance an emergency surgery, on `db` (never commits).
 **How it works:**
@@ -469,7 +469,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **How it works:** `asyncio.get_running_loop().create_task(...)` (`:820`); with no running loop it logs a WARNING and the case stays at `emergency_pending`.
 **Why it exists:** the adapter now runs inside the confirm's transaction, off the event loop, where `get_running_loop()` fails; and a task started before the commit could look for a case that is not there yet. The transition endpoint calls this after `run_db` returns, on the loop (`server/routes/relay_routes.py:466`); `create_and_dispatch_handoff` calls it after its own commit. Pinned by `test_transfer_confirm_still_schedules_the_prep_package`.
 
-#### `_alert_assigned_team`: `server/services/sage_handoff_service.py:960`
+#### `_alert_assigned_team`: `server/services/sage_handoff_service.py:1092`
 **Signature:** `(db, surgery_id, patient_id) → None`
 **Does:** persist targeted `surgical_alert` messages for the surgeon + one nurse + one anaesthetist.
 **How it works:** finds the case-room channel; builds a roster (surgeon real id, first nurse, first anaes-department/name user); wipes and re-inserts `surgery_team_assignments` (idempotent) with status `alerted`; inserts one `surgical_alert` message per member carrying a JSON payload with `target_user_id`.
@@ -478,7 +478,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** the Relay `surgical_alert` renderer; live delivery is done separately by `emit_team_alerts_live`.
 **Gotchas:** persistence only, nothing is pushed live from here.
 
-#### `emit_team_alerts_live`: `server/services/sage_handoff_service.py:1044`
+#### `emit_team_alerts_live`: `server/services/sage_handoff_service.py:1176`
 **Signature:** `async (surgery_id, patient_id) → None`
 **Does:** push each `surgical_alert` for this surgery over sockets, both to the case-room room and to each target user's personal room `user:<id>`.
 **How it works:** reads the recent `surgical_alert` messages off the loop (`_load_alert_rows`, `:889`), filters to this surgery, serialises each row with `relay_service._message_row_to_dict` (`:928`), the same serializer the history endpoint uses, so the live copy carries `is_bot` and `source`, and `sio.emit("message:new", …, room=…)` to the channel and the `user:<id>` room (`:930-933`). A **socket room** is a named group the server can broadcast to; `user:<id>` is a per-user room so an alert reaches that clinician on any device.
@@ -487,7 +487,7 @@ Every state change is written to `sage_handoff_events` for audit, and dispatch i
 **Talks to:** `ws.realtime.sio` (guide 06-realtime); called by the Relay transition handler *after* dispatch (`server/routes/relay_routes.py:472`).
 **Gotchas:** emits `message:new` (the same event normal chat uses) so existing clients render it with no new handler. A failed emit is logged, never raised.
 
-#### `generate_transfer_surgery_package_async`: `server/services/sage_handoff_service.py:1123`
+#### `generate_transfer_surgery_package_async`: `server/services/sage_handoff_service.py:1266`
 **Signature:** `async (surgery_id) → None`
 **Does:** flip the surgery to `emergency_context_generating`, write the shared prep-package template (risk assessment, complications, checklist, instruments, staff) and set `emergency_ready`, emitting `surgery:emergency_intake` before and after.
 **How it works:** `_mark_generating` (`:942`) flips the status in one transaction, then `_persist_package` (`:958`) writes `PREP_PACKAGE` from `surgery_escalation_service` with `notes.ai_package_status = "template"` (`:1004-1007`, `:1010-1015`). There is no wait and no model call. If the write fails, the case is finalised with `FALLBACK_DATA` and status `failed` (`:1021-1022`) rather than left behind a spinner.

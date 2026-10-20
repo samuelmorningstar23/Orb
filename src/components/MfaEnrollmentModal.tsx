@@ -60,9 +60,6 @@ function groupSecret(secret: string | undefined | null): string {
  */
 export default function MfaEnrollmentModal({ onClose, enrollTicket, onEnrolled }: Props) {
   // Per-call Authorization override; buildHeaders leaves an explicit one alone.
-  const ticketAuth = enrollTicket
-    ? { Authorization: `Bearer ${enrollTicket}` }
-    : undefined
   const [view, setView] = useState<View>('loading')
   const [enroll, setEnroll] = useState<EnrollBeginResponse | null>(null)
   const [error, setError] = useState('')
@@ -85,7 +82,7 @@ export default function MfaEnrollmentModal({ onClose, enrollTicket, onEnrolled }
       try {
         const data = await apiFetch<EnrollBeginResponse>('/auth/mfa/enroll/begin', {
           method: 'POST',
-          headers: ticketAuth,
+          headers: enrollTicket ? { Authorization: `Bearer ${enrollTicket}` } : undefined,
         })
         if (cancelled) return
         setEnroll(data)
@@ -108,7 +105,7 @@ export default function MfaEnrollmentModal({ onClose, enrollTicket, onEnrolled }
       }
     })()
     return () => { cancelled = true }
-  }, [])
+  }, [enrollTicket])
 
   const copy = async (value: string, which: 'secret' | 'uri') => {
     try {
@@ -133,7 +130,7 @@ export default function MfaEnrollmentModal({ onClose, enrollTicket, onEnrolled }
       await apiFetch('/auth/mfa/enroll/confirm', {
         method: 'POST',
         body: JSON.stringify({ totp_code: code }),
-        headers: ticketAuth,
+        headers: enrollTicket ? { Authorization: `Bearer ${enrollTicket}` } : undefined,
       })
       setView('enrolled')
       onEnrolled?.()

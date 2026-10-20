@@ -20,11 +20,13 @@ exercises the full hybrid path; without it (the dev venv) retrieval degrades to
 the FTS/BM25 lexical path plus the lexical reranker — the harness still runs and
 produces metrics. It is pure/read-only over the store, so it is safe to run in CI.
 """
+
 from __future__ import annotations
 
 import json
 import os
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 
 # Default question bank ships alongside the server at server/eval/.
 _DEFAULT_QUESTIONS_PATH = os.path.join(
@@ -37,7 +39,7 @@ _DEFAULT_QUESTIONS_PATH = os.path.join(
 _DEFAULT_KS: Sequence[int] = (1, 3, 5)
 
 
-def load_questions(path: Optional[str] = None) -> List[Dict[str, Any]]:
+def load_questions(path: str | None = None) -> list[dict[str, Any]]:
     """Load the evaluation question bank from JSON.
 
     Accepts either a top-level list, or an object with a ``questions`` list. Each
@@ -45,7 +47,7 @@ def load_questions(path: Optional[str] = None) -> List[Dict[str, Any]]:
     list of ids) / ``expected_keywords``.
     """
     p = path or _DEFAULT_QUESTIONS_PATH
-    with open(p, "r", encoding="utf-8") as fh:
+    with open(p, encoding="utf-8") as fh:
         data = json.load(fh)
     questions = data["questions"] if isinstance(data, dict) else data
     if not isinstance(questions, list):
@@ -53,7 +55,7 @@ def load_questions(path: Optional[str] = None) -> List[Dict[str, Any]]:
     return [_normalize_question(q, i) for i, q in enumerate(questions)]
 
 
-def _normalize_question(q: Dict[str, Any], idx: int) -> Dict[str, Any]:
+def _normalize_question(q: dict[str, Any], idx: int) -> dict[str, Any]:
     """Coerce a raw question dict into a canonical shape."""
     expected = q.get("expected_source", q.get("expected_doc_ids", []))
     if isinstance(expected, str):
@@ -73,7 +75,7 @@ def _normalize_question(q: Dict[str, Any], idx: int) -> Dict[str, Any]:
     }
 
 
-def _is_relevant(result: Dict[str, Any], question: Dict[str, Any]) -> bool:
+def _is_relevant(result: dict[str, Any], question: dict[str, Any]) -> bool:
     """Whether a single retrieved result satisfies the question.
 
     Primary signal: the result's document_id is one of the expected ids. Fallback
@@ -90,25 +92,25 @@ def _is_relevant(result: Dict[str, Any], question: Dict[str, Any]) -> bool:
     return all(kw.lower() in hay for kw in keywords)
 
 
-def _expected_count(question: Dict[str, Any]) -> int:
+def _expected_count(question: dict[str, Any]) -> int:
     """Denominator for recall — number of distinct target documents."""
     return max(1, len(set(question["expected_source"]))) if question["expected_source"] else 1
 
 
 def evaluate_question(
-    question: Dict[str, Any],
-    search_fn: Callable[..., List[Dict[str, Any]]],
+    question: dict[str, Any],
+    search_fn: Callable[..., list[dict[str, Any]]],
     k: int,
     approved_only: bool = False,
     rerank: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Run one question through retrieval and compute its per-question signals."""
     results = search_fn(question["query"], limit=k, rerank=rerank, approved_only=approved_only)
     retrieved_ids = [r.get("document_id") for r in results]
 
     # Rank (1-based) of the first relevant result, else None.
-    first_rel_rank: Optional[int] = None
-    relevant_flags: List[bool] = []
+    first_rel_rank: int | None = None
+    relevant_flags: list[bool] = []
     for rank, r in enumerate(results, start=1):
         rel = _is_relevant(r, question)
         relevant_flags.append(rel)
@@ -127,7 +129,7 @@ def evaluate_question(
     }
 
 
-def _recall_at_k(per_q: List[Dict[str, Any]], k: int) -> float:
+def _recall_at_k(per_q: list[dict[str, Any]], k: int) -> float:
     """Mean over questions of (relevant found in top-k / expected count)."""
     if not per_q:
         return 0.0
@@ -139,7 +141,7 @@ def _recall_at_k(per_q: List[Dict[str, Any]], k: int) -> float:
     return total / len(per_q)
 
 
-def _hit_rate_at_k(per_q: List[Dict[str, Any]], k: int) -> float:
+def _hit_rate_at_k(per_q: list[dict[str, Any]], k: int) -> float:
     """Fraction of questions with >= 1 relevant result in the top-k."""
     if not per_q:
         return 0.0
@@ -147,7 +149,7 @@ def _hit_rate_at_k(per_q: List[Dict[str, Any]], k: int) -> float:
     return hits / len(per_q)
 
 
-def _mrr(per_q: List[Dict[str, Any]]) -> float:
+def _mrr(per_q: list[dict[str, Any]]) -> float:
     """Mean reciprocal rank of the first relevant result (0 if none found)."""
     if not per_q:
         return 0.0
@@ -159,14 +161,14 @@ def _mrr(per_q: List[Dict[str, Any]]) -> float:
 
 
 def run_eval(
-    questions: Optional[List[Dict[str, Any]]] = None,
+    questions: list[dict[str, Any]] | None = None,
     k: int = 5,
-    ks: Optional[Sequence[int]] = None,
-    search_fn: Optional[Callable[..., List[Dict[str, Any]]]] = None,
+    ks: Sequence[int] | None = None,
+    search_fn: Callable[..., list[dict[str, Any]]] | None = None,
     approved_only: bool = False,
     rerank: bool = True,
-    questions_path: Optional[str] = None,
-) -> Dict[str, Any]:
+    questions_path: str | None = None,
+) -> dict[str, Any]:
     """Evaluate retrieval over the question bank and return an aggregate metrics dict.
 
     Args:
@@ -186,6 +188,7 @@ def run_eval(
     """
     if search_fn is None:
         from services.clinical_knowledge import search_guidelines
+
         search_fn = search_guidelines
     if questions is None:
         questions = load_questions(questions_path)
@@ -197,7 +200,7 @@ def run_eval(
         for q in questions
     ]
 
-    metrics: Dict[str, Any] = {
+    metrics: dict[str, Any] = {
         "num_questions": len(per_q),
         "k": k,
         "ks": report_ks,

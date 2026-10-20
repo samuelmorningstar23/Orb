@@ -1,12 +1,17 @@
 """Orb Hospital OS — SQLite Database Layer"""
-import sqlite3
-from db_backend import DBOperationalError, DBProgrammingError
-import json
+
+import asyncio as _asyncio
+import atexit as _atexit
 import logging
+import sqlite3
 import threading
-from pathlib import Path
-from typing import Optional
+from concurrent.futures import ThreadPoolExecutor as _TPE
+from contextlib import contextmanager
+from functools import partial as _partial
+from typing import Never
+
 from config import DB_PATH
+from db_backend import DBOperationalError, DBProgrammingError
 from roles import role_check_sql
 
 logger = logging.getLogger("orb.database")
@@ -29,9 +34,17 @@ SCHEMA_VERSION = 6
 # laboratory's critical result is posted to the case room under it. It is
 # created inactive (is_active 0) by services/lab_critical_service.py and never
 # signs in.
-SERVICE_ACCOUNT_IDS: frozenset[str] = frozenset({
-    "system", "bot_vigil", "bot_lab", "bot_lens", "bot_scribe", "bot_bridge", "system_lab",
-})
+SERVICE_ACCOUNT_IDS: frozenset[str] = frozenset(
+    {
+        "system",
+        "bot_vigil",
+        "bot_lab",
+        "bot_lens",
+        "bot_scribe",
+        "bot_bridge",
+        "system_lab",
+    }
+)
 
 
 _SCHEMA_TEMPLATE = """
@@ -897,6 +910,7 @@ def _open_raw_connection(pooled: bool = False):
     SQLCipher — run scripts/encrypt_db.py --migrate.
     """
     from config import DB_ENCRYPTION_KEY
+
     if DB_ENCRYPTION_KEY:
         driver = None
         try:
@@ -924,10 +938,11 @@ def _sqlcipher_key_hex(key: str) -> str:
     per-open KDF and accepts any-length input, mirroring the uploads key.
     """
     import hashlib
+
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
-def _refuse_plaintext_with_key():
+def _refuse_plaintext_with_key() -> Never:
     """A key with no driver is a misconfigured appliance, never a plaintext one.
 
     Fail closed on both the live and the backup path: the operator asked for
@@ -949,6 +964,7 @@ def encryption_at_rest_status() -> dict:
     says it is happening. Never raises: a failed probe reports inactive.
     """
     from config import DB_ENCRYPTION_KEY
+
     key_set = bool(DB_ENCRYPTION_KEY)
     conn = None
     try:
@@ -957,14 +973,17 @@ def encryption_at_rest_status() -> dict:
         conn = _open_raw_connection()
         row = conn.execute("PRAGMA cipher_version").fetchone()
     except Exception as exc:
-        return {"key_set": key_set, "cipher_version": None, "active": False,
-                "error": type(exc).__name__}
+        return {
+            "key_set": key_set,
+            "cipher_version": None,
+            "active": False,
+            "error": type(exc).__name__,
+        }
     finally:
         if conn is not None:
             conn.close()
     version = (row[0] if row else None) or None
-    return {"key_set": key_set, "cipher_version": version,
-            "active": bool(key_set and version)}
+    return {"key_set": key_set, "cipher_version": version, "active": bool(key_set and version)}
 
 
 def verify_encryption_at_rest() -> None:
@@ -999,9 +1018,11 @@ def _row_factory_for(conn):
     modules = [(c.__module__ or "") for c in type(conn).__mro__]
     if any(m.startswith("sqlcipher3") for m in modules):
         import sqlcipher3.dbapi2 as _drv  # type: ignore
+
         return _drv.Row
     if any(m.startswith("pysqlcipher3") for m in modules):
         from pysqlcipher3 import dbapi2 as _drv  # type: ignore
+
         return _drv.Row
     return sqlite3.Row
 
@@ -1020,6 +1041,7 @@ _pooled_conn_classes: dict = {}
 def _pooled_connection_class(base):
     cls = _pooled_conn_classes.get(base)
     if cls is None:
+
         class _PooledConnection(base):  # type: ignore[misc, valid-type]
             def close(self):
                 """Lifecycle no-op + STATE RESET.
@@ -1079,13 +1101,12 @@ def get_db() -> sqlite3.Connection:
     exercise). See db_backend.get_pooled.
     """
     from db_backend import get_pooled
+
     pooled = get_pooled(lambda: _build_connection(pooled=True), str(DB_PATH))
     if pooled is not None:
         return pooled
     return _build_connection()
 
-
-from contextlib import contextmanager
 
 # Per-thread db_session nesting depth for POOLED connections. Nested sessions
 # on one thread share one pooled handle, so the inner exit must not commit or
@@ -1162,6 +1183,7 @@ def db_session(immediate: bool = False):
 
     conn = get_db()
     from db_backend import discard_pooled, is_pooled
+
     pooled = is_pooled(conn)
     depth = getattr(_session_nesting, "depth", 0) if pooled else 0
 
@@ -1258,10 +1280,6 @@ def db_session(immediate: bool = False):
 # Private, so a background storm cannot drain the shared default executor.
 # (event_bus keeps its own single-worker executor: its delivery bookkeeping
 # relies on ordered execution.)
-import asyncio as _asyncio
-import atexit as _atexit
-from concurrent.futures import ThreadPoolExecutor as _TPE
-from functools import partial as _partial
 
 _DB_EXECUTOR = _TPE(max_workers=4, thread_name_prefix="orb-db")
 _atexit.register(_DB_EXECUTOR.shutdown, wait=False)
@@ -1299,6 +1317,7 @@ def _open_raw_connection_at(path, apply_key: bool):
     (used by consistent_backup so the backup file is encrypted iff the live DB
     is)."""
     from config import DB_ENCRYPTION_KEY
+
     if apply_key and DB_ENCRYPTION_KEY:
         driver = None
         try:
@@ -1330,6 +1349,7 @@ def consistent_backup(dest_path) -> None:
     Raises RuntimeError if the fresh backup fails PRAGMA integrity_check.
     """
     from config import DB_ENCRYPTION_KEY
+
     encrypted = bool(DB_ENCRYPTION_KEY)
     src = _open_raw_connection()  # codec-aware for the live DB
     dst = _open_raw_connection_at(dest_path, apply_key=encrypted)
@@ -1352,7 +1372,9 @@ def _harden_db_file_permissions():
     without a key.
     """
     import os
+
     from config import DB_PATH
+
     # The WAL/SHM sidecars also contain PHI and must be locked down too — the
     # previous implementation only chmod'd the main .db file.
     for suffix in ("", "-wal", "-shm", "-journal"):
@@ -1389,9 +1411,9 @@ def _harden_db_file_permissions():
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def _atomic_table_rebuild(conn, *, table: str, create_new_sql: str,
-                          shared_cols: str, post_sql: list,
-                          before_commit=None) -> None:
+def _atomic_table_rebuild(
+    conn, *, table: str, create_new_sql: str, shared_cols: str, post_sql: list, before_commit=None
+) -> None:
     """Rebuild `table` via the SQLite create-copy-drop-rename dance as a single
     ALL-OR-NOTHING unit. Either the rebuilt table is in place with every row, or
     the original is untouched. There is no third outcome.
@@ -1435,9 +1457,7 @@ def _atomic_table_rebuild(conn, *, table: str, create_new_sql: str,
     # one thing that can silently drift is the scratch table's NAME — and a
     # mismatch would DROP the live table and then rename something else.
     if new_table not in create_new_sql:
-        raise RuntimeError(
-            f"rebuild of {table!r} expects its CREATE to define {new_table!r}"
-        )
+        raise RuntimeError(f"rebuild of {table!r} expects its CREATE to define {new_table!r}")
     # This function COMMITs the caller's pending work before taking its own
     # transaction, which is correct from init_db's OUTERMOST db_session frame
     # (depth 1) and only there: inside a nested pooled frame the enclosing
@@ -1465,17 +1485,14 @@ def _atomic_table_rebuild(conn, *, table: str, create_new_sql: str,
             conn.execute(f'DROP TABLE IF EXISTS "{new_table}"')
             conn.execute(create_new_sql)
             conn.execute(
-                f'INSERT INTO "{new_table}" ({shared_cols}) '
-                f'SELECT {shared_cols} FROM "{table}"'
+                f'INSERT INTO "{new_table}" ({shared_cols}) SELECT {shared_cols} FROM "{table}"'
             )
             # Prove the copy before anything destructive. Cheap, and it turns a
             # silent partial copy into a clean abort.
             src = conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
             dst = conn.execute(f'SELECT COUNT(*) FROM "{new_table}"').fetchone()[0]
             if src != dst:
-                raise RuntimeError(
-                    f"{table} rebuild aborted: copied {dst} of {src} rows"
-                )
+                raise RuntimeError(f"{table} rebuild aborted: copied {dst} of {src} rows")
             conn.execute(f'DROP TABLE "{table}"')
             conn.execute(f'ALTER TABLE "{new_table}" RENAME TO "{table}"')
             for stmt in post_sql:
@@ -1543,7 +1560,8 @@ def init_db():
                     "prev_hash values found (e.g. %s x%d), likely from the historical "
                     "audit-chain write race. Forks remain detectable via "
                     "verify_audit_chain(); reseal the chain to enable the index.",
-                    _dup[0], _dup[1],
+                    _dup[0],
+                    _dup[1],
                 )
             else:
                 logger.info("Migrating audit_logs: adding partial UNIQUE index on prev_hash")
@@ -1577,11 +1595,10 @@ def init_db():
         # DBs migrating from < v5 get the well-known hash revoked ONCE (ledger-
         # gated so a deliberately re-provisioned '1234'-equivalent hash — e.g.
         # in tests — is not silently re-revoked on a later init_db call).
-        already_v5 = conn.execute(
-            "SELECT 1 FROM schema_version WHERE version >= 5"
-        ).fetchone()
+        already_v5 = conn.execute("SELECT 1 FROM schema_version WHERE version >= 5").fetchone()
         if not already_v5:
             import hashlib
+
             legacy_pin_1234 = hashlib.sha256(b"1234").hexdigest()
             revoked = conn.execute(
                 "UPDATE users SET pin_hash = NULL WHERE pin_hash = ?", (legacy_pin_1234,)
@@ -1589,7 +1606,8 @@ def init_db():
             if revoked:
                 logger.warning(
                     "Revoked the legacy universal '1234' PIN for %d user(s); "
-                    "agentic co-sign requires re-provisioning a personal PIN.", revoked
+                    "agentic co-sign requires re-provisioning a personal PIN.",
+                    revoked,
                 )
 
         # ── Migration: ensure messages.message_type CHECK allows the newer message
@@ -1641,8 +1659,19 @@ def init_db():
             existing = {c[1] for c in conn.execute("PRAGMA table_info(messages)").fetchall()}
             # Canonical column list == shipped SCHEMA + the source/is_bot additive
             # migration. Copy only columns the legacy table actually has.
-            canonical = ["id", "channel_id", "sender_id", "sender_name", "sender_role",
-                         "content", "message_type", "timestamp", "read_by", "source", "is_bot"]
+            canonical = [
+                "id",
+                "channel_id",
+                "sender_id",
+                "sender_name",
+                "sender_role",
+                "content",
+                "message_type",
+                "timestamp",
+                "read_by",
+                "source",
+                "is_bot",
+            ]
             shared = ", ".join(c for c in canonical if c in existing)
             _atomic_table_rebuild(
                 conn,
@@ -1692,11 +1721,27 @@ def init_db():
             # (surgery_team_assignments); building the new table before touching
             # the old one means a CREATE failure destroys nothing.
             _surg_existing = {c[1] for c in conn.execute("PRAGMA table_info(surgeries)").fetchall()}
-            _surg_canonical = ["id", "patient_id", "surgeon_id", "procedure_name", "diagnosis",
-                               "scheduled_date", "scheduled_time", "estimated_duration_min",
-                               "operating_room", "status", "co_morbidities", "surgical_checklist",
-                               "instruments_required", "staff_required", "risk_assessment",
-                               "possible_complications", "success_probability", "notes", "created_at"]
+            _surg_canonical = [
+                "id",
+                "patient_id",
+                "surgeon_id",
+                "procedure_name",
+                "diagnosis",
+                "scheduled_date",
+                "scheduled_time",
+                "estimated_duration_min",
+                "operating_room",
+                "status",
+                "co_morbidities",
+                "surgical_checklist",
+                "instruments_required",
+                "staff_required",
+                "risk_assessment",
+                "possible_complications",
+                "success_probability",
+                "notes",
+                "created_at",
+            ]
             _surg_shared = ", ".join(c for c in _surg_canonical if c in _surg_existing)
             # Was strictly worse than the messages block: an explicit conn.commit()
             # here, then an executescript() whose DROP and RENAME each committed
@@ -1742,7 +1787,9 @@ def init_db():
             conn.execute("ALTER TABLE vitals ADD COLUMN source TEXT DEFAULT 'simulated'")
         if "source_event_id" not in cols:
             print("  [DB] Migrating vitals table: adding 'source_event_id' column...")
-            conn.execute("ALTER TABLE vitals ADD COLUMN source_event_id INTEGER REFERENCES ingestion_events(id)")
+            conn.execute(
+                "ALTER TABLE vitals ADD COLUMN source_event_id INTEGER REFERENCES ingestion_events(id)"
+            )
 
         # ── Migration: add verification + pipeline meta to scribe_notes ──
         scribe_cols = {r[1] for r in conn.execute("PRAGMA table_info(scribe_notes)").fetchall()}
@@ -1757,18 +1804,18 @@ def init_db():
         # Re-read columns after previous migration block
         scribe_cols = {r[1] for r in conn.execute("PRAGMA table_info(scribe_notes)").fetchall()}
         lifecycle_cols = {
-            "status":           "TEXT DEFAULT 'draft'",
-            "version":          "INTEGER DEFAULT 1",
+            "status": "TEXT DEFAULT 'draft'",
+            "version": "INTEGER DEFAULT 1",
             "supersedes_note_id": "INTEGER",
-            "signed_by":        "TEXT",
-            "signed_at":        "TIMESTAMP",
-            "finalized_at":     "TIMESTAMP",
-            "rejected_by":      "TEXT",
-            "rejected_at":      "TIMESTAMP",
+            "signed_by": "TEXT",
+            "signed_at": "TIMESTAMP",
+            "finalized_at": "TIMESTAMP",
+            "rejected_by": "TEXT",
+            "rejected_at": "TIMESTAMP",
             "rejection_reason": "TEXT",
-            "last_edited_by":   "TEXT",
-            "last_edited_at":   "TIMESTAMP",
-            "ai_generated":     "INTEGER DEFAULT 1",
+            "last_edited_by": "TEXT",
+            "last_edited_at": "TIMESTAMP",
+            "ai_generated": "INTEGER DEFAULT 1",
         }
         added_lifecycle = False
         for col_name, col_def in lifecycle_cols.items():
@@ -1785,7 +1832,9 @@ def init_db():
                 "SELECT COUNT(*) FROM scribe_notes WHERE status IS NULL OR status = 'draft'"
             ).fetchone()[0]
             if existing_count > 0:
-                print(f"  [DB] Migrating {existing_count} legacy scribe note(s) to status='signed' (immutable)...")
+                print(
+                    f"  [DB] Migrating {existing_count} legacy scribe note(s) to status='signed' (immutable)..."
+                )
                 conn.execute("""
                     UPDATE scribe_notes
                     SET status = 'signed',
@@ -1806,7 +1855,9 @@ def init_db():
         try:
             conn.execute("SELECT 1 FROM sage_actions LIMIT 1")
         except DBOperationalError:
-            print("  [DB] Migrating Sage Ambient: creating sage_actions and sage_action_events tables...")
+            print(
+                "  [DB] Migrating Sage Ambient: creating sage_actions and sage_action_events tables..."
+            )
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS sage_actions (
                     id TEXT PRIMARY KEY,
@@ -1847,13 +1898,13 @@ def init_db():
             ("emergency_contact_phone", "TEXT"),
             ("address", "TEXT"),
         ]
-        
+
         migrated_any = False
         for col_name, col_type in new_columns:
             if col_name not in patient_cols:
                 conn.execute(f"ALTER TABLE patients ADD COLUMN {col_name} {col_type}")
                 migrated_any = True
-                
+
         if migrated_any:
             print("  [DB] Migrating patients: added new contact/identity columns...")
 
@@ -1956,7 +2007,9 @@ def init_db():
                 "UPDATE discharge_access_tokens SET token_id = token_hash WHERE token_id != token_hash"
             )
             if scrubbed.rowcount > 0:
-                print(f"  [DB] Scrubbed {scrubbed.rowcount} plaintext discharge token(s) (token_id := token_hash)")
+                print(
+                    f"  [DB] Scrubbed {scrubbed.rowcount} plaintext discharge token(s) (token_id := token_hash)"
+                )
         except Exception as e:
             logger.warning("Discharge token scrub migration failed: %s", e)
 
@@ -1995,6 +2048,7 @@ def init_db():
         # inside this same transaction so a failure rolls the whole init back.
         try:
             from migrations import run_pending_migrations
+
             run_pending_migrations(conn)
         except Exception as e:
             logger.error("Migration framework failed during init_db: %s", e)
@@ -2004,6 +2058,7 @@ def init_db():
     # values already raised at import; this just logs the active backend + pool).
     try:
         from db_backend import validate_backend_at_startup
+
         validate_backend_at_startup()
     except Exception as e:  # pragma: no cover — never let logging block boot
         logger.warning("db_backend validation note: %s", e)
@@ -2013,7 +2068,7 @@ def init_db():
     _harden_db_file_permissions()
 
 
-def verify_audit_chain(conn: Optional[sqlite3.Connection] = None) -> dict:
+def verify_audit_chain(conn: sqlite3.Connection | None = None) -> dict:
     """Verify the audit_logs hash chain for tamper-evidence.
 
     Recomputes each row's hash from the stored prev_hash + canonical fields and
@@ -2021,11 +2076,14 @@ def verify_audit_chain(conn: Optional[sqlite3.Connection] = None) -> dict:
     prior row. Rows with NULL row_hash (legacy, pre-hash-chain) are skipped and
     counted separately. Returns a summary dict; never raises on a broken chain.
     """
-    from services.audit_service import compute_audit_row_hash  # local import avoids cycle
+    from services.audit_service import (
+        compute_audit_row_hash,  # local import avoids cycle
+    )
 
     own_conn = conn is None
     if own_conn:
         conn = get_db()
+    assert conn is not None
     try:
         rows = conn.execute(
             """SELECT id, timestamp, correlation_id, event_category, actor_user_id,

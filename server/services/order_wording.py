@@ -37,6 +37,7 @@ and question phrasings and requires that none trips. Fuzzy spelling is
 deliberately NOT here: "gave" is one letter from "give" and "sat" (saturation)
 one from "stat", so a typo-tolerant gate reads reports as orders.
 """
+
 import re
 
 # ── Drugs a ward types that the international generic list does not reach ──
@@ -44,49 +45,233 @@ import re
 # verb-led patterns in sage_service ("stop the ecosprin"): each names a therapy
 # and nothing else on a ward. Words that also mean something else ("blood",
 # "k", "ns") are in LINE_ONLY_DRUG_WORDS below.
-WARD_DRUG_NAMES = frozenset({
-    "pcm", "pantop", "pantocid", "rantac", "ranitidine", "famotidine", "ondem", "emeset",
-    "zofer", "perinorm", "domperidone", "dolo", "crocin", "calpol", "combiflam", "monocef",
-    "taxim", "cefotaxime", "cefuroxime", "cefoperazone", "sulbactam", "magnex", "piptaz",
-    "tazo", "zosyn", "amoxiclav", "clavam", "azithro", "azee", "azithral", "doxy", "mero",
-    "meronem", "duolin", "levolin", "asthalin", "budecort", "foracort", "deriphyllin",
-    "theophylline", "lactulose", "glargine", "lantus", "actrapid", "mixtard", "humulin",
-    "novomix", "aspart", "lispro", "atorva", "rosuva", "atorvastatin", "rosuvastatin",
-    "ecosprin", "clopi", "clopilet", "dytor", "torsemide", "torasemide", "spiro",
-    "aldactone", "metolazone", "mannitol", "dexona", "decadron", "hydrocort", "solumedrol",
-    "wysolone", "oseltamivir", "tamiflu", "acyclovir", "acivir", "amphotericin", "ambisome",
-    "thiamine", "optineuron", "neurobion", "ksol", "potchlor", "prbc", "ffp", "sdp", "rdp",
-    "cryo", "lmwh", "ufh", "enox", "fondaparinux", "warf", "acitrom", "ntg", "isosorbide",
-    "sorbitrate", "nicardipine", "esmolol", "norad", "dobu", "atropine", "glycopyrrolate",
-    "neostigmine", "midaz", "buprenorphine", "diclo", "voveran", "lignocaine", "lidocaine",
-    "glimi", "levipil", "eptoin", "valparin", "ativan", "diazepam", "haloperidol",
-    "olanzapine", "quetiapine", "esomeprazole", "rabeprazole", "sucralfate", "octreotide",
-    "terlipressin", "txa", "ethamsylate", "ivig", "hbig", "immunoglobulin", "rifampicin",
-    "steroids", "steroid", "albendazole", "carbimazole", "thyronorm", "eltroxin",
-    "telmisartan", "glimepiride", "linezolid", "colistin", "amlo", "amlong", "amlodac",
-    "metolar", "met-xl", "pan-d", "rabicip", "shelcal", "oha", "ohas", "insulins", "vitk",
-    "ironsucrose",
-    # sage_service._BRAND_FLOOR (the name matcher's "never a patient's name"
-    # brands): a brand that is never a name is a drug, and a parity test keeps
-    # every floor word in this list.
-    "meftal", "zerodol", "cifran", "ciplox", "zifi", "storvas", "rosuvas", "razo", "omez",
-    "glycomet", "monotrate", "nitrocontin", "cordarone", "tazact", "huminsulin",
-    "lupisulin", "novorapid",
-    # brands and classes the blind sets named (sets 3 and 4)
-    "flagyl", "metrogyl", "telma", "avil", "orofer", "transfusion", "antihypertensives",
-    "antiplatelets", "anticoagulants", "diuretics", "sedatives", "analgesics", "laxatives",
-    "nsaids", "statins",
-})
+WARD_DRUG_NAMES = frozenset(
+    {
+        "pcm",
+        "pantop",
+        "pantocid",
+        "rantac",
+        "ranitidine",
+        "famotidine",
+        "ondem",
+        "emeset",
+        "zofer",
+        "perinorm",
+        "domperidone",
+        "dolo",
+        "crocin",
+        "calpol",
+        "combiflam",
+        "monocef",
+        "taxim",
+        "cefotaxime",
+        "cefuroxime",
+        "cefoperazone",
+        "sulbactam",
+        "magnex",
+        "piptaz",
+        "tazo",
+        "zosyn",
+        "amoxiclav",
+        "clavam",
+        "azithro",
+        "azee",
+        "azithral",
+        "doxy",
+        "mero",
+        "meronem",
+        "duolin",
+        "levolin",
+        "asthalin",
+        "budecort",
+        "foracort",
+        "deriphyllin",
+        "theophylline",
+        "lactulose",
+        "glargine",
+        "lantus",
+        "actrapid",
+        "mixtard",
+        "humulin",
+        "novomix",
+        "aspart",
+        "lispro",
+        "atorva",
+        "rosuva",
+        "atorvastatin",
+        "rosuvastatin",
+        "ecosprin",
+        "clopi",
+        "clopilet",
+        "dytor",
+        "torsemide",
+        "torasemide",
+        "spiro",
+        "aldactone",
+        "metolazone",
+        "mannitol",
+        "dexona",
+        "decadron",
+        "hydrocort",
+        "solumedrol",
+        "wysolone",
+        "oseltamivir",
+        "tamiflu",
+        "acyclovir",
+        "acivir",
+        "amphotericin",
+        "ambisome",
+        "thiamine",
+        "optineuron",
+        "neurobion",
+        "ksol",
+        "potchlor",
+        "prbc",
+        "ffp",
+        "sdp",
+        "rdp",
+        "cryo",
+        "lmwh",
+        "ufh",
+        "enox",
+        "fondaparinux",
+        "warf",
+        "acitrom",
+        "ntg",
+        "isosorbide",
+        "sorbitrate",
+        "nicardipine",
+        "esmolol",
+        "norad",
+        "dobu",
+        "atropine",
+        "glycopyrrolate",
+        "neostigmine",
+        "midaz",
+        "buprenorphine",
+        "diclo",
+        "voveran",
+        "lignocaine",
+        "lidocaine",
+        "glimi",
+        "levipil",
+        "eptoin",
+        "valparin",
+        "ativan",
+        "diazepam",
+        "haloperidol",
+        "olanzapine",
+        "quetiapine",
+        "esomeprazole",
+        "rabeprazole",
+        "sucralfate",
+        "octreotide",
+        "terlipressin",
+        "txa",
+        "ethamsylate",
+        "ivig",
+        "hbig",
+        "immunoglobulin",
+        "rifampicin",
+        "steroids",
+        "steroid",
+        "albendazole",
+        "carbimazole",
+        "thyronorm",
+        "eltroxin",
+        "telmisartan",
+        "glimepiride",
+        "linezolid",
+        "colistin",
+        "amlo",
+        "amlong",
+        "amlodac",
+        "metolar",
+        "met-xl",
+        "pan-d",
+        "rabicip",
+        "shelcal",
+        "oha",
+        "ohas",
+        "insulins",
+        "vitk",
+        "ironsucrose",
+        # sage_service._BRAND_FLOOR (the name matcher's "never a patient's name"
+        # brands): a brand that is never a name is a drug, and a parity test keeps
+        # every floor word in this list.
+        "meftal",
+        "zerodol",
+        "cifran",
+        "ciplox",
+        "zifi",
+        "storvas",
+        "rosuvas",
+        "razo",
+        "omez",
+        "glycomet",
+        "monotrate",
+        "nitrocontin",
+        "cordarone",
+        "tazact",
+        "huminsulin",
+        "lupisulin",
+        "novorapid",
+        # brands and classes the blind sets named (sets 3 and 4)
+        "flagyl",
+        "metrogyl",
+        "telma",
+        "avil",
+        "orofer",
+        "transfusion",
+        "antihypertensives",
+        "antiplatelets",
+        "anticoagulants",
+        "diuretics",
+        "sedatives",
+        "analgesics",
+        "laxatives",
+        "nsaids",
+        "statins",
+    }
+)
 
 # Words that name a therapy on a prescription line but are ordinary English, or a
 # reading, elsewhere ("blood results", "k 3.1", "ns" as in not significant).
 # The line reads them as drugs; the verb-led patterns never do.
-LINE_ONLY_DRUG_WORDS = frozenset({
-    "k", "blood", "fluid", "fluids", "o2", "oxygen", "ns", "rl", "dns", "d5", "d10", "d25",
-    "d50", "saline", "dextrose", "nacl", "ivf", "antibiotics", "abx", "iron", "pan",
-    "platelets", "platelet", "prc", "magsulph", "slidingscale", "akt", "inh", "insulin",
-    "albumin",
-})
+LINE_ONLY_DRUG_WORDS = frozenset(
+    {
+        "k",
+        "blood",
+        "fluid",
+        "fluids",
+        "o2",
+        "oxygen",
+        "ns",
+        "rl",
+        "dns",
+        "d5",
+        "d10",
+        "d25",
+        "d50",
+        "saline",
+        "dextrose",
+        "nacl",
+        "ivf",
+        "antibiotics",
+        "abx",
+        "iron",
+        "pan",
+        "platelets",
+        "platelet",
+        "prc",
+        "magsulph",
+        "slidingscale",
+        "akt",
+        "inh",
+        "insulin",
+        "albumin",
+    }
+)
 
 #: Multi-word drug names the verb-led patterns should still see as one object.
 WARD_DRUG_PHRASES = (
@@ -116,93 +301,490 @@ WARD_VERBS = (
 ESCALATE = r"(?:de-?)?escalate\s+(?:abx\s+|antibiotics?\s+)?to\s+(?:inj\s+|iv\s+|oral\s+)?"
 
 # ── Token classes for the prescription line ──
-FORM = frozenset({"inj", "tab", "tabs", "cap", "caps", "syp", "syr", "susp", "neb", "nebs",
-                  "oint", "gtt"})
-ROUTE = frozenset({"iv", "im", "sc", "po", "pr", "sl", "ng", "ngt", "oral", "orally",
-                   "intravenous", "intravenously", "subcut", "subcutaneous", "inhaled",
-                   "topical", "ivp", "infusion", "drip", "slow", "chew"})
-FREQ = frozenset({"od", "bd", "bid", "tds", "tid", "qid", "qds", "hs", "nocte", "mane",
-                  "daily", "hourly", "stat", "sos", "prn", "weekly", "asper", "bedtime"})
+FORM = frozenset(
+    {"inj", "tab", "tabs", "cap", "caps", "syp", "syr", "susp", "neb", "nebs", "oint", "gtt"}
+)
+ROUTE = frozenset(
+    {
+        "iv",
+        "im",
+        "sc",
+        "po",
+        "pr",
+        "sl",
+        "ng",
+        "ngt",
+        "oral",
+        "orally",
+        "intravenous",
+        "intravenously",
+        "subcut",
+        "subcutaneous",
+        "inhaled",
+        "topical",
+        "ivp",
+        "infusion",
+        "drip",
+        "slow",
+        "chew",
+    }
+)
+FREQ = frozenset(
+    {
+        "od",
+        "bd",
+        "bid",
+        "tds",
+        "tid",
+        "qid",
+        "qds",
+        "hs",
+        "nocte",
+        "mane",
+        "daily",
+        "hourly",
+        "stat",
+        "sos",
+        "prn",
+        "weekly",
+        "asper",
+        "bedtime",
+    }
+)
 URGENT = frozenset({"stat", "now", "immediately", "asap", "urgently", "abhi", "turant"})
-WHEN = frozenset({"now", "immediately", "asap", "urgently", "urgent", "once", "twice",
-                  "thrice", "abhi", "turant", "tonight", "today", "tomorrow", "morning",
-                  "evening", "night", "overnight", "meals", "fromnow", "loading"})
-UNIT = frozenset({"mg", "g", "gm", "gms", "gram", "grams", "milligram", "milligrams",
-                  "microgram", "micrograms", "mcg", "ug", "units", "unit", "u", "iu", "mu",
-                  "ml", "l", "litre", "litres", "liter", "liters", "mmol", "meq", "pint",
-                  "pints", "amp", "amps", "ampoule", "vial", "vials", "puffs", "puff", "%",
-                  "mg/kg", "ml/hr", "ml/kg", "mcg/kg/min", "units/hr", "u/kg/hr", "mg/hr",
-                  "mcg/hr", "mcg/min", "mg/min", "ml/min"})
-DURATION_UNIT = frozenset({"min", "mins", "minute", "minutes", "h", "hr", "hrs", "hour",
-                           "hours", "days", "week", "weeks"})
+WHEN = frozenset(
+    {
+        "now",
+        "immediately",
+        "asap",
+        "urgently",
+        "urgent",
+        "once",
+        "twice",
+        "thrice",
+        "abhi",
+        "turant",
+        "tonight",
+        "today",
+        "tomorrow",
+        "morning",
+        "evening",
+        "night",
+        "overnight",
+        "meals",
+        "fromnow",
+        "loading",
+    }
+)
+UNIT = frozenset(
+    {
+        "mg",
+        "g",
+        "gm",
+        "gms",
+        "gram",
+        "grams",
+        "milligram",
+        "milligrams",
+        "microgram",
+        "micrograms",
+        "mcg",
+        "ug",
+        "units",
+        "unit",
+        "u",
+        "iu",
+        "mu",
+        "ml",
+        "l",
+        "litre",
+        "litres",
+        "liter",
+        "liters",
+        "mmol",
+        "meq",
+        "pint",
+        "pints",
+        "amp",
+        "amps",
+        "ampoule",
+        "vial",
+        "vials",
+        "puffs",
+        "puff",
+        "%",
+        "mg/kg",
+        "ml/hr",
+        "ml/kg",
+        "mcg/kg/min",
+        "units/hr",
+        "u/kg/hr",
+        "mg/hr",
+        "mcg/hr",
+        "mcg/min",
+        "mg/min",
+        "ml/min",
+    }
+)
+DURATION_UNIT = frozenset(
+    {"min", "mins", "minute", "minutes", "h", "hr", "hrs", "hour", "hours", "days", "week", "weeks"}
+)
 BLOOD = frozenset({"prbc", "prc", "ffp", "sdp", "rdp", "cryo", "platelets", "platelet"})
-ACTION = frozenset({
-    "stop", "hold", "discontinue", "d/c", "dc", "omit", "withhold", "cancel", "start",
-    "restart", "resume", "commence", "initiate", "add", "give", "prescribe", "order",
-    "increase", "inc", "decrease", "dec", "reduce", "double", "halve", "wean", "taper",
-    "titrate", "change", "switch", "convert", "escalate", "de-escalate", "deescalate",
-    "bump", "push", "load", "transfuse", "infuse", "run", "hang", "nebulise", "nebulize",
-    "cover", "replace", "stepdown", "topup", "makeit", "tobe", "up", "make",
-    "bolus", "slow", "cut", "skip", "keep", "putup", "adjust",
-})
+ACTION = frozenset(
+    {
+        "stop",
+        "hold",
+        "discontinue",
+        "d/c",
+        "dc",
+        "omit",
+        "withhold",
+        "cancel",
+        "start",
+        "restart",
+        "resume",
+        "commence",
+        "initiate",
+        "add",
+        "give",
+        "prescribe",
+        "order",
+        "increase",
+        "inc",
+        "decrease",
+        "dec",
+        "reduce",
+        "double",
+        "halve",
+        "wean",
+        "taper",
+        "titrate",
+        "change",
+        "switch",
+        "convert",
+        "escalate",
+        "de-escalate",
+        "deescalate",
+        "bump",
+        "push",
+        "load",
+        "transfuse",
+        "infuse",
+        "run",
+        "hang",
+        "nebulise",
+        "nebulize",
+        "cover",
+        "replace",
+        "stepdown",
+        "topup",
+        "makeit",
+        "tobe",
+        "up",
+        "make",
+        "bolus",
+        "slow",
+        "cut",
+        "skip",
+        "keep",
+        "putup",
+        "adjust",
+    }
+)
 #: "she needs lasix 40 iv" is an order; "he really needs paracetamol for the
 #: fever" is not. These count only next to a dose, a route or a frequency.
-WEAK_ACTION = frozenset({"needs", "need", "get", "have", "let", "should", "to",
-                         # "repeat lasix 40 iv" orders a drug; "repeat potassium at 6 pm"
-                         # orders a blood test, outside this gate (ruling of 7 September)
-                         "repeat"})
+WEAK_ACTION = frozenset(
+    {
+        "needs",
+        "need",
+        "get",
+        "have",
+        "let",
+        "should",
+        "to",
+        # "repeat lasix 40 iv" orders a drug; "repeat potassium at 6 pm"
+        # orders a blood test, outside this gate (ruling of 7 September)
+        "repeat",
+    }
+)
 #: Hinglish: a verb stem is an order only with an imperative ending after it.
-HINDI_STEM = frozenset({"band", "bandh", "chalu", "shuru", "start", "kam", "badha", "ghata",
-                        "laga", "chadha", "chala", "rok", "hata", "de", "kar", "daal", "lagwa",
-                        "chadhwa", "dilwa", "mangwa", "skip"})
-HINDI_END = frozenset({"do", "karo", "kardo", "dijiye", "kijiye", "karein", "dena", "dein",
-                       "karna"})
-HINDI_ONE = frozenset({"lagao", "chadhao", "badhao", "roko", "hatao", "ghatao", "lagaiye",
-                       "chadhaiye", "chalao", "chalaiye", "dijiye", "karo", "kardo"})
-WHO = frozenset({"she", "he", "her", "him", "they", "them", "pt", "patient", "bed", "cot",
-                 "room", "isko", "usko", "unko", "inko", "mr", "mrs", "ms", "smt", "shri",
-                 "no", "baby"})
+HINDI_STEM = frozenset(
+    {
+        "band",
+        "bandh",
+        "chalu",
+        "shuru",
+        "start",
+        "kam",
+        "badha",
+        "ghata",
+        "laga",
+        "chadha",
+        "chala",
+        "rok",
+        "hata",
+        "de",
+        "kar",
+        "daal",
+        "lagwa",
+        "chadhwa",
+        "dilwa",
+        "mangwa",
+        "skip",
+    }
+)
+HINDI_END = frozenset(
+    {"do", "karo", "kardo", "dijiye", "kijiye", "karein", "dena", "dein", "karna"}
+)
+HINDI_ONE = frozenset(
+    {
+        "lagao",
+        "chadhao",
+        "badhao",
+        "roko",
+        "hatao",
+        "ghatao",
+        "lagaiye",
+        "chadhaiye",
+        "chalao",
+        "chalaiye",
+        "dijiye",
+        "karo",
+        "kardo",
+    }
+)
+WHO = frozenset(
+    {
+        "she",
+        "he",
+        "her",
+        "him",
+        "they",
+        "them",
+        "pt",
+        "patient",
+        "bed",
+        "cot",
+        "room",
+        "isko",
+        "usko",
+        "unko",
+        "inko",
+        "mr",
+        "mrs",
+        "ms",
+        "smt",
+        "shri",
+        "no",
+        "baby",
+    }
+)
 HONORIFIC = frozenset({"mr", "mrs", "ms", "smt", "shri"})
-CONNECT = frozenset({"then", "and", "&", "+", "with", "via", "at", "of", "a", "an", "the",
-                     "more", "another", "one", "each", "x", "to", "for", "please", "kindly",
-                     "also", "plus", "ko", "ka", "ki", "ke", "mein", "ghante", "ghanta", "wale",
-                     "wali", "wala", "divided", "slowly", "over", "in", "hai", "se", "between",
-                     "aur", "only", "as"})
+CONNECT = frozenset(
+    {
+        "then",
+        "and",
+        "&",
+        "+",
+        "with",
+        "via",
+        "at",
+        "of",
+        "a",
+        "an",
+        "the",
+        "more",
+        "another",
+        "one",
+        "each",
+        "x",
+        "to",
+        "for",
+        "please",
+        "kindly",
+        "also",
+        "plus",
+        "ko",
+        "ka",
+        "ki",
+        "ke",
+        "mein",
+        "ghante",
+        "ghanta",
+        "wale",
+        "wali",
+        "wala",
+        "divided",
+        "slowly",
+        "over",
+        "in",
+        "hai",
+        "se",
+        "between",
+        "aur",
+        "only",
+        "as",
+    }
+)
 #: Formulation suffixes a brand carries: "pantop dsr", "ondem md", "magnex forte".
-FORMULATION = frozenset({"sr", "xr", "er", "cr", "dsr", "md", "forte", "plus", "duo", "xl",
-                         "ds", "lsr", "dt", "mr"})
+FORMULATION = frozenset(
+    {"sr", "xr", "er", "cr", "dsr", "md", "forte", "plus", "duo", "xl", "ds", "lsr", "dt", "mr"}
+)
 #: "stat dose of lasix" is an order; "augmentin iv dose" is a lookup.
-DOSE_OPENERS = frozenset({"stat", "loading", "another", "more", "one", "next", "first", "a",
-                          "single", "extra", "same"})
+DOSE_OPENERS = frozenset(
+    {"stat", "loading", "another", "more", "one", "next", "first", "a", "single", "extra", "same"}
+)
 CONDITION = frozenset({"if", "unless", "till", "until"})
 REASON = frozenset({"for", "because", "due"})
 #: Words that make what follows an order line a question.
-TAIL_VETO = frozenset({"why", "how", "what", "which", "who", "kya", "ok", "okay", "safe",
-                       "safety", "fine", "enough", "vs", "or", "allowed", "contraindicated",
-                       "correct", "right", "too"})
+TAIL_VETO = frozenset(
+    {
+        "why",
+        "how",
+        "what",
+        "which",
+        "who",
+        "kya",
+        "ok",
+        "okay",
+        "safe",
+        "safety",
+        "fine",
+        "enough",
+        "vs",
+        "or",
+        "allowed",
+        "contraindicated",
+        "correct",
+        "right",
+        "too",
+    }
+)
 #: Words that make a line a report: something already done, running or known.
-REPORT = frozenset({
-    "given", "gave", "had", "got", "received", "running", "ran", "on", "done", "completed",
-    "charted", "held", "stopped", "started", "was", "were", "is", "are", "has", "been",
-    "already", "currently", "home", "refused", "allergic", "allergy", "not", "day", "diya",
-    "tha", "thi", "mila", "last", "this", "ok", "okay", "why", "how", "what", "or", "vs",
-    "continue", "continued", "cont", "same", "after", "before", "with", "without", "plus",
-    "since", "chart", "stock", "enough", "much", "effects", "interactions", "gaya", "gayi",
-    "raha", "rahi", "ordered", "when", "which", "who", "long", "placebo", "kya", "nahi",
-    "level", "levels", "should", "could", "would", "can", "years", "yrs", "months",
-    "taken", "taking", "takes", "using", "uses", "meds", "medications", "medicines",
-    "regular", "list",
-})
+REPORT = frozenset(
+    {
+        "given",
+        "gave",
+        "had",
+        "got",
+        "received",
+        "running",
+        "ran",
+        "on",
+        "done",
+        "completed",
+        "charted",
+        "held",
+        "stopped",
+        "started",
+        "was",
+        "were",
+        "is",
+        "are",
+        "has",
+        "been",
+        "already",
+        "currently",
+        "home",
+        "refused",
+        "allergic",
+        "allergy",
+        "not",
+        "day",
+        "diya",
+        "tha",
+        "thi",
+        "mila",
+        "last",
+        "this",
+        "ok",
+        "okay",
+        "why",
+        "how",
+        "what",
+        "or",
+        "vs",
+        "continue",
+        "continued",
+        "cont",
+        "same",
+        "after",
+        "before",
+        "with",
+        "without",
+        "plus",
+        "since",
+        "chart",
+        "stock",
+        "enough",
+        "much",
+        "effects",
+        "interactions",
+        "gaya",
+        "gayi",
+        "raha",
+        "rahi",
+        "ordered",
+        "when",
+        "which",
+        "who",
+        "long",
+        "placebo",
+        "kya",
+        "nahi",
+        "level",
+        "levels",
+        "should",
+        "could",
+        "would",
+        "can",
+        "years",
+        "yrs",
+        "months",
+        "taken",
+        "taking",
+        "takes",
+        "using",
+        "uses",
+        "meds",
+        "medications",
+        "medicines",
+        "regular",
+        "list",
+    }
+)
 #: The REPORT words that tell a drug's own state. A reason after an order may
 #: hold the rest ("inj lorazepam 2 mg iv now, bed 11 is seizing"); one of these
 #: makes the clause a status ("inj monocef 1 g iv bd, day 3", "tab ecosprin 75 od
 #: - taken").
-DRUG_STATE = REPORT - frozenset({
-    "is", "are", "was", "were", "has", "been", "with", "without", "after", "before", "plus",
-    "when", "which", "who", "not", "should", "could", "would", "can", "nahi",
-})
-NUMBER = re.compile(r"^(?:\d+(?:\.\d+)?|\d+-\d+-\d+|\d+/\d+|q\d+h|q\d+hrly|\d+hrly|x\d+|"
-                    r"[a-z]{1,4}-\d{1,4}|b\d{1,3}|ek|do|teen|char)$")
+DRUG_STATE = REPORT - frozenset(
+    {
+        "is",
+        "are",
+        "was",
+        "were",
+        "has",
+        "been",
+        "with",
+        "without",
+        "after",
+        "before",
+        "plus",
+        "when",
+        "which",
+        "who",
+        "not",
+        "should",
+        "could",
+        "would",
+        "can",
+        "nahi",
+    }
+)
+NUMBER = re.compile(
+    r"^(?:\d+(?:\.\d+)?|\d+-\d+-\d+|\d+/\d+|q\d+h|q\d+hrly|\d+hrly|x\d+|"
+    r"[a-z]{1,4}-\d{1,4}|b\d{1,3}|ek|do|teen|char)$"
+)
 
 #: Longest message the line checks read. A prescription line is short; the
 #: limit keeps a pasted 512 KB note from paying for them on the event loop.
@@ -224,8 +806,11 @@ def normalise(q: str) -> str:
     q = re.sub(r"\biron\s+sucrose\b", "ironsucrose", q)
     q = re.sub(r"\bsliding\s+scale\b", "slidingscale", q)
     q = re.sub(r"\bas\s+per\s+(?:slidingscale|protocol|scale)\b", "asper", q)
-    q = re.sub(r"\b(?:before|after|with)\s+(?:each\s+)?(?:meals?|food|breakfast|lunch|dinner)\b",
-               "meals", q)
+    q = re.sub(
+        r"\b(?:before|after|with)\s+(?:each\s+)?(?:meals?|food|breakfast|lunch|dinner)\b",
+        "meals",
+        q,
+    )
     q = re.sub(r"\b(?:on\s+)?(?:an\s+)?empty\s+stomach\b", "meals", q)
     q = re.sub(r"\bat\s+bedtime\b", "bedtime", q)
     q = re.sub(r"\b(?:once|twice|thrice)\s+(?:a\s+)?daily\b", "od", q)
@@ -238,9 +823,13 @@ def normalise(q: str) -> str:
     q = re.sub(r"\bstep\s+(?:down|up)\b", "stepdown", q)
     q = re.sub(r"\btop\s+up\b", "topup", q)
     q = re.sub(r"\bmake\s+(?:it|the)\b", "makeit", q)
-    q = re.sub(r"\b(?:to|needs?\s+to)\s+be\s+(?:stopped|held|given|started|increased|reduced|"
-               r"discontinued|omitted|withheld|restarted|changed|switched|tapered|weaned|"
-               r"transfused|infused|administered|nebuli[sz]ed)\b", "tobe", q)
+    q = re.sub(
+        r"\b(?:to|needs?\s+to)\s+be\s+(?:stopped|held|given|started|increased|reduced|"
+        r"discontinued|omitted|withheld|restarted|changed|switched|tapered|weaned|"
+        r"transfused|infused|administered|nebuli[sz]ed)\b",
+        "tobe",
+        q,
+    )
     q = re.sub(r"\bkar\s+do\b", "kardo", q)
     q = re.sub(r"(?:->|→|=>)", " to ", q)
     q = q.replace("@", " at ")
@@ -248,8 +837,9 @@ def normalise(q: str) -> str:
     q = re.sub(r"(\d)\s*(?:ml\s*)?(?:/|per\s+)(?:hour|hr|h)\b", r"\1 ml/hr", q)
     q = re.sub(r"(\d)\s*(?:u|units?)\s*/\s*(?:hour|hr|h)\b", r"\1 units/hr", q)
     q = re.sub(r"(\d)(mg|g|gm|mcg|ml|l|mmol|meq|u|iu|units?)\b", r"\1 \2", q)
-    q = re.sub(r"(\d)\s*(mg/kg|units/hr|u/kg/hr|mg/hr|mcg/hr|ml/kg|mcg/min|mg/min|ml/min)\b",
-               r"\1 \2", q)
+    q = re.sub(
+        r"(\d)\s*(mg/kg|units/hr|u/kg/hr|mg/hr|mcg/hr|ml/kg|mcg/min|mg/min|ml/min)\b", r"\1 \2", q
+    )
     q = re.sub(r"\bx\s*(\d)", r"x\1", q)
     q = re.sub(r"'s\b", "", q)
     return q
@@ -267,17 +857,20 @@ def line_signals(q: str, is_drug):
     if n < 2 or n > LINE_MAX_TOKENS:
         return None
     drugs = unknown = 0
-    has = dict.fromkeys(("route", "freq", "unit", "dur", "act", "weak", "form", "when",
-                         "urgent", "num"), False)
+    has = dict.fromkeys(
+        ("route", "freq", "unit", "dur", "act", "weak", "form", "when", "urgent", "num"), False
+    )
     prev = None
 
     def complete():
-        return drugs and (has["act"] or has["urgent"]
-                          or (has["form"] and (has["unit"] or has["route"] or has["freq"])))
+        return drugs and (
+            has["act"]
+            or has["urgent"]
+            or (has["form"] and (has["unit"] or has["route"] or has["freq"]))
+        )
 
     def met():
-        return drugs and (has["act"] or has["urgent"] or has["unit"] or has["route"]
-                          or has["freq"])
+        return drugs and (has["act"] or has["urgent"] or has["unit"] or has["route"] or has["freq"])
 
     i = 0
     while i < n:
@@ -286,8 +879,11 @@ def line_signals(q: str, is_drug):
         # A condition or a reason after a complete order ("hold amlodipine if sbp
         # below 100", "sos inj emeset 4 mg iv for vomiting") ends the line, as long
         # as what follows asks or reports nothing.
-        if unknown == 0 and ((t in CONDITION and met()) or (t in REASON and met())
-                             or (t in ("before", "after", "then") and complete())):
+        if unknown == 0 and (
+            (t in CONDITION and met())
+            or (t in REASON and met())
+            or (t in ("before", "after", "then") and complete())
+        ):
             veto = TAIL_VETO if t in CONDITION else (REPORT - {"before", "after"}) | TAIL_VETO
             if any(x in veto for x in toks[i:]):
                 return None
@@ -352,25 +948,43 @@ def line_signals(q: str, is_drug):
             return None  # one report or question word and it is not a line
         elif prev == "honorific" and unknown == 0:
             unknown = -1  # the name after Mr or Mrs
-        elif (t not in REPORT and t.isalpha() and len(t) >= 4 and nxt is not None
-              and is_drug(nxt) and unknown == 0 and prev == "form"):
+        elif (
+            t not in REPORT
+            and t.isalpha()
+            and len(t) >= 4
+            and nxt is not None
+            and is_drug(nxt)
+            and unknown == 0
+            and prev == "form"
+        ):
             # One word of a drug's name, after inj/tab: "inj human mixtard". Not
             # at the start, where a misspelt verb would pass ("contine ns").
             unknown = -1
         else:
             unknown += 1 if unknown >= 0 else 2
-        prev = (t if t in DOSE_OPENERS else "honorific" if t in HONORIFIC
-                else "form" if t in FORM else "drug" if is_drug(t) else "other")
+        prev = (
+            t
+            if t in DOSE_OPENERS
+            else "honorific"
+            if t in HONORIFIC
+            else "form"
+            if t in FORM
+            else "drug"
+            if is_drug(t)
+            else "other"
+        )
         i += 1
     if unknown > 0:
         # An unknown word may only be the drug's own name (a brand the list does
         # not know), and only on a line that is unmistakably a prescription.
         if unknown > 2 or drugs:
             return None
-        signature = (has["form"] or (has["unit"] and (has["route"] or has["freq"]))
-                     or (has["route"] and has["freq"])
-                     or (has["act"] and has["num"] and (has["unit"] or has["freq"]
-                                                        or has["route"])))
+        signature = (
+            has["form"]
+            or (has["unit"] and (has["route"] or has["freq"]))
+            or (has["route"] and has["freq"])
+            or (has["act"] and has["num"] and (has["unit"] or has["freq"] or has["route"]))
+        )
         if not signature:
             return None
         drugs = 1
@@ -379,8 +993,15 @@ def line_signals(q: str, is_drug):
         if "makeit" in toks and has["num"] and (has["freq"] or has["unit"]) and unknown <= 0:
             return has
         return None
-    if (has["act"] or has["route"] or has["freq"] or has["unit"] or has["dur"]
-            or has["urgent"] or (has["form"] and has["when"])):
+    if (
+        has["act"]
+        or has["route"]
+        or has["freq"]
+        or has["unit"]
+        or has["dur"]
+        or has["urgent"]
+        or (has["form"] and has["when"])
+    ):
         return has
     if has["weak"] and (has["unit"] or has["route"] or has["freq"]):
         return has
@@ -402,8 +1023,9 @@ def reading_then_order(q: str, is_drug) -> bool:
     and nothing after it may report or ask ("inj monocef 1 g iv bd, day 3").
     """
     # Normalised first, so "i.v. stat" is not split at its full stop.
-    parts = [p.strip() for p in re.split(r"[,;]|\s[-\u2013\u2014]\s|\.\s", normalise(q))
-             if p.strip()]
+    parts = [
+        p.strip() for p in re.split(r"[,;]|\s[-\u2013\u2014]\s|\.\s", normalise(q)) if p.strip()
+    ]
     if len(parts) < 2:
         return False
     for part in parts[1:]:
@@ -413,10 +1035,12 @@ def reading_then_order(q: str, is_drug) -> bool:
     first = line_signals(parts[0], is_drug)
     if first:
         rest = [t for p in parts[1:] for t in tokens(normalise(p))]
-        if (not any(t in DRUG_STATE or t in TAIL_VETO for t in rest)
-                and (first["act"] or first["urgent"]
-                     or (first["form"] and (first["unit"] or first["route"] or first["freq"]))
-                     or any(t in ACTION for t in rest))):
+        if not any(t in DRUG_STATE or t in TAIL_VETO for t in rest) and (
+            first["act"]
+            or first["urgent"]
+            or (first["form"] and (first["unit"] or first["route"] or first["freq"]))
+            or any(t in ACTION for t in rest)
+        ):
             return True
     words = tokens(normalise(q))
     if any(t in REPORT or t in TAIL_VETO for t in words):
@@ -486,19 +1110,19 @@ _REQUEST_PREAMBLE = re.compile(
 
 
 def without_request(q: str) -> str:
-    """"can you please increase the ns to 120 ml/hr?" read as "increase the ns to
+    """ "can you please increase the ns to 120 ml/hr?" read as "increase the ns to
     120 ml/hr". The question test has already ruled that a polite message is an
     order (ruling 3), so its preamble and its "?" are not words of the order;
     left in, "can" and "could" read as a question to the line reader."""
     m = _REQUEST_PREAMBLE.match(q)
-    rest = q[m.end():] if m else q
+    rest = q[m.end() :] if m else q
     return rest.rstrip(" ?") if rest != q or q.endswith("?") else q
 
 
 def after_patient_reference(q: str) -> str:
     """What follows a leading patient reference, or "" when there is none."""
     m = PATIENT_REFERENCE.match(q)
-    return q[m.end():] if m else ""
+    return q[m.end() :] if m else ""
 
 
 # ── Spelling the gate repairs before it reads anything ──
@@ -506,11 +1130,12 @@ _GLUED_VERB = re.compile(r"\b(give|start|stop|hold|add)([a-z]{4,})\b")
 
 
 def repair(q: str, is_drug) -> str:
-    """"pls" is "please" (so a polite order stays polite), "inj.lasix40mg" is
+    """ "pls" is "please" (so a polite order stays polite), "inj.lasix40mg" is
     "inj lasix 40mg", "givelasix" is "give lasix". Nothing here guesses a word."""
     q = re.sub(r"\b(?:pls|plz|plss|pl)\b", "please", q)
     # "start inj. ceftriaxone": the stop after "inj" would end the clause.
     q = re.sub(r"\b(inj|tab|tabs|cap|caps|syp|syr|susp)\.\s*", r"\1 ", q)
     q = re.sub(r"\b([a-z]{3,})(\d)", r"\1 \2", q)
     return _GLUED_VERB.sub(
-        lambda m: f"{m.group(1)} {m.group(2)}" if is_drug(m.group(2)) else m.group(0), q)
+        lambda m: f"{m.group(1)} {m.group(2)}" if is_drug(m.group(2)) else m.group(0), q
+    )

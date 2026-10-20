@@ -54,6 +54,7 @@ table must carry facility_id and ADMISSION_INDEXES below as well.
 A NOTE FOR ANY FUTURE PATIENTS REBUILD: migration 52's frozen column list does
 not know registered_facility_id; a later rebuild must add it to its own list.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -158,11 +159,11 @@ FACILITY_COLUMNS = (
 ADMISSION_INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_admissions_patient_status "
     "ON admissions(patient_id, status, created_at)",
-    "CREATE INDEX IF NOT EXISTS idx_admissions_facility_status "
-    "ON admissions(facility_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_admissions_facility_status ON admissions(facility_id, status)",
 )
-ADMISSION_INDEX_NAMES = frozenset({"idx_admissions_patient_status",
-                                   "idx_admissions_facility_status"})
+ADMISSION_INDEX_NAMES = frozenset(
+    {"idx_admissions_patient_status", "idx_admissions_facility_status"}
+)
 
 #: The roles whose department the front desk treats as clinical cover
 #: (frontdesk_service._COVERING_ROLES). Their spelling is read first.
@@ -187,7 +188,8 @@ def _site_config_departments() -> list[str]:
     file was loaded."""
     try:
         from services.site_config_service import current_site_config
-        return [d.get("name") for d in (current_site_config().departments or [])]
+
+        return [d["name"] for d in (current_site_config().departments or [])]
     except Exception:
         return []
 
@@ -200,14 +202,22 @@ def department_sources(conn) -> list[tuple[str, list[str]]]:
     if "department" in users:
         active = "AND COALESCE(is_active, 1) = 1 " if "is_active" in users else ""
         marks = ", ".join("?" for _ in COVERING_ROLES)
-        covering = [r[0] for r in conn.execute(
-            "SELECT DISTINCT department FROM users WHERE department IS NOT NULL "
-            f"AND TRIM(department) != '' {active}AND role IN ({marks}) ORDER BY 1",
-            COVERING_ROLES).fetchall()]
-        others = [r[0] for r in conn.execute(
-            "SELECT DISTINCT department FROM users WHERE department IS NOT NULL "
-            f"AND TRIM(department) != '' {active}AND role NOT IN ({marks}) ORDER BY 1",
-            COVERING_ROLES).fetchall()]
+        covering = [
+            r[0]
+            for r in conn.execute(
+                "SELECT DISTINCT department FROM users WHERE department IS NOT NULL "
+                f"AND TRIM(department) != '' {active}AND role IN ({marks}) ORDER BY 1",
+                COVERING_ROLES,
+            ).fetchall()
+        ]
+        others = [
+            r[0]
+            for r in conn.execute(
+                "SELECT DISTINCT department FROM users WHERE department IS NOT NULL "
+                f"AND TRIM(department) != '' {active}AND role NOT IN ({marks}) ORDER BY 1",
+                COVERING_ROLES,
+            ).fetchall()
+        ]
         sources.append(("users", covering + others))
     sources.append(("site_config", _site_config_departments()))
     for table, source, where in (
@@ -220,9 +230,18 @@ def department_sources(conn) -> list[tuple[str, list[str]]]:
         column = "name" if table == "channels" else "department"
         if column not in cols or (table == "channels" and "type" not in cols):
             continue
-        sources.append((source, [r[0] for r in conn.execute(
-            f"SELECT DISTINCT {column} FROM {table} WHERE {column} IS NOT NULL "
-            f"AND TRIM({column}) != '' {where} ORDER BY 1").fetchall()]))
+        sources.append(
+            (
+                source,
+                [
+                    r[0]
+                    for r in conn.execute(
+                        f"SELECT DISTINCT {column} FROM {table} WHERE {column} IS NOT NULL "
+                        f"AND TRIM({column}) != '' {where} ORDER BY 1"
+                    ).fetchall()
+                ],
+            )
+        )
     return sources
 
 
@@ -238,7 +257,9 @@ def seed_departments(conn) -> dict:
                 continue
             cur = conn.execute(
                 "INSERT OR IGNORE INTO departments (facility_id, name, seeded_from, created_by) "
-                "VALUES (1, ?, ?, 'migration_70')", (name, source))
+                "VALUES (1, ?, ?, 'migration_70')",
+                (name, source),
+            )
             count += max(0, cur.rowcount or 0)
         added[source] = count
     return added
@@ -248,7 +269,9 @@ def seed_facility_one(conn) -> bool:
     """Facility 1, code MAIN, no stored name. False when it already exists."""
     cur = conn.execute(
         "INSERT OR IGNORE INTO facilities (id, uuid, code, name, is_active, created_by) "
-        "VALUES (1, ?, ?, NULL, 1, 'migration_70')", (str(uuid.uuid4()), MAIN_CODE))
+        "VALUES (1, ?, ?, NULL, 1, 'migration_70')",
+        (str(uuid.uuid4()), MAIN_CODE),
+    )
     return bool(cur.rowcount)
 
 

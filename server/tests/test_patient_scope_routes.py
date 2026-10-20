@@ -34,6 +34,7 @@ Every test below fails on the pre-fix tree. They assert three things:
      over-applied;
   3. a PHI read leaves a row on the hash chain.
 """
+from tests.source_contract import contract_source
 import uuid
 from datetime import datetime, timezone
 
@@ -600,7 +601,7 @@ def test_every_patient_id_route_that_returns_phi_carries_the_guard():
         if endpoint is None:
             continue
         try:
-            src = inspect.getsource(endpoint)
+            src = contract_source(endpoint)
         except (OSError, TypeError):
             continue
         if not _source_really_belongs_to(endpoint, src):

@@ -46,6 +46,7 @@ Sub-modules, one per concern, each exporting `router` (no prefix):
   schedule   the times an order is due and the hospital's signed dose times
              (W8-I); reads in record mode, the write takes the lifecycle
 """
+
 from fastapi import APIRouter, Depends
 
 from routes.opt_in_gates import feature_gate
@@ -57,6 +58,7 @@ require_med_order_store = feature_gate("med_order_store")
 require_med_order_lifecycle = feature_gate("med_order_lifecycle")
 
 # Imported after the gates exist: the sub-modules import them from here.
+
 from routes.medorders import core, lifecycle, schedule, supply, verify  # noqa: E402
 
 router = APIRouter(

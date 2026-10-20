@@ -48,8 +48,10 @@ Pure and dependency-free on purpose: both callers reach it from inside a thread
 (the retrieval executor, the warm executor), and it must never be the thing
 that drags the knowledge stack into an import.
 """
+
 import re
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from typing import Any
 
 # The query a patient with NO stated condition and no drivers gets. Kept
 # deliberately generic: it is what the alert lane sent before this module
@@ -74,17 +76,29 @@ _MAX_QUERY_CHARS = 320
 # one to the dedup below. This is NOT the retrieval tokenizer — retrieval has
 # its own (clinical_knowledge._rerank_terms), and importing it here would pull
 # the knowledge stack into two hot import paths for four lines of regex.
-_DEDUP_STOPWORDS = frozenset({
-    "a", "an", "and", "the", "with", "of", "on", "in", "for", "to",
-})
+_DEDUP_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "the",
+        "with",
+        "of",
+        "on",
+        "in",
+        "for",
+        "to",
+    }
+)
 
 
 def _terms(text: str) -> set[str]:
     """Content tokens of `text`, for deciding whether one segment is already
     said by another. Single characters and digits are KEPT — "Type 1 DM" and
     "Type 2 DM" are different problems and must not collapse into one."""
-    return {w for w in re.split(r"[^a-z0-9]+", (text or "").lower())
-            if w and w not in _DEDUP_STOPWORDS}
+    return {
+        w for w in re.split(r"[^a-z0-9]+", (text or "").lower()) if w and w not in _DEDUP_STOPWORDS
+    }
 
 
 def _clean(value: Any) -> str:
@@ -94,7 +108,7 @@ def _clean(value: Any) -> str:
     return text[:_MAX_SEGMENT_CHARS].strip()
 
 
-def clinical_picture(facts: Optional[dict]) -> list[str]:
+def clinical_picture(facts: dict | None) -> list[str]:
     """What this patient HAS, most-specific first — the working diagnosis, then
     the active problem list.
 
@@ -137,9 +151,12 @@ def _render(primary: list[str], secondary: list[str]) -> str:
     return ". ".join(part for part in (head, tail) if part)
 
 
-def build_guideline_query(facts: Optional[dict] = None,
-                          drivers: Optional[Iterable[Any]] = None,
-                          *, fallback: str = FALLBACK_QUERY) -> str:
+def build_guideline_query(
+    facts: dict | None = None,
+    drivers: Iterable[Any] | None = None,
+    *,
+    fallback: str = FALLBACK_QUERY,
+) -> str:
     """The retrieval query for one patient: clinical picture first, drivers second.
 
     `drivers` is the NEWS2 driver list on both alert lanes. The prefetch warmer
@@ -173,8 +190,7 @@ def build_guideline_query(facts: Optional[dict] = None,
     # Truncation drops WHOLE segments from the least important end, so the
     # query can never be cut mid-condition: drivers go first, then the tail of
     # the problem list. The working diagnosis is the last thing left standing.
-    while (len(_render(primary, secondary)) > _MAX_QUERY_CHARS
-           and (secondary or len(primary) > 1)):
+    while len(_render(primary, secondary)) > _MAX_QUERY_CHARS and (secondary or len(primary) > 1):
         (secondary if secondary else primary).pop()
 
     # The slice is unreachable while _MAX_SEGMENT_CHARS <= _MAX_QUERY_CHARS (one

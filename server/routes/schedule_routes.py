@@ -16,19 +16,20 @@ Rules for every endpoint added here (design: docs/his_design/opd.json):
     stored; overlapping sessions for one doctor are refused;
   * plain `def` handlers.
 """
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
 
 import config
+from fastapi import APIRouter, Depends, HTTPException, Request
 from permissions import (
     REGISTRATION_READ,
     SCHEDULE_MANAGE,
     require_permission,
     require_registration_desk,
 )
+from pydantic import BaseModel, Field
+from services.clinic_schedule_service import ClinicScheduleError
+
 from routes.opt_in_gates import require_registration_feature
 from services import clinic_schedule_service as schedule
-from services.clinic_schedule_service import ClinicScheduleError
 
 router = APIRouter(
     prefix="/api/schedule",
@@ -37,8 +38,11 @@ router = APIRouter(
 )
 
 
+_SCHEDULE_META_USER_DEFAULT = Depends(require_permission(REGISTRATION_READ))
+
+
 @router.get("/meta")
-def schedule_meta(user: dict = Depends(require_permission(REGISTRATION_READ))):
+def schedule_meta(user: dict = _SCHEDULE_META_USER_DEFAULT):
     """Whether clinic timings are offered at this site. No patient data."""
     return {"feature": "registration", "enabled": config.feature_enabled("registration")}
 
@@ -109,11 +113,17 @@ def _request_meta(request: Request) -> dict:
     }
 
 
+_CLINIC_DOCTORS_USER_DEFAULT = Depends(_DESK_READ)
+
+
 @router.get("/doctors")
-def clinic_doctors(department: str | None = None, user: dict = Depends(_DESK_READ)):
+def clinic_doctors(department: str | None = None, user: dict = _CLINIC_DOCTORS_USER_DEFAULT):
     """Active doctors who may hold a clinic (opd.consult), with their
     department. Staff names only."""
     return {"doctors": schedule.list_clinic_doctors(department)}
+
+
+_LIST_SESSIONS_USER_DEFAULT = Depends(_DESK_READ)
 
 
 @router.get("/sessions")
@@ -121,54 +131,82 @@ def list_sessions(
     doctor_id: str | None = None,
     department: str | None = None,
     include_retired: bool = False,
-    user: dict = Depends(_DESK_READ),
+    user: dict = _LIST_SESSIONS_USER_DEFAULT,
 ):
-    return {"sessions": schedule.list_sessions(
-        doctor_id=doctor_id, department=department, include_retired=include_retired)}
+    return {
+        "sessions": schedule.list_sessions(
+            doctor_id=doctor_id, department=department, include_retired=include_retired
+        )
+    }
+
+
+_CREATE_SESSION_USER_DEFAULT = Depends(_MANAGE)
 
 
 @router.post("/sessions")
-def create_session(data: SessionIn, request: Request, user: dict = Depends(_MANAGE)):
+def create_session(data: SessionIn, request: Request, user: dict = _CREATE_SESSION_USER_DEFAULT):
     """Add a weekly clinic. 409 when it overlaps another clinic of the same
     doctor; 422 when a field is wrong."""
     try:
-        return schedule.create_session(data.model_dump(), actor=user,
-                                       request_meta=_request_meta(request))
+        return schedule.create_session(
+            data.model_dump(), actor=user, request_meta=_request_meta(request)
+        )
     except ClinicScheduleError as err:
-        raise _refusal(err)
+        raise _refusal(err) from err
+
+
+_READ_SESSION_USER_DEFAULT = Depends(_DESK_READ)
 
 
 @router.get("/sessions/{session_id}")
-def read_session(session_id: str, user: dict = Depends(_DESK_READ)):
+def read_session(session_id: str, user: dict = _READ_SESSION_USER_DEFAULT):
     found = schedule.get_session(session_id)
     if found is None:
-        raise HTTPException(status_code=404, detail={"error": "not_found",
-                                                     "message": "No such clinic"})
+        raise HTTPException(
+            status_code=404, detail={"error": "not_found", "message": "No such clinic"}
+        )
     return found
 
 
+_UPDATE_SESSION_USER_DEFAULT = Depends(_MANAGE)
+
+
 @router.patch("/sessions/{session_id}")
-def update_session(session_id: str, data: SessionPatch, request: Request,
-                   user: dict = Depends(_MANAGE)):
+def update_session(
+    session_id: str, data: SessionPatch, request: Request, user: dict = _UPDATE_SESSION_USER_DEFAULT
+):
     """Change a clinic's day, hours, slots, room, dates or notes. The doctor and
     department never change here: retire the clinic and add a new one."""
     changes = data.model_dump(exclude_unset=True)
     expected = changes.pop("row_version", None)
     try:
-        return schedule.update_session(session_id, changes, expected_row_version=expected,
-                                       actor=user, request_meta=_request_meta(request))
+        return schedule.update_session(
+            session_id,
+            changes,
+            expected_row_version=expected,
+            actor=user,
+            request_meta=_request_meta(request),
+        )
     except ClinicScheduleError as err:
-        raise _refusal(err)
+        raise _refusal(err) from err
+
+
+_RETIRE_SESSION_USER_DEFAULT = Depends(_MANAGE)
 
 
 @router.post("/sessions/{session_id}/retire")
-def retire_session(session_id: str, data: ReasonIn, request: Request,
-                   user: dict = Depends(_MANAGE)):
+def retire_session(
+    session_id: str, data: ReasonIn, request: Request, user: dict = _RETIRE_SESSION_USER_DEFAULT
+):
     try:
-        return schedule.retire_session(session_id, reason=data.reason, actor=user,
-                                       request_meta=_request_meta(request))
+        return schedule.retire_session(
+            session_id, reason=data.reason, actor=user, request_meta=_request_meta(request)
+        )
     except ClinicScheduleError as err:
-        raise _refusal(err)
+        raise _refusal(err) from err
+
+
+_LIST_EXCEPTIONS_USER_DEFAULT = Depends(_DESK_READ)
 
 
 @router.get("/exceptions")
@@ -177,35 +215,55 @@ def list_exceptions(
     date_to: str | None = None,
     doctor_id: str | None = None,
     include_withdrawn: bool = False,
-    user: dict = Depends(_DESK_READ),
+    user: dict = _LIST_EXCEPTIONS_USER_DEFAULT,
 ):
     try:
-        return {"exceptions": schedule.list_exceptions(
-            date_from=date_from, date_to=date_to, doctor_id=doctor_id,
-            include_withdrawn=include_withdrawn)}
+        return {
+            "exceptions": schedule.list_exceptions(
+                date_from=date_from,
+                date_to=date_to,
+                doctor_id=doctor_id,
+                include_withdrawn=include_withdrawn,
+            )
+        }
     except ClinicScheduleError as err:
-        raise _refusal(err)
+        raise _refusal(err) from err
+
+
+_ADD_EXCEPTION_USER_DEFAULT = Depends(_MANAGE)
 
 
 @router.post("/exceptions")
-def add_exception(data: ExceptionIn, request: Request, user: dict = Depends(_MANAGE)):
+def add_exception(data: ExceptionIn, request: Request, user: dict = _ADD_EXCEPTION_USER_DEFAULT):
     """A day a clinic does not run: one session, or every session the doctor
     holds that day. A reason is required."""
     try:
-        return schedule.add_exception(data.model_dump(), actor=user,
-                                      request_meta=_request_meta(request))
+        return schedule.add_exception(
+            data.model_dump(), actor=user, request_meta=_request_meta(request)
+        )
     except ClinicScheduleError as err:
-        raise _refusal(err)
+        raise _refusal(err) from err
+
+
+_WITHDRAW_EXCEPTION_USER_DEFAULT = Depends(_MANAGE)
 
 
 @router.post("/exceptions/{exception_id}/withdraw")
-def withdraw_exception(exception_id: str, data: ReasonIn, request: Request,
-                       user: dict = Depends(_MANAGE)):
+def withdraw_exception(
+    exception_id: str,
+    data: ReasonIn,
+    request: Request,
+    user: dict = _WITHDRAW_EXCEPTION_USER_DEFAULT,
+):
     try:
-        return schedule.withdraw_exception(exception_id, reason=data.reason, actor=user,
-                                           request_meta=_request_meta(request))
+        return schedule.withdraw_exception(
+            exception_id, reason=data.reason, actor=user, request_meta=_request_meta(request)
+        )
     except ClinicScheduleError as err:
-        raise _refusal(err)
+        raise _refusal(err) from err
+
+
+_AVAILABILITY_USER_DEFAULT = Depends(_DESK_READ)
 
 
 @router.get("/availability")
@@ -214,12 +272,13 @@ def availability(
     days: int = 1,
     doctor_id: str | None = None,
     department: str | None = None,
-    user: dict = Depends(_DESK_READ),
+    user: dict = _AVAILABILITY_USER_DEFAULT,
 ):
     """The slots each running clinic offers, in hospital-local time. `date` is
     a hospital-local day (default: the hospital's today)."""
     try:
-        return schedule.availability(day=date, days=days, doctor_id=doctor_id,
-                                     department=department)
+        return schedule.availability(
+            day=date, days=days, doctor_id=doctor_id, department=department
+        )
     except ClinicScheduleError as err:
-        raise _refusal(err)
+        raise _refusal(err) from err

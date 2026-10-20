@@ -10,6 +10,7 @@ path straight to transcribe_audio, which loads a local path without the hub.
 Stdlib only, because the subprocess worker imports it and is kept free of MLX
 and of the server's own modules until it has to transcribe.
 """
+
 import os
 from pathlib import Path
 
@@ -43,7 +44,9 @@ def model_dir(model: str, quant: str | None = None, models_dir: Path | None = No
     return Path(models_dir or MLX_MODELS_DIR) / model_dir_name(model, quant)
 
 
-def missing_files(model: str, quant: str | None = None, models_dir: Path | None = None) -> list[str]:
+def missing_files(
+    model: str, quant: str | None = None, models_dir: Path | None = None
+) -> list[str]:
     folder = model_dir(model, quant, models_dir)
     return [name for name in REQUIRED_FILES if not (folder / name).is_file()]
 

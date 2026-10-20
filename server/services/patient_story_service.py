@@ -42,6 +42,7 @@ module used to emit it still emits. Three things got better on the way:
   * events whose timestamp is unreadable are dropped instead of being sorted to
     an arbitrary end of the chart.
 """
+
 from __future__ import annotations
 
 import logging
@@ -85,11 +86,13 @@ def get_patient_story(patient_id: str, types: list[str] | None = None) -> list[d
     for e in result["events"]:
         if want is not None and e["kind"] not in want:
             continue
-        events.append({
-            "timestamp": e["timestamp"],
-            "type": e["kind"],
-            "title": e["title"],
-            "detail": e["detail"],
-            "actor": e["actor"],
-        })
+        events.append(
+            {
+                "timestamp": e["timestamp"],
+                "type": e["kind"],
+                "title": e["title"],
+                "detail": e["detail"],
+                "actor": e["actor"],
+            }
+        )
     return events

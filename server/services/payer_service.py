@@ -67,15 +67,17 @@ CONVENTIONS (same as the rest of server/services)
   * No foreign keys on these tables (migration 20): a dangling id yields
     "unknown", never a failed clinical write.
 """
+
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from database import db_session
 from db_backend import DBIntegrityError
+
 from services.billing_masters import next_document_number, resolve_patient_payer
 from services.money import (
     apply_basis_points,
@@ -152,6 +154,7 @@ NO_TRANSMISSION_SHORT = "Recorded in Orb only, not sent to the payer."
 #  Errors
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class PayerError(ValueError):
     """Bad payer/policy input — blank code, unknown payer, impossible dates."""
 
@@ -176,10 +179,19 @@ class IllegalTransition(ClaimError):
 #  Vocabulary — mirrors migration 20's CHECK constraints exactly
 # ══════════════════════════════════════════════════════════════════════════════
 
-PAYER_TYPES: frozenset[str] = frozenset({
-    "self_pay", "tpa", "insurer", "pmjay", "state_scheme", "cghs", "esic",
-    "corporate", "charity",
-})
+PAYER_TYPES: frozenset[str] = frozenset(
+    {
+        "self_pay",
+        "tpa",
+        "insurer",
+        "pmjay",
+        "state_scheme",
+        "cghs",
+        "esic",
+        "corporate",
+        "charity",
+    }
+)
 
 CLAIM_TYPES: frozenset[str] = frozenset({"cashless", "reimbursement", "scheme"})
 
@@ -191,18 +203,37 @@ CLAIM_TYPES: frozenset[str] = frozenset({"cashless", "reimbursement", "scheme"})
 HOSPITAL_RECEIVABLE_TYPES: frozenset[str] = frozenset({"cashless", "scheme"})
 
 CLAIM_STATUSES: tuple[str, ...] = (
-    "draft", "preauth_requested", "preauth_approved", "preauth_denied",
-    "submitted", "queried", "approved", "partially_approved", "denied",
-    "settled", "closed", "cancelled", "appealed",
+    "draft",
+    "preauth_requested",
+    "preauth_approved",
+    "preauth_denied",
+    "submitted",
+    "queried",
+    "approved",
+    "partially_approved",
+    "denied",
+    "settled",
+    "closed",
+    "cancelled",
+    "appealed",
 )
 
 # Statuses where the money is still moving and the desk still owes somebody an
 # action. These are what the work queue shows and what ages.
-OPEN_STATUSES: frozenset[str] = frozenset({
-    "draft", "preauth_requested", "preauth_approved", "preauth_denied",
-    "submitted", "queried", "approved", "partially_approved", "denied",
-    "appealed",
-})
+OPEN_STATUSES: frozenset[str] = frozenset(
+    {
+        "draft",
+        "preauth_requested",
+        "preauth_approved",
+        "preauth_denied",
+        "submitted",
+        "queried",
+        "approved",
+        "partially_approved",
+        "denied",
+        "appealed",
+    }
+)
 
 TERMINAL_STATUSES: frozenset[str] = frozenset({"closed", "cancelled"})
 
@@ -237,21 +268,39 @@ LEGAL_TRANSITIONS: dict[str, frozenset[str]] = {
     # A denied pre-auth is appealed, or the case converts to cash and the claim
     # is cancelled. It is NOT submitted as if approved.
     "preauth_denied": frozenset({"appealed", "cancelled"}),
-    "submitted": frozenset({
-        "queried", "approved", "partially_approved", "denied", "cancelled",
-    }),
+    "submitted": frozenset(
+        {
+            "queried",
+            "approved",
+            "partially_approved",
+            "denied",
+            "cancelled",
+        }
+    ),
     # Answering a query puts the claim back in the payer's hands: 'submitted'.
-    "queried": frozenset({
-        "submitted", "approved", "partially_approved", "denied", "cancelled",
-    }),
+    "queried": frozenset(
+        {
+            "submitted",
+            "approved",
+            "partially_approved",
+            "denied",
+            "cancelled",
+        }
+    ),
     "approved": frozenset({"settled", "closed"}),
     # A partial approval may be banked as-is (settled) or contested (appealed).
     "partially_approved": frozenset({"settled", "appealed", "closed"}),
     # NO 'settled' HERE. See the note above.
     "denied": frozenset({"appealed", "closed"}),
-    "appealed": frozenset({
-        "submitted", "approved", "partially_approved", "denied", "closed",
-    }),
+    "appealed": frozenset(
+        {
+            "submitted",
+            "approved",
+            "partially_approved",
+            "denied",
+            "closed",
+        }
+    ),
     "settled": frozenset({"closed"}),
     "closed": frozenset(),
     "cancelled": frozenset(),
@@ -279,7 +328,7 @@ _EVENT_FOR_STATUS: dict[str, str] = {
 # a week is normal, a fortnight is a follow-up call, a month is an escalation,
 # and past sixty days the claim is usually in trouble. The upper bound is
 # exclusive; `None` means open-ended.
-AGING_BUCKETS: tuple[tuple[str, int, Optional[int]], ...] = (
+AGING_BUCKETS: tuple[tuple[str, int, int | None], ...] = (
     ("0-7", 0, 8),
     ("8-14", 8, 15),
     ("15-30", 15, 31),
@@ -318,6 +367,7 @@ DENIAL_REASON_CODES: tuple[tuple[str, str], ...] = (
 #  Settlement arithmetic — PURE, and the part that must never be wrong
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass(frozen=True)
 class ClaimSettlement:
     """What was claimed, what the payer allowed, what actually arrived, and the
@@ -327,18 +377,19 @@ class ClaimSettlement:
     render as words, never as ₹0.00 — a claim awaiting a decision and a claim
     approved for nothing look identical as zeros and mean opposite things.
     """
+
     claim_type: str
     claimed_paise: int
-    approved_paise: Optional[int]
-    disallowed_paise: Optional[int]
+    approved_paise: int | None
+    disallowed_paise: int | None
     copay_percent_bp: int
-    copay_paise: Optional[int]
+    copay_paise: int | None
     tds_paise: int
-    expected_receipt_paise: Optional[int]
-    settled_paise: Optional[int]
-    short_settled_paise: Optional[int]
-    patient_liability_paise: Optional[int]
-    hospital_receivable_paise: Optional[int]
+    expected_receipt_paise: int | None
+    settled_paise: int | None
+    short_settled_paise: int | None
+    patient_liability_paise: int | None
+    hospital_receivable_paise: int | None
     is_short_settled: bool
     is_over_settled: bool
     is_decided: bool
@@ -352,13 +403,9 @@ class ClaimSettlement:
             "claimed_paise": self.claimed_paise,
             "claimed_display": format_inr(self.claimed_paise),
             "approved_paise": self.approved_paise,
-            "approved_display": format_inr_or_unset(
-                self.approved_paise, unset="Awaiting decision"
-            ),
+            "approved_display": format_inr_or_unset(self.approved_paise, unset="Awaiting decision"),
             "disallowed_paise": self.disallowed_paise,
-            "disallowed_display": format_inr_or_unset(
-                self.disallowed_paise, unset="Not yet known"
-            ),
+            "disallowed_display": format_inr_or_unset(self.disallowed_paise, unset="Not yet known"),
             "copay_percent_bp": self.copay_percent_bp,
             "copay_paise": self.copay_paise,
             "copay_display": format_inr_or_unset(self.copay_paise, unset="Not yet known"),
@@ -369,9 +416,7 @@ class ClaimSettlement:
                 self.expected_receipt_paise, unset="Not yet known"
             ),
             "settled_paise": self.settled_paise,
-            "settled_display": format_inr_or_unset(
-                self.settled_paise, unset="Nothing received"
-            ),
+            "settled_display": format_inr_or_unset(self.settled_paise, unset="Nothing received"),
             "short_settled_paise": self.short_settled_paise,
             "short_settled_display": format_inr_or_unset(
                 self.short_settled_paise, unset="Not yet known"
@@ -394,10 +439,10 @@ class ClaimSettlement:
 def compute_settlement(
     *,
     claimed_paise: int,
-    approved_paise: Optional[int] = None,
+    approved_paise: int | None = None,
     copay_percent_bp: int = 0,
     tds_paise: int = 0,
-    settled_paise: Optional[int] = None,
+    settled_paise: int | None = None,
     claim_type: str = "cashless",
 ) -> ClaimSettlement:
     """Reconcile one claim, to the paise.
@@ -455,8 +500,7 @@ def compute_settlement(
         raise ClaimError("Co-pay must be a number from 0 to 100.")
 
     settled = (
-        None if settled_paise is None
-        else assert_non_negative_paise(settled_paise, "settled_paise")
+        None if settled_paise is None else assert_non_negative_paise(settled_paise, "settled_paise")
     )
 
     # ── Reimbursement: the payer never pays the hospital ─────────────────────
@@ -466,7 +510,8 @@ def compute_settlement(
     # receivable report by money that is not coming to the hospital at all.
     if claim_type == "reimbursement":
         approved_r = (
-            None if approved_paise is None
+            None
+            if approved_paise is None
             else assert_non_negative_paise(approved_paise, "approved_paise")
         )
         if approved_r is not None and approved_r > claimed:
@@ -579,11 +624,12 @@ def compute_settlement(
 # column would make an age computation silently wrong by 5½ hours in India,
 # which is exactly the size of error that hides inside a "0-7 days" bucket.
 
+
 def _utc_now_str() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _parse_ts(value: Any) -> Optional[datetime]:
+def _parse_ts(value: Any) -> datetime | None:
     """Parse a stored timestamp into a naive-UTC datetime, or None.
 
     Tolerates the three shapes that reach these columns: SQLite's
@@ -611,11 +657,11 @@ def _parse_ts(value: Any) -> Optional[datetime]:
             except ValueError:
                 return None
     if dt.tzinfo is not None:
-        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        dt = dt.astimezone(UTC).replace(tzinfo=None)
     return dt
 
 
-def _age_days(anchor: Optional[datetime], *, now: Optional[datetime] = None) -> Optional[int]:
+def _age_days(anchor: datetime | None, *, now: datetime | None = None) -> int | None:
     """Whole days elapsed since `anchor`. None when the anchor is unknown.
 
     Floored, not rounded: a claim submitted eight hours ago is 0 days old, not
@@ -624,12 +670,12 @@ def _age_days(anchor: Optional[datetime], *, now: Optional[datetime] = None) -> 
     """
     if anchor is None:
         return None
-    reference = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    reference = now or datetime.now(UTC).replace(tzinfo=None)
     delta = reference - anchor
     return max(0, delta.days)
 
 
-def _bucket_for(age_days: Optional[int]) -> str:
+def _bucket_for(age_days: int | None) -> str:
     if age_days is None:
         return "unknown"
     for label, low, high in AGING_BUCKETS:
@@ -687,10 +733,10 @@ _AGING_COLUMN_FALLBACK: dict[str, tuple[str, ...]] = {
 }
 
 
-def _aging_for(row: dict, event_times: dict[str, str], *, now: Optional[datetime] = None) -> dict:
+def _aging_for(row: dict, event_times: dict[str, str], *, now: datetime | None = None) -> dict:
     """Aging block for one claim, measured from when its CURRENT status began."""
     status = row.get("status") or "draft"
-    anchor_raw: Optional[Any] = None
+    anchor_raw: Any | None = None
     source = "created_at"
 
     event_type = _AGING_EVENT.get(status)
@@ -723,11 +769,12 @@ def _aging_for(row: dict, event_times: dict[str, str], *, now: Optional[datetime
 #  Small helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def _row(r) -> dict:
     return {k: r[k] for k in r.keys()}
 
 
-def _clean(value: Optional[str]) -> Optional[str]:
+def _clean(value: str | None) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
@@ -737,8 +784,7 @@ def _clean(value: Optional[str]) -> Optional[str]:
 def _unknown_patient_message(patient_id: str) -> str:
     """What the desk reads when a typed id names nobody. One sentence for both
     forms (cover and claim), in words a clerk can act on."""
-    return (f"No patient with ID {patient_id} is registered. Check the ID, or "
-            "search by name or MRN.")
+    return f"No patient with ID {patient_id} is registered. Check the ID, or search by name or MRN."
 
 
 def _require_transition(current: str, target: str) -> None:
@@ -757,15 +803,15 @@ def _write_event(
     *,
     claim_id: int,
     event_type: str,
-    from_status: Optional[str] = None,
-    to_status: Optional[str] = None,
-    amount_paise: Optional[int] = None,
-    denial_code: Optional[str] = None,
-    denial_reason: Optional[str] = None,
-    remark: Optional[str] = None,
-    document_ref: Optional[str] = None,
-    actor_id: Optional[str] = None,
-    occurred_at: Optional[str] = None,
+    from_status: str | None = None,
+    to_status: str | None = None,
+    amount_paise: int | None = None,
+    denial_code: str | None = None,
+    denial_reason: str | None = None,
+    remark: str | None = None,
+    document_ref: str | None = None,
+    actor_id: str | None = None,
+    occurred_at: str | None = None,
 ) -> None:
     """Append one immutable line to the claim's history.
 
@@ -781,9 +827,17 @@ def _write_event(
               occurred_at, recorded_at)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
-            claim_id, event_type, from_status, to_status, amount_paise,
-            _clean(denial_code), _clean(denial_reason), _clean(remark),
-            _clean(document_ref), actor_id, occurred_at or _utc_now_str(),
+            claim_id,
+            event_type,
+            from_status,
+            to_status,
+            amount_paise,
+            _clean(denial_code),
+            _clean(denial_reason),
+            _clean(remark),
+            _clean(document_ref),
+            actor_id,
+            occurred_at or _utc_now_str(),
             _utc_now_str(),
         ),
     )
@@ -791,13 +845,27 @@ def _write_event(
 
 # The only `claims` columns a lifecycle transition may write. `status` and
 # `updated_at` are always written and are not listed.
-_UPDATABLE_CLAIM_COLUMNS: frozenset[str] = frozenset({
-    "claimed_paise", "approved_paise", "disallowed_paise", "tds_paise",
-    "settled_paise", "patient_liability_paise", "preauth_requested_paise",
-    "preauth_approved_paise", "preauth_status", "preauth_number",
-    "submitted_at", "submitted_by", "decided_at", "settled_at", "external_ref",
-    "invoice_id", "notes",
-})
+_UPDATABLE_CLAIM_COLUMNS: frozenset[str] = frozenset(
+    {
+        "claimed_paise",
+        "approved_paise",
+        "disallowed_paise",
+        "tds_paise",
+        "settled_paise",
+        "patient_liability_paise",
+        "preauth_requested_paise",
+        "preauth_approved_paise",
+        "preauth_status",
+        "preauth_number",
+        "submitted_at",
+        "submitted_by",
+        "decided_at",
+        "settled_at",
+        "external_ref",
+        "invoice_id",
+        "notes",
+    }
+)
 
 
 def _load_claim(db, claim_id: int):
@@ -807,7 +875,7 @@ def _load_claim(db, claim_id: int):
     return row
 
 
-def _policy_copay_bp(db, policy_id: Optional[int]) -> int:
+def _policy_copay_bp(db, policy_id: int | None) -> int:
     if not policy_id:
         return 0
     row = db.execute(
@@ -820,10 +888,11 @@ def _policy_copay_bp(db, policy_id: Optional[int]) -> int:
 #  Payer master
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def list_payers(
     *,
     active_only: bool = True,
-    payer_type: Optional[str] = None,
+    payer_type: str | None = None,
     include_self_pay: bool = True,
 ) -> list[dict]:
     """The payer directory, with the tariff plan each payer is priced under.
@@ -865,10 +934,20 @@ _UNSET: Any = object()
 # Payer columns an update may leave as they are, with the value a NEW payer gets
 # when the caller does not send one.
 _PAYER_DEFAULTS: dict[str, Any] = {
-    "payer_type": "tpa", "tariff_plan_id": None, "gstin": None, "state_code": None,
-    "address": None, "contact_name": None, "contact_phone": None,
-    "contact_email": None, "claim_submission_mode": None, "portal_url": None,
-    "credit_days": None, "preauth_required": False, "is_active": True, "notes": None,
+    "payer_type": "tpa",
+    "tariff_plan_id": None,
+    "gstin": None,
+    "state_code": None,
+    "address": None,
+    "contact_name": None,
+    "contact_phone": None,
+    "contact_email": None,
+    "claim_submission_mode": None,
+    "portal_url": None,
+    "credit_days": None,
+    "preauth_required": False,
+    "is_active": True,
+    "notes": None,
 }
 
 
@@ -918,16 +997,28 @@ def upsert_payer(
         found = db.execute("SELECT * FROM payers WHERE code = ?", (code,)).fetchone()
         existing = _row(found) if found else None
         sent = {
-            "payer_type": payer_type, "gstin": gstin, "state_code": state_code,
-            "address": address, "contact_name": contact_name,
-            "contact_phone": contact_phone, "contact_email": contact_email,
-            "claim_submission_mode": claim_submission_mode, "portal_url": portal_url,
-            "credit_days": credit_days, "preauth_required": preauth_required,
-            "is_active": is_active, "notes": notes,
+            "payer_type": payer_type,
+            "gstin": gstin,
+            "state_code": state_code,
+            "address": address,
+            "contact_name": contact_name,
+            "contact_phone": contact_phone,
+            "contact_email": contact_email,
+            "claim_submission_mode": claim_submission_mode,
+            "portal_url": portal_url,
+            "credit_days": credit_days,
+            "preauth_required": preauth_required,
+            "is_active": is_active,
+            "notes": notes,
         }
         v = {
-            col: (value if value is not _UNSET
-                  else existing[col] if existing else _PAYER_DEFAULTS[col])
+            col: (
+                value
+                if value is not _UNSET
+                else existing[col]
+                if existing
+                else _PAYER_DEFAULTS[col]
+            )
             for col, value in sent.items()
         }
 
@@ -975,10 +1066,21 @@ def upsert_payer(
                  is_active=excluded.is_active, notes=excluded.notes,
                  updated_at=CURRENT_TIMESTAMP""",
             (
-                code, name, v["payer_type"], plan, _clean(v["gstin"]), _clean(v["state_code"]),
-                _clean(v["address"]), _clean(v["contact_name"]), _clean(v["contact_phone"]),
-                _clean(v["contact_email"]), mode, _clean(v["portal_url"]), credit,
-                1 if v["preauth_required"] else 0, 1 if v["is_active"] else 0,
+                code,
+                name,
+                v["payer_type"],
+                plan,
+                _clean(v["gstin"]),
+                _clean(v["state_code"]),
+                _clean(v["address"]),
+                _clean(v["contact_name"]),
+                _clean(v["contact_phone"]),
+                _clean(v["contact_email"]),
+                mode,
+                _clean(v["portal_url"]),
+                credit,
+                1 if v["preauth_required"] else 0,
+                1 if v["is_active"] else 0,
                 _clean(v["notes"]),
             ),
         )
@@ -993,23 +1095,24 @@ def upsert_payer(
 #  Patient policies — the capture path the admission form deliberately lacks
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def capture_policy(
     *,
     patient_id: str,
     payer_code: str,
-    admission_id: Optional[str] = None,
-    policy_number: Optional[str] = None,
-    member_id: Optional[str] = None,
-    scheme_beneficiary_id: Optional[str] = None,
-    subscriber_name: Optional[str] = None,
-    relationship_to_subscriber: Optional[str] = None,
-    valid_from: Optional[str] = None,
-    valid_to: Optional[str] = None,
-    sum_insured_paise: Optional[int] = None,
+    admission_id: str | None = None,
+    policy_number: str | None = None,
+    member_id: str | None = None,
+    scheme_beneficiary_id: str | None = None,
+    subscriber_name: str | None = None,
+    relationship_to_subscriber: str | None = None,
+    valid_from: str | None = None,
+    valid_to: str | None = None,
+    sum_insured_paise: int | None = None,
     copay_percent_bp: int = 0,
-    preauth_required: Optional[bool] = None,
+    preauth_required: bool | None = None,
     is_primary: bool = True,
-    created_by: Optional[str] = None,
+    created_by: str | None = None,
 ) -> dict:
     """Record a patient's cover. This is Orb's ONLY payer-capture path.
 
@@ -1037,16 +1140,12 @@ def capture_policy(
         raise PayerError("policy valid_to is before valid_from")
 
     with db_session() as db:
-        patient = db.execute(
-            "SELECT id FROM patients WHERE id = ?", (patient_id,)
-        ).fetchone()
+        patient = db.execute("SELECT id FROM patients WHERE id = ?", (patient_id,)).fetchone()
         if patient is None:
             # No FK exists (migration 20 rule 1), so this is the guard. A policy
             # keyed to a mistyped patient id is money the desk will never find.
             raise PayerError(_unknown_patient_message(patient_id))
-        payer = db.execute(
-            "SELECT * FROM payers WHERE code = ?", (payer_code,)
-        ).fetchone()
+        payer = db.execute("SELECT * FROM payers WHERE code = ?", (payer_code,)).fetchone()
         if payer is None:
             raise PayerError(f"unknown payer {payer_code!r}")
 
@@ -1075,29 +1174,39 @@ def capture_policy(
                   copay_percent_bp, preauth_required, is_primary, status, created_by)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'active',?)""",
             (
-                patient_id, _clean(admission_id), int(payer["id"]), _clean(policy_number),
-                _clean(member_id), _clean(scheme_beneficiary_id), _clean(subscriber_name),
-                _clean(relationship_to_subscriber), _clean(valid_from), _clean(valid_to),
+                patient_id,
+                _clean(admission_id),
+                int(payer["id"]),
+                _clean(policy_number),
+                _clean(member_id),
+                _clean(scheme_beneficiary_id),
+                _clean(subscriber_name),
+                _clean(relationship_to_subscriber),
+                _clean(valid_from),
+                _clean(valid_to),
                 sum_insured_paise,
                 1 if sum_insured_paise is not None else 0,
                 copay_percent_bp,
-                1 if (payer["preauth_required"] if preauth_required is None else preauth_required) else 0,
+                1
+                if (payer["preauth_required"] if preauth_required is None else preauth_required)
+                else 0,
                 1 if is_primary else 0,
                 created_by,
             ),
         )
         policy_id = int(cursor.lastrowid)
 
-    logger.info("payer policy captured patient=%s payer=%s policy=%s",
-                patient_id, payer_code, policy_id)
+    logger.info(
+        "payer policy captured patient=%s payer=%s policy=%s", patient_id, payer_code, policy_id
+    )
     return list_policies(patient_id=patient_id, policy_id=policy_id)[0]
 
 
 def list_policies(
     *,
-    patient_id: Optional[str] = None,
-    admission_id: Optional[str] = None,
-    policy_id: Optional[int] = None,
+    patient_id: str | None = None,
+    admission_id: str | None = None,
+    policy_id: int | None = None,
     active_only: bool = False,
 ) -> list[dict]:
     """Policies on file, newest first, with the payer and the patient resolved.
@@ -1187,19 +1296,20 @@ def set_policy_status(*, policy_id: int, status: str) -> dict:
 #  Claims — creation
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def create_claim(
     *,
     patient_id: str,
     claim_type: str = "cashless",
-    payer_code: Optional[str] = None,
-    policy_id: Optional[int] = None,
-    admission_id: Optional[str] = None,
-    invoice_id: Optional[int] = None,
-    claimed_paise: Optional[int] = None,
-    package_code: Optional[str] = None,
-    notes: Optional[str] = None,
-    created_by: Optional[str] = None,
-    idempotency_key: Optional[str] = None,
+    payer_code: str | None = None,
+    policy_id: int | None = None,
+    admission_id: str | None = None,
+    invoice_id: int | None = None,
+    claimed_paise: int | None = None,
+    package_code: str | None = None,
+    notes: str | None = None,
+    created_by: str | None = None,
+    idempotency_key: str | None = None,
 ) -> dict:
     """Open a claim file. Creates nothing anywhere but Orb.
 
@@ -1230,7 +1340,9 @@ def create_claim(
         if replay is not None:
             return replay
     if claim_type not in CLAIM_TYPES:
-        raise ClaimError(f"unknown claim type {claim_type!r}; expected one of {sorted(CLAIM_TYPES)}")
+        raise ClaimError(
+            f"unknown claim type {claim_type!r}; expected one of {sorted(CLAIM_TYPES)}"
+        )
     if claimed_paise is not None:
         assert_non_negative_paise(claimed_paise, "claimed_paise")
 
@@ -1269,7 +1381,8 @@ def create_claim(
 
     with db_session() as db:
         claim_facility = facility_identity.document_facility_id(
-            db, patient_id=patient_id, admission_id=admission_id)
+            db, patient_id=patient_id, admission_id=admission_id
+        )
     try:
         number = next_document_number("CLM", facility_id=claim_facility)
     except SeriesNotSetUp as exc:
@@ -1280,10 +1393,18 @@ def create_claim(
 
     try:
         claim_id = _insert_claim(
-            number=number, patient_id=patient_id, claim_type=claim_type,
-            resolved_payer_code=resolved_payer_code, resolved_policy_id=resolved_policy_id,
-            admission_id=admission_id, invoice_id=invoice_id, claimed_paise=claimed_paise,
-            package_code=package_code, notes=notes, created_by=created_by, key=key,
+            number=number,
+            patient_id=patient_id,
+            claim_type=claim_type,
+            resolved_payer_code=resolved_payer_code,
+            resolved_policy_id=resolved_policy_id,
+            admission_id=admission_id,
+            invoice_id=invoice_id,
+            claimed_paise=claimed_paise,
+            package_code=package_code,
+            notes=notes,
+            created_by=created_by,
+            key=key,
         )
     except DBIntegrityError:
         # Two requests with the same key raced past the lookup above; the unique
@@ -1294,14 +1415,19 @@ def create_claim(
             raise
         return replay
 
-    logger.info("claim created id=%s patient=%s payer=%s type=%s",
-                claim_id, patient_id, resolved_payer_code, claim_type)
+    logger.info(
+        "claim created id=%s patient=%s payer=%s type=%s",
+        claim_id,
+        patient_id,
+        resolved_payer_code,
+        claim_type,
+    )
     claim = get_claim(claim_id)
     claim["number_is_configured"] = bool(number.get("is_configured"))
     return claim
 
 
-def _claim_for_key(key: str, patient_id: str) -> Optional[dict]:
+def _claim_for_key(key: str, patient_id: str) -> dict | None:
     """The claim an earlier request with this key opened, or None."""
     with db_session() as db:
         row = db.execute(
@@ -1325,35 +1451,30 @@ def _insert_claim(
     patient_id: str,
     claim_type: str,
     resolved_payer_code: str,
-    resolved_policy_id: Optional[int],
-    admission_id: Optional[str],
-    invoice_id: Optional[int],
-    claimed_paise: Optional[int],
-    package_code: Optional[str],
-    notes: Optional[str],
-    created_by: Optional[str],
-    key: Optional[str],
+    resolved_policy_id: int | None,
+    admission_id: str | None,
+    invoice_id: int | None,
+    claimed_paise: int | None,
+    package_code: str | None,
+    notes: str | None,
+    created_by: str | None,
+    key: str | None,
 ) -> int:
     """Write the claim row and its 'created' event in one transaction."""
     with db_session() as db:
-        patient = db.execute(
-            "SELECT id, name FROM patients WHERE id = ?", (patient_id,)
-        ).fetchone()
+        patient = db.execute("SELECT id, name FROM patients WHERE id = ?", (patient_id,)).fetchone()
         if patient is None:
             raise ClaimError(f"unknown patient {patient_id!r}")
-        payer = db.execute(
-            "SELECT * FROM payers WHERE code = ?", (resolved_payer_code,)
-        ).fetchone()
+        payer = db.execute("SELECT * FROM payers WHERE code = ?", (resolved_payer_code,)).fetchone()
         if payer is None:
             raise ClaimError(f"unknown payer {resolved_payer_code!r}")
         if payer["payer_type"] == "self_pay":
             raise ClaimError(
-                "cannot raise a claim against a self-pay payer. There is nobody "
-                "to submit it to"
+                "cannot raise a claim against a self-pay payer. There is nobody to submit it to"
             )
 
         claimed = claimed_paise
-        seed_remark: Optional[str] = None
+        seed_remark: str | None = None
         if claimed is None and invoice_id:
             # Seed from the invoice if the billing module has raised one. The
             # payer's share, not the whole bill: the patient's own share was
@@ -1387,6 +1508,7 @@ def _insert_claim(
                         "the patient). Nothing is claimable from this payer."
                     )
 
+        preauth_status: str | None
         preauth_status = "not_required"
         if payer["preauth_required"] or (
             resolved_policy_id is not None and _policy_preauth_required(db, resolved_policy_id)
@@ -1400,9 +1522,19 @@ def _insert_claim(
                   created_by, notes, idempotency_key)
                VALUES (?,?,?,?,?,?,?,?,?,?, 'draft', ?, ?, ?)""",
             (
-                number["number"], patient_id, _clean(admission_id), invoice_id,
-                int(payer["id"]), resolved_policy_id, claim_type, _clean(package_code),
-                preauth_status, int(claimed or 0), created_by, _clean(notes), key,
+                number["number"],
+                patient_id,
+                _clean(admission_id),
+                invoice_id,
+                int(payer["id"]),
+                resolved_policy_id,
+                claim_type,
+                _clean(package_code),
+                preauth_status,
+                int(claimed or 0),
+                created_by,
+                _clean(notes),
+                key,
             ),
         )
         claim_id = int(cursor.lastrowid)
@@ -1414,7 +1546,8 @@ def _insert_claim(
             amount_paise=claimed,
             remark=(
                 "Claim amount not yet entered. Nothing is claimed until it is."
-                if claimed is None else seed_remark
+                if claimed is None
+                else seed_remark
             ),
             actor_id=created_by,
         )
@@ -1428,7 +1561,7 @@ def _policy_preauth_required(db, policy_id: int) -> bool:
     return bool(row["preauth_required"]) if row else False
 
 
-def set_claimed_amount(*, claim_id: int, claimed_paise: int, actor_id: Optional[str] = None) -> dict:
+def set_claimed_amount(*, claim_id: int, claimed_paise: int, actor_id: str | None = None) -> dict:
     """Set or revise what the hospital is claiming.
 
     Only while the claim is still the hospital's to change. Once it has been
@@ -1456,7 +1589,7 @@ def set_claimed_amount(*, claim_id: int, claimed_paise: int, actor_id: Optional[
             event_type="note",
             amount_paise=claimed_paise,
             remark=f"Claimed amount set to {format_inr(claimed_paise)} "
-                   f"(was {format_inr(previous)}).",
+            f"(was {format_inr(previous)}).",
             actor_id=actor_id,
         )
     return get_claim(claim_id)
@@ -1490,7 +1623,7 @@ def _event_times(db, claim_id: int) -> dict[str, str]:
     return {r["event_type"]: r["at"] for r in rows if r["at"]}
 
 
-def _decorate(row: dict, event_times: dict[str, str], *, now: Optional[datetime] = None) -> dict:
+def _decorate(row: dict, event_times: dict[str, str], *, now: datetime | None = None) -> dict:
     """Add the derived block every screen needs: settlement, aging, honesty."""
     claim_type = row.get("claim_type") or "cashless"
     copay_bp = int(row.get("policy_copay_bp") or 0)
@@ -1560,13 +1693,13 @@ def get_claim(claim_id: int, *, include_events: bool = True) -> dict:
 
 def list_claims(
     *,
-    status: Optional[str] = None,
-    statuses: Optional[list[str]] = None,
-    payer_code: Optional[str] = None,
-    patient_id: Optional[str] = None,
-    claim_type: Optional[str] = None,
+    status: str | None = None,
+    statuses: list[str] | None = None,
+    payer_code: str | None = None,
+    patient_id: str | None = None,
+    claim_type: str | None = None,
     open_only: bool = False,
-    search: Optional[str] = None,
+    search: str | None = None,
     limit: int = 200,
 ) -> list[dict]:
     sql = _CLAIM_SELECT + " WHERE 1=1"
@@ -1592,8 +1725,10 @@ def list_claims(
         params.append(claim_type)
     if search:
         like = f"%{search}%"
-        sql += (" AND (c.claim_number LIKE ? OR pt.name LIKE ? OR c.patient_id LIKE ?"
-                " OR c.external_ref LIKE ? OR c.preauth_number LIKE ?)")
+        sql += (
+            " AND (c.claim_number LIKE ? OR pt.name LIKE ? OR c.patient_id LIKE ?"
+            " OR c.external_ref LIKE ? OR c.preauth_number LIKE ?)"
+        )
         params.extend([like, like, like, like, like])
     sql += " ORDER BY c.id DESC LIMIT ?"
     params.append(max(1, min(int(limit), 1000)))
@@ -1612,7 +1747,7 @@ def list_claims(
             ).fetchall():
                 if e["at"]:
                     anchors.setdefault(int(e["claim_id"]), {})[e["event_type"]] = e["at"]
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(UTC).replace(tzinfo=None)
     return [_decorate(r, anchors.get(int(r["id"]), {}), now=now) for r in rows]
 
 
@@ -1620,19 +1755,20 @@ def list_claims(
 #  Claims — the lifecycle. Every one of these records; none of them sends.
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def _transition(
     claim_id: int,
     target: str,
     *,
-    event_type: Optional[str] = None,
-    updates: Optional[dict[str, Any]] = None,
-    amount_paise: Optional[int] = None,
-    denial_code: Optional[str] = None,
-    denial_reason: Optional[str] = None,
-    remark: Optional[str] = None,
-    document_ref: Optional[str] = None,
-    actor_id: Optional[str] = None,
-    occurred_at: Optional[str] = None,
+    event_type: str | None = None,
+    updates: dict[str, Any] | None = None,
+    amount_paise: int | None = None,
+    denial_code: str | None = None,
+    denial_reason: str | None = None,
+    remark: str | None = None,
+    document_ref: str | None = None,
+    actor_id: str | None = None,
+    occurred_at: str | None = None,
     guard=None,
 ) -> dict:
     """Move a claim, atomically, with its evidence.
@@ -1688,10 +1824,10 @@ def record_preauth_request(
     *,
     claim_id: int,
     requested_paise: int,
-    actor_id: Optional[str] = None,
-    reference: Optional[str] = None,
-    remark: Optional[str] = None,
-    occurred_at: Optional[str] = None,
+    actor_id: str | None = None,
+    reference: str | None = None,
+    remark: str | None = None,
+    occurred_at: str | None = None,
 ) -> dict:
     """Record that the desk raised a pre-authorisation WITH THE PAYER, elsewhere.
 
@@ -1720,13 +1856,13 @@ def record_preauth_decision(
     *,
     claim_id: int,
     decision: str,
-    approved_paise: Optional[int] = None,
-    reference: Optional[str] = None,
-    denial_code: Optional[str] = None,
-    denial_reason: Optional[str] = None,
-    actor_id: Optional[str] = None,
-    remark: Optional[str] = None,
-    occurred_at: Optional[str] = None,
+    approved_paise: int | None = None,
+    reference: str | None = None,
+    denial_code: str | None = None,
+    denial_reason: str | None = None,
+    actor_id: str | None = None,
+    remark: str | None = None,
+    occurred_at: str | None = None,
 ) -> dict:
     """Record the payer's pre-auth answer: approved | partially_approved | denied.
 
@@ -1737,9 +1873,7 @@ def record_preauth_decision(
     """
     decision = (_clean(decision) or "").lower()
     if decision not in ("approved", "partially_approved", "denied"):
-        raise ClaimError(
-            "pre-auth decision must be 'approved', 'partially_approved' or 'denied'"
-        )
+        raise ClaimError("pre-auth decision must be 'approved', 'partially_approved' or 'denied'")
     if decision == "denied":
         if not _clean(denial_reason):
             # A denial with no reason is a dead end: nobody can appeal "no".
@@ -1773,7 +1907,11 @@ def record_preauth_decision(
                 f"pre-auth approved ({format_inr(approved_paise)}) exceeds the amount "
                 f"requested ({format_inr(int(requested))}): check the figures"
             )
-        if decision == "partially_approved" and requested is not None and approved_paise == int(requested):
+        if (
+            decision == "partially_approved"
+            and requested is not None
+            and approved_paise == int(requested)
+        ):
             raise ClaimError(
                 "a 'partially_approved' pre-auth must be for less than the amount "
                 "requested. Record 'approved' if the payer allowed it in full"
@@ -1800,11 +1938,11 @@ def record_preauth_decision(
 def record_submission(
     *,
     claim_id: int,
-    claimed_paise: Optional[int] = None,
-    external_ref: Optional[str] = None,
-    submitted_at: Optional[str] = None,
-    actor_id: Optional[str] = None,
-    remark: Optional[str] = None,
+    claimed_paise: int | None = None,
+    external_ref: str | None = None,
+    submitted_at: str | None = None,
+    actor_id: str | None = None,
+    remark: str | None = None,
 ) -> dict:
     """Record that the desk SUBMITTED THE CLAIM TO THE PAYER SOMEWHERE ELSE.
 
@@ -1830,9 +1968,7 @@ def record_submission(
         if amount <= 0:
             # A claim submitted for nothing is a data-entry accident that would
             # sit in the queue as ₹0 and be reconciled against ₹0 forever.
-            raise ClaimError(
-                "cannot record a submission for ₹0. Enter what was claimed first"
-            )
+            raise ClaimError("cannot record a submission for ₹0. Enter what was claimed first")
 
     return _transition(
         claim_id,
@@ -1852,9 +1988,9 @@ def record_query(
     claim_id: int,
     query_text: str,
     answered: bool = False,
-    actor_id: Optional[str] = None,
-    document_ref: Optional[str] = None,
-    occurred_at: Optional[str] = None,
+    actor_id: str | None = None,
+    document_ref: str | None = None,
+    occurred_at: str | None = None,
 ) -> dict:
     """Record a payer query (`answered=False`) or the desk's answer to one
     (`answered=True`, which puts the claim back with the payer).
@@ -1893,14 +2029,14 @@ def record_decision(
     *,
     claim_id: int,
     decision: str,
-    approved_paise: Optional[int] = None,
+    approved_paise: int | None = None,
     tds_paise: int = 0,
-    denial_code: Optional[str] = None,
-    denial_reason: Optional[str] = None,
-    external_ref: Optional[str] = None,
-    actor_id: Optional[str] = None,
-    remark: Optional[str] = None,
-    occurred_at: Optional[str] = None,
+    denial_code: str | None = None,
+    denial_reason: str | None = None,
+    external_ref: str | None = None,
+    actor_id: str | None = None,
+    remark: str | None = None,
+    occurred_at: str | None = None,
 ) -> dict:
     """Record the payer's decision on the submitted claim.
 
@@ -1913,19 +2049,18 @@ def record_decision(
     """
     decision = (_clean(decision) or "").lower()
     if decision not in ("approved", "partially_approved", "denied"):
-        raise ClaimError(
-            "decision must be 'approved', 'partially_approved' or 'denied'"
-        )
+        raise ClaimError("decision must be 'approved', 'partially_approved' or 'denied'")
     stamp = _clean(occurred_at) or _utc_now_str()
 
     if decision == "denied":
         if not _clean(denial_reason):
-            raise ClaimError("a denial must record the payer's reason, an unexplained "
-                             "denial cannot be appealed")
+            raise ClaimError(
+                "a denial must record the payer's reason, an unexplained denial cannot be appealed"
+            )
         with db_session() as db:
             row = _load_claim(db, claim_id)
             claimed = int(row["claimed_paise"] or 0)
-            claim_type = row["claim_type"] or "cashless"
+            row["claim_type"] or "cashless"
         return _transition(
             claim_id,
             "denied",
@@ -1990,9 +2125,14 @@ def record_decision(
                    external_ref = ?, updated_at = CURRENT_TIMESTAMP
                  WHERE id = ?""",
             (
-                target, approved_paise, settlement.disallowed_paise,
-                settlement.patient_liability_paise, tds_paise, stamp,
-                _clean(external_ref), claim_id,
+                target,
+                approved_paise,
+                settlement.disallowed_paise,
+                settlement.patient_liability_paise,
+                tds_paise,
+                stamp,
+                _clean(external_ref),
+                claim_id,
             ),
         )
         _write_event(
@@ -2014,11 +2154,11 @@ def record_settlement(
     *,
     claim_id: int,
     settled_paise: int,
-    tds_paise: Optional[int] = None,
-    utr_reference: Optional[str] = None,
-    actor_id: Optional[str] = None,
-    remark: Optional[str] = None,
-    occurred_at: Optional[str] = None,
+    tds_paise: int | None = None,
+    utr_reference: str | None = None,
+    actor_id: str | None = None,
+    remark: str | None = None,
+    occurred_at: str | None = None,
 ) -> dict:
     """Record money that ACTUALLY ARRIVED against an approved claim.
 
@@ -2060,8 +2200,12 @@ def record_settlement(
                    updated_at = CURRENT_TIMESTAMP
                  WHERE id = ?""",
             (
-                settled_paise, effective_tds, settlement.patient_liability_paise,
-                stamp, _clean(utr_reference), claim_id,
+                settled_paise,
+                effective_tds,
+                settlement.patient_liability_paise,
+                stamp,
+                _clean(utr_reference),
+                claim_id,
             ),
         )
         note = remark
@@ -2069,8 +2213,7 @@ def record_settlement(
             note = (
                 f"SHORT SETTLED by {format_inr(settlement.short_settled_paise or 0)}, "
                 f"expected {format_inr(settlement.expected_receipt_paise or 0)}, "
-                f"received {format_inr(settled_paise)}."
-                + (f" {remark}" if remark else "")
+                f"received {format_inr(settled_paise)}." + (f" {remark}" if remark else "")
             )
         elif settlement.is_over_settled:
             note = (
@@ -2098,9 +2241,9 @@ def record_appeal(
     *,
     claim_id: int,
     grounds: str,
-    actor_id: Optional[str] = None,
-    document_ref: Optional[str] = None,
-    occurred_at: Optional[str] = None,
+    actor_id: str | None = None,
+    document_ref: str | None = None,
+    occurred_at: str | None = None,
 ) -> dict:
     """Record that the hospital appealed a denial or a partial approval —
     lodged with the payer elsewhere, as always."""
@@ -2117,14 +2260,12 @@ def record_appeal(
     )
 
 
-def close_claim(*, claim_id: int, reason: Optional[str] = None, actor_id: Optional[str] = None) -> dict:
+def close_claim(*, claim_id: int, reason: str | None = None, actor_id: str | None = None) -> dict:
     """Close the file. Terminal — a closed claim can go nowhere."""
-    return _transition(
-        claim_id, "closed", remark=_clean(reason), actor_id=actor_id
-    )
+    return _transition(claim_id, "closed", remark=_clean(reason), actor_id=actor_id)
 
 
-def cancel_claim(*, claim_id: int, reason: str, actor_id: Optional[str] = None) -> dict:
+def cancel_claim(*, claim_id: int, reason: str, actor_id: str | None = None) -> dict:
     """Withdraw a claim that should never have been raised. Terminal."""
     text = _clean(reason)
     if not text:
@@ -2132,7 +2273,7 @@ def cancel_claim(*, claim_id: int, reason: str, actor_id: Optional[str] = None) 
     return _transition(claim_id, "cancelled", remark=text, actor_id=actor_id)
 
 
-def add_note(*, claim_id: int, note: str, actor_id: Optional[str] = None) -> dict:
+def add_note(*, claim_id: int, note: str, actor_id: str | None = None) -> dict:
     """Append a note without moving the claim. The desk's running commentary —
     'called Ramesh at the TPA, said Tuesday' — which is most of what makes a
     follow-up call productive."""
@@ -2157,10 +2298,11 @@ def add_note(*, claim_id: int, note: str, actor_id: Optional[str] = None) -> dic
 #  The work queue — what a TPA desk actually lives in
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def work_queue(
     *,
-    payer_code: Optional[str] = None,
-    bucket: Optional[str] = None,
+    payer_code: str | None = None,
+    bucket: str | None = None,
     limit: int = 300,
 ) -> dict:
     """Everything still owed to (or by) somebody, oldest first, in aging buckets.
@@ -2183,32 +2325,43 @@ def work_queue(
     buckets: list[dict] = []
     for label, _low, _high in AGING_BUCKETS:
         in_bucket = [c for c in claims if c["age_bucket"] == label]
-        buckets.append({
-            "bucket": label,
-            "count": len(in_bucket),
-            # Value at risk = what the hospital still expects to receive on these
-            # claims. Undecided claims have no expected receipt yet, so the
-            # CLAIMED amount stands in and the field says which is which.
-            "claimed_paise": sum(int(c.get("claimed_paise") or 0) for c in in_bucket),
-            "claimed_display": format_inr(
-                sum(int(c.get("claimed_paise") or 0) for c in in_bucket)
-            ),
-        })
+        buckets.append(
+            {
+                "bucket": label,
+                "count": len(in_bucket),
+                # Value at risk = what the hospital still expects to receive on these
+                # claims. Undecided claims have no expected receipt yet, so the
+                # CLAIMED amount stands in and the field says which is which.
+                "claimed_paise": sum(int(c.get("claimed_paise") or 0) for c in in_bucket),
+                "claimed_display": format_inr(
+                    sum(int(c.get("claimed_paise") or 0) for c in in_bucket)
+                ),
+            }
+        )
     unknown = [c for c in claims if c["age_bucket"] == "unknown"]
     if unknown:
-        buckets.append({
-            "bucket": "unknown",
-            "count": len(unknown),
-            "claimed_paise": sum(int(c.get("claimed_paise") or 0) for c in unknown),
-            "claimed_display": format_inr(
-                sum(int(c.get("claimed_paise") or 0) for c in unknown)
-            ),
-        })
+        buckets.append(
+            {
+                "bucket": "unknown",
+                "count": len(unknown),
+                "claimed_paise": sum(int(c.get("claimed_paise") or 0) for c in unknown),
+                "claimed_display": format_inr(
+                    sum(int(c.get("claimed_paise") or 0) for c in unknown)
+                ),
+            }
+        )
 
     # WHOSE MOVE IS IT. The single most useful cut of this list.
     with_payer = {"preauth_requested", "submitted", "appealed"}
-    with_hospital = {"draft", "queried", "preauth_approved", "preauth_denied",
-                     "approved", "partially_approved", "denied"}
+    with_hospital = {
+        "draft",
+        "queried",
+        "preauth_approved",
+        "preauth_denied",
+        "approved",
+        "partially_approved",
+        "denied",
+    }
 
     return {
         "notice": NO_TRANSMISSION_NOTICE,
@@ -2223,7 +2376,7 @@ def work_queue(
     }
 
 
-def denial_log(*, limit: int = 200, payer_code: Optional[str] = None) -> dict:
+def denial_log(*, limit: int = 200, payer_code: str | None = None) -> dict:
     """Every denial and every disallowance, with the payer's own reason.
 
     Rolled up by reason code as well as listed, because a denial log's value is
@@ -2263,12 +2416,15 @@ def denial_log(*, limit: int = 200, payer_code: Optional[str] = None) -> dict:
         row["amount_at_stake_display"] = format_inr(lost)
         code = row.get("denial_code") or "OTHER"
         row["denial_code_label"] = labels.get(code, code)
-        entry = by_code.setdefault(code, {
-            "denial_code": code,
-            "label": labels.get(code, code),
-            "count": 0,
-            "amount_paise": 0,
-        })
+        entry = by_code.setdefault(
+            code,
+            {
+                "denial_code": code,
+                "label": labels.get(code, code),
+                "count": 0,
+                "amount_paise": 0,
+            },
+        )
         entry["count"] += 1
         entry["amount_paise"] += lost
 
@@ -2297,9 +2453,7 @@ def desk_summary() -> dict:
     settled = list_claims(status="settled", limit=1000)
 
     short_settled = [c for c in settled if c["settlement"]["is_short_settled"]]
-    short_total = sum(
-        int(c["settlement"]["short_settled_paise"] or 0) for c in short_settled
-    )
+    short_total = sum(int(c["settlement"]["short_settled_paise"] or 0) for c in short_settled)
     # Receivable = what the hospital still expects from payers on open claims.
     # Undecided claims contribute their CLAIMED amount, which is an estimate and
     # is labelled as one; reimbursement claims contribute nothing (the patient

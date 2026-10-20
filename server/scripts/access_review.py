@@ -32,12 +32,14 @@ Exit codes:
     1  --strict and at least one finding
     2  no login-capable administrator exists (always non-zero, --strict or not)
 """
+
 import argparse
 import json
 import os
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 
 from database import db_session  # noqa: E402
 from services.bootstrap_service import (  # noqa: E402
@@ -61,20 +63,30 @@ def _fmt_table(accounts: list[dict]) -> str:
         )
         for a in accounts
     ]
-    widths = [max(len(h), *(len(r[i]) for r in rows)) if rows else len(h)
-              for i, h in enumerate(headers)]
-    line = "  ".join(h.ljust(w) for h, w in zip(headers, widths))
+    widths = [
+        max(len(h), *(len(r[i]) for r in rows)) if rows else len(h) for i, h in enumerate(headers)
+    ]
+    line = "  ".join(h.ljust(w) for h, w in zip(headers, widths, strict=False))
     out = [line, "  ".join("-" * w for w in widths)]
-    out += ["  ".join(c.ljust(w) for c, w in zip(r, widths)) for r in rows]
+    out += ["  ".join(c.ljust(w) for c, w in zip(r, widths, strict=False)) for r in rows]
     return "\n".join(out)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Review Orb staff accounts, roles and MFA posture.")
-    parser.add_argument("--deep", action="store_true",
-                        help="Also bcrypt-sweep every staff account for Orb's shipped default passwords (slow).")
-    parser.add_argument("--budget", type=float, default=300.0,
-                        help="Wall-clock seconds allowed for --deep (default 300).")
+    parser = argparse.ArgumentParser(
+        description="Review Orb staff accounts, roles and MFA posture."
+    )
+    parser.add_argument(
+        "--deep",
+        action="store_true",
+        help="Also bcrypt-sweep every staff account for Orb's shipped default passwords (slow).",
+    )
+    parser.add_argument(
+        "--budget",
+        type=float,
+        default=300.0,
+        help="Wall-clock seconds allowed for --deep (default 300).",
+    )
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     parser.add_argument("--strict", action="store_true", help="Exit 1 if any finding is present.")
     args = parser.parse_args(argv)
@@ -109,15 +121,19 @@ def main(argv: list[str] | None = None) -> int:
         print(_fmt_table(review["accounts"]) if review["accounts"] else "  (no staff accounts)")
         print()
         print(f"  staff accounts            : {review['staff_accounts']}")
-        print(f"  login-capable admins      : {inv['admins_active']}"
-              f"{'   ← NOBODY CAN ADMINISTER THIS APPLIANCE' if inv['admins_active'] == 0 else ''}")
+        print(
+            f"  login-capable admins      : {inv['admins_active']}"
+            f"{'   ← NOBODY CAN ADMINISTER THIS APPLIANCE' if inv['admins_active'] == 0 else ''}"
+        )
         print(f"  admins with a TOTP factor : {inv['admins_with_mfa']}")
         if review["privileged_without_mfa"]:
             print(f"  admins WITHOUT MFA        : {', '.join(review['privileged_without_mfa'])}")
         if sweep:
-            print(f"  credential sweep          : {sweep['checked']} bcrypt checks in "
-                  f"{sweep['elapsed_s']}s"
-                  f"{' (BUDGET EXHAUSTED — incomplete)' if sweep['budget_exhausted'] else ''}")
+            print(
+                f"  credential sweep          : {sweep['checked']} bcrypt checks in "
+                f"{sweep['elapsed_s']}s"
+                f"{' (BUDGET EXHAUSTED — incomplete)' if sweep['budget_exhausted'] else ''}"
+            )
             print(f"  shipped default passwords : {', '.join(default_ids) or 'none'}")
         else:
             print("  credential sweep          : not run (pass --deep)")

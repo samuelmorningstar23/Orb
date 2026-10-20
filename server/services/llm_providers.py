@@ -12,6 +12,7 @@ Concurrency posture: the local lane serializes through llm_queue
 (max_concurrent=1) behind the process-wide GPU gate — one physical GPU, one
 job at a time. Callers acquire the queue before streaming.
 """
+
 from __future__ import annotations
 
 import json
@@ -19,10 +20,9 @@ import logging
 import os
 import time
 from abc import ABC, abstractmethod
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 import httpx
-
 from config import (
     LLM_MODEL,
     OLLAMA_BASE_URL,
@@ -95,6 +95,7 @@ class OllamaChatProvider(ChatProvider):
         # ORB_MODELS_ENABLED off (or the Orb Ward Record): refused before any
         # request leaves this process (services/model_switch.py).
         from services.model_switch import refuse_when_models_off
+
         refuse_when_models_off("Sage chat (OllamaChatProvider)")
         opts = options or {}
         # ~4 chars/token is close enough to tell a cache hit from a miss; the
@@ -106,8 +107,7 @@ class OllamaChatProvider(ChatProvider):
         _t0 = time.monotonic()
         _first_tok_at = None
         async with httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=30.0, read=_stream_read_timeout(),
-                                  write=30.0, pool=30.0),
+            timeout=httpx.Timeout(connect=30.0, read=_stream_read_timeout(), write=30.0, pool=30.0),
             trust_env=False,
         ) as client:
             async with client.stream(
@@ -140,7 +140,8 @@ class OllamaChatProvider(ChatProvider):
                                 _first_tok_at = time.monotonic()
                                 logger.info(
                                     "llm first_token model=%s at %.0f ms after request",
-                                    self.model, (_first_tok_at - _t0) * 1000,
+                                    self.model,
+                                    (_first_tok_at - _t0) * 1000,
                                 )
                             yield data["message"]["content"]
                         if data.get("done", False):
@@ -157,9 +158,13 @@ class OllamaChatProvider(ChatProvider):
                                     "llm split model=%s prefill=%d tok in %.0f ms "
                                     "(%.0f tok/s) decode=%d tok in %.0f ms (%.1f tok/s) "
                                     "prompt~%d tok, cache_reused~%d tok",
-                                    self.model, _pc, _pd,
+                                    self.model,
+                                    _pc,
+                                    _pd,
                                     (_pc / _pd * 1000) if _pd else 0,
-                                    _ec, _ed, (_ec / _ed * 1000) if _ed else 0,
+                                    _ec,
+                                    _ed,
+                                    (_ec / _ed * 1000) if _ed else 0,
                                     _prompt_tokens_est,
                                     _cached if _cached > 0 else 0,
                                 )

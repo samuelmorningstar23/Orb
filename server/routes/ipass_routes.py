@@ -19,29 +19,29 @@ Both serve the same block, from the same builder as the handover sheet's
 supplement, so the round and the handover cannot show a clinician two different
 versions of the machine's opinion.
 """
+
 from __future__ import annotations
 
-import uuid
-
 from fastapi import APIRouter, Depends, HTTPException, Request
-
-from permissions import require_patient_access, require_permission
+from permissions import require_patient_access
+from services.audit_service import log_audit_event
 from services.ipass_service import (
     HANDOFF_WINDOW_HOURS,
     build_ipass,
-    save_ipass_handoff,
-    get_recent_handoffs,
     get_reasoned_assessment,
+    get_recent_handoffs,
     prepare_reasoned_assessment,
     render_assessment_text,
+    save_ipass_handoff,
 )
-from services.audit_service import log_audit_event
+
 
 def _handover_switched_on() -> None:
     """The Orb Ward Record profile switches the handover off (SALES_PLAN
     section 3, step 2: "The handover is off"). Every I-PASS route then answers
     404 in these words, before any patient is read."""
     import config
+
     if getattr(config, "WARD_RECORD", False):
         raise HTTPException(status_code=404, detail=HANDOVER_SWITCHED_OFF)
 
@@ -49,16 +49,20 @@ def _handover_switched_on() -> None:
 #: What every I-PASS route answers under the Orb Ward Record profile.
 HANDOVER_SWITCHED_OFF = "The handover is switched off on this computer"
 
-router = APIRouter(prefix="/api/ipass", tags=["ipass"],
-                   dependencies=[Depends(_handover_switched_on)])
+router = APIRouter(
+    prefix="/api/ipass", tags=["ipass"], dependencies=[Depends(_handover_switched_on)]
+)
+
+
+_GET_DRAFT_USER_DEFAULT = Depends(
+    require_patient_access("vitals.read", audit_action="ipass_draft_viewed")
+)
 
 
 @router.get("/{patient_id}/draft")
 def get_draft(
     patient_id: str,
-    user: dict = Depends(
-        require_patient_access("vitals.read", audit_action="ipass_draft_viewed")
-    ),
+    user: dict = _GET_DRAFT_USER_DEFAULT,
 ):
     """Auto-draft a structured I-PASS handoff from the patient's last ~12h of data."""
     try:
@@ -69,7 +73,10 @@ def get_draft(
         # must be indistinguishable — the established posture on the chart,
         # timeline, orders and eMAR (DEMO_READINESS §15.1). str(e) echoed the
         # raw id, giving unscoped callers a different body than scoped ones.
-        raise HTTPException(status_code=404, detail="Patient not found")
+        raise HTTPException(status_code=404, detail="Patient not found") from None
+
+
+_SAVE_DRAFT_USER_DEFAULT = Depends(require_patient_access("scribe.create_draft"))
 
 
 @router.post("/{patient_id}/save")
@@ -77,7 +84,7 @@ def save_draft(
     patient_id: str,
     data: dict,
     request: Request,
-    user: dict = Depends(require_patient_access("scribe.create_draft")),
+    user: dict = _SAVE_DRAFT_USER_DEFAULT,
 ):
     """Persist an I-PASS handoff draft as a scribe note (note_format='handoff')."""
     content = data.get("content")
@@ -87,7 +94,7 @@ def save_draft(
     try:
         note_id = save_ipass_handoff(patient_id, user["id"], content)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     log_audit_event(
         correlation_id=f"ipass-save-{note_id}",
@@ -109,12 +116,15 @@ def save_draft(
     return {"id": note_id, "status": "draft", "note_format": "handoff"}
 
 
+_REASONED_ASSESSMENT_USER_DEFAULT = Depends(
+    require_patient_access("vitals.read", audit_action="ipass_assessment_viewed")
+)
+
+
 @router.get("/{patient_id}/reasoned-assessment")
 def reasoned_assessment(
     patient_id: str,
-    user: dict = Depends(
-        require_patient_access("vitals.read", audit_action="ipass_assessment_viewed")
-    ),
+    user: dict = _REASONED_ASSESSMENT_USER_DEFAULT,
 ):
     """Sage's full reasoned assessment for this patient, or nothing.
 
@@ -153,13 +163,15 @@ def reasoned_assessment(
     }
 
 
+_PREPARE_REASONED_ASSESSMENT_ROUTE_USER_DEFAULT = Depends(
+    require_patient_access("vitals.read", "sage.query", audit_action="ipass_assessment_requested")
+)
+
+
 @router.post("/{patient_id}/reasoned-assessment/prepare")
 async def prepare_reasoned_assessment_route(
     patient_id: str,
-    user: dict = Depends(
-        require_patient_access("vitals.read", "sage.query",
-                               audit_action="ipass_assessment_requested")
-    ),
+    user: dict = _PREPARE_REASONED_ASSESSMENT_ROUTE_USER_DEFAULT,
 ):
     """Ask Sage for the full reasoned assessment EARLY, and return at once.
 
@@ -185,12 +197,15 @@ async def prepare_reasoned_assessment_route(
     return await prepare_reasoned_assessment(patient_id)
 
 
+_RECENT_HANDOFFS_USER_DEFAULT = Depends(
+    require_patient_access("vitals.read", audit_action="ipass_handoffs_viewed")
+)
+
+
 @router.get("/{patient_id}/recent")
 def recent_handoffs(
     patient_id: str,
-    user: dict = Depends(
-        require_patient_access("vitals.read", audit_action="ipass_handoffs_viewed")
-    ),
+    user: dict = _RECENT_HANDOFFS_USER_DEFAULT,
 ):
     """List recent I-PASS handoff notes for a patient."""
     return {"handoffs": get_recent_handoffs(patient_id)}

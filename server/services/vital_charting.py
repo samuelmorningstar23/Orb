@@ -19,11 +19,12 @@ Two traps this module exists to avoid, both of which shipped somewhere:
 
 The frontend twin of this rule is `chartedValue` in src/lib/vitals.ts.
 """
+
 from __future__ import annotations
 
 import math
 import numbers
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 
 _QUANTUM = {0: Decimal("1"), 1: Decimal("0.1")}
 
@@ -63,17 +64,20 @@ def charted_text(value, dp: int = 0, unit: str = "", missing: str = NOT_RECORDED
     return f"{as_charted(number, dp):.{dp}f}{unit}"
 
 
-def vitals_line(*, hr=None, sbp=None, dbp=None, spo2=None, temp=None, rr=None,
-                sep: str = " · ") -> str:
+def vitals_line(
+    *, hr=None, sbp=None, dbp=None, spo2=None, temp=None, rr=None, sep: str = " · "
+) -> str:
     """The vitals snapshot line the Relay alerts print, from charted values.
 
     "HR 72 · BP 120/80 · SpO2 97% · Temp 38.1°C · RR 21". A missing vital
     prints NOT_RECORDED, never a stand-in number.
     """
-    return sep.join([
-        f"HR {charted_text(hr)}",
-        f"BP {charted_text(sbp)}/{charted_text(dbp)}",
-        f"SpO2 {charted_text(spo2, unit='%')}",
-        f"Temp {charted_text(temp, 1, unit='°C')}",
-        f"RR {charted_text(rr)}",
-    ])
+    return sep.join(
+        [
+            f"HR {charted_text(hr)}",
+            f"BP {charted_text(sbp)}/{charted_text(dbp)}",
+            f"SpO2 {charted_text(spo2, unit='%')}",
+            f"Temp {charted_text(temp, 1, unit='°C')}",
+            f"RR {charted_text(rr)}",
+        ]
+    )

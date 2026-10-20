@@ -16,6 +16,7 @@ dependency; SVG factory only, no Pillow). It is strictly optional: the import
 is deferred and every failure degrades to None, so TOTP itself never gains a
 hard dependency and enrolment keeps working on the manual key alone.
 """
+
 from __future__ import annotations
 
 import base64
@@ -59,11 +60,13 @@ def _hotp(secret: str, counter: int) -> str:
     msg = struct.pack(">Q", counter)
     digest = hmac.new(key, msg, hashlib.sha1).digest()
     offset = digest[-1] & 0x0F
-    binary = ((digest[offset] & 0x7F) << 24
-              | (digest[offset + 1] & 0xFF) << 16
-              | (digest[offset + 2] & 0xFF) << 8
-              | (digest[offset + 3] & 0xFF))
-    return str(binary % (10 ** _DIGITS)).zfill(_DIGITS)
+    binary = (
+        (digest[offset] & 0x7F) << 24
+        | (digest[offset + 1] & 0xFF) << 16
+        | (digest[offset + 2] & 0xFF) << 8
+        | (digest[offset + 3] & 0xFF)
+    )
+    return str(binary % (10**_DIGITS)).zfill(_DIGITS)
 
 
 def current_code(secret: str, at: float | None = None) -> str:

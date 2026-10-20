@@ -70,12 +70,13 @@ not exist is skipped rather than failed: in the runner every table this
 touches exists (migration 20 and 49 run first), and the skip keeps the
 migration usable on the bare Helix database tests/test_migrations.py builds.
 """
+
 from __future__ import annotations
 
 import logging
 import re
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from migrations import Migration
 
@@ -137,42 +138,75 @@ _PROCUREMENT_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # One set of document tables, two domains. Every existing row is a stores
     # document, and the stores routes see only the stores domain
     # (procurement_service domain guards).
-    ("purchase_orders", "domain",
-     "TEXT NOT NULL DEFAULT 'stores' CHECK (domain IN ('stores', 'pharmacy'))"),
-    ("goods_receipts", "domain",
-     "TEXT NOT NULL DEFAULT 'stores' CHECK (domain IN ('stores', 'pharmacy'))"),
-    ("indents", "domain",
-     "TEXT NOT NULL DEFAULT 'stores' CHECK (domain IN ('stores', 'pharmacy'))"),
+    (
+        "purchase_orders",
+        "domain",
+        "TEXT NOT NULL DEFAULT 'stores' CHECK (domain IN ('stores', 'pharmacy'))",
+    ),
+    (
+        "goods_receipts",
+        "domain",
+        "TEXT NOT NULL DEFAULT 'stores' CHECK (domain IN ('stores', 'pharmacy'))",
+    ),
+    (
+        "indents",
+        "domain",
+        "TEXT NOT NULL DEFAULT 'stores' CHECK (domain IN ('stores', 'pharmacy'))",
+    ),
     # A purchase indent asks for something to be bought (every stores indent
     # today); an issue indent asks another store to hand stock over.
-    ("indents", "indent_kind",
-     "TEXT NOT NULL DEFAULT 'purchase' CHECK (indent_kind IN ('purchase', 'issue'))"),
+    (
+        "indents",
+        "indent_kind",
+        "TEXT NOT NULL DEFAULT 'purchase' CHECK (indent_kind IN ('purchase', 'issue'))",
+    ),
     ("indents", "issuing_store_id", "INTEGER"),
     ("purchase_order_lines", "helix_medication_id", "TEXT"),
-    ("purchase_order_lines", "units_per_pack",
-     "INTEGER CHECK (units_per_pack IS NULL OR units_per_pack > 0)"),
+    (
+        "purchase_order_lines",
+        "units_per_pack",
+        "INTEGER CHECK (units_per_pack IS NULL OR units_per_pack > 0)",
+    ),
     ("goods_receipt_lines", "helix_medication_id", "TEXT"),
-    ("goods_receipt_lines", "units_per_pack",
-     "INTEGER CHECK (units_per_pack IS NULL OR units_per_pack > 0)"),
-    ("goods_receipt_lines", "free_quantity_milli",
-     "INTEGER NOT NULL DEFAULT 0 CHECK (free_quantity_milli >= 0)"),
-    ("goods_receipt_lines", "mrp_pack_paise",
-     "INTEGER CHECK (mrp_pack_paise IS NULL OR mrp_pack_paise >= 0)"),
+    (
+        "goods_receipt_lines",
+        "units_per_pack",
+        "INTEGER CHECK (units_per_pack IS NULL OR units_per_pack > 0)",
+    ),
+    (
+        "goods_receipt_lines",
+        "free_quantity_milli",
+        "INTEGER NOT NULL DEFAULT 0 CHECK (free_quantity_milli >= 0)",
+    ),
+    (
+        "goods_receipt_lines",
+        "mrp_pack_paise",
+        "INTEGER CHECK (mrp_pack_paise IS NULL OR mrp_pack_paise >= 0)",
+    ),
     ("goods_receipt_lines", "mfg_date", "DATE"),
     ("goods_receipt_lines", "helix_lot_ref", "TEXT"),
     ("indent_lines", "helix_medication_id", "TEXT"),
-    ("indent_lines", "units_per_pack",
-     "INTEGER CHECK (units_per_pack IS NULL OR units_per_pack > 0)"),
-    ("indent_lines", "issued_quantity_milli",
-     "INTEGER NOT NULL DEFAULT 0 CHECK (issued_quantity_milli >= 0)"),
+    (
+        "indent_lines",
+        "units_per_pack",
+        "INTEGER CHECK (units_per_pack IS NULL OR units_per_pack > 0)",
+    ),
+    (
+        "indent_lines",
+        "issued_quantity_milli",
+        "INTEGER NOT NULL DEFAULT 0 CHECK (issued_quantity_milli >= 0)",
+    ),
     ("vendors", "drug_licence_numbers", "TEXT"),
     ("vendors", "drug_licence_valid_to", "DATE"),
     ("vendors", "ndps_licence_number", "TEXT"),
     # NULL is a stores store. A non-NULL kind makes the row a pharmacy store,
     # which the stores routes cannot list, edit or move stock through.
-    ("stores", "pharmacy_kind",
-     "TEXT CHECK (pharmacy_kind IS NULL OR pharmacy_kind IN ('dispensing', 'sub_store', "
-     "'ndps_vault', 'returns_quarantine', 'ward_imprest', 'crash_cart'))"),
+    (
+        "stores",
+        "pharmacy_kind",
+        "TEXT CHECK (pharmacy_kind IS NULL OR pharmacy_kind IN ('dispensing', 'sub_store', "
+        "'ndps_vault', 'returns_quarantine', 'ward_imprest', 'crash_cart'))",
+    ),
 )
 
 # ── New tables (no FKs; CHECKs on every enum) ─────────────────────────────────
@@ -438,10 +472,18 @@ _TABLES: tuple[str, ...] = (
 )
 
 TABLE_NAMES: tuple[str, ...] = (
-    "pharmacy_par_levels", "pharmacy_transfers", "pharmacy_transfer_lines",
-    "pharmacy_lot_events", "pharmacy_stock_counts", "pharmacy_stock_count_lines",
-    "pharmacy_ward_returns", "pharmacy_vendor_returns", "pharmacy_vendor_return_lines",
-    "pharmacy_master_change_requests", "ndps_variances", "ndps_register",
+    "pharmacy_par_levels",
+    "pharmacy_transfers",
+    "pharmacy_transfer_lines",
+    "pharmacy_lot_events",
+    "pharmacy_stock_counts",
+    "pharmacy_stock_count_lines",
+    "pharmacy_ward_returns",
+    "pharmacy_vendor_returns",
+    "pharmacy_vendor_return_lines",
+    "pharmacy_master_change_requests",
+    "ndps_variances",
+    "ndps_register",
 )
 
 # (index name, table, key, WHERE clause or None, unique). Created only when
@@ -449,66 +491,140 @@ TABLE_NAMES: tuple[str, ...] = (
 # with idx_helix, the prefix of the four HELIX_SCHEMA indexes
 # tests/test_migrations.py pins.
 _INDEXES: tuple[tuple[str, str, str, str | None, bool], ...] = (
-    ("idx_pharmacy_lots_dispensable", "helix_inventory_lots",
-     "(medication_id, store_id, status, expiration_date)", None, False),
-    ("ux_pharmacy_lots_store_batch", "helix_inventory_lots",
-     "(medication_id, store_id, lot_number, expiration_date)", "store_id IS NOT NULL", True),
-    ("ux_pharmacy_movements_idempotency", "helix_stock_movements",
-     "(idempotency_key)", "idempotency_key IS NOT NULL", True),
-    ("ux_pharmacy_movements_seq", "helix_stock_movements",
-     "(seq)", "seq IS NOT NULL", True),
-    ("idx_pharmacy_movements_med_store_seq", "helix_stock_movements",
-     "(medication_id, store_id, seq)", None, False),
-    ("idx_pharmacy_movements_lot_seq", "helix_stock_movements",
-     "(lot_id, seq)", None, False),
-    ("idx_po_domain_status", "purchase_orders",
-     "(domain, status, order_date)", None, False),
-    ("idx_grn_domain_status", "goods_receipts",
-     "(domain, status, received_at)", None, False),
-    ("idx_indents_domain_status", "indents",
-     "(domain, status, requested_at)", None, False),
+    (
+        "idx_pharmacy_lots_dispensable",
+        "helix_inventory_lots",
+        "(medication_id, store_id, status, expiration_date)",
+        None,
+        False,
+    ),
+    (
+        "ux_pharmacy_lots_store_batch",
+        "helix_inventory_lots",
+        "(medication_id, store_id, lot_number, expiration_date)",
+        "store_id IS NOT NULL",
+        True,
+    ),
+    (
+        "ux_pharmacy_movements_idempotency",
+        "helix_stock_movements",
+        "(idempotency_key)",
+        "idempotency_key IS NOT NULL",
+        True,
+    ),
+    ("ux_pharmacy_movements_seq", "helix_stock_movements", "(seq)", "seq IS NOT NULL", True),
+    (
+        "idx_pharmacy_movements_med_store_seq",
+        "helix_stock_movements",
+        "(medication_id, store_id, seq)",
+        None,
+        False,
+    ),
+    ("idx_pharmacy_movements_lot_seq", "helix_stock_movements", "(lot_id, seq)", None, False),
+    ("idx_po_domain_status", "purchase_orders", "(domain, status, order_date)", None, False),
+    ("idx_grn_domain_status", "goods_receipts", "(domain, status, received_at)", None, False),
+    ("idx_indents_domain_status", "indents", "(domain, status, requested_at)", None, False),
     # One active dispensing store (GRN-R17: one dispensing pharmacy per site in
     # v1; the multi-site epic relaxes this to one per facility).
-    ("ux_stores_one_active_dispensing", "stores",
-     "(pharmacy_kind)", "pharmacy_kind = 'dispensing' AND is_active = 1", True),
-    ("idx_stores_pharmacy_kind", "stores",
-     "(pharmacy_kind, is_active)", None, False),
-    ("idx_pharmacy_par_levels_med", "pharmacy_par_levels",
-     "(helix_medication_id)", None, False),
-    ("ux_pharmacy_transfers_number", "pharmacy_transfers",
-     "(transfer_number)", "transfer_number IS NOT NULL", True),
-    ("idx_pharmacy_transfers_status", "pharmacy_transfers",
-     "(status, to_store_id, from_store_id)", None, False),
-    ("idx_pharmacy_lot_events_lot", "pharmacy_lot_events",
-     "(lot_id, id)", None, False),
-    ("ux_pharmacy_stock_counts_number", "pharmacy_stock_counts",
-     "(count_number)", "count_number IS NOT NULL", True),
-    ("idx_pharmacy_stock_counts_store", "pharmacy_stock_counts",
-     "(store_id, status)", None, False),
-    ("ux_pharmacy_ward_returns_number", "pharmacy_ward_returns",
-     "(return_number)", "return_number IS NOT NULL", True),
-    ("idx_pharmacy_ward_returns_order", "pharmacy_ward_returns",
-     "(helix_order_id)", None, False),
-    ("idx_pharmacy_ward_returns_patient", "pharmacy_ward_returns",
-     "(patient_id, created_at)", None, False),
-    ("idx_pharmacy_ward_returns_status", "pharmacy_ward_returns",
-     "(status, store_id)", None, False),
-    ("ux_pharmacy_vendor_returns_number", "pharmacy_vendor_returns",
-     "(return_number)", "return_number IS NOT NULL", True),
-    ("idx_pharmacy_vendor_returns_vendor", "pharmacy_vendor_returns",
-     "(vendor_id, status)", None, False),
-    ("idx_pharmacy_change_requests_med", "pharmacy_master_change_requests",
-     "(helix_medication_id, decision)", None, False),
+    (
+        "ux_stores_one_active_dispensing",
+        "stores",
+        "(pharmacy_kind)",
+        "pharmacy_kind = 'dispensing' AND is_active = 1",
+        True,
+    ),
+    ("idx_stores_pharmacy_kind", "stores", "(pharmacy_kind, is_active)", None, False),
+    ("idx_pharmacy_par_levels_med", "pharmacy_par_levels", "(helix_medication_id)", None, False),
+    (
+        "ux_pharmacy_transfers_number",
+        "pharmacy_transfers",
+        "(transfer_number)",
+        "transfer_number IS NOT NULL",
+        True,
+    ),
+    (
+        "idx_pharmacy_transfers_status",
+        "pharmacy_transfers",
+        "(status, to_store_id, from_store_id)",
+        None,
+        False,
+    ),
+    ("idx_pharmacy_lot_events_lot", "pharmacy_lot_events", "(lot_id, id)", None, False),
+    (
+        "ux_pharmacy_stock_counts_number",
+        "pharmacy_stock_counts",
+        "(count_number)",
+        "count_number IS NOT NULL",
+        True,
+    ),
+    ("idx_pharmacy_stock_counts_store", "pharmacy_stock_counts", "(store_id, status)", None, False),
+    (
+        "ux_pharmacy_ward_returns_number",
+        "pharmacy_ward_returns",
+        "(return_number)",
+        "return_number IS NOT NULL",
+        True,
+    ),
+    ("idx_pharmacy_ward_returns_order", "pharmacy_ward_returns", "(helix_order_id)", None, False),
+    (
+        "idx_pharmacy_ward_returns_patient",
+        "pharmacy_ward_returns",
+        "(patient_id, created_at)",
+        None,
+        False,
+    ),
+    (
+        "idx_pharmacy_ward_returns_status",
+        "pharmacy_ward_returns",
+        "(status, store_id)",
+        None,
+        False,
+    ),
+    (
+        "ux_pharmacy_vendor_returns_number",
+        "pharmacy_vendor_returns",
+        "(return_number)",
+        "return_number IS NOT NULL",
+        True,
+    ),
+    (
+        "idx_pharmacy_vendor_returns_vendor",
+        "pharmacy_vendor_returns",
+        "(vendor_id, status)",
+        None,
+        False,
+    ),
+    (
+        "idx_pharmacy_change_requests_med",
+        "pharmacy_master_change_requests",
+        "(helix_medication_id, decision)",
+        None,
+        False,
+    ),
     # One open request per drug, kind and field: a second one would let two
     # approvers act on the same change.
-    ("ux_pharmacy_change_requests_pending", "pharmacy_master_change_requests",
-     "(helix_medication_id, change_kind, COALESCE(field, ''))", "decision = 'pending'", True),
-    ("idx_ndps_variances_open", "ndps_variances",
-     "(status, store_id, helix_medication_id)", None, False),
-    ("idx_ndps_register_drug", "ndps_register",
-     "(store_id, helix_medication_id, seq)", None, False),
-    ("idx_ndps_register_patient", "ndps_register",
-     "(patient_id)", None, False),
+    (
+        "ux_pharmacy_change_requests_pending",
+        "pharmacy_master_change_requests",
+        "(helix_medication_id, change_kind, COALESCE(field, ''))",
+        "decision = 'pending'",
+        True,
+    ),
+    (
+        "idx_ndps_variances_open",
+        "ndps_variances",
+        "(status, store_id, helix_medication_id)",
+        None,
+        False,
+    ),
+    (
+        "idx_ndps_register_drug",
+        "ndps_register",
+        "(store_id, helix_medication_id, seq)",
+        None,
+        False,
+    ),
+    ("idx_ndps_register_patient", "ndps_register", "(patient_id)", None, False),
 )
 
 _TRIGGERS: tuple[str, ...] = (
@@ -538,23 +654,32 @@ SERIES: tuple[tuple[str, str, str], ...] = (
 )
 
 OPENING_REMARK = "Balance brought forward when the stock ledger began"
-CLOSING_REMARK = ("Correction made when the stock ledger began: the earlier entries for "
-                  "this lot did not add up to the quantity on the shelf")
+CLOSING_REMARK = (
+    "Correction made when the stock ledger began: the earlier entries for "
+    "this lot did not add up to the quantity on the shelf"
+)
 
 # The legacy columns the backfill reads. Every Helix database has them
 # (HELIX_SCHEMA has carried them since the table was introduced); they are
 # added here, nullable, only if a hand-built table lacks one, so the backfill
 # can always run.
 _LEGACY_MOVEMENT_COLUMNS = (
-    ("lot_id", "TEXT"), ("medication_id", "TEXT"), ("order_id", "TEXT"),
-    ("quantity_change", "INTEGER"), ("reason", "TEXT"), ("timestamp", "TIMESTAMP"),
+    ("lot_id", "TEXT"),
+    ("medication_id", "TEXT"),
+    ("order_id", "TEXT"),
+    ("quantity_change", "INTEGER"),
+    ("reason", "TEXT"),
+    ("timestamp", "TIMESTAMP"),
 )
 
 
 def _table_exists(conn, table: str) -> bool:
-    return conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
-    ).fetchone() is not None
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+        ).fetchone()
+        is not None
+    )
 
 
 def _columns(conn, table: str) -> dict[str, tuple]:
@@ -576,8 +701,7 @@ def _create_indexes(conn) -> None:
             continue
         # The plain column names in the key (an expression such as
         # COALESCE(field, '') contributes the column inside it).
-        named = {word for word in re.findall(r"[A-Za-z_]+", key)
-                 if word.upper() != "COALESCE"}
+        named = {word for word in re.findall(r"[A-Za-z_]+", key) if word.upper() != "COALESCE"}
         if not named <= set(_columns(conn, table)):
             continue
         kind = "UNIQUE INDEX" if unique else "INDEX"
@@ -606,10 +730,11 @@ def apply(conn) -> None:
 
 # ── The ledger backfill ───────────────────────────────────────────────────────
 
+
 def _legacy_stamp(dt: datetime) -> str:
     """SQLite's CURRENT_TIMESTAMP spelling (UTC, seconds), for the legacy
     `timestamp` column the existing Helix readers order by."""
-    return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return dt.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def backfill_stock_ledger(conn, *, now: datetime | None = None) -> dict:
@@ -619,7 +744,7 @@ def backfill_stock_ledger(conn, *, now: datetime | None = None) -> dict:
     movements is dated."""
     from services.clinical_time import format_utc, parse_to_utc
 
-    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    now = (now or datetime.now(UTC)).astimezone(UTC)
     _add_columns(conn, [("helix_stock_movements", c, d) for c, d in _LEGACY_MOVEMENT_COLUMNS])
     _add_columns(conn, [c for c in _HELIX_COLUMNS if c[0] == "helix_stock_movements"])
     cols = _columns(conn, "helix_stock_movements")
@@ -627,22 +752,30 @@ def backfill_stock_ledger(conn, *, now: datetime | None = None) -> dict:
     # takes a uuid, as helix_service writes it.
     id_is_integer = "INT" in str(cols.get("id", (None, None, ""))[2]).upper()
 
-    counts = {"occurred_at_set": 0, "occurred_at_unreadable": 0, "typed_dispense": 0,
-              "opening_rows": 0, "closing_rows": 0, "sequenced": 0, "balanced": 0,
-              "negative_lots": 0}
+    counts = {
+        "occurred_at_set": 0,
+        "occurred_at_unreadable": 0,
+        "typed_dispense": 0,
+        "opening_rows": 0,
+        "closing_rows": 0,
+        "sequenced": 0,
+        "balanced": 0,
+        "negative_lots": 0,
+    }
 
     # 1. occurred_at, canonical UTC, from the legacy timestamp.
     updates = []
     for rowid, raw in conn.execute(
-            "SELECT rowid, timestamp FROM helix_stock_movements "
-            "WHERE occurred_at IS NULL").fetchall():
+        "SELECT rowid, timestamp FROM helix_stock_movements WHERE occurred_at IS NULL"
+    ).fetchall():
         try:
-            updates.append((format_utc(parse_to_utc(raw, naive_tz=timezone.utc)), rowid))
+            updates.append((format_utc(parse_to_utc(raw, naive_tz=UTC)), rowid))
         except (TypeError, ValueError):
             counts["occurred_at_unreadable"] += 1
     if updates:
-        conn.executemany("UPDATE helix_stock_movements SET occurred_at = ? WHERE rowid = ?",
-                         updates)
+        conn.executemany(
+            "UPDATE helix_stock_movements SET occurred_at = ? WHERE rowid = ?", updates
+        )
     counts["occurred_at_set"] = len(updates)
 
     # 2. Type the legacy dispense rows. Nothing else is guessed.
@@ -650,7 +783,8 @@ def backfill_stock_ledger(conn, *, now: datetime | None = None) -> dict:
         "UPDATE helix_stock_movements SET movement_type = 'dispense', "
         "reference_type = CASE WHEN order_id IS NOT NULL THEN 'helix_order' END, "
         "reference_id = order_id "
-        "WHERE movement_type IS NULL AND reason = 'dispense'")
+        "WHERE movement_type IS NULL AND reason = 'dispense'"
+    )
     counts["typed_dispense"] = max(cur.rowcount, 0)
 
     # 3. Plan an opening (and, rarely, a closing) row per unbalanced lot, from
@@ -660,21 +794,26 @@ def backfill_stock_ledger(conn, *, now: datetime | None = None) -> dict:
     first_at: dict[str, str] = {}
     last_at: dict[str, str] = {}
     for lot_id, change, occurred in conn.execute(
-            "SELECT lot_id, quantity_change, occurred_at FROM helix_stock_movements "
-            f"WHERE seq IS NULL AND lot_id IS NOT NULL {order_sql}").fetchall():
+        "SELECT lot_id, quantity_change, occurred_at FROM helix_stock_movements "
+        f"WHERE seq IS NULL AND lot_id IS NOT NULL {order_sql}"
+    ).fetchall():
         legacy.setdefault(lot_id, []).append(int(change or 0))
         if occurred:
             first_at.setdefault(lot_id, occurred)
             last_at[lot_id] = occurred
-    sequenced_sum = {lot_id: int(total or 0) for lot_id, total in conn.execute(
-        "SELECT lot_id, SUM(COALESCE(quantity_change, 0)) FROM helix_stock_movements "
-        "WHERE seq IS NOT NULL AND lot_id IS NOT NULL GROUP BY lot_id").fetchall()}
+    sequenced_sum = {
+        lot_id: int(total or 0)
+        for lot_id, total in conn.execute(
+            "SELECT lot_id, SUM(COALESCE(quantity_change, 0)) FROM helix_stock_movements "
+            "WHERE seq IS NOT NULL AND lot_id IS NOT NULL GROUP BY lot_id"
+        ).fetchall()
+    }
 
     openings: list[tuple] = []
     closings: list[tuple] = []
     for lot_id, medication_id, quantity in conn.execute(
-            "SELECT id, medication_id, COALESCE(quantity, 0) FROM helix_inventory_lots "
-            "ORDER BY id").fetchall():
+        "SELECT id, medication_id, COALESCE(quantity, 0) FROM helix_inventory_lots ORDER BY id"
+    ).fetchall():
         changes = legacy.get(lot_id, [])
         total = sequenced_sum.get(lot_id, 0) + sum(changes)
         quantity = int(quantity)
@@ -697,37 +836,52 @@ def backfill_stock_ledger(conn, *, now: datetime | None = None) -> dict:
                 at = now
             openings.append((lot_id, medication_id, opening, at))
         if closing:
-            at = (parse_to_utc(last_at[lot_id]) + timedelta(seconds=1)
-                  if lot_id in last_at else now)
+            at = parse_to_utc(last_at[lot_id]) + timedelta(seconds=1) if lot_id in last_at else now
             closings.append((lot_id, medication_id, closing, at))
 
-    next_seq = int(conn.execute(
-        "SELECT COALESCE(MAX(seq), 0) FROM helix_stock_movements").fetchone()[0]) + 1
+    next_seq = (
+        int(conn.execute("SELECT COALESCE(MAX(seq), 0) FROM helix_stock_movements").fetchone()[0])
+        + 1
+    )
 
     def _insert(lot_id, medication_id, change, at, movement_type, remark, seq):
         values = {
-            "lot_id": lot_id, "medication_id": medication_id, "order_id": None,
-            "quantity_change": change, "reason": movement_type,
-            "timestamp": _legacy_stamp(at), "movement_type": movement_type,
-            "store_id": None, "actor_id": "system", "remarks": remark,
-            "occurred_at": format_utc(at), "seq": seq,
+            "lot_id": lot_id,
+            "medication_id": medication_id,
+            "order_id": None,
+            "quantity_change": change,
+            "reason": movement_type,
+            "timestamp": _legacy_stamp(at),
+            "movement_type": movement_type,
+            "store_id": None,
+            "actor_id": "system",
+            "remarks": remark,
+            "occurred_at": format_utc(at),
+            "seq": seq,
         }
         if not id_is_integer:
             values = {"id": str(uuid.uuid4()), **values}
         names = ", ".join(values)
         marks = ", ".join("?" for _ in values)
-        conn.execute(f"INSERT INTO helix_stock_movements ({names}) VALUES ({marks})",
-                     tuple(values.values()))
+        conn.execute(
+            f"INSERT INTO helix_stock_movements ({names}) VALUES ({marks})", tuple(values.values())
+        )
 
     # 4. Sequence: openings, then the legacy rows in time order, then closings.
     for lot_id, medication_id, change, at in openings:
         _insert(lot_id, medication_id, change, at, "opening", OPENING_REMARK, next_seq)
         next_seq += 1
     counts["opening_rows"] = len(openings)
-    pending = [r[0] for r in conn.execute(
-        f"SELECT rowid FROM helix_stock_movements WHERE seq IS NULL {order_sql}").fetchall()]
-    conn.executemany("UPDATE helix_stock_movements SET seq = ? WHERE rowid = ?",
-                     [(next_seq + i, rowid) for i, rowid in enumerate(pending)])
+    pending = [
+        r[0]
+        for r in conn.execute(
+            f"SELECT rowid FROM helix_stock_movements WHERE seq IS NULL {order_sql}"
+        ).fetchall()
+    ]
+    conn.executemany(
+        "UPDATE helix_stock_movements SET seq = ? WHERE rowid = ?",
+        [(next_seq + i, rowid) for i, rowid in enumerate(pending)],
+    )
     next_seq += len(pending)
     counts["sequenced"] = len(pending)
     for lot_id, medication_id, change, at in closings:
@@ -740,22 +894,28 @@ def backfill_stock_ledger(conn, *, now: datetime | None = None) -> dict:
     running_by_lot: dict[str, int] = {}
     balances = []
     for rowid, lot_id, change, balance in conn.execute(
-            "SELECT rowid, lot_id, quantity_change, balance_after_units "
-            "FROM helix_stock_movements WHERE lot_id IS NOT NULL ORDER BY seq").fetchall():
+        "SELECT rowid, lot_id, quantity_change, balance_after_units "
+        "FROM helix_stock_movements WHERE lot_id IS NOT NULL ORDER BY seq"
+    ).fetchall():
         running_by_lot[lot_id] = running_by_lot.get(lot_id, 0) + int(change or 0)
         if balance is None:
             balances.append((running_by_lot[lot_id], rowid))
     if balances:
         conn.executemany(
-            "UPDATE helix_stock_movements SET balance_after_units = ? WHERE rowid = ?", balances)
+            "UPDATE helix_stock_movements SET balance_after_units = ? WHERE rowid = ?", balances
+        )
     counts["balanced"] = len(balances)
 
     if counts["occurred_at_unreadable"]:
-        logger.warning("pharmacy ledger backfill: %d movement timestamp(s) could not be read "
-                       "and keep no occurred_at", counts["occurred_at_unreadable"])
+        logger.warning(
+            "pharmacy ledger backfill: %d movement timestamp(s) could not be read "
+            "and keep no occurred_at",
+            counts["occurred_at_unreadable"],
+        )
     if counts["negative_lots"]:
-        logger.warning("pharmacy ledger backfill: %d lot(s) hold a negative quantity",
-                       counts["negative_lots"])
+        logger.warning(
+            "pharmacy ledger backfill: %d lot(s) hold a negative quantity", counts["negative_lots"]
+        )
     if counts["opening_rows"] or counts["closing_rows"] or counts["typed_dispense"]:
         _audit_backfill(conn, counts)
     logger.info("pharmacy ledger backfill: %s", counts)

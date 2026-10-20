@@ -9,24 +9,32 @@ the SCRIBE_READ_ALL ("scribe.read_all") permission so it stays scoped to
 clinicians who can already read the clinical documentation it derives codes
 from (doctors, nurses, admins) — CDI is a documentation-derived function.
 """
+
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-
-from permissions import require_patient_access, require_permission, SCRIBE_READ_ALL
-from services import coding_service
+from permissions import SCRIBE_READ_ALL, require_patient_access
 from services.audit_service import log_audit_event
 
+from services import coding_service
+
 router = APIRouter(prefix="/api/coding", tags=["Revenue Integrity / Coding"])
+
+
+_SUGGEST_PATIENT_CODES_USE_LLM_DEFAULT = Query(
+    False,
+    description="Route through the optional LLM refinement hook (no-op unless a local LLM is wired up).",
+)
+_SUGGEST_PATIENT_CODES_USER_DEFAULT = Depends(require_patient_access(SCRIBE_READ_ALL))
 
 
 @router.get("/patient/{patient_id}")
 def suggest_patient_codes(
     patient_id: str,
     request: Request,
-    use_llm: bool = Query(False, description="Route through the optional LLM refinement hook (no-op unless a local LLM is wired up)."),
+    use_llm: bool = _SUGGEST_PATIENT_CODES_USE_LLM_DEFAULT,
     # No audit_action: this route already writes its own phi_access row below.
-    user=Depends(require_patient_access(SCRIBE_READ_ALL)),
+    user=_SUGGEST_PATIENT_CODES_USER_DEFAULT,
 ):
     """Suggest codes, flag CDI gaps and estimate reimbursement for a patient.
 

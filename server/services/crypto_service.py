@@ -20,11 +20,13 @@ decrypted; anything else is returned as-is. This means turning encryption on
 does not orphan previously-written plaintext files, and turning it off still
 lets you read already-encrypted files (as long as the key is still configured).
 """
+
 from __future__ import annotations
 
 import hashlib
 import logging
 import os
+from contextlib import contextmanager
 
 from config import UPLOAD_ENCRYPTION_KEY
 
@@ -35,6 +37,7 @@ _NONCE_LEN = 12
 
 try:
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
     _HAVE_AESGCM = True
 except Exception:  # pragma: no cover - depends on deploy env
     AESGCM = None  # type: ignore
@@ -67,6 +70,7 @@ def _warn_once() -> None:
 
 def _derive_key() -> bytes:
     """32-byte AES key derived from the configured key material."""
+    assert UPLOAD_ENCRYPTION_KEY is not None
     return hashlib.sha256(UPLOAD_ENCRYPTION_KEY.encode("utf-8")).digest()
 
 
@@ -93,6 +97,7 @@ def _require_encryption() -> bool:
     if raw in ("0", "false", "no", "off"):
         return False
     import config
+
     return getattr(config, "DEPLOYMENT_PROFILE", "prod") == "prod"
 
 
@@ -115,6 +120,7 @@ def encrypt_bytes(plaintext: bytes) -> bytes:
         _warn_once()
         return plaintext
     import os
+
     nonce = os.urandom(_NONCE_LEN)
     aes = AESGCM(_derive_key())
     ct = aes.encrypt(nonce, plaintext, None)
@@ -135,18 +141,19 @@ def decrypt_bytes(data: bytes) -> bytes:
             "File is encrypted but ORB_UPLOAD_ENCRYPTION_KEY / cryptography is "
             "unavailable; cannot decrypt."
         )
-    body = data[len(_MAGIC):]
+    body = data[len(_MAGIC) :]
     nonce, ct = body[:_NONCE_LEN], body[_NONCE_LEN:]
     aes = AESGCM(_derive_key())
     try:
         return aes.decrypt(nonce, ct, None)
     except Exception as e:
-        raise ValueError(f"Upload decryption failed (tampered or wrong key): {e}")
+        raise ValueError(f"Upload decryption failed (tampered or wrong key): {e}") from e
 
 
 def write_encrypted(path, plaintext: bytes) -> None:
     """Encrypt (if enabled) and write bytes to path with 0o600 permissions."""
     import os
+
     data = encrypt_bytes(plaintext)
     with open(path, "wb") as f:
         f.write(data)
@@ -162,9 +169,6 @@ def read_decrypted(path) -> bytes:
         return decrypt_bytes(f.read())
 
 
-from contextlib import contextmanager
-
-
 @contextmanager
 def materialize_plaintext(path):
     """Yield a filesystem path that downstream tools (Whisper, vision LLM) can
@@ -177,6 +181,7 @@ def materialize_plaintext(path):
     """
     import os
     import tempfile
+
     with open(path, "rb") as f:
         data = f.read()
     if not is_encrypted_blob(data):

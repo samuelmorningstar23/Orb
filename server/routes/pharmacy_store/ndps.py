@@ -28,15 +28,14 @@ variance already reconciled or reported, or nothing to open is 409; an audit
 outage is 503 audit_unavailable and nothing was returned or changed; anything
 the request must correct is 422.
 """
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
-
 from permissions import PHARMACY_STORE_NDPS, PHARMACY_STORE_READ, require_permission
-from services import ndps_service as ndps
+from pydantic import BaseModel, Field
 from services.audit_service import AuditWriteError
+
+from services import ndps_service as ndps
 
 router = APIRouter()
 
@@ -66,143 +65,233 @@ def _fail(exc: ndps.NdpsError) -> HTTPException:
 
 
 def _audit_unavailable() -> HTTPException:
-    return HTTPException(status_code=503, detail={
-        "error": "audit_unavailable",
-        "message": "The audit record could not be written, so nothing was shown or changed. "
-                   "Try again shortly."})
+    return HTTPException(
+        status_code=503,
+        detail={
+            "error": "audit_unavailable",
+            "message": "The audit record could not be written, so nothing was shown or changed. "
+            "Try again shortly.",
+        },
+    )
 
 
 def _ctx(request: Request) -> dict:
-    return {"request_path": request.url.path, "http_method": request.method,
-            "ip_address": request.client.host if request.client else None}
+    return {
+        "request_path": request.url.path,
+        "http_method": request.method,
+        "ip_address": request.client.host if request.client else None,
+    }
 
 
 # ── Reads ─────────────────────────────────────────────────────────────────────
 
+
+_NDPS_OPTIONS_USER_DEFAULT = Depends(_PS_NDPS)
+
+
 @router.get("/ndps/options")
-def ndps_options(user: dict = Depends(_PS_NDPS)):
+def ndps_options(user: dict = _NDPS_OPTIONS_USER_DEFAULT):
     return ndps.options(user)
 
 
+_NDPS_BALANCES_STORE_ID_DEFAULT = Query(None, ge=1)
+_NDPS_BALANCES_DRUG_ID_DEFAULT = Query(None, max_length=80)
+_NDPS_BALANCES_USER_DEFAULT = Depends(_PS_NDPS)
+
+
 @router.get("/ndps/balances")
-def ndps_balances(store_id: Optional[int] = Query(None, ge=1),
-                  drug_id: Optional[str] = Query(None, max_length=80),
-                  user: dict = Depends(_PS_NDPS)):
+def ndps_balances(
+    store_id: int | None = _NDPS_BALANCES_STORE_ID_DEFAULT,
+    drug_id: str | None = _NDPS_BALANCES_DRUG_ID_DEFAULT,
+    user: dict = _NDPS_BALANCES_USER_DEFAULT,
+):
     """No patient data: drug, store, the register's balance and the shelf's."""
     return ndps.balances(store_id=store_id, drug_id=drug_id or None)
 
 
+_NDPS_REGISTER_STORE_ID_DEFAULT = Query(None, ge=1)
+_NDPS_REGISTER_DRUG_ID_DEFAULT = Query(None, max_length=80)
+_NDPS_REGISTER_BEFORE_ID_DEFAULT = Query(None, ge=1)
+_NDPS_REGISTER_LIMIT_DEFAULT = Query(100, ge=1, le=ndps.MAX_PAGE)
+_NDPS_REGISTER_USER_DEFAULT = Depends(_PS_NDPS)
+
+
 @router.get("/ndps/register")
-def ndps_register(request: Request,
-                  store_id: Optional[int] = Query(None, ge=1),
-                  drug_id: Optional[str] = Query(None, max_length=80),
-                  before_id: Optional[int] = Query(None, ge=1),
-                  limit: int = Query(100, ge=1, le=ndps.MAX_PAGE),
-                  user: dict = Depends(_PS_NDPS)):
+def ndps_register(
+    request: Request,
+    store_id: int | None = _NDPS_REGISTER_STORE_ID_DEFAULT,
+    drug_id: str | None = _NDPS_REGISTER_DRUG_ID_DEFAULT,
+    before_id: int | None = _NDPS_REGISTER_BEFORE_ID_DEFAULT,
+    limit: int = _NDPS_REGISTER_LIMIT_DEFAULT,
+    user: dict = _NDPS_REGISTER_USER_DEFAULT,
+):
     try:
-        return ndps.register_page(actor=user, store_id=store_id, drug_id=drug_id or None,
-                                  before_id=before_id, limit=limit, audit_ctx=_ctx(request))
+        return ndps.register_page(
+            actor=user,
+            store_id=store_id,
+            drug_id=drug_id or None,
+            before_id=before_id,
+            limit=limit,
+            audit_ctx=_ctx(request),
+        )
     except ndps.NdpsError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
+
+
+_NDPS_VARIANCES_STATUS_DEFAULT = Query("open", max_length=20)
+_NDPS_VARIANCES_LIMIT_DEFAULT = Query(200, ge=1, le=500)
+_NDPS_VARIANCES_USER_DEFAULT = Depends(_PS_NDPS)
 
 
 @router.get("/ndps/variances")
-def ndps_variances(status: Optional[str] = Query("open", max_length=20),
-                   limit: int = Query(200, ge=1, le=500),
-                   user: dict = Depends(_PS_NDPS)):
+def ndps_variances(
+    status: str | None = _NDPS_VARIANCES_STATUS_DEFAULT,
+    limit: int = _NDPS_VARIANCES_LIMIT_DEFAULT,
+    user: dict = _NDPS_VARIANCES_USER_DEFAULT,
+):
     try:
         return ndps.list_variances(status=status, limit=limit)
     except ndps.NdpsError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
+
+
+_NDPS_EXPORT_STORE_ID_DEFAULT = Query(None, ge=1)
+_NDPS_EXPORT_DRUG_ID_DEFAULT = Query(None, max_length=80)
+_NDPS_EXPORT_DATE_FROM_DEFAULT = Query(None, alias="from", max_length=10)
+_NDPS_EXPORT_DATE_TO_DEFAULT = Query(None, alias="to", max_length=10)
+_NDPS_EXPORT_USER_DEFAULT = Depends(_PS_NDPS)
 
 
 @router.get("/ndps/export.csv")
-def ndps_export(request: Request,
-                store_id: Optional[int] = Query(None, ge=1),
-                drug_id: Optional[str] = Query(None, max_length=80),
-                date_from: Optional[str] = Query(None, alias="from", max_length=10),
-                date_to: Optional[str] = Query(None, alias="to", max_length=10),
-                user: dict = Depends(_PS_NDPS)):
+def ndps_export(
+    request: Request,
+    store_id: int | None = _NDPS_EXPORT_STORE_ID_DEFAULT,
+    drug_id: str | None = _NDPS_EXPORT_DRUG_ID_DEFAULT,
+    date_from: str | None = _NDPS_EXPORT_DATE_FROM_DEFAULT,
+    date_to: str | None = _NDPS_EXPORT_DATE_TO_DEFAULT,
+    user: dict = _NDPS_EXPORT_USER_DEFAULT,
+):
     """The register as CSV. Audited ('security', fail-closed) before the file
     is sent: no audit row, no file."""
     try:
-        filename, text = ndps.export_csv(actor=user, store_id=store_id,
-                                         drug_id=drug_id or None, date_from=date_from,
-                                         date_to=date_to, audit_ctx=_ctx(request))
+        filename, text = ndps.export_csv(
+            actor=user,
+            store_id=store_id,
+            drug_id=drug_id or None,
+            date_from=date_from,
+            date_to=date_to,
+            audit_ctx=_ctx(request),
+        )
     except ndps.NdpsError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
-    return Response(content=text, media_type="text/csv; charset=utf-8",
-                    headers={"Content-Disposition": f'attachment; filename="{filename}"',
-                             "Cache-Control": "no-store"})
+        raise _audit_unavailable() from None
+    return Response(
+        content=text,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 # ── Writes ────────────────────────────────────────────────────────────────────
 
+
 class WitnessIn(BaseModel):
-    witness_id: Optional[str] = Field(None, max_length=80)
-    witness_pin: Optional[str] = Field(None, max_length=64)
+    witness_id: str | None = Field(None, max_length=80)
+    witness_pin: str | None = Field(None, max_length=64)
 
 
 class OpeningIn(WitnessIn):
-    reason: Optional[str] = Field(None, max_length=ndps.MAX_TEXT)
-    store_id: Optional[int] = Field(None, ge=1)
-    drug_id: Optional[str] = Field(None, max_length=80)
+    reason: str | None = Field(None, max_length=ndps.MAX_TEXT)
+    store_id: int | None = Field(None, ge=1)
+    drug_id: str | None = Field(None, max_length=80)
+
+
+_NDPS_OPEN_USER_DEFAULT = Depends(_PS_NDPS)
 
 
 @router.post("/ndps/openings")
-def ndps_open(body: OpeningIn, request: Request, user: dict = Depends(_PS_NDPS)):
+def ndps_open(body: OpeningIn, request: Request, user: dict = _NDPS_OPEN_USER_DEFAULT):
     """Open (or open again) the register from what the shelf holds, witnessed."""
     try:
-        return ndps.open_register(actor=user, reason=body.reason, witness_id=body.witness_id,
-                                  witness_pin=body.witness_pin, store_id=body.store_id,
-                                  drug_id=body.drug_id or None, audit_ctx=_ctx(request))
+        return ndps.open_register(
+            actor=user,
+            reason=body.reason,
+            witness_id=body.witness_id,
+            witness_pin=body.witness_pin,
+            store_id=body.store_id,
+            drug_id=body.drug_id or None,
+            audit_ctx=_ctx(request),
+        )
     except ndps.NdpsError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
+
+
+_NDPS_RECONCILE_USER_DEFAULT = Depends(_PS_NDPS)
 
 
 @router.post("/ndps/reconcile")
-def ndps_reconcile(request: Request, user: dict = Depends(_PS_NDPS)):
+def ndps_reconcile(request: Request, user: dict = _NDPS_RECONCILE_USER_DEFAULT):
     try:
         return ndps.raise_reconciliation_variances(actor=user, audit_ctx=_ctx(request))
     except ndps.NdpsError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
 
 
 class VarianceCloseIn(WitnessIn):
-    note: Optional[str] = Field(None, max_length=ndps.MAX_TEXT)
+    note: str | None = Field(None, max_length=ndps.MAX_TEXT)
+
+
+_NDPS_CLOSE_VARIANCE_USER_DEFAULT = Depends(_PS_NDPS)
 
 
 @router.post("/ndps/variances/{variance_id}/reconcile")
-def ndps_close_variance(variance_id: int, body: VarianceCloseIn, request: Request,
-                        user: dict = Depends(_PS_NDPS)):
+def ndps_close_variance(
+    variance_id: int,
+    body: VarianceCloseIn,
+    request: Request,
+    user: dict = _NDPS_CLOSE_VARIANCE_USER_DEFAULT,
+):
     try:
-        return ndps.reconcile_variance(variance_id, actor=user, note=body.note,
-                                       witness_id=body.witness_id,
-                                       witness_pin=body.witness_pin, audit_ctx=_ctx(request))
+        return ndps.reconcile_variance(
+            variance_id,
+            actor=user,
+            note=body.note,
+            witness_id=body.witness_id,
+            witness_pin=body.witness_pin,
+            audit_ctx=_ctx(request),
+        )
     except ndps.NdpsError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
+
+
+_NDPS_VARIANCE_INCIDENT_USER_DEFAULT = Depends(_PS_NDPS)
 
 
 @router.post("/ndps/variances/{variance_id}/incident")
-def ndps_variance_incident(variance_id: int, request: Request,
-                           user: dict = Depends(_PS_NDPS)):
+def ndps_variance_incident(
+    variance_id: int, request: Request, user: dict = _NDPS_VARIANCE_INCIDENT_USER_DEFAULT
+):
     from services.nabh_service import NabhError
 
     try:
         return ndps.draft_incident(variance_id, actor=user, audit_ctx=_ctx(request))
     except ndps.NdpsError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     except NabhError as exc:
-        raise HTTPException(status_code=422, detail={"error": exc.code, "message": str(exc)})
+        raise HTTPException(
+            status_code=422, detail={"error": exc.code, "message": str(exc)}
+        ) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None

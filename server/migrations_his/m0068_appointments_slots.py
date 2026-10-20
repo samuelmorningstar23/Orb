@@ -51,6 +51,7 @@ idx_appointments_day (the day view) and idx_appointments_visit.
 Idempotent: on a table that already has the new shape it only makes sure the
 indexes exist (after the clash pre-check).
 """
+
 from __future__ import annotations
 
 from migrations import Migration
@@ -60,16 +61,36 @@ STATUSES: tuple = ("booked", "cancelled", "completed", "checked_in", "no_show")
 #: Every appointments column before this migration, in the order a fresh
 #: database has them: database.SCHEMA's ten, then migration 28's two.
 OLD_COLUMNS: tuple = (
-    "id", "patient_id", "booked_by_user_id", "scheduled_date", "scheduled_time",
-    "appointment_type", "reason", "status", "idempotency_key", "created_at",
-    "origin", "department",
+    "id",
+    "patient_id",
+    "booked_by_user_id",
+    "scheduled_date",
+    "scheduled_time",
+    "appointment_type",
+    "reason",
+    "status",
+    "idempotency_key",
+    "created_at",
+    "origin",
+    "department",
 )
 
 #: The columns this migration adds, all NULL on every existing row.
 ADDED_COLUMNS: tuple = (
-    "doctor_id", "session_id", "slot_position", "checked_in_at", "checked_in_by",
-    "opd_visit_id", "no_show_at", "no_show_by", "cancel_reason", "cancelled_at",
-    "cancelled_by", "completed_at", "completed_by", "rescheduled_from_id",
+    "doctor_id",
+    "session_id",
+    "slot_position",
+    "checked_in_at",
+    "checked_in_by",
+    "opd_visit_id",
+    "no_show_at",
+    "no_show_by",
+    "cancel_reason",
+    "cancelled_at",
+    "cancelled_by",
+    "completed_at",
+    "completed_by",
+    "rescheduled_from_id",
 )
 
 NEW_COLUMNS: tuple = OLD_COLUMNS + ADDED_COLUMNS
@@ -172,7 +193,9 @@ def _ensure_indexes(conn) -> None:
         if clashes:
             raise AppointmentsRebuildRefused(
                 "Migration 68 cannot build the one-booking-per-slot index: these "
-                "live appointments hold the same doctor's slot", clashes)
+                "live appointments hold the same doctor's slot",
+                clashes,
+            )
         conn.execute(DOCTOR_SLOT_INDEX)
     for statement in NEW_INDEXES:
         conn.execute(statement)
@@ -184,13 +207,13 @@ def _rebuild_in_transaction(conn, *, create_new_sql: str) -> None:
     conn.execute("DROP TABLE IF EXISTS appointments_new")
     conn.execute(create_new_sql)
     shared = ", ".join(OLD_COLUMNS)
-    conn.execute(
-        f"INSERT INTO appointments_new ({shared}) SELECT {shared} FROM appointments")
+    conn.execute(f"INSERT INTO appointments_new ({shared}) SELECT {shared} FROM appointments")
     src = conn.execute("SELECT COUNT(*) FROM appointments").fetchone()[0]
     dst = conn.execute("SELECT COUNT(*) FROM appointments_new").fetchone()[0]
     if src != dst:
         raise AppointmentsRebuildRefused(
-            f"Migration 68 copied {dst} of {src} appointments; nothing was changed")
+            f"Migration 68 copied {dst} of {src} appointments; nothing was changed"
+        )
     conn.execute("DROP TABLE appointments")
     conn.execute("ALTER TABLE appointments_new RENAME TO appointments")
 
@@ -203,7 +226,8 @@ def apply(conn) -> None:
         # database.SCHEMA creates appointments before any migration runs; a
         # database without it is not one this migration can reason about.
         raise AppointmentsRebuildRefused(
-            "Migration 68 found no appointments table; nothing was changed")
+            "Migration 68 found no appointments table; nothing was changed"
+        )
 
     if has_new_shape(conn):
         _ensure_indexes(conn)
@@ -214,12 +238,14 @@ def apply(conn) -> None:
     if unknown:
         raise AppointmentsRebuildRefused(
             "Migration 68 would drop appointments columns it does not know "
-            f"({', '.join(unknown)}); nothing was changed")
+            f"({', '.join(unknown)}); nothing was changed"
+        )
     missing = [c for c in OLD_COLUMNS if c not in cols]
     if missing:
         raise AppointmentsRebuildRefused(
             "Migration 68 expects migration 28's appointments columns "
-            f"({', '.join(missing)} missing); nothing was changed")
+            f"({', '.join(missing)} missing); nothing was changed"
+        )
 
     others = conn.execute(
         "SELECT type, name FROM sqlite_master WHERE tbl_name = 'appointments' "
@@ -230,15 +256,20 @@ def apply(conn) -> None:
     if unknown_objects:
         raise AppointmentsRebuildRefused(
             "Migration 68 would drop objects on appointments it does not know "
-            f"({', '.join(unknown_objects)}); nothing was changed")
+            f"({', '.join(unknown_objects)}); nothing was changed"
+        )
 
     orphans = orphan_rows(conn)
     if orphans:
         raise AppointmentsRebuildRefused(
             "Migration 68 cannot copy appointments whose patient or booking user no "
-            "longer exists; fix or remove them first", orphans)
+            "longer exists; fix or remove them first",
+            orphans,
+        )
 
-    _rebuild_in_transaction(conn, create_new_sql="""CREATE TABLE appointments_new (
+    _rebuild_in_transaction(
+        conn,
+        create_new_sql="""CREATE TABLE appointments_new (
     id TEXT PRIMARY KEY,
     patient_id TEXT NOT NULL REFERENCES patients(id),
     booked_by_user_id TEXT REFERENCES users(id),
@@ -267,16 +298,25 @@ def apply(conn) -> None:
     completed_by TEXT,
     rescheduled_from_id TEXT,
     CHECK (doctor_id IS NULL OR slot_position IS NOT NULL)
-)""")
+)""",
+    )
     _ensure_indexes(conn)
 
     broken = conn.execute("PRAGMA foreign_key_check(appointments)").fetchall()
     if broken:
         raise AppointmentsRebuildRefused(
             "Migration 68 left appointments pointing at missing rows; rolled back",
-            sorted({str(conn.execute(
-                "SELECT id FROM appointments WHERE rowid = ?", (r[1],)).fetchone()[0])
-                for r in broken}))
+            sorted(
+                {
+                    str(
+                        conn.execute(
+                            "SELECT id FROM appointments WHERE rowid = ?", (r[1],)
+                        ).fetchone()[0]
+                    )
+                    for r in broken
+                }
+            ),
+        )
 
 
 MIGRATION = Migration(68, "appointments_slots", apply)

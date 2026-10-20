@@ -33,18 +33,21 @@ content-free 'adt:changed' {ward_id} (adt-19, services/adt/live.py).
 Every handler is a plain def (FastAPI threadpools it); the work runs in one
 immediate session in services/adt/end_stay.end_stay.
 """
+
 from __future__ import annotations
 
 import uuid
-from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel, ConfigDict
-
-from permissions import (
-    ADT_BED, DISCHARGE_GENERATE, department_scope, patient_in_scope, require_permission,
-)
 from database import db_session
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from permissions import (
+    ADT_BED,
+    DISCHARGE_GENERATE,
+    department_scope,
+    patient_in_scope,
+    require_permission,
+)
+from pydantic import BaseModel, ConfigDict
 from services.adt import clerk as adt_clerk
 from services.adt import end_stay as adt_end
 from services.adt.core import AdtError, http_detail
@@ -54,7 +57,10 @@ from services.audit_service import AuditWriteError, log_audit_event
 router = APIRouter()
 
 
-def require_ward_clerk(request: Request, user: dict = Depends(require_permission(ADT_BED))) -> dict:
+_REQUIRE_WARD_CLERK_USER_DEFAULT = Depends(require_permission(ADT_BED))
+
+
+def require_ward_clerk(request: Request, user: dict = _REQUIRE_WARD_CLERK_USER_DEFAULT) -> dict:
     """The ward clerk's lanes (adt-17b): adt.bed, a role in
     services/adt/clerk.CLERK_ROLES and a department. Anyone else holding
     adt.bed (the administrator) is refused here with the denial audited, the
@@ -74,13 +80,19 @@ def require_ward_clerk(request: Request, user: dict = Depends(require_permission
         http_method=request.method,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
-        metadata={"required_role": list(adt_clerk.CLERK_ROLES), "user_role": user.get("role"),
-                  "department_required": True},
+        metadata={
+            "required_role": list(adt_clerk.CLERK_ROLES),
+            "user_role": user.get("role"),
+            "department_required": True,
+        },
     )
-    raise HTTPException(status_code=403, detail={
-        "error": "clerk_only",
-        "message": "Only the ward clerk, working in a department, records this.",
-    })
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "error": "clerk_only",
+            "message": "Only the ward clerk, working in a department, records this.",
+        },
+    )
 
 
 class EndStayIn(BaseModel):
@@ -89,10 +101,10 @@ class EndStayIn(BaseModel):
     #: The patient's MRN, typed back from the wristband. Refused on mismatch.
     confirm_mrn: str
     #: When the stay ended; now when omitted. Up to ORB_ADT_BACKTIME_HOURS back.
-    occurred_at: Optional[str] = None
+    occurred_at: str | None = None
     #: Required for LAMA, DAMA and absconded.
-    reason: Optional[str] = None
-    notes: Optional[str] = None
+    reason: str | None = None
+    notes: str | None = None
 
 
 def _meta(request: Request) -> dict:
@@ -122,8 +134,9 @@ def _scoped_admission(admission_id: str, user: dict, request: Request) -> dict:
             event_category="authorization",
             action_type="patient_scope_denied",
             outcome="denied",
-            summary_message=(f"Patient {found['patient_id']} is outside the caller's department "
-                             f"({dept})"),
+            summary_message=(
+                f"Patient {found['patient_id']} is outside the caller's department ({dept})"
+            ),
             actor_user_id=user.get("id"),
             actor_role=user.get("role"),
             patient_id=found["patient_id"],
@@ -139,13 +152,17 @@ def _scoped_admission(admission_id: str, user: dict, request: Request) -> dict:
     return found
 
 
+_END_ADMISSION_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempotency-Key")
+_END_ADMISSION_USER_DEFAULT = Depends(require_permission(DISCHARGE_GENERATE))
+
+
 @router.post("/admissions/{admission_id}/end")
 def end_admission(
     admission_id: str,
     body: EndStayIn,
     request: Request,
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    user: dict = Depends(require_permission(DISCHARGE_GENERATE)),
+    idempotency_key: str | None = _END_ADMISSION_IDEMPOTENCY_KEY_DEFAULT,
+    user: dict = _END_ADMISSION_USER_DEFAULT,
 ):
     """Record how a stay ended. The MRN must be typed back (409
     read_back_mismatch writes nothing). Writes the end type, the discharge
@@ -167,7 +184,7 @@ def end_admission(
             request_meta=_meta(request),
         )
     except AdtError as err:
-        raise HTTPException(status_code=err.http_status, detail=http_detail(err))
+        raise HTTPException(status_code=err.http_status, detail=http_detail(err)) from err
     if not ended.get("replayed"):
         # adt-19: after the commit, the bed boards refetch.
         notify_adt_changed(answer=ended, admission_ids=[admission_id])
@@ -198,8 +215,10 @@ def _scoped_ended_admission(admission_id: str, user: dict, request: Request) -> 
         event_category="authorization",
         action_type="patient_scope_denied",
         outcome="denied",
-        summary_message=(f"Admission {admission_id} belongs to {found.get('department')}, "
-                         f"outside the caller's department ({dept})"),
+        summary_message=(
+            f"Admission {admission_id} belongs to {found.get('department')}, "
+            f"outside the caller's department ({dept})"
+        ),
         actor_user_id=user.get("id"),
         actor_role=user.get("role"),
         patient_id=found["patient_id"],
@@ -214,13 +233,17 @@ def _scoped_ended_admission(admission_id: str, user: dict, request: Request) -> 
     raise HTTPException(status_code=404, detail="Admission not found")
 
 
+_REOPEN_ADMISSION_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempotency-Key")
+_REOPEN_ADMISSION_USER_DEFAULT = Depends(require_permission(DISCHARGE_GENERATE))
+
+
 @router.post("/admissions/{admission_id}/reopen")
 def reopen_admission(
     admission_id: str,
     body: ReopenIn,
     request: Request,
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    user: dict = Depends(require_permission(DISCHARGE_GENERATE)),
+    idempotency_key: str | None = _REOPEN_ADMISSION_IDEMPOTENCY_KEY_DEFAULT,
+    user: dict = _REOPEN_ADMISSION_USER_DEFAULT,
 ):
     """Reopen a stay whose end was recorded in error. The MRN must be typed
     back (409 read_back_mismatch writes nothing) and a reason given. Only an
@@ -242,13 +265,16 @@ def reopen_admission(
             request_meta=_meta(request),
         )
     except AdtError as err:
-        raise HTTPException(status_code=err.http_status, detail=http_detail(err))
+        raise HTTPException(status_code=err.http_status, detail=http_detail(err)) from err
     except AuditWriteError:
-        raise HTTPException(status_code=503, detail={
-            "error": "audit_unavailable",
-            "message": "The record of this correction could not be written, so nothing was "
-                       "changed. Try again in a moment.",
-        })
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "audit_unavailable",
+                "message": "The record of this correction could not be written, so nothing was "
+                "changed. Try again in a moment.",
+            },
+        ) from None
     if not reopened.get("replayed"):
         # adt-19: after the commit, the bed boards refetch.
         notify_adt_changed(answer=reopened, admission_ids=[admission_id])
@@ -259,17 +285,23 @@ def reopen_admission(
 #  'Left the ward', recorded by the ward clerk (adt-17b, W9-A; ruling ADT-S3)
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class LeftWardIn(BaseModel):
     """The ward clerk's record that the patient left the ward. No end type
     (the clerk does not say how the stay ended, so none is guessed) and no
     reason field; extra fields are 422."""
+
     model_config = ConfigDict(extra="forbid")
 
     #: The patient's MRN, typed back from the wristband. Refused on mismatch.
     confirm_mrn: str
     #: When the patient left; now when omitted. Up to ORB_ADT_BACKTIME_HOURS back.
-    occurred_at: Optional[str] = None
-    notes: Optional[str] = None
+    occurred_at: str | None = None
+    notes: str | None = None
+
+
+_RECORD_LEFT_WARD_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempotency-Key")
+_RECORD_LEFT_WARD_USER_DEFAULT = Depends(require_ward_clerk)
 
 
 @router.post("/admissions/{admission_id}/left-ward")
@@ -277,8 +309,8 @@ def record_left_ward(
     admission_id: str,
     body: LeftWardIn,
     request: Request,
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    user: dict = Depends(require_ward_clerk),
+    idempotency_key: str | None = _RECORD_LEFT_WARD_IDEMPOTENCY_KEY_DEFAULT,
+    user: dict = _RECORD_LEFT_WARD_USER_DEFAULT,
 ):
     """The ward clerk records that the patient left the ward, with the time.
     Only on an Orb Ward Record computer (403 left_ward_not_here elsewhere: a
@@ -292,17 +324,25 @@ def record_left_ward(
     _scoped_admission(admission_id, user, request)
     try:
         ended = adt_clerk.record_left_ward(
-            admission_id, actor=user, confirm_mrn=body.confirm_mrn,
-            occurred_at=body.occurred_at, notes=body.notes,
-            idempotency_key=idempotency_key, request_meta=_meta(request))
+            admission_id,
+            actor=user,
+            confirm_mrn=body.confirm_mrn,
+            occurred_at=body.occurred_at,
+            notes=body.notes,
+            idempotency_key=idempotency_key,
+            request_meta=_meta(request),
+        )
     except AdtError as err:
-        raise HTTPException(status_code=err.http_status, detail=http_detail(err))
+        raise HTTPException(status_code=err.http_status, detail=http_detail(err)) from err
     except AuditWriteError:
-        raise HTTPException(status_code=503, detail={
-            "error": "audit_unavailable",
-            "message": "The record of this could not be written, so nothing was changed. "
-                       "Try again in a moment.",
-        })
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "audit_unavailable",
+                "message": "The record of this could not be written, so nothing was changed. "
+                "Try again in a moment.",
+            },
+        ) from None
     if not ended.get("replayed"):
         notify_adt_changed(answer=ended, admission_ids=[admission_id])
     return ended

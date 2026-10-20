@@ -21,23 +21,31 @@ An available lot with more shelf life than that stays on the shelf, and a lot
 with no expiry recorded is not offered (it is neither near expiry nor held).
 Written-off and already returned lots hold nothing and are closed.
 """
+
 from __future__ import annotations
 
+import logging as _logging
+import uuid as _uuid
+from collections.abc import Mapping
 from datetime import date
-from typing import Any, Mapping, Optional
+from typing import Any, Literal, overload
 
 import config
+
 from services import pharmacy_stock_service as stock
 
 #: Lot statuses that are off the shelf and may leave by a vendor return.
-RETURNABLE_HELD_STATUSES: tuple[str, ...] = (
-    "quarantined", "recalled", "nsq", "pending_inspection")
+RETURNABLE_HELD_STATUSES: tuple[str, ...] = ("quarantined", "recalled", "nsq", "pending_inspection")
 
 #: Pharmacy store kinds that hold stock a vendor return may take from. Ward
 #: stores and crash carts are filled by transfers and empty by consumption or a
 #: ward return, never straight to a vendor.
 RETURN_STORE_KINDS: tuple[str, ...] = (
-    stock.DISPENSING_STORE_KIND, "sub_store", stock.NDPS_VAULT_KIND, "returns_quarantine")
+    stock.DISPENSING_STORE_KIND,
+    "sub_store",
+    stock.NDPS_VAULT_KIND,
+    "returns_quarantine",
+)
 
 RETURN_WHY_LABELS = {
     "held": "Held off the shelf",
@@ -58,7 +66,7 @@ def near_expiry_days() -> int:
     return int(getattr(config, "PHARMACY_NEAR_EXPIRY_DAYS", 90) or 90)
 
 
-def days_left(expiry: Any, today: str) -> Optional[int]:
+def days_left(expiry: Any, today: str) -> int | None:
     text = str(expiry or "")[:10]
     if not text:
         return None
@@ -68,8 +76,9 @@ def days_left(expiry: Any, today: str) -> Optional[int]:
         return None
 
 
-def return_eligibility(lot: Mapping, *, today: Optional[str] = None,
-                       window_days: Optional[int] = None) -> dict:
+def return_eligibility(
+    lot: Mapping, *, today: str | None = None, window_days: int | None = None
+) -> dict:
     """{returnable, why, why_label, days_left} for one lot row. `why` is
     held, expired or near_expiry when returnable, else the refusal code
     (empty, closed, in_date, no_expiry, not_in_store)."""
@@ -97,45 +106,57 @@ def return_eligibility(lot: Mapping, *, today: Optional[str] = None,
     else:  # an unknown status is never returned on a guess
         why = "closed"
     returnable = why in RETURN_WHY_LABELS
-    return {"returnable": returnable, "why": why,
-            "why_label": RETURN_WHY_LABELS.get(why) or REFUSAL_LABELS.get(why, why),
-            "days_left": left}
+    return {
+        "returnable": returnable,
+        "why": why,
+        "why_label": RETURN_WHY_LABELS.get(why) or REFUSAL_LABELS.get(why, why),
+        "days_left": left,
+    }
 
 
-def returnable_lots(conn, store_id: int, *, today: Optional[str] = None,
-                    window_days: Optional[int] = None) -> list[dict]:
+def returnable_lots(
+    conn, store_id: int, *, today: str | None = None, window_days: int | None = None
+) -> list[dict]:
     """The lots of one store a vendor return may take from, earliest expiry
     first, each with its drug, vendor and the reason it may go back."""
     day = today or stock.site_today()
     out: list[dict] = []
     for row in conn.execute(
-            "SELECT l.*, m.name AS drug_name, m.strength, m.form, m.ndps_category, "
-            "m.dispense_unit, v.code AS vendor_code, v.name AS vendor_name "
-            "FROM helix_inventory_lots l "
-            "LEFT JOIN helix_medication_master m ON m.id = l.medication_id "
-            "LEFT JOIN vendors v ON v.id = l.vendor_id "
-            "WHERE l.store_id = ? AND COALESCE(l.quantity, 0) > 0 "
-            "ORDER BY date(l.expiration_date) IS NULL, date(l.expiration_date), l.rowid",
-            (store_id,)).fetchall():
+        "SELECT l.*, m.name AS drug_name, m.strength, m.form, m.ndps_category, "
+        "m.dispense_unit, v.code AS vendor_code, v.name AS vendor_name "
+        "FROM helix_inventory_lots l "
+        "LEFT JOIN helix_medication_master m ON m.id = l.medication_id "
+        "LEFT JOIN vendors v ON v.id = l.vendor_id "
+        "WHERE l.store_id = ? AND COALESCE(l.quantity, 0) > 0 "
+        "ORDER BY date(l.expiration_date) IS NULL, date(l.expiration_date), l.rowid",
+        (store_id,),
+    ).fetchall():
         lot = dict(row)
         verdict = return_eligibility(lot, today=day, window_days=window_days)
         if not verdict["returnable"]:
             continue
-        out.append({
-            "lot_id": lot["id"], "drug_id": lot["medication_id"],
-            "drug_name": lot["drug_name"] or lot["medication_id"],
-            "strength": lot["strength"], "form": lot["form"],
-            "dispense_unit": lot["dispense_unit"],
-            "ndps": lot["ndps_category"] in stock.NDPS_CONTROLLED,
-            "batch_no": lot["lot_number"],
-            "expiry_date": str(lot["expiration_date"])[:10] if lot["expiration_date"] else None,
-            "status": lot["status"], "quantity_units": int(lot["quantity"] or 0),
-            "unit_cost_paise": lot["unit_cost_paise"],
-            "vendor_id": lot["vendor_id"], "vendor_code": lot["vendor_code"],
-            "vendor_name": lot["vendor_name"],
-            "why": verdict["why"], "why_label": verdict["why_label"],
-            "days_left": verdict["days_left"],
-        })
+        out.append(
+            {
+                "lot_id": lot["id"],
+                "drug_id": lot["medication_id"],
+                "drug_name": lot["drug_name"] or lot["medication_id"],
+                "strength": lot["strength"],
+                "form": lot["form"],
+                "dispense_unit": lot["dispense_unit"],
+                "ndps": lot["ndps_category"] in stock.NDPS_CONTROLLED,
+                "batch_no": lot["lot_number"],
+                "expiry_date": str(lot["expiration_date"])[:10] if lot["expiration_date"] else None,
+                "status": lot["status"],
+                "quantity_units": int(lot["quantity"] or 0),
+                "unit_cost_paise": lot["unit_cost_paise"],
+                "vendor_id": lot["vendor_id"],
+                "vendor_code": lot["vendor_code"],
+                "vendor_name": lot["vendor_name"],
+                "why": verdict["why"],
+                "why_label": verdict["why_label"],
+                "days_left": verdict["days_left"],
+            }
+        )
     return out
 
 
@@ -201,8 +222,6 @@ def returnable_lots(conn, store_id: int, *, today: Optional[str] = None,
 # reads to credit the patient: units times the batch MRP per unit, or None
 # where the batch has no MRP or pack size on file. Nothing here bills.
 
-import logging as _logging
-import uuid as _uuid
 
 _logger = _logging.getLogger("orb.pharmacy_store")
 
@@ -221,8 +240,10 @@ INSPECTION_DECISIONS: tuple[str, ...] = ("write_off", "restock")
 #: person who took a return in cannot also write it off, so units never leave
 #: the books on one person's word. False lets the receiver write it off alone.
 RETURN_WRITE_OFF_NEEDS_SECOND_PERSON = True
-_WRITE_OFF_SAME_PERSON = ("The person who took this return in cannot also write it off. "
-                          "Ask another pharmacist to inspect it. Nothing was changed.")
+_WRITE_OFF_SAME_PERSON = (
+    "The person who took this return in cannot also write it off. "
+    "Ask another pharmacist to inspect it. Nothing was changed."
+)
 LANE_PHARMACY = "pharmacy"
 LANE_WARD = "ward"
 #: Only an order the ward has signed for can come back from the ward.
@@ -265,8 +286,7 @@ class WardReturnError(ValueError):
 
     code = "ward_return_error"
 
-    def __init__(self, message: str, *, code: Optional[str] = None,
-                 detail: Optional[dict] = None):
+    def __init__(self, message: str, *, code: str | None = None, detail: dict | None = None):
         super().__init__(message)
         if code:
             self.code = code
@@ -274,6 +294,7 @@ class WardReturnError(ValueError):
 
 
 # ── Small helpers ─────────────────────────────────────────────────────────────
+
 
 def _actor_id(actor: Mapping) -> str:
     uid = actor.get("id") if actor else None
@@ -284,23 +305,38 @@ def _actor_id(actor: Mapping) -> str:
 
 def _holds(actor: Mapping, permission: str) -> bool:
     from permissions import has_permission
+
     return has_permission(str((actor or {}).get("role") or ""), permission)
 
 
 def ward_return_lane(actor: Mapping) -> str:
     """'pharmacy' for a pharmacy_store.write holder, else 'ward'."""
     from permissions import PHARMACY_STORE_WRITE
+
     return LANE_PHARMACY if _holds(actor, PHARMACY_STORE_WRITE) else LANE_WARD
 
 
-def _scope(actor: Mapping) -> tuple[Optional[str], Any]:
+def _scope(actor: Mapping) -> tuple[str | None, Any]:
     """(department, facilities) for the caller, read BEFORE any transaction
     opens (the facility scope may read on a cache miss)."""
     from permissions import department_scope, facility_scope
+
     return department_scope(dict(actor or {})), facility_scope(dict(actor or {}))
 
 
-def _text(value: Any, name: str, *, required: bool = False) -> Optional[str]:
+@overload
+def _text(value: Any, name: str, *, required: Literal[True]) -> str: ...
+
+
+@overload
+def _text(value: Any, name: str, *, required: Literal[False] = False) -> str | None: ...
+
+
+@overload
+def _text(value: Any, name: str, *, required: bool = False) -> str | None: ...
+
+
+def _text(value: Any, name: str, *, required: bool = False) -> str | None:
     if value is None:
         text = ""
     elif isinstance(value, str):
@@ -318,73 +354,109 @@ def _text(value: Any, name: str, *, required: bool = False) -> Optional[str]:
 
 def _units(value: Any) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
-        raise WardReturnError("give the number of units coming back as a whole number",
-                              code="bad_quantity")
+        raise WardReturnError(
+            "give the number of units coming back as a whole number", code="bad_quantity"
+        )
     if value < 1:
         raise WardReturnError("a return brings back at least one unit", code="bad_quantity")
     return value
 
 
-def _seal(value: Any) -> Optional[int]:
+def _seal(value: Any) -> int | None:
     if value is None:
         return None
     if isinstance(value, bool):
         return 1 if value else 0
-    raise WardReturnError("say whether the seal is intact (yes or no), or leave it unanswered",
-                          code="bad_value")
+    raise WardReturnError(
+        "say whether the seal is intact (yes or no), or leave it unanswered", code="bad_value"
+    )
 
 
 def _units_words(units: int) -> str:
     return f"{units} unit" if units == 1 else f"{units} units"
 
 
-def _audit(conn, action: str, *, actor: Mapping, summary: str, return_id: Any,
-           patient_id: Optional[str], metadata: dict, audit_ctx: Optional[Mapping],
-           category: str = "clinical_access", outcome: str = "success") -> None:
+def _audit(
+    conn,
+    action: str,
+    *,
+    actor: Mapping,
+    summary: str,
+    return_id: Any,
+    patient_id: str | None,
+    metadata: dict,
+    audit_ctx: Mapping | None,
+    category: str = "clinical_access",
+    outcome: str = "success",
+) -> None:
     from services.audit_service import log_audit_event
+
     ctx = dict(audit_ctx or {})
     log_audit_event(
-        correlation_id=str(_uuid.uuid4()), event_category=category, action_type=action,
-        outcome=outcome, db=conn, summary_message=summary,
-        actor_user_id=(actor or {}).get("id"), actor_role=(actor or {}).get("role"),
+        correlation_id=str(_uuid.uuid4()),
+        event_category=category,
+        action_type=action,
+        outcome=outcome,
+        db=conn,
+        summary_message=summary,
+        actor_user_id=(actor or {}).get("id"),
+        actor_role=(actor or {}).get("role"),
         target_type=WARD_RETURN_REFERENCE,
         target_id=str(return_id) if return_id is not None else None,
-        patient_id=patient_id, request_path=ctx.get("request_path"),
-        http_method=ctx.get("http_method"), ip_address=ctx.get("ip_address"),
-        metadata=metadata)
+        patient_id=patient_id,
+        request_path=ctx.get("request_path"),
+        http_method=ctx.get("http_method"),
+        ip_address=ctx.get("ip_address"),
+        metadata=metadata,
+    )
 
 
-def _scope_denied(actor: Mapping, *, patient_id: Optional[str], helix_order_id: str,
-                  audit_ctx: Optional[Mapping]) -> None:
+def _scope_denied(
+    actor: Mapping, *, patient_id: str | None, helix_order_id: str, audit_ctx: Mapping | None
+) -> None:
     """Another ward's order: recorded (fail-soft, as require_patient_access
     records it), then answered exactly like an order that does not exist."""
     from services.audit_service import log_audit_event
+
     ctx = dict(audit_ctx or {})
     try:
         log_audit_event(
-            correlation_id=str(_uuid.uuid4()), event_category="authorization",
-            action_type="patient_scope_denied", outcome="denied",
+            correlation_id=str(_uuid.uuid4()),
+            event_category="authorization",
+            action_type="patient_scope_denied",
+            outcome="denied",
             summary_message="Ward return refused: the order is outside the caller's department",
-            actor_user_id=(actor or {}).get("id"), actor_role=(actor or {}).get("role"),
-            target_type="helix_order", target_id=str(helix_order_id), patient_id=patient_id,
-            request_path=ctx.get("request_path"), http_method=ctx.get("http_method"),
+            actor_user_id=(actor or {}).get("id"),
+            actor_role=(actor or {}).get("role"),
+            target_type="helix_order",
+            target_id=str(helix_order_id),
+            patient_id=patient_id,
+            request_path=ctx.get("request_path"),
+            http_method=ctx.get("http_method"),
             ip_address=ctx.get("ip_address"),
-            metadata={"department": (actor or {}).get("department"),
-                      "lane": "pharmacy_ward_return"})
+            metadata={
+                "department": (actor or {}).get("department"),
+                "lane": "pharmacy_ward_return",
+            },
+        )
     except Exception:  # noqa: BLE001  (an authorization row is fail-soft; the 404 stands)
         pass
 
 
 def _order_not_found(helix_order_id: str) -> WardReturnError:
-    return WardReturnError("That order is not on file for your ward. Check the order and "
-                           "try again.", code="not_found",
-                           detail={"helix_order_id": str(helix_order_id)})
+    return WardReturnError(
+        "That order is not on file for your ward. Check the order and try again.",
+        code="not_found",
+        detail={"helix_order_id": str(helix_order_id)},
+    )
 
 
-def _patient_department(conn, patient_id: str) -> Optional[str]:
+def _patient_department(conn, patient_id: str) -> str | None:
     from permissions import PATIENT_DEPARTMENT_SQL
-    row = conn.execute(f"SELECT {PATIENT_DEPARTMENT_SQL} AS dept FROM patients p WHERE p.id = ?",
-                       (patient_id,)).fetchone()
+
+    row = conn.execute(
+        f"SELECT {PATIENT_DEPARTMENT_SQL} AS dept FROM patients p WHERE p.id = ?", (patient_id,)
+    ).fetchone()
     return row["dept"] if row is not None else None
 
 
@@ -397,52 +469,71 @@ def _dispensed_lots(conn, helix_order_id: str) -> list[dict]:
         "SELECT s.lot_id, s.medication_id, -SUM(s.quantity_change) AS units "
         "FROM helix_stock_movements s WHERE s.order_id = ? AND s.movement_type = 'dispense' "
         "GROUP BY s.lot_id, s.medication_id ORDER BY MIN(s.seq), s.lot_id",
-        (helix_order_id,)).fetchall()
+        (helix_order_id,),
+    ).fetchall()
     out = []
     for r in rows:
         lot = conn.execute(
             "SELECT l.*, m.name AS drug_name, m.strength, m.form, m.ndps_category, "
             "m.storage_condition, m.dispense_unit FROM helix_inventory_lots l "
             "LEFT JOIN helix_medication_master m ON m.id = l.medication_id WHERE l.id = ?",
-            (r["lot_id"],)).fetchone()
+            (r["lot_id"],),
+        ).fetchone()
         if lot is None:
             continue
-        out.append({"lot": dict(lot), "medication_id": r["medication_id"],
-                    "dispensed_units": int(r["units"] or 0)})
+        out.append(
+            {
+                "lot": dict(lot),
+                "medication_id": r["medication_id"],
+                "dispensed_units": int(r["units"] or 0),
+            }
+        )
     return out
 
 
 def _returned_units(conn, helix_order_id: str, lot_id: str) -> int:
     row = conn.execute(
         "SELECT COALESCE(SUM(quantity_units), 0) FROM pharmacy_ward_returns "
-        "WHERE helix_order_id = ? AND lot_id = ?", (helix_order_id, lot_id)).fetchone()
+        "WHERE helix_order_id = ? AND lot_id = ?",
+        (helix_order_id, lot_id),
+    ).fetchone()
     return int(row[0] or 0)
 
 
 def _returns_stores(conn) -> list[dict]:
-    return [dict(r) for r in conn.execute(
-        "SELECT id, code, name FROM stores WHERE pharmacy_kind = ? AND is_active = 1 "
-        "ORDER BY name, id", (WARD_RETURN_STORE_KIND,)).fetchall()]
+    return [
+        dict(r)
+        for r in conn.execute(
+            "SELECT id, code, name FROM stores WHERE pharmacy_kind = ? AND is_active = 1 "
+            "ORDER BY name, id",
+            (WARD_RETURN_STORE_KIND,),
+        ).fetchall()
+    ]
 
 
-def _pick_store(conn, store_code: Optional[str]) -> dict:
+def _pick_store(conn, store_code: str | None) -> dict:
     stores = _returns_stores(conn)
     if store_code:
         for s in stores:
             if s["code"] == store_code:
                 return s
-        raise WardReturnError("that is not an active returns quarantine store",
-                              code="store_not_found", detail={"store_code": store_code})
+        raise WardReturnError(
+            "that is not an active returns quarantine store",
+            code="store_not_found",
+            detail={"store_code": store_code},
+        )
     if not stores:
         raise WardReturnError(
             "There is no returns quarantine store on this site, so a return has nowhere to "
             "wait for inspection. The pharmacy sets one up in Masters, Stores.",
-            code="no_returns_store")
+            code="no_returns_store",
+        )
     if len(stores) > 1:
-        raise WardReturnError("choose which returns quarantine store this goes to",
-                              code="store_required",
-                              detail={"stores": [{"code": s["code"], "name": s["name"]}
-                                                 for s in stores]})
+        raise WardReturnError(
+            "choose which returns quarantine store this goes to",
+            code="store_required",
+            detail={"stores": [{"code": s["code"], "name": s["name"]} for s in stores]},
+        )
     return stores[0]
 
 
@@ -450,17 +541,19 @@ def _is_controlled(lot: Mapping) -> bool:
     return lot.get("ndps_category") in stock.NDPS_CONTROLLED
 
 
-def _quarantine_lot_id(conn, return_id: int) -> Optional[str]:
+def _quarantine_lot_id(conn, return_id: int) -> str | None:
     row = conn.execute(
         "SELECT lot_id FROM helix_stock_movements WHERE reference_type = ? AND reference_id = ? "
         "AND movement_type = 'ward_return' ORDER BY seq LIMIT 1",
-        (WARD_RETURN_REFERENCE, str(return_id))).fetchone()
+        (WARD_RETURN_REFERENCE, str(return_id)),
+    ).fetchone()
     return row["lot_id"] if row is not None else None
 
 
 # ── What a return is worth to the patient (grn-16 reads this) ────────────────
 
-def credit_candidate(row: Mapping, lot: Optional[Mapping]) -> dict:
+
+def credit_candidate(row: Mapping, lot: Mapping | None) -> dict:
     """The patient's credit for a return at the batch MRP: units times the MRP
     per unit, half up to the paisa. amount_paise is None where the batch has no
     MRP or pack size recorded (billing then decides; nothing is guessed)."""
@@ -472,9 +565,14 @@ def credit_candidate(row: Mapping, lot: Optional[Mapping]) -> dict:
     if isinstance(mrp, int) and isinstance(per_pack, int) and per_pack > 0 and mrp >= 0:
         amount = (2 * mrp * units + per_pack) // (2 * per_pack)
         unit_mrp = (2 * mrp + per_pack) // (2 * per_pack)
-    return {"units": units, "unit_mrp_paise": unit_mrp, "amount_paise": amount,
-            "basis": "batch_mrp" if amount is not None else "not_recorded",
-            "helix_order_id": row.get("helix_order_id"), "patient_id": row.get("patient_id")}
+    return {
+        "units": units,
+        "unit_mrp_paise": unit_mrp,
+        "amount_paise": amount,
+        "basis": "batch_mrp" if amount is not None else "not_recorded",
+        "helix_order_id": row.get("helix_order_id"),
+        "patient_id": row.get("patient_id"),
+    }
 
 
 # ── The restock rule (GRN-RS3 (b), switched off) ─────────────────────────────
@@ -489,7 +587,8 @@ _LOT_WORDS = {
     "returned_to_vendor": "returned to the vendor",
 }
 
-def restock_check(conn, row: Mapping, *, today: Optional[str] = None) -> dict:
+
+def restock_check(conn, row: Mapping, *, today: str | None = None) -> dict:
     """Whether this return could go back on the shelf, and why not, in words.
     {allowed, code, reasons}. The seal and who inspects are checked at the
     inspection itself (the inspector says whether the seal is intact)."""
@@ -497,32 +596,44 @@ def restock_check(conn, row: Mapping, *, today: Optional[str] = None) -> dict:
     reasons: list[str] = []
     code = None
     if not stock.RETURN_RESTOCK_ALLOWED:
-        return {"allowed": False, "code": "restock_not_allowed",
-                "reasons": ["This site does not put returned medicines back on the shelf. "
-                            "Write it off, or send it back to the vendor."]}
+        return {
+            "allowed": False,
+            "code": "restock_not_allowed",
+            "reasons": [
+                "This site does not put returned medicines back on the shelf. "
+                "Write it off, or send it back to the vendor."
+            ],
+        }
     lot = conn.execute(
         "SELECT l.*, m.ndps_category, m.storage_condition FROM helix_inventory_lots l "
         "LEFT JOIN helix_medication_master m ON m.id = l.medication_id WHERE l.id = ?",
-        (row.get("lot_id"),)).fetchone()
+        (row.get("lot_id"),),
+    ).fetchone()
     if lot is None:
-        return {"allowed": False, "code": "restock_refused",
-                "reasons": ["The batch it was dispensed from is no longer on file."]}
+        return {
+            "allowed": False,
+            "code": "restock_refused",
+            "reasons": ["The batch it was dispensed from is no longer on file."],
+        }
     lot = dict(lot)
     if _is_controlled(lot):
         reasons.append("A narcotic or psychotropic medicine is never put back on the shelf.")
     if lot.get("storage_condition") in stock.COLD_CHAIN_STORAGE:
-        reasons.append("A refrigerated or frozen medicine is never put back on the shelf once "
-                       "it has left the pharmacy.")
+        reasons.append(
+            "A refrigerated or frozen medicine is never put back on the shelf once "
+            "it has left the pharmacy."
+        )
     expiry = str(lot.get("expiration_date") or "")[:10]
     if not expiry or expiry < day:
         reasons.append("The batch has expired or has no expiry recorded.")
     if lot.get("status") != "available":
-        words = _LOT_WORDS.get(lot.get("status"), "not available")
+        words = _LOT_WORDS.get((lot.get("status") or ""), "not available")
         reasons.append(f"The batch it came from is {words}.")
     else:
         on_shelf = conn.execute(
             f"SELECT 1 FROM helix_inventory_lots l WHERE l.id = ? AND {stock.shelf_lot_sql('l')}",
-            (lot["id"],)).fetchone()
+            (lot["id"],),
+        ).fetchone()
         if on_shelf is None or lot.get("store_id") is None:
             reasons.append("The batch it came from is no longer on the dispensing shelf.")
     if reasons:
@@ -554,24 +665,30 @@ def _utc(value: Any) -> Any:
     if not value:
         return value
     from services.clinical_time import to_utc_iso
+
     try:
         return to_utc_iso(value)
     except (TypeError, ValueError):
         return value
 
 
-def _decorate(conn, row: Mapping, *, today: Optional[str] = None) -> dict:
+def _decorate(conn, row: Mapping, *, today: str | None = None) -> dict:
     out = dict(row)
     rid = out["id"]
     q_lot = _quarantine_lot_id(conn, rid)
     q_units = None
     if q_lot:
-        found = conn.execute("SELECT quantity FROM helix_inventory_lots WHERE id = ?",
-                             (q_lot,)).fetchone()
+        found = conn.execute(
+            "SELECT quantity FROM helix_inventory_lots WHERE id = ?", (q_lot,)
+        ).fetchone()
         q_units = int(found["quantity"] or 0) if found is not None else None
-    lot_view = {"mrp_pack_paise": out.pop("mrp_pack_paise", None),
-                "units_per_pack": out.pop("units_per_pack", None)}
-    out["status_label"] = WARD_RETURN_STATUS_LABELS.get(out.get("status"), out.get("status"))
+    lot_view = {
+        "mrp_pack_paise": out.pop("mrp_pack_paise", None),
+        "units_per_pack": out.pop("units_per_pack", None),
+    }
+    out["status_label"] = WARD_RETURN_STATUS_LABELS.get(
+        (out.get("status") or ""), out.get("status")
+    )
     out["seal_intact"] = None if out.get("seal_intact") is None else bool(out["seal_intact"])
     out["controlled"] = out.get("ndps_category") in stock.NDPS_CONTROLLED
     out["cold_chain"] = out.get("storage_condition") in stock.COLD_CHAIN_STORAGE
@@ -589,23 +706,24 @@ def _decorate(conn, row: Mapping, *, today: Optional[str] = None) -> dict:
     return out
 
 
-def _load_return(conn, return_id: int) -> Optional[dict]:
+def _load_return(conn, return_id: int) -> dict | None:
     row = conn.execute(_RETURN_SELECT + "WHERE r.id = ?", (return_id,)).fetchone()
     return dict(row) if row is not None else None
 
 
-def _visible(conn, row: Mapping, dept: Optional[str], facilities: Any) -> bool:
+def _visible(conn, row: Mapping, dept: str | None, facilities: Any) -> bool:
     from permissions import patient_in_scope
+
     return patient_in_scope(conn, row["patient_id"], dept, facilities=facilities)
 
 
-def list_ward_returns(*, actor: Mapping, status: Optional[str] = None,
-                      limit: int = 100) -> list[dict]:
+def list_ward_returns(*, actor: Mapping, status: str | None = None, limit: int = 100) -> list[dict]:
     """Returns the caller may see, newest first: a ward account its own
     department's patients, the pharmacy desk every ward. `status` is one of
     WARD_RETURN_STATUSES or None for all."""
     from database import db_session
     from permissions import scope_patient_ids_sql
+
     if status is not None and status not in WARD_RETURN_STATUSES:
         raise WardReturnError("unknown return status", code="bad_value")
     limit = max(1, min(int(limit), MAX_LIST))
@@ -620,16 +738,18 @@ def list_ward_returns(*, actor: Mapping, status: Optional[str] = None,
     params.append(limit)
     today = stock.site_today()
     with db_session() as conn:
-        return [_decorate(conn, dict(r), today=today)
-                for r in conn.execute(sql, tuple(params)).fetchall()]
+        return [
+            _decorate(conn, dict(r), today=today)
+            for r in conn.execute(sql, tuple(params)).fetchall()
+        ]
 
 
-def get_ward_return(return_id: int, *, actor: Mapping,
-                    audit_ctx: Optional[Mapping] = None) -> dict:
+def get_ward_return(return_id: int, *, actor: Mapping, audit_ctx: Mapping | None = None) -> dict:
     """One return the caller may see. Another ward's return is a 404 that
     writes an authorization patient_scope_denied row first, the same answer
     as a return that does not exist."""
     from database import db_session
+
     dept, facilities = _scope(actor)
     denied_patient = None
     with db_session() as conn:
@@ -639,19 +759,26 @@ def get_ward_return(return_id: int, *, actor: Mapping,
         if row is not None:
             denied_patient = row["patient_id"]
     if denied_patient is not None:
-        _scope_denied(actor, patient_id=denied_patient,
-                      helix_order_id=str(row["helix_order_id"]), audit_ctx=audit_ctx)
+        assert row is not None
+        _scope_denied(
+            actor,
+            patient_id=denied_patient,
+            helix_order_id=str(row["helix_order_id"]),
+            audit_ctx=audit_ctx,
+        )
     raise WardReturnError("no such return", code="not_found")
 
 
-def returnable_orders(*, actor: Mapping, helix_order_id: Optional[str] = None,
-                      limit: int = 100) -> list[dict]:
+def returnable_orders(
+    *, actor: Mapping, helix_order_id: str | None = None, limit: int = 100
+) -> list[dict]:
     """Delivered orders in the caller's scope that still hold units a return
     could name, newest delivery first, within RETURNABLE_WINDOW_DAYS (or the
     one order named). Each lists its dispensed batches with what can still
     come back."""
     from database import db_session
     from permissions import scope_patient_ids_sql
+
     limit = max(1, min(int(limit), MAX_LIST))
     dept, facilities = _scope(actor)
     scope_sql, scope_params = scope_patient_ids_sql(dept, facilities=facilities)
@@ -684,17 +811,24 @@ def returnable_orders(*, actor: Mapping, helix_order_id: Optional[str] = None,
                 lot = d["lot"]
                 returned = _returned_units(conn, r["id"], lot["id"])
                 left = max(0, d["dispensed_units"] - returned)
-                batches.append({
-                    "lot_id": lot["id"], "drug_id": d["medication_id"],
-                    "drug_name": lot.get("drug_name") or d["medication_id"],
-                    "strength": lot.get("strength"), "form": lot.get("form"),
-                    "dispense_unit": lot.get("dispense_unit"),
-                    "batch_no": lot.get("lot_number"),
-                    "expiry_date": str(lot["expiration_date"])[:10]
-                    if lot.get("expiration_date") else None,
-                    "controlled": _is_controlled(lot),
-                    "dispensed_units": d["dispensed_units"], "returned_units": returned,
-                    "returnable_units": left})
+                batches.append(
+                    {
+                        "lot_id": lot["id"],
+                        "drug_id": d["medication_id"],
+                        "drug_name": lot.get("drug_name") or d["medication_id"],
+                        "strength": lot.get("strength"),
+                        "form": lot.get("form"),
+                        "dispense_unit": lot.get("dispense_unit"),
+                        "batch_no": lot.get("lot_number"),
+                        "expiry_date": str(lot["expiration_date"])[:10]
+                        if lot.get("expiration_date")
+                        else None,
+                        "controlled": _is_controlled(lot),
+                        "dispensed_units": d["dispensed_units"],
+                        "returned_units": returned,
+                        "returnable_units": left,
+                    }
+                )
             if not any(b["returnable_units"] > 0 for b in batches):
                 continue
             item = dict(r)
@@ -713,30 +847,53 @@ def options(*, actor: Mapping) -> dict:
     patient data."""
     from database import db_session
     from permissions import PHARMACY_STORE_NDPS
+
     from services import ndps_service
+
     me = (actor or {}).get("id")
     with db_session() as conn:
         stores = [{"code": s["code"], "name": s["name"]} for s in _returns_stores(conn)]
         may_ndps = _holds(actor, PHARMACY_STORE_NDPS)
-        witnesses = ndps_service.witnesses(conn, exclude=str(me) if me else None) \
-            if may_ndps else []
-    return {"stores": stores, "restock_allowed": bool(stock.RETURN_RESTOCK_ALLOWED),
-            "write_off_needs_second_person": bool(RETURN_WRITE_OFF_NEEDS_SECOND_PERSON),
-            "lane": ward_return_lane(actor), "may_record_controlled": may_ndps,
-            "witnesses": witnesses, "decisions": list(INSPECTION_DECISIONS),
-            "status_labels": WARD_RETURN_STATUS_LABELS,
-            "number_series": WARD_RETURN_NUMBER_SERIES}
+        witnesses = (
+            ndps_service.witnesses(conn, exclude=str(me) if me else None) if may_ndps else []
+        )
+    return {
+        "stores": stores,
+        "restock_allowed": bool(stock.RETURN_RESTOCK_ALLOWED),
+        "write_off_needs_second_person": bool(RETURN_WRITE_OFF_NEEDS_SECOND_PERSON),
+        "lane": ward_return_lane(actor),
+        "may_record_controlled": may_ndps,
+        "witnesses": witnesses,
+        "decisions": list(INSPECTION_DECISIONS),
+        "status_labels": WARD_RETURN_STATUS_LABELS,
+        "number_series": WARD_RETURN_NUMBER_SERIES,
+    }
 
 
 # ── Writes ────────────────────────────────────────────────────────────────────
 
-def _witness(actor: Mapping, witness_id: Any, witness_pin: Any, *, purpose: str,
-             target_id: Any, audit_ctx: Optional[Mapping]) -> str:
+
+def _witness(
+    actor: Mapping,
+    witness_id: Any,
+    witness_pin: Any,
+    *,
+    purpose: str,
+    target_id: Any,
+    audit_ctx: Mapping | None,
+) -> str:
     from services import ndps_service
+
     try:
         return ndps_service.verify_witness(
-            actor=actor, witness_id=witness_id, witness_pin=witness_pin, purpose=purpose,
-            target_type="helix_order", target_id=target_id, audit_ctx=audit_ctx)
+            actor=actor,
+            witness_id=witness_id,
+            witness_pin=witness_pin,
+            purpose=purpose,
+            target_type="helix_order",
+            target_id=target_id,
+            audit_ctx=audit_ctx,
+        )
     except ndps_service.NdpsError as exc:
         raise WardReturnError(str(exc), code=exc.code) from exc
 
@@ -747,13 +904,14 @@ class _ScopeMiss(Exception):
     written on the transaction's connection would roll back with it, and one
     written on another connection would wait on this one's write lock)."""
 
-    def __init__(self, patient_id: Optional[str]):
+    def __init__(self, patient_id: str | None):
         super().__init__("out of scope")
         self.patient_id = patient_id
 
 
-def _peek_order_lot(helix_order_id: str, lot_id: Optional[str], dept: Optional[str],
-                    facilities: Any) -> tuple[str, Optional[str], Optional[dict]]:
+def _peek_order_lot(
+    helix_order_id: str, lot_id: str | None, dept: str | None, facilities: Any
+) -> tuple[str, str | None, dict | None]:
     """Before the transaction: (verdict, patient id, batch). The verdict is
     'missing', 'denied' (outside the caller's scope: nothing about the order is
     said) or 'ok'; the batch is the one this return will name when it is
@@ -762,9 +920,11 @@ def _peek_order_lot(helix_order_id: str, lot_id: Optional[str], dept: Optional[s
     transaction."""
     from database import db_session
     from permissions import patient_in_scope
+
     with db_session() as conn:
-        order = conn.execute("SELECT patient_id FROM helix_patient_med_orders WHERE id = ?",
-                             (helix_order_id,)).fetchone()
+        order = conn.execute(
+            "SELECT patient_id FROM helix_patient_med_orders WHERE id = ?", (helix_order_id,)
+        ).fetchone()
         if order is None:
             return "missing", None, None
         if not patient_in_scope(conn, order["patient_id"], dept, facilities=facilities):
@@ -775,15 +935,25 @@ def _peek_order_lot(helix_order_id: str, lot_id: Optional[str], dept: Optional[s
     return "ok", order["patient_id"], (lots[0]["lot"] if len(lots) == 1 else None)
 
 
-def record_ward_return(helix_order_id: Any, *, actor: Mapping, quantity_units: Any,
-                       seal_intact: Any = None, lot_id: Any = None, store_code: Any = None,
-                       note: Any = None, idempotency_key: Any = None,
-                       witness_id: Any = None, witness_pin: Any = None,
-                       audit_ctx: Optional[Mapping] = None) -> dict:
+def record_ward_return(
+    helix_order_id: Any,
+    *,
+    actor: Mapping,
+    quantity_units: Any,
+    seal_intact: Any = None,
+    lot_id: Any = None,
+    store_code: Any = None,
+    note: Any = None,
+    idempotency_key: Any = None,
+    witness_id: Any = None,
+    witness_pin: Any = None,
+    audit_ctx: Mapping | None = None,
+) -> dict:
     """Take back units of a delivered order into returns quarantine.
     Returns {ward_return, replayed}."""
     from database import db_session
     from permissions import PHARMACY_STORE_NDPS
+
     from services import procurement_service as procurement
 
     me = _actor_id(actor)
@@ -799,8 +969,7 @@ def record_ward_return(helix_order_id: Any, *, actor: Mapping, quantity_units: A
 
     verdict, peek_patient, peek = _peek_order_lot(order_id, batch, dept, facilities)
     if verdict == "denied":
-        _scope_denied(actor, patient_id=peek_patient, helix_order_id=order_id,
-                      audit_ctx=audit_ctx)
+        _scope_denied(actor, patient_id=peek_patient, helix_order_id=order_id, audit_ctx=audit_ctx)
     if verdict != "ok":
         raise _order_not_found(order_id)
     witness = None
@@ -809,18 +978,38 @@ def record_ward_return(helix_order_id: Any, *, actor: Mapping, quantity_units: A
             raise WardReturnError(
                 "A narcotic or psychotropic medicine is taken back at the pharmacy counter, "
                 "with a second pharmacist witnessing. Bring it to the pharmacy.",
-                code="ndps_permission_needed")
-        witness = _witness(actor, witness_id, witness_pin, purpose="Taking back this return",
-                           target_id=order_id, audit_ctx=audit_ctx)
+                code="ndps_permission_needed",
+            )
+        witness = _witness(
+            actor,
+            witness_id,
+            witness_pin,
+            purpose="Taking back this return",
+            target_id=order_id,
+            audit_ctx=audit_ctx,
+        )
 
     try:
         result, rid, replayed = _record_in_txn(
-            actor=actor, me=me, order_id=order_id, units=units, seal=seal, batch=batch,
-            store_wanted=store_wanted, remark=remark, key=key, lane=lane, dept=dept,
-            facilities=facilities, witness=witness, audit_ctx=audit_ctx)
+            actor=actor,
+            me=me,
+            order_id=order_id,
+            units=units,
+            seal=seal,
+            batch=batch,
+            store_wanted=store_wanted,
+            remark=remark,
+            key=key,
+            lane=lane,
+            dept=dept,
+            facilities=facilities,
+            witness=witness,
+            audit_ctx=audit_ctx,
+        )
     except _ScopeMiss as miss:
-        _scope_denied(actor, patient_id=miss.patient_id, helix_order_id=order_id,
-                      audit_ctx=audit_ctx)
+        _scope_denied(
+            actor, patient_id=miss.patient_id, helix_order_id=order_id, audit_ctx=audit_ctx
+        )
         raise _order_not_found(order_id) from None
     if replayed:
         return {"ward_return": result, "replayed": True}
@@ -828,37 +1017,59 @@ def record_ward_return(helix_order_id: Any, *, actor: Mapping, quantity_units: A
         _logger.error("ward return %s was taken in but not numbered; stamp it again", rid)
     else:
         with db_session() as conn:
-            found = conn.execute("SELECT return_number FROM pharmacy_ward_returns WHERE id = ?",
-                                 (rid,)).fetchone()
+            found = conn.execute(
+                "SELECT return_number FROM pharmacy_ward_returns WHERE id = ?", (rid,)
+            ).fetchone()
             result["return_number"] = found["return_number"] if found is not None else None
     return {"ward_return": result, "replayed": False}
 
 
-def _record_in_txn(*, actor: Mapping, me: str, order_id: str, units: int, seal: Optional[int],
-                   batch: Optional[str], store_wanted: Optional[str], remark: Optional[str],
-                   key: Optional[str], lane: str, dept: Optional[str], facilities: Any,
-                   witness: Optional[str], audit_ctx: Optional[Mapping]
-                   ) -> tuple[dict, int, bool]:
+def _record_in_txn(
+    *,
+    actor: Mapping,
+    me: str,
+    order_id: str,
+    units: int,
+    seal: int | None,
+    batch: str | None,
+    store_wanted: str | None,
+    remark: str | None,
+    key: str | None,
+    lane: str,
+    dept: str | None,
+    facilities: Any,
+    witness: str | None,
+    audit_ctx: Mapping | None,
+) -> tuple[dict, int, bool]:
     """The return's one immediate transaction: (decorated return, id, replayed)."""
     from database import db_session
     from permissions import patient_in_scope
+
     from services import ndps_service
 
     with db_session(immediate=True) as conn:
         if key:
-            prior = conn.execute("SELECT * FROM pharmacy_ward_returns WHERE idempotency_key = ?",
-                                 (key,)).fetchone()
+            prior = conn.execute(
+                "SELECT * FROM pharmacy_ward_returns WHERE idempotency_key = ?", (key,)
+            ).fetchone()
             if prior is not None:
-                if (prior["helix_order_id"], int(prior["quantity_units"]), prior["received_by"]) \
-                        != (order_id, units, me) or (batch and prior["lot_id"] != batch):
-                    raise WardReturnError("this request key was already used for a different "
-                                          "return. Nothing was changed.",
-                                          code="idempotency_conflict")
+                if (
+                    prior["helix_order_id"],
+                    int(prior["quantity_units"]),
+                    prior["received_by"],
+                ) != (order_id, units, me) or (batch and prior["lot_id"] != batch):
+                    raise WardReturnError(
+                        "this request key was already used for a different "
+                        "return. Nothing was changed.",
+                        code="idempotency_conflict",
+                    )
                 row = _load_return(conn, prior["id"])
+                assert row is not None
                 return _decorate(conn, row), int(prior["id"]), True
 
-        order = conn.execute("SELECT id, patient_id, status FROM helix_patient_med_orders "
-                             "WHERE id = ?", (order_id,)).fetchone()
+        order = conn.execute(
+            "SELECT id, patient_id, status FROM helix_patient_med_orders WHERE id = ?", (order_id,)
+        ).fetchone()
         if order is None:
             raise _order_not_found(order_id)
         if not patient_in_scope(conn, order["patient_id"], dept, facilities=facilities):
@@ -866,30 +1077,40 @@ def _record_in_txn(*, actor: Mapping, me: str, order_id: str, units: int, seal: 
         if order["status"] != RETURNABLE_ORDER_STATUS:
             raise WardReturnError(
                 "Only a medicine the ward has signed for can be returned. This order has not "
-                "been received on the ward.", code="order_not_delivered",
-                detail={"order_status": order["status"]})
+                "been received on the ward.",
+                code="order_not_delivered",
+                detail={"order_status": order["status"]},
+            )
         dispensed = _dispensed_lots(conn, order_id)
         if not dispensed:
-            raise WardReturnError("No dispense of this order is on the stock ledger, so there "
-                                  "is nothing to take back against it.",
-                                  code="nothing_dispensed")
+            raise WardReturnError(
+                "No dispense of this order is on the stock ledger, so there "
+                "is nothing to take back against it.",
+                code="nothing_dispensed",
+            )
         if batch:
             dispensed = [d for d in dispensed if d["lot"]["id"] == batch]
             if not dispensed:
-                raise WardReturnError("that batch was not dispensed for this order",
-                                      code="lot_not_dispensed")
+                raise WardReturnError(
+                    "that batch was not dispensed for this order", code="lot_not_dispensed"
+                )
         if len(dispensed) > 1:
-            raise WardReturnError("this order was dispensed from more than one batch: choose "
-                                  "the batch that is coming back", code="lot_required",
-                                  detail={"lots": [d["lot"]["id"] for d in dispensed]})
+            raise WardReturnError(
+                "this order was dispensed from more than one batch: choose "
+                "the batch that is coming back",
+                code="lot_required",
+                detail={"lots": [d["lot"]["id"] for d in dispensed]},
+            )
         source = dispensed[0]
         lot = source["lot"]
         controlled = _is_controlled(lot)
         if controlled and witness is None:
             # Classified controlled between the peek and the write lock.
-            raise WardReturnError("this medicine is now classified narcotic or psychotropic, "
-                                  "so a witness is needed. Nothing was changed.",
-                                  code="witness_required")
+            raise WardReturnError(
+                "this medicine is now classified narcotic or psychotropic, "
+                "so a witness is needed. Nothing was changed.",
+                code="witness_required",
+            )
         already = _returned_units(conn, order_id, lot["id"])
         left = source["dispensed_units"] - already
         if units > left:
@@ -899,72 +1120,126 @@ def _record_in_txn(*, actor: Mapping, me: str, order_id: str, units: int, seal: 
                 f"{'has' if already == 1 else 'have'} already come back, so at most "
                 f"{_units_words(max(0, left))} can be returned. Nothing was changed.",
                 code="over_return",
-                detail={"dispensed_units": source["dispensed_units"],
-                        "returned_units": already, "returnable_units": max(0, left)})
+                detail={
+                    "dispensed_units": source["dispensed_units"],
+                    "returned_units": already,
+                    "returnable_units": max(0, left),
+                },
+            )
         store = _pick_store(conn, store_wanted)
         patient_id = order["patient_id"]
         department = _patient_department(conn, patient_id)
         from services.clinical_time import utc_iso_now
+
         occurred = utc_iso_now()
         rid = conn.execute(
             "INSERT INTO pharmacy_ward_returns (patient_id, helix_order_id, helix_medication_id, "
             "lot_id, store_id, department, quantity_units, seal_intact, status, returned_by, "
             "received_by, occurred_at, note, idempotency_key) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending_inspection', ?, ?, ?, ?, ?)",
-            (patient_id, order_id, lot["medication_id"], lot["id"], store["id"], department,
-             units, seal, me if lane == LANE_WARD else None, me, occurred, remark, key),
+            (
+                patient_id,
+                order_id,
+                lot["medication_id"],
+                lot["id"],
+                store["id"],
+                department,
+                units,
+                seal,
+                me if lane == LANE_WARD else None,
+                me,
+                occurred,
+                remark,
+                key,
+            ),
         ).lastrowid
         try:
             with ndps_service.entry_context(
-                    witness_id=witness, counterparty_type="patient",
-                    counterparty_ref=str(patient_id),
-                    document_ref=f"{WARD_RETURN_REFERENCE}:{rid}"):
+                witness_id=witness,
+                counterparty_type="patient",
+                counterparty_ref=str(patient_id),
+                document_ref=f"{WARD_RETURN_REFERENCE}:{rid}",
+            ):
                 opened = stock.open_or_merge_lot(
-                    conn, medication_id=lot["medication_id"],
-                    lot_number=lot["lot_number"], expiration_date=lot["expiration_date"],
-                    units=units, actor_id=me, store_id=store["id"],
-                    status="pending_inspection", movement_type="ward_return",
+                    conn,
+                    medication_id=lot["medication_id"],
+                    lot_number=lot["lot_number"],
+                    expiration_date=lot["expiration_date"],
+                    units=units,
+                    actor_id=me,
+                    store_id=store["id"],
+                    status="pending_inspection",
+                    movement_type="ward_return",
                     units_per_pack=lot.get("units_per_pack"),
                     mrp_pack_paise=lot.get("mrp_pack_paise"),
-                    unit_cost_paise=lot.get("unit_cost_paise"), vendor_id=lot.get("vendor_id"),
-                    reference_type=WARD_RETURN_REFERENCE, reference_id=str(rid),
+                    unit_cost_paise=lot.get("unit_cost_paise"),
+                    vendor_id=lot.get("vendor_id"),
+                    reference_type=WARD_RETURN_REFERENCE,
+                    reference_id=str(rid),
                     idempotency_key=f"{WARD_RETURN_REFERENCE}:{rid}:in",
-                    remarks=f"Returned from the ward against order {order_id}")
+                    remarks=f"Returned from the ward against order {order_id}",
+                )
         except stock.StockError as exc:
             if exc.code == "lot_status_conflict":
                 raise WardReturnError(
                     f"Batch {lot.get('lot_number')} of this medicine is already closed in "
                     f"{store['name']} (written off or sent back to the vendor), so it cannot "
                     "hold this return. Take it into another returns quarantine store.",
-                    code="lot_status_conflict") from exc
+                    code="lot_status_conflict",
+                ) from exc
             raise WardReturnError(str(exc), code=exc.code) from exc
         movement = opened["movement"] or {}
-        _audit(conn, "pharmacy_ward_return_recorded", actor=actor, return_id=rid,
-               patient_id=patient_id, audit_ctx=audit_ctx,
-               summary=(f"Ward return {rid} taken in: {_units_words(units)} of "
-                        f"{lot.get('drug_name') or lot['medication_id']} against order "
-                        f"{order_id}"),
-               metadata={"ward_return_id": str(rid), "helix_order_id": str(order_id),
-                         "original_lot_id": lot["id"],
-                         "quarantine_lot_id": (opened["lot"] or {}).get("id"),
-                         "movement_id": movement.get("id"), "medication_id": lot["medication_id"],
-                         "quantity_units": units, "seal_intact": seal, "lane": lane,
-                         "store_id": str(store["id"]), "controlled": controlled,
-                         "witness_id": witness, "department": department})
+        _audit(
+            conn,
+            "pharmacy_ward_return_recorded",
+            actor=actor,
+            return_id=rid,
+            patient_id=patient_id,
+            audit_ctx=audit_ctx,
+            summary=(
+                f"Ward return {rid} taken in: {_units_words(units)} of "
+                f"{lot.get('drug_name') or lot['medication_id']} against order "
+                f"{order_id}"
+            ),
+            metadata={
+                "ward_return_id": str(rid),
+                "helix_order_id": str(order_id),
+                "original_lot_id": lot["id"],
+                "quarantine_lot_id": (opened["lot"] or {}).get("id"),
+                "movement_id": movement.get("id"),
+                "medication_id": lot["medication_id"],
+                "quantity_units": units,
+                "seal_intact": seal,
+                "lane": lane,
+                "store_id": str(store["id"]),
+                "controlled": controlled,
+                "witness_id": witness,
+                "department": department,
+            },
+        )
         row = _load_return(conn, rid)
+        assert row is not None
         return _decorate(conn, row), int(rid), False
 
 
-def inspect_ward_return(return_id: Any, *, actor: Mapping, decision: Any, reason: Any,
-                        seal_intact: Any = None, witness_id: Any = None,
-                        witness_pin: Any = None,
-                        audit_ctx: Optional[Mapping] = None) -> dict:
+def inspect_ward_return(
+    return_id: Any,
+    *,
+    actor: Mapping,
+    decision: Any,
+    reason: Any,
+    seal_intact: Any = None,
+    witness_id: Any = None,
+    witness_pin: Any = None,
+    audit_ctx: Mapping | None = None,
+) -> dict:
     """The pharmacist's decision on a return waiting for inspection: write it
     off, or (only while RETURN_RESTOCK_ALLOWED is on, ruling GRN-RS3) put it
     back into the batch it was dispensed from. Either decision is refused to
     the person who took the return in (same_person). Returns {ward_return}."""
     from database import db_session
     from permissions import PHARMACY_STORE_NDPS
+
     from services import ndps_service
 
     me = _actor_id(actor)
@@ -987,21 +1262,34 @@ def inspect_ward_return(return_id: Any, *, actor: Mapping, decision: Any, reason
     controlled = peek.get("ndps_category") in stock.NDPS_CONTROLLED
     witness = None
     if decision == "restock" and not stock.RETURN_RESTOCK_ALLOWED:
-        raise WardReturnError("This site does not put returned medicines back on the shelf. "
-                              "Write it off, or send it back to the vendor. Nothing was changed.",
-                              code="restock_not_allowed")
+        raise WardReturnError(
+            "This site does not put returned medicines back on the shelf. "
+            "Write it off, or send it back to the vendor. Nothing was changed.",
+            code="restock_not_allowed",
+        )
     # Refused before a witness is asked for their PIN; checked again under the
     # write lock below, which is the check that holds.
-    if (decision == "write_off" and RETURN_WRITE_OFF_NEEDS_SECOND_PERSON
-            and peek.get("status") == "pending_inspection"
-            and str(peek.get("received_by")) == me):
+    if (
+        decision == "write_off"
+        and RETURN_WRITE_OFF_NEEDS_SECOND_PERSON
+        and peek.get("status") == "pending_inspection"
+        and str(peek.get("received_by")) == me
+    ):
         raise WardReturnError(_WRITE_OFF_SAME_PERSON, code="same_person")
     if controlled and decision == "write_off":
         if not _holds(actor, PHARMACY_STORE_NDPS):
-            raise WardReturnError("writing off a narcotic or psychotropic return needs the NDPS "
-                                  "permission", code="ndps_permission_needed")
-        witness = _witness(actor, witness_id, witness_pin, purpose="Writing off this return",
-                           target_id=peek["helix_order_id"], audit_ctx=audit_ctx)
+            raise WardReturnError(
+                "writing off a narcotic or psychotropic return needs the NDPS permission",
+                code="ndps_permission_needed",
+            )
+        witness = _witness(
+            actor,
+            witness_id,
+            witness_pin,
+            purpose="Writing off this return",
+            target_id=peek["helix_order_id"],
+            audit_ctx=audit_ctx,
+        )
 
     today = stock.site_today()
     with db_session(immediate=True) as conn:
@@ -1012,29 +1300,47 @@ def inspect_ward_return(return_id: Any, *, actor: Mapping, decision: Any, reason
             raise WardReturnError(
                 f"This return was already inspected: "
                 f"{WARD_RETURN_STATUS_LABELS.get(row['status'], row['status']).lower()}.",
-                code="already_inspected", detail={"status": row["status"]})
+                code="already_inspected",
+                detail={"status": row["status"]},
+            )
         units = int(row["quantity_units"])
         q_lot = _quarantine_lot_id(conn, rid)
-        held = conn.execute("SELECT quantity FROM helix_inventory_lots WHERE id = ?",
-                            (q_lot,)).fetchone() if q_lot else None
+        held = (
+            conn.execute(
+                "SELECT quantity FROM helix_inventory_lots WHERE id = ?", (q_lot,)
+            ).fetchone()
+            if q_lot
+            else None
+        )
         if held is None or int(held["quantity"] or 0) < units:
             raise WardReturnError(
                 "The units of this return are no longer in returns quarantine (for example, "
                 "they went back to the vendor). Check the returns store. Nothing was changed.",
-                code="units_not_in_quarantine")
+                code="units_not_in_quarantine",
+            )
         movements: list[dict] = []
         if decision == "write_off":
             if RETURN_WRITE_OFF_NEEDS_SECOND_PERSON and str(row["received_by"]) == me:
                 raise WardReturnError(_WRITE_OFF_SAME_PERSON, code="same_person")
             try:
-                with ndps_service.entry_context(witness_id=witness, entry_type="write_off",
-                                                document_ref=f"{WARD_RETURN_REFERENCE}:{rid}"):
-                    movements.append(stock.post_movement(
-                        conn, lot_id=q_lot, movement_type="write_off", quantity_change=-units,
-                        actor_id=me, reference_type=WARD_RETURN_REFERENCE,
-                        reference_id=str(rid),
-                        idempotency_key=f"{WARD_RETURN_REFERENCE}:{rid}:write_off",
-                        remarks=f"Ward return written off: {why}"))
+                with ndps_service.entry_context(
+                    witness_id=witness,
+                    entry_type="write_off",
+                    document_ref=f"{WARD_RETURN_REFERENCE}:{rid}",
+                ):
+                    movements.append(
+                        stock.post_movement(
+                            conn,
+                            lot_id=q_lot or "",
+                            movement_type="write_off",
+                            quantity_change=-units,
+                            actor_id=me,
+                            reference_type=WARD_RETURN_REFERENCE,
+                            reference_id=str(rid),
+                            idempotency_key=f"{WARD_RETURN_REFERENCE}:{rid}:write_off",
+                            remarks=f"Ward return written off: {why}",
+                        )
+                    )
             except stock.StockError as exc:
                 raise WardReturnError(str(exc), code=exc.code) from exc
             new_status = "written_off"
@@ -1042,27 +1348,47 @@ def inspect_ward_return(return_id: Any, *, actor: Mapping, decision: Any, reason
             if str(row["received_by"]) == me:
                 raise WardReturnError(
                     "The person who took this return in cannot also put it back on the shelf. "
-                    "Ask another pharmacist to inspect it.", code="same_person")
+                    "Ask another pharmacist to inspect it.",
+                    code="same_person",
+                )
             if seal != 1:
-                raise WardReturnError("A return goes back on the shelf only with its seal "
-                                      "intact. Confirm the seal, or write it off.",
-                                      code="restock_refused")
+                raise WardReturnError(
+                    "A return goes back on the shelf only with its seal "
+                    "intact. Confirm the seal, or write it off.",
+                    code="restock_refused",
+                )
             check = restock_check(conn, row, today=today)
             if not check["allowed"]:
-                raise WardReturnError(" ".join(check["reasons"]),
-                                      code=check["code"] or "restock_refused")
+                raise WardReturnError(
+                    " ".join(check["reasons"]), code=check["code"] or "restock_refused"
+                )
             try:
-                movements.append(stock.post_movement(
-                    conn, lot_id=q_lot, movement_type="transfer_out", quantity_change=-units,
-                    actor_id=me, reference_type=WARD_RETURN_REFERENCE, reference_id=str(rid),
-                    idempotency_key=f"{WARD_RETURN_REFERENCE}:{rid}:restock:out",
-                    remarks="Ward return inspected and put back on the shelf"))
-                movements.append(stock.post_movement(
-                    conn, lot_id=row["lot_id"], movement_type="transfer_in",
-                    quantity_change=units, actor_id=me, reference_type=WARD_RETURN_REFERENCE,
-                    reference_id=str(rid),
-                    idempotency_key=f"{WARD_RETURN_REFERENCE}:{rid}:restock:in",
-                    remarks="Ward return inspected and put back on the shelf"))
+                movements.append(
+                    stock.post_movement(
+                        conn,
+                        lot_id=q_lot or "",
+                        movement_type="transfer_out",
+                        quantity_change=-units,
+                        actor_id=me,
+                        reference_type=WARD_RETURN_REFERENCE,
+                        reference_id=str(rid),
+                        idempotency_key=f"{WARD_RETURN_REFERENCE}:{rid}:restock:out",
+                        remarks="Ward return inspected and put back on the shelf",
+                    )
+                )
+                movements.append(
+                    stock.post_movement(
+                        conn,
+                        lot_id=row["lot_id"],
+                        movement_type="transfer_in",
+                        quantity_change=units,
+                        actor_id=me,
+                        reference_type=WARD_RETURN_REFERENCE,
+                        reference_id=str(rid),
+                        idempotency_key=f"{WARD_RETURN_REFERENCE}:{rid}:restock:in",
+                        remarks="Ward return inspected and put back on the shelf",
+                    )
+                )
             except stock.StockError as exc:
                 raise WardReturnError(str(exc), code=exc.code) from exc
             new_status = "restocked"
@@ -1071,20 +1397,39 @@ def inspect_ward_return(return_id: Any, *, actor: Mapping, decision: Any, reason
             "inspected_at = CURRENT_TIMESTAMP, inspection_note = ?, "
             "seal_intact = COALESCE(?, seal_intact) "
             "WHERE id = ? AND status = 'pending_inspection'",
-            (new_status, me, why, seal, rid))
+            (new_status, me, why, seal, rid),
+        )
         if cur.rowcount != 1:
-            raise WardReturnError("this return changed while you were looking at it. Nothing "
-                                  "was changed.", code="return_changed")
-        _audit(conn, "pharmacy_ward_return_inspected", actor=actor, return_id=rid,
-               patient_id=row["patient_id"], audit_ctx=audit_ctx,
-               summary=(f"Ward return {rid} inspected: "
-                        f"{WARD_RETURN_STATUS_LABELS[new_status].lower()}"),
-               metadata={"ward_return_id": str(rid), "decision": decision,
-                         "status": new_status, "quantity_units": units,
-                         "helix_order_id": str(row["helix_order_id"]),
-                         "original_lot_id": row["lot_id"], "quarantine_lot_id": q_lot,
-                         "movement_ids": [m.get("id") for m in movements],
-                         "seal_intact": seal, "controlled": controlled,
-                         "witness_id": witness, "received_by": str(row["received_by"]),
-                         "restock_allowed": bool(stock.RETURN_RESTOCK_ALLOWED)})
-        return {"ward_return": _decorate(conn, _load_return(conn, rid), today=today)}
+            raise WardReturnError(
+                "this return changed while you were looking at it. Nothing was changed.",
+                code="return_changed",
+            )
+        _audit(
+            conn,
+            "pharmacy_ward_return_inspected",
+            actor=actor,
+            return_id=rid,
+            patient_id=row["patient_id"],
+            audit_ctx=audit_ctx,
+            summary=(
+                f"Ward return {rid} inspected: {WARD_RETURN_STATUS_LABELS[new_status].lower()}"
+            ),
+            metadata={
+                "ward_return_id": str(rid),
+                "decision": decision,
+                "status": new_status,
+                "quantity_units": units,
+                "helix_order_id": str(row["helix_order_id"]),
+                "original_lot_id": row["lot_id"],
+                "quarantine_lot_id": q_lot,
+                "movement_ids": [m.get("id") for m in movements],
+                "seal_intact": seal,
+                "controlled": controlled,
+                "witness_id": witness,
+                "received_by": str(row["received_by"]),
+                "restock_allowed": bool(stock.RETURN_RESTOCK_ALLOWED),
+            },
+        )
+        returned = _load_return(conn, rid)
+        assert returned is not None
+        return {"ward_return": _decorate(conn, returned, today=today)}

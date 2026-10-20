@@ -46,6 +46,7 @@ so a second run changes nothing, and an index is created only when its table
 has every column it names, so an unusual table of the same name cannot stop
 boot.
 """
+
 from migrations import Migration
 
 #: The vocabulary of `effect`, shared with the writer.
@@ -66,9 +67,7 @@ LINKS_DDL = """CREATE TABLE IF NOT EXISTS housekeeping_movement_links (
 TABLE_NAMES = ("housekeeping_movement_links",)
 
 # (index name, table, columns, unique)
-_INDEXES = (
-    ("idx_hk_movement_links_unit", "housekeeping_movement_links", ("unit_id",), False),
-)
+_INDEXES = (("idx_hk_movement_links_unit", "housekeeping_movement_links", ("unit_id",), False),)
 
 
 def _columns(conn, table: str) -> set:

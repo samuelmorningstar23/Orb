@@ -20,6 +20,7 @@ unknown time, nothing illegible, not voided. Idempotent through PRAGMA
 introspection. No index: the void filter rides the existing patient and time
 indexes, and almost every row has voided_at NULL.
 """
+
 from __future__ import annotations
 
 from migrations import Migration

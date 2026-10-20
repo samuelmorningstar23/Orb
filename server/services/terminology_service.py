@@ -40,17 +40,18 @@ LOADABLE_CODE_SYSTEMS) through load_release below:
     note is never rewritten (a trigger refuses it too); it is only counted.
 Nothing here downloads anything: the release is a file the hospital brings.
 """
+
 import json
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from database import db_session
-
 
 # ══════════════════════════════════════════════════════════════════════════
 #  VALIDATION / LOOKUP
 # ══════════════════════════════════════════════════════════════════════════
+
 
 def validate_code(code_system: str, code: str) -> bool:
     """Return True iff (code_system, code) exists in `terminology` and is active."""
@@ -123,9 +124,12 @@ def _like_pattern(text: str) -> str:
 
 
 def _has_table(conn, name: str) -> bool:
-    return conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
-    ).fetchone() is not None
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+        ).fetchone()
+        is not None
+    )
 
 
 def _local_type(code: str) -> str | None:
@@ -171,27 +175,33 @@ def describe_investigation(code_system: str, code: str, *, lab_catalogue: bool =
         catalogue = _catalogue_row(conn, system, value) if system in ("LOINC", "LOCAL") else None
     in_catalogue = bool(catalogue and catalogue["active"] and catalogue["orderable"])
     if system == "LOINC":
+        kind: str | None
         kind = "lab"
     elif system == "LOCAL":
         kind = _local_type(value) or ("lab" if catalogue is not None else None)
     else:
         kind = None
-    display = (catalogue["name"] if in_catalogue else None) or (term["display"] if term else None)
+    display = (catalogue["name"] if in_catalogue and catalogue is not None else None) or (
+        term["display"] if term else None
+    )
     if term is None and not in_catalogue:
         return out
     out.update(order_type=kind, display=display, refusal=None)
     if kind not in INVESTIGATION_ORDER_TYPES:
         out["refusal"] = "not_an_investigation"
-    elif kind == "lab" and (value.upper() in BEDSIDE_LOCAL_CODES
-                            or (catalogue is not None and catalogue["performed_at"] == "ward_poct")):
+    elif kind == "lab" and (
+        value.upper() in BEDSIDE_LOCAL_CODES
+        or (catalogue is not None and catalogue["performed_at"] == "ward_poct")
+    ):
         out["refusal"] = "bedside_test"
     elif kind == "lab" and lab_catalogue and not in_catalogue:
         out["refusal"] = "not_in_lab_catalogue"
     return out
 
 
-def search_terms(query: str, *, kind: str, limit: int = SEARCH_MAX_RESULTS,
-                 lab_catalogue: bool = False) -> dict:
+def search_terms(
+    query: str, *, kind: str, limit: int = SEARCH_MAX_RESULTS, lab_catalogue: bool = False
+) -> dict:
     """Codes whose wording or code contains `query` (case ignored), for the
     outpatient pickers. `kind` is 'diagnosis' or 'investigation' (ValueError
     otherwise). Fewer than SEARCH_MIN_CHARS characters searches nothing.
@@ -220,30 +230,41 @@ def search_terms(query: str, *, kind: str, limit: int = SEARCH_MAX_RESULTS,
                                    WHEN lower(display) LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END,
                               code_system, display, code
                      LIMIT ?""",
-                (*(f"%{t}" for t in _SNOMED_DIAGNOSIS_TAGS), pattern, pattern,
-                 text.lower(), _like_pattern(text.lower())[1:], limit + 1),
+                (
+                    *(f"%{t}" for t in _SNOMED_DIAGNOSIS_TAGS),
+                    pattern,
+                    pattern,
+                    text.lower(),
+                    _like_pattern(text.lower())[1:],
+                    limit + 1,
+                ),
             ).fetchall()
-            rows = [{"code_system": r["code_system"], "code": r["code"],
-                     "display": r["display"]} for r in found]
+            rows = [
+                {"code_system": r["code_system"], "code": r["code"], "display": r["display"]}
+                for r in found
+            ]
         else:
-            rows = _investigation_rows(conn, text.lower(), pattern, limit + 1,
-                                       lab_catalogue=lab_catalogue)
+            rows = _investigation_rows(
+                conn, text.lower(), pattern, limit + 1, lab_catalogue=lab_catalogue
+            )
     answer["truncated"] = len(rows) > limit
     answer["results"] = rows[:limit]
     return answer
 
 
-def _investigation_rows(conn, text: str, pattern: str, limit: int, *,
-                        lab_catalogue: bool) -> list[dict]:
+def _investigation_rows(
+    conn, text: str, pattern: str, limit: int, *, lab_catalogue: bool
+) -> list[dict]:
     """Laboratory tests and imaging a clinic may order, best match first.
     Every row also passes describe_investigation's rules."""
     bedside = sorted(BEDSIDE_LOCAL_CODES)
     marks = ",".join("?" for _ in bedside)
     poct = ""
-    params_poct: tuple = ()
     if _has_table(conn, "lab_tests"):
-        poct = (" AND NOT EXISTS (SELECT 1 FROM lab_tests p WHERE p.code_system = t.code_system "
-                "AND p.code = t.code AND p.performed_at = 'ward_poct')")
+        poct = (
+            " AND NOT EXISTS (SELECT 1 FROM lab_tests p WHERE p.code_system = t.code_system "
+            "AND p.code = t.code AND p.performed_at = 'ward_poct')"
+        )
     rows: list[dict] = []
     if lab_catalogue and _has_table(conn, "lab_tests"):
         for r in conn.execute(
@@ -257,35 +278,56 @@ def _investigation_rows(conn, text: str, pattern: str, limit: int, *,
         ).fetchall():
             if r["code"].upper() in BEDSIDE_LOCAL_CODES:
                 continue
-            rows.append({"code_system": r["code_system"], "code": r["code"],
-                         "display": r["name"], "order_type": "lab"})
+            rows.append(
+                {
+                    "code_system": r["code_system"],
+                    "code": r["code"],
+                    "display": r["name"],
+                    "order_type": "lab",
+                }
+            )
         lab_sql = None
     else:
-        lab_sql = (f"""SELECT t.code_system, t.code, t.display, 'lab' AS order_type
+        lab_sql = (
+            f"""SELECT t.code_system, t.code, t.display, 'lab' AS order_type
                         FROM terminology t
                        WHERE t.is_active = 1
                          AND (t.code_system = 'LOINC'
                               OR (t.code_system = 'LOCAL' AND upper(t.code) LIKE 'ORB-LAB-%'))
                          AND upper(t.code) NOT IN ({marks}){poct}
                          AND (lower(t.display) LIKE ? ESCAPE '\\' OR lower(t.code) LIKE ? ESCAPE '\\')""",
-                   (*bedside, pattern, pattern))
-    imaging_sql = ("""SELECT t.code_system, t.code, t.display, 'imaging' AS order_type
+            (*bedside, pattern, pattern),
+        )
+    imaging_sql = (
+        """SELECT t.code_system, t.code, t.display, 'imaging' AS order_type
                        FROM terminology t
                       WHERE t.is_active = 1 AND t.code_system = 'LOCAL'
                         AND upper(t.code) LIKE 'ORB-IMG-%'
                         AND (lower(t.display) LIKE ? ESCAPE '\\' OR lower(t.code) LIKE ? ESCAPE '\\')""",
-                   (pattern, pattern))
+        (pattern, pattern),
+    )
     for sql, params in ([lab_sql] if lab_sql else []) + [imaging_sql]:
         for r in conn.execute(
             f"SELECT * FROM ({sql}) ORDER BY CASE WHEN lower(code) = ? THEN 0 ELSE 1 END, "
             "display, code LIMIT ?",
             (*params, text, limit),
         ).fetchall():
-            rows.append({"code_system": r["code_system"], "code": r["code"],
-                         "display": r["display"], "order_type": r["order_type"]})
-    rows.sort(key=lambda r: (0 if r["code"].lower() == text else 1,
-                             0 if r["display"].lower().startswith(text) else 1,
-                             r["display"].lower(), r["code"]))
+            rows.append(
+                {
+                    "code_system": r["code_system"],
+                    "code": r["code"],
+                    "display": r["display"],
+                    "order_type": r["order_type"],
+                }
+            )
+    rows.sort(
+        key=lambda r: (
+            0 if r["code"].lower() == text else 1,
+            0 if r["display"].lower().startswith(text) else 1,
+            r["display"].lower(),
+            r["code"],
+        )
+    )
     return rows[:limit]
 
 
@@ -315,10 +357,18 @@ _LOINC_SEED = [
     ("LOINC", "2524-7", "Lactate [Moles/volume] in Serum or Plasma"),
     ("LOINC", "6598-7", "Troponin T.cardiac [Mass/volume] in Serum or Plasma"),
     ("LOINC", "10839-9", "Troponin I.cardiac [Mass/volume] in Serum or Plasma"),
-    ("LOINC", "33762-6", "Natriuretic peptide B prohormone N-Terminal [Mass/volume] in Serum or Plasma"),
+    (
+        "LOINC",
+        "33762-6",
+        "Natriuretic peptide B prohormone N-Terminal [Mass/volume] in Serum or Plasma",
+    ),
     ("LOINC", "1988-5", "C reactive protein [Mass/volume] in Serum or Plasma"),
     ("LOINC", "30341-2", "Erythrocyte sedimentation rate"),
-    ("LOINC", "1920-8", "Aspartate aminotransferase [Enzymatic activity/volume] in Serum or Plasma"),
+    (
+        "LOINC",
+        "1920-8",
+        "Aspartate aminotransferase [Enzymatic activity/volume] in Serum or Plasma",
+    ),
     ("LOINC", "1742-6", "Alanine aminotransferase [Enzymatic activity/volume] in Serum or Plasma"),
     ("LOINC", "1975-2", "Bilirubin.total [Mass/volume] in Serum or Plasma"),
     ("LOINC", "1751-7", "Albumin [Mass/volume] in Serum or Plasma"),
@@ -400,13 +450,14 @@ def seed_terminology() -> dict:
         # The release loader's version rows (opd-20) are not codes.
         rows = conn.execute(
             "SELECT code_system, COUNT(*) AS n FROM terminology WHERE code_system != ? "
-            "GROUP BY code_system", (RELEASE_CODE_SYSTEM,)
+            "GROUP BY code_system",
+            (RELEASE_CODE_SYSTEM,),
         ).fetchall()
     counts = {r["code_system"]: r["n"] for r in rows}
     return {
         "seeded": len(STARTER_TERMINOLOGY),
         "counts": counts,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }
 
 
@@ -543,17 +594,23 @@ def _clean_entries(code_system: str, entries) -> tuple[dict, dict]:
         raise TerminologyLoadError(
             "release_row_without_display",
             f"{len(no_display)} code(s) in the release have no wording, for example "
-            f"{', '.join(no_display[:_SAMPLE_LIMIT])}. Nothing was loaded.")
+            f"{', '.join(no_display[:_SAMPLE_LIMIT])}. Nothing was loaded.",
+        )
     if conflicts:
         raise TerminologyLoadError(
             "release_code_twice",
             f"{len(set(conflicts))} code(s) appear twice with different wording or status, "
-            f"for example {', '.join(sorted(set(conflicts))[:_SAMPLE_LIMIT])}. Nothing was loaded.")
+            f"for example {', '.join(sorted(set(conflicts))[:_SAMPLE_LIMIT])}. Nothing was loaded.",
+        )
     if not codes:
         raise TerminologyLoadError(
-            "release_empty", "The release holds no codes Orb can read. Nothing was loaded.")
-    return codes, {"rows_read": rows_read, "skipped_not_a_code": len(skipped),
-                   "skipped_samples": [s for s in skipped if s][:_SAMPLE_LIMIT]}
+            "release_empty", "The release holds no codes Orb can read. Nothing was loaded."
+        )
+    return codes, {
+        "rows_read": rows_read,
+        "skipped_not_a_code": len(skipped),
+        "skipped_samples": [s for s in skipped if s][:_SAMPLE_LIMIT],
+    }
 
 
 def _release_identity(info: dict | None) -> tuple | None:
@@ -562,10 +619,19 @@ def _release_identity(info: dict | None) -> tuple | None:
     return (info.get("release"), info.get("version"), info.get("source_sha256"))
 
 
-def load_release(entries, *, code_system: str, release: str, version: str,
-                 source_sha256: str, source_name: str | None = None,
-                 licence_ref: str | None = None, operator: str | None = None,
-                 retire_missing: bool = False, dry_run: bool = False) -> dict:
+def load_release(
+    entries,
+    *,
+    code_system: str,
+    release: str,
+    version: str,
+    source_sha256: str,
+    source_name: str | None = None,
+    licence_ref: str | None = None,
+    operator: str | None = None,
+    retire_missing: bool = False,
+    dry_run: bool = False,
+) -> dict:
     """Load one release of `code_system` into `terminology`.
 
     `entries` are (code, display, active) as the release file states them.
@@ -585,34 +651,48 @@ def load_release(entries, *, code_system: str, release: str, version: str,
     if system not in LOADABLE_CODE_SYSTEMS:
         raise TerminologyLoadError(
             "code_system_not_loadable",
-            f"This loader loads {', '.join(LOADABLE_CODE_SYSTEMS)} only, not {system or 'nothing'}.")
+            f"This loader loads {', '.join(LOADABLE_CODE_SYSTEMS)} only, not {system or 'nothing'}.",
+        )
     release = " ".join(str(release or "").split())
     version = " ".join(str(version or "").split())
     if not release or not version:
-        raise TerminologyLoadError("release_unnamed",
-                                   "Name the release and its version, as the publisher prints them.")
+        raise TerminologyLoadError(
+            "release_unnamed", "Name the release and its version, as the publisher prints them."
+        )
     licence = " ".join(str(licence_ref or "").split()) or None
     if not dry_run and not licence:
         raise TerminologyLoadError(
             "licence_required",
             "No release is loaded until counsel confirms its licence (ruling OPD-N11). Give "
-            "counsel's confirmation reference to load it, or run a dry run.")
+            "counsel's confirmation reference to load it, or run a dry run.",
+        )
     sha = str(source_sha256 or "").strip().lower()
     if not re.fullmatch(r"[0-9a-f]{64}", sha):
-        raise TerminologyLoadError("source_unidentified",
-                                   "The release file's SHA-256 is needed to record what was loaded.")
+        raise TerminologyLoadError(
+            "source_unidentified", "The release file's SHA-256 is needed to record what was loaded."
+        )
 
     codes, facts = _clean_entries(system, entries)
 
     with db_session(immediate=not dry_run) as conn:
-        existing = {r["code"]: (r["display"], bool(r["is_active"])) for r in conn.execute(
-            "SELECT code, display, is_active FROM terminology WHERE code_system = ?",
-            (system,)).fetchall()}
+        existing = {
+            r["code"]: (r["display"], bool(r["is_active"]))
+            for r in conn.execute(
+                "SELECT code, display, is_active FROM terminology WHERE code_system = ?", (system,)
+            ).fetchall()
+        }
         previous = release_info(system, conn)
 
         inserts, updates = [], []
-        counts = {"inserted": 0, "inserted_inactive": 0, "display_updated": 0,
-                  "reactivated": 0, "deactivated": 0, "retired_missing": 0, "unchanged": 0}
+        counts = {
+            "inserted": 0,
+            "inserted_inactive": 0,
+            "display_updated": 0,
+            "reactivated": 0,
+            "deactivated": 0,
+            "retired_missing": 0,
+            "unchanged": 0,
+        }
         for code, (display, active) in codes.items():
             had = existing.get(code)
             if had is None:
@@ -636,68 +716,105 @@ def load_release(entries, *, code_system: str, release: str, version: str,
             counts["retired_missing"] = len(retirements)
 
         active_before = sum(1 for _d, a in existing.values() if a)
-        active_after = (active_before
-                        + counts["inserted"] + counts["reactivated"]
-                        - counts["deactivated"] - counts["retired_missing"])
+        active_after = (
+            active_before
+            + counts["inserted"]
+            + counts["reactivated"]
+            - counts["deactivated"]
+            - counts["retired_missing"]
+        )
         changes = bool(inserts or updates or retirements)
         identity = (release, version, sha)
         already_loaded = (not changes) and _release_identity(previous) == identity
         report = {
-            "code_system": system, "release": release, "version": version,
-            "source_sha256": sha, "source_name": source_name, "licence_ref": licence,
-            "retire_missing": bool(retire_missing), "dry_run": bool(dry_run),
-            "already_loaded": already_loaded, "applied": False,
-            **facts, "codes_in_release": len(codes),
+            "code_system": system,
+            "release": release,
+            "version": version,
+            "source_sha256": sha,
+            "source_name": source_name,
+            "licence_ref": licence,
+            "retire_missing": bool(retire_missing),
+            "dry_run": bool(dry_run),
+            "already_loaded": already_loaded,
+            "applied": False,
+            **facts,
+            "codes_in_release": len(codes),
             "active_in_release": sum(1 for _d, a in codes.values() if a),
             **counts,
-            "total_before": len(existing), "total_after": len(existing) + len(inserts),
-            "active_before": active_before, "active_after": active_after,
+            "total_before": len(existing),
+            "total_after": len(existing) + len(inserts),
+            "active_before": active_before,
+            "active_after": active_after,
             "previous_release": previous,
         }
         if dry_run or already_loaded:
             return report
 
-        loaded_at = datetime.now(timezone.utc).isoformat()
+        loaded_at = datetime.now(UTC).isoformat()
         if inserts:
             conn.executemany(
                 "INSERT INTO terminology (code_system, code, display, is_active) "
-                "VALUES (?, ?, ?, ?)", inserts)
+                "VALUES (?, ?, ?, ?)",
+                inserts,
+            )
         if updates:
             conn.executemany(
                 "UPDATE terminology SET display = ?, is_active = ? "
-                "WHERE code_system = ? AND code = ?", updates)
+                "WHERE code_system = ? AND code = ?",
+                updates,
+            )
         if retirements:
             conn.executemany(
                 "UPDATE terminology SET is_active = 0 WHERE code_system = ? AND code = ?",
-                retirements)
+                retirements,
+            )
         info = {
-            "code_system": system, "release": release, "version": version,
-            "source_sha256": sha, "source_name": source_name, "licence_ref": licence,
-            "codes_in_release": len(codes), "active_in_release": report["active_in_release"],
-            "retire_missing": bool(retire_missing), "loaded_at": loaded_at,
+            "code_system": system,
+            "release": release,
+            "version": version,
+            "source_sha256": sha,
+            "source_name": source_name,
+            "licence_ref": licence,
+            "codes_in_release": len(codes),
+            "active_in_release": report["active_in_release"],
+            "retire_missing": bool(retire_missing),
+            "loaded_at": loaded_at,
             "loaded_by": operator,
         }
         conn.execute(
             "INSERT INTO terminology (code_system, code, display, is_active) VALUES (?, ?, ?, 0) "
             "ON CONFLICT(code_system, code) DO UPDATE SET display = excluded.display, is_active = 0",
-            (RELEASE_CODE_SYSTEM, system, json.dumps(info, sort_keys=True)))
+            (RELEASE_CODE_SYSTEM, system, json.dumps(info, sort_keys=True)),
+        )
         from services.audit_service import log_audit_event
+
         log_audit_event(
             correlation_id=f"terminology-release-{system}-{uuid.uuid4().hex[:8]}",
             event_category="clinical_config",
             action_type="terminology_release_loaded",
             outcome="success",
             db=conn,
-            summary_message=(f"{release} {version} loaded into {system}: "
-                             f"{counts['inserted']} new, {counts['display_updated']} reworded, "
-                             f"{counts['deactivated'] + counts['retired_missing']} no longer valid"),
-            actor_user_id=None, actor_role="console", source_type="console",
-            target_type="terminology_release", target_id=system,
-            metadata={**{k: v for k, v in report.items() if k != "previous_release"},
-                      "previous_release": _release_identity(previous) and {
-                          "release": previous.get("release"), "version": previous.get("version"),
-                          "source_sha256": previous.get("source_sha256")},
-                      "operator": operator, "script": "load_terminology.py"},
+            summary_message=(
+                f"{release} {version} loaded into {system}: "
+                f"{counts['inserted']} new, {counts['display_updated']} reworded, "
+                f"{counts['deactivated'] + counts['retired_missing']} no longer valid"
+            ),
+            actor_user_id=None,
+            actor_role="console",
+            source_type="console",
+            target_type="terminology_release",
+            target_id=system,
+            metadata={
+                **{k: v for k, v in report.items() if k != "previous_release"},
+                "previous_release": (previous is not None and _release_identity(previous))
+                and {
+                    "release": previous.get("release"),
+                    "version": previous.get("version"),
+                    "source_sha256": previous.get("source_sha256"),
+                },
+                "operator": operator,
+                "script": "load_terminology.py",
+            },
         )
         report["applied"] = True
         report["loaded_at"] = loaded_at
@@ -730,30 +847,49 @@ def revalidate_draft_diagnoses(*, operator: str | None = None, dry_run: bool = F
 
     Each changed draft is audited (clinical_record, in the transaction) and
     the run once (clinical_config, fail-closed)."""
-    report = {"dry_run": bool(dry_run), "applied": False, "drafts_checked": 0,
-              "drafts_changed": 0, "diagnoses_validated": 0, "diagnoses_unvalidated": 0,
-              "unreadable_drafts": 0, "signed_with_codes_now_valid": 0,
-              "signed_untouched": True}
+    report = {
+        "dry_run": bool(dry_run),
+        "applied": False,
+        "drafts_checked": 0,
+        "drafts_changed": 0,
+        "diagnoses_validated": 0,
+        "diagnoses_unvalidated": 0,
+        "unreadable_drafts": 0,
+        "signed_with_codes_now_valid": 0,
+        "signed_untouched": True,
+    }
     with db_session(immediate=not dry_run) as conn:
-        if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' "
-                        "AND name = 'opd_consultations'").fetchone() is None:
+        if (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'opd_consultations'"
+            ).fetchone()
+            is None
+        ):
             report["table_absent"] = True
             return report
 
         def active(system: str, code: str) -> bool:
-            return conn.execute(
-                "SELECT 1 FROM terminology WHERE code_system = ? AND code = ? AND is_active = 1 "
-                "LIMIT 1", (system, code)).fetchone() is not None
+            return (
+                conn.execute(
+                    "SELECT 1 FROM terminology WHERE code_system = ? AND code = ? AND is_active = 1 "
+                    "LIMIT 1",
+                    (system, code),
+                ).fetchone()
+                is not None
+            )
 
         changed: list[tuple[dict, list, list, list]] = []
         for row in conn.execute(
-                "SELECT id, visit_id, patient_id, diagnoses_json FROM opd_consultations "
-                "WHERE status = 'draft' AND diagnoses_json IS NOT NULL ORDER BY id").fetchall():
+            "SELECT id, visit_id, patient_id, diagnoses_json FROM opd_consultations "
+            "WHERE status = 'draft' AND diagnoses_json IS NOT NULL ORDER BY id"
+        ).fetchall():
             report["drafts_checked"] += 1
             items = _diagnosis_list(row["diagnoses_json"])
             if items is None:
                 report["unreadable_drafts"] += 1
                 continue
+            now_valid: list[dict]
+            now_invalid: list[dict]
             now_valid, now_invalid, out = [], [], []
             for item in items:
                 if not isinstance(item, dict):
@@ -763,7 +899,11 @@ def revalidate_draft_diagnoses(*, operator: str | None = None, dry_run: bool = F
                 system = str(item.get("code_system") or "").upper()
                 code = item.get("code")
                 status = item.get("code_status")
-                if code and system in DIAGNOSIS_CODE_SYSTEMS and status in ("validated", "unvalidated"):
+                if (
+                    code
+                    and system in DIAGNOSIS_CODE_SYSTEMS
+                    and status in ("validated", "unvalidated")
+                ):
                     fresh = "validated" if active(system, str(code)) else "unvalidated"
                     if fresh != status:
                         item["code_status"] = fresh
@@ -778,13 +918,17 @@ def revalidate_draft_diagnoses(*, operator: str | None = None, dry_run: bool = F
         report["drafts_changed"] = len(changed)
 
         for row in conn.execute(
-                "SELECT diagnoses_json FROM opd_consultations WHERE status = 'signed' "
-                "AND diagnoses_json LIKE '%unvalidated%'").fetchall():
+            "SELECT diagnoses_json FROM opd_consultations WHERE status = 'signed' "
+            "AND diagnoses_json LIKE '%unvalidated%'"
+        ).fetchall():
             for item in _diagnosis_list(row["diagnoses_json"]) or []:
-                if (isinstance(item, dict) and item.get("code_status") == "unvalidated"
-                        and item.get("code")
-                        and str(item.get("code_system") or "").upper() in DIAGNOSIS_CODE_SYSTEMS
-                        and active(str(item.get("code_system")).upper(), str(item["code"]))):
+                if (
+                    isinstance(item, dict)
+                    and item.get("code_status") == "unvalidated"
+                    and item.get("code")
+                    and str(item.get("code_system") or "").upper() in DIAGNOSIS_CODE_SYSTEMS
+                    and active(str(item.get("code_system")).upper(), str(item["code"]))
+                ):
                     report["signed_with_codes_now_valid"] += 1
                     break
 
@@ -792,11 +936,13 @@ def revalidate_draft_diagnoses(*, operator: str | None = None, dry_run: bool = F
             return report
 
         from services.audit_service import log_audit_event
+
         correlation = f"terminology-revalidate-{uuid.uuid4().hex[:8]}"
         for row, items, now_valid, now_invalid in changed:
             cur = conn.execute(
                 "UPDATE opd_consultations SET diagnoses_json = ? WHERE id = ? AND status = 'draft'",
-                (json.dumps(items), row["id"]))
+                (json.dumps(items), row["id"]),
+            )
             if (cur.rowcount or 0) != 1:
                 # Signed (or gone) since it was read: left exactly as it is.
                 report["drafts_changed"] -= 1
@@ -809,14 +955,24 @@ def revalidate_draft_diagnoses(*, operator: str | None = None, dry_run: bool = F
                 action_type="opd_diagnosis_codes_revalidated",
                 outcome="success",
                 db=conn,
-                summary_message=(f"Diagnosis codes on draft {row['id']} checked again: "
-                                 f"{len(now_valid)} now valid, {len(now_invalid)} no longer valid"),
-                actor_user_id=None, actor_role="console", source_type="console",
-                patient_id=row["patient_id"], target_type="opd_consultation",
+                summary_message=(
+                    f"Diagnosis codes on draft {row['id']} checked again: "
+                    f"{len(now_valid)} now valid, {len(now_invalid)} no longer valid"
+                ),
+                actor_user_id=None,
+                actor_role="console",
+                source_type="console",
+                patient_id=row["patient_id"],
+                target_type="opd_consultation",
                 target_id=str(row["id"]),
-                metadata={"visit_id": row["visit_id"], "now_valid": now_valid,
-                          "no_longer_valid": now_invalid, "operator": operator,
-                          "script": "load_terminology.py", "written": "in_transaction"},
+                metadata={
+                    "visit_id": row["visit_id"],
+                    "now_valid": now_valid,
+                    "no_longer_valid": now_invalid,
+                    "operator": operator,
+                    "script": "load_terminology.py",
+                    "written": "in_transaction",
+                },
             )
         log_audit_event(
             correlation_id=correlation,
@@ -824,10 +980,15 @@ def revalidate_draft_diagnoses(*, operator: str | None = None, dry_run: bool = F
             action_type="terminology_drafts_revalidated",
             outcome="success",
             db=conn,
-            summary_message=(f"Diagnosis codes on {report['drafts_changed']} draft outpatient "
-                             "note(s) checked again; signed notes untouched"),
-            actor_user_id=None, actor_role="console", source_type="console",
-            target_type="terminology_release", target_id="drafts",
+            summary_message=(
+                f"Diagnosis codes on {report['drafts_changed']} draft outpatient "
+                "note(s) checked again; signed notes untouched"
+            ),
+            actor_user_id=None,
+            actor_role="console",
+            source_type="console",
+            target_type="terminology_release",
+            target_id="drafts",
             metadata={**report, "operator": operator, "script": "load_terminology.py"},
         )
         report["applied"] = True

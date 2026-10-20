@@ -19,6 +19,7 @@ One nullable column on sage_insights:
 Plain ADD COLUMN with no default, so every existing row reads NULL. Idempotent
 through PRAGMA introspection. No index: the feed reads it by row.
 """
+
 from __future__ import annotations
 
 from migrations import Migration

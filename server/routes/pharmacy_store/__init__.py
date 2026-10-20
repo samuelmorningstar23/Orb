@@ -33,14 +33,23 @@ Sub-modules, one per concern, each exporting `router` (no prefix):
   returns         ward returns and their inspection
   vendor_returns  returns to vendor
 """
-from fastapi import APIRouter, Depends
 
 import config
+from fastapi import APIRouter, Depends
 from permissions import PHARMACY_STORE_READ, require_permission
+
 from routes.opt_in_gates import require_pharmacy_store_module
 from routes.pharmacy_store import (
-    counts, lots, masters, ndps, purchasing, returns, stock, transfers,
-    vendor_returns, ward,
+    counts,
+    lots,
+    masters,
+    ndps,
+    purchasing,
+    returns,
+    stock,
+    transfers,
+    vendor_returns,
+    ward,
 )
 
 router = APIRouter(
@@ -50,8 +59,11 @@ router = APIRouter(
 )
 
 
+_PHARMACY_STORE_META_USER_DEFAULT = Depends(require_permission(PHARMACY_STORE_READ))
+
+
 @router.get("/meta")
-def pharmacy_store_meta(user: dict = Depends(require_permission(PHARMACY_STORE_READ))):
+def pharmacy_store_meta(user: dict = _PHARMACY_STORE_META_USER_DEFAULT):
     """What this site's pharmacy store is set to. No patient data and no stock."""
     return {
         "module": "pharmacy-store",
@@ -69,6 +81,16 @@ def pharmacy_store_meta(user: dict = Depends(require_permission(PHARMACY_STORE_R
     }
 
 
-for _sub in (masters, purchasing, stock, lots, transfers, counts, ndps, ward,
-             returns, vendor_returns):
+for _sub in (
+    masters,
+    purchasing,
+    stock,
+    lots,
+    transfers,
+    counts,
+    ndps,
+    ward,
+    returns,
+    vendor_returns,
+):
     router.include_router(_sub.router)

@@ -54,6 +54,7 @@ no foreign key. With ORB_ADT off nothing writes any of these columns, so the
 rows every existing lane writes are unchanged; SELECT * readers of admissions
 carry seven more NULL keys.
 """
+
 from migrations import Migration
 
 #: The columns admissions gains, in order. No constant default is needed: NULL
@@ -74,7 +75,13 @@ PRESENCE_STATUSES: tuple = ("on_leave", "absconded")
 #: How a stay ended. The same words as nabh_discharge_dispositions, less
 #: 'death_within_48h', which is derived from the stay times, never stated.
 DISCHARGE_TYPES: tuple = (
-    "routine", "referred_out", "transferred_out", "dama", "lama", "absconded", "death",
+    "routine",
+    "referred_out",
+    "transferred_out",
+    "dama",
+    "lama",
+    "absconded",
+    "death",
 )
 
 _PRESENCE_LIST = ", ".join(f"'{v}'" for v in PRESENCE_STATUSES)
@@ -98,10 +105,14 @@ ADMISSION_TRIGGERS: tuple = (
     f"WHEN NEW.discharge_type IS NOT NULL AND NEW.discharge_type NOT IN ({_DISCHARGE_LIST}) "
     "BEGIN SELECT RAISE(ABORT, 'unknown admissions.discharge_type'); END",
 )
-TRIGGER_NAMES: frozenset = frozenset({
-    "trg_admissions_presence_insert", "trg_admissions_presence_update",
-    "trg_admissions_discharge_type_insert", "trg_admissions_discharge_type_update",
-})
+TRIGGER_NAMES: frozenset = frozenset(
+    {
+        "trg_admissions_presence_insert",
+        "trg_admissions_presence_update",
+        "trg_admissions_discharge_type_insert",
+        "trg_admissions_discharge_type_update",
+    }
+)
 
 ADMISSION_INDEXES: tuple = (
     # The bed lock (ruling ADT-S1 (a)): one active admission per master bed.

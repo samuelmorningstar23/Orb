@@ -45,6 +45,7 @@ cannot stop boot.
 A NOTE FOR ANY FUTURE REBUILD OF invoices OR payments: carry these six columns
 and recreate the triggers in TRIGGERS below.
 """
+
 from migrations import Migration
 
 #: The snapshot columns, in the order the writers bind them.
@@ -91,10 +92,13 @@ PAYMENTS_TRIGGER = (
 
 #: (table, trigger name, DDL, every column the trigger names)
 TRIGGERS = (
-    ("invoices", "trg_invoices_supplier_snapshot_fixed", INVOICES_TRIGGER,
-     SNAPSHOT_COLUMNS + ("invoice_number",)),
-    ("payments", "trg_payments_supplier_snapshot_fixed", PAYMENTS_TRIGGER,
-     SNAPSHOT_COLUMNS),
+    (
+        "invoices",
+        "trg_invoices_supplier_snapshot_fixed",
+        INVOICES_TRIGGER,
+        SNAPSHOT_COLUMNS + ("invoice_number",),
+    ),
+    ("payments", "trg_payments_supplier_snapshot_fixed", PAYMENTS_TRIGGER, SNAPSHOT_COLUMNS),
 )
 
 TRIGGER_NAMES = frozenset(entry[1] for entry in TRIGGERS)

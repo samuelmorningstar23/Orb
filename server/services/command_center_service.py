@@ -17,12 +17,19 @@ Design contract:
     normalization uses forecast_service._normalize_ward, so census/occupancy here
     always agree with the Forecast pillar.
 """
+
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from database import db_session
+
+from services.forecast_service import (
+    WARD_CAPACITY,
+    _normalize_ward,
+    capacity_source_summary,
+)
 
 logger = logging.getLogger("orb.command_center")
 
@@ -39,23 +46,19 @@ logger = logging.getLogger("orb.command_center")
 # the Command Center header read `30/48` (the four-ward fallback) while the
 # capacity forecast three tiles below it read `34/72` (the six real wards), from
 # the same snapshot. Summing the live dict cannot drift.
-from services.forecast_service import (
-    WARD_CAPACITY,
-    _normalize_ward,
-    capacity_source_summary,
-)
 
 
 def _total_capacity() -> int:
     """Live total bed capacity. Always read through this, never a cached int."""
     return sum(WARD_CAPACITY.values())
 
+
 # A snapshot is considered "downtime-ready" if it was captured within this window.
 DOWNTIME_RECENT_WINDOW_MIN = 24 * 60  # 24 hours
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _now_iso() -> str:
@@ -68,7 +71,7 @@ def _parse_ts(ts) -> datetime | None:
     try:
         dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         return dt
     except (ValueError, TypeError):
         return None
@@ -91,7 +94,10 @@ def _admitted_with_acuity() -> list[dict]:
     one with no active admission row, which the board's own query would drop.
     """
     from services.vigil_service import (
-        board_order, score_vitals_row, scoring_enabled, ward_bed_order,
+        board_order,
+        score_vitals_row,
+        scoring_enabled,
+        ward_bed_order,
     )
 
     with db_session() as db:
@@ -129,22 +135,21 @@ def _admitted_with_acuity() -> list[dict]:
             d["news2_result"] = None
             d["level"] = None
             d["news2"] = None
-            d["norm_ward"] = _normalize_ward(d.get("ward"))
+            d["norm_ward"] = _normalize_ward(d.get("ward") or "")
             out.append(d)
             continue
         # One patient whose row cannot be scored must not blank the house: the
         # whole list used to fall to zeros with it. That patient is counted
         # "not scored", which the Critical card says out loud.
         try:
-            news2 = score_vitals_row(latest.get(d["id"]), patient_id=d["id"],
-                                     on_scale_2=on_scale_2)
+            news2 = score_vitals_row(latest.get(d["id"]), patient_id=d["id"], on_scale_2=on_scale_2)
         except Exception as e:
             logger.warning("command-center: NEWS2 failed for %s: %s", d["id"], e)
             news2 = None
         d["news2_result"] = news2
         d["level"] = news2["level"] if news2 else None
         d["news2"] = news2["raw_news2"] if news2 else None
-        d["norm_ward"] = _normalize_ward(d.get("ward"))
+        d["norm_ward"] = _normalize_ward(d.get("ward") or "")
         out.append(d)
     if scoring:
         out.sort(key=lambda d: board_order(d["id"], d["news2_result"]))
@@ -157,13 +162,15 @@ def _admitted_with_acuity() -> list[dict]:
 #  SECTION BUILDERS — each returns a dict and never raises (caller wraps too).
 # ══════════════════════════════════════════════════════════════════════════
 
+
 def _census_and_acuity(patients: list[dict]) -> tuple[dict, dict]:
     """Build both the census (occupancy vs capacity) and acuity (counts + heatmap)
     sections from a single pass over the admitted-patient list."""
     # Per-ward tallies keyed by the canonical WARD_CAPACITY wards.
     ward_occ = {w: 0 for w in WARD_CAPACITY}
-    ward_acuity = {w: {"critical": 0, "elevated": 0, "stable": 0, "not_scored": 0}
-                   for w in WARD_CAPACITY}
+    ward_acuity = {
+        w: {"critical": 0, "elevated": 0, "stable": 0, "not_scored": 0} for w in WARD_CAPACITY
+    }
     totals = {"critical": 0, "elevated": 0, "stable": 0, "not_scored": 0}
 
     for p in patients:
@@ -180,25 +187,31 @@ def _census_and_acuity(patients: list[dict]) -> tuple[dict, dict]:
     heatmap = []
     for w, cap in WARD_CAPACITY.items():
         occ = ward_occ[w]
-        by_ward.append({
-            "ward": w,
-            "occupied": occ,
-            "capacity": cap,
-            "occupancy_pct": round(occ / cap * 100, 1) if cap else 0.0,
-        })
-        heatmap.append({
-            "ward": w,
-            "critical": ward_acuity[w]["critical"],
-            "elevated": ward_acuity[w]["elevated"],
-            "stable": ward_acuity[w]["stable"],
-            "not_scored": ward_acuity[w]["not_scored"],
-        })
+        by_ward.append(
+            {
+                "ward": w,
+                "occupied": occ,
+                "capacity": cap,
+                "occupancy_pct": round(occ / cap * 100, 1) if cap else 0.0,
+            }
+        )
+        heatmap.append(
+            {
+                "ward": w,
+                "critical": ward_acuity[w]["critical"],
+                "elevated": ward_acuity[w]["elevated"],
+                "stable": ward_acuity[w]["stable"],
+                "not_scored": ward_acuity[w]["not_scored"],
+            }
+        )
 
     total_admitted = len(patients)
     census = {
         "total_admitted": total_admitted,
         "total_capacity": _total_capacity(),
-        "occupancy_pct": round(total_admitted / _total_capacity() * 100, 1) if _total_capacity() else 0.0,
+        "occupancy_pct": round(total_admitted / _total_capacity() * 100, 1)
+        if _total_capacity()
+        else 0.0,
         "by_ward": by_ward,
     }
     # Where the bed counts came from (adt-14): 'from bed register' or 'site
@@ -208,7 +221,8 @@ def _census_and_acuity(patients: list[dict]) -> tuple[dict, dict]:
         census["capacity_source"] = {k: source[k] for k in ("source", "words")}
         for row in by_ward:
             row["capacity_source"] = source["by_ward"].get(
-                row["ward"], {"source": "site_setting", "words": "site setting"})
+                row["ward"], {"source": "site_setting", "words": "site setting"}
+            )
     acuity = {
         "critical": totals["critical"],
         "elevated": totals["elevated"],
@@ -234,16 +248,18 @@ def _deteriorations(patients: list[dict]) -> list[dict]:
         if p["level"] not in ("critical", "elevated"):
             continue
         news2 = p.get("news2_result") or {}
-        out.append({
-            "patient_id": p["id"],
-            "name": p.get("name"),
-            "ward": p.get("ward"),
-            "bed": p.get("bed"),
-            "level": p["level"],
-            "news2": p.get("news2"),
-            # False: an incomplete set, so the number is a minimum.
-            "news2_complete": news2.get("complete"),
-        })
+        out.append(
+            {
+                "patient_id": p["id"],
+                "name": p.get("name"),
+                "ward": p.get("ward"),
+                "bed": p.get("bed"),
+                "level": p["level"],
+                "news2": p.get("news2"),
+                # False: an incomplete set, so the number is a minimum.
+                "news2_complete": news2.get("complete"),
+            }
+        )
     return out
 
 
@@ -273,9 +289,7 @@ def _forecast() -> dict:
     first = days[0] if days else {}
     return {
         "projected_admissions_24h": first.get("predicted_admissions", 0),
-        "projected_occupancy": first.get(
-            "predicted_occupancy", flow.get("current_occupancy", 0)
-        ),
+        "projected_occupancy": first.get("predicted_occupancy", flow.get("current_occupancy", 0)),
         "projected_occupancy_pct": first.get(
             "occupancy_pct", flow.get("current_occupancy_pct", 0.0)
         ),
@@ -333,22 +347,26 @@ def _or_today() -> dict:
                ORDER BY s.scheduled_time ASC""",
             (today,),
         ).fetchall()
-    cases = [{
-        "id": r["id"],
-        "procedure_name": r["procedure_name"],
-        "operating_room": r["operating_room"],
-        "scheduled_time": r["scheduled_time"],
-        "status": r["status"],
-        "estimated_duration_min": r["estimated_duration_min"],
-        "patient_name": r["patient_name"],
-        "ward": r["ward"],
-    } for r in rows]
+    cases = [
+        {
+            "id": r["id"],
+            "procedure_name": r["procedure_name"],
+            "operating_room": r["operating_room"],
+            "scheduled_time": r["scheduled_time"],
+            "status": r["status"],
+            "estimated_duration_min": r["estimated_duration_min"],
+            "patient_name": r["patient_name"],
+            "ward": r["ward"],
+        }
+        for r in rows
+    ]
     return {"count": len(cases), "cases": cases}
 
 
 # ══════════════════════════════════════════════════════════════════════════
 #  PUBLIC ENTRY POINT
 # ══════════════════════════════════════════════════════════════════════════
+
 
 # Empty-DB / failure fallbacks per section (used when a builder raises).
 def _empty_census() -> dict:
@@ -365,7 +383,10 @@ def _empty_census() -> dict:
 
 def _empty_acuity() -> dict:
     return {
-        "critical": 0, "elevated": 0, "stable": 0, "not_scored": 0,
+        "critical": 0,
+        "elevated": 0,
+        "stable": 0,
+        "not_scored": 0,
         "heatmap": [
             {"ward": w, "critical": 0, "elevated": 0, "stable": 0, "not_scored": 0}
             for w in WARD_CAPACITY
@@ -384,6 +405,7 @@ def house_snapshot() -> dict:
     # The screen hides the acuity bands and the highest-scores list when this
     # is False (ORB_SCORING_ENABLED off, the Orb Ward Record).
     from services.vigil_service import scoring_enabled
+
     snapshot["scoring_enabled"] = scoring_enabled()
 
     # Admitted-patient list feeds census, acuity, deteriorations and downtime.

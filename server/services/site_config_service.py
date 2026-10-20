@@ -47,6 +47,7 @@ library (no new dependency on an appliance that must install offline), its
 parser reports the line number of a syntax error, and comments survive — the
 file is meant to be read by the next person, not just parsed.
 """
+
 from __future__ import annotations
 
 import json
@@ -54,10 +55,11 @@ import logging
 import os
 import re
 import tomllib
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from difflib import get_close_matches
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from services.india_states import STATES, resolve_state
 
@@ -259,7 +261,7 @@ _TYPE_NAMES = {
     "int": "a whole number",
     "number": "a number",
     "bool": "true or false",
-    "str_list": "a list of quoted names, e.g. [\"GM-1\", \"GM-2\"]",
+    "str_list": 'a list of quoted names, e.g. ["GM-1", "GM-2"]',
 }
 
 
@@ -318,17 +320,27 @@ class _LineIndex:
 #  Validation
 # ═════════════════════════════════════════════════════════════════════════════
 def _fail(
-    path: Path, idx: _LineIndex, table: str, key: str | None, problem: str,
-    *, occurrence: int = 0, hint: str | None = None,
-) -> "SiteConfigError":
+    path: Path,
+    idx: _LineIndex,
+    table: str,
+    key: str | None,
+    problem: str,
+    *,
+    occurrence: int = 0,
+    hint: str | None = None,
+) -> SiteConfigError:
     line = idx.key(table, key, occurrence) if key else idx.table(table, occurrence)
     return SiteConfigError(
-        path, problem, line=line, source_line=idx.text(line), hint=hint,
+        path,
+        problem,
+        line=line,
+        source_line=idx.text(line),
+        hint=hint,
     )
 
 
 def _suggest(name: str, options: Iterable[str]) -> str:
-    """"did you mean" + the full allowed list. Both matter: the near-miss fixes
+    """ "did you mean" + the full allowed list. Both matter: the near-miss fixes
     the common case in one read, the list fixes the case where the operator was
     guessing at a name that never existed."""
     options = sorted(options)
@@ -341,8 +353,13 @@ def _suggest(name: str, options: Iterable[str]) -> str:
 
 
 def _check_value(
-    path: Path, idx: _LineIndex, table: str, key: str, value: Any,
-    spec: dict, occurrence: int = 0,
+    path: Path,
+    idx: _LineIndex,
+    table: str,
+    key: str,
+    value: Any,
+    spec: dict,
+    occurrence: int = 0,
 ) -> Any:
     """One value against its spec. Raises SiteConfigError; returns the value."""
     kind = spec["type"]
@@ -351,17 +368,22 @@ def _check_value(
     # Rule 1. A value that is present but empty is never a default.
     if isinstance(value, str) and not value.strip():
         raise _fail(
-            path, idx, table, key,
+            path,
+            idx,
+            table,
+            key,
             f"'{key}' is empty. A setting that is written down but left blank is "
             f"the failure this file exists to prevent. Orb will not guess what "
             f"you meant.",
             occurrence=occurrence,
-            hint=f"Give it a value ({want}), or delete the line entirely to use "
-                 f"Orb's default.",
+            hint=f"Give it a value ({want}), or delete the line entirely to use Orb's default.",
         )
     if kind == "str_list" and isinstance(value, list) and not value:
         raise _fail(
-            path, idx, table, key,
+            path,
+            idx,
+            table,
+            key,
             f"'{key}' is an empty list. Delete the line to use Orb's default, or "
             f"list at least one entry.",
             occurrence=occurrence,
@@ -369,30 +391,41 @@ def _check_value(
 
     if kind == "str":
         if not isinstance(value, str):
-            raise _fail(path, idx, table, key,
-                        f"'{key}' must be {want}.", occurrence=occurrence)
+            raise _fail(path, idx, table, key, f"'{key}' must be {want}.", occurrence=occurrence)
         return value.strip()
 
     if kind == "bool":
         if not isinstance(value, bool):
-            raise _fail(path, idx, table, key,
-                        f"'{key}' must be {want} (no quotes).", occurrence=occurrence)
+            raise _fail(
+                path, idx, table, key, f"'{key}' must be {want} (no quotes).", occurrence=occurrence
+            )
         return value
 
     if kind in ("int", "number"):
         # bool is an int subclass in Python — `news2_threshold = true` must not
         # silently become 1.
-        ok = isinstance(value, int) and not isinstance(value, bool) if kind == "int" \
+        ok = (
+            isinstance(value, int) and not isinstance(value, bool)
+            if kind == "int"
             else isinstance(value, (int, float)) and not isinstance(value, bool)
+        )
         if not ok:
-            raise _fail(path, idx, table, key,
-                        f"'{key}' must be {want}, not {value!r}.", occurrence=occurrence)
+            raise _fail(
+                path,
+                idx,
+                table,
+                key,
+                f"'{key}' must be {want}, not {value!r}.",
+                occurrence=occurrence,
+            )
         lo, hi = spec.get("min"), spec.get("max")
         if lo is not None and value < lo or hi is not None and value > hi:
             raise _fail(
-                path, idx, table, key,
-                f"'{key}' is {value}, which is outside the range Orb accepts "
-                f"({lo} to {hi}).",
+                path,
+                idx,
+                table,
+                key,
+                f"'{key}' is {value}, which is outside the range Orb accepts ({lo} to {hi}).",
                 occurrence=occurrence,
                 hint=_range_hint(table, key),
             )
@@ -400,14 +433,18 @@ def _check_value(
 
     if kind == "str_list":
         if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
-            raise _fail(path, idx, table, key,
-                        f"'{key}' must be {want}.", occurrence=occurrence)
+            raise _fail(path, idx, table, key, f"'{key}' must be {want}.", occurrence=occurrence)
         cleaned = []
         for v in value:
             if not v.strip():
-                raise _fail(path, idx, table, key,
-                            f"'{key}' contains an empty entry. Remove it.",
-                            occurrence=occurrence)
+                raise _fail(
+                    path,
+                    idx,
+                    table,
+                    key,
+                    f"'{key}' contains an empty entry. Remove it.",
+                    occurrence=occurrence,
+                )
             cleaned.append(v.strip())
         return cleaned
 
@@ -418,8 +455,10 @@ def _range_hint(table: str, key: str) -> str | None:
     """Why the bound is where it is. An operator who is told 'out of range' and
     not told why will pick the nearest legal number and move on."""
     if key == "news2_threshold" or key == "entry_min_news2":
-        return ("NEWS2 is a 0-20 aggregate score. A threshold above 20 can never be "
-                "reached, so nothing would ever escalate.")
+        return (
+            "NEWS2 is a 0-20 aggregate score. A threshold above 20 can never be "
+            "reached, so nothing would ever escalate."
+        )
     if key == "timeout_minutes":
         return "A tier that waits longer than 12 hours is not an escalation."
     if key == "disk_min_free_percent":
@@ -430,14 +469,21 @@ def _range_hint(table: str, key: str) -> str | None:
 
 
 def _check_table(
-    path: Path, idx: _LineIndex, table: str, data: dict, occurrence: int = 0,
+    path: Path,
+    idx: _LineIndex,
+    table: str,
+    data: dict,
+    occurrence: int = 0,
 ) -> dict:
     """Every key in one table, against the schema for that table."""
     spec_table = _SCHEMA[table]
     # A nested table or array-of-tables shows up as a plain key on its
     # parent; it is validated separately, so allow the name through here.
-    nested = {t[len(table) + 1:] for t in (_ARRAY_TABLES | _SUB_TABLES)
-              if t.startswith(table + ".") and t.count(".") == table.count(".") + 1}
+    nested = {
+        t[len(table) + 1 :]
+        for t in (_ARRAY_TABLES | _SUB_TABLES)
+        if t.startswith(table + ".") and t.count(".") == table.count(".") + 1
+    }
     out: dict = {}
     for key, value in data.items():
         if key in nested:
@@ -445,7 +491,10 @@ def _check_table(
         spec = spec_table.get(key)
         if spec is None:
             raise _fail(
-                path, idx, table, key,
+                path,
+                idx,
+                table,
+                key,
                 f"'{key}' is not a setting Orb knows about in [{table}].",
                 occurrence=occurrence,
                 hint=_suggest(key, set(spec_table) | nested),
@@ -454,7 +503,10 @@ def _check_table(
     for key, spec in spec_table.items():
         if spec.get("required") and key not in out:
             raise _fail(
-                path, idx, table, None,
+                path,
+                idx,
+                table,
+                None,
                 f"[{table}] is missing the required setting '{key}'.",
                 occurrence=occurrence,
                 hint=f"Add a line: {key} = ...",
@@ -472,17 +524,23 @@ def _resolve_state(path: Path, idx: _LineIndex, value: str) -> str:
     code = resolve_state(value)
     if code is not None:
         return code
-    close = get_close_matches(value.strip().lower(),
-                              [n.lower() for n in STATES.values()], n=1, cutoff=0.6)
+    close = get_close_matches(
+        value.strip().lower(), [n.lower() for n in STATES.values()], n=1, cutoff=0.6
+    )
     hint = []
     if close:
         name = next(n for n in STATES.values() if n.lower() == close[0])
         hint.append(f"Did you mean '{name}'?")
-    hint.append('Write the state or union territory by name or by its two-letter '
-                'code, e.g. state = "Maharashtra" or state = "MH".')
+    hint.append(
+        "Write the state or union territory by name or by its two-letter "
+        'code, e.g. state = "Maharashtra" or state = "MH".'
+    )
     hint.append("Codes Orb knows: " + ", ".join(STATES))
     raise _fail(
-        path, idx, "site", "state",
+        path,
+        idx,
+        "site",
+        "state",
         f"'{value}' is not an Indian state or union territory Orb knows.",
         hint="\n".join(hint),
     )
@@ -526,20 +584,30 @@ def _validate(path: Path, raw_text: str, doc: dict) -> SiteConfig:
         name = dept["name"]
         if _BED_PREFIX_RE.match(name):
             raise _fail(
-                path, idx, "departments", "name", occurrence=i,
+                path,
+                idx,
+                "departments",
+                "name",
+                occurrence=i,
                 problem=f"'{name}' looks like a BED PREFIX, not a department.",
-                hint=("In Orb a department is the clinical service, "
-                      "\"General Medicine\", \"Cardiology\". A ward is the bed prefix, "
-                      "\"GM-1\". Every permission check keys on the department, so "
-                      "putting a bed prefix here quietly stops staff seeing their "
-                      "own patients.\n"
-                      f'Try:\n  name = "General Medicine"\n  wards = ["{name}"]'),
+                hint=(
+                    "In Orb a department is the clinical service, "
+                    '"General Medicine", "Cardiology". A ward is the bed prefix, '
+                    '"GM-1". Every permission check keys on the department, so '
+                    "putting a bed prefix here quietly stops staff seeing their "
+                    "own patients.\n"
+                    f'Try:\n  name = "General Medicine"\n  wards = ["{name}"]'
+                ),
             )
         if name.lower() in seen_departments:
             raise _fail(
-                path, idx, "departments", "name", occurrence=i,
+                path,
+                idx,
+                "departments",
+                "name",
+                occurrence=i,
                 problem=f"department '{name}' is listed twice "
-                        f"(first on line {seen_departments[name.lower()]}).",
+                f"(first on line {seen_departments[name.lower()]}).",
                 hint="Merge the two entries: put all of its wards in one list.",
             )
         seen_departments[name.lower()] = idx.key("departments", "name", i) or 0
@@ -547,11 +615,17 @@ def _validate(path: Path, raw_text: str, doc: dict) -> SiteConfig:
             owner = seen_wards.get(ward.lower())
             if owner:
                 raise _fail(
-                    path, idx, "departments", "wards", occurrence=i,
+                    path,
+                    idx,
+                    "departments",
+                    "wards",
+                    occurrence=i,
                     problem=f"ward '{ward}' is claimed by both '{owner}' and '{name}'.",
-                    hint=("A bed prefix belongs to exactly one department. With two "
-                          "owners, which staff may see a patient in that bed has no "
-                          "answer, and Orb would have to pick one."),
+                    hint=(
+                        "A bed prefix belongs to exactly one department. With two "
+                        "owners, which staff may see a patient in that bed has no "
+                        "answer, and Orb would have to pick one."
+                    ),
                 )
             seen_wards[ward.lower()] = name
         cfg.departments.append(dept)
@@ -570,13 +644,21 @@ def _validate(path: Path, raw_text: str, doc: dict) -> SiteConfig:
         is_last = i == len(tiers_raw) - 1
         if not is_last and tier.get("timeout_minutes") is None:
             raise _fail(
-                path, idx, "escalation.tiers", "role", occurrence=i,
-                problem=(f"tier {i + 1} ('{tier['role']}') has no timeout_minutes, "
-                         f"but it is not the last tier."),
-                hint=("Without a timeout this tier never hands on, so an unanswered "
-                      "alert stops here and the tiers below it are unreachable.\n"
-                      "Add `timeout_minutes = 10`, or move this tier to the end of "
-                      "the list if it really is the last resort."),
+                path,
+                idx,
+                "escalation.tiers",
+                "role",
+                occurrence=i,
+                problem=(
+                    f"tier {i + 1} ('{tier['role']}') has no timeout_minutes, "
+                    f"but it is not the last tier."
+                ),
+                hint=(
+                    "Without a timeout this tier never hands on, so an unanswered "
+                    "alert stops here and the tiers below it are unreachable.\n"
+                    "Add `timeout_minutes = 10`, or move this tier to the end of "
+                    "the list if it really is the last resort."
+                ),
             )
         if is_last and tier.get("timeout_minutes") is not None:
             # Not an error — escalation_service clears it — but say so, because
@@ -587,13 +669,15 @@ def _validate(path: Path, raw_text: str, doc: dict) -> SiteConfig:
                 f"open and visible instead."
             )
             tier["timeout_minutes"] = None
-        tiers.append({
-            "tier": i + 1,
-            "role": tier["role"],
-            "label": tier.get("label") or tier["role"].title(),
-            "timeout_minutes": tier.get("timeout_minutes"),
-            "entry_min_news2": tier.get("entry_min_news2"),
-        })
+        tiers.append(
+            {
+                "tier": i + 1,
+                "role": tier["role"],
+                "label": tier.get("label") or tier["role"].title(),
+                "timeout_minutes": tier.get("timeout_minutes"),
+                "entry_min_news2": tier.get("entry_min_news2"),
+            }
+        )
     if tiers:
         tiers[-1]["timeout_minutes"] = None
     escalation["tiers"] = tiers
@@ -626,10 +710,13 @@ def _validate_facilities(path: Path, idx: _LineIndex, raw: Any) -> list[dict]:
     header = idx.table("facilities")
     if not isinstance(raw, list) or not raw or not all(isinstance(e, dict) for e in raw):
         raise SiteConfigError(
-            path, "'facilities' must be written as [[facilities]] blocks, one per facility.",
-            line=header, source_line=idx.text(header),
+            path,
+            "'facilities' must be written as [[facilities]] blocks, one per facility.",
+            line=header,
+            source_line=idx.text(header),
             hint='Write each one as:\n  [[facilities]]\n  code = "MAIN"\n'
-                 '  ingestion_sources = ["monitor_hl7"]')
+            '  ingestion_sources = ["monitor_hl7"]',
+        )
     out: list[dict] = []
     seen_codes: dict[str, int] = {}
     seen_sources: dict[str, str] = {}
@@ -638,41 +725,67 @@ def _validate_facilities(path: Path, idx: _LineIndex, raw: Any) -> list[dict]:
         code = fac["code"].upper()
         if not _FACILITY_CODE_RE.match(code):
             raise _fail(
-                path, idx, "facilities", "code", occurrence=i,
+                path,
+                idx,
+                "facilities",
+                "code",
+                occurrence=i,
                 problem=f"'{fac['code']}' is not a facility code.",
-                hint=("A facility code is 2 to 12 capital letters and digits, exactly as "
-                      "the Facilities screen shows it, e.g. code = \"MAIN\"."))
+                hint=(
+                    "A facility code is 2 to 12 capital letters and digits, exactly as "
+                    'the Facilities screen shows it, e.g. code = "MAIN".'
+                ),
+            )
         if code in seen_codes:
             raise _fail(
-                path, idx, "facilities", "code", occurrence=i,
-                problem=f"facility '{code}' is listed twice "
-                        f"(first on line {seen_codes[code]}).",
-                hint="Merge the two blocks into one.")
+                path,
+                idx,
+                "facilities",
+                "code",
+                occurrence=i,
+                problem=f"facility '{code}' is listed twice (first on line {seen_codes[code]}).",
+                hint="Merge the two blocks into one.",
+            )
         seen_codes[code] = idx.key("facilities", "code", i) or 0
         mirror = fac.get("downtime_mirror_dir")
         if mirror is not None and not Path(mirror).is_absolute():
             raise _fail(
-                path, idx, "facilities", "downtime_mirror_dir", occurrence=i,
+                path,
+                idx,
+                "facilities",
+                "downtime_mirror_dir",
+                occurrence=i,
                 problem=f"downtime_mirror_dir '{mirror}' is not a full folder path.",
-                hint=("Write the whole path from the top of the disk, e.g. "
-                      "downtime_mirror_dir = \"/Volumes/WardPacks/MAIN\"."))
+                hint=(
+                    "Write the whole path from the top of the disk, e.g. "
+                    'downtime_mirror_dir = "/Volumes/WardPacks/MAIN".'
+                ),
+            )
         sources: list[str] = []
         for source in fac.get("ingestion_sources", []):
             folded = source.casefold()
             owner = seen_sources.get(folded)
             if owner is not None:
                 raise _fail(
-                    path, idx, "facilities", "ingestion_sources", occurrence=i,
-                    problem=(f"ingestion source '{source}' is listed twice "
-                             f"(under '{owner}' and '{code}')."
-                             if owner != code else
-                             f"ingestion source '{source}' is listed twice under '{code}'."),
-                    hint=("A feed belongs to exactly one facility. With two, whose patients "
-                          "its readings are for has no answer, and Orb would have to pick one."))
+                    path,
+                    idx,
+                    "facilities",
+                    "ingestion_sources",
+                    occurrence=i,
+                    problem=(
+                        f"ingestion source '{source}' is listed twice "
+                        f"(under '{owner}' and '{code}')."
+                        if owner != code
+                        else f"ingestion source '{source}' is listed twice under '{code}'."
+                    ),
+                    hint=(
+                        "A feed belongs to exactly one facility. With two, whose patients "
+                        "its readings are for has no answer, and Orb would have to pick one."
+                    ),
+                )
             seen_sources[folded] = code
             sources.append(source)
-        out.append({"code": code, "downtime_mirror_dir": mirror,
-                    "ingestion_sources": sources})
+        out.append({"code": code, "downtime_mirror_dir": mirror, "ingestion_sources": sources})
     return out
 
 
@@ -686,50 +799,82 @@ def _validate_lab_critical(path: Path, idx: _LineIndex, lab_raw: Any, cfg: SiteC
     and the laboratory phones the ward."""
     header = idx.table("lab") or idx.table("lab.critical")
     if not isinstance(lab_raw, dict):
-        raise SiteConfigError(path, "'lab' must be a section, written [lab.critical].",
-                              line=header, source_line=idx.text(header))
+        raise SiteConfigError(
+            path,
+            "'lab' must be a section, written [lab.critical].",
+            line=header,
+            source_line=idx.text(header),
+        )
     _check_table(path, idx, "lab", lab_raw)
     crit_raw = lab_raw.get("critical")
     if crit_raw is None:
         raise SiteConfigError(
-            path, "[lab] is written but has nothing in it.", line=header,
+            path,
+            "[lab] is written but has nothing in it.",
+            line=header,
             source_line=idx.text(header),
             hint="Delete it, or add the critical-result ladder:\n"
-                 "  [lab.critical]\n  [[lab.critical.tiers]]\n"
-                 '  role = "Ward nurse in charge and the ordering doctor"\n'
-                 "  timeout_minutes = 15")
+            "  [lab.critical]\n  [[lab.critical.tiers]]\n"
+            '  role = "Ward nurse in charge and the ordering doctor"\n'
+            "  timeout_minutes = 15",
+        )
     if not isinstance(crit_raw, dict):
-        raise _fail(path, idx, "lab", "critical",
-                    "'critical' must be a section, written [lab.critical].")
+        raise _fail(
+            path, idx, "lab", "critical", "'critical' must be a section, written [lab.critical]."
+        )
     _check_table(path, idx, "lab.critical", crit_raw)
     tiers_raw = crit_raw.get("tiers")
     if not tiers_raw:
         raise _fail(
-            path, idx, "lab.critical", None,
+            path,
+            idx,
+            "lab.critical",
+            None,
             "[lab.critical] is written but lists no tiers. Orb ships no critical-result "
             "ladder, and will not guess one.",
-            hint=("Add one [[lab.critical.tiers]] block per person the laboratory calls, in "
-                  "order, or delete [lab.critical] to run with no ladder: every critical "
-                  "result is then due at once, and the laboratory phones the ward."))
+            hint=(
+                "Add one [[lab.critical.tiers]] block per person the laboratory calls, in "
+                "order, or delete [lab.critical] to run with no ladder: every critical "
+                "result is then due at once, and the laboratory phones the ward."
+            ),
+        )
     if not isinstance(tiers_raw, list):
-        raise _fail(path, idx, "lab.critical", "tiers",
-                    "'tiers' must be written as [[lab.critical.tiers]] blocks.")
+        raise _fail(
+            path,
+            idx,
+            "lab.critical",
+            "tiers",
+            "'tiers' must be written as [[lab.critical.tiers]] blocks.",
+        )
     tiers: list[dict] = []
     for i, entry in enumerate(tiers_raw):
         if not isinstance(entry, dict):
-            raise _fail(path, idx, "lab.critical", "tiers",
-                        "'tiers' must be written as [[lab.critical.tiers]] blocks.")
+            raise _fail(
+                path,
+                idx,
+                "lab.critical",
+                "tiers",
+                "'tiers' must be written as [[lab.critical.tiers]] blocks.",
+            )
         tier = _check_table(path, idx, "lab.critical.tiers", entry, occurrence=i)
         is_last = i == len(tiers_raw) - 1
         if not is_last and tier.get("timeout_minutes") is None:
             raise _fail(
-                path, idx, "lab.critical.tiers", "role", occurrence=i,
-                problem=(f"critical-result tier {i + 1} ('{tier['role']}') has no "
-                         "timeout_minutes, but it is not the last tier."),
-                hint=("Without a timeout this tier never hands on, so a critical result "
-                      "nobody confirms stops here and the tiers below it are never called.\n"
-                      "Add `timeout_minutes = 15`, or move this tier to the end of the list "
-                      "if it really is the last resort."),
+                path,
+                idx,
+                "lab.critical.tiers",
+                "role",
+                occurrence=i,
+                problem=(
+                    f"critical-result tier {i + 1} ('{tier['role']}') has no "
+                    "timeout_minutes, but it is not the last tier."
+                ),
+                hint=(
+                    "Without a timeout this tier never hands on, so a critical result "
+                    "nobody confirms stops here and the tiers below it are never called.\n"
+                    "Add `timeout_minutes = 15`, or move this tier to the end of the list "
+                    "if it really is the last resort."
+                ),
             )
         if is_last and tier.get("timeout_minutes") is not None:
             # escalation's rule: not an error, but said, because an operator who
@@ -737,14 +882,17 @@ def _validate_lab_critical(path: Path, idx: _LineIndex, lab_raw: Any, cfg: SiteC
             cfg.errors.append(
                 f"the last critical-result tier ('{tier['role']}') has a timeout, which Orb "
                 "ignores: there is nobody after it to call. The result stays open and on "
-                "the laboratory's Critical results screen until a callback is logged.")
+                "the laboratory's Critical results screen until a callback is logged."
+            )
             tier["timeout_minutes"] = None
-        tiers.append({
-            "tier": i + 1,
-            "role": tier["role"],
-            "label": tier.get("label") or tier["role"],
-            "timeout_minutes": tier.get("timeout_minutes"),
-        })
+        tiers.append(
+            {
+                "tier": i + 1,
+                "role": tier["role"],
+                "label": tier.get("label") or tier["role"],
+                "timeout_minutes": tier.get("timeout_minutes"),
+            }
+        )
     return {"tiers": tiers}
 
 
@@ -763,8 +911,9 @@ def _to_env(cfg: SiteConfig) -> dict[str, str]:
     if "news2_threshold" in esc:
         env["ORB_ESCALATION_NEWS2_THRESHOLD"] = str(esc["news2_threshold"])
     if "escalate_on_single_parameter_3" in esc:
-        env["ORB_ESCALATION_ON_SINGLE_PARAM_3"] = \
+        env["ORB_ESCALATION_ON_SINGLE_PARAM_3"] = (
             "true" if esc["escalate_on_single_parameter_3"] else "false"
+        )
     if "scan_lookback_minutes" in esc:
         env["ORB_ESCALATION_SCAN_LOOKBACK_MINUTES"] = str(esc["scan_lookback_minutes"])
     if "relay_notify" in esc:
@@ -804,8 +953,8 @@ def load_site_config(path: Path | str | None = None, *, apply_env: bool = True) 
     An absent file is not an error and returns an empty, `present=False` config.
     """
     global _loaded
-    target = Path(path) if path is not None else Path(
-        os.getenv("ORB_SITE_CONFIG_FILE") or DEFAULT_PATH
+    target = (
+        Path(path) if path is not None else Path(os.getenv("ORB_SITE_CONFIG_FILE") or DEFAULT_PATH)
     )
 
     if not target.is_file():
@@ -816,9 +965,9 @@ def load_site_config(path: Path | str | None = None, *, apply_env: bool = True) 
         raw_text = target.read_text(encoding="utf-8")
     except OSError as e:
         raise SiteConfigError(
-            target, f"the file could not be read ({e.strerror or e}).",
-            hint="Check that it exists and that the Orb user can read it "
-                 f"(`ls -l {target}`).",
+            target,
+            f"the file could not be read ({e.strerror or e}).",
+            hint=f"Check that it exists and that the Orb user can read it (`ls -l {target}`).",
         ) from e
 
     try:
@@ -832,11 +981,16 @@ def load_site_config(path: Path | str | None = None, *, apply_env: bool = True) 
             target,
             f"the file is not valid TOML: {e}",
             line=line,
-            source_line=(raw_text.splitlines()[line - 1] if line and
-                         line <= len(raw_text.splitlines()) else None),
-            hint=("Common causes: a missing closing bracket on a [section] "
-                  "header, a value that needs quotes around it, or a stray "
-                  "character pasted from a word processor."),
+            source_line=(
+                raw_text.splitlines()[line - 1]
+                if line and line <= len(raw_text.splitlines())
+                else None
+            ),
+            hint=(
+                "Common causes: a missing closing bracket on a [section] "
+                "header, a value that needs quotes around it, or a stray "
+                "character pasted from a word processor."
+            ),
         ) from e
 
     cfg = _validate(target, raw_text, doc)
@@ -849,7 +1003,11 @@ def load_site_config(path: Path | str | None = None, *, apply_env: bool = True) 
                 logger.warning(
                     "Site config %s sets %s=%s, overriding the environment value "
                     "%r. The FILE wins. Remove it from the environment (.env) to "
-                    "silence this.", target, key, value, existing,
+                    "silence this.",
+                    target,
+                    key,
+                    value,
+                    existing,
                 )
             os.environ[key] = value
 
@@ -858,7 +1016,10 @@ def load_site_config(path: Path | str | None = None, *, apply_env: bool = True) 
         logger.warning("Site config %s: %s", target, note)
     logger.info(
         "Site config loaded from %s — site=%r, %d department(s), %d escalation tier(s)",
-        target, cfg.site_name, len(cfg.departments), len(cfg.escalation.get("tiers") or []),
+        target,
+        cfg.site_name,
+        len(cfg.departments),
+        len(cfg.escalation.get("tiers") or []),
     )
     return cfg
 
@@ -886,22 +1047,33 @@ def site_config_snapshot() -> dict:
         "departments": [d["name"] for d in cfg.departments],
         "wards": cfg.wards,
         "escalation_tiers": [
-            {"tier": t["tier"], "role": t["role"], "label": t["label"],
-             "timeout_minutes": t["timeout_minutes"]}
+            {
+                "tier": t["tier"],
+                "role": t["role"],
+                "label": t["label"],
+                "timeout_minutes": t["timeout_minutes"],
+            }
             for t in (cfg.escalation.get("tiers") or [])
         ],
         # The laboratory's critical-result ladder; [] means none is set.
         "lab_critical_tiers": [
-            {"tier": t["tier"], "role": t["role"], "label": t["label"],
-             "timeout_minutes": t["timeout_minutes"]}
+            {
+                "tier": t["tier"],
+                "role": t["role"],
+                "label": t["label"],
+                "timeout_minutes": t["timeout_minutes"],
+            }
             for t in (cfg.lab_critical.get("tiers") or [])
         ],
         # [[facilities]] (multisite-3 and multisite-16): codes and the feeds
         # bound to each. The mirror folder is reported as set or not, never
         # as the path itself.
         "facilities": [
-            {"code": f["code"], "ingestion_sources": list(f["ingestion_sources"]),
-             "downtime_mirror_set": f["downtime_mirror_dir"] is not None}
+            {
+                "code": f["code"],
+                "ingestion_sources": list(f["ingestion_sources"]),
+                "downtime_mirror_set": f["downtime_mirror_dir"] is not None,
+            }
             for f in cfg.facilities
         ],
         "notes": list(cfg.errors),

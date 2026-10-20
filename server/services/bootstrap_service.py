@@ -100,9 +100,10 @@ import os
 import sys
 import threading
 import time
-from datetime import datetime, timezone
+from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any
 
 # roles.py is import-free by contract, so this cannot close an import cycle.
 from roles import STORABLE_ROLES as _STORABLE_ROLES
@@ -128,9 +129,7 @@ PRIVILEGED_ROLES = ("admin",)
 # the CIO account review and the default-password scan. A role added to
 # roles.py later is covered here without anyone remembering this file.
 NON_STAFF_ROLES = ("patient",)
-STAFF_ROLES: tuple[str, ...] = tuple(
-    r for r in _STORABLE_ROLES if r not in NON_STAFF_ROLES
-)
+STAFF_ROLES: tuple[str, ...] = tuple(r for r in _STORABLE_ROLES if r not in NON_STAFF_ROLES)
 
 # Passwords that Orb's own tooling, its docs, or universal habit will have put
 # on an appliance. Every entry here is a credential that could plausibly reach a
@@ -163,7 +162,7 @@ MIN_ADMIN_PASSWORD_LEN = 12
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -187,7 +186,7 @@ FIRST_ADMIN_FILENAME = "FIRST-ADMIN-REQUIRED.txt"
 
 
 # ── Password policy (set-time) ───────────────────────────────────────────────
-def password_policy_error(password: str, *, user_id: str = "", name: str = "") -> Optional[str]:
+def password_policy_error(password: str, *, user_id: str = "", name: str = "") -> str | None:
     """Return a human-readable reason to REFUSE this password, or None to accept.
 
     Deliberately small and explainable — it runs at a console during an install,
@@ -212,7 +211,9 @@ def password_policy_error(password: str, *, user_id: str = "", name: str = "") -
             "a hospital appliance. Choose something else, and not a variation of it."
         )
     if len(password) < MIN_ADMIN_PASSWORD_LEN:
-        return f"Password must be at least {MIN_ADMIN_PASSWORD_LEN} characters (got {len(password)})."
+        return (
+            f"Password must be at least {MIN_ADMIN_PASSWORD_LEN} characters (got {len(password)})."
+        )
     if user_id and lowered == user_id.strip().lower():
         return "Password must not be the staff ID itself."
     if user_id and user_id.strip().lower() in lowered and len(user_id.strip()) >= 4:
@@ -250,6 +251,8 @@ def admin_inventory(db) -> dict[str, Any]:
         (SYSTEM_USER_ID,),
     ).fetchall()
 
+    active: list[dict]
+    inactive: list[dict]
     active, inactive = [], []
     for r in rows:
         pwd = (_row_get(r, "password_hash") or "").strip()
@@ -307,26 +310,29 @@ def review_accounts(db) -> dict[str, Any]:
             findings.append("legacy (non-bcrypt) password hash")
         if not r["is_active"]:
             findings.append("deactivated")
-        accounts.append({
-            "id": r["id"],
-            "name": r["name"],
-            "role": role,
-            "department": r["department"],
-            "registration_number": _row_get(r, "registration_number"),
-            "created_at": _row_get(r, "created_at"),
-            "is_active": bool(r["is_active"]),
-            "mfa_enrolled": bool(_row_get(r, "totp_enabled", 0)),
-            "privileged": privileged,
-            "permission_count": len(get_permissions_for_role(role)),
-            "findings": findings,
-        })
+        accounts.append(
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "role": role,
+                "department": r["department"],
+                "registration_number": _row_get(r, "registration_number"),
+                "created_at": _row_get(r, "created_at"),
+                "is_active": bool(r["is_active"]),
+                "mfa_enrolled": bool(_row_get(r, "totp_enabled", 0)),
+                "privileged": privileged,
+                "permission_count": len(get_permissions_for_role(role)),
+                "findings": findings,
+            }
+        )
 
     return {
         "generated_utc": _utc_now(),
         "staff_accounts": len(accounts),
         "accounts": accounts,
         "privileged_without_mfa": [
-            a["id"] for a in accounts
+            a["id"]
+            for a in accounts
             if a["privileged"] and a["is_active"] and not a["mfa_enrolled"]
         ],
     }
@@ -382,13 +388,15 @@ def scan_default_credentials(
             checked += 1
             try:
                 if verify_password(candidate, pwd_hash):
-                    findings.append({
-                        "id": row["id"],
-                        "role": row["role"],
-                        "is_active": bool(row["is_active"]),
-                        # Redacted on purpose — see the docstring.
-                        "password_hint": f"{candidate[0]}{'*' * (len(candidate) - 1)}",
-                    })
+                    findings.append(
+                        {
+                            "id": row["id"],
+                            "role": row["role"],
+                            "is_active": bool(row["is_active"]),
+                            # Redacted on purpose — see the docstring.
+                            "password_hint": f"{candidate[0]}{'*' * (len(candidate) - 1)}",
+                        }
+                    )
                     break
             except Exception:  # a malformed hash must not abort the whole scan
                 break
@@ -504,10 +512,11 @@ def bootstrap_snapshot() -> dict[str, Any]:
 
 def _hash_digest(password_hash: Any) -> str:
     import hashlib
+
     return hashlib.sha256(str(password_hash or "").encode("utf-8")).hexdigest()
 
 
-def live_default_credential_accounts() -> Optional[list[str]]:
+def live_default_credential_accounts() -> list[str] | None:
     """Accounts the last scan found on a shipped default password that can
     still sign in with it: active, and the password unchanged since the scan.
 
@@ -545,18 +554,35 @@ def _publish_gauges(snap: dict[str, Any]) -> None:
         from services.metrics_service import set_gauge
     except Exception:
         return
-    set_gauge("orb_admins_active", snap.get("admins_active", 0),
-              help_text="Login-capable administrator accounts on this appliance.")
-    set_gauge("orb_admins_with_mfa", snap.get("admins_with_mfa", 0),
-              help_text="Login-capable administrators that have enrolled a TOTP factor.")
-    set_gauge("orb_default_credential_accounts", len(snap.get("default_credential_accounts", [])),
-              help_text="Accounts found holding a shipped default password (0 is the only acceptable value).")
-    set_gauge("orb_bootstrap_scan_complete", 0 if snap.get("scan_budget_exhausted") else 1,
-              help_text="1 when the default-credential scan covered every staff account.")
+    set_gauge(
+        "orb_admins_active",
+        snap.get("admins_active", 0),
+        help_text="Login-capable administrator accounts on this appliance.",
+    )
+    set_gauge(
+        "orb_admins_with_mfa",
+        snap.get("admins_with_mfa", 0),
+        help_text="Login-capable administrators that have enrolled a TOTP factor.",
+    )
+    set_gauge(
+        "orb_default_credential_accounts",
+        len(snap.get("default_credential_accounts", [])),
+        help_text="Accounts found holding a shipped default password (0 is the only acceptable value).",
+    )
+    set_gauge(
+        "orb_bootstrap_scan_complete",
+        0 if snap.get("scan_budget_exhausted") else 1,
+        help_text="1 when the default-credential scan covered every staff account.",
+    )
 
 
-def _audit(action_type: str, outcome: str, summary: str, metadata: dict | None = None,
-           target_id: str | None = None) -> None:
+def _audit(
+    action_type: str,
+    outcome: str,
+    summary: str,
+    metadata: dict | None = None,
+    target_id: str | int | None = None,
+) -> None:
     """Audit a bootstrap decision. Never allowed to abort startup.
 
     event_category='security' is FAIL-CLOSED in audit_service, so a write failure
@@ -565,8 +591,10 @@ def _audit(action_type: str, outcome: str, summary: str, metadata: dict | None =
     and logged. The action still happened and is in the log either way.
     """
     import uuid
+
     try:
         from services.audit_service import log_audit_event
+
         log_audit_event(
             correlation_id=str(uuid.uuid4()),
             event_category="security",
@@ -576,14 +604,14 @@ def _audit(action_type: str, outcome: str, summary: str, metadata: dict | None =
             actor_user_id=SYSTEM_USER_ID,
             actor_role="admin",
             target_type="appliance_bootstrap",
-            target_id=target_id,
+            target_id=str(target_id) if target_id is not None else None,
             metadata=metadata,
         )
     except Exception as exc:
         logger.warning("Bootstrap audit write failed (%s): %s", action_type, exc)
 
 
-def run_bootstrap_check(*, scan: bool = True, enforce: Optional[bool] = None) -> dict[str, Any]:
+def run_bootstrap_check(*, scan: bool = True, enforce: bool | None = None) -> dict[str, Any]:
     """Assess the appliance's access posture and enforce the two invariants.
 
     Blocking (bcrypt + SQLite). MUST NOT be called on the event loop — start it
@@ -606,8 +634,12 @@ def run_bootstrap_check(*, scan: bool = True, enforce: Optional[bool] = None) ->
     with db_session() as db:
         inv = admin_inventory(db)
         scan_result: dict[str, Any] = {
-            "findings": [], "checked": 0, "accounts_considered": 0,
-            "budget_exhausted": False, "elapsed_s": 0.0, "skipped": True,
+            "findings": [],
+            "checked": 0,
+            "accounts_considered": 0,
+            "budget_exhausted": False,
+            "elapsed_s": 0.0,
+            "skipped": True,
         }
         if scan:
             scan_result = scan_default_credentials(db, budget_s=budget)
@@ -659,7 +691,8 @@ def run_bootstrap_check(*, scan: bool = True, enforce: Optional[bool] = None) ->
                 ", ".join(locked),
             )
             _audit(
-                "default_credentials_locked", "success",
+                "default_credentials_locked",
+                "success",
                 f"Locked {len(locked)} account(s) holding a shipped default password: {', '.join(locked)}",
                 metadata={"locked": locked, "profile": DEPLOYMENT_PROFILE},
             )
@@ -667,28 +700,36 @@ def run_bootstrap_check(*, scan: bool = True, enforce: Optional[bool] = None) ->
             logger.critical(
                 "SHIPPED DEFAULT CREDENTIALS FOUND: %s (profile=%s, enforcement=%s). "
                 "This appliance must NOT be handed to a hospital in this state.",
-                ids, DEPLOYMENT_PROFILE, "on" if enforce else "off",
+                ids,
+                DEPLOYMENT_PROFILE,
+                "on" if enforce else "off",
             )
             _audit(
-                "default_credentials_detected", "denied",
+                "default_credentials_detected",
+                "denied",
                 f"Detected {len(scan_result['findings'])} account(s) holding a shipped default password: {ids}",
-                metadata={"accounts": [f["id"] for f in scan_result["findings"]],
-                          "enforced": bool(enforce), "profile": DEPLOYMENT_PROFILE},
+                metadata={
+                    "accounts": [f["id"] for f in scan_result["findings"]],
+                    "enforced": bool(enforce),
+                    "profile": DEPLOYMENT_PROFILE,
+                },
             )
     if scan_result["budget_exhausted"]:
         logger.warning(
             "Default-credential scan hit its %.0fs budget after %d checks — %d staff "
             "account(s) were NOT fully checked. Privileged accounts are checked first, "
             "so admins were covered. Raise ORB_BOOTSTRAP_SCAN_BUDGET_S to finish the sweep.",
-            budget, scan_result["checked"], scan_result["accounts_considered"],
+            budget,
+            scan_result["checked"],
+            scan_result["accounts_considered"],
         )
 
     # ── Invariant 1: no admin can never be quiet ──
     if inv["admins_active"] == 0:
         reason = (
             "the only administrator account(s) held a shipped default password and were locked"
-            if locked else
-            "no administrator account exists (a fresh install that never ran create_admin.py)"
+            if locked
+            else "no administrator account exists (a fresh install that never ran create_admin.py)"
         )
         notice = write_first_admin_notice(reason)
         snap["first_admin_notice"] = str(notice)
@@ -697,11 +738,15 @@ def run_bootstrap_check(*, scan: bool = True, enforce: Optional[bool] = None) ->
             "in as admin and no admin can be created over the network. Fix at the "
             "console: server/.venv/bin/python server/scripts/create_admin.py "
             "--enroll-mfa . Written to %s",
-            reason, notice,
+            reason,
+            notice,
         )
-        _audit("no_admin_account", "denied",
-               f"Appliance has no login-capable administrator: {reason}",
-               metadata={"reason": reason})
+        _audit(
+            "no_admin_account",
+            "denied",
+            f"Appliance has no login-capable administrator: {reason}",
+            metadata={"reason": reason},
+        )
     else:
         _clear_first_admin_notice()
         if inv["admins_with_mfa"] == 0:
@@ -724,7 +769,7 @@ def run_bootstrap_check(*, scan: bool = True, enforce: Optional[bool] = None) ->
     return snap
 
 
-def start_bootstrap_check() -> Optional[threading.Thread]:
+def start_bootstrap_check() -> threading.Thread | None:
     """Run run_bootstrap_check() on a daemon thread. Returns the thread (or None
     when disabled).
 
@@ -777,10 +822,16 @@ def _main(argv: list[str] | None = None) -> int:
         prog="bootstrap_service",
         description="Assess (and in prod, enforce) this appliance's access posture.",
     )
-    parser.add_argument("--no-scan", action="store_true",
-                        help="Skip the bcrypt default-credential scan (inventory only).")
-    parser.add_argument("--enforce", action="store_true",
-                        help="Lock default-credential accounts even outside the prod profile.")
+    parser.add_argument(
+        "--no-scan",
+        action="store_true",
+        help="Skip the bcrypt default-credential scan (inventory only).",
+    )
+    parser.add_argument(
+        "--enforce",
+        action="store_true",
+        help="Lock default-credential accounts even outside the prod profile.",
+    )
     parser.add_argument("--json", action="store_true", help="Print the raw snapshot as JSON.")
     args = parser.parse_args(argv)
 
@@ -790,16 +841,22 @@ def _main(argv: list[str] | None = None) -> int:
     if args.json:
         print(json.dumps(snap, indent=2, default=str))
     else:
-        print(f"profile                    : {snap['profile']} (enforcement {'on' if snap['enforced'] else 'off'})")
+        print(
+            f"profile                    : {snap['profile']} (enforcement {'on' if snap['enforced'] else 'off'})"
+        )
         print(f"login-capable admins       : {snap['admins_active']}")
         print(f"  ... with a TOTP factor   : {snap['admins_with_mfa']}")
         print(f"deactivated admins         : {snap['admins_inactive']}")
-        print(f"default-credential accounts: {len(snap['default_credential_accounts'])} "
-              f"{snap['default_credential_accounts'] or ''}")
+        print(
+            f"default-credential accounts: {len(snap['default_credential_accounts'])} "
+            f"{snap['default_credential_accounts'] or ''}"
+        )
         print(f"  ... locked by this run   : {snap['default_credential_locked'] or 'none'}")
-        print(f"scan                       : {snap['scan_checked']} bcrypt checks over "
-              f"{snap['scan_accounts']} account(s) in {snap['elapsed_s']}s"
-              f"{' (BUDGET EXHAUSTED)' if snap['scan_budget_exhausted'] else ''}")
+        print(
+            f"scan                       : {snap['scan_checked']} bcrypt checks over "
+            f"{snap['scan_accounts']} account(s) in {snap['elapsed_s']}s"
+            f"{' (BUDGET EXHAUSTED)' if snap['scan_budget_exhausted'] else ''}"
+        )
 
     return 0 if (snap["admins_active"] > 0 and not snap["default_credential_accounts"]) else 1
 

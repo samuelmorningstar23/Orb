@@ -45,14 +45,23 @@ execute. Existing housekeeping rows are untouched: every new column is NULL
 (is_temporary 0) on them, so with ORB_ADT off nothing reads or writes any of
 this and behaviour is unchanged.
 """
+
 from migrations import Migration
 
 #: The facility label every ward carries until the multi-site epic.
 FACILITY_CODE = "MAIN"
 
 WARD_TYPES: tuple = (
-    "general", "icu", "hdu", "nicu", "picu", "maternity", "daycare",
-    "emergency", "isolation", "other",
+    "general",
+    "icu",
+    "hdu",
+    "nicu",
+    "picu",
+    "maternity",
+    "daycare",
+    "emergency",
+    "isolation",
+    "other",
 )
 ROOM_TYPES: tuple = ("bay", "private", "semi_private", "isolation", "icu_cubicle", "other")
 ENTITY_TYPES: tuple = ("ward", "room", "bed", "bed_class")

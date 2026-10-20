@@ -3,16 +3,18 @@
 Embeds hospital SOPs, formularies, and external clinical guidelines into a
 SQLite-vec vector store (and FTS5 lexical index) for retrieval-augmented Sage queries.
 """
+
 import hashlib
 import json
 import os
 import re
-import sqlite3
 import threading
+from typing import Any, Protocol
+
 import numpy as np
-from typing import List, Tuple, Dict, Any, Optional
-from config import DB_PATH, EMBEDDING_MODEL, EMBEDDING_DIM, SAGE_RERANKING_ENABLED
+from config import EMBEDDING_DIM, EMBEDDING_MODEL, SAGE_RERANKING_ENABLED
 from database import db_session
+
 from services.knowledge_worker import (
     KnowledgeWorkerError,
     embed_texts_isolated,
@@ -20,13 +22,18 @@ from services.knowledge_worker import (
     rerank_scores_isolated,
 )
 
+
 # ─── Lazy-loaded embedding model (in-process path ONLY) ───
 # By default the heavy models live in the knowledge worker subprocess (see
 # services/knowledge_worker.py — in-process loads starved the event loop of
 # the GIL and froze the API for minutes). This in-process path survives for
 # ORB_KNOWLEDGE_INPROCESS=1 (tests / constrained envs) and for the worker
 # process itself.
-_embed_model = None
+class _Embedder(Protocol):
+    def encode(self, texts: list[str], **kwargs: Any) -> dict[str, Any]: ...
+
+
+_embed_model: _Embedder | None = None
 
 
 def _in_worker() -> bool:
@@ -35,6 +42,7 @@ def _in_worker() -> bool:
 
 def _use_isolated() -> bool:
     return isolation_enabled() and not _in_worker()
+
 
 # Serializes ALL work against the shared HuggingFace models (BGE-M3 embedder and
 # the cross-encoder reranker) — both lazy construction and every encode/score
@@ -62,6 +70,7 @@ def _local_snapshot_or_name(model_name: str) -> str:
     """
     try:
         from huggingface_hub import snapshot_download
+
         return snapshot_download(model_name, local_files_only=True)
     except Exception:
         return model_name
@@ -73,6 +82,7 @@ def _get_embedder():
     # embedder is never loaded. A RuntimeError, like the isolation guard
     # below, so search degrades to lexical only.
     from services.model_switch import refuse_when_models_off
+
     refuse_when_models_off("knowledge embedder")
     if _embed_model is not None:
         return _embed_model
@@ -93,14 +103,21 @@ def _get_embedder():
             # ~2GB BGE-M3 load at query time (not just at init) — otherwise the first Sage query
             # silently loads 2GB and stalls. Use the zero-vector mock so Sage runs LLM-only.
             if os.getenv("ORB_SKIP_KNOWLEDGE_BASE", "").lower() in ("1", "true", "yes"):
+
                 class MockEmbedder:
-                    def encode(self, texts, **kwargs):
-                        return {"dense_vecs": [np.zeros(EMBEDDING_DIM, dtype=np.float32) for _ in texts]}
+                    def encode(self, texts: list[str], **kwargs: Any) -> dict[str, Any]:
+                        return {
+                            "dense_vecs": [np.zeros(EMBEDDING_DIM, dtype=np.float32) for _ in texts]
+                        }
+
                 _embed_model = MockEmbedder()
-                print("  ⏭  Clinical knowledge embedder skipped (ORB_SKIP_KNOWLEDGE_BASE) — Sage runs LLM-only")
+                print(
+                    "  ⏭  Clinical knowledge embedder skipped (ORB_SKIP_KNOWLEDGE_BASE) — Sage runs LLM-only"
+                )
                 return _embed_model
             try:
                 from FlagEmbedding import BGEM3FlagModel
+
                 _resolved = _local_snapshot_or_name(EMBEDDING_MODEL)
                 try:
                     _embed_model = BGEM3FlagModel(_resolved, use_fp16=True)
@@ -111,10 +128,13 @@ def _get_embedder():
                 print("  ✓ Clinical knowledge embedder loaded")
             except ImportError:
                 # Fallback mock for environments without FlagEmbedding but where schema init is needed
-                class MockEmbedder:
-                    def encode(self, texts, **kwargs):
-                        return {"dense_vecs": [np.zeros(EMBEDDING_DIM, dtype=np.float32) for _ in texts]}
-                _embed_model = MockEmbedder()
+                class _FallbackEmbedder:
+                    def encode(self, texts: list[str], **kwargs: Any) -> dict[str, Any]:
+                        return {
+                            "dense_vecs": [np.zeros(EMBEDDING_DIM, dtype=np.float32) for _ in texts]
+                        }
+
+                _embed_model = _FallbackEmbedder()
                 print("  ! Clinical knowledge embedder mocked (FlagEmbedding missing)")
     return _embed_model
 
@@ -137,9 +157,7 @@ def _embed_texts(texts: list) -> list:
         # Skip-mode must not spin up a 2 GB worker just to fabricate zeros.
         if os.getenv("ORB_SKIP_KNOWLEDGE_BASE", "").lower() in ("1", "true", "yes"):
             return [np.zeros(EMBEDDING_DIM, dtype=np.float32).tobytes() for _ in texts]
-        return embed_texts_isolated(
-            texts, EMBEDDING_MODEL, batch_size=8, max_length=512
-        )
+        return embed_texts_isolated(texts, EMBEDDING_MODEL, batch_size=8, max_length=512)
     model = _get_embedder()
     with _MODEL_LOCK:
         embeddings = model.encode(texts, batch_size=8, max_length=512)["dense_vecs"]
@@ -164,7 +182,7 @@ CLINICAL_DOCUMENTS = [
         "effective_date": "2025-01-15",
         "version": "v2.1",
         "is_synthetic": True,
-        "content": "All clinical staff must adhere to the 5 Moments for Hand Hygiene as defined by the WHO. Additionally, for any patient with suspected or confirmed Clostridioides difficile (C. diff) infection, soap and water handwashing is mandatory; alcohol-based hand rub is insufficient as it does not eliminate spores. Contact precautions, including gown and gloves, must be donned prior to entering the room and removed before exiting. Equipment must be disinfected with bleach-based wipes (sporicidal). Patients should be isolated in a single room with a dedicated bathroom whenever possible. Isolation precautions can only be discontinued after 48 hours of formed stool."
+        "content": "All clinical staff must adhere to the 5 Moments for Hand Hygiene as defined by the WHO. Additionally, for any patient with suspected or confirmed Clostridioides difficile (C. diff) infection, soap and water handwashing is mandatory; alcohol-based hand rub is insufficient as it does not eliminate spores. Contact precautions, including gown and gloves, must be donned prior to entering the room and removed before exiting. Equipment must be disinfected with bleach-based wipes (sporicidal). Patients should be isolated in a single room with a dedicated bathroom whenever possible. Isolation precautions can only be discontinued after 48 hours of formed stool.",
     },
     {
         "document_id": "SOP-CODE-001",
@@ -178,9 +196,8 @@ CLINICAL_DOCUMENTS = [
         "effective_date": "2024-11-01",
         "version": "v4.0",
         "is_synthetic": True,
-        "content": "Upon activation of a Code Blue, the primary nurse remains with the patient to initiate BLS and apply backboard. The first responding physician acts as the Code Team Leader until the ICU Attending or Critical Care Fellow arrives. The Code Cart contains epinephrine 1mg/10mL prefilled syringes in Drawer 2. Amiodarone 150mg vials are in Drawer 3. For adult cardiac arrest, epinephrine 1mg IV/IO is administered every 3-5 minutes. Defibrillation for VF/pVT starts at 120J on our Zoll biphasic monitors, escalating to 150J, then 200J. Capnography (ETCO2) must be connected to the monitor once an advanced airway is placed to assess CPR quality and ROSC."
+        "content": "Upon activation of a Code Blue, the primary nurse remains with the patient to initiate BLS and apply backboard. The first responding physician acts as the Code Team Leader until the ICU Attending or Critical Care Fellow arrives. The Code Cart contains epinephrine 1mg/10mL prefilled syringes in Drawer 2. Amiodarone 150mg vials are in Drawer 3. For adult cardiac arrest, epinephrine 1mg IV/IO is administered every 3-5 minutes. Defibrillation for VF/pVT starts at 120J on our Zoll biphasic monitors, escalating to 150J, then 200J. Capnography (ETCO2) must be connected to the monitor once an advanced airway is placed to assess CPR quality and ROSC.",
     },
-    
     # ── DEMO LOCAL FORMULARY (Trust Tier 2) ──
     {
         "document_id": "FORM-ID-001",
@@ -194,9 +211,8 @@ CLINICAL_DOCUMENTS = [
         "effective_date": "2026-01-01",
         "version": "2026",
         "is_synthetic": True,
-        "content": "Due to high local rates of extended-spectrum beta-lactamase (ESBL) producing E. coli (currently >25% in the community), empiric coverage for sepsis of unknown origin or suspected urinary/intra-abdominal source should default to Piperacillin-Tazobactam 4.5g IV q6h or Meropenem 1g IV q8h. Ceftriaxone is NO LONGER recommended for empiric severe sepsis coverage at this institution. For suspected MRSA (prior MRSA infection, IV drug use, indwelling lines), add Vancomycin 15-20 mg/kg IV q8-12h targeting a trough of 15-20 mcg/mL."
+        "content": "Due to high local rates of extended-spectrum beta-lactamase (ESBL) producing E. coli (currently >25% in the community), empiric coverage for sepsis of unknown origin or suspected urinary/intra-abdominal source should default to Piperacillin-Tazobactam 4.5g IV q6h or Meropenem 1g IV q8h. Ceftriaxone is NO LONGER recommended for empiric severe sepsis coverage at this institution. For suspected MRSA (prior MRSA infection, IV drug use, indwelling lines), add Vancomycin 15-20 mg/kg IV q8-12h targeting a trough of 15-20 mcg/mL.",
     },
-
     # ── EXTERNAL GUIDELINES (Trust Tier 3) ──
     {
         "document_id": "EXT-SEPSIS-001",
@@ -210,7 +226,7 @@ CLINICAL_DOCUMENTS = [
         "effective_date": "2021-10-01",
         "version": "2021",
         "is_synthetic": False,
-        "content": "Screen for sepsis using qSOFA (quick Sequential Organ Failure Assessment): Respiratory rate >= 22/min, altered mentation (GCS < 15), systolic BP <= 100 mmHg. Two or more criteria suggest organ dysfunction. Full SOFA scoring should follow for ICU patients. Lactate > 2 mmol/L is a key biomarker of tissue hypoperfusion. Early recognition is critical: for every hour delay in antibiotic administration, mortality increases by approximately 7.6%."
+        "content": "Screen for sepsis using qSOFA (quick Sequential Organ Failure Assessment): Respiratory rate >= 22/min, altered mentation (GCS < 15), systolic BP <= 100 mmHg. Two or more criteria suggest organ dysfunction. Full SOFA scoring should follow for ICU patients. Lactate > 2 mmol/L is a key biomarker of tissue hypoperfusion. Early recognition is critical: for every hour delay in antibiotic administration, mortality increases by approximately 7.6%.",
     },
     {
         "document_id": "EXT-SEPSIS-002",
@@ -224,7 +240,7 @@ CLINICAL_DOCUMENTS = [
         "effective_date": "2021-10-01",
         "version": "2021",
         "is_synthetic": False,
-        "content": "The SSC 1-hour bundle mandates within 1 hour of sepsis recognition: 1) Measure lactate level (re-measure if initial lactate > 2 mmol/L). 2) Obtain blood cultures BEFORE administering antibiotics. 3) Administer broad-spectrum antibiotics. 4) Begin rapid administration of 30 mL/kg crystalloid for hypotension or lactate >= 4 mmol/L. 5) Apply vasopressors if patient is hypotensive during or after fluid resuscitation to maintain MAP >= 65 mmHg."
+        "content": "The SSC 1-hour bundle mandates within 1 hour of sepsis recognition: 1) Measure lactate level (re-measure if initial lactate > 2 mmol/L). 2) Obtain blood cultures BEFORE administering antibiotics. 3) Administer broad-spectrum antibiotics. 4) Begin rapid administration of 30 mL/kg crystalloid for hypotension or lactate >= 4 mmol/L. 5) Apply vasopressors if patient is hypotensive during or after fluid resuscitation to maintain MAP >= 65 mmHg.",
     },
     {
         "document_id": "EXT-SEPSIS-003",
@@ -238,7 +254,7 @@ CLINICAL_DOCUMENTS = [
         "effective_date": "2021-10-01",
         "version": "2021",
         "is_synthetic": False,
-        "content": "Initial resuscitation: 30 mL/kg IV crystalloid (balanced crystalloid preferred over normal saline) within the first 3 hours for sepsis-induced hypoperfusion. Reassess fluid responsiveness with dynamic measures (passive leg raise, pulse pressure variation). First-line vasopressor: Norepinephrine titrated to MAP >= 65 mmHg. Add vasopressin (up to 0.03 U/min) as second-line. Dobutamine for myocardial dysfunction with persistent hypoperfusion despite adequate volume and MAP."
+        "content": "Initial resuscitation: 30 mL/kg IV crystalloid (balanced crystalloid preferred over normal saline) within the first 3 hours for sepsis-induced hypoperfusion. Reassess fluid responsiveness with dynamic measures (passive leg raise, pulse pressure variation). First-line vasopressor: Norepinephrine titrated to MAP >= 65 mmHg. Add vasopressin (up to 0.03 U/min) as second-line. Dobutamine for myocardial dysfunction with persistent hypoperfusion despite adequate volume and MAP.",
     },
     {
         "document_id": "EXT-CARD-001",
@@ -252,7 +268,7 @@ CLINICAL_DOCUMENTS = [
         "effective_date": "2023-01-01",
         "version": "2023",
         "is_synthetic": False,
-        "content": "STEMI diagnosis: ST elevation >= 1mm in 2 contiguous leads (>= 2mm in V1-V3 for men, >= 1.5mm for women). Door-to-balloon time target: < 90 minutes for primary PCI. If PCI not available within 120 minutes, administer fibrinolytic therapy within 30 minutes. Administer aspirin 325 mg (chewed), P2Y12 inhibitor (ticagrelor 180mg or clopidogrel 600mg), and unfractionated heparin. Morphine only for refractory pain (may delay P2Y12 absorption). Beta-blockers within 24 hours if no contraindications."
+        "content": "STEMI diagnosis: ST elevation >= 1mm in 2 contiguous leads (>= 2mm in V1-V3 for men, >= 1.5mm for women). Door-to-balloon time target: < 90 minutes for primary PCI. If PCI not available within 120 minutes, administer fibrinolytic therapy within 30 minutes. Administer aspirin 325 mg (chewed), P2Y12 inhibitor (ticagrelor 180mg or clopidogrel 600mg), and unfractionated heparin. Morphine only for refractory pain (may delay P2Y12 absorption). Beta-blockers within 24 hours if no contraindications.",
     },
     {
         "document_id": "EXT-RESP-001",
@@ -266,7 +282,7 @@ CLINICAL_DOCUMENTS = [
         "effective_date": "2012-06-01",
         "version": "2012",
         "is_synthetic": False,
-        "content": "ARDS Berlin criteria: 1) Acute onset within 1 week. 2) Bilateral opacities on CXR not fully explained by effusions/atelectasis. 3) Respiratory failure not fully explained by cardiac failure. 4) PaO2/FiO2 ratio: Mild 200-300, Moderate 100-200, Severe < 100 (with PEEP >= 5). Management: Low tidal volume ventilation (6 mL/kg predicted body weight), plateau pressure < 30 cmH2O. Prone positioning for 12-16 hrs/day if P/F < 150. Conservative fluid strategy. Consider neuromuscular blockade for severe ARDS (P/F < 150) in first 48 hours."
+        "content": "ARDS Berlin criteria: 1) Acute onset within 1 week. 2) Bilateral opacities on CXR not fully explained by effusions/atelectasis. 3) Respiratory failure not fully explained by cardiac failure. 4) PaO2/FiO2 ratio: Mild 200-300, Moderate 100-200, Severe < 100 (with PEEP >= 5). Management: Low tidal volume ventilation (6 mL/kg predicted body weight), plateau pressure < 30 cmH2O. Prone positioning for 12-16 hrs/day if P/F < 150. Conservative fluid strategy. Consider neuromuscular blockade for severe ARDS (P/F < 150) in first 48 hours.",
     },
     {
         "document_id": "EXT-METAB-001",
@@ -280,7 +296,7 @@ CLINICAL_DOCUMENTS = [
         "effective_date": "2024-01-01",
         "version": "2024",
         "is_synthetic": False,
-        "content": "DKA diagnostic criteria: Blood glucose > 250 mg/dL, arterial pH < 7.3, serum bicarbonate < 18 mEq/L, ketonemia or ketonuria. Treatment: 1) IV fluid resuscitation with 0.9% NaCl 1-1.5 L/hr for first 1-2 hours, then 250-500 mL/hr. Switch to 0.45% NaCl when Na is normal or elevated. 2) Regular insulin 0.1-0.14 U/kg/hr continuous infusion. 3) Add dextrose (D5) when glucose < 200 mg/dL. 4) Potassium replacement: if K+ < 3.3 hold insulin and replace aggressively; 3.3-5.3 give 20-30 mEq/L in each liter of IV fluid; > 5.3 recheck q2h. 5) Bicarbonate only if pH < 6.9."
+        "content": "DKA diagnostic criteria: Blood glucose > 250 mg/dL, arterial pH < 7.3, serum bicarbonate < 18 mEq/L, ketonemia or ketonuria. Treatment: 1) IV fluid resuscitation with 0.9% NaCl 1-1.5 L/hr for first 1-2 hours, then 250-500 mL/hr. Switch to 0.45% NaCl when Na is normal or elevated. 2) Regular insulin 0.1-0.14 U/kg/hr continuous infusion. 3) Add dextrose (D5) when glucose < 200 mg/dL. 4) Potassium replacement: if K+ < 3.3 hold insulin and replace aggressively; 3.3-5.3 give 20-30 mEq/L in each liter of IV fluid; > 5.3 recheck q2h. 5) Bicarbonate only if pH < 6.9.",
     },
     # ── ADDITIONAL EXTERNAL GUIDELINES ──
     {
@@ -295,7 +311,7 @@ CLINICAL_DOCUMENTS = [
         "effective_date": "2019-01-01",
         "version": "2019",
         "is_synthetic": False,
-        "content": "IV alteplase (tPA) 0.9 mg/kg (max 90 mg): 10% as bolus over 1 minute, remainder over 60 minutes. Eligibility: onset within 4.5 hours, no contraindications (recent surgery, active bleeding, INR > 1.7, platelets < 100k, glucose < 50). BP must be < 185/110 before and < 180/105 for 24h after. CT head must exclude hemorrhage. NIHSS should be documented. Door-to-needle target: < 60 minutes. For large vessel occlusion (LVO), consider mechanical thrombectomy within 24 hours if eligible per imaging."
+        "content": "IV alteplase (tPA) 0.9 mg/kg (max 90 mg): 10% as bolus over 1 minute, remainder over 60 minutes. Eligibility: onset within 4.5 hours, no contraindications (recent surgery, active bleeding, INR > 1.7, platelets < 100k, glucose < 50). BP must be < 185/110 before and < 180/105 for 24h after. CT head must exclude hemorrhage. NIHSS should be documented. Door-to-needle target: < 60 minutes. For large vessel occlusion (LVO), consider mechanical thrombectomy within 24 hours if eligible per imaging.",
     },
     {
         "document_id": "EXT-CARD-002",
@@ -309,7 +325,7 @@ CLINICAL_DOCUMENTS = [
         "effective_date": "2022-01-01",
         "version": "2022",
         "is_synthetic": False,
-        "content": "Acute decompensated heart failure: 1) IV furosemide 40-80mg (or 1-2x home dose) for volume overload. Target urine output 0.5-1 mL/kg/hr. 2) Nitroglycerin IV if SBP > 110 for afterload reduction. 3) Avoid NSAIDs, CCBs (verapamil/diltiazem) in HFrEF. 4) If cardiogenic shock: dobutamine or milrinone; consider mechanical support (IABP, Impella). 5) Continue GDMT (beta-blocker, ACEi/ARB/ARNI, MRA, SGLT2i) unless hemodynamically unstable. 6) Daily weights, strict I/O, BMP and BNP trending."
+        "content": "Acute decompensated heart failure: 1) IV furosemide 40-80mg (or 1-2x home dose) for volume overload. Target urine output 0.5-1 mL/kg/hr. 2) Nitroglycerin IV if SBP > 110 for afterload reduction. 3) Avoid NSAIDs, CCBs (verapamil/diltiazem) in HFrEF. 4) If cardiogenic shock: dobutamine or milrinone; consider mechanical support (IABP, Impella). 5) Continue GDMT (beta-blocker, ACEi/ARB/ARNI, MRA, SGLT2i) unless hemodynamically unstable. 6) Daily weights, strict I/O, BMP and BNP trending.",
     },
     {
         "document_id": "EXT-ID-001",
@@ -323,7 +339,7 @@ CLINICAL_DOCUMENTS = [
         "effective_date": "2019-10-01",
         "version": "2019",
         "is_synthetic": False,
-        "content": "Outpatient CAP: amoxicillin 1g TID or doxycycline 100mg BID or azithromycin 500mg day 1 then 250mg (if local resistance < 25%). Inpatient non-ICU: beta-lactam (ampicillin-sulbactam 3g q6h or ceftriaxone 1-2g daily) + macrolide (azithromycin) or respiratory fluoroquinolone alone (levofloxacin 750mg daily). Inpatient ICU: beta-lactam + macrolide or beta-lactam + respiratory fluoroquinolone. If MRSA risk: add vancomycin or linezolid. If Pseudomonas risk: piperacillin-tazobactam or cefepime."
+        "content": "Outpatient CAP: amoxicillin 1g TID or doxycycline 100mg BID or azithromycin 500mg day 1 then 250mg (if local resistance < 25%). Inpatient non-ICU: beta-lactam (ampicillin-sulbactam 3g q6h or ceftriaxone 1-2g daily) + macrolide (azithromycin) or respiratory fluoroquinolone alone (levofloxacin 750mg daily). Inpatient ICU: beta-lactam + macrolide or beta-lactam + respiratory fluoroquinolone. If MRSA risk: add vancomycin or linezolid. If Pseudomonas risk: piperacillin-tazobactam or cefepime.",
     },
     {
         "document_id": "EXT-ID-002",
@@ -337,7 +353,7 @@ CLINICAL_DOCUMENTS = [
         "effective_date": "2024-01-01",
         "version": "2024",
         "is_synthetic": False,
-        "content": "Uncomplicated cystitis: nitrofurantoin 100mg BID x 5 days (first-line) or TMP-SMX 160/800mg BID x 3 days (if local resistance < 20%) or fosfomycin 3g single dose. Avoid fluoroquinolones for uncomplicated UTI. Complicated UTI / pyelonephritis: ceftriaxone 1g IV daily or fluoroquinolone (ciprofloxacin 400mg IV q12h). ESBL-producing organisms: ertapenem or meropenem based on susceptibility. Catheter-associated UTI: treat only if symptomatic; remove or replace catheter before starting antibiotics."
+        "content": "Uncomplicated cystitis: nitrofurantoin 100mg BID x 5 days (first-line) or TMP-SMX 160/800mg BID x 3 days (if local resistance < 20%) or fosfomycin 3g single dose. Avoid fluoroquinolones for uncomplicated UTI. Complicated UTI / pyelonephritis: ceftriaxone 1g IV daily or fluoroquinolone (ciprofloxacin 400mg IV q12h). ESBL-producing organisms: ertapenem or meropenem based on susceptibility. Catheter-associated UTI: treat only if symptomatic; remove or replace catheter before starting antibiotics.",
     },
     {
         "document_id": "EXT-VTE-001",
@@ -351,7 +367,7 @@ CLINICAL_DOCUMENTS = [
         "effective_date": "2018-01-01",
         "version": "2018",
         "is_synthetic": False,
-        "content": "Medical patients: enoxaparin 40mg SC daily or heparin 5000U SC q8-12h for Padua score >= 4. Surgical patients: enoxaparin 40mg SC daily starting 6-12h postop or heparin 5000U SC q8h. Mechanical prophylaxis (IPC) if pharmacologic contraindicated. Duration: throughout hospitalization; extended (up to 35 days) for high-risk surgeries (hip/knee arthroplasty, abdominal cancer surgery). Contraindications: active bleeding, severe thrombocytopenia (plt < 25k), recent CNS surgery."
+        "content": "Medical patients: enoxaparin 40mg SC daily or heparin 5000U SC q8-12h for Padua score >= 4. Surgical patients: enoxaparin 40mg SC daily starting 6-12h postop or heparin 5000U SC q8h. Mechanical prophylaxis (IPC) if pharmacologic contraindicated. Duration: throughout hospitalization; extended (up to 35 days) for high-risk surgeries (hip/knee arthroplasty, abdominal cancer surgery). Contraindications: active bleeding, severe thrombocytopenia (plt < 25k), recent CNS surgery.",
     },
     {
         "document_id": "EXT-LYTES-001",
@@ -365,7 +381,7 @@ CLINICAL_DOCUMENTS = [
         "effective_date": "2024-01-01",
         "version": "2024",
         "is_synthetic": False,
-        "content": "Hypokalemia: Mild (3.0-3.4): oral KCl 40-80 mEq/day in divided doses. Moderate (2.5-2.9): IV KCl 10-20 mEq/hr via central line (max 40 mEq/hr in emergencies), continuous telemetry required. Severe (< 2.5): aggressive IV replacement with telemetry, check Mg (correct hypomagnesemia first). Hyperkalemia: Mild (5.5-6.0): kayexalate, dietary restriction. Moderate (6.0-6.5): IV insulin 10U + D50, calcium gluconate if ECG changes. Severe (> 6.5 or ECG changes): calcium gluconate 1g IV stat, insulin/D50, consider dialysis. Recheck K+ q2-4h during correction."
+        "content": "Hypokalemia: Mild (3.0-3.4): oral KCl 40-80 mEq/day in divided doses. Moderate (2.5-2.9): IV KCl 10-20 mEq/hr via central line (max 40 mEq/hr in emergencies), continuous telemetry required. Severe (< 2.5): aggressive IV replacement with telemetry, check Mg (correct hypomagnesemia first). Hyperkalemia: Mild (5.5-6.0): kayexalate, dietary restriction. Moderate (6.0-6.5): IV insulin 10U + D50, calcium gluconate if ECG changes. Severe (> 6.5 or ECG changes): calcium gluconate 1g IV stat, insulin/D50, consider dialysis. Recheck K+ q2-4h during correction.",
     },
     {
         "document_id": "EXT-VENT-001",
@@ -379,7 +395,7 @@ CLINICAL_DOCUMENTS = [
         "effective_date": "2017-01-01",
         "version": "2017",
         "is_synthetic": False,
-        "content": "Daily readiness assessment: 1) FiO2 <= 0.4, PEEP <= 8, adequate oxygenation. 2) Hemodynamically stable (no/low-dose vasopressors). 3) Patient can initiate breaths. 4) No continuous sedation. Spontaneous Breathing Trial (SBT): T-piece or PS 5-8/PEEP 5 for 30-120 minutes. Pass criteria: RR < 35, SpO2 > 90%, HR < 140, no distress. Rapid Shallow Breathing Index (RSBI) < 105 predicts success. If SBT passes, assess cuff leak and airway patency before extubation. Post-extubation: prophylactic NIV for high-risk patients."
+        "content": "Daily readiness assessment: 1) FiO2 <= 0.4, PEEP <= 8, adequate oxygenation. 2) Hemodynamically stable (no/low-dose vasopressors). 3) Patient can initiate breaths. 4) No continuous sedation. Spontaneous Breathing Trial (SBT): T-piece or PS 5-8/PEEP 5 for 30-120 minutes. Pass criteria: RR < 35, SpO2 > 90%, HR < 140, no distress. Rapid Shallow Breathing Index (RSBI) < 105 predicts success. If SBT passes, assess cuff leak and airway patency before extubation. Post-extubation: prophylactic NIV for high-risk patients.",
     },
     {
         "document_id": "EXT-TRANS-001",
@@ -393,7 +409,7 @@ CLINICAL_DOCUMENTS = [
         "effective_date": "2016-10-01",
         "version": "2016",
         "is_synthetic": False,
-        "content": "Restrictive strategy recommended: transfuse pRBC if Hgb < 7 g/dL for hemodynamically stable patients (including ICU). Liberal threshold Hgb < 8 g/dL for cardiac surgery and acute coronary syndrome. Platelets: transfuse if < 10k (prophylactic) or < 50k with active bleeding or planned procedure; < 100k for neurosurgery. FFP: for active bleeding with INR > 1.5 or massive transfusion protocol. Massive transfusion: 1:1:1 ratio pRBC:FFP:platelets. Type and screen before all transfusions; crossmatch for non-emergent."
+        "content": "Restrictive strategy recommended: transfuse pRBC if Hgb < 7 g/dL for hemodynamically stable patients (including ICU). Liberal threshold Hgb < 8 g/dL for cardiac surgery and acute coronary syndrome. Platelets: transfuse if < 10k (prophylactic) or < 50k with active bleeding or planned procedure; < 100k for neurosurgery. FFP: for active bleeding with INR > 1.5 or massive transfusion protocol. Massive transfusion: 1:1:1 ratio pRBC:FFP:platelets. Type and screen before all transfusions; crossmatch for non-emergent.",
     },
     {
         "document_id": "EXT-SEDATION-001",
@@ -407,7 +423,7 @@ CLINICAL_DOCUMENTS = [
         "effective_date": "2018-09-01",
         "version": "2018",
         "is_synthetic": False,
-        "content": "Pain: assess with BPS or CPOT q4h. First-line: IV acetaminophen, low-dose opioids (fentanyl preferred for short-acting). Agitation: target light sedation (RASS 0 to -1). First-line: propofol or dexmedetomidine (preferred over benzodiazepines which increase delirium risk). Delirium: screen with CAM-ICU q12h. Non-pharmacologic prevention: early mobilization, sleep hygiene, reorientation, minimize benzodiazepines, avoid physical restraints. Pharmacologic: avoid haloperidol for prevention; consider low-dose haloperidol or atypical antipsychotics for symptomatic hyperactive delirium only."
+        "content": "Pain: assess with BPS or CPOT q4h. First-line: IV acetaminophen, low-dose opioids (fentanyl preferred for short-acting). Agitation: target light sedation (RASS 0 to -1). First-line: propofol or dexmedetomidine (preferred over benzodiazepines which increase delirium risk). Delirium: screen with CAM-ICU q12h. Non-pharmacologic prevention: early mobilization, sleep hygiene, reorientation, minimize benzodiazepines, avoid physical restraints. Pharmacologic: avoid haloperidol for prevention; consider low-dose haloperidol or atypical antipsychotics for symptomatic hyperactive delirium only.",
     },
     {
         "document_id": "EXT-SEPSIS-004",
@@ -421,7 +437,7 @@ CLINICAL_DOCUMENTS = [
         "effective_date": "2021-10-01",
         "version": "2021",
         "is_synthetic": False,
-        "content": "IV hydrocortisone 200mg/day (50mg q6h or 200mg continuous infusion) is suggested for adults with septic shock who require ongoing vasopressor therapy despite adequate fluid resuscitation. Start after vasopressor initiation if MAP remains < 65 despite norepinephrine >= 0.25 mcg/kg/min for > 4 hours. Taper gradually (not abrupt discontinuation). Do NOT use the ACTH stimulation test to guide therapy. Fludrocortisone 50mcg daily may be added (APROCCHSS trial). Monitor for hyperglycemia and hypernatremia."
+        "content": "IV hydrocortisone 200mg/day (50mg q6h or 200mg continuous infusion) is suggested for adults with septic shock who require ongoing vasopressor therapy despite adequate fluid resuscitation. Start after vasopressor initiation if MAP remains < 65 despite norepinephrine >= 0.25 mcg/kg/min for > 4 hours. Taper gradually (not abrupt discontinuation). Do NOT use the ACTH stimulation test to guide therapy. Fludrocortisone 50mcg daily may be added (APROCCHSS trial). Monitor for hyperglycemia and hypernatremia.",
     },
 ]
 
@@ -493,34 +509,34 @@ def _expand_query(query: str) -> str:
     """Expand medical abbreviations and drug aliases for better FTS5 recall."""
     q_lower = query.lower()
     expansions = []
-    
+
     for abbrev, expansion in MEDICAL_ABBREVIATIONS.items():
-        if re.search(r'\b' + re.escape(abbrev) + r'\b', q_lower):
+        if re.search(r"\b" + re.escape(abbrev) + r"\b", q_lower):
             expansions.append(expansion)
-    
+
     for alias, generic in DRUG_ALIASES.items():
-        if re.search(r'\b' + re.escape(alias) + r'\b', q_lower):
+        if re.search(r"\b" + re.escape(alias) + r"\b", q_lower):
             expansions.append(generic)
-    
+
     if expansions:
         return query + " " + " ".join(expansions)
     return query
 
 
-def chunk_text(text: str, words_per_chunk: int = 150, overlap: int = 50) -> List[str]:
+def chunk_text(text: str, words_per_chunk: int = 150, overlap: int = 50) -> list[str]:
     """Splits text into chunks of `words_per_chunk` with `overlap`."""
     words = text.split()
     chunks = []
     if len(words) <= words_per_chunk:
         return [text]
-        
+
     start = 0
     while start < len(words):
         end = start + words_per_chunk
         chunks.append(" ".join(words[start:end]))
         if end >= len(words):
             break
-        start += (words_per_chunk - overlap)
+        start += words_per_chunk - overlap
     return chunks
 
 
@@ -556,6 +572,7 @@ def init_knowledge_base():
     # Models switched off (ORB_MODELS_ENABLED, or the Orb Ward Record): nothing
     # is embedded, so no embedder or knowledge worker starts.
     from services.model_switch import models_enabled
+
     if not models_enabled():
         return
 
@@ -589,12 +606,12 @@ def init_knowledge_base():
             print(f"  ! Knowledge base fingerprint check failed ({e}); rebuilding")
 
         # Metadata table (persists the fingerprint across boots).
-        cursor.execute('''
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS clinical_knowledge_meta (
                 key TEXT PRIMARY KEY,
                 value TEXT
             )
-        ''')
+        """)
 
         # Corpus changed (or first run) — drop and rebuild.
         try:
@@ -605,7 +622,7 @@ def init_knowledge_base():
             pass
 
         # 1. Create Core Metadata Table
-        cursor.execute('''
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS clinical_knowledge (
                 id INTEGER PRIMARY KEY,
                 document_id TEXT,
@@ -622,18 +639,18 @@ def init_knowledge_base():
                 version TEXT,
                 is_synthetic BOOLEAN DEFAULT 0
             )
-        ''')
-        
+        """)
+
         # 2. Check FTS5 availability and create index if possible
         fts_available = False
         try:
             db.enable_load_extension(True)
-            cursor.execute('''
+            cursor.execute("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS clinical_knowledge_fts USING fts5(
                     title, content, source, category, specialty,
                     content=clinical_knowledge, content_rowid=id
                 )
-            ''')
+            """)
             fts_available = True
         except Exception as e:
             print(f"  ! FTS5 not available: {e}. Lexical search will fallback to LIKE.")
@@ -641,79 +658,107 @@ def init_knowledge_base():
         # 3. Create sqlite-vec extension tables
         try:
             import sqlite_vec
+
             db.enable_load_extension(True)
             sqlite_vec.load(db)
-            cursor.execute(f'''
+            cursor.execute(f"""
                 CREATE VIRTUAL TABLE IF NOT EXISTS clinical_knowledge_vec USING vec0(
                     embedding float[{EMBEDDING_DIM}]
                 )
-            ''')
+            """)
         except Exception as e:
             print(f"  ! Error loading sqlite-vec: {e}")
             return
-            
+
         print("  ! Initializing clinical knowledge base (chunking & embedding...)")
-        
+
         # 5. Ingest & Embed
         texts_to_embed = []
         metadata_to_insert = []
-        
+
         for doc in CLINICAL_DOCUMENTS:
-            chunks = chunk_text(doc["content"], words_per_chunk=150, overlap=50)
+            chunks = chunk_text(str(doc["content"]), words_per_chunk=150, overlap=50)
             for idx, chunk in enumerate(chunks):
                 # We embed a composite text to give the vector more context
                 composite_text = f"Title: {doc['title']}\nCategory: {doc['category']}\nSource: {doc['source']}\nContent: {chunk}"
                 texts_to_embed.append(composite_text)
-                
-                metadata_to_insert.append({
-                    "document_id": doc.get("document_id"),
-                    "chunk_index": idx,
-                    "category": doc["category"],
-                    "title": doc["title"],
-                    "content": chunk,
-                    "source": doc["source"],
-                    "source_type": doc["source_type"],
-                    "source_origin": doc["source_origin"],
-                    "trust_tier": doc["trust_tier"],
-                    "specialty": doc.get("specialty"),
-                    "effective_date": doc.get("effective_date"),
-                    "version": doc.get("version"),
-                    "is_synthetic": doc.get("is_synthetic", False)
-                })
-        
+
+                metadata_to_insert.append(
+                    {
+                        "document_id": doc.get("document_id"),
+                        "chunk_index": idx,
+                        "category": doc["category"],
+                        "title": doc["title"],
+                        "content": chunk,
+                        "source": doc["source"],
+                        "source_type": doc["source_type"],
+                        "source_origin": doc["source_origin"],
+                        "trust_tier": doc["trust_tier"],
+                        "specialty": doc.get("specialty"),
+                        "effective_date": doc.get("effective_date"),
+                        "version": doc.get("version"),
+                        "is_synthetic": doc.get("is_synthetic", False),
+                    }
+                )
+
         # Batch embed
         try:
             embeddings = _embed_texts(texts_to_embed)
-            
-            for meta, emb in zip(metadata_to_insert, embeddings):
+
+            for meta, emb in zip(metadata_to_insert, embeddings, strict=False):
                 # Insert metadata
-                cursor.execute('''
+                cursor.execute(
+                    """
                     INSERT INTO clinical_knowledge 
                     (document_id, chunk_index, category, title, content, source, source_type, 
                      source_origin, trust_tier, specialty, effective_date, version, is_synthetic)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    meta["document_id"], meta["chunk_index"], meta["category"], meta["title"], 
-                    meta["content"], meta["source"], meta["source_type"], meta["source_origin"],
-                    meta["trust_tier"], meta["specialty"], meta["effective_date"], meta["version"], 
-                    meta["is_synthetic"]
-                ))
-                
+                """,
+                    (
+                        meta["document_id"],
+                        meta["chunk_index"],
+                        meta["category"],
+                        meta["title"],
+                        meta["content"],
+                        meta["source"],
+                        meta["source_type"],
+                        meta["source_origin"],
+                        meta["trust_tier"],
+                        meta["specialty"],
+                        meta["effective_date"],
+                        meta["version"],
+                        meta["is_synthetic"],
+                    ),
+                )
+
                 rowid = cursor.lastrowid
-                
+
                 # Insert vector
-                cursor.execute('''
+                cursor.execute(
+                    """
                     INSERT INTO clinical_knowledge_vec (rowid, embedding)
                     VALUES (?, ?)
-                ''', (rowid, emb))
-                
+                """,
+                    (rowid, emb),
+                )
+
                 # Insert FTS
                 if fts_available:
-                    cursor.execute('''
+                    cursor.execute(
+                        """
                         INSERT INTO clinical_knowledge_fts (rowid, title, content, source, category, specialty)
                         VALUES (?, ?, ?, ?, ?, ?)
-                    ''', (rowid, meta["title"], meta["content"], meta["source"], meta["category"], meta["specialty"]))
-                    
+                    """,
+                        (
+                            rowid,
+                            meta["title"],
+                            meta["content"],
+                            meta["source"],
+                            meta["category"],
+                            meta["specialty"],
+                        ),
+                    )
+
             # Record the corpus fingerprint so the next boot can skip the rebuild.
             cursor.execute(
                 "INSERT OR REPLACE INTO clinical_knowledge_meta (key, value) VALUES ('corpus_fingerprint', ?)",
@@ -749,17 +794,47 @@ _TRUST_TIER_WEIGHT = {1: 1.00, 2: 0.92, 3: 0.85}
 _DEFAULT_TRUST_WEIGHT = 0.85
 
 # Small, high-frequency words that carry little retrieval signal.
-_RERANK_STOPWORDS = frozenset({
-    "the", "a", "an", "and", "or", "of", "for", "to", "in", "on", "with", "is",
-    "are", "was", "be", "by", "at", "as", "if", "it", "this", "that", "what",
-    "how", "when", "should", "management", "patient", "patients", "use", "used",
-})
+_RERANK_STOPWORDS = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "of",
+        "for",
+        "to",
+        "in",
+        "on",
+        "with",
+        "is",
+        "are",
+        "was",
+        "be",
+        "by",
+        "at",
+        "as",
+        "if",
+        "it",
+        "this",
+        "that",
+        "what",
+        "how",
+        "when",
+        "should",
+        "management",
+        "patient",
+        "patients",
+        "use",
+        "used",
+    }
+)
 
 # Blend weights for the lexical reranker's final score.
-_W_COVERAGE = 0.45      # fraction of query terms present in the candidate
-_W_OVERLAP = 0.30       # BM25-style term-frequency saturation
-_W_TRUST = 0.15         # trust-tier weighting
-_W_PRIOR = 0.10         # normalized retrieval (RRF) fusion prior
+_W_COVERAGE = 0.45  # fraction of query terms present in the candidate
+_W_OVERLAP = 0.30  # BM25-style term-frequency saturation
+_W_TRUST = 0.15  # trust-tier weighting
+_W_PRIOR = 0.10  # normalized retrieval (RRF) fusion prior
 
 _cross_encoder = None
 _cross_encoder_checked = False
@@ -773,11 +848,10 @@ def _cross_encoder_disabled() -> bool:
     load runs on it). Its relevance floor therefore has to be calibratable on a
     machine that DOES have the model, which needs a way to turn the model off.
     """
-    return os.getenv("ORB_SAGE_CROSS_ENCODER", "").strip().lower() in (
-        "0", "off", "false", "no")
+    return os.getenv("ORB_SAGE_CROSS_ENCODER", "").strip().lower() in ("0", "off", "false", "no")
 
 
-def _rerank_terms(text: str) -> List[str]:
+def _rerank_terms(text: str) -> list[str]:
     """Tokenize into lowercase content terms (drop punctuation, stopwords, tiny words)."""
     terms = []
     for raw in re.split(r"[^a-zA-Z0-9]+", text.lower()):
@@ -795,6 +869,7 @@ def _get_cross_encoder():
     global _cross_encoder, _cross_encoder_checked
     # Models switched off: no reranker is loaded; the lexical path ranks.
     from services.model_switch import models_enabled
+
     if not models_enabled():
         return None
     if _cross_encoder_checked:
@@ -829,8 +904,10 @@ def _get_cross_encoder():
             # sentence-transformers CrossEncoder. Only import when the package is present.
             try:
                 import importlib.util
+
                 if importlib.util.find_spec("FlagEmbedding") is not None:
                     from FlagEmbedding import FlagReranker  # type: ignore
+
                     _resolved = _local_snapshot_or_name(model_name)
                     try:
                         reranker = FlagReranker(_resolved, use_fp16=True)
@@ -848,6 +925,7 @@ def _get_cross_encoder():
                     return _cross_encoder
                 if importlib.util.find_spec("sentence_transformers") is not None:
                     from sentence_transformers import CrossEncoder  # type: ignore
+
                     ce = CrossEncoder(_local_snapshot_or_name(model_name))
 
                     def _score(pairs):
@@ -865,8 +943,9 @@ def _get_cross_encoder():
             _cross_encoder_checked = True
 
 
-def _lexical_rerank_score(query_terms: List[str], candidate: Dict[str, Any],
-                          max_prior: float) -> float:
+def _lexical_rerank_score(
+    query_terms: list[str], candidate: dict[str, Any], max_prior: float
+) -> float:
     """Heuristic relevance score for one candidate. Higher is better.
 
     Combines:
@@ -876,14 +955,14 @@ def _lexical_rerank_score(query_terms: List[str], candidate: Dict[str, Any],
       * fusion prior — the normalized RRF score from hybrid retrieval.
     """
     if not query_terms:
-        return _TRUST_TIER_WEIGHT.get(candidate.get("trust_tier"), _DEFAULT_TRUST_WEIGHT)
+        return _TRUST_TIER_WEIGHT.get((candidate.get("trust_tier") or -1), _DEFAULT_TRUST_WEIGHT)
 
     text = f"{candidate.get('title', '')} {candidate.get('content', '')}"
     doc_terms = _rerank_terms(text)
     if not doc_terms:
         coverage = overlap = 0.0
     else:
-        tf: Dict[str, int] = {}
+        tf: dict[str, int] = {}
         for t in doc_terms:
             tf[t] = tf.get(t, 0) + 1
         distinct_q = set(query_terms)
@@ -899,13 +978,12 @@ def _lexical_rerank_score(query_terms: List[str], candidate: Dict[str, Any],
                 sat += f / (f + k1)
         overlap = sat / len(distinct_q)
 
-    trust = _TRUST_TIER_WEIGHT.get(candidate.get("trust_tier"), _DEFAULT_TRUST_WEIGHT)
+    trust = _TRUST_TIER_WEIGHT.get((candidate.get("trust_tier") or -1), _DEFAULT_TRUST_WEIGHT)
     prior = 0.0
     if max_prior > 0:
         prior = min(1.0, max(0.0, candidate.get("fusion_score", 0.0) / max_prior))
 
-    return (_W_COVERAGE * coverage + _W_OVERLAP * overlap
-            + _W_TRUST * trust + _W_PRIOR * prior)
+    return _W_COVERAGE * coverage + _W_OVERLAP * overlap + _W_TRUST * trust + _W_PRIOR * prior
 
 
 # ═════════════════════════════════════════════════════════════════
@@ -931,7 +1009,7 @@ _W_REL_COVERAGE = 0.60
 _W_REL_OVERLAP = 0.40
 
 
-def _lexical_relevance_score(query_terms: List[str], candidate: Dict[str, Any]) -> float:
+def _lexical_relevance_score(query_terms: list[str], candidate: dict[str, Any]) -> float:
     """Pure query↔passage lexical relevance in [0, 1]. No trust, no fusion prior.
 
     A candidate sharing no content term with the query scores exactly 0.0 —
@@ -946,7 +1024,7 @@ def _lexical_relevance_score(query_terms: List[str], candidate: Dict[str, Any]) 
     doc_terms = _rerank_terms(text)
     if not doc_terms:
         return 0.0
-    tf: Dict[str, int] = {}
+    tf: dict[str, int] = {}
     for t in doc_terms:
         tf[t] = tf.get(t, 0) + 1
     distinct_q = set(query_terms)
@@ -958,8 +1036,9 @@ def _lexical_relevance_score(query_terms: List[str], candidate: Dict[str, Any]) 
     return _W_REL_COVERAGE * coverage + _W_REL_OVERLAP * overlap
 
 
-def rerank_results(query: str, candidates: List[Dict[str, Any]],
-                   top_k: Optional[int] = None) -> List[Dict[str, Any]]:
+def rerank_results(
+    query: str, candidates: list[dict[str, Any]], top_k: int | None = None
+) -> list[dict[str, Any]]:
     """Re-order retrieval candidates by second-stage relevance to `query`.
 
     Uses a cross-encoder when available, otherwise a robust lexical/heuristic
@@ -973,19 +1052,20 @@ def rerank_results(query: str, candidates: List[Dict[str, Any]],
     try:
         expanded = _expand_query(query)
         method = "lexical"
-        scores: List[float]
+        scores: list[float]
 
         if _use_isolated():
             # Cross-encoder scoring happens in the knowledge worker process —
             # any failure (worker crash, model absent, skip mode) degrades to
             # the lexical reranker exactly like the legacy in-process path.
-            if (os.getenv("ORB_SKIP_KNOWLEDGE_BASE", "").lower() in ("1", "true", "yes")
-                    or _cross_encoder_disabled()):
+            if (
+                os.getenv("ORB_SKIP_KNOWLEDGE_BASE", "").lower() in ("1", "true", "yes")
+                or _cross_encoder_disabled()
+            ):
                 scores = None  # type: ignore
             else:
                 try:
-                    passages = [f"{c.get('title', '')}\n{c.get('content', '')}"
-                                for c in candidates]
+                    passages = [f"{c.get('title', '')}\n{c.get('content', '')}" for c in candidates]
                     scores = rerank_scores_isolated(expanded, passages)
                     method = "cross_encoder"
                 except (KnowledgeWorkerError, Exception) as e:  # noqa: BLE001
@@ -995,8 +1075,10 @@ def rerank_results(query: str, candidates: List[Dict[str, Any]],
             ce = _get_cross_encoder()
             if ce is not None:
                 try:
-                    pairs = [[expanded, f"{c.get('title', '')}\n{c.get('content', '')}"]
-                             for c in candidates]
+                    pairs = [
+                        [expanded, f"{c.get('title', '')}\n{c.get('content', '')}"]
+                        for c in candidates
+                    ]
                     # FlagReranker tokenizes queries and passages at DIFFERENT max
                     # lengths, mutating the shared Rust tokenizer's truncation config
                     # twice per batch — concurrent scoring from the query and warm
@@ -1015,7 +1097,7 @@ def rerank_results(query: str, candidates: List[Dict[str, Any]],
             max_prior = max((c.get("fusion_score", 0.0) for c in candidates), default=0.0)
             scores = [_lexical_rerank_score(q_terms, c, max_prior) for c in candidates]
 
-        for c, s in zip(candidates, scores):
+        for c, s in zip(candidates, scores, strict=False):
             c["rerank_score"] = float(s)
             c["rerank_method"] = method
 
@@ -1086,8 +1168,10 @@ def _relevance_floor(method: str) -> float:
             print(f"  ! Ignoring unparseable ORB_RETRIEVAL_RELEVANCE_FLOOR={override!r}")
     try:
         from services.retrieval_calibration import load_thresholds
-        key = ("min_relevance_cross_encoder" if method == "cross_encoder"
-               else "min_relevance_lexical")
+
+        key = (
+            "min_relevance_cross_encoder" if method == "cross_encoder" else "min_relevance_lexical"
+        )
         value = load_thresholds().get(key)
         if value is not None:
             return max(0.0, float(value))
@@ -1096,7 +1180,7 @@ def _relevance_floor(method: str) -> float:
     return _FALLBACK_MIN_RELEVANCE.get(method, _FALLBACK_MIN_RELEVANCE["lexical"])
 
 
-def score_relevance(query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def score_relevance(query: str, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Annotate each candidate with `relevance_score` + `relevance_method`.
 
     Self-sufficient: it does NOT require reranking to have run. When the
@@ -1115,7 +1199,7 @@ def score_relevance(query: str, candidates: List[Dict[str, Any]]) -> List[Dict[s
     return candidates
 
 
-def apply_relevance_floor(query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def apply_relevance_floor(query: str, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Drop candidates that are not relevant enough to be cited to a clinician.
 
     Returns [] when nothing clears the floor — that empty list IS the honest
@@ -1155,14 +1239,15 @@ def apply_relevance_floor(query: str, candidates: List[Dict[str, Any]]) -> List[
 def synthetic_documents_allowed() -> bool:
     """True only when ORB_DEPLOYMENT_PROFILE is 'dev'. Read at call time."""
     import config
+
     return getattr(config, "DEPLOYMENT_PROFILE", "prod") == "dev"
 
 
-def is_synthetic_document(doc: Dict[str, Any]) -> bool:
+def is_synthetic_document(doc: dict[str, Any]) -> bool:
     return bool(doc.get("is_synthetic")) or (doc.get("source_origin") or "") == "demo_local"
 
 
-def drop_synthetic(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def drop_synthetic(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """`docs` without synthetic documents, unless this is a dev appliance."""
     if synthetic_documents_allowed():
         return docs
@@ -1172,7 +1257,7 @@ def drop_synthetic(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 # ═════════════════════════════════════════════════════════════════
 # APPROVAL FILTERING (bookkeeping owned by services.corpus_loader)
 # ═════════════════════════════════════════════════════════════════
-def _approved_document_ids(db) -> Optional[set]:
+def _approved_document_ids(db) -> dict[str, set] | None:
     """Set of document_ids allowed under `approved_only` retrieval.
 
     Built-in seed documents (not tracked in corpus_documents) are always
@@ -1193,7 +1278,8 @@ def _approved_document_ids(db) -> Optional[set]:
             return None
         # Every doc the loader tracks that is NOT approved is excluded.
         approved = {
-            r[0] for r in db.execute(
+            r[0]
+            for r in db.execute(
                 "SELECT document_id FROM corpus_documents WHERE approval_status = 'approved'"
             ).fetchall()
         }
@@ -1205,9 +1291,13 @@ def _approved_document_ids(db) -> Optional[set]:
         return None
 
 
-def search_guidelines(query: str, limit: int = 5, rerank: bool = True,
-                      approved_only: bool = False,
-                      min_relevance: Optional[float] = None) -> List[Dict[str, Any]]:
+def search_guidelines(
+    query: str,
+    limit: int = 5,
+    rerank: bool = True,
+    approved_only: bool = False,
+    min_relevance: float | None = None,
+) -> list[dict[str, Any]]:
     """Hybrid search (Dense + Lexical) with RRF fusion, query expansion, reranking
     and a relevance floor.
 
@@ -1246,7 +1336,9 @@ def search_guidelines(query: str, limit: int = 5, rerank: bool = True,
         # Check FTS5
         fts_available = False
         try:
-            cursor = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='clinical_knowledge_fts'")
+            cursor = db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='clinical_knowledge_fts'"
+            )
             fts_available = cursor.fetchone() is not None
         except Exception:
             pass
@@ -1257,6 +1349,7 @@ def search_guidelines(query: str, limit: int = 5, rerank: bool = True,
             try:
                 db.enable_load_extension(True)
                 import sqlite_vec
+
                 sqlite_vec.load(db)
 
                 dense_query = """
@@ -1288,13 +1381,15 @@ def search_guidelines(query: str, limit: int = 5, rerank: bool = True,
                 clean_words = []
                 for word in expanded_query.split():
                     # Strip non-alphanumeric
-                    w = re.sub(r'[^a-zA-Z0-9]', '', word).lower()
+                    w = re.sub(r"[^a-zA-Z0-9]", "", word).lower()
                     if len(w) > 3:
                         clean_words.append(w)
                 clean_query = " OR ".join(clean_words)
-                
+
                 if clean_query:
-                    for rank, row in enumerate(db.execute(lexical_query, (clean_query,)).fetchall()):
+                    for rank, row in enumerate(
+                        db.execute(lexical_query, (clean_query,)).fetchall()
+                    ):
                         rowid, bm25_rank = row
                         lexical_results[rowid] = {"rank": rank + 1, "score": abs(bm25_rank)}
             except Exception as e:
@@ -1321,11 +1416,11 @@ def search_guidelines(query: str, limit: int = 5, rerank: bool = True,
         k_rrf = 60
         fused_scores = {}
         all_rowids = set(dense_results.keys()) | set(lexical_results.keys())
-        
+
         for rowid in all_rowids:
             dense_rank = dense_results.get(rowid, {}).get("rank", 1000)
             lexical_rank = lexical_results.get(rowid, {}).get("rank", 1000)
-            
+
             rrf_score = (1.0 / (k_rrf + dense_rank)) + (1.0 / (k_rrf + lexical_rank))
             fused_scores[rowid] = rrf_score
 
@@ -1361,7 +1456,7 @@ def search_guidelines(query: str, limit: int = 5, rerank: bool = True,
             FROM clinical_knowledge
             WHERE id IN ({placeholders})
         """
-        
+
         meta_dict = {}
         for row in db.execute(meta_query, query_ids).fetchall():
             meta_dict[row[0]] = {
@@ -1373,9 +1468,9 @@ def search_guidelines(query: str, limit: int = 5, rerank: bool = True,
                 "source_type": row[5],
                 "source_origin": row[6],
                 "trust_tier": row[7],
-                "is_synthetic": bool(row[8])
+                "is_synthetic": bool(row[8]),
             }
-            
+
         for rowid, rrf_score in sorted_rowids:
             if rowid in meta_dict:
                 meta = meta_dict[rowid]
@@ -1427,8 +1522,7 @@ def search_guidelines(query: str, limit: int = 5, rerank: bool = True,
             if min_relevance is not None:
                 results = score_relevance(query, results)
                 if min_relevance > 0:
-                    results = [r for r in results
-                               if r["relevance_score"] >= min_relevance]
+                    results = [r for r in results if r["relevance_score"] >= min_relevance]
             else:
                 results = apply_relevance_floor(query, results)
 

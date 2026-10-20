@@ -51,6 +51,7 @@ Idempotent: a table that already has facility_id and the composite unique
 key is left alone (a fresh database rebuilds once, at its first boot, from
 migration 20's shape). Facility-independent: it runs on every install.
 """
+
 from migrations import Migration
 
 TABLE = "document_number_series"
@@ -59,9 +60,18 @@ ASIDE = "document_number_series_aside"
 #: Every column of the table before this migration, in order: migration 20's,
 #: then migration 50's two.
 LEGACY_COLUMNS: tuple = (
-    "id", "series_code", "document_type", "prefix", "suffix", "financial_year",
-    "pad_width", "next_number", "is_configured", "updated_at",
-    "resets_yearly", "check_digit",
+    "id",
+    "series_code",
+    "document_type",
+    "prefix",
+    "suffix",
+    "financial_year",
+    "pad_width",
+    "next_number",
+    "is_configured",
+    "updated_at",
+    "resets_yearly",
+    "check_digit",
 )
 
 #: The columns after it: the same, then facility_id.
@@ -120,9 +130,12 @@ def is_new_shape(conn) -> bool:
 
 def _sequence(conn, name: str):
     """The AUTOINCREMENT high-water mark for `name`, or None."""
-    if conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'"
-    ).fetchone() is None:
+    if (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'"
+        ).fetchone()
+        is None
+    ):
         return None
     row = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = ?", (name,)).fetchone()
     return int(row[0]) if row is not None and row[0] is not None else None
@@ -132,8 +145,9 @@ def _refuse_strangers(conn, old_cols: list) -> None:
     unknown = [c for c in old_cols if c not in CANONICAL_COLUMNS]
     if unknown:
         raise RuntimeError(f"{TABLE} rebuild would drop live column(s) {unknown}")
-    missing = [c for c in ("id", "series_code", "document_type", "next_number")
-               if c not in old_cols]
+    missing = [
+        c for c in ("id", "series_code", "document_type", "next_number") if c not in old_cols
+    ]
     if missing:
         raise RuntimeError(f"{TABLE} has no {missing}; not a series table this migration knows")
     assoc = conn.execute(
@@ -219,11 +233,11 @@ def _rebuild(conn) -> None:
     after_seq = _sequence(conn, TABLE)
     if before_seq is not None and (after_seq is None or after_seq < before_seq):
         if after_seq is None:
-            conn.execute("INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)",
-                         (TABLE, before_seq))
+            conn.execute(
+                "INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)", (TABLE, before_seq)
+            )
         else:
-            conn.execute("UPDATE sqlite_sequence SET seq = ? WHERE name = ?",
-                         (before_seq, TABLE))
+            conn.execute("UPDATE sqlite_sequence SET seq = ? WHERE name = ?", (before_seq, TABLE))
 
     violations = conn.execute(f'PRAGMA foreign_key_check("{TABLE}")').fetchall()
     if violations:

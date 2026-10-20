@@ -5,33 +5,38 @@ picture so the ward keeps a safe view when the EHR/network/LLM is down. The
 capture + read paths are pure DB (no Ollama, no network), which is exactly what
 makes this usable during an outage — see services/downtime_service.py.
 """
+
 from __future__ import annotations
 
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
-
 from permissions import require_patient_access, require_permission
+from services.audit_service import log_audit_event
 from services.downtime_service import (
-    capture_snapshot,
     capture_all_admitted,
+    capture_snapshot,
     get_latest_snapshot,
     list_snapshots,
     serve_ward_pack,
 )
-from services.audit_service import log_audit_event
 
 router = APIRouter(prefix="/api/downtime", tags=["downtime"])
 
 
+_CAPTURE_USER_DEFAULT = Depends(require_patient_access("vitals.read"))
+
+
 @router.post("/capture/{patient_id}")
-def capture(patient_id: str,
-            # require_patient_access, not require_permission: this returns the
-            # FULL snapshot, so an unscoped check let any vitals.read holder
-            # read a cross-ward patient's whole clinical picture through the
-            # capture side door (DEMO_READINESS §15.1's neighbourhood).
-            user: dict = Depends(require_patient_access("vitals.read"))):
+def capture(
+    patient_id: str,
+    # require_patient_access, not require_permission: this returns the
+    # FULL snapshot, so an unscoped check let any vitals.read holder
+    # read a cross-ward patient's whole clinical picture through the
+    # capture side door (DEMO_READINESS §15.1's neighbourhood).
+    user: dict = _CAPTURE_USER_DEFAULT,
+):
     """Freeze the current essential clinical picture for one patient into a local
     snapshot and return it."""
     try:
@@ -40,7 +45,7 @@ def capture(patient_id: str,
         # Byte-identical to require_patient_access's scope refusal: an unknown
         # id and an out-of-ward id must be indistinguishable — the established
         # posture on the chart, timeline, orders and eMAR.
-        raise HTTPException(status_code=404, detail="Patient not found")
+        raise HTTPException(status_code=404, detail="Patient not found") from None
 
     log_audit_event(
         correlation_id=f"downtime-capture-{result['id']}",
@@ -57,8 +62,11 @@ def capture(patient_id: str,
     return result
 
 
+_CAPTURE_ALL_USER_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.post("/capture-all")
-def capture_all(user: dict = Depends(require_permission("admin.overview"))):
+def capture_all(user: dict = _CAPTURE_ALL_USER_DEFAULT):
     """Snapshot every admitted patient (pre-downtime drill / scheduled job)."""
     result = capture_all_admitted(created_by=user.get("id", "auto"))
     log_audit_event(
@@ -81,12 +89,17 @@ def capture_all(user: dict = Depends(require_permission("admin.overview"))):
     return result
 
 
+_LATEST_USER_DEFAULT = Depends(require_patient_access("vitals.read"))
+
+
 @router.get("/{patient_id}/latest")
-def latest(patient_id: str,
-           # Scope-checked, NOT read-audited. This is the DEGRADED-MODE fallback
-           # view; wiring a fail-closed audit write into the surface whose whole
-           # job is to work when things are broken is exactly backwards.
-           user: dict = Depends(require_patient_access("vitals.read"))):
+def latest(
+    patient_id: str,
+    # Scope-checked, NOT read-audited. This is the DEGRADED-MODE fallback
+    # view; wiring a fail-closed audit write into the surface whose whole
+    # job is to work when things are broken is exactly backwards.
+    user: dict = _LATEST_USER_DEFAULT,
+):
     """Return the most recent snapshot for a patient (the downtime fallback view)."""
     snap = get_latest_snapshot(patient_id)
     if snap is None:
@@ -94,21 +107,28 @@ def latest(patient_id: str,
     return snap
 
 
+_HISTORY_USER_DEFAULT = Depends(require_patient_access("vitals.read"))
+
+
 @router.get("/{patient_id}/history")
-def history(patient_id: str, limit: int = 50,
-            user: dict = Depends(require_patient_access("vitals.read"))):
+def history(patient_id: str, limit: int = 50, user: dict = _HISTORY_USER_DEFAULT):
     """Return the snapshot history (newest first) for a patient."""
     return {"snapshots": list_snapshots(patient_id, limit=limit)}
 
 
+_WARD_PACK_USER_DEFAULT = Depends(require_patient_access("vitals.read"))
+
+
 @router.get("/{patient_id}/ward-pack", response_class=HTMLResponse)
-def ward_pack(patient_id: str,
-              # Same posture as /latest: scope-checked, NOT read-audited — this
-              # is the degraded-mode surface (see the comment there). Resolving
-              # the ward from a scope-checked patient id means no caller ever
-              # names a ward directly, so the pack inherits the one per-patient
-              # scope derivation instead of growing its own.
-              user: dict = Depends(require_patient_access("vitals.read"))):
+def ward_pack(
+    patient_id: str,
+    # Same posture as /latest: scope-checked, NOT read-audited — this
+    # is the degraded-mode surface (see the comment there). Resolving
+    # the ward from a scope-checked patient id means no caller ever
+    # names a ward directly, so the pack inherits the one per-patient
+    # scope derivation instead of growing its own.
+    user: dict = _WARD_PACK_USER_DEFAULT,
+):
     """Serve the ward-level downtime print pack covering this patient's ward,
     as a self-contained printable HTML document. A stale pack, or one missing
     a patient admitted since it was written, is rebuilt first (pure SQLite);
@@ -117,7 +137,7 @@ def ward_pack(patient_id: str,
     try:
         result = serve_ward_pack(patient_id, created_by=user.get("id", "auto"), user=user)
     except ValueError:
-        raise HTTPException(status_code=404, detail="Patient not found")
+        raise HTTPException(status_code=404, detail="Patient not found") from None
     if result["captured"]:
         # The rebuild WROTE snapshots, so it is recorded, unlike the read
         # itself. data_management is fail-soft on purpose: a failed audit
@@ -136,10 +156,12 @@ def ward_pack(patient_id: str,
             patient_id=patient_id,
             target_type="ward_pack",
             target_id=result["ward"],
-            metadata={"ward": result["ward"], "captured": result["captured"],
-                      "missing": len(result["missing"])},
+            metadata={
+                "ward": result["ward"],
+                "captured": result["captured"],
+                "missing": len(result["missing"]),
+            },
         )
     if result["html"] is None:
-        raise HTTPException(status_code=404,
-                            detail="No ward pack generated for this ward yet")
+        raise HTTPException(status_code=404, detail="No ward pack generated for this ward yet")
     return HTMLResponse(content=result["html"])

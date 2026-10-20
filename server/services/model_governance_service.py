@@ -10,12 +10,12 @@ Honesty is enforced structurally: `checkpoint_present` is computed from the
 filesystem, and `validated` defaults to 0 — a model cannot claim to be validated
 just because a checkpoint exists.
 """
+
 from __future__ import annotations
 
 import functools
 import json
 import logging
-from pathlib import Path
 
 from config import BASE_DIR
 from database import db_session
@@ -36,11 +36,13 @@ def _cfc_checkpoint_present() -> bool:
     overlay could disagree about whether a model was running."""
     try:
         from services.vigil_service import _CFC_CHECKPOINTS
+
         names = [n for files in _CFC_CHECKPOINTS.values() for n in files]
     except Exception:  # pragma: no cover - defensive
         names = ["vigil_cfc_deterioration.pt", "vigil_cfc_checkpoint.pt"]
-    return _checkpoint_exists(*(f"models/{n}" for n in names),
-                              *(f"models/checkpoints/{n}" for n in names))
+    return _checkpoint_exists(
+        *(f"models/{n}" for n in names), *(f"models/checkpoints/{n}" for n in names)
+    )
 
 
 def _embedding_cached(model_name: str) -> bool:
@@ -48,6 +50,7 @@ def _embedding_cached(model_name: str) -> bool:
     Sage falls back to keyword search without them)."""
     try:
         from huggingface_hub import snapshot_download
+
         snapshot_download(model_name, local_files_only=True)
         return True
     except Exception:
@@ -56,6 +59,7 @@ def _embedding_cached(model_name: str) -> bool:
 
 def _asr_engine_installed() -> bool:
     import importlib.util
+
     try:
         return importlib.util.find_spec("lightning_whisper_mlx") is not None
     except Exception:  # pragma: no cover - defensive
@@ -99,7 +103,7 @@ def _default_models() -> list[dict]:
     asr = (getattr(config, "SCRIBE", {}) or {}).get("asr", {}) or {}
     medgemma = "Google MedGemma (pretrained); not fine-tuned on Orb or hospital data"
 
-    models = [
+    models: list[dict] = [
         {
             "model_key": "vigil_news2",
             "display_name": "NEWS2 score",
@@ -121,8 +125,9 @@ def _default_models() -> list[dict]:
             "task": "Deterioration, sepsis and mortality risk over the next 1 to 24 hours",
             "training_data": (
                 "A trained checkpoint is present, but it has not been validated on "
-                "this hospital's patients" if cfc_ckpt else
-                "Not trained: no checkpoint on this appliance, so the overlay is off"
+                "this hospital's patients"
+                if cfc_ckpt
+                else "Not trained: no checkpoint on this appliance, so the overlay is off"
             ),
             "validated": 0,
             "validation_metrics": json.dumps({}),
@@ -138,9 +143,9 @@ def _default_models() -> list[dict]:
             "version": "synthetic-v1" if forecast_ckpt else "untrained",
             "task": "Length of stay, discharge and acuity forecasting",
             "training_data": (
-                "Trained on synthetic data only: not trained or validated on real "
-                "patients" if forecast_ckpt else
-                "Not trained: no checkpoint on this appliance, so Forecast shows a "
+                "Trained on synthetic data only: not trained or validated on real patients"
+                if forecast_ckpt
+                else "Not trained: no checkpoint on this appliance, so Forecast shows a "
                 "labelled rule of thumb"
             ),
             "validated": 0,
@@ -150,7 +155,7 @@ def _default_models() -> list[dict]:
             "role": "Bed and discharge planning",
             "impacts": ["Forecast screen predictions"],
             "notes": "Must be retrained on real data and externally validated before "
-                     "any clinical use.",
+            "any clinical use.",
         },
         {
             "model_key": "sage_llm",
@@ -163,79 +168,86 @@ def _default_models() -> list[dict]:
             "is_active": 1,
             "checkpoint_present": 1,
             "role": "Thinking on" + (", and the safety floor" if floor_on else ""),
-            "impacts": _CAREFUL_IMPACTS + (
-                _AMBIENT_IMPACTS if ambient == careful else []),
+            "impacts": _CAREFUL_IMPACTS + (_AMBIENT_IMPACTS if ambient == careful else []),
             "notes": "Decision support only: every output is a draft for a clinician "
-                     "to review, never an order. Runs on this appliance; nothing "
-                     "leaves the building.",
+            "to review, never an order. Runs on this appliance; nothing "
+            "leaves the building.",
         },
     ]
     if fast_on and fast and fast != careful:
-        models.append({
-            "model_key": "sage_llm_fast",
-            "display_name": "Sage, fast model",
-            "version": fast,
-            "task": "Quick answers when a clinician turns thinking off (local, via Ollama)",
-            "training_data": medgemma,
-            "validated": 0,
-            "validation_metrics": json.dumps({}),
-            "is_active": 1,
-            "checkpoint_present": 1,
-            "role": "Thinking off",
-            "impacts": _FAST_IMPACTS + (_AMBIENT_IMPACTS if ambient == fast else []),
-            "notes": (
-                "The safety floor sends patient and dosing questions to the careful "
-                "model even with thinking off." if floor_on else
-                "The safety floor is switched off: this model answers every "
-                "thinking-off question, including patient and dosing questions."
-            ),
-        })
+        models.append(
+            {
+                "model_key": "sage_llm_fast",
+                "display_name": "Sage, fast model",
+                "version": fast,
+                "task": "Quick answers when a clinician turns thinking off (local, via Ollama)",
+                "training_data": medgemma,
+                "validated": 0,
+                "validation_metrics": json.dumps({}),
+                "is_active": 1,
+                "checkpoint_present": 1,
+                "role": "Thinking off",
+                "impacts": _FAST_IMPACTS + (_AMBIENT_IMPACTS if ambient == fast else []),
+                "notes": (
+                    "The safety floor sends patient and dosing questions to the careful "
+                    "model even with thinking off."
+                    if floor_on
+                    else "The safety floor is switched off: this model answers every "
+                    "thinking-off question, including patient and dosing questions."
+                ),
+            }
+        )
     if ambient and ambient not in (careful, fast if fast_on else careful):
-        models.append({
-            "model_key": "sage_llm_ambient",
-            "display_name": "Sage, background model",
-            "version": ambient,
-            "task": "Background work: alert recommendations and Relay drafting",
-            "training_data": medgemma,
+        models.append(
+            {
+                "model_key": "sage_llm_ambient",
+                "display_name": "Sage, background model",
+                "version": ambient,
+                "task": "Background work: alert recommendations and Relay drafting",
+                "training_data": medgemma,
+                "validated": 0,
+                "validation_metrics": json.dumps({}),
+                "is_active": 1,
+                "checkpoint_present": 1,
+                "role": "Background tasks",
+                "impacts": _AMBIENT_IMPACTS,
+                "notes": "Runs without a clinician asking; its drafts are shown, never acted on.",
+            }
+        )
+    models.append(
+        {
+            "model_key": "sage_embedding",
+            "display_name": "Guideline search",
+            "version": embedding,
+            "task": "Finds the guideline passages Sage cites",
+            "training_data": "Pretrained open embedding model; not trained on Orb data",
             "validated": 0,
             "validation_metrics": json.dumps({}),
             "is_active": 1,
-            "checkpoint_present": 1,
-            "role": "Background tasks",
-            "impacts": _AMBIENT_IMPACTS,
-            "notes": "Runs without a clinician asking; its drafts are shown, never acted on.",
-        })
-    models.append({
-        "model_key": "sage_embedding",
-        "display_name": "Guideline search",
-        "version": embedding,
-        "task": "Finds the guideline passages Sage cites",
-        "training_data": "Pretrained open embedding model; not trained on Orb data",
-        "validated": 0,
-        "validation_metrics": json.dumps({}),
-        "is_active": 1,
-        "checkpoint_present": 1 if _embedding_cached(embedding) else 0,
-        "role": "Retrieval for Sage",
-        "impacts": ["Which guideline passages Sage reads before answering"],
-        "notes": "Without these weights on the machine, search falls back to keyword "
-                 "matching.",
-    })
+            "checkpoint_present": 1 if _embedding_cached(embedding) else 0,
+            "role": "Retrieval for Sage",
+            "impacts": ["Which guideline passages Sage reads before answering"],
+            "notes": "Without these weights on the machine, search falls back to keyword matching.",
+        }
+    )
     asr_model = asr.get("model") or getattr(config, "WHISPER_MODEL", "large-v3")
-    models.append({
-        "model_key": "scribe_asr",
-        "display_name": "Scribe speech recognition",
-        "version": f"whisper-{asr_model}",
-        "task": "Turns a dictated consultation into a transcript",
-        "training_data": "OpenAI Whisper (pretrained); not trained on Orb data",
-        "validated": 0,
-        "validation_metrics": json.dumps({}),
-        "is_active": 1 if _asr_engine_installed() else 0,
-        "checkpoint_present": 1 if _asr_engine_installed() else 0,
-        "role": "Dictation",
-        "impacts": ["Scribe transcripts, before the note is structured"],
-        "notes": "Present means the speech engine is installed on this appliance. "
-                 "Every transcript is shown to the clinician before it is used.",
-    })
+    models.append(
+        {
+            "model_key": "scribe_asr",
+            "display_name": "Scribe speech recognition",
+            "version": f"whisper-{asr_model}",
+            "task": "Turns a dictated consultation into a transcript",
+            "training_data": "OpenAI Whisper (pretrained); not trained on Orb data",
+            "validated": 0,
+            "validation_metrics": json.dumps({}),
+            "is_active": 1 if _asr_engine_installed() else 0,
+            "checkpoint_present": 1 if _asr_engine_installed() else 0,
+            "role": "Dictation",
+            "impacts": ["Scribe transcripts, before the note is structured"],
+            "notes": "Present means the speech engine is installed on this appliance. "
+            "Every transcript is shown to the clinician before it is used.",
+        }
+    )
     return models
 
 
@@ -247,9 +259,18 @@ def _descriptions() -> dict[str, dict]:
     chip every clinician loads, and the checkpoint probes have no place there.
     """
     import config
-    key = tuple(getattr(config, name, None) for name in (
-        "LLM_MODEL", "THINKING_FAST_MODEL", "THINKING_FAST_MODE_ENABLED",
-        "AMBIENT_LLM_MODEL", "FAST_MODE_SAFETY_FLOOR", "EMBEDDING_MODEL"))
+
+    key = tuple(
+        getattr(config, name, None)
+        for name in (
+            "LLM_MODEL",
+            "THINKING_FAST_MODEL",
+            "THINKING_FAST_MODE_ENABLED",
+            "AMBIENT_LLM_MODEL",
+            "FAST_MODE_SAFETY_FLOOR",
+            "EMBEDDING_MODEL",
+        )
+    )
     return _descriptions_for(key)
 
 
@@ -278,9 +299,18 @@ def seed_default_models() -> int:
                        is_active=excluded.is_active,
                        checkpoint_present=excluded.checkpoint_present,
                        notes=excluded.notes""",
-                (m["model_key"], m["version"], m["task"], m["training_data"], m["validated"],
-                 m["validation_metrics"], m.get("calibration_stats"), m["is_active"],
-                 m["checkpoint_present"], m["notes"]),
+                (
+                    m["model_key"],
+                    m["version"],
+                    m["task"],
+                    m["training_data"],
+                    m["validated"],
+                    m["validation_metrics"],
+                    m.get("calibration_stats"),
+                    m["is_active"],
+                    m["checkpoint_present"],
+                    m["notes"],
+                ),
             )
         # This registry is written from _default_models() and nowhere else (the
         # only INSERT and the only DELETE are both in this function), so a row
@@ -319,16 +349,21 @@ def list_models() -> list[dict]:
     if n == 0:
         seed_default_models()
     with db_session() as db:
-        rows = db.execute(
-            "SELECT * FROM model_registry ORDER BY model_key, version"
-        ).fetchall()
+        rows = db.execute("SELECT * FROM model_registry ORDER BY model_key, version").fetchall()
     described = _descriptions()
     out = []
     for r in rows:
         d = dict(r)
-        d.update(described.get(d["model_key"], {
-            "display_name": d["model_key"], "role": None, "impacts": [],
-        }))
+        d.update(
+            described.get(
+                d["model_key"],
+                {
+                    "display_name": d["model_key"],
+                    "role": None,
+                    "impacts": [],
+                },
+            )
+        )
         for jf in ("validation_metrics", "calibration_stats"):
             if d.get(jf):
                 try:

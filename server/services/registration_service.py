@@ -100,6 +100,7 @@ department (a central desk) reads hospital-wide.
 No AI model anywhere in this lane. Every function is plain sync and opens its
 own session unless it is named *_on, which takes the caller's connection.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -107,12 +108,13 @@ import json
 import logging
 import re
 import uuid
-from datetime import date, datetime, timedelta, timezone
-from typing import Any, Optional
+from datetime import UTC, date, datetime, timedelta
+from typing import Any, Never
 
 import config
 from database import db_session
 from db_backend import DBIntegrityError
+
 from services import patient_matching as pm
 from services.audit_service import AuditWriteError, log_audit_event
 from services.clinical_time import parse_to_utc, utc_iso_now
@@ -121,16 +123,39 @@ from services.patient_name_rule import PatientNameError, validate_patient_name
 logger = logging.getLogger("orb.registration")
 
 __all__ = [
-    "RegistrationError", "RegistrationConflict", "RegistrationForbidden",
-    "RegistrationNotFound", "RegistrationRateLimited", "AuditWriteError",
-    "UHID_SERIES", "SEARCH_MIN_CHARS", "SEARCH_MAX_RESULTS", "REASON_MIN_CHARS",
-    "IDENTITY_FAILURE_LIMIT", "ID_DOCUMENT_TYPES", "PATIENT_FIELDS",
-    "DEMOGRAPHIC_FIELDS", "registration_config", "uhid_check", "index_cards_on",
-    "search_index", "find_matches", "register_patient", "get_registration",
-    "get_registration_on", "change_history", "uhid_card", "correct_demographics",
-    "evaluate_identity_on", "check_identity", "list_duplicates",
-    "resolve_duplicate", "sweep_duplicates",
-    "NOTICE_LANGUAGES", "REGISTRATION_CONSENT_PURPOSE", "REGISTRATION_RETENTION_TEXT",
+    "RegistrationError",
+    "RegistrationConflict",
+    "RegistrationForbidden",
+    "RegistrationNotFound",
+    "RegistrationRateLimited",
+    "AuditWriteError",
+    "UHID_SERIES",
+    "SEARCH_MIN_CHARS",
+    "SEARCH_MAX_RESULTS",
+    "REASON_MIN_CHARS",
+    "IDENTITY_FAILURE_LIMIT",
+    "ID_DOCUMENT_TYPES",
+    "PATIENT_FIELDS",
+    "DEMOGRAPHIC_FIELDS",
+    "registration_config",
+    "uhid_check",
+    "index_cards_on",
+    "search_index",
+    "find_matches",
+    "register_patient",
+    "get_registration",
+    "get_registration_on",
+    "change_history",
+    "uhid_card",
+    "correct_demographics",
+    "evaluate_identity_on",
+    "check_identity",
+    "list_duplicates",
+    "resolve_duplicate",
+    "sweep_duplicates",
+    "NOTICE_LANGUAGES",
+    "REGISTRATION_CONSENT_PURPOSE",
+    "REGISTRATION_RETENTION_TEXT",
     "registration_consent_options",
 ]
 
@@ -159,17 +184,43 @@ MAX_UHID = 40
 
 #: Identity document kinds the desk may record, as the type and the last four
 #: characters only, never a full number (ruling OPD-N10).
-ID_DOCUMENT_TYPES = ("aadhaar", "pan", "voter_id", "passport", "driving_licence",
-                     "ration_card", "other")
+ID_DOCUMENT_TYPES = (
+    "aadhaar",
+    "pan",
+    "voter_id",
+    "passport",
+    "driving_licence",
+    "ration_card",
+    "other",
+)
 
 #: patients columns the desk writes and may correct.
-PATIENT_FIELDS = ("name", "sex", "date_of_birth", "age_years", "phone",
-                  "emergency_contact_name", "emergency_contact_phone")
+PATIENT_FIELDS = (
+    "name",
+    "sex",
+    "date_of_birth",
+    "age_years",
+    "phone",
+    "emergency_contact_name",
+    "emergency_contact_phone",
+)
 #: patient_demographics columns the desk writes and may correct.
-DEMOGRAPHIC_FIELDS = ("guardian_relation", "guardian_name", "marital_status",
-                      "preferred_language", "address_line", "city", "district",
-                      "state_code", "pin_code", "alt_phone", "email",
-                      "id_document_type", "id_document_last4", "occupation")
+DEMOGRAPHIC_FIELDS = (
+    "guardian_relation",
+    "guardian_name",
+    "marital_status",
+    "preferred_language",
+    "address_line",
+    "city",
+    "district",
+    "state_code",
+    "pin_code",
+    "alt_phone",
+    "email",
+    "id_document_type",
+    "id_document_last4",
+    "occupation",
+)
 _ADDRESS_PARTS = ("address_line", "city", "district", "state_code", "pin_code")
 
 DUPLICATE_RESOLUTIONS = ("not_duplicate", "confirmed_duplicate")
@@ -182,15 +233,31 @@ DUPLICATE_RESOLUTIONS = ("not_duplicate", "confirmed_duplicate")
 #: gates visit registration (opd-6a), a visit, even a self-registered one, is
 #: all it takes to open the arm. The admitting ward and a desk with no
 #: department see and correct everything.
-OPD_ARM_HIDDEN_FIELDS = ("date_of_birth", "phone", "emergency_contact_name",
-                         "emergency_contact_phone", "address")
-OPD_ARM_HIDDEN_DEMOGRAPHICS = ("guardian_relation", "guardian_name", "address_line", "city",
-                               "district", "state_code", "pin_code", "alt_phone", "email",
-                               "id_document_type", "id_document_last4")
+OPD_ARM_HIDDEN_FIELDS = (
+    "date_of_birth",
+    "phone",
+    "emergency_contact_name",
+    "emergency_contact_phone",
+    "address",
+)
+OPD_ARM_HIDDEN_DEMOGRAPHICS = (
+    "guardian_relation",
+    "guardian_name",
+    "address_line",
+    "city",
+    "district",
+    "state_code",
+    "pin_code",
+    "alt_phone",
+    "email",
+    "id_document_type",
+    "id_document_last4",
+)
 OPD_ARM_HIDDEN = frozenset(OPD_ARM_HIDDEN_FIELDS + OPD_ARM_HIDDEN_DEMOGRAPHICS)
 
-NO_DOB_HINT = ("No date of birth on file, so a secure discharge link cannot be "
-               "issued for this patient.")
+NO_DOB_HINT = (
+    "No date of birth on file, so a secure discharge link cannot be issued for this patient."
+)
 
 # ── Notice and consent at the desk (opd-19, W9-G, 10 October 2026) ───────────
 # An optional step of POST /patients. When the desk sends it, ONE consent row
@@ -211,9 +278,29 @@ NO_DOB_HINT = ("No date of birth on file, so a secure discharge link cannot be "
 #: DPDP Act 2023 s.5(3): the notice is offered in English or a language of the
 #: Eighth Schedule to the Constitution. The consent row names which one.
 NOTICE_LANGUAGES = (
-    "English", "Assamese", "Bengali", "Bodo", "Dogri", "Gujarati", "Hindi", "Kannada",
-    "Kashmiri", "Konkani", "Maithili", "Malayalam", "Manipuri", "Marathi", "Nepali",
-    "Odia", "Punjabi", "Sanskrit", "Santali", "Sindhi", "Tamil", "Telugu", "Urdu",
+    "English",
+    "Assamese",
+    "Bengali",
+    "Bodo",
+    "Dogri",
+    "Gujarati",
+    "Hindi",
+    "Kannada",
+    "Kashmiri",
+    "Konkani",
+    "Maithili",
+    "Malayalam",
+    "Manipuri",
+    "Marathi",
+    "Nepali",
+    "Odia",
+    "Punjabi",
+    "Sanskrit",
+    "Santali",
+    "Sindhi",
+    "Tamil",
+    "Telugu",
+    "Urdu",
 )
 NOTICE_VERSION_MAX = 40
 CONSENT_EVIDENCE_MAX = 120
@@ -241,8 +328,7 @@ REGISTRATION_RETENTION_TEXT = (
     "requires the record to be kept, so they are not erased on request during that time."
 )
 REGISTRATION_CONSENT_SCOPE = (
-    "Care and treatment at this hospital, given at registration. "
-    + REGISTRATION_RETENTION_TEXT
+    "Care and treatment at this hospital, given at registration. " + REGISTRATION_RETENTION_TEXT
 )
 
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -251,6 +337,7 @@ _LAST4 = re.compile(r"^[A-Za-z0-9]{1,4}$")
 
 
 # ── Errors ───────────────────────────────────────────────────────────────────
+
 
 class RegistrationError(ValueError):
     """A refusal the desk can act on. `code` is the machine word, `message` the
@@ -288,7 +375,8 @@ class RegistrationRateLimited(RegistrationError):
 
 # ── Small helpers ────────────────────────────────────────────────────────────
 
-def _clean(value: Any, *, limit: int = MAX_TEXT) -> Optional[str]:
+
+def _clean(value: Any, *, limit: int = MAX_TEXT) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
@@ -303,18 +391,22 @@ def _reason(value: Any, *, code: str = "reason_required") -> str:
     text = _clean(value, limit=1000)
     if not text or len(text) < REASON_MIN_CHARS:
         raise RegistrationError(
-            code, f"Give a reason of at least {REASON_MIN_CHARS} characters. It is "
-                  "the only thing that explains this to whoever reads it next.")
+            code,
+            f"Give a reason of at least {REASON_MIN_CHARS} characters. It is "
+            "the only thing that explains this to whoever reads it next.",
+        )
     return text
 
 
-def _today(today: Optional[date] = None) -> date:
+def _today(today: date | None = None) -> date:
     from services.hospital_time import hospital_today
+
     return today or hospital_today()
 
 
-def _local_date(stamp: Any) -> Optional[str]:
+def _local_date(stamp: Any) -> str | None:
     from services.hospital_time import to_hospital
+
     local = to_hospital(stamp)
     return local.date().isoformat() if local else None
 
@@ -324,15 +416,26 @@ def _user_names(db, ids) -> dict:
     if not ids:
         return {}
     marks = ",".join("?" for _ in ids)
-    return {r["id"]: r["name"] for r in db.execute(
-        f"SELECT id, name FROM users WHERE id IN ({marks})", ids).fetchall()}
+    return {
+        r["id"]: r["name"]
+        for r in db.execute(f"SELECT id, name FROM users WHERE id IN ({marks})", ids).fetchall()
+    }
 
 
-def _audit(db, *, action: str, user: Optional[dict], outcome: str = "success",
-           patient_id: Optional[str] = None, target_type: Optional[str] = "patient",
-           target_id: Optional[str] = None, summary: str = "",
-           metadata: Optional[dict] = None, request_meta: Optional[dict] = None,
-           correlation_id: Optional[str] = None) -> None:
+def _audit(
+    db,
+    *,
+    action: str,
+    user: dict | None,
+    outcome: str = "success",
+    patient_id: str | None = None,
+    target_type: str | None = "patient",
+    target_id: str | int | None = None,
+    summary: str = "",
+    metadata: dict | None = None,
+    request_meta: dict | None = None,
+    correlation_id: str | None = None,
+) -> None:
     """One patient_identity row (fail-closed). With `db` it is written inside
     the caller's transaction, so a failure rolls the caller's work back."""
     meta = dict(request_meta or {})
@@ -346,7 +449,9 @@ def _audit(db, *, action: str, user: Optional[dict], outcome: str = "success",
         actor_user_id=(user or {}).get("id"),
         actor_role=(user or {}).get("role"),
         target_type=target_type,
-        target_id=str(target_id) if target_id is not None else (str(patient_id) if patient_id else None),
+        target_id=str(target_id)
+        if target_id is not None
+        else (str(patient_id) if patient_id else None),
         patient_id=patient_id,
         request_path=meta.get("request_path"),
         http_method=meta.get("http_method"),
@@ -356,16 +461,19 @@ def _audit(db, *, action: str, user: Optional[dict], outcome: str = "success",
     )
 
 
-def _department(user: Optional[dict]) -> Optional[str]:
+def _department(user: dict | None) -> str | None:
     from permissions import department_scope
+
     return department_scope(user or {})
 
 
 # ── Configuration and the UHID ───────────────────────────────────────────────
 
-def _uhid_series_on(db) -> Optional[dict]:
-    row = db.execute("SELECT * FROM document_number_series WHERE series_code = ?",
-                     (UHID_SERIES,)).fetchone()
+
+def _uhid_series_on(db) -> dict | None:
+    row = db.execute(
+        "SELECT * FROM document_number_series WHERE series_code = ?", (UHID_SERIES,)
+    ).fetchone()
     return dict(row) if row is not None else None
 
 
@@ -383,6 +491,7 @@ def _uhid_pattern():
 def registration_config() -> dict:
     """What the desk needs to know about this site. No patient data."""
     from services.abdm_service import NO_GATEWAY_SHORT
+
     with db_session() as db:
         series = _uhid_series_on(db)
     pattern, problem = _uhid_pattern()
@@ -392,8 +501,9 @@ def registration_config() -> dict:
         "uhid_pattern_set": bool(getattr(config, "UHID_PATTERN", None)),
         "uhid_pattern_valid": problem is None,
         "uhid_series_configured": bool(series and int(series.get("is_configured") or 0)),
-        "uhid_ready": (problem is None) if source == "hospital"
-                      else bool(series and int(series.get("is_configured") or 0)),
+        "uhid_ready": (problem is None)
+        if source == "hospital"
+        else bool(series and int(series.get("is_configured") or 0)),
         "duplicate_mode": config.DUPLICATE_MODE,
         "abdm_enabled": _abdm_on(),
         "abha_notice": NO_GATEWAY_SHORT,
@@ -413,11 +523,15 @@ def registration_consent_options() -> dict:
     """The closed sets the desk's consent step offers, in the server's words
     (consent_service vocabularies). No patient data."""
     from services.consent_service import CONSENT_METHODS, CONSENT_PURPOSES, GIVEN_BY
+
     return {
         "purpose": REGISTRATION_CONSENT_PURPOSE,
         "purpose_label": CONSENT_PURPOSES[REGISTRATION_CONSENT_PURPOSE],
-        "methods": [{"value": k, "label": v} for k, v in CONSENT_METHODS.items()
-                    if k not in REGISTRATION_CONSENT_EXCLUDED_METHODS],
+        "methods": [
+            {"value": k, "label": v}
+            for k, v in CONSENT_METHODS.items()
+            if k not in REGISTRATION_CONSENT_EXCLUDED_METHODS
+        ],
         "given_by": list(GIVEN_BY),
         # The two rules the desk mirrors before sending (_consent_values
         # refuses both): these methods need a named guardian or proxy, and a
@@ -434,7 +548,7 @@ def _abdm_on() -> bool:
     return bool(config.enabled_modules().get("abdm", False))
 
 
-def uhid_check(text: Optional[str], series: Optional[dict] = None) -> bool:
+def uhid_check(text: str | None, series: dict | None = None) -> bool:
     """Does a typed Orb-mode UHID carry a valid Verhoeff check digit?
 
     The configured prefix and suffix are removed (any case) and what is left
@@ -445,6 +559,7 @@ def uhid_check(text: Optional[str], series: Optional[dict] = None) -> bool:
     if config.UHID_SOURCE != "orb":
         return True
     from services.billing_masters import verhoeff_valid
+
     value = (text or "").strip().upper()
     if series is None:
         with db_session() as db:
@@ -452,47 +567,58 @@ def uhid_check(text: Optional[str], series: Optional[dict] = None) -> bool:
     prefix = str((series or {}).get("prefix") or "").upper()
     suffix = str((series or {}).get("suffix") or "").upper()
     if prefix and value.startswith(prefix):
-        value = value[len(prefix):]
+        value = value[len(prefix) :]
     if suffix and value.endswith(suffix):
         value = value[: -len(suffix)]
     return verhoeff_valid(value)
 
 
-def _hospital_uhid(raw: Optional[str]) -> str:
+def _hospital_uhid(raw: str | None) -> str:
     """Validate a typed hospital-mode UHID against the site pattern."""
     uhid = _clean(raw, limit=MAX_UHID)
     if not uhid:
-        raise RegistrationError("uhid_required",
-                                "Type the patient's hospital number (UHID).")
+        raise RegistrationError("uhid_required", "Type the patient's hospital number (UHID).")
     pattern, problem = _uhid_pattern()
     if problem:
         logger.error("Registration refused: %s", problem)
         raise RegistrationConflict(
             "uhid_pattern_invalid",
             "The hospital number format set for this site is not valid, so no "
-            "patient can be registered until an administrator corrects it.")
+            "patient can be registered until an administrator corrects it.",
+        )
     if pattern is not None and not pattern.fullmatch(uhid):
-        raise RegistrationError("uhid_format",
-                                "That hospital number is not in this hospital's format.")
+        raise RegistrationError(
+            "uhid_format", "That hospital number is not in this hospital's format."
+        )
     return uhid
 
 
-def _uhid_in_use_on(db, uhid: str, *, exclude_patient_id: Optional[str] = None) -> list[str]:
+def _uhid_in_use_on(db, uhid: str, *, exclude_patient_id: str | None = None) -> list[str]:
     key = pm.uhid_key(uhid)
     rows = db.execute(
         f"SELECT id FROM patients WHERE mrn = ? OR {pm.UHID_KEY_SQL.format(col='mrn')} = ?",
-        (uhid, key)).fetchall()
+        (uhid, key),
+    ).fetchall()
     return [r[0] for r in rows if r[0] != exclude_patient_id]
 
 
 # ── Minimal index cards (OPD-N4) ─────────────────────────────────────────────
 
 #: The ONLY fields a hospital-wide reader sees about a patient.
-INDEX_CARD_FIELDS = ("patient_id", "uhid", "name", "sex", "age", "age_stated",
-                     "phone_last4", "last_visit_date", "inpatient_now")
+INDEX_CARD_FIELDS = (
+    "patient_id",
+    "uhid",
+    "name",
+    "sex",
+    "age",
+    "age_stated",
+    "phone_last4",
+    "last_visit_date",
+    "inpatient_now",
+)
 
 
-def index_cards_on(db, ids, *, today: Optional[date] = None) -> dict:
+def index_cards_on(db, ids, *, today: date | None = None) -> dict:
     """{patient_id: card} for the minimal-field index view. Nothing else."""
     ids = [i for i in dict.fromkeys(ids) if i]
     if not ids:
@@ -508,12 +634,18 @@ def index_cards_on(db, ids, *, today: Optional[date] = None) -> dict:
                    EXISTS (SELECT 1 FROM admissions a
                             WHERE a.patient_id = p.id AND a.status = 'active') AS inpatient_now
               FROM patients p LEFT JOIN patient_demographics d ON d.patient_id = p.id
-             WHERE p.id IN ({marks})""", ids).fetchall()
+             WHERE p.id IN ({marks})""",
+        ids,
+    ).fetchall()
     out = {}
     for r in rows:
-        age, stated = pm.current_age(date_of_birth=r["date_of_birth"], stated_age=r["age"],
-                                     age_recorded_on=r["age_recorded_on"],
-                                     created_at=r["created_at"], today=today)
+        age, stated = pm.current_age(
+            date_of_birth=r["date_of_birth"],
+            stated_age=r["age"],
+            age_recorded_on=r["age_recorded_on"],
+            created_at=r["created_at"],
+            today=today,
+        )
         visits = [d for d in (r["last_opd"], _local_date(r["last_admission"])) if d]
         out[r["id"]] = {
             "patient_id": r["id"],
@@ -536,11 +668,12 @@ def _cards_in_order(db, ids, *, today=None) -> list[dict]:
 
 # ── Search (hospital-wide, minimal fields) ───────────────────────────────────
 
+
 def _like_escape(text: str) -> str:
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def search_index(query: Optional[str], *, today: Optional[date] = None) -> dict:
+def search_index(query: str | None, *, today: date | None = None) -> dict:
     """Find patients by UHID, phone or name across the whole hospital.
 
     Returns {"results": [card], "truncated": bool, "kinds": [...]} where
@@ -550,7 +683,8 @@ def search_index(query: Optional[str], *, today: Optional[date] = None) -> dict:
     q = (query or "").strip()
     if len(q) < SEARCH_MIN_CHARS:
         raise RegistrationError(
-            "query_too_short", f"Type at least {SEARCH_MIN_CHARS} characters to search.")
+            "query_too_short", f"Type at least {SEARCH_MIN_CHARS} characters to search."
+        )
     if len(q) > MAX_TEXT:
         raise RegistrationError("value_too_long", "That search is too long.")
     limit = SEARCH_MAX_RESULTS
@@ -572,24 +706,31 @@ def search_index(query: Optional[str], *, today: Optional[date] = None) -> dict:
         digits_only = re.fullmatch(r"[\d\s()+\-.]+", q) is not None
         phone = pm.phone_key(q) if digits_only else None
         if phone:
-            add([r[0] for r in db.execute(
-                "SELECT k.patient_id FROM patient_match_keys k JOIN patients p ON p.id = k.patient_id "
-                "WHERE k.phone_key = ? ORDER BY p.name LIMIT ?", (phone, limit + 1)).fetchall()],
-                "phone")
+            add(
+                [
+                    r[0]
+                    for r in db.execute(
+                        "SELECT k.patient_id FROM patient_match_keys k JOIN patients p ON p.id = k.patient_id "
+                        "WHERE k.phone_key = ? ORDER BY p.name LIMIT ?",
+                        (phone, limit + 1),
+                    ).fetchall()
+                ],
+                "phone",
+            )
         # Name: every word typed must start a word of the normalised name, or
         # the typed text must appear in the name as written.
         words = [w for w in pm.name_tokens(q) if w != pm.BABY_MARKER and len(w) >= 2]
         if not digits_only and words:
             key = pm.name_key(q)
-            clauses = " AND ".join(
-                "(' ' || k.name_key || ' ') LIKE ? ESCAPE '\\'" for _ in words)
+            clauses = " AND ".join("(' ' || k.name_key || ' ') LIKE ? ESCAPE '\\'" for _ in words)
             params = [f"% {_like_escape(w)}%" for w in words]
             rows = db.execute(
                 "SELECT k.patient_id, k.name_key, p.name FROM patient_match_keys k "
                 "JOIN patients p ON p.id = k.patient_id "
                 f"WHERE ({clauses}) OR p.name LIKE ? ESCAPE '\\' "
                 "ORDER BY (k.name_key = ?) DESC, p.name, k.patient_id LIMIT ?",
-                (*params, f"%{_like_escape(q)}%", key, limit + 1)).fetchall()
+                (*params, f"%{_like_escape(q)}%", key, limit + 1),
+            ).fetchall()
             add([r["patient_id"] for r in rows], "name")
         truncated = len(ordered) > limit
         results = _cards_in_order(db, ordered[:limit], today=today)
@@ -598,18 +739,20 @@ def search_index(query: Optional[str], *, today: Optional[date] = None) -> dict:
 
 # ── Input validation ─────────────────────────────────────────────────────────
 
-def _phone(value: Any, *, field: str = "phone") -> Optional[str]:
+
+def _phone(value: Any, *, field: str = "phone") -> str | None:
     text = _clean(value, limit=30)
     if text is None:
         return None
     digits = pm.phone_digits(text)
     if not (6 <= len(digits) <= 15) or re.search(r"[A-Za-z]", text):
-        raise RegistrationError("bad_phone", "That phone number is not a number Orb can store.",
-                                field=field)
+        raise RegistrationError(
+            "bad_phone", "That phone number is not a number Orb can store.", field=field
+        )
     return text
 
 
-def _dob(value: Any) -> Optional[str]:
+def _dob(value: Any) -> str | None:
     text = _clean(value, limit=40)
     if text is None:
         return None
@@ -617,17 +760,18 @@ def _dob(value: Any) -> Optional[str]:
     if dob is None:
         raise RegistrationError(
             "bad_date_of_birth",
-            "That date of birth cannot be used. Give it as YYYY-MM-DD, not in the future.")
+            "That date of birth cannot be used. Give it as YYYY-MM-DD, not in the future.",
+        )
     return dob
 
 
-def _stated_age(value: Any) -> Optional[int]:
+def _stated_age(value: Any) -> int | None:
     if value is None or (isinstance(value, str) and not value.strip()):
         return None
     try:
         age = int(value)
     except (TypeError, ValueError):
-        raise RegistrationError("bad_age", "A stated age is a whole number of years.")
+        raise RegistrationError("bad_age", "A stated age is a whole number of years.") from None
     if isinstance(value, float) and value != age:
         raise RegistrationError("bad_age", "A stated age is a whole number of years.")
     if not (0 <= age <= 130):
@@ -642,7 +786,7 @@ def _sex(value: Any) -> str:
     return sex
 
 
-def _demographic(field: str, value: Any) -> Optional[str]:
+def _demographic(field: str, value: Any) -> str | None:
     if field == "alt_phone":
         return _phone(value, field="alt_phone")
     text = _clean(value)
@@ -655,31 +799,39 @@ def _demographic(field: str, value: Any) -> Optional[str]:
     if field == "id_document_type":
         text = text.lower()
         if text not in ID_DOCUMENT_TYPES:
-            raise RegistrationError("bad_id_document_type",
-                                    "Choose the identity document type from the list.")
+            raise RegistrationError(
+                "bad_id_document_type", "Choose the identity document type from the list."
+            )
     if field == "id_document_last4" and not _LAST4.match(text):
         raise RegistrationError(
             "bad_id_document_last4",
-            "Record only the last 4 characters of an identity document, never the full number.")
+            "Record only the last 4 characters of an identity document, never the full number.",
+        )
     return text
 
 
-def _compose_address(parts: dict) -> Optional[str]:
-    words = [parts.get(k) for k in _ADDRESS_PARTS]
-    words = [w for w in words if w]
+def _compose_address(parts: dict) -> str | None:
+    address_parts = [parts.get(k) for k in _ADDRESS_PARTS]
+    words = [w for w in address_parts if w]
     return ", ".join(words) if words else None
 
 
-def _abha_values(data: dict) -> tuple[Optional[str], Optional[str], str]:
+def _abha_values(data: dict) -> tuple[str | None, str | None, str]:
     """(normalised number, normalised address, source) or 422."""
-    from services.abdm_service import IDENTITY_SOURCES, validate_abha_address, validate_abha_number
+    from services.abdm_service import (
+        IDENTITY_SOURCES,
+        validate_abha_address,
+        validate_abha_number,
+    )
+
     number_raw = _clean(data.get("abha_number"), limit=40)
     address_raw = _clean(data.get("abha_address"), limit=120)
     if not number_raw and not address_raw:
         return None, None, "counter_keyed"
     if not _abdm_on():
-        raise RegistrationError("abdm_off",
-                                "ABHA recording is switched off on this site, so leave the ABHA blank.")
+        raise RegistrationError(
+            "abdm_off", "ABHA recording is switched off on this site, so leave the ABHA blank."
+        )
     number = address = None
     if number_raw:
         check = validate_abha_number(number_raw)
@@ -687,17 +839,19 @@ def _abha_values(data: dict) -> tuple[Optional[str], Optional[str], str]:
             raise RegistrationError("bad_abha", check.reason or "That is not an ABHA number.")
         number = check.normalised
     if address_raw:
-        check = validate_abha_address(address_raw)
-        if not check.valid:
-            raise RegistrationError("bad_abha", check.reason or "That is not an ABHA address.")
-        address = check.normalised
+        address_check = validate_abha_address(address_raw)
+        if not address_check.valid:
+            raise RegistrationError(
+                "bad_abha", address_check.reason or "That is not an ABHA address."
+            )
+        address = address_check.normalised
     source = _clean(data.get("abha_source")) or "counter_keyed"
     if source not in {code for code, _ in IDENTITY_SOURCES}:
         raise RegistrationError("bad_abha_source", "Choose where the ABHA came from from the list.")
     return number, address, source
 
 
-def _payer_values(payer: Any) -> Optional[dict]:
+def _payer_values(payer: Any) -> dict | None:
     """Who the patient says pays for their outpatient care (opd-13): a payer
     code from the site's payer master, and the policy or member number if
     they have one. None when the desk recorded no payer (the patient is then
@@ -708,6 +862,7 @@ def _payer_values(payer: Any) -> Optional[dict]:
     if not isinstance(payer, dict):
         raise RegistrationError("bad_payer", "The payer is not readable.")
     from services.billing_masters import MAX_POLICY_TEXT
+
     code = _clean(payer.get("payer_code"), limit=MAX_POLICY_TEXT)
     if not code:
         raise RegistrationError("bad_payer", "Choose who pays from the list.")
@@ -718,7 +873,7 @@ def _payer_values(payer: Any) -> Optional[dict]:
     }
 
 
-def _notice_language(value: Any) -> Optional[str]:
+def _notice_language(value: Any) -> str | None:
     """The notice language in its listed spelling, or None when the text is
     not English or an Eighth Schedule language (case and spaces ignored)."""
     text = _clean(value)
@@ -731,8 +886,7 @@ def _notice_language(value: Any) -> Optional[str]:
     return None
 
 
-def _younger_than(years: int, date_of_birth: Optional[str],
-                  age_years: Optional[int]) -> bool:
+def _younger_than(years: int, date_of_birth: str | None, age_years: int | None) -> bool:
     """Is a patient with this validated date of birth (YYYY-MM-DD) or stated
     age younger than `years` today?
 
@@ -749,14 +903,14 @@ def _younger_than(years: int, date_of_birth: Optional[str],
         born = date.fromisoformat(date_of_birth)
     except ValueError:
         return True
-    today = min(date.today(), datetime.now(timezone.utc).date())
+    today = min(date.today(), datetime.now(UTC).date())
     age = today.year - born.year - ((today.month, today.day) < (born.month, born.day))
     return age < years
 
 
-def _consent_values(raw: Any, *, preferred_language: Optional[str],
-                    date_of_birth: Optional[str],
-                    age_years: Optional[int]) -> Optional[dict]:
+def _consent_values(
+    raw: Any, *, preferred_language: str | None, date_of_birth: str | None, age_years: int | None
+) -> dict | None:
     """The desk's notice and consent step (opd-19), checked before anything
     is written. None when the desk did not send one (the registration then
     writes no consent, exactly as before).
@@ -781,33 +935,40 @@ def _consent_values(raw: Any, *, preferred_language: Optional[str],
         raise RegistrationError(
             "consent_notice_required",
             "Give the patient the privacy notice and record that they have it before "
-            "recording their consent.")
+            "recording their consent.",
+        )
     if raw.get("treatment_consent") is not True:
         raise RegistrationError(
             "consent_treatment_required",
             "Record consent only when the patient agrees to treatment. Otherwise leave "
-            "the consent step out; a doctor records it later.")
+            "the consent step out; a doctor records it later.",
+        )
     version = _clean(raw.get("notice_version"), limit=NOTICE_VERSION_MAX)
     if not version:
         raise RegistrationError(
             "notice_version_required",
-            "Record the version printed on the notice the patient was given.")
+            "Record the version printed on the notice the patient was given.",
+        )
     language_text = _clean(raw.get("notice_language"))
     language = _notice_language(language_text if language_text else preferred_language)
     if language is None:
         raise RegistrationError(
             "bad_notice_language",
             "The notice is given in English or a language of the Eighth Schedule. Choose "
-            "the language the patient was given it in.")
+            "the language the patient was given it in.",
+        )
     from services.consent_service import CONSENT_METHODS, GIVEN_BY
+
     method = _clean(raw.get("method"), limit=40)
     if method not in CONSENT_METHODS or method in REGISTRATION_CONSENT_EXCLUDED_METHODS:
-        raise RegistrationError("bad_consent_method",
-                                "Choose how the consent was given from the list.")
+        raise RegistrationError(
+            "bad_consent_method", "Choose how the consent was given from the list."
+        )
     given_by = _clean(raw.get("given_by"), limit=20) or "patient"
     if given_by not in GIVEN_BY:
-        raise RegistrationError("bad_consent_given_by",
-                                "Say whether the patient, a guardian or a proxy gave consent.")
+        raise RegistrationError(
+            "bad_consent_given_by", "Say whether the patient, a guardian or a proxy gave consent."
+        )
     proxy_name = _clean(raw.get("proxy_name"))
     proxy_relationship = _clean(raw.get("proxy_relationship"), limit=80)
     if given_by == "patient" and method in REGISTRATION_CONSENT_GUARDIAN_METHODS:
@@ -817,17 +978,20 @@ def _consent_values(raw: Any, *, preferred_language: Optional[str],
         raise RegistrationError(
             "consent_given_by_mismatch",
             "This consent was given by a guardian. Under who gave consent, choose a guardian "
-            "or someone acting for the patient, and record their name and relationship.")
+            "or someone acting for the patient, and record their name and relationship.",
+        )
     if given_by == "patient" and _younger_than(CONSENT_ADULT_AGE, date_of_birth, age_years):
         raise RegistrationError(
             "consent_guardian_required",
             f"This patient is under {CONSENT_ADULT_AGE}, so a parent or guardian gives "
-            "consent for them. Record who gave it, with their name and relationship.")
+            "consent for them. Record who gave it, with their name and relationship.",
+        )
     if given_by != "patient" and not (proxy_name and proxy_relationship):
         raise RegistrationError(
             "consent_proxy_required",
             "A guardian's or proxy's consent needs their name and their relationship "
-            "to the patient.")
+            "to the patient.",
+        )
     if given_by == "patient":
         proxy_name = proxy_relationship = None
     return {
@@ -841,16 +1005,18 @@ def _consent_values(raw: Any, *, preferred_language: Optional[str],
     }
 
 
-def _may_record_consent(user: Optional[dict]) -> bool:
+def _may_record_consent(user: dict | None) -> bool:
     from permissions import CONSENT_RECORD, has_permission
+
     return has_permission(str((user or {}).get("role") or ""), CONSENT_RECORD)
 
 
-def _refuse_consent_without_grant(user: dict, request_meta: Optional[dict]) -> None:
+def _refuse_consent_without_grant(user: dict, request_meta: dict | None) -> Never:
     """The consent step sent by an account without consent.record (ruling
     OPD-N3: the receptionist, until counsel agrees). Audited like any other
     permission refusal, then 403 before anything is written."""
     from permissions import CONSENT_RECORD
+
     meta = dict(request_meta or {})
     log_audit_event(
         correlation_id=str(uuid.uuid4()),
@@ -864,21 +1030,35 @@ def _refuse_consent_without_grant(user: dict, request_meta: Optional[dict]) -> N
         http_method=meta.get("http_method"),
         ip_address=meta.get("ip_address"),
         user_agent=meta.get("user_agent"),
-        metadata={"required_permissions": [CONSENT_RECORD],
-                  "missing_permissions": [CONSENT_RECORD],
-                  "user_role": user.get("role"), "lane": "registration_consent"},
+        metadata={
+            "required_permissions": [CONSENT_RECORD],
+            "missing_permissions": [CONSENT_RECORD],
+            "user_role": user.get("role"),
+            "lane": "registration_consent",
+        },
     )
     raise RegistrationForbidden(
         "consent_permission_required",
         "This account does not record consent. Register the patient without the consent "
         "step; a doctor records it.",
-        missing=[CONSENT_RECORD])
+        missing=[CONSENT_RECORD],
+    )
 
 
 def _consent_view(row: dict) -> dict:
     """The consent a registration recorded, as the desk's answer shows it."""
-    keys = ("id", "purpose", "purpose_label", "notice_version", "notice_language",
-            "method", "method_label", "given_by", "granted_at", "effective_status")
+    keys = (
+        "id",
+        "purpose",
+        "purpose_label",
+        "notice_version",
+        "notice_language",
+        "method",
+        "method_label",
+        "given_by",
+        "granted_at",
+        "effective_status",
+    )
     return {k: row.get(k) for k in keys}
 
 
@@ -887,51 +1067,60 @@ def _validate_registration(data: dict) -> dict:
     try:
         name = validate_patient_name(data.get("name"))
     except PatientNameError as exc:
-        raise RegistrationError("name_invalid", str(exc))
+        raise RegistrationError("name_invalid", str(exc)) from exc
     if len(name) > MAX_TEXT:
         raise RegistrationError("value_too_long", "That name is too long.")
     dob = _dob(data.get("date_of_birth"))
     age = _stated_age(data.get("age_years"))
     if dob and age is not None:
-        raise RegistrationError("age_with_date_of_birth",
-                                "Give a date of birth or a stated age, not both.")
+        raise RegistrationError(
+            "age_with_date_of_birth", "Give a date of birth or a stated age, not both."
+        )
     if dob is None and age is None:
         raise RegistrationError(
             "age_or_date_of_birth_required",
-            "Record a date of birth, or the age the patient states if they do not know it.")
-    clean = {
+            "Record a date of birth, or the age the patient states if they do not know it.",
+        )
+    clean: dict[str, Any] = {
         "name": name,
         "sex": _sex(data.get("sex")),
         "date_of_birth": dob,
         "age_years": age,
         "phone": _phone(data.get("phone")),
         "emergency_contact_name": _clean(data.get("emergency_contact_name")),
-        "emergency_contact_phone": _phone(data.get("emergency_contact_phone"),
-                                          field="emergency_contact_phone"),
+        "emergency_contact_phone": _phone(
+            data.get("emergency_contact_phone"), field="emergency_contact_phone"
+        ),
         "uhid": _clean(data.get("uhid"), limit=MAX_UHID),
     }
     for field in DEMOGRAPHIC_FIELDS:
         clean[field] = _demographic(field, data.get(field))
     if clean["id_document_last4"] and not clean["id_document_type"]:
-        raise RegistrationError("bad_id_document_type",
-                                "Say which identity document the last 4 characters belong to.")
+        raise RegistrationError(
+            "bad_id_document_type", "Say which identity document the last 4 characters belong to."
+        )
     clean["abha_number"], clean["abha_address"], clean["abha_source"] = _abha_values(data)
     clean["payer"] = _payer_values(data.get("payer"))
     # opd-19: the notice and consent step, when the desk sent one.
-    clean["consent"] = _consent_values(data.get("consent"),
-                                       preferred_language=clean["preferred_language"],
-                                       date_of_birth=dob, age_years=age)
+    clean["consent"] = _consent_values(
+        data.get("consent"),
+        preferred_language=clean["preferred_language"],
+        date_of_birth=dob,
+        age_years=age,
+    )
     review = data.get("duplicate_review")
     if review is not None:
         if not isinstance(review, dict):
             raise RegistrationError("bad_duplicate_review", "The duplicate review is not readable.")
         if review.get("decision") != "register_new":
-            raise RegistrationError("bad_duplicate_review",
-                                    "A duplicate review must say 'register_new'.")
+            raise RegistrationError(
+                "bad_duplicate_review", "A duplicate review must say 'register_new'."
+            )
         ids = review.get("candidate_ids") or []
         if not isinstance(ids, list) or not all(isinstance(i, str) and i for i in ids):
-            raise RegistrationError("bad_duplicate_review",
-                                    "List the records you checked by their ids.")
+            raise RegistrationError(
+                "bad_duplicate_review", "List the records you checked by their ids."
+            )
         clean["duplicate_review"] = {
             "decision": "register_new",
             "candidate_ids": sorted(set(ids)),
@@ -944,6 +1133,7 @@ def _validate_registration(data: dict) -> dict:
 
 # ── Matching (opd-5) ─────────────────────────────────────────────────────────
 
+
 def _decorate_candidates(db, candidates: list[dict], *, today=None) -> list[dict]:
     cards = index_cards_on(db, [c["patient_id"] for c in candidates], today=today)
     out = []
@@ -951,22 +1141,33 @@ def _decorate_candidates(db, candidates: list[dict], *, today=None) -> list[dict
         card = cards.get(c["patient_id"])
         if card is None:
             continue
-        out.append({**card, "score": c["score"], "band": c["band"],
-                    "reasons": list(c["reasons"]),
-                    "reason_labels": pm.reason_labels(c["reasons"])})
+        out.append(
+            {
+                **card,
+                "score": c["score"],
+                "band": c["band"],
+                "reasons": list(c["reasons"]),
+                "reason_labels": pm.reason_labels(c["reasons"]),
+            }
+        )
     return out
 
 
 def _probe(clean: dict, *, today=None) -> dict:
     return pm.probe_from(
-        name=clean.get("name"), phone=clean.get("phone"),
-        date_of_birth=clean.get("date_of_birth"), age_years=clean.get("age_years"),
-        sex=clean.get("sex"), uhid=clean.get("uhid"),
-        abha_number=clean.get("abha_number"), abha_address=clean.get("abha_address"),
-        today=today)
+        name=clean.get("name"),
+        phone=clean.get("phone"),
+        date_of_birth=clean.get("date_of_birth"),
+        age_years=clean.get("age_years"),
+        sex=clean.get("sex"),
+        uhid=clean.get("uhid"),
+        abha_number=clean.get("abha_number"),
+        abha_address=clean.get("abha_address"),
+        today=today,
+    )
 
 
-def _dob_visible_to(db, department: Optional[str]):
+def _dob_visible_to(db, department: str | None):
     """The matcher's dob_visible predicate for a caller scoped to `department`.
 
     None (compare every date of birth) for an account with no department, which
@@ -979,10 +1180,11 @@ def _dob_visible_to(db, department: Optional[str]):
     if department is None:
         return None
     from permissions import patient_in_scope
+
     return lambda patient_id: patient_in_scope(db, patient_id, department)
 
 
-def _review_needs(candidates: list[dict], *, unseen_band: Optional[str] = None) -> dict:
+def _review_needs(candidates: list[dict], *, unseen_band: str | None = None) -> dict:
     """What the desk must do about these candidates under config.DUPLICATE_MODE.
 
     `unseen_band` is the matcher's band for the records a cut scan left out
@@ -1010,12 +1212,14 @@ def _review_needs(candidates: list[dict], *, unseen_band: Optional[str] = None) 
 
 def _scan_facts(found: dict, needs: dict) -> dict:
     """The cut-scan facts every refusal, override and registration audits."""
-    return {"truncated": bool(found.get("truncated")),
-            "check_incomplete": needs["check_incomplete"],
-            "unseen_band": needs["unseen_band"]}
+    return {
+        "truncated": bool(found.get("truncated")),
+        "check_incomplete": needs["check_incomplete"],
+        "unseen_band": needs["unseen_band"],
+    }
 
 
-def find_matches(data: dict, *, user: dict, today: Optional[date] = None) -> dict:
+def find_matches(data: dict, *, user: dict, today: date | None = None) -> dict:
     """POST /match: what registering these details would run into.
 
     Takes the same fields as a registration (name, sex, date_of_birth or
@@ -1042,15 +1246,24 @@ def find_matches(data: dict, *, user: dict, today: Optional[date] = None) -> dic
     }
     abha = {k: data.get(k) for k in ("abha_number", "abha_address", "abha_source")}
     probe_fields["abha_number"], probe_fields["abha_address"], _src = (
-        _abha_values(abha) if (abha.get("abha_number") or abha.get("abha_address"))
-        else (None, None, None))
-    if not any(probe_fields.get(k) for k in ("name", "phone", "date_of_birth", "uhid",
-                                              "abha_number", "abha_address")):
-        raise RegistrationError("nothing_to_match",
-                                "Type a name, phone, date of birth, UHID or ABHA to check.")
+        _abha_values(abha)
+        if (abha.get("abha_number") or abha.get("abha_address"))
+        else (None, None, None)
+    )
+    if not any(
+        probe_fields.get(k)
+        for k in ("name", "phone", "date_of_birth", "uhid", "abha_number", "abha_address")
+    ):
+        raise RegistrationError(
+            "nothing_to_match", "Type a name, phone, date of birth, UHID or ABHA to check."
+        )
     with db_session() as db:
-        found = pm.find_candidates_on(db, _probe(probe_fields, today=today), today=today,
-                                      dob_visible=_dob_visible_to(db, _department(user)))
+        found = pm.find_candidates_on(
+            db,
+            _probe(probe_fields, today=today),
+            today=today,
+            dob_visible=_dob_visible_to(db, _department(user)),
+        )
         candidates = _decorate_candidates(db, found["candidates"], today=today)
     needs = _review_needs(candidates, unseen_band=found.get("unseen_band"))
     return {
@@ -1065,14 +1278,16 @@ def find_matches(data: dict, *, user: dict, today: Optional[date] = None) -> dic
 
 # ── Registering a patient ────────────────────────────────────────────────────
 
-def _patient_id_for(user_id: str, idempotency_key: Optional[str]) -> str:
+
+def _patient_id_for(user_id: str, idempotency_key: str | None) -> str:
     """A new patient id. With an idempotency key it is derived from the
     registrar and the key, so a replay lands on the same row; 12 hex digits, a
     different length from the 8 the admission door mints, so the two can never
     collide."""
     if idempotency_key:
         digest = hashlib.sha256(
-            f"registration\x00{user_id}\x00{idempotency_key}".encode("utf-8")).hexdigest()
+            f"registration\x00{user_id}\x00{idempotency_key}".encode()
+        ).hexdigest()
         return f"PAT-{digest[:12].upper()}"
     return f"PAT-{uuid.uuid4().hex[:12].upper()}"
 
@@ -1086,8 +1301,9 @@ def _same_registration(row, clean: dict) -> bool:
         return False
     if clean["date_of_birth"] is None and row["age"] != clean["age_years"]:
         return False
-    if pm.phone_key(row["phone"]) != pm.phone_key(clean["phone"]) \
-            or pm.phone_digits(row["phone"]) != pm.phone_digits(clean["phone"]):
+    if pm.phone_key(row["phone"]) != pm.phone_key(clean["phone"]) or pm.phone_digits(
+        row["phone"]
+    ) != pm.phone_digits(clean["phone"]):
         return False
     if config.UHID_SOURCE == "hospital" and clean["uhid"] and row["mrn"] != clean["uhid"]:
         return False
@@ -1098,8 +1314,9 @@ class _Refusal(Exception):
     """Carries a refusal out of the transaction so its audit row can be written
     on its own (an audit row written inside a rolled-back transaction is lost)."""
 
-    def __init__(self, error: RegistrationError, *, action: str, metadata: dict,
-                 patient_ids: list[str]):
+    def __init__(
+        self, error: RegistrationError, *, action: str, metadata: dict, patient_ids: list[str]
+    ):
         super().__init__(error.message)
         self.error = error
         self.action = action
@@ -1107,32 +1324,50 @@ class _Refusal(Exception):
         self.patient_ids = patient_ids
 
 
-def _refuse_with_candidates(code: str, message: str, candidates: list[dict], mode: str,
-                            *, action: str = "registration_refused",
-                            scan: Optional[dict] = None) -> _Refusal:
+def _refuse_with_candidates(
+    code: str,
+    message: str,
+    candidates: list[dict],
+    mode: str,
+    *,
+    action: str = "registration_refused",
+    scan: dict | None = None,
+) -> _Refusal:
     ids = [c["patient_id"] for c in candidates]
     scan = scan or {"truncated": False, "check_incomplete": False, "unseen_band": None}
     return _Refusal(
-        RegistrationConflict(code, message, candidates=candidates, mode=mode,
-                             check_incomplete=scan["check_incomplete"]),
+        RegistrationConflict(
+            code,
+            message,
+            candidates=candidates,
+            mode=mode,
+            check_incomplete=scan["check_incomplete"],
+        ),
         action=action,
-        metadata={"reason_code": code, "mode": mode, "matched_patient_ids": ids,
-                  "bands": [c["band"] for c in candidates], **scan},
-        patient_ids=ids)
+        metadata={
+            "reason_code": code,
+            "mode": mode,
+            "matched_patient_ids": ids,
+            "bands": [c["band"] for c in candidates],
+            **scan,
+        },
+        patient_ids=ids,
+    )
 
 
 def _key_conflict() -> _Refusal:
     return _Refusal(
         RegistrationConflict(
             "registration_key_conflict",
-            "This request was already used for a different registration. "
-            "Start a new registration."),
+            "This request was already used for a different registration. Start a new registration.",
+        ),
         action="registration_replay_refused",
         metadata={"reason_code": "registration_key_conflict"},
-        patient_ids=[])
+        patient_ids=[],
+    )
 
 
-def _replay_window_open(registered_at: Any, *, now: Optional[datetime] = None) -> bool:
+def _replay_window_open(registered_at: Any, *, now: datetime | None = None) -> bool:
     """Is a registration still inside REPLAY_WINDOW, so its idempotency key
     may be replayed? A missing or unreadable stamp is outside (fail closed)."""
     if not registered_at:
@@ -1141,7 +1376,7 @@ def _replay_window_open(registered_at: Any, *, now: Optional[datetime] = None) -
         at = parse_to_utc(registered_at)
     except (TypeError, ValueError):
         return False
-    return (now or datetime.now(timezone.utc)) - at <= REPLAY_WINDOW
+    return (now or datetime.now(UTC)) - at <= REPLAY_WINDOW
 
 
 def _replay_record(row) -> dict:
@@ -1153,8 +1388,14 @@ def _replay_record(row) -> dict:
     return {"patient_id": row["id"], "uhid": row["mrn"], "record_returned": False}
 
 
-def register_patient(data: dict, *, user: dict, idempotency_key: Optional[str] = None,
-                     request_meta: Optional[dict] = None, today: Optional[date] = None) -> dict:
+def register_patient(
+    data: dict,
+    *,
+    user: dict,
+    idempotency_key: str | None = None,
+    request_meta: dict | None = None,
+    today: date | None = None,
+) -> dict:
     """Register a new patient. See the module docstring for what one call
     writes and refuses. Returns {"patient": record, "replayed": bool,
     "duplicate_review": {...} or None}.
@@ -1194,10 +1435,13 @@ def register_patient(data: dict, *, user: dict, idempotency_key: Optional[str] =
                     "SELECT p.*, d.registered_by, d.registration_source, d.registered_at "
                     "FROM patients p "
                     "LEFT JOIN patient_demographics d ON d.patient_id = p.id WHERE p.id = ?",
-                    (pid,)).fetchone()
+                    (pid,),
+                ).fetchone()
                 if existing is not None:
-                    if existing["registered_by"] != user["id"] \
-                            or existing["registration_source"] != "desk":
+                    if (
+                        existing["registered_by"] != user["id"]
+                        or existing["registration_source"] != "desk"
+                    ):
                         raise _key_conflict()
                     if not _replay_window_open(existing["registered_at"]):
                         raise _Refusal(
@@ -1205,19 +1449,32 @@ def register_patient(data: dict, *, user: dict, idempotency_key: Optional[str] =
                                 "registration_key_expired",
                                 "This request already registered a patient more than a day "
                                 "ago. Search for the patient instead of registering them "
-                                "again."),
+                                "again.",
+                            ),
                             action="registration_replay_refused",
                             metadata={"reason_code": "registration_key_expired"},
-                            patient_ids=[])
+                            patient_ids=[],
+                        )
                     if not _same_registration(existing, clean):
                         raise _key_conflict()
-                    _audit(db, action="patient_registered", user=user, patient_id=pid,
-                           summary=f"Registration replayed for {pid}",
-                           metadata={"replay": True, "registration_source": "desk",
-                                     "record_returned": False},
-                           request_meta=request_meta)
-                    return {"patient": _replay_record(existing),
-                            "replayed": True, "duplicate_review": None}
+                    _audit(
+                        db,
+                        action="patient_registered",
+                        user=user,
+                        patient_id=pid,
+                        summary=f"Registration replayed for {pid}",
+                        metadata={
+                            "replay": True,
+                            "registration_source": "desk",
+                            "record_returned": False,
+                        },
+                        request_meta=request_meta,
+                    )
+                    return {
+                        "patient": _replay_record(existing),
+                        "replayed": True,
+                        "duplicate_review": None,
+                    }
 
             # 2. The UHID.
             series = None
@@ -1225,13 +1482,15 @@ def register_patient(data: dict, *, user: dict, idempotency_key: Optional[str] =
                 if clean["uhid"]:
                     raise RegistrationError(
                         "uhid_assigned_by_orb",
-                        "This site issues hospital numbers itself. Leave the UHID blank.")
+                        "This site issues hospital numbers itself. Leave the UHID blank.",
+                    )
                 series = _uhid_series_on(db)
                 if not series or not int(series.get("is_configured") or 0):
                     raise RegistrationConflict(
                         "uhid_series_not_configured",
                         "Hospital numbers cannot be issued yet: the UHID series is not set "
-                        "up on this site. Ask an administrator to configure it.")
+                        "up on this site. Ask an administrator to configure it.",
+                    )
             else:
                 clean["uhid"] = _hospital_uhid(clean["uhid"])
 
@@ -1241,8 +1500,9 @@ def register_patient(data: dict, *, user: dict, idempotency_key: Optional[str] =
             # and its candidates would otherwise answer a guess. Never weaker
             # for a candidate the phone or name finds (the same age scores the
             # full +30); the administrator's sweep pairs the rest.
-            found = pm.find_candidates_on(db, _probe(clean, today=today), today=today,
-                                          dob_visible=_dob_visible_to(db, dept))
+            found = pm.find_candidates_on(
+                db, _probe(clean, today=today), today=today, dob_visible=_dob_visible_to(db, dept)
+            )
             candidates = _decorate_candidates(db, found["candidates"], today=today)
             # A cut scan never reads as "no duplicate": records it left out
             # count as the strongest candidates they could have been
@@ -1252,19 +1512,30 @@ def register_patient(data: dict, *, user: dict, idempotency_key: Optional[str] =
             mode = needs["mode"]
             if needs["hard"]:
                 reasons = {r for c in needs["hard"] for r in c["reasons"]}
-                what = "UHID" if "uhid" in reasons and "abha" not in reasons else (
-                    "ABHA" if "abha" in reasons and "uhid" not in reasons else "UHID and ABHA")
+                what = (
+                    "UHID"
+                    if "uhid" in reasons and "abha" not in reasons
+                    else (
+                        "ABHA" if "abha" in reasons and "uhid" not in reasons else "UHID and ABHA"
+                    )
+                )
                 raise _refuse_with_candidates(
                     "existing_record",
                     f"A patient with this {what} is already registered. Open their record "
                     "instead of registering them again.",
-                    needs["hard"], mode, scan=scan)
+                    needs["hard"],
+                    mode,
+                    scan=scan,
+                )
             if needs["blocked"] and needs["probable"]:
                 raise _refuse_with_candidates(
                     "probable_duplicate",
                     "This looks like a patient who is already registered. Open their record. "
                     "This site does not register past a probable duplicate.",
-                    needs["probable"] + needs["possible"], mode, scan=scan)
+                    needs["probable"] + needs["possible"],
+                    mode,
+                    scan=scan,
+                )
             if needs["blocked"]:
                 # 'block', and a record the cut left out could be a probable
                 # duplicate: the strict side of OPD-S2 refuses it unseen.
@@ -1275,7 +1546,10 @@ def register_patient(data: dict, *, user: dict, idempotency_key: Optional[str] =
                     "compare may be this patient. This site does not register a patient the "
                     "check could not clear. Search the patient index for them, and leave out "
                     "a phone number that is not the patient's own, such as a hospital number.",
-                    needs["possible"], mode, scan=scan)
+                    needs["possible"],
+                    mode,
+                    scan=scan,
+                )
             reviewed: list[dict] = []
             review_used = False
             review = clean["duplicate_review"]
@@ -1287,45 +1561,63 @@ def register_patient(data: dict, *, user: dict, idempotency_key: Optional[str] =
                             "Too many registered records share this phone number, name or date "
                             "of birth for the duplicate check to compare them all, so this may "
                             "be a patient who is already registered. Search the patient index "
-                            "for them. To register a new patient anyway, give a reason.")
+                            "for them. To register a new patient anyway, give a reason."
+                        )
                     elif needs["check_incomplete"]:
                         message = (
                             "This may be a patient who is already registered. Check each record "
                             "below. The check could not compare every record that shares these "
                             "details, so search the patient index too. To register a new "
-                            "patient anyway, give a reason.")
+                            "patient anyway, give a reason."
+                        )
                     else:
-                        message = ("This may be a patient who is already registered. Check each "
-                                   "record below. To register a new patient anyway, give a reason.")
-                    raise _refuse_with_candidates("duplicate_review_required", message,
-                                                  listed, mode, scan=scan)
+                        message = (
+                            "This may be a patient who is already registered. Check each "
+                            "record below. To register a new patient anyway, give a reason."
+                        )
+                    raise _refuse_with_candidates(
+                        "duplicate_review_required", message, listed, mode, scan=scan
+                    )
                 missing = [c for c in listed if c["patient_id"] not in review["candidate_ids"]]
                 if missing:
                     raise _refuse_with_candidates(
                         "duplicate_review_stale",
                         "More possible matches were found since you checked. Review the list "
-                        "again.", listed, mode, scan=scan)
+                        "again.",
+                        listed,
+                        mode,
+                        scan=scan,
+                    )
                 reviewed = listed
                 review_used = True
 
             # 4. The writes.
             if series is not None:
-                from services.billing_masters import SeriesNotConfigured, allocate_series_number
+                from services.billing_masters import (
+                    SeriesNotConfigured,
+                    allocate_series_number,
+                )
+
                 try:
                     clean["uhid"] = allocate_series_number(
-                        db, UHID_SERIES, require_configured=True)["number"]
+                        db, UHID_SERIES, require_configured=True
+                    )["number"]
                 except SeriesNotConfigured:
                     raise RegistrationConflict(
                         "uhid_series_not_configured",
                         "Hospital numbers cannot be issued yet: the UHID series is not set "
-                        "up on this site.")
+                        "up on this site.",
+                    ) from None
                 if _uhid_in_use_on(db, clean["uhid"]):
                     raise RegistrationConflict(
                         "uhid_series_collision",
                         "The next number in the UHID series is already in use. Ask an "
-                        "administrator to check the series before registering anyone.")
+                        "administrator to check the series before registering anyone.",
+                    )
             dob = clean["date_of_birth"]
-            age = pm.full_years(date.fromisoformat(dob), _today(today)) if dob else clean["age_years"]
+            age = (
+                pm.full_years(date.fromisoformat(dob), _today(today)) if dob else clean["age_years"]
+            )
             address = _compose_address(clean)
             try:
                 db.execute(
@@ -1333,12 +1625,24 @@ def register_patient(data: dict, *, user: dict, idempotency_key: Optional[str] =
                            phone, emergency_contact_name, emergency_contact_phone, address,
                            status, admission_date, created_at)
                        VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'registered', NULL, ?)""",
-                    (pid, clean["name"], clean["uhid"], age, dob, clean["sex"], clean["phone"],
-                     clean["emergency_contact_name"], clean["emergency_contact_phone"],
-                     address, now))
+                    (
+                        pid,
+                        clean["name"],
+                        clean["uhid"],
+                        age,
+                        dob,
+                        clean["sex"],
+                        clean["phone"],
+                        clean["emergency_contact_name"],
+                        clean["emergency_contact_phone"],
+                        address,
+                        now,
+                    ),
+                )
             except DBIntegrityError as exc:
                 raise RegistrationConflict(
-                    "uhid_in_use", "That hospital number is already in use.") from exc
+                    "uhid_in_use", "That hospital number is already in use."
+                ) from exc
             db.execute(
                 """INSERT INTO patient_demographics (patient_id, registered_at, registered_by,
                        registration_source, uhid_source, age_recorded_on, guardian_relation,
@@ -1346,19 +1650,45 @@ def register_patient(data: dict, *, user: dict, idempotency_key: Optional[str] =
                        district, state_code, pin_code, alt_phone, email, id_document_type,
                        id_document_last4, occupation, row_version, updated_at, updated_by)
                    VALUES (?, ?, ?, 'desk', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)""",
-                (pid, now, user["id"], config.UHID_SOURCE,
-                 _today(today).isoformat() if dob is None else None,
-                 *(clean[f] for f in DEMOGRAPHIC_FIELDS), now, user["id"]))
-            pm.upsert_keys_on(db, pid, {"name": clean["name"], "phone": clean["phone"],
-                                        "date_of_birth": dob, "sex": clean["sex"]})
+                (
+                    pid,
+                    now,
+                    user["id"],
+                    config.UHID_SOURCE,
+                    _today(today).isoformat() if dob is None else None,
+                    *(clean[f] for f in DEMOGRAPHIC_FIELDS),
+                    now,
+                    user["id"],
+                ),
+            )
+            pm.upsert_keys_on(
+                db,
+                pid,
+                {
+                    "name": clean["name"],
+                    "phone": clean["phone"],
+                    "date_of_birth": dob,
+                    "sex": clean["sex"],
+                },
+            )
             abha_recorded = False
             if clean["abha_number"] or clean["abha_address"]:
-                from services.abdm_service import AbdmError, IdentityError, record_abha_on
+                from services.abdm_service import (
+                    AbdmError,
+                    IdentityError,
+                    record_abha_on,
+                )
+
                 try:
-                    record_abha_on(db, patient_id=pid, abha_number=clean["abha_number"],
-                                   abha_address=clean["abha_address"],
-                                   source=clean["abha_source"], recorded_by=user["id"],
-                                   department=dept)
+                    record_abha_on(
+                        db,
+                        patient_id=pid,
+                        abha_number=clean["abha_number"],
+                        abha_address=clean["abha_address"],
+                        source=clean["abha_source"],
+                        recorded_by=user["id"],
+                        department=dept,
+                    )
                 except IdentityError as exc:
                     raise RegistrationConflict("abha_in_use", str(exc)) from exc
                 except AbdmError as exc:
@@ -1372,24 +1702,42 @@ def register_patient(data: dict, *, user: dict, idempotency_key: Optional[str] =
                            overridden_by, override_reason)
                        VALUES (?, ?, ?, ?, 'open', 'registration', ?, ?, ?, ?)
                        ON CONFLICT(patient_id, candidate_patient_id) DO NOTHING""",
-                    (a, b, int(c["score"]), json.dumps(c["reasons"]), now, user["id"],
-                     user["id"], review["reason"]))
+                    (
+                        a,
+                        b,
+                        int(c["score"]),
+                        json.dumps(c["reasons"]),
+                        now,
+                        user["id"],
+                        user["id"],
+                        review["reason"],
+                    ),
+                )
             # opd-13: the payer the patient names (no admission, unverified)
             # and, when the site charges one, the registration fee, once.
             payer_recorded = None
             if clean["payer"] is not None:
-                from services.billing_masters import MasterDataError, record_patient_payer_on
+                from services.billing_masters import (
+                    MasterDataError,
+                    record_patient_payer_on,
+                )
+
                 try:
                     payer_recorded = record_patient_payer_on(
-                        db, patient_id=pid, payer_code=clean["payer"]["payer_code"],
+                        db,
+                        patient_id=pid,
+                        payer_code=clean["payer"]["payer_code"],
                         policy_number=clean["payer"]["policy_number"],
-                        member_id=clean["payer"]["member_id"], created_by=user["id"])
+                        member_id=clean["payer"]["member_id"],
+                        created_by=user["id"],
+                    )
                 except MasterDataError as exc:
                     raise RegistrationError("bad_payer", str(exc)) from exc
             from services.opd_charges_service import raise_registration_fee_on
+
             registration_fee = raise_registration_fee_on(
-                db, patient_id=pid, charged_by=user["id"],
-                service_day=_today(today).isoformat())
+                db, patient_id=pid, charged_by=user["id"], service_day=_today(today).isoformat()
+            )
             correlation = f"registration-{pid}"
             # opd-19: the notice and consent step, in this transaction and
             # through consent_service, so the patient and the consent exist
@@ -1398,81 +1746,145 @@ def register_patient(data: dict, *, user: dict, idempotency_key: Optional[str] =
             consent_row = None
             if clean["consent"] is not None:
                 from services.consent_service import record_consent_on
+
                 taken = clean["consent"]
                 try:
                     consent_row = record_consent_on(
-                        db, patient_id=pid, purpose=REGISTRATION_CONSENT_PURPOSE,
-                        method=taken["method"], recorded_by=user["id"],
+                        db,
+                        patient_id=pid,
+                        purpose=REGISTRATION_CONSENT_PURPOSE,
+                        method=taken["method"],
+                        recorded_by=user["id"],
                         recorded_by_role=user.get("role"),
                         scope_detail=REGISTRATION_CONSENT_SCOPE,
                         notice_version=taken["notice_version"],
-                        notice_language=taken["notice_language"], granted_at=now,
-                        given_by=taken["given_by"], proxy_name=taken["proxy_name"],
+                        notice_language=taken["notice_language"],
+                        granted_at=now,
+                        given_by=taken["given_by"],
+                        proxy_name=taken["proxy_name"],
                         proxy_relationship=taken["proxy_relationship"],
-                        evidence_ref=taken["evidence_ref"])
+                        evidence_ref=taken["evidence_ref"],
+                    )
                 except ValueError as exc:
                     raise RegistrationError("bad_consent", str(exc)) from exc
-                _audit(db, action="consent_recorded", user=user, patient_id=pid,
-                       target_type="consent_record", target_id=consent_row["id"],
-                       summary=f"Consent to treatment recorded at registration for {pid}",
-                       metadata={"lane": "registration", "purpose": REGISTRATION_CONSENT_PURPOSE,
-                                 "method": taken["method"], "given_by": taken["given_by"],
-                                 "notice_acknowledged": True,
-                                 "notice_version": taken["notice_version"],
-                                 "notice_language": taken["notice_language"]},
-                       request_meta=request_meta, correlation_id=correlation)
-            _audit(db, action="patient_registered", user=user, patient_id=pid,
-                   summary=f"Patient {pid} registered at the desk",
-                   metadata={"replay": False, "registration_source": "desk",
-                             "uhid_source": config.UHID_SOURCE, "abha_recorded": abha_recorded,
-                             "stated_age": dob is None, "idempotency_key": bool(key),
-                             "duplicate_review": review_used,
-                             "candidate_scan_truncated": scan["truncated"],
-                             "check_incomplete": scan["check_incomplete"],
-                             **({"payer_code": payer_recorded["payer_code"],
-                                 "payer_type": payer_recorded["payer_type"],
-                                 "payer_policy_id": payer_recorded["policy_id"]}
-                                if payer_recorded else {}),
-                             **({"registration_fee_charge_id": registration_fee.charge_id}
-                                if registration_fee else {}),
-                             **({"consent_id": consent_row["id"]} if consent_row else {})},
-                   request_meta=request_meta, correlation_id=correlation)
+                _audit(
+                    db,
+                    action="consent_recorded",
+                    user=user,
+                    patient_id=pid,
+                    target_type="consent_record",
+                    target_id=consent_row["id"],
+                    summary=f"Consent to treatment recorded at registration for {pid}",
+                    metadata={
+                        "lane": "registration",
+                        "purpose": REGISTRATION_CONSENT_PURPOSE,
+                        "method": taken["method"],
+                        "given_by": taken["given_by"],
+                        "notice_acknowledged": True,
+                        "notice_version": taken["notice_version"],
+                        "notice_language": taken["notice_language"],
+                    },
+                    request_meta=request_meta,
+                    correlation_id=correlation,
+                )
+            _audit(
+                db,
+                action="patient_registered",
+                user=user,
+                patient_id=pid,
+                summary=f"Patient {pid} registered at the desk",
+                metadata={
+                    "replay": False,
+                    "registration_source": "desk",
+                    "uhid_source": config.UHID_SOURCE,
+                    "abha_recorded": abha_recorded,
+                    "stated_age": dob is None,
+                    "idempotency_key": bool(key),
+                    "duplicate_review": review_used,
+                    "candidate_scan_truncated": scan["truncated"],
+                    "check_incomplete": scan["check_incomplete"],
+                    **(
+                        {
+                            "payer_code": payer_recorded["payer_code"],
+                            "payer_type": payer_recorded["payer_type"],
+                            "payer_policy_id": payer_recorded["policy_id"],
+                        }
+                        if payer_recorded
+                        else {}
+                    ),
+                    **(
+                        {"registration_fee_charge_id": registration_fee.charge_id}
+                        if registration_fee
+                        else {}
+                    ),
+                    **({"consent_id": consent_row["id"]} if consent_row else {}),
+                },
+                request_meta=request_meta,
+                correlation_id=correlation,
+            )
             if review_used:
-                summary = (f"Registered {pid} past {len(reviewed)} possible duplicate(s)"
-                           if reviewed else
-                           f"Registered {pid} past a duplicate check that could not compare "
-                           "every record")
-                _audit(db, action="registration_duplicate_override", user=user,
-                       patient_id=pid, summary=summary,
-                       metadata={"mode": mode, "reason": review["reason"],
-                                 "candidate_ids": [c["patient_id"] for c in reviewed],
-                                 "scores": [c["score"] for c in reviewed],
-                                 "bands": [c["band"] for c in reviewed], **scan},
-                       request_meta=request_meta, correlation_id=correlation)
+                summary = (
+                    f"Registered {pid} past {len(reviewed)} possible duplicate(s)"
+                    if reviewed
+                    else f"Registered {pid} past a duplicate check that could not compare "
+                    "every record"
+                )
+                _audit(
+                    db,
+                    action="registration_duplicate_override",
+                    user=user,
+                    patient_id=pid,
+                    summary=summary,
+                    metadata={
+                        "mode": mode,
+                        "reason": review["reason"],
+                        "candidate_ids": [c["patient_id"] for c in reviewed],
+                        "scores": [c["score"] for c in reviewed],
+                        "bands": [c["band"] for c in reviewed],
+                        **scan,
+                    },
+                    request_meta=request_meta,
+                    correlation_id=correlation,
+                )
             record = get_registration_on(db, pid, today=today)
     except _Refusal as refusal:
         # The refusal is audited on its own write (fail-closed): if it cannot
         # be written, the desk gets 503 and sees no candidates.
         with db_session() as db:
-            _audit(db, action=refusal.action, user=user, outcome="denied",
-                   patient_id=None, target_type="patient_index", target_id=None,
-                   summary=f"Registration refused: {refusal.error.code}",
-                   metadata=refusal.metadata, request_meta=request_meta)
-        raise refusal.error
+            _audit(
+                db,
+                action=refusal.action,
+                user=user,
+                outcome="denied",
+                patient_id=None,
+                target_type="patient_index",
+                target_id=None,
+                summary=f"Registration refused: {refusal.error.code}",
+                metadata=refusal.metadata,
+                request_meta=request_meta,
+            )
+        raise refusal.error from refusal
     result = {
         "patient": record,
         "replayed": False,
-        "duplicate_review": ({"reason": review["reason"],
-                              "candidate_ids": [c["patient_id"] for c in reviewed],
-                              "check_incomplete": scan["check_incomplete"]}
-                             if review_used else None),
+        "duplicate_review": (
+            {
+                "reason": review["reason"],
+                "candidate_ids": [c["patient_id"] for c in reviewed],
+                "check_incomplete": scan["check_incomplete"],
+            }
+            if review_used
+            else None
+        ),
     }
     # opd-13: present only when the desk recorded a payer, or the site
     # charges a registration fee, so every other registration answers as
     # before.
     if payer_recorded:
-        result["payer"] = {k: payer_recorded[k] for k in
-                           ("policy_id", "payer_code", "payer_name", "payer_type", "verified")}
+        result["payer"] = {
+            k: payer_recorded[k]
+            for k in ("policy_id", "payer_code", "payer_name", "payer_type", "verified")
+        }
     if registration_fee:
         result["registration_fee"] = registration_fee.as_dict()
     # opd-19: present only when the desk recorded the consent step.
@@ -1483,43 +1895,56 @@ def register_patient(data: dict, *, user: dict, idempotency_key: Optional[str] =
 
 # ── The record, its history and the card ─────────────────────────────────────
 
+
 def _abha_rows_on(db, patient_id: str) -> list[dict]:
     from services.abdm_service import VERIFICATION_LABEL, format_abha_number
+
     rows = db.execute(
         "SELECT id, abha_number, abha_address, verification_status, source, is_primary, "
         "created_at FROM abha_identities WHERE patient_id = ? AND status = 'active' "
-        "ORDER BY is_primary DESC, id DESC", (patient_id,)).fetchall()
+        "ORDER BY is_primary DESC, id DESC",
+        (patient_id,),
+    ).fetchall()
     out = []
     for r in rows:
         status = r["verification_status"] or "unverified"
-        out.append({
-            "id": r["id"],
-            "abha_number": format_abha_number(r["abha_number"]) if r["abha_number"] else None,
-            "abha_address": r["abha_address"],
-            "verification_status": status,
-            "verification_label": VERIFICATION_LABEL.get(status, status),
-            "is_verified": status == "verified",
-            "is_primary": bool(r["is_primary"]),
-            "source": r["source"],
-        })
+        out.append(
+            {
+                "id": r["id"],
+                "abha_number": format_abha_number(r["abha_number"]) if r["abha_number"] else None,
+                "abha_address": r["abha_address"],
+                "verification_status": status,
+                "verification_label": VERIFICATION_LABEL.get(status, status),
+                "is_verified": status == "verified",
+                "is_primary": bool(r["is_primary"]),
+                "source": r["source"],
+            }
+        )
     return out
 
 
-def get_registration_on(db, patient_id: str, *, today: Optional[date] = None) -> dict:
+def get_registration_on(db, patient_id: str, *, today: date | None = None) -> dict:
     """The full registration record for a reader the route already scoped."""
     from services.abdm_service import NO_GATEWAY_SHORT
+
     row = db.execute(
         "SELECT p.*, EXISTS (SELECT 1 FROM admissions a WHERE a.patient_id = p.id "
         "AND a.status = 'active') AS inpatient_now FROM patients p WHERE p.id = ?",
-        (patient_id,)).fetchone()
+        (patient_id,),
+    ).fetchone()
     if row is None:
         raise RegistrationNotFound("patient_not_found", "Patient not found")
-    demo = db.execute("SELECT * FROM patient_demographics WHERE patient_id = ?",
-                      (patient_id,)).fetchone()
+    demo = db.execute(
+        "SELECT * FROM patient_demographics WHERE patient_id = ?", (patient_id,)
+    ).fetchone()
     demo = dict(demo) if demo is not None else {}
-    age, stated = pm.current_age(date_of_birth=row["date_of_birth"], stated_age=row["age"],
-                                 age_recorded_on=demo.get("age_recorded_on"),
-                                 created_at=row["created_at"], today=today)
+    age, stated = pm.current_age(
+        date_of_birth=row["date_of_birth"],
+        stated_age=row["age"],
+        age_recorded_on=demo.get("age_recorded_on"),
+        created_at=row["created_at"],
+        today=today,
+    )
     names = _user_names(db, [demo.get("registered_by"), demo.get("updated_by")])
     dob = pm.dob_key(row["date_of_birth"])
     return {
@@ -1556,7 +1981,7 @@ def get_registration_on(db, patient_id: str, *, today: Optional[date] = None) ->
     }
 
 
-def get_registration(patient_id: str, *, today: Optional[date] = None) -> dict:
+def get_registration(patient_id: str, *, today: date | None = None) -> dict:
     with db_session() as db:
         return get_registration_on(db, patient_id, today=today)
 
@@ -1570,8 +1995,10 @@ def redact_for_opd_arm(record: dict) -> dict:
     out["phone_last4"] = pm.phone_last4(record.get("phone"))
     for field in OPD_ARM_HIDDEN_FIELDS:
         out[field] = None
-    out["demographics"] = {k: (None if k in OPD_ARM_HIDDEN_DEMOGRAPHICS else v)
-                           for k, v in (record.get("demographics") or {}).items()}
+    out["demographics"] = {
+        k: (None if k in OPD_ARM_HIDDEN_DEMOGRAPHICS else v)
+        for k, v in (record.get("demographics") or {}).items()
+    }
     out["abha_on_file"] = bool(record.get("abha"))
     out["abha"] = []
     out["hidden_fields"] = sorted(OPD_ARM_HIDDEN)
@@ -1597,17 +2024,22 @@ def change_history(patient_id: str) -> dict:
     with db_session() as db:
         if db.execute("SELECT 1 FROM patients WHERE id = ?", (patient_id,)).fetchone() is None:
             raise RegistrationNotFound("patient_not_found", "Patient not found")
-        rows = [dict(r) for r in db.execute(
-            "SELECT id, field, old_value, new_value, reason, changed_by, changed_at, "
-            "correlation_id FROM patient_identity_changes WHERE patient_id = ? "
-            "ORDER BY changed_at DESC, id DESC", (patient_id,)).fetchall()]
+        rows = [
+            dict(r)
+            for r in db.execute(
+                "SELECT id, field, old_value, new_value, reason, changed_by, changed_at, "
+                "correlation_id FROM patient_identity_changes WHERE patient_id = ? "
+                "ORDER BY changed_at DESC, id DESC",
+                (patient_id,),
+            ).fetchall()
+        ]
         names = _user_names(db, [r["changed_by"] for r in rows])
     for r in rows:
         r["changed_by_name"] = names.get(r["changed_by"])
     return {"patient_id": patient_id, "changes": rows}
 
 
-def uhid_card(patient_id: str, *, today: Optional[date] = None) -> dict:
+def uhid_card(patient_id: str, *, today: date | None = None) -> dict:
     """What the printed UHID card carries: number, name, age and sex. No date
     of birth, phone or address."""
     with db_session() as db:
@@ -1616,9 +2048,11 @@ def uhid_card(patient_id: str, *, today: Optional[date] = None) -> dict:
             raise RegistrationNotFound("patient_not_found", "Patient not found")
         demo = db.execute(
             "SELECT registered_at, uhid_source FROM patient_demographics WHERE patient_id = ?",
-            (patient_id,)).fetchone()
-        created = db.execute("SELECT created_at FROM patients WHERE id = ?",
-                             (patient_id,)).fetchone()[0]
+            (patient_id,),
+        ).fetchone()
+        created = db.execute(
+            "SELECT created_at FROM patients WHERE id = ?", (patient_id,)
+        ).fetchone()[0]
     return {
         "patient_id": patient_id,
         "uhid": card["uhid"],
@@ -1633,14 +2067,24 @@ def uhid_card(patient_id: str, *, today: Optional[date] = None) -> dict:
 
 # ── Corrections ──────────────────────────────────────────────────────────────
 
-def _old_text(value: Any) -> Optional[str]:
+
+def _old_text(value: Any) -> str | None:
     return None if value is None else str(value)
 
 
-def correct_demographics(patient_id: str, changes: dict, *, row_version: Any, reason: Any,
-                         user: dict, may_edit_fields: bool, may_correct_uhid: bool,
-                         request_meta: Optional[dict] = None, opd_arm_only: bool = False,
-                         today: Optional[date] = None) -> dict:
+def correct_demographics(
+    patient_id: str,
+    changes: dict,
+    *,
+    row_version: Any,
+    reason: Any,
+    user: dict,
+    may_edit_fields: bool,
+    may_correct_uhid: bool,
+    request_meta: dict | None = None,
+    opd_arm_only: bool = False,
+    today: date | None = None,
+) -> dict:
     """Correct a registered identity, with a reason, against the row_version
     the editor read. Every changed field is appended to
     patient_identity_changes (append-only) in the same transaction as the
@@ -1663,8 +2107,11 @@ def correct_demographics(patient_id: str, changes: dict, *, row_version: Any, re
     changes = dict(changes or {})
     unknown = set(changes) - set(PATIENT_FIELDS) - set(DEMOGRAPHIC_FIELDS) - {"uhid"}
     if unknown:
-        raise RegistrationError("unknown_field", "Only registration details can be corrected here.",
-                                fields=sorted(unknown))
+        raise RegistrationError(
+            "unknown_field",
+            "Only registration details can be corrected here.",
+            fields=sorted(unknown),
+        )
     if not changes:
         raise RegistrationError("no_change", "Nothing was changed.")
     hidden = sorted(set(changes) & OPD_ARM_HIDDEN)
@@ -1673,19 +2120,23 @@ def correct_demographics(patient_id: str, changes: dict, *, row_version: Any, re
             "needs_full_scope",
             "Date of birth, contact, address and identity document details can be corrected "
             "only by the registration desk serving the whole hospital or by the admitting ward.",
-            fields=hidden)
+            fields=hidden,
+        )
     if "uhid" in changes and not may_correct_uhid:
-        raise RegistrationForbidden("uhid_correction_admin_only",
-                                    "Only an administrator can correct a hospital number.")
+        raise RegistrationForbidden(
+            "uhid_correction_admin_only", "Only an administrator can correct a hospital number."
+        )
     if set(changes) - {"uhid"} and not may_edit_fields:
-        raise RegistrationForbidden("registration_write_required",
-                                    "Your account cannot correct registration details.")
+        raise RegistrationForbidden(
+            "registration_write_required", "Your account cannot correct registration details."
+        )
     why = _reason(reason)
     try:
         expected = int(row_version)
     except (TypeError, ValueError):
-        raise RegistrationError("row_version_required",
-                                "Reload the record before correcting it.")
+        raise RegistrationError(
+            "row_version_required", "Reload the record before correcting it."
+        ) from None
 
     new: dict[str, Any] = {}
     for field, value in changes.items():
@@ -1693,7 +2144,7 @@ def correct_demographics(patient_id: str, changes: dict, *, row_version: Any, re
             try:
                 new["name"] = validate_patient_name(value)
             except PatientNameError as exc:
-                raise RegistrationError("name_invalid", str(exc))
+                raise RegistrationError("name_invalid", str(exc)) from exc
         elif field == "sex":
             new["sex"] = _sex(value)
         elif field == "date_of_birth":
@@ -1715,15 +2166,18 @@ def correct_demographics(patient_id: str, changes: dict, *, row_version: Any, re
         row = db.execute("SELECT * FROM patients WHERE id = ?", (patient_id,)).fetchone()
         if row is None:
             raise RegistrationNotFound("patient_not_found", "Patient not found")
-        demo = db.execute("SELECT * FROM patient_demographics WHERE patient_id = ?",
-                          (patient_id,)).fetchone()
+        demo = db.execute(
+            "SELECT * FROM patient_demographics WHERE patient_id = ?", (patient_id,)
+        ).fetchone()
         demo = dict(demo) if demo is not None else None
         current_version = int(demo["row_version"]) if demo else 0
         if expected != current_version:
             raise RegistrationConflict(
                 "stale_row_version",
                 "Someone changed this record after you opened it. Reload it and make your "
-                "correction again.", current_row_version=current_version)
+                "correction again.",
+                current_row_version=current_version,
+            )
 
         old_dob = pm.dob_key(row["date_of_birth"])
         # The age the patient STATED. Registration, a date of birth correction
@@ -1731,10 +2185,14 @@ def correct_demographics(patient_id: str, changes: dict, *, row_version: Any, re
         # birth in patients.age, and that is not a stated age.
         old_stated_age = row["age"] if old_dob is None else None
         old_patient = {
-            "name": row["name"], "sex": row["sex"], "phone": row["phone"],
-            "date_of_birth": row["date_of_birth"], "age_years": old_stated_age,
+            "name": row["name"],
+            "sex": row["sex"],
+            "phone": row["phone"],
+            "date_of_birth": row["date_of_birth"],
+            "age_years": old_stated_age,
             "emergency_contact_name": row["emergency_contact_name"],
-            "emergency_contact_phone": row["emergency_contact_phone"], "uhid": row["mrn"],
+            "emergency_contact_phone": row["emergency_contact_phone"],
+            "uhid": row["mrn"],
         }
         old_demo = {f: (demo or {}).get(f) for f in DEMOGRAPHIC_FIELDS}
 
@@ -1744,8 +2202,9 @@ def correct_demographics(patient_id: str, changes: dict, *, row_version: Any, re
         dob_after = new["date_of_birth"] if "date_of_birth" in new else old_dob
         if dob_after:
             if "age_years" in new and new["age_years"] is not None:
-                raise RegistrationError("age_with_date_of_birth",
-                                        "Give a date of birth or a stated age, not both.")
+                raise RegistrationError(
+                    "age_with_date_of_birth", "Give a date of birth or a stated age, not both."
+                )
             stated_age_after = None
         elif "age_years" in new:
             stated_age_after = new["age_years"]
@@ -1760,27 +2219,32 @@ def correct_demographics(patient_id: str, changes: dict, *, row_version: Any, re
         # to this, so a record that already lacked both (an old admission-door
         # row) can still have its phone or address corrected; no correction
         # can leave a record in that state.
-        if dob_after is None and stated_age_after is None \
-                and ("date_of_birth" in new or "age_years" in new):
+        if (
+            dob_after is None
+            and stated_age_after is None
+            and ("date_of_birth" in new or "age_years" in new)
+        ):
             raise RegistrationError(
                 "age_or_date_of_birth_required",
                 "Removing the date of birth needs the age the patient states instead, in the "
-                "same correction." if old_dob is not None else
-                "A stated age cannot be removed without a date of birth in its place. Record "
-                "the date of birth, or the age the patient states now.")
+                "same correction."
+                if old_dob is not None
+                else "A stated age cannot be removed without a date of birth in its place. Record "
+                "the date of birth, or the age the patient states now.",
+            )
         if "uhid" in new:
             if not new["uhid"]:
                 raise RegistrationError("uhid_required", "A hospital number cannot be blank.")
             if config.UHID_SOURCE == "hospital":
                 new["uhid"] = _hospital_uhid(new["uhid"])
             elif not uhid_check(new["uhid"], _uhid_series_on(db)):
-                raise RegistrationError("uhid_check_digit",
-                                        "That hospital number fails its check digit.")
+                raise RegistrationError(
+                    "uhid_check_digit", "That hospital number fails its check digit."
+                )
             if _uhid_in_use_on(db, new["uhid"], exclude_patient_id=patient_id):
-                raise RegistrationConflict("uhid_in_use",
-                                           "That hospital number is already in use.")
+                raise RegistrationConflict("uhid_in_use", "That hospital number is already in use.")
 
-        diffs: list[tuple[str, Optional[str], Optional[str]]] = []
+        diffs: list[tuple[str, str | None, str | None]] = []
         for field, value in new.items():
             old = old_patient.get(field) if field in old_patient else old_demo.get(field)
             if field == "sex":
@@ -1799,9 +2263,14 @@ def correct_demographics(patient_id: str, changes: dict, *, row_version: Any, re
         changed = {f for f, _o, _n in diffs}
         # patients
         sets, params = [], []
-        mapping = {"name": "name", "sex": "sex", "phone": "phone", "uhid": "mrn",
-                   "emergency_contact_name": "emergency_contact_name",
-                   "emergency_contact_phone": "emergency_contact_phone"}
+        mapping = {
+            "name": "name",
+            "sex": "sex",
+            "phone": "phone",
+            "uhid": "mrn",
+            "emergency_contact_name": "emergency_contact_name",
+            "emergency_contact_phone": "emergency_contact_phone",
+        }
         for field, column in mapping.items():
             if field in changed:
                 sets.append(f"{column} = ?")
@@ -1812,7 +2281,9 @@ def correct_demographics(patient_id: str, changes: dict, *, row_version: Any, re
             params.append(new["date_of_birth"])
             if new["date_of_birth"]:
                 sets.append("age = ?")
-                params.append(pm.full_years(date.fromisoformat(new["date_of_birth"]), _today(today)))
+                params.append(
+                    pm.full_years(date.fromisoformat(new["date_of_birth"]), _today(today))
+                )
                 age_recorded_on = None
         if "age_years" in changed:
             sets.append("age = ?")
@@ -1824,62 +2295,104 @@ def correct_demographics(patient_id: str, changes: dict, *, row_version: Any, re
             params.append(_compose_address(demo_after))
         if sets:
             try:
-                db.execute(f"UPDATE patients SET {', '.join(sets)} WHERE id = ?",
-                           (*params, patient_id))
+                db.execute(
+                    f"UPDATE patients SET {', '.join(sets)} WHERE id = ?", (*params, patient_id)
+                )
             except DBIntegrityError as exc:
-                raise RegistrationConflict("uhid_in_use",
-                                           "That hospital number is already in use.") from exc
+                raise RegistrationConflict(
+                    "uhid_in_use", "That hospital number is already in use."
+                ) from exc
         # patient_demographics (created on a record's first correction)
         if demo is None:
-            source = "import" if row["import_run_id"] else (
-                "admission" if db.execute("SELECT 1 FROM admissions WHERE patient_id = ?",
-                                          (patient_id,)).fetchone() else None)
+            source = (
+                "import"
+                if row["import_run_id"]
+                else (
+                    "admission"
+                    if db.execute(
+                        "SELECT 1 FROM admissions WHERE patient_id = ?", (patient_id,)
+                    ).fetchone()
+                    else None
+                )
+            )
             db.execute(
                 f"""INSERT INTO patient_demographics (patient_id, registration_source,
-                        age_recorded_on, {', '.join(DEMOGRAPHIC_FIELDS)}, row_version,
+                        age_recorded_on, {", ".join(DEMOGRAPHIC_FIELDS)}, row_version,
                         updated_at, updated_by)
-                    VALUES (?, ?, ?, {', '.join('?' for _ in DEMOGRAPHIC_FIELDS)}, 1, ?, ?)""",
-                (patient_id, source, age_recorded_on,
-                 *(demo_after[f] for f in DEMOGRAPHIC_FIELDS), now, user["id"]))
+                    VALUES (?, ?, ?, {", ".join("?" for _ in DEMOGRAPHIC_FIELDS)}, 1, ?, ?)""",
+                (
+                    patient_id,
+                    source,
+                    age_recorded_on,
+                    *(demo_after[f] for f in DEMOGRAPHIC_FIELDS),
+                    now,
+                    user["id"],
+                ),
+            )
         else:
             demo_sets = [f"{f} = ?" for f in DEMOGRAPHIC_FIELDS if f in changed]
             demo_params = [demo_after[f] for f in DEMOGRAPHIC_FIELDS if f in changed]
             cur = db.execute(
-                f"""UPDATE patient_demographics SET {', '.join(demo_sets + [
-                        'age_recorded_on = ?', 'row_version = row_version + 1',
-                        'updated_at = ?', 'updated_by = ?'])}
+                f"""UPDATE patient_demographics SET {
+                    ", ".join(
+                        demo_sets
+                        + [
+                            "age_recorded_on = ?",
+                            "row_version = row_version + 1",
+                            "updated_at = ?",
+                            "updated_by = ?",
+                        ]
+                    )
+                }
                      WHERE patient_id = ? AND row_version = ?""",
-                (*demo_params, age_recorded_on, now, user["id"], patient_id, current_version))
+                (*demo_params, age_recorded_on, now, user["id"], patient_id, current_version),
+            )
             if cur.rowcount != 1:
                 raise RegistrationConflict(
-                    "stale_row_version", "Someone changed this record after you opened it.",
-                    current_row_version=current_version)
+                    "stale_row_version",
+                    "Someone changed this record after you opened it.",
+                    current_row_version=current_version,
+                )
         for field, old, value in diffs:
             db.execute(
                 """INSERT INTO patient_identity_changes (patient_id, field, old_value,
                        new_value, reason, changed_by, changed_at, correlation_id)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (patient_id, field, old, value, why, user["id"], now, correlation))
-        after = db.execute("SELECT name, phone, date_of_birth, sex FROM patients WHERE id = ?",
-                           (patient_id,)).fetchone()
+                (patient_id, field, old, value, why, user["id"], now, correlation),
+            )
+        after = db.execute(
+            "SELECT name, phone, date_of_birth, sex FROM patients WHERE id = ?", (patient_id,)
+        ).fetchone()
         pm.upsert_keys_on(db, patient_id, after)
         fields = sorted(changed - {"uhid"})
         if fields:
-            _audit(db, action="patient_demographics_corrected", user=user,
-                   patient_id=patient_id,
-                   summary=f"Registration details corrected for {patient_id}",
-                   metadata={"fields": fields, "row_version": current_version + 1},
-                   request_meta=request_meta, correlation_id=correlation)
+            _audit(
+                db,
+                action="patient_demographics_corrected",
+                user=user,
+                patient_id=patient_id,
+                summary=f"Registration details corrected for {patient_id}",
+                metadata={"fields": fields, "row_version": current_version + 1},
+                request_meta=request_meta,
+                correlation_id=correlation,
+            )
         if "uhid" in changed:
-            _audit(db, action="patient_uhid_corrected", user=user, patient_id=patient_id,
-                   summary=f"Hospital number corrected for {patient_id}",
-                   metadata={"row_version": current_version + 1},
-                   request_meta=request_meta, correlation_id=correlation)
+            _audit(
+                db,
+                action="patient_uhid_corrected",
+                user=user,
+                patient_id=patient_id,
+                summary=f"Hospital number corrected for {patient_id}",
+                metadata={"row_version": current_version + 1},
+                request_meta=request_meta,
+                correlation_id=correlation,
+            )
         record = get_registration_on(db, patient_id, today=today)
     return {"patient": record, "changed_fields": sorted(changed)}
 
 
 # ── Identity check (OPD-S1) ──────────────────────────────────────────────────
+
 
 def _stated(stated: dict) -> dict:
     stated = dict(stated or {})
@@ -1894,13 +2407,18 @@ def _stated(stated: dict) -> dict:
         raise RegistrationError(
             "identifiers_required",
             "Ask the patient for their name, their date of birth or age, and the last 4 "
-            "digits of their phone or their UHID.")
-    return {"name": name, "date_of_birth": dob, "age_years": age, "phone_last4": last4,
-            "uhid": uhid}
+            "digits of their phone or their UHID.",
+        )
+    return {
+        "name": name,
+        "date_of_birth": dob,
+        "age_years": age,
+        "phone_last4": last4,
+        "uhid": uhid,
+    }
 
 
-def evaluate_identity_on(db, patient_id: str, stated: dict, *,
-                         today: Optional[date] = None) -> dict:
+def evaluate_identity_on(db, patient_id: str, stated: dict, *, today: date | None = None) -> dict:
     """Compare what the patient stated with the record. Writes nothing and
     returns {"result": 'match'|'no_match', "checked": [kinds], "mismatched":
     [kinds]}. `mismatched` is for the audit row only and must never reach the
@@ -1910,16 +2428,21 @@ def evaluate_identity_on(db, patient_id: str, stated: dict, *,
         "SELECT p.name, p.mrn, p.phone, p.date_of_birth, p.age, p.created_at, "
         "d.age_recorded_on, d.alt_phone FROM patients p "
         "LEFT JOIN patient_demographics d ON d.patient_id = p.id WHERE p.id = ?",
-        (patient_id,)).fetchone()
+        (patient_id,),
+    ).fetchone()
     if row is None:
         raise RegistrationNotFound("patient_not_found", "Patient not found")
     checked, mismatched = ["name"], []
     if not pm.stated_name_matches(stated["name"], row["name"]):
         mismatched.append("name")
     stored_dob = pm.dob_key(row["date_of_birth"])
-    stored_age, _ = pm.current_age(date_of_birth=row["date_of_birth"], stated_age=row["age"],
-                                   age_recorded_on=row["age_recorded_on"],
-                                   created_at=row["created_at"], today=today)
+    stored_age, _ = pm.current_age(
+        date_of_birth=row["date_of_birth"],
+        stated_age=row["age"],
+        age_recorded_on=row["age_recorded_on"],
+        created_at=row["created_at"],
+        today=today,
+    )
     if stated.get("date_of_birth"):
         checked.append("date_of_birth")
         if stored_dob is not None:
@@ -1933,7 +2456,10 @@ def evaluate_identity_on(db, patient_id: str, stated: dict, *,
             mismatched.append("date_of_birth")
     if stated.get("age_years") is not None:
         checked.append("age_years")
-        if stored_age is None or abs(int(stated["age_years"]) - stored_age) > IDENTITY_AGE_TOLERANCE:
+        if (
+            stored_age is None
+            or abs(int(stated["age_years"]) - stored_age) > IDENTITY_AGE_TOLERANCE
+        ):
             mismatched.append("age_years")
     if stated.get("phone_last4"):
         checked.append("phone_last4")
@@ -1944,25 +2470,37 @@ def evaluate_identity_on(db, patient_id: str, stated: dict, *,
         checked.append("uhid")
         if pm.uhid_key(stated["uhid"]) != pm.uhid_key(row["mrn"]):
             mismatched.append("uhid")
-    return {"result": "no_match" if mismatched else "match", "checked": checked,
-            "mismatched": mismatched}
+    return {
+        "result": "no_match" if mismatched else "match",
+        "checked": checked,
+        "mismatched": mismatched,
+    }
 
 
 def _recent_failures_on(db, user_id: str, patient_id: str) -> int:
-    since = (datetime.now(timezone.utc) - IDENTITY_FAILURE_WINDOW).isoformat()
-    return int(db.execute(
-        "SELECT COUNT(*) FROM audit_logs WHERE patient_id = ? AND action_type = "
-        "'identity_check_failed' AND actor_user_id = ? AND timestamp >= ?",
-        (patient_id, user_id, since)).fetchone()[0])
+    since = (datetime.now(UTC) - IDENTITY_FAILURE_WINDOW).isoformat()
+    return int(
+        db.execute(
+            "SELECT COUNT(*) FROM audit_logs WHERE patient_id = ? AND action_type = "
+            "'identity_check_failed' AND actor_user_id = ? AND timestamp >= ?",
+            (patient_id, user_id, since),
+        ).fetchone()[0]
+    )
 
 
 _NOT_DECIDED = object()
 
 
-def check_identity(patient_id: str, stated: dict, *, user: dict,
-                   department: Any = _NOT_DECIDED,
-                   request_meta: Optional[dict] = None, purpose: Optional[str] = None,
-                   today: Optional[date] = None) -> dict:
+def check_identity(
+    patient_id: str,
+    stated: dict,
+    *,
+    user: dict,
+    department: Any = _NOT_DECIDED,
+    request_meta: dict | None = None,
+    purpose: str | None = None,
+    today: date | None = None,
+) -> dict:
     """The stated-identifier check (ruling OPD-S1). Returns {"result":
     'match'|'no_match', "checked": [kinds], "checked_at"}; never a stored
     value. Audited every time (fail-closed). After IDENTITY_FAILURE_LIMIT
@@ -1987,8 +2525,14 @@ def check_identity(patient_id: str, stated: dict, *, user: dict,
             raise RegistrationNotFound("patient_not_found", "Patient not found")
         if dept is not None:
             from permissions import patient_in_scope
-            admitted = db.execute("SELECT 1 FROM admissions WHERE patient_id = ? AND "
-                                  "status = 'active' LIMIT 1", (pid,)).fetchone() is not None
+
+            admitted = (
+                db.execute(
+                    "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' LIMIT 1",
+                    (pid,),
+                ).fetchone()
+                is not None
+            )
             out_of_scope = admitted and not patient_in_scope(db, pid, dept)
         failures = _recent_failures_on(db, user["id"], pid) if not out_of_scope else 0
         if out_of_scope:
@@ -1998,22 +2542,30 @@ def check_identity(patient_id: str, stated: dict, *, user: dict,
         else:
             verdict = evaluate_identity_on(db, pid, said, today=today)
             passed = verdict["result"] == "match"
-            _audit(db, action="identity_check_passed" if passed else "identity_check_failed",
-                   user=user, outcome="success" if passed else "failure", patient_id=pid,
-                   summary=f"Identity check for {pid}: {verdict['result']}",
-                   metadata={"checked": verdict["checked"],
-                             "mismatched": verdict["mismatched"],
-                             "purpose": purpose,
-                             "failures_in_window": failures + (0 if passed else 1)},
-                   request_meta=request_meta)
+            _audit(
+                db,
+                action="identity_check_passed" if passed else "identity_check_failed",
+                user=user,
+                outcome="success" if passed else "failure",
+                patient_id=pid,
+                summary=f"Identity check for {pid}: {verdict['result']}",
+                metadata={
+                    "checked": verdict["checked"],
+                    "mismatched": verdict["mismatched"],
+                    "purpose": purpose,
+                    "failures_in_window": failures + (0 if passed else 1),
+                },
+                request_meta=request_meta,
+            )
     if out_of_scope:
         log_audit_event(
             correlation_id=str(uuid.uuid4()),
             event_category="authorization",
             action_type="patient_scope_denied",
             outcome="denied",
-            summary_message=(f"Identity check: patient {pid} is another department's "
-                             f"inpatient ({dept})"),
+            summary_message=(
+                f"Identity check: patient {pid} is another department's inpatient ({dept})"
+            ),
             actor_user_id=user.get("id"),
             actor_role=user.get("role"),
             patient_id=pid,
@@ -2021,93 +2573,120 @@ def check_identity(patient_id: str, stated: dict, *, user: dict,
             http_method=(request_meta or {}).get("http_method"),
             ip_address=(request_meta or {}).get("ip_address"),
             user_agent=(request_meta or {}).get("user_agent"),
-            metadata={"department": dept, "scope_source": "authenticated_user",
-                      "identity_check": True},
+            metadata={
+                "department": dept,
+                "scope_source": "authenticated_user",
+                "identity_check": True,
+            },
         )
         raise RegistrationNotFound("patient_not_found", "Patient not found")
     if limited:
         with db_session() as db:
-            _audit(db, action="identity_check_rate_limited", user=user, outcome="denied",
-                   patient_id=pid, summary=f"Identity check refused for {pid}: too many failures",
-                   metadata={"failures_in_window": failures, "purpose": purpose},
-                   request_meta=request_meta)
+            _audit(
+                db,
+                action="identity_check_rate_limited",
+                user=user,
+                outcome="denied",
+                patient_id=pid,
+                summary=f"Identity check refused for {pid}: too many failures",
+                metadata={"failures_in_window": failures, "purpose": purpose},
+                request_meta=request_meta,
+            )
         raise RegistrationRateLimited(
             "identity_check_locked",
             "Too many identity checks for this patient did not match in the last hour. "
             "Ask a colleague to confirm who the patient is.",
-            retry_after_seconds=int(IDENTITY_FAILURE_WINDOW.total_seconds()))
-    return {"result": verdict["result"], "checked": verdict["checked"],
-            "checked_at": utc_iso_now()}
+            retry_after_seconds=int(IDENTITY_FAILURE_WINDOW.total_seconds()),
+        )
+    return {"result": verdict["result"], "checked": verdict["checked"], "checked_at": utc_iso_now()}
 
 
 # ── The duplicate worklist ───────────────────────────────────────────────────
 
-def list_duplicates(*, status: str = "open", limit: int = 50,
-                    today: Optional[date] = None) -> dict:
+
+def list_duplicates(*, status: str = "open", limit: int = 50, today: date | None = None) -> dict:
     statuses = ("open", "not_duplicate", "confirmed_duplicate", "merged", "all")
     if status not in statuses:
         raise RegistrationError("bad_status", "Choose open, resolved or all.")
     limit = max(1, min(int(limit or 50), DUPLICATE_LIST_MAX))
     with db_session() as db:
         where, params = ("", []) if status == "all" else ("WHERE status = ?", [status])
-        rows = [dict(r) for r in db.execute(
-            f"SELECT * FROM patient_duplicate_candidates {where} "
-            "ORDER BY detected_at DESC, id DESC LIMIT ?", (*params, limit)).fetchall()]
+        rows = [
+            dict(r)
+            for r in db.execute(
+                f"SELECT * FROM patient_duplicate_candidates {where} "
+                "ORDER BY detected_at DESC, id DESC LIMIT ?",
+                (*params, limit),
+            ).fetchall()
+        ]
         ids = [i for r in rows for i in (r["patient_id"], r["candidate_patient_id"])]
         cards = index_cards_on(db, ids, today=today)
-        names = _user_names(db, [u for r in rows for u in
-                                 (r["overridden_by"], r["resolved_by"], r["detected_by"])])
-        counts = {r["status"]: r["n"] for r in db.execute(
-            "SELECT status, COUNT(*) AS n FROM patient_duplicate_candidates GROUP BY status")}
+        names = _user_names(
+            db, [u for r in rows for u in (r["overridden_by"], r["resolved_by"], r["detected_by"])]
+        )
+        counts = {
+            r["status"]: r["n"]
+            for r in db.execute(
+                "SELECT status, COUNT(*) AS n FROM patient_duplicate_candidates GROUP BY status"
+            )
+        }
     items = []
     for r in rows:
         reasons = json.loads(r["reasons_json"] or "[]")
-        items.append({
-            "id": r["id"],
-            "status": r["status"],
-            "score": r["score"],
-            "band": pm.band_for(int(r["score"] or 0), reasons),
-            "reasons": reasons,
-            "reason_labels": pm.reason_labels(reasons),
-            "source": r["source"],
-            "detected_at": r["detected_at"],
-            "detected_by_name": names.get(r["detected_by"]),
-            "overridden_by": r["overridden_by"],
-            "overridden_by_name": names.get(r["overridden_by"]),
-            "override_reason": r["override_reason"],
-            "resolved_by_name": names.get(r["resolved_by"]),
-            "resolved_at": r["resolved_at"],
-            "resolution_reason": r["resolution_reason"],
-            "patient": cards.get(r["patient_id"]),
-            "candidate": cards.get(r["candidate_patient_id"]),
-        })
-    return {"status": status, "items": items, "counts": counts,
-            "patient_ids": sorted(set(ids))}
+        items.append(
+            {
+                "id": r["id"],
+                "status": r["status"],
+                "score": r["score"],
+                "band": pm.band_for(int(r["score"] or 0), reasons),
+                "reasons": reasons,
+                "reason_labels": pm.reason_labels(reasons),
+                "source": r["source"],
+                "detected_at": r["detected_at"],
+                "detected_by_name": names.get(r["detected_by"]),
+                "overridden_by": r["overridden_by"],
+                "overridden_by_name": names.get(r["overridden_by"]),
+                "override_reason": r["override_reason"],
+                "resolved_by_name": names.get(r["resolved_by"]),
+                "resolved_at": r["resolved_at"],
+                "resolution_reason": r["resolution_reason"],
+                "patient": cards.get(r["patient_id"]),
+                "candidate": cards.get(r["candidate_patient_id"]),
+            }
+        )
+    return {"status": status, "items": items, "counts": counts, "patient_ids": sorted(set(ids))}
 
 
-def resolve_duplicate(candidate_id: Any, *, resolution: str, reason: Any, user: dict,
-                      request_meta: Optional[dict] = None) -> dict:
+def resolve_duplicate(
+    candidate_id: Any, *, resolution: str, reason: Any, user: dict, request_meta: dict | None = None
+) -> dict:
     """Mark a worklist pair as not the same person, or as the same person.
     Records are never merged here (merging is a later, separate executor). The
     person who registered past the warning may not resolve it."""
     if resolution not in DUPLICATE_RESOLUTIONS:
-        raise RegistrationError("bad_resolution",
-                                "Choose 'not the same person' or 'the same person'.")
+        raise RegistrationError(
+            "bad_resolution", "Choose 'not the same person' or 'the same person'."
+        )
     why = _reason(reason)
     try:
         cid = int(candidate_id)
     except (TypeError, ValueError):
-        raise RegistrationNotFound("duplicate_not_found", "That worklist item does not exist.")
+        raise RegistrationNotFound(
+            "duplicate_not_found", "That worklist item does not exist."
+        ) from None
     refusal = None
     with db_session(immediate=True) as db:
-        row = db.execute("SELECT * FROM patient_duplicate_candidates WHERE id = ?",
-                         (cid,)).fetchone()
+        row = db.execute(
+            "SELECT * FROM patient_duplicate_candidates WHERE id = ?", (cid,)
+        ).fetchone()
         if row is None:
             raise RegistrationNotFound("duplicate_not_found", "That worklist item does not exist.")
         if row["status"] != "open":
-            raise RegistrationConflict("already_resolved",
-                                       "Someone has already resolved this item.",
-                                       status_now=row["status"])
+            raise RegistrationConflict(
+                "already_resolved",
+                "Someone has already resolved this item.",
+                status_now=row["status"],
+            )
         if row["overridden_by"] and row["overridden_by"] == user["id"]:
             refusal = row
         else:
@@ -2115,32 +2694,55 @@ def resolve_duplicate(candidate_id: Any, *, resolution: str, reason: Any, user: 
             db.execute(
                 "UPDATE patient_duplicate_candidates SET status = ?, resolved_by = ?, "
                 "resolved_at = ?, resolution_reason = ? WHERE id = ? AND status = 'open'",
-                (resolution, user["id"], now, why, cid))
-            _audit(db, action="duplicate_resolved", user=user, patient_id=row["patient_id"],
-                   target_type="patient_duplicate_candidate", target_id=str(cid),
-                   summary=f"Duplicate worklist item {cid} resolved: {resolution}",
-                   metadata={"resolution": resolution, "reason": why,
-                             "pair": [row["patient_id"], row["candidate_patient_id"]],
-                             "source": row["source"]},
-                   request_meta=request_meta)
+                (resolution, user["id"], now, why, cid),
+            )
+            _audit(
+                db,
+                action="duplicate_resolved",
+                user=user,
+                patient_id=row["patient_id"],
+                target_type="patient_duplicate_candidate",
+                target_id=str(cid),
+                summary=f"Duplicate worklist item {cid} resolved: {resolution}",
+                metadata={
+                    "resolution": resolution,
+                    "reason": why,
+                    "pair": [row["patient_id"], row["candidate_patient_id"]],
+                    "source": row["source"],
+                },
+                request_meta=request_meta,
+            )
     if refusal is not None:
         with db_session() as db:
-            _audit(db, action="duplicate_resolution_refused", user=user, outcome="denied",
-                   patient_id=refusal["patient_id"],
-                   target_type="patient_duplicate_candidate", target_id=str(cid),
-                   summary=f"Worklist item {cid}: the person who overrode cannot resolve it",
-                   metadata={"reason_code": "resolver_is_overrider",
-                             "pair": [refusal["patient_id"], refusal["candidate_patient_id"]]},
-                   request_meta=request_meta)
+            _audit(
+                db,
+                action="duplicate_resolution_refused",
+                user=user,
+                outcome="denied",
+                patient_id=refusal["patient_id"],
+                target_type="patient_duplicate_candidate",
+                target_id=str(cid),
+                summary=f"Worklist item {cid}: the person who overrode cannot resolve it",
+                metadata={
+                    "reason_code": "resolver_is_overrider",
+                    "pair": [refusal["patient_id"], refusal["candidate_patient_id"]],
+                },
+                request_meta=request_meta,
+            )
         raise RegistrationForbidden(
             "resolver_is_overrider",
-            "You registered past this warning, so someone else must resolve it.")
+            "You registered past this warning, so someone else must resolve it.",
+        )
     return {"id": cid, "status": resolution, "resolved_by": user["id"]}
 
 
-def sweep_duplicates(*, user: dict, max_pairs: int = SWEEP_MAX_PAIRS,
-                     request_meta: Optional[dict] = None,
-                     today: Optional[date] = None) -> dict:
+def sweep_duplicates(
+    *,
+    user: dict,
+    max_pairs: int = SWEEP_MAX_PAIRS,
+    request_meta: dict | None = None,
+    today: date | None = None,
+) -> dict:
     """A bounded pass over the whole index that opens worklist rows (source
     'sweep') for pairs scoring in a band, and for records whose hospital
     numbers differ only in case or separators.
@@ -2156,16 +2758,18 @@ def sweep_duplicates(*, user: dict, max_pairs: int = SWEEP_MAX_PAIRS,
     try:
         cap = int(max_pairs)
     except (TypeError, ValueError):
-        raise RegistrationError("bad_limit", "The sweep limit is a whole number.")
+        raise RegistrationError("bad_limit", "The sweep limit is a whole number.") from None
     cap = max(1, min(cap, SWEEP_PAIRS_CEILING))
     now = utc_iso_now()
     groups = skipped = 0
     truncated = False
     to_open: list[tuple] = []
-    facts_sql = ("p.id AS patient_id, k.name_key, k.phone_key, k.dob, k.sex, p.age, "
-                 "p.date_of_birth, p.created_at, d.age_recorded_on "
-                 "FROM patients p JOIN patient_match_keys k ON k.patient_id = p.id "
-                 "LEFT JOIN patient_demographics d ON d.patient_id = p.id")
+    facts_sql = (
+        "p.id AS patient_id, k.name_key, k.phone_key, k.dob, k.sex, p.age, "
+        "p.date_of_birth, p.created_at, d.age_recorded_on "
+        "FROM patients p JOIN patient_match_keys k ON k.patient_id = p.id "
+        "LEFT JOIN patient_demographics d ON d.patient_id = p.id"
+    )
     scans = (
         ("uhid", f"SELECT {pm.UHID_KEY_SQL.format(col='p.mrn')} AS g, {facts_sql} ORDER BY g"),
         ("phone", f"SELECT k.phone_key AS g, {facts_sql} WHERE k.phone_key IS NOT NULL ORDER BY g"),
@@ -2174,16 +2778,20 @@ def sweep_duplicates(*, user: dict, max_pairs: int = SWEEP_MAX_PAIRS,
     )
     with db_session(immediate=True) as db:
         synced = pm.sync_keys(db, remove_orphans=True)
-        seen: set = {(r[0], r[1]) for r in db.execute(
-            "SELECT patient_id, candidate_patient_id FROM patient_duplicate_candidates")}
+        seen: set = {
+            (r[0], r[1])
+            for r in db.execute(
+                "SELECT patient_id, candidate_patient_id FROM patient_duplicate_candidates"
+            )
+        }
         for kind, sql in scans:
             if truncated:
                 break
             rows = db.execute(sql).fetchall()
-            for g, members in groupby(rows, key=lambda r: r["g"]):
+            for g, member_iter in groupby(rows, key=lambda r: r["g"]):
                 if g is None:
                     continue
-                members = list(members)
+                members = list(member_iter)
                 if len(members) < 2:
                     continue
                 if len(members) > SWEEP_MAX_GROUP:
@@ -2192,14 +2800,23 @@ def sweep_duplicates(*, user: dict, max_pairs: int = SWEEP_MAX_PAIRS,
                 groups += 1
                 facts = {}
                 for r in members:
-                    age, _ = pm.current_age(date_of_birth=r["date_of_birth"], stated_age=r["age"],
-                                            age_recorded_on=r["age_recorded_on"],
-                                            created_at=r["created_at"], today=today)
-                    facts[r["patient_id"]] = {"name_key": r["name_key"], "phone_key": r["phone_key"],
-                                              "dob": r["dob"], "sex": r["sex"], "age": age}
+                    age, _ = pm.current_age(
+                        date_of_birth=r["date_of_birth"],
+                        stated_age=r["age"],
+                        age_recorded_on=r["age_recorded_on"],
+                        created_at=r["created_at"],
+                        today=today,
+                    )
+                    facts[r["patient_id"]] = {
+                        "name_key": r["name_key"],
+                        "phone_key": r["phone_key"],
+                        "dob": r["dob"],
+                        "sex": r["sex"],
+                        "age": age,
+                    }
                 ids = sorted(facts)
                 for i, a in enumerate(ids):
-                    for b in ids[i + 1:]:
+                    for b in ids[i + 1 :]:
                         if (a, b) in seen:
                             continue
                         if kind == "uhid":
@@ -2222,13 +2839,27 @@ def sweep_duplicates(*, user: dict, max_pairs: int = SWEEP_MAX_PAIRS,
                 """INSERT INTO patient_duplicate_candidates (patient_id, candidate_patient_id,
                        score, reasons_json, status, source, detected_at, detected_by)
                    VALUES (?, ?, ?, ?, 'open', 'sweep', ?, ?)
-                   ON CONFLICT(patient_id, candidate_patient_id) DO NOTHING""", to_open)
-        result = {"pairs_opened": len(to_open), "groups_checked": groups,
-                  "groups_too_large": skipped, "truncated": truncated,
-                  "keys_recomputed": synced["recomputed"],
-                  "orphan_keys_removed": synced["removed"], "max_pairs": cap}
-        _audit(db, action="duplicate_sweep_run", user=user, patient_id=None,
-               target_type="patient_index", target_id=None,
-               summary=f"Duplicate sweep opened {len(to_open)} worklist item(s)",
-               metadata=result, request_meta=request_meta)
+                   ON CONFLICT(patient_id, candidate_patient_id) DO NOTHING""",
+                to_open,
+            )
+        result = {
+            "pairs_opened": len(to_open),
+            "groups_checked": groups,
+            "groups_too_large": skipped,
+            "truncated": truncated,
+            "keys_recomputed": synced["recomputed"],
+            "orphan_keys_removed": synced["removed"],
+            "max_pairs": cap,
+        }
+        _audit(
+            db,
+            action="duplicate_sweep_run",
+            user=user,
+            patient_id=None,
+            target_type="patient_index",
+            target_id=None,
+            summary=f"Duplicate sweep opened {len(to_open)} worklist item(s)",
+            metadata=result,
+            request_meta=request_meta,
+        )
     return result

@@ -1,12 +1,12 @@
 """Orb Vigil — Patient Monitoring Routes"""
-import json
+
 import asyncio
-import sqlite3
+import json
+from datetime import UTC, datetime, timedelta
+
+from database import db_session, get_db, run_db
 from db_backend import DBIntegrityError
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
-from auth import get_current_user
 from permissions import (
     PATIENT_DEPARTMENT_SQL,
     department_scope,
@@ -15,24 +15,29 @@ from permissions import (
     require_patient_access,
     require_permission,
 )
-from database import get_db, db_session, run_db
-from datetime import datetime, timedelta, timezone
+from pydantic import BaseModel
 from services.clinical_time import format_utc
-from services.vigil_service import (
-    SCORING_OFF_REASON, current_stay_start_on, from_previous_stay, get_vitals_trend,
-    previous_stay_on, risk_for_row, scored_admitted_patients, scoring_enabled,
-    this_stay_rows,
-)
+from services.drug_chart import drug_chart_enabled, require_drug_chart
+from services.lens_service import decorate_analysis
 from services.medication_safety_gate import enforce_medication_safety
 from services.medorders import chart_lane
 from services.medorders import core as medorder_core
-from services.vitals_source.base import LABEL_SIMULATED
-from services.lens_service import decorate_analysis
-from services.stay_times import summary_less_ends_sql
 
 # The expected course is drafted by a model: 404 while the models are off.
 from services.model_switch import require_models_on
-from services.drug_chart import drug_chart_enabled, require_drug_chart
+from services.stay_times import summary_less_ends_sql
+from services.vigil_service import (
+    SCORING_OFF_REASON,
+    current_stay_start_on,
+    from_previous_stay,
+    get_vitals_trend,
+    previous_stay_on,
+    risk_for_row,
+    scored_admitted_patients,
+    scoring_enabled,
+    this_stay_rows,
+)
+from services.vitals_source.base import LABEL_SIMULATED
 
 router = APIRouter(prefix="/api/vigil", tags=["vigil"])
 
@@ -60,7 +65,7 @@ def _load_patient_bundle(patient_id: str):
                FROM patients p
                LEFT JOIN users u ON u.id = p.attending_doctor_id
                WHERE p.id = ?""",
-            (patient_id,)
+            (patient_id,),
         ).fetchone()
         if not patient:
             raise HTTPException(status_code=404, detail="Patient not found")
@@ -133,8 +138,10 @@ def _load_patient_bundle(patient_id: str):
         # services/lab_observations.py, the one reader every lab lane shares.
         # Simulated rows stay in, with their source, so the card labels them.
         from services import lab_observations as _lab_obs
+
         lab_observations = _lab_obs.chart_lab_rows(
-            db, patient_id,
+            db,
+            patient_id,
             per_analyte=_CHART_LAB_RESULTS_PER_ANALYTE,
             max_rows=_CHART_LAB_RESULTS_MAX,
         )
@@ -167,11 +174,21 @@ def _load_patient_bundle(patient_id: str):
         if stay_start is not None:
             vitals = this_stay_rows(vitals, stay_start)
             risk_history = this_stay_rows(risk_history, stay_start)
-            previous_stay = previous_stay_on(db, patient_id, stay_start,
-                                             risk=scoring_enabled())
-        return (patient, vitals, notes, scribe_notes, risk_history,
-                lens_analyses, medications, lab_observations,
-                profile, problems, admission, previous_stay)
+            previous_stay = previous_stay_on(db, patient_id, stay_start, risk=scoring_enabled())
+        return (
+            patient,
+            vitals,
+            notes,
+            scribe_notes,
+            risk_history,
+            lens_analyses,
+            medications,
+            lab_observations,
+            profile,
+            problems,
+            admission,
+            previous_stay,
+        )
 
 
 def _load_latest_risk(patient_id: str):
@@ -183,7 +200,8 @@ def _load_latest_risk(patient_id: str):
         ).fetchone()
         # A readmitted patient's earlier stay is not their latest (ADT-S9 (a)).
         if risk is not None and from_previous_stay(
-                risk["timestamp"], current_stay_start_on(db, patient_id)):
+            risk["timestamp"], current_stay_start_on(db, patient_id)
+        ):
             return None
         return risk
 
@@ -193,7 +211,7 @@ def _load_recent_vitals(patient_id: str, hours: int):
     # `datetime('now', ?)` yields "YYYY-MM-DD HH:MM:SS", and every 'T' row of
     # that UTC date compared above it, so a 1-hour window returned a reading
     # charted 7 hours earlier.
-    cutoff = format_utc(datetime.now(timezone.utc) - timedelta(hours=hours))
+    cutoff = format_utc(datetime.now(UTC) - timedelta(hours=hours))
     db = get_db()
     try:
         rows = db.execute(
@@ -221,8 +239,9 @@ def _load_patient_notes(patient_id: str):
         db.close()
 
 
-def _insert_patient_note(patient_id: str, data: dict, author_id: str,
-                         idempotency_key: str | None) -> int:
+def _insert_patient_note(
+    patient_id: str, data: dict, author_id: str, idempotency_key: str | None
+) -> int:
     """Idempotency lookup + INSERT in one hop. The pre-check and the INSERT must
     not be separated by an await — a replay landing in the gap would insert a
     duplicate note. (The DBIntegrityError branch still covers the genuinely
@@ -240,17 +259,29 @@ def _insert_patient_note(patient_id: str, data: dict, author_id: str,
             cursor = db.execute(
                 """INSERT INTO clinical_documents (patient_id, doc_type, title, content, author_id, idempotency_key)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (patient_id, data.get("doc_type", "Progress Note"), data.get("title", "Manual Entry"), data.get("content"), author_id, idempotency_key),
+                (
+                    patient_id,
+                    data.get("doc_type", "Progress Note"),
+                    data.get("title", "Manual Entry"),
+                    data.get("content"),
+                    author_id,
+                    idempotency_key,
+                ),
             )
             db.commit()
+            assert cursor.lastrowid is not None
             return cursor.lastrowid
         except DBIntegrityError:
             # Concurrent replay raced past the pre-INSERT check — return the
             # existing row for this key rather than a duplicate.
-            existing = db.execute(
-                "SELECT id FROM clinical_documents WHERE idempotency_key = ?",
-                (idempotency_key,),
-            ).fetchone() if idempotency_key else None
+            existing = (
+                db.execute(
+                    "SELECT id FROM clinical_documents WHERE idempotency_key = ?",
+                    (idempotency_key,),
+                ).fetchone()
+                if idempotency_key
+                else None
+            )
             if not existing:
                 raise
             return existing["id"]
@@ -288,9 +319,16 @@ def _load_qr_path(patient_id: str):
         db.close()
 
 
-def _insert_medication(patient_id: str, drug_name: str, dosage: str, route_: str,
-                       frequency: str, status: str, prescriber_id: str,
-                       idempotency_key: str | None) -> int:
+def _insert_medication(
+    patient_id: str,
+    drug_name: str,
+    dosage: str,
+    route_: str,
+    frequency: str,
+    status: str,
+    prescriber_id: str,
+    idempotency_key: str | None,
+) -> int:
     """Same one-hop rule as _insert_patient_note: the idempotency pre-check and
     the INSERT stay atomic w.r.t. the event loop, so an offline replay can never
     slip between them and duplicate a drug order."""
@@ -307,17 +345,31 @@ def _insert_medication(patient_id: str, drug_name: str, dosage: str, route_: str
             cursor = db.execute(
                 """INSERT INTO medications (patient_id, drug_name, dosage, route, frequency, status, prescribed_by, source, idempotency_key)
                    VALUES (?, ?, ?, ?, ?, ?, ?, 'clinician', ?)""",
-                (patient_id, drug_name, dosage, route_, frequency, status, prescriber_id, idempotency_key),
+                (
+                    patient_id,
+                    drug_name,
+                    dosage,
+                    route_,
+                    frequency,
+                    status,
+                    prescriber_id,
+                    idempotency_key,
+                ),
             )
             db.commit()
+            assert cursor.lastrowid is not None
             return cursor.lastrowid
         except DBIntegrityError:
             # Concurrent replay raced past the pre-INSERT check — return the
             # existing row for this key rather than a duplicate.
-            existing = db.execute(
-                "SELECT id FROM medications WHERE idempotency_key = ?",
-                (idempotency_key,),
-            ).fetchone() if idempotency_key else None
+            existing = (
+                db.execute(
+                    "SELECT id FROM medications WHERE idempotency_key = ?",
+                    (idempotency_key,),
+                ).fetchone()
+                if idempotency_key
+                else None
+            )
             if not existing:
                 raise
             return existing["id"]
@@ -346,15 +398,20 @@ def _active_admission_ids(patient_ids: list) -> dict:
     return {r["patient_id"]: r["id"] for r in found}
 
 
+_LIST_PATIENTS_LIMIT_DEFAULT = Query(100, ge=1, le=500)
+_LIST_PATIENTS_OFFSET_DEFAULT = Query(0, ge=0)
+_LIST_PATIENTS_USER_DEFAULT = Depends(require_permission("patient.read_all"))
+
+
 @router.get("/patients")
 # Plain def on purpose (no awaits): FastAPI runs sync routes in its threadpool,
 # keeping SQLCipher page I/O and the audit write off the asyncio event loop.
 def list_patients(
     request: Request,
     response: Response,
-    limit: int = Query(100, ge=1, le=500),
-    offset: int = Query(0, ge=0),
-    user: dict = Depends(require_permission("patient.read_all")),
+    limit: int = _LIST_PATIENTS_LIMIT_DEFAULT,
+    offset: int = _LIST_PATIENTS_OFFSET_DEFAULT,
+    user: dict = _LIST_PATIENTS_USER_DEFAULT,
 ):
     """Get admitted patients filtered by the user's department, each with the
     NEWS2 of their latest vitals row (`news2`, null when nothing is recorded).
@@ -420,7 +477,7 @@ def list_patients(
             # dated and labelled. Absent for a patient with one stay.
             **({"previous_stay": p["previous_stay"]} if p.get("previous_stay") else {}),
         }
-        for p, vitals, news2 in scored[offset:offset + limit]
+        for p, vitals, news2 in scored[offset : offset + limit]
     ]
     # The ACTIVE admission each row is on, so a charge or bill raised from a
     # picker lands on the stay (encounter 'ip'). Without it the billing desk
@@ -470,15 +527,20 @@ def list_patients(
     return rows
 
 
+_LIST_DISCHARGED_LIMIT_DEFAULT = Query(100, ge=1, le=500)
+_LIST_DISCHARGED_OFFSET_DEFAULT = Query(0, ge=0)
+_LIST_DISCHARGED_USER_DEFAULT = Depends(require_permission("patient.read_all"))
+
+
 @router.get("/discharged")
 # Plain def on purpose (no awaits): FastAPI threadpools sync routes, so the
 # db_session and the audit write stay off the event loop without a run_db hop.
 def list_discharged(
     request: Request,
     response: Response,
-    limit: int = Query(100, ge=1, le=500),
-    offset: int = Query(0, ge=0),
-    user: dict = Depends(require_permission("patient.read_all")),
+    limit: int = _LIST_DISCHARGED_LIMIT_DEFAULT,
+    offset: int = _LIST_DISCHARGED_OFFSET_DEFAULT,
+    user: dict = _LIST_DISCHARGED_USER_DEFAULT,
 ):
     """Discharged patients from the caller's department, paginated.
 
@@ -561,8 +623,14 @@ def list_discharged(
                 LIMIT ? OFFSET ?""",
             dept_param + (limit, offset),
         ).fetchall()
-        rows = [{**dict(p), "final_bill_raised": bool(p["final_bill_raised"]),
-                 "has_pending_charges": bool(p["has_pending_charges"])} for p in patients]
+        rows = [
+            {
+                **dict(p),
+                "final_bill_raised": bool(p["final_bill_raised"]),
+                "has_pending_charges": bool(p["has_pending_charges"]),
+            }
+            for p in patients
+        ]
 
     response.headers["X-Total-Count"] = str(total)
 
@@ -577,20 +645,26 @@ def list_discharged(
             ),
             target_type="department",
             target_id=dept,
-            metadata={"result_count": len(rows), "total": total,
-                      "patient_ids": [r["id"] for r in rows]},
+            metadata={
+                "result_count": len(rows),
+                "total": total,
+                "patient_ids": [r["id"] for r in rows],
+            },
         )
 
     return rows
+
+
+_GET_PATIENT_STORY_ROUTE_USER_DEFAULT = Depends(
+    require_patient_access("patient.read_all", audit_action="patient_story_viewed")
+)
 
 
 @router.get("/patients/{patient_id}/story")
 async def get_patient_story_route(
     patient_id: str,
     types: str | None = None,
-    user: dict = Depends(
-        require_patient_access("patient.read_all", audit_action="patient_story_viewed")
-    ),
+    user: dict = _GET_PATIENT_STORY_ROUTE_USER_DEFAULT,
 ):
     """Unified patient story — one chronological clinical narrative merging
     admission, alerts, notes, imaging, labs, meds, orders, administrations,
@@ -611,32 +685,49 @@ async def get_patient_story_route(
     """
     from services.patient_story_service import get_patient_story
     from services.patient_timeline_service import read_review_state
+
     type_list = [t.strip() for t in types.split(",") if t.strip()] if types else None
     events = await asyncio.to_thread(get_patient_story, patient_id, type_list)
     review = await asyncio.to_thread(read_review_state, user.get("id"), patient_id)
     return {"patient_id": patient_id, "events": events, **review}
 
 
+_GET_PATIENT_USER_DEFAULT = Depends(
+    require_patient_access("patient.read_all", audit_action="patient_chart_viewed")
+)
+
+
 @router.get("/patients/{patient_id}")
 async def get_patient(
     patient_id: str,
-    user: dict = Depends(
-        require_patient_access("patient.read_all", audit_action="patient_chart_viewed")
-    ),
+    user: dict = _GET_PATIENT_USER_DEFAULT,
 ):
     """Get full patient details with vitals, notes, risk, and trends."""
-    (patient, vitals, notes, scribe_notes, risk_history,
-     lens_analyses, medications, lab_observations,
-     profile, problems, admission, previous_stay) = await run_db(_load_patient_bundle, patient_id)
+    (
+        patient,
+        vitals,
+        notes,
+        scribe_notes,
+        risk_history,
+        lens_analyses,
+        medications,
+        lab_observations,
+        profile,
+        problems,
+        admission,
+        previous_stay,
+    ) = await run_db(_load_patient_bundle, patient_id)
 
     # Score vitals[0], the row the command bar shows. This used to call
     # get_patient_risk(patient_id), which re-reads "the latest" row in its own
     # session: two sessions, autocommit SELECTs, no shared snapshot, so a bot
     # tick landing between the bundle read and that one scored a set the bar
     # was not showing. The scale comes from the patient row already in hand.
-    on_scale_2 = (bool(patient["on_scale_2"])
-                  if "on_scale_2" in patient.keys() and patient["on_scale_2"] is not None
-                  else False)
+    on_scale_2 = (
+        bool(patient["on_scale_2"])
+        if "on_scale_2" in patient.keys() and patient["on_scale_2"] is not None
+        else False
+    )
     # The CfC overlay runs torch/MPS inference (per outcome) synchronously;
     # offload it so a patient-card open doesn't block the asyncio event loop and
     # stall live telemetry / other requests once checkpoints exist.
@@ -644,25 +735,34 @@ async def get_patient(
     # input sequence and checking model identity/state. Historical risk_scores
     # do not carry enough provenance to substitute for the row shown here.
     import asyncio as _asyncio
+
     # Scoring switched off (ORB_SCORING_ENABLED off, or the Orb Ward Record
     # profile): no NEWS2, no band, no response line and no schedule worked out
     # from one. `risk` is null and `risk_off_reason` says why, for the chart to
     # show in place of the badge; the stored risk history is not sent either.
     scoring = scoring_enabled()
     drug_chart = drug_chart_enabled()
-    risk = await _asyncio.to_thread(
-        risk_for_row, vitals[0] if vitals else None,
-        patient_id=patient_id, on_scale_2=on_scale_2,
-    ) if scoring else None
+    risk = (
+        await _asyncio.to_thread(
+            risk_for_row,
+            vitals[0] if vitals else None,
+            patient_id=patient_id,
+            on_scale_2=on_scale_2,
+        )
+        if scoring
+        else None
+    )
     trend = await _asyncio.to_thread(get_vitals_trend, patient_id)
 
     # The RCP minimum observation interval for this score, from the same table
     # the nurse board uses, so the chart can say when the last set is overdue.
-    from services.nurse_shift_service import obs_schedule
     from services.discharge_service import parse_comorbidities
+    from services.nurse_shift_service import obs_schedule
 
     patient_out = dict(patient)
-    patient_out["comorbidities"] = parse_comorbidities(profile["comorbidities"] if profile else None)
+    patient_out["comorbidities"] = parse_comorbidities(
+        profile["comorbidities"] if profile else None
+    )
     patient_out["admission_id"] = admission["id"] if admission else None
 
     # The name the printed discharge record carries: the patient's facility's
@@ -670,6 +770,7 @@ async def get_patient(
     # file's [site] name), else None, so a printed record says nothing rather
     # than invent one (multisite-2, services/facility_identity).
     from services import facility_identity
+
     site_name = await run_db(facility_identity.print_site_name, patient_id)
 
     return {
@@ -677,8 +778,11 @@ async def get_patient(
         "risk": risk,
         "risk_off_reason": None if scoring else SCORING_OFF_REASON,
         "trend": trend,
-        "obs_schedule": (obs_schedule(risk if risk.get("raw_news2") is not None else None)
-                         if scoring else None),
+        "obs_schedule": (
+            obs_schedule(risk if risk is not None and risk.get("raw_news2") is not None else None)
+            if scoring
+            else None
+        ),
         "lab_observations": [dict(o) for o in lab_observations],
         "problems": [dict(p) for p in problems],
         "site_name": site_name,
@@ -720,10 +824,13 @@ async def get_patient(
         # are sent, and drug_chart false tells the chart to draw no medicines
         # at all, even before its own health probe answers (services/drug_chart).
         "medications": [
-            {**dict(m),
-             "unverified": (m["source"] in ("llm_extracted", "agentic")
-                            if "source" in m.keys() else False)
-                           and not (("verified_by" in m.keys()) and m["verified_by"])}
+            {
+                **dict(m),
+                "unverified": (
+                    m["source"] in ("llm_extracted", "agentic") if "source" in m.keys() else False
+                )
+                and not (("verified_by" in m.keys()) and m["verified_by"]),
+            }
             for m in (medications if drug_chart else [])
         ],
         "drug_chart": drug_chart,
@@ -735,6 +842,9 @@ async def get_patient(
     }
 
 
+_GET_PATIENT_VITALS_USER_DEFAULT = Depends(require_patient_access("vitals.read"))
+
+
 @router.get("/patients/{patient_id}/vitals")
 async def get_patient_vitals(
     patient_id: str,
@@ -742,7 +852,7 @@ async def get_patient_vitals(
     # Scope-checked but deliberately NOT read-audited: the sparkline polls, and
     # one fail-closed encrypted-SQLite write per poll is the exact shape that
     # stalled the loop on 2026-07-30. The scope check is the control here.
-    user: dict = Depends(require_patient_access("vitals.read")),
+    user: dict = _GET_PATIENT_VITALS_USER_DEFAULT,
 ):
     """Get recent vitals for sparkline charts."""
     vitals = await run_db(_load_recent_vitals, patient_id, hours)
@@ -767,27 +877,38 @@ def _row_source(row) -> str | None:
     return row["source"] if "source" in row.keys() else None
 
 
+_GET_VITALS_FEED_USER_DEFAULT = Depends(require_permission("vitals.read"))
+
+
 @router.get("/vitals-feed")
-def get_vitals_feed(user: dict = Depends(require_permission("vitals.read"))):
+def get_vitals_feed(user: dict = _GET_VITALS_FEED_USER_DEFAULT):
     """Where this system's vital signs come from, for the shell's honesty label.
 
     Anything but 'ingestion' means the simulator is writing readings
     (config.INGESTION_MODE: 'simulation' or 'hybrid'). No patient data.
     """
     from config import INGESTION_MODE
+
     return {"mode": INGESTION_MODE, "simulated": INGESTION_MODE != "ingestion"}
+
+
+_GET_PATIENT_NOTES_USER_DEFAULT = Depends(
+    require_patient_access("patient.read_all", audit_action="patient_notes_viewed")
+)
 
 
 @router.get("/patients/{patient_id}/notes")
 async def get_patient_notes(
     patient_id: str,
-    user: dict = Depends(
-        require_patient_access("patient.read_all", audit_action="patient_notes_viewed")
-    ),
+    user: dict = _GET_PATIENT_NOTES_USER_DEFAULT,
 ):
     """Get all clinical notes for a patient."""
     notes = await run_db(_load_patient_notes, patient_id)
     return [dict(n) for n in notes]
+
+
+_ADD_PATIENT_NOTE_USER_DEFAULT = Depends(require_patient_access("patient.write"))
+_ADD_PATIENT_NOTE_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempotency-Key")
 
 
 @router.post("/patients/{patient_id}/notes")
@@ -797,8 +918,8 @@ async def add_patient_note(
     # Writes are already audited by the mutation middleware; what they lacked
     # was the ward check — charting on another ward's patient is worse than
     # reading one.
-    user: dict = Depends(require_patient_access("patient.write")),
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    user: dict = _ADD_PATIENT_NOTE_USER_DEFAULT,
+    idempotency_key: str | None = _ADD_PATIENT_NOTE_IDEMPOTENCY_KEY_DEFAULT,
 ):
     """Add a new clinical note for a patient.
 
@@ -809,9 +930,7 @@ async def add_patient_note(
     if not content:
         raise HTTPException(status_code=400, detail="Content is required")
 
-    inserted_id = await run_db(
-        _insert_patient_note, patient_id, data, user["id"], idempotency_key
-    )
+    inserted_id = await run_db(_insert_patient_note, patient_id, data, user["id"], idempotency_key)
     return {"status": "success", "id": inserted_id}
 
 
@@ -841,18 +960,22 @@ async def add_patient_note(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-@router.get("/patients/{patient_id}/medication-reconciliation",
-            dependencies=[Depends(require_drug_chart)])
+_MEDICATION_RECONCILIATION_ROUTE_USER_DEFAULT = Depends(
+    require_patient_access("discharge.generate", audit_action="medication_reconciliation_viewed")
+)
+
+
+@router.get(
+    "/patients/{patient_id}/medication-reconciliation", dependencies=[Depends(require_drug_chart)]
+)
 async def medication_reconciliation_route(
     patient_id: str,
-    user: dict = Depends(
-        require_patient_access("discharge.generate",
-                               audit_action="medication_reconciliation_viewed")
-    ),
+    user: dict = _MEDICATION_RECONCILIATION_ROUTE_USER_DEFAULT,
 ):
     """Deterministic discharge medication reconciliation (continued/stopped/
     unverified) from the real medication record — previewable before discharge."""
     from services.discharge_service import build_medication_reconciliation
+
     exists = await run_db(_patient_exists, patient_id)
     if not exists:
         raise HTTPException(status_code=404, detail="Patient not found")
@@ -863,6 +986,7 @@ async def medication_reconciliation_route(
 class DischargeIn(BaseModel):
     """How the stay ended (adt-8a). Read only while ORB_ADT is on; with the
     module off the body is ignored and the discharge is exactly what it was."""
+
     #: routine (when omitted), referred_out, transferred_out or dama. LAMA,
     #: absconded and death are refused with the End of stay route.
     discharge_type: str | None = None
@@ -882,6 +1006,11 @@ def _active_admission_id(patient_id: str):
     return row["id"] if row else None
 
 
+_DISCHARGE_PATIENT_ROUTE_USER_DEFAULT = Depends(
+    require_patient_access("discharge.generate", audit_action="discharge_generated")
+)
+
+
 @router.post("/patients/{patient_id}/discharge")
 async def discharge_patient_route(
     patient_id: str,
@@ -890,9 +1019,7 @@ async def discharge_patient_route(
     # Ward-scoped like its siblings. This was a bare require_permission, so a
     # General Surgery doctor could discharge a General Medicine patient whose
     # chart they are 404'd from reading, and receive the portal link for it.
-    user: dict = Depends(
-        require_patient_access("discharge.generate", audit_action="discharge_generated")
-    ),
+    user: dict = _DISCHARGE_PATIENT_ROUTE_USER_DEFAULT,
 ):
     """Discharge a patient: drafts the summary, builds the timeline, issues the
     QR link when the patient has a second factor.
@@ -910,8 +1037,8 @@ async def discharge_patient_route(
     from services.adt.core import AdtError, adt_on, http_detail
     from services.discharge_service import (
         build_patient_timeline,
-        generate_discharge_summary,
         discharge_patient,
+        generate_discharge_summary,
         offline_discharge_summary,
     )
 
@@ -941,8 +1068,9 @@ async def discharge_patient_route(
             if err.code == "use_end_of_stay":
                 admission_id = await run_db(_active_admission_id, patient_id)
                 detail["end_of_stay_route"] = (
-                    f"/api/adt/admissions/{admission_id}/end" if admission_id else None)
-            raise HTTPException(status_code=err.http_status, detail=detail)
+                    f"/api/adt/admissions/{admission_id}/end" if admission_id else None
+                )
+            raise HTTPException(status_code=err.http_status, detail=detail) from err
         adt_kwargs = {
             "discharge_type": end_type,
             "confirm_mrn": body.confirm_mrn if body else None,
@@ -972,10 +1100,11 @@ async def discharge_patient_route(
         drafted_by = "unavailable"
 
     try:
-        result = await run_db(discharge_patient, patient_id, user["id"], summary, timeline,
-                              **adt_kwargs)
+        result = await run_db(
+            discharge_patient, patient_id, user["id"], summary, timeline, **adt_kwargs
+        )
     except AdtError as err:
-        raise HTTPException(status_code=err.http_status, detail=http_detail(err))
+        raise HTTPException(status_code=err.http_status, detail=http_detail(err)) from err
     if result.get("status") != "success":
         return result
     # The discharging doctor reads the draft from this response, labelled as
@@ -988,12 +1117,15 @@ async def discharge_patient_route(
     }
 
 
+_GET_DISCHARGE_SUMMARY_USER_DEFAULT = Depends(
+    require_patient_access("discharge.read", audit_action="discharge_summary_viewed")
+)
+
+
 @router.get("/patients/{patient_id}/discharge-summary")
 async def get_discharge_summary(
     patient_id: str,
-    user: dict = Depends(
-        require_patient_access("discharge.read", audit_action="discharge_summary_viewed")
-    ),
+    user: dict = _GET_DISCHARGE_SUMMARY_USER_DEFAULT,
 ):
     """Latest discharge summary for a patient, with its review state.
 
@@ -1003,6 +1135,7 @@ async def get_discharge_summary(
     box that could only ever fail to load.
     """
     from services.discharge_service import load_discharge_summary_view
+
     view = await run_db(load_discharge_summary_view, patient_id)
 
     if not view:
@@ -1013,7 +1146,11 @@ async def get_discharge_summary(
 class DischargeReviewIn(BaseModel):
     """The summary the doctor actually read. Named explicitly so a review can
     never land on a newer draft that appeared while they were reading."""
+
     summary_id: int
+
+
+_REVIEW_DISCHARGE_SUMMARY_USER_DEFAULT = Depends(require_patient_access("discharge.publish"))
 
 
 @router.post("/patients/{patient_id}/discharge-summary/review")
@@ -1022,7 +1159,7 @@ async def review_discharge_summary(
     body: DischargeReviewIn,
     # discharge.publish ("finalise / sign a discharge") is the prescriber's.
     # Ward-scoped like every other {patient_id} write.
-    user: dict = Depends(require_patient_access("discharge.publish")),
+    user: dict = _REVIEW_DISCHARGE_SUMMARY_USER_DEFAULT,
 ):
     """Mark a drafted discharge summary reviewed, which releases it to the
     patient's portal and discharge link. Interim until the draft, edit and sign
@@ -1031,15 +1168,21 @@ async def review_discharge_summary(
         DischargeSummaryNotFound,
         mark_discharge_summary_reviewed,
     )
+
     try:
         return await run_db(
-            mark_discharge_summary_reviewed, patient_id, body.summary_id,
-            user["id"], user.get("role"),
+            mark_discharge_summary_reviewed,
+            patient_id,
+            body.summary_id,
+            user["id"],
+            user.get("role"),
         )
     except DischargeSummaryNotFound:
-        raise HTTPException(status_code=404, detail="Discharge summary not found")
+        raise HTTPException(status_code=404, detail="Discharge summary not found") from None
 
 
+_ADD_PATIENT_MEDICATION_USER_DEFAULT = Depends(require_patient_access("medication.write"))
+_ADD_PATIENT_MEDICATION_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempotency-Key")
 
 
 @router.post("/patients/{patient_id}/medications", dependencies=[Depends(require_drug_chart)])
@@ -1047,8 +1190,8 @@ async def add_patient_medication(
     patient_id: str,
     data: dict,
     request: Request,
-    user: dict = Depends(require_patient_access("medication.write")),
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    user: dict = _ADD_PATIENT_MEDICATION_USER_DEFAULT,
+    idempotency_key: str | None = _ADD_PATIENT_MEDICATION_IDEMPOTENCY_KEY_DEFAULT,
 ):
     """Add a new medication for a patient.
 
@@ -1073,9 +1216,17 @@ async def add_patient_medication(
         # plus the order's id. With the store off, the path below is unchanged.
         try:
             result = await run_db(
-                chart_lane.create_chart_order, patient_id, drug_name, dosage, route,
-                frequency, status, actor_id=user["id"], actor_role=user.get("role"),
-                idempotency_key=idempotency_key, safety_ack=data.get("safety_ack"),
+                chart_lane.create_chart_order,
+                patient_id,
+                drug_name,
+                dosage,
+                route,
+                frequency,
+                status,
+                actor_id=user["id"],
+                actor_role=user.get("role"),
+                idempotency_key=idempotency_key,
+                safety_ack=data.get("safety_ack"),
                 request_meta={
                     "request_path": request.url.path,
                     "http_method": request.method,
@@ -1084,9 +1235,15 @@ async def add_patient_medication(
                 },
             )
         except medorder_core.MedOrderError as e:
-            raise HTTPException(status_code=e.http_status, detail=medorder_core.http_detail(e))
-        return {"status": "success", "id": result["id"], "safety": result["safety"],
-                "med_order_id": result["med_order_id"]}
+            raise HTTPException(
+                status_code=e.http_status, detail=medorder_core.http_detail(e)
+            ) from e
+        return {
+            "status": "success",
+            "id": result["id"],
+            "safety": result["safety"],
+            "med_order_id": result["med_order_id"],
+        }
 
     # Order-time drug-safety gate: allergy + interaction screen BEFORE any DB
     # write. Severe alerts raise 428 until the clinician re-submits with
@@ -1095,6 +1252,7 @@ async def add_patient_medication(
     # same order screens identically, so alerts (and any 428) are consistent.
     # The dose guard runs in the same gate (dose + route): an 8 g paracetamol is
     # refused here exactly as the order-set and bedside lanes refuse it.
+    assert drug_name is not None
     safety = enforce_medication_safety(
         patient_id,
         drug_name,
@@ -1107,18 +1265,28 @@ async def add_patient_medication(
     )
 
     inserted_id = await run_db(
-        _insert_medication, patient_id, drug_name, dosage, route, frequency,
-        status, user["id"], idempotency_key,
+        _insert_medication,
+        patient_id,
+        drug_name,
+        dosage,
+        route,
+        frequency,
+        status,
+        user["id"],
+        idempotency_key,
     )
     return {"status": "success", "id": inserted_id, "safety": safety}
+
+
+_GET_QR_CODE_USER_DEFAULT = Depends(
+    require_patient_access("discharge.read", audit_action="discharge_qr_viewed")
+)
 
 
 @router.get("/patients/{patient_id}/qr")
 async def get_qr_code(
     patient_id: str,
-    user: dict = Depends(
-        require_patient_access("discharge.read", audit_action="discharge_qr_viewed")
-    ),
+    user: dict = _GET_QR_CODE_USER_DEFAULT,
 ):
     """Serve the QR code image for a discharged patient.
 
@@ -1132,8 +1300,9 @@ async def get_qr_code(
     summary = await run_db(_load_qr_path, patient_id)
     if not summary or not summary["qr_code_path"]:
         raise HTTPException(status_code=404, detail="QR code not found")
-    from services.crypto_service import read_decrypted
     from fastapi.responses import Response
+    from services.crypto_service import read_decrypted
+
     try:
         content = await run_db(read_decrypted, summary["qr_code_path"])
     except FileNotFoundError:
@@ -1156,22 +1325,27 @@ GHOST_PATIENT_ROUTE_RETIRED = (
 )
 
 
+_CREATE_PATIENT_USER_DEFAULT = Depends(require_permission("patient.write"))
+
+
 @router.post("/patients", status_code=410)
 def create_patient(
-    user: dict = Depends(require_permission("patient.write")),
-):
+    user: dict = _CREATE_PATIENT_USER_DEFAULT,
+) -> None:
     """Retired. Answers 410 and names the admission door."""
     raise HTTPException(status_code=410, detail=GHOST_PATIENT_ROUTE_RETIRED)
 
 
-@router.get("/patients/{patient_id}/timeline-projection",
-            dependencies=[Depends(require_models_on)])
+_GET_PATIENT_TIMELINE_PROJECTION_USER_DEFAULT = Depends(
+    require_patient_access("patient.read_all", audit_action="patient_timeline_viewed")
+)
+
+
+@router.get("/patients/{patient_id}/timeline-projection", dependencies=[Depends(require_models_on)])
 async def get_patient_timeline_projection(
     patient_id: str,
     refresh: bool = False,
-    user: dict = Depends(
-        require_patient_access("patient.read_all", audit_action="patient_timeline_viewed")
-    ),
+    user: dict = _GET_PATIENT_TIMELINE_PROJECTION_USER_DEFAULT,
 ):
     """Sage-deduced expected clinical course for the patient.
 
@@ -1223,6 +1397,7 @@ class EscalationAcknowledgeIn(BaseModel):
     """Deliberately carries NO patient id. The chain names the patient; letting a
     request name one is the caller-named-scope hole that
     tests/test_caller_named_patient_scope.py exists to catch."""
+
     note: str | None = None
 
 
@@ -1231,8 +1406,7 @@ class EscalationResolveIn(BaseModel):
     category: str | None = None
 
 
-def _escalation_or_404(escalation_id: str, user: dict,
-                       include_events: bool = True) -> dict:
+def _escalation_or_404(escalation_id: str, user: dict, include_events: bool = True) -> dict:
     """Load a chain and prove the caller's ward owns its patient.
 
     404 on both "no such escalation" and "not your ward", never 403 — a 403
@@ -1244,8 +1418,7 @@ def _escalation_or_404(escalation_id: str, user: dict,
     """
     from services import escalation_service
 
-    chain = escalation_service.get_escalation(
-        escalation_id, include_events=include_events)
+    chain = escalation_service.get_escalation(escalation_id, include_events=include_events)
     if chain is None:
         raise HTTPException(status_code=404, detail="Escalation not found")
     # Raises 404 itself when the patient is outside the caller's department.
@@ -1253,12 +1426,17 @@ def _escalation_or_404(escalation_id: str, user: dict,
     return chain
 
 
+_LIST_ESCALATIONS_ROUTE_INCLUDE_RESOLVED_DEFAULT = Query(False)
+_LIST_ESCALATIONS_ROUTE_LIMIT_DEFAULT = Query(200, ge=1, le=500)
+_LIST_ESCALATIONS_ROUTE_USER_DEFAULT = Depends(require_permission("alert.read"))
+
+
 @router.get("/escalations")
 def list_escalations_route(
     request: Request,
-    include_resolved: bool = Query(False),
-    limit: int = Query(200, ge=1, le=500),
-    user: dict = Depends(require_permission("alert.read")),
+    include_resolved: bool = _LIST_ESCALATIONS_ROUTE_INCLUDE_RESOLVED_DEFAULT,
+    limit: int = _LIST_ESCALATIONS_ROUTE_LIMIT_DEFAULT,
+    user: dict = _LIST_ESCALATIONS_ROUTE_USER_DEFAULT,
 ):
     """Everything on this ward that a deterioration alert is still waiting on.
 
@@ -1289,7 +1467,8 @@ def list_escalations_route(
         escalation_service.scan_new_observations(department=dept)
 
     rows = escalation_service.list_escalations(
-        department=dept, include_resolved=include_resolved, limit=limit)
+        department=dept, include_resolved=include_resolved, limit=limit
+    )
 
     if rows:
         log_phi_read(
@@ -1318,11 +1497,14 @@ def list_escalations_route(
     }
 
 
+_GET_ESCALATION_ROUTE_USER_DEFAULT = Depends(require_permission("alert.read"))
+
+
 @router.get("/escalations/{escalation_id}")
 def get_escalation_route(
     escalation_id: str,
     request: Request,
-    user: dict = Depends(require_permission("alert.read")),
+    user: dict = _GET_ESCALATION_ROUTE_USER_DEFAULT,
 ):
     """One chain and every recorded step: raised, each repeat observation, each
     timed tier advance, the acknowledgement, the resolution."""
@@ -1340,13 +1522,18 @@ def get_escalation_route(
     return chain
 
 
+_ACKNOWLEDGE_ESCALATION_ROUTE_USER_DEFAULT = Depends(
+    require_permission("alert.read", "vitals.write")
+)
+
+
 @router.post("/escalations/{escalation_id}/acknowledge")
 def acknowledge_escalation_route(
     escalation_id: str,
     body: EscalationAcknowledgeIn,
-    user: dict = Depends(require_permission("alert.read", "vitals.write")),
+    user: dict = _ACKNOWLEDGE_ESCALATION_ROUTE_USER_DEFAULT,
 ):
-    """"I have seen this and I am dealing with it." Records who and when, and
+    """ "I have seen this and I am dealing with it." Records who and when, and
     stops the tier ladder. Does NOT close the escalation — see /resolve."""
     from services import escalation_service
 
@@ -1354,16 +1541,19 @@ def acknowledge_escalation_route(
     try:
         return escalation_service.acknowledge(escalation_id, user, note=body.note)
     except escalation_service.EscalationNotFound:
-        raise HTTPException(status_code=404, detail="Escalation not found")
+        raise HTTPException(status_code=404, detail="Escalation not found") from None
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+_RESOLVE_ESCALATION_ROUTE_USER_DEFAULT = Depends(require_permission("alert.read", "vitals.write"))
 
 
 @router.post("/escalations/{escalation_id}/resolve")
 def resolve_escalation_route(
     escalation_id: str,
     body: EscalationResolveIn,
-    user: dict = Depends(require_permission("alert.read", "vitals.write")),
+    user: dict = _RESOLVE_ESCALATION_ROUTE_USER_DEFAULT,
 ):
     """Close the chain WITH A REASON. The reason is mandatory: a resolve button
     with no reason is a dismiss button, and a dismiss button is how a
@@ -1373,16 +1563,20 @@ def resolve_escalation_route(
     _escalation_or_404(escalation_id, user, include_events=False)
     try:
         return escalation_service.resolve(
-            escalation_id, user, reason=body.reason, category=body.category)
+            escalation_id, user, reason=body.reason, category=body.category
+        )
     except escalation_service.EscalationNotFound:
-        raise HTTPException(status_code=404, detail="Escalation not found")
+        raise HTTPException(status_code=404, detail="Escalation not found") from None
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+_SWEEP_ESCALATIONS_ROUTE_USER_DEFAULT = Depends(require_permission("alert.read"))
 
 
 @router.post("/escalations/sweep")
 def sweep_escalations_route(
-    user: dict = Depends(require_permission("alert.read")),
+    user: dict = _SWEEP_ESCALATIONS_ROUTE_USER_DEFAULT,
 ):
     """One tick of the mechanism for an ops caller or a scheduler: advance every
     overdue tier, then catch any qualifying observation nothing dispatched.
@@ -1397,13 +1591,17 @@ def sweep_escalations_route(
     return escalation_service.sweep(department=department_scope(user))
 
 
+_PATIENT_ESCALATIONS_ROUTE_INCLUDE_RESOLVED_DEFAULT = Query(True)
+_PATIENT_ESCALATIONS_ROUTE_USER_DEFAULT = Depends(
+    require_patient_access("alert.read", audit_action="patient_escalations_viewed")
+)
+
+
 @router.get("/patients/{patient_id}/escalations")
 def patient_escalations_route(
     patient_id: str,
-    include_resolved: bool = Query(True),
-    user: dict = Depends(
-        require_patient_access("alert.read", audit_action="patient_escalations_viewed")
-    ),
+    include_resolved: bool = _PATIENT_ESCALATIONS_ROUTE_INCLUDE_RESOLVED_DEFAULT,
+    user: dict = _PATIENT_ESCALATIONS_ROUTE_USER_DEFAULT,
 ):
     """Escalation history for one patient, for the chart rather than the board.
 
@@ -1415,5 +1613,6 @@ def patient_escalations_route(
     return {
         "patient_id": patient_id,
         "escalations": escalation_service.patient_escalations(
-            patient_id, include_resolved=include_resolved),
+            patient_id, include_resolved=include_resolved
+        ),
     }

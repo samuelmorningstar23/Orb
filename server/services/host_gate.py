@@ -23,15 +23,19 @@ What passes (the names come from config.allowed_host_names()):
 X-Forwarded-Host is never read: a rebinding page is same-origin, so its fetch()
 may set that header to anything.
 """
+
 import ipaddress
 import logging
+from typing import Any
 
 import config
 
 logger = logging.getLogger("orb.host_gate")
 
-_BODY = (b"Orb does not answer to this address. Ask the person who installed Orb "
-         b"to add it to ORB_ALLOWED_HOSTS.\n")
+_BODY = (
+    b"Orb does not answer to this address. Ask the person who installed Orb "
+    b"to add it to ORB_ALLOWED_HOSTS.\n"
+)
 _HEADERS = [
     (b"content-type", b"text/plain; charset=utf-8"),
     (b"content-length", str(len(_BODY)).encode()),
@@ -45,7 +49,7 @@ _BAD_CHARS = set("/\\@?#,; \t\r\n")
 
 # Refusals since the process started, across every gate (production has one).
 # The Trust Center prints these: the only sign a rebinding page was ever opened.
-refused = {"count": 0, "last_host": None}
+refused: dict[str, Any] = {"count": 0, "last_host": None}
 
 
 def parse_host(raw: str) -> tuple[str, bool] | None:
@@ -56,7 +60,7 @@ def parse_host(raw: str) -> tuple[str, bool] | None:
         return None
     if raw.startswith("["):
         end = raw.find("]")
-        port = raw[end + 1:] if end > 0 else None
+        port = raw[end + 1 :] if end > 0 else None
         if port is None or (port and not (port[0] == ":" and port[1:].isdigit())):
             return None
         try:
@@ -82,11 +86,15 @@ class HostGate:
         self.names = frozenset(config.allowed_host_names() if names is None else names)
         self._logged: set[str] = set()
         if "*" in self.names:
-            logger.warning("Host check is OFF (ORB_ALLOWED_HOSTS=*): Orb answers to any "
-                           "name, so a DNS-rebinding web page can reach it.")
+            logger.warning(
+                "Host check is OFF (ORB_ALLOWED_HOSTS=*): Orb answers to any "
+                "name, so a DNS-rebinding web page can reach it."
+            )
         else:
-            logger.info("Host check: any IP address, and the names %s. ORB_ALLOWED_HOSTS "
-                        "adds more.", ", ".join(sorted(self.names)))
+            logger.info(
+                "Host check: any IP address, and the names %s. ORB_ALLOWED_HOSTS adds more.",
+                ", ".join(sorted(self.names)),
+            )
 
     def allows(self, raw: str | None) -> bool:
         if "*" in self.names or raw is None:
@@ -103,6 +111,7 @@ class HostGate:
             return
         hosts = [v.decode("latin-1") for k, v in scope.get("headers") or () if k == b"host"]
         if len(hosts) > 1:
+            shown: str | None
             shown, ok = ", ".join(hosts), "*" in self.names
         else:
             shown = hosts[0] if hosts else None
@@ -127,9 +136,11 @@ class HostGate:
         if len(self._logged) >= _LOG_LIMIT:
             if len(self._logged) == _LOG_LIMIT:
                 self._logged.add("\0more")
-                logger.warning("Refused requests for more than %d different Host names; "
-                               "the rest are counted on the Trust Center, not logged.",
-                               _LOG_LIMIT)
+                logger.warning(
+                    "Refused requests for more than %d different Host names; "
+                    "the rest are counted on the Trust Center, not logged.",
+                    _LOG_LIMIT,
+                )
             return
         self._logged.add(shown)
         client = (scope.get("client") or ("an unknown address",))[0]
@@ -137,4 +148,7 @@ class HostGate:
             "Refused a request for Host %r from %s (%r): Orb does not answer to that name. "
             "Either a web page is trying DNS rebinding, or staff or a device reach Orb by a "
             "name it was not told about; if so, add it to ORB_ALLOWED_HOSTS in .env and restart.",
-            shown, client, scope.get("path"))
+            shown,
+            client,
+            scope.get("path"),
+        )

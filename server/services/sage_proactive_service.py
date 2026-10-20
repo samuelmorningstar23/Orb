@@ -9,20 +9,28 @@ carry a suggested action that one-clicks into the agentic loop.
 Everything here is defensive: a patient with missing/None vitals, no risk history,
 or malformed data must never raise — surveillance must not take down the app.
 """
-import uuid
+
 import json
-from datetime import datetime, timezone, timedelta
+import uuid
+from datetime import UTC, datetime, timedelta
 
 from database import db_session
+
 from services.clinical_time import format_utc, parse_to_utc
 from services.news2_text import news2_description
 from services.vigil_service import news2_reason_line, score_vitals_row, scoring_enabled
 from services.vital_charting import as_charted, charted_text
 
 INSIGHT_COOLDOWN_MIN = 30  # don't re-raise the same dedup_key within this window
-AUTO_RESOLVE_AFTER_MIN = 10  # auto-resolve an active insight once its condition has been clear this long
-RECURRENCE_FLAP_GUARD_MIN = 3  # after a SYSTEM auto-resolve, how long before the same key may re-raise
-RISE_REFERENCE_MIN = 15  # Rule 1 "rose from" compares against the newest vitals row at least this much older
+AUTO_RESOLVE_AFTER_MIN = (
+    10  # auto-resolve an active insight once its condition has been clear this long
+)
+RECURRENCE_FLAP_GUARD_MIN = (
+    3  # after a SYSTEM auto-resolve, how long before the same key may re-raise
+)
+RISE_REFERENCE_MIN = (
+    15  # Rule 1 "rose from" compares against the newest vitals row at least this much older
+)
 _LEVELS = {"stable": 0, "elevated": 1, "critical": 2}
 
 # Suggested actions an insight may never carry into a one-click draft. A rule
@@ -58,7 +66,7 @@ _DEDUP_SUPPRESSED_SQL = """dedup_key = ? AND (
 
 def _dedup_cutoffs() -> tuple:
     """(human-decision cutoff, auto-resolve flap-guard cutoff) for _DEDUP_SUPPRESSED_SQL."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return (
         (now - timedelta(minutes=INSIGHT_COOLDOWN_MIN)).isoformat(),
         (now - timedelta(minutes=RECURRENCE_FLAP_GUARD_MIN)).isoformat(),
@@ -66,7 +74,7 @@ def _dedup_cutoffs() -> tuple:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _level_rank(level) -> int:
@@ -98,22 +106,24 @@ def _hours_since(ts) -> float:
         s = str(ts).replace("Z", "+00:00")
         dt = datetime.fromisoformat(s)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return (datetime.now(timezone.utc) - dt).total_seconds() / 3600.0
+            dt = dt.replace(tzinfo=UTC)
+        return (datetime.now(UTC) - dt).total_seconds() / 3600.0
     except Exception:
         return 0.0
 
 
 def _recent_dedup_exists(db, dedup_key) -> bool:
     cutoff, flap_cutoff = _dedup_cutoffs()
-    return db.execute(
-        f"SELECT 1 FROM sage_insights WHERE {_DEDUP_SUPPRESSED_SQL} LIMIT 1",
-        (dedup_key, cutoff, flap_cutoff),
-    ).fetchone() is not None
+    return (
+        db.execute(
+            f"SELECT 1 FROM sage_insights WHERE {_DEDUP_SUPPRESSED_SQL} LIMIT 1",
+            (dedup_key, cutoff, flap_cutoff),
+        ).fetchone()
+        is not None
+    )
 
 
-def _refresh_insight(db, dedup_key, detail, title=None, severity=None,
-                     observed_at=None) -> None:
+def _refresh_insight(db, dedup_key, detail, title=None, severity=None, observed_at=None) -> None:
     """Rewrite the detail of the ACTIVE insight for this key with this sweep's
     numbers. The dedup guard used to stop a refire at the door, so a card raised
     at SpO2 94 still read 94 an hour later beside a chart reading 88.
@@ -155,8 +165,19 @@ def _location(ward, bed) -> str:
     return ward or "location not recorded"
 
 
-def _insert_insight(db, patient_id, itype, severity, title, detail, target_user, dedup_key,
-                    action_type=None, action_target=None, observed_at=None):
+def _insert_insight(
+    db,
+    patient_id,
+    itype,
+    severity,
+    title,
+    detail,
+    target_user,
+    dedup_key,
+    action_type=None,
+    action_target=None,
+    observed_at=None,
+):
     """Atomic dedup-and-insert. A single INSERT ... WHERE NOT EXISTS so concurrent
     sweeps cannot both create the same insight — the previous check-then-insert raced
     (50 parallel evaluations produced duplicate active insights). SQLite serializes
@@ -167,6 +188,7 @@ def _insert_insight(db, patient_id, itype, severity, title, detail, target_user,
     # clinician is already looking at.
     try:
         from services.sage_feedback_service import is_pattern_suppressed
+
         if is_pattern_suppressed(itype, severity, db=db):
             # Not raised again, but a card already on the feed still gets this
             # sweep's numbers, and the time they were taken.
@@ -185,9 +207,24 @@ def _insert_insight(db, patient_id, itype, severity, title, detail, target_user,
            WHERE NOT EXISTS (
                SELECT 1 FROM sage_insights WHERE {_DEDUP_SUPPRESSED_SQL}
            )""",
-        (iid, patient_id, itype, severity, title[:200], (detail or "")[:600],
-         action_type, action_target, target_user, dedup_key, _now(), _now(), observed_at,
-         dedup_key, cutoff, flap_cutoff),
+        (
+            iid,
+            patient_id,
+            itype,
+            severity,
+            title[:200],
+            (detail or "")[:600],
+            action_type,
+            action_target,
+            target_user,
+            dedup_key,
+            _now(),
+            _now(),
+            observed_at,
+            dedup_key,
+            cutoff,
+            flap_cutoff,
+        ),
     )
     if cur.rowcount > 0:
         return iid
@@ -220,16 +257,20 @@ def _read_moment(patient_id):
         ).fetchone()
         if not pat or (pat["status"] or "") != "admitted":
             return None
-        vits = [dict(v) for v in db.execute(
-            "SELECT * FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
-            "ORDER BY timestamp DESC, id DESC LIMIT 4",
-            (patient_id,),
-        ).fetchall()]
+        vits = [
+            dict(v)
+            for v in db.execute(
+                "SELECT * FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
+                "ORDER BY timestamp DESC, id DESC LIMIT 4",
+                (patient_id,),
+            ).fetchall()
+        ]
         before = None
         if vits:
             try:
-                cutoff = format_utc(parse_to_utc(vits[0]["timestamp"])
-                                    - timedelta(minutes=RISE_REFERENCE_MIN))
+                cutoff = format_utc(
+                    parse_to_utc(vits[0]["timestamp"]) - timedelta(minutes=RISE_REFERENCE_MIN)
+                )
             except (TypeError, ValueError):
                 cutoff = None  # unparseable time: no reference, so no rise
             if cutoff:
@@ -239,10 +280,13 @@ def _read_moment(patient_id):
                     (patient_id, cutoff),
                 ).fetchone()
                 before = dict(row) if row else None
-        meds = [dict(m) for m in db.execute(
-            "SELECT drug_name, started_at FROM medications WHERE patient_id = ? AND status = 'active'",
-            (patient_id,),
-        ).fetchall()]
+        meds = [
+            dict(m)
+            for m in db.execute(
+                "SELECT drug_name, started_at FROM medications WHERE patient_id = ? AND status = 'active'",
+                (patient_id,),
+            ).fetchall()
+        ]
     return dict(pat), vits, before, meds
 
 
@@ -284,8 +328,14 @@ STOOD_DOWN_SEVERITY = "info"
 
 # The value at which each vital scores 3 on the RCP chart, on either SpO2 scale,
 # and the worst ACVPU. Used only to ask what an UNMEASURED parameter could add.
-_WORST_VALUES = {"heart_rate": 140.0, "systolic_bp": 80.0, "respiratory_rate": 30.0,
-                 "temperature": 34.0, "spo2": 80.0, "consciousness": "unresponsive"}
+_WORST_VALUES = {
+    "heart_rate": 140.0,
+    "systolic_bp": 80.0,
+    "respiratory_rate": 30.0,
+    "temperature": 34.0,
+    "spo2": 80.0,
+    "consciousness": "unresponsive",
+}
 
 
 def _worst_case_level(row, on_scale_2) -> str:
@@ -301,9 +351,11 @@ def _worst_case_level(row, on_scale_2) -> str:
             filled[col] = worst
     o2 = filled.get("on_oxygen")
     levels = []
-    for option in ([o2] if o2 is not None else [True, False]):
+    for option in [o2] if o2 is not None else [True, False]:
         filled["on_oxygen"] = option
-        levels.append(score_vitals_row(filled, on_scale_2=on_scale_2, overlay=False)["level"])
+        scored = score_vitals_row(filled, on_scale_2=on_scale_2, overlay=False)
+        assert scored is not None
+        levels.append(scored["level"])
     return max(levels, key=_level_rank)
 
 
@@ -316,8 +368,9 @@ def _stood_down_id(db, dedup_key):
     return row["id"] if row else None
 
 
-def _stand_down(db, dedup_key, now, label, worst, band, was_title, no_longer,
-                observed_at=None) -> bool:
+def _stand_down(
+    db, dedup_key, now, label, worst, band, was_title, no_longer, observed_at=None
+) -> bool:
     """The latest observation is below `band`, the band of this Rule 1 card.
     Returns True when the card must stay on the feed (the caller keeps its key
     valid). `worst` is `_worst_case_level` of the latest row (None when the set
@@ -351,12 +404,17 @@ def _stand_down(db, dedup_key, now, label, worst, band, was_title, no_longer,
     missing = ", ".join(now.get("missing_parameters") or []) or "not recorded"
     if now.get("complete") is False:
         if worst is None or _level_rank(worst) >= _level_rank(band):
-            _refresh_insight(db, dedup_key,
-                             f"Not confirmed recovered: {label}; not measured: {missing}.",
-                             observed_at=observed_at)
+            _refresh_insight(
+                db,
+                dedup_key,
+                f"Not confirmed recovered: {label}; not measured: {missing}.",
+                observed_at=observed_at,
+            )
             return True
-        detail = (f"{no_longer}: latest observation {label}; not measured: {missing}, "
-                  f"which could not bring it to {band}.")
+        detail = (
+            f"{no_longer}: latest observation {label}; not measured: {missing}, "
+            f"which could not bring it to {band}."
+        )
     else:
         detail = f"{no_longer}: latest observation {label}."
     _refresh_insight(db, dedup_key, detail, was_title, STOOD_DOWN_SEVERITY, observed_at)
@@ -408,6 +466,7 @@ def evaluate_patient(patient_id, raised_again=None) -> list:
             if vits:
                 now = score_vitals_row(vits[0], patient_id=patient_id, on_scale_2=on_scale_2)
                 table = score_vitals_row(vits[0], on_scale_2=on_scale_2, overlay=False)
+                assert now is not None
                 if now.get("complete") is False:
                     worst = _worst_case_level(vits[0], on_scale_2)
             if before is not None:
@@ -450,20 +509,38 @@ def evaluate_patient(patient_id, raised_again=None) -> list:
                 flipping = _stood_down_id(db, f"{patient_id}:deterioration:{lvl_now}")
                 if lvl_now == "critical":
                     iid = _insert_insight(
-                        db, patient_id, "deterioration", "critical",
+                        db,
+                        patient_id,
+                        "deterioration",
+                        "critical",
                         f"{name} ({loc}) is critical",
                         _detail(label, _reasons(now, table), "Recommend immediate senior review"),
-                        target, crit_key, observed_at=read_at)
+                        target,
+                        crit_key,
+                        observed_at=read_at,
+                    )
                     if iid:
                         new_ids.append(iid)
-                elif (lvl_now == "elevated" and before_score is not None
-                      and _level_rank(lvl_now) > _level_rank(before_score["level"])):
+                elif (
+                    lvl_now == "elevated"
+                    and before_score is not None
+                    and _level_rank(lvl_now) > _level_rank(before_score["level"])
+                ):
                     iid = _insert_insight(
-                        db, patient_id, "deterioration", "warning",
+                        db,
+                        patient_id,
+                        "deterioration",
+                        "warning",
                         f"{name} ({loc}) is deteriorating",
-                        _detail(f"Rose from {news2_description(before_score, scale=False)} to {label}",
-                                _reasons(now, table), "Consider review"),
-                        target, elev_key, observed_at=read_at)
+                        _detail(
+                            f"Rose from {news2_description(before_score, scale=False)} to {label}",
+                            _reasons(now, table),
+                            "Consider review",
+                        ),
+                        target,
+                        elev_key,
+                        observed_at=read_at,
+                    )
                     if iid:
                         new_ids.append(iid)
                 elif lvl_now == "elevated":
@@ -471,20 +548,41 @@ def evaluate_patient(patient_id, raised_again=None) -> list:
                     # stays, with today's numbers rather than the ones it was
                     # raised on.
                     _refresh_insight(
-                        db, elev_key, _detail(label, _reasons(now, table), "Consider review"),
-                        f"{name} ({loc}) is deteriorating", "warning", read_at)
+                        db,
+                        elev_key,
+                        _detail(label, _reasons(now, table), "Consider review"),
+                        f"{name} ({loc}) is deteriorating",
+                        "warning",
+                        read_at,
+                    )
                 if flipping and raised_again is not None:
                     raised_again.append(flipping)
 
                 # Below a card's band: stand it down, unless an incomplete set
                 # leaves it open (see _stand_down).
                 if lvl_now != "critical" and _stand_down(
-                        db, crit_key, now, label, worst, "critical",
-                        f"{name} ({loc}) was critical", "No longer critical", read_at):
+                    db,
+                    crit_key,
+                    now,
+                    label,
+                    worst,
+                    "critical",
+                    f"{name} ({loc}) was critical",
+                    "No longer critical",
+                    read_at,
+                ):
                     valid_keys.add(crit_key)
                 if lvl_now == "stable" and _stand_down(
-                        db, elev_key, now, label, worst, "elevated",
-                        f"{name} ({loc}) was deteriorating", "No longer elevated", read_at):
+                    db,
+                    elev_key,
+                    now,
+                    label,
+                    worst,
+                    "elevated",
+                    f"{name} ({loc}) was deteriorating",
+                    "No longer elevated",
+                    read_at,
+                ):
                     valid_keys.add(elev_key)
 
             # ── Rule 2: trajectory (SpO2 falling / RR rising over last 3 readings) ──
@@ -492,23 +590,43 @@ def evaluate_patient(patient_id, raised_again=None) -> list:
                 spo2 = [_num(vits[i]["spo2"]) for i in range(3)]
                 rr = [_num(vits[i]["respiratory_rate"]) for i in range(3)]
                 # index 0 = latest, 2 = oldest of the window
-                if all(x is not None for x in spo2) and spo2[0] <= spo2[1] <= spo2[2] and (spo2[2] - spo2[0]) >= 3:
+                if (
+                    all(x is not None for x in spo2)
+                    and spo2[0] <= spo2[1] <= spo2[2]
+                    and (spo2[2] - spo2[0]) >= 3
+                ):
                     valid_keys.add(f"{patient_id}:trajectory:spo2")
                     iid = _insert_insight(
-                        db, patient_id, "trajectory", "warning",
+                        db,
+                        patient_id,
+                        "trajectory",
+                        "warning",
                         f"{name} ({loc}): SpO2 falling",
                         f"SpO2 trending down {charted_text(spo2[2], unit='%')} to "
                         f"{charted_text(spo2[0], unit='%')} over the last 3 readings.",
-                        target, f"{patient_id}:trajectory:spo2", observed_at=read_at)
+                        target,
+                        f"{patient_id}:trajectory:spo2",
+                        observed_at=read_at,
+                    )
                     if iid:
                         new_ids.append(iid)
-                if all(x is not None for x in rr) and rr[0] >= rr[1] >= rr[2] and (rr[0] - rr[2]) >= 4:
+                if (
+                    all(x is not None for x in rr)
+                    and rr[0] >= rr[1] >= rr[2]
+                    and (rr[0] - rr[2]) >= 4
+                ):
                     valid_keys.add(f"{patient_id}:trajectory:rr")
                     iid = _insert_insight(
-                        db, patient_id, "trajectory", "warning",
+                        db,
+                        patient_id,
+                        "trajectory",
+                        "warning",
                         f"{name} ({loc}): respiratory rate rising",
                         f"RR climbing {charted_text(rr[2])} to {charted_text(rr[0])} over the last 3 readings.",
-                        target, f"{patient_id}:trajectory:rr", observed_at=read_at)
+                        target,
+                        f"{patient_id}:trajectory:rr",
+                        observed_at=read_at,
+                    )
                     if iid:
                         new_ids.append(iid)
 
@@ -539,26 +657,47 @@ def evaluate_patient(patient_id, raised_again=None) -> list:
                 if len(met) >= 2:
                     valid_keys.add(f"{patient_id}:sepsis")
                     iid = _insert_insight(
-                        db, patient_id, "sepsis", "warning",
+                        db,
+                        patient_id,
+                        "sepsis",
+                        "warning",
                         f"{name} ({loc}): possible sepsis",
                         f"Temp {charted_text(t, 1, unit='C')}, HR {charted_text(hr)}, RR {charted_text(rrate)}: "
                         f"meets SIRS, {len(met)} of 4 criteria ({', '.join(met)}; white cell count not "
                         "recorded in Orb). Consider sepsis screen + cultures.",
-                        target, f"{patient_id}:sepsis", observed_at=read_at)
+                        target,
+                        f"{patient_id}:sepsis",
+                        observed_at=read_at,
+                    )
                     if iid:
                         new_ids.append(iid)
 
             # ── Rule 4: antibiotic stewardship (broad-spectrum > 72h) ──
             for m in meds:
                 drug = (m["drug_name"] or "").lower()
-                if any(k in drug for k in ("ceftriaxone", "meropenem", "piperacillin", "tazobactam", "vancomycin", "monocef")):
+                if any(
+                    k in drug
+                    for k in (
+                        "ceftriaxone",
+                        "meropenem",
+                        "piperacillin",
+                        "tazobactam",
+                        "vancomycin",
+                        "monocef",
+                    )
+                ):
                     if m["started_at"] and _hours_since(m["started_at"]) >= 72:
                         valid_keys.add(f"{patient_id}:stewardship:{drug[:12]}")
                         iid = _insert_insight(
-                            db, patient_id, "stewardship", "info",
+                            db,
+                            patient_id,
+                            "stewardship",
+                            "info",
                             f"{name} ({loc}): antibiotic review due",
                             f"On {m['drug_name']} for >72h. Review for de-escalation / check culture results.",
-                            target, f"{patient_id}:stewardship:{drug[:12]}")
+                            target,
+                            f"{patient_id}:stewardship:{drug[:12]}",
+                        )
                         if iid:
                             new_ids.append(iid)
 
@@ -569,19 +708,19 @@ def evaluate_patient(patient_id, raised_again=None) -> list:
             # states are untouched (state = 'active' guard). Without this, the
             # ward-brief "active" count grows monotonically: insights were born
             # 'active' and only a human click could ever retire them.
-            now = _now()
+            resolved_at = _now()
             if valid_keys:
                 marks = ",".join("?" * len(valid_keys))
                 db.execute(
                     f"UPDATE sage_insights SET updated_at = ? "
                     f"WHERE patient_id = ? AND state = 'active' AND dedup_key IN ({marks})",
-                    (now, patient_id, *valid_keys),
+                    (resolved_at, patient_id, *valid_keys),
                 )
-            stale = (datetime.now(timezone.utc) - timedelta(minutes=AUTO_RESOLVE_AFTER_MIN)).isoformat()
+            stale = (datetime.now(UTC) - timedelta(minutes=AUTO_RESOLVE_AFTER_MIN)).isoformat()
             db.execute(
                 "UPDATE sage_insights SET state = 'auto_resolved', updated_at = ? "
                 "WHERE patient_id = ? AND state = 'active' AND updated_at < ?",
-                (now, patient_id, stale),
+                (resolved_at, patient_id, stale),
             )
     except Exception as e:
         print(f"  [SageProactive] evaluate_patient({patient_id}) error: {e}")
@@ -666,11 +805,17 @@ def transition_insight(insight_id, new_state, user_id, role) -> dict:
         # diverge. Best-effort — never fails the transition.
         try:
             from services.sage_feedback_service import pattern_of, record_feedback
+
             record_feedback(
                 pattern_of(row["insight_type"], row["severity"]),
-                new_state, insight_id=insight_id, patient_id=row["patient_id"],
-                actor_user_id=user_id, db=db,
+                new_state,
+                insight_id=insight_id,
+                patient_id=row["patient_id"],
+                actor_user_id=user_id,
+                db=db,
             )
         except Exception:
             pass
-        return dict(db.execute("SELECT * FROM sage_insights WHERE id = ?", (insight_id,)).fetchone())
+        return dict(
+            db.execute("SELECT * FROM sage_insights WHERE id = ?", (insight_id,)).fetchone()
+        )

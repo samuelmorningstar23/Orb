@@ -28,11 +28,17 @@ This module DOES import Orb code (`ingestion_adapters`), so — unlike
 `hl7v2.py`, `mllp.py` and `vendor_profiles.py` — it must not be imported by the
 bench simulator. The bench runs on a laptop with no database and no `.env`.
 """
+
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from services.ingestion_adapters import CanonicalEvent
 
 import logging
 import re
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from services.ingestion_adapters import (
     HL7Adapter,
@@ -61,10 +67,10 @@ class VendorProfileAdapter(HL7Adapter):
 
     def __init__(
         self,
-        profile: Optional[VendorProfile] = None,
+        profile: VendorProfile | None = None,
         *,
         default_timezone=None,
-        observer: Optional[Observer] = None,
+        observer: Observer | None = None,
         strict: bool = False,
     ):
         super().__init__(default_timezone=default_timezone)
@@ -119,7 +125,8 @@ class VendorProfileAdapter(HL7Adapter):
             number = _numeric(event.value)
             if number is not None:
                 event.value_numeric = validate_vital_value(
-                    "Temp", normalize_temp_to_celsius(number, canonical))
+                    "Temp", normalize_temp_to_celsius(number, canonical)
+                )
                 event.unit = "°C"
                 if canonical.upper() in ("F", "°F"):
                     self._note("unit", f"{_identity(event)} °F→°C via {raw_unit!r}")
@@ -127,10 +134,10 @@ class VendorProfileAdapter(HL7Adapter):
             event.unit = canonical
         return event
 
-    def parse(self, raw_payload: str, source_name: Optional[str] = None,
-              correlation_id: Optional[str] = None):
-        events = super().parse(raw_payload, source_name=source_name,
-                               correlation_id=correlation_id)
+    def parse(
+        self, raw_payload: str, source_name: str | None = None, correlation_id: str | None = None
+    ):
+        events = super().parse(raw_payload, source_name=source_name, correlation_id=correlation_id)
         if self.profile.key == vendor_profiles.GENERIC.key or not events:
             # Still report what LOINC could not map: on a generic profile that
             # list is the evidence for choosing a vendor profile at all.
@@ -144,7 +151,7 @@ class VendorProfileAdapter(HL7Adapter):
         already = {e.mapped_vital_key for e in events if e.mapped_vital_key}
 
         # vital_key -> (priority, event) currently winning
-        claimed: dict[str, tuple[int, object]] = {}
+        claimed: dict[str, tuple[int, CanonicalEvent]] = {}
 
         for event in events:
             if event.mapped_vital_key is not None:
@@ -164,7 +171,9 @@ class VendorProfileAdapter(HL7Adapter):
                 self._note("skipped", f"{_identity(event)} ({mapping.confidence.value})")
                 continue
             if mapping.vital_key in already:
-                self._note("demoted", f"{_identity(event)} → {mapping.vital_key} (LOINC already mapped it)")
+                self._note(
+                    "demoted", f"{_identity(event)} → {mapping.vital_key} (LOINC already mapped it)"
+                )
                 continue
 
             winner = claimed.get(mapping.vital_key)
@@ -210,7 +219,10 @@ class VendorProfileAdapter(HL7Adapter):
         if event.value_numeric is None:
             logger.info(
                 "profile %s: %s mapped to %s but the value was implausible or non-numeric; "
-                "not scored", self.profile.key, _identity(event), mapping.vital_key,
+                "not scored",
+                self.profile.key,
+                _identity(event),
+                mapping.vital_key,
             )
         self._note("mapped", f"{mapping.vital_key}<-{_identity(event)}")
 
@@ -219,7 +231,7 @@ def _revalidate(value, vital_key):
     return validate_vital_value(vital_key, value)
 
 
-def _numeric(raw) -> Optional[float]:
+def _numeric(raw) -> float | None:
     """OBX-5 → float, tolerating the `SN` decorations (`>`, `<`, `=`) the base
     adapter also strips. Returns None for anything else."""
     if raw is None:
@@ -243,10 +255,17 @@ def _identity(event) -> str:
     return (code or name or "?")[:80]
 
 
-def build_adapter(profile_name: Optional[str] = None, *, default_timezone=None,
-                  observer: Optional[Observer] = None, strict: bool = False):
+def build_adapter(
+    profile_name: str | None = None,
+    *,
+    default_timezone=None,
+    observer: Observer | None = None,
+    strict: bool = False,
+):
     """Convenience for callers holding a configured profile NAME, not an object."""
     return VendorProfileAdapter(
         vendor_profiles.profile_for(profile_name),
-        default_timezone=default_timezone, observer=observer, strict=strict,
+        default_timezone=default_timezone,
+        observer=observer,
+        strict=strict,
     )

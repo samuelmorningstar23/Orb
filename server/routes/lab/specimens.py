@@ -63,18 +63,24 @@ Receive, reject and the cancel decision finish open work, so they are served
 while the module drains (ruling LIS-R21); recollecting starts new work and is
 not.
 """
-from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Any
 
 from database import db_session
-from permissions import (LAB_COLLECT, LAB_RECEIVE, department_scope, log_phi_read,
-                         require_permission)
+from fastapi import APIRouter, Depends, Request
+from permissions import (
+    LAB_COLLECT,
+    LAB_RECEIVE,
+    department_scope,
+    log_phi_read,
+    require_permission,
+)
+from pydantic import BaseModel, ConfigDict, Field
+from services.audit_service import AuditWriteError
+
 from routes.lab.orders import audit_unavailable, lab_refusal, request_meta
 from routes.opt_in_gates import require_lab_module
 from services import lab_order_service
-from services.audit_service import AuditWriteError
 
 router = APIRouter(dependencies=[Depends(require_lab_module(allow_draining=True))])
 
@@ -85,31 +91,35 @@ _NEW_WORK = [Depends(require_lab_module())]
 class Identity(BaseModel):
     """The two identifiers typed at the bedside, from the wristband or as the
     patient states them. Compared with the record; never stored."""
+
     model_config = ConfigDict(extra="forbid")
-    uhid: Optional[str] = Field(None, max_length=64)
-    name: Optional[str] = Field(None, max_length=200)
+    uhid: str | None = Field(None, max_length=64)
+    name: str | None = Field(None, max_length=200)
 
 
 class LabelsBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     specimen_ids: list[str] = Field(..., max_length=lab_order_service.MAX_LABELS_PER_PRINT)
-    identity: Optional[Identity] = None
+    identity: Identity | None = None
 
 
 class CollectBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    identity: Optional[Identity] = None
-    collected_at: Optional[str] = Field(None, max_length=64)
-    backdate_reason: Optional[str] = Field(None, max_length=500)
-    collection_location: Optional[str] = Field(None, max_length=120)
+    identity: Identity | None = None
+    collected_at: str | None = Field(None, max_length=64)
+    backdate_reason: str | None = Field(None, max_length=500)
+    collection_location: str | None = Field(None, max_length=120)
 
 
-def _identity(value: Optional[Identity]) -> Optional[dict[str, Any]]:
+def _identity(value: Identity | None) -> dict[str, Any] | None:
     return value.model_dump() if value is not None else None
 
 
+_LIST_COLLECTION_USER_DEFAULT = Depends(require_permission(LAB_COLLECT))
+
+
 @router.get("/collection")
-def list_collection(request: Request, user: dict = Depends(require_permission(LAB_COLLECT))):
+def list_collection(request: Request, user: dict = _LIST_COLLECTION_USER_DEFAULT):
     """Samples waiting to be collected, STAT first, then by ward and bed, and
     rejected samples waiting for a recollection. Scoped by department_scope,
     never by a request parameter. The audit row records the patients
@@ -119,56 +129,83 @@ def list_collection(request: Request, user: dict = Depends(require_permission(LA
         rows = lab_order_service.list_collection(db, dept=dept)
     patient_ids = sorted({r["patient"]["id"] for r in rows})
     log_phi_read(
-        request=request, user=user,
+        request=request,
+        user=user,
         action_type="lab_collection_list_viewed",
         summary_message=f"Specimen collection list viewed ({len(rows)} samples)",
         target_type="lab_collection",
         target_id="pending",
-        metadata={"count": len(rows), "patient_count": len(patient_ids),
-                  "patient_ids": patient_ids[:200]},
+        metadata={
+            "count": len(rows),
+            "patient_count": len(patient_ids),
+            "patient_ids": patient_ids[:200],
+        },
     )
-    return {"specimens": rows, "scope": {"department": dept, "hospital_wide": dept is None},
-            "backdate_minutes": lab_order_service.backdate_limit_minutes()}
+    return {
+        "specimens": rows,
+        "scope": {"department": dept, "hospital_wide": dept is None},
+        "backdate_minutes": lab_order_service.backdate_limit_minutes(),
+    }
+
+
+_PRINT_COLLECTION_LABELS_USER_DEFAULT = Depends(require_permission(LAB_COLLECT))
 
 
 @router.post("/collection/labels", dependencies=_NEW_WORK)
-def print_collection_labels(body: LabelsBody, request: Request,
-                            user: dict = Depends(require_permission(LAB_COLLECT))):
+def print_collection_labels(
+    body: LabelsBody, request: Request, user: dict = _PRINT_COLLECTION_LABELS_USER_DEFAULT
+):
     """The label payloads for one patient's samples, once the two identifiers
     match. The client draws the barcode (src/lib/code128.ts)."""
     try:
         return lab_order_service.print_labels(
-            body.specimen_ids, actor=user, identity=_identity(body.identity),
-            dept=department_scope(user), request_meta=request_meta(request))
+            body.specimen_ids,
+            actor=user,
+            identity=_identity(body.identity),
+            dept=department_scope(user),
+            request_meta=request_meta(request),
+        )
     except lab_order_service.LabOrderError as err:
-        raise lab_refusal(err)
+        raise lab_refusal(err) from err
     except AuditWriteError:
-        raise audit_unavailable()
+        raise audit_unavailable() from None
+
+
+_COLLECT_SPECIMEN_USER_DEFAULT = Depends(require_permission(LAB_COLLECT))
 
 
 @router.post("/specimens/{specimen_id}/collect", dependencies=_NEW_WORK)
-def collect_specimen(specimen_id: str, body: CollectBody, request: Request,
-                     user: dict = Depends(require_permission(LAB_COLLECT))):
+def collect_specimen(
+    specimen_id: str,
+    body: CollectBody,
+    request: Request,
+    user: dict = _COLLECT_SPECIMEN_USER_DEFAULT,
+):
     """Record a sample as collected. Unknown and out-of-department are the
     same 404."""
     try:
         return lab_order_service.collect_specimen(
-            specimen_id, actor=user, identity=_identity(body.identity),
-            dept=department_scope(user), collected_at=body.collected_at,
+            specimen_id,
+            actor=user,
+            identity=_identity(body.identity),
+            dept=department_scope(user),
+            collected_at=body.collected_at,
             backdate_reason=body.backdate_reason,
             collection_location=body.collection_location,
-            request_meta=request_meta(request))
+            request_meta=request_meta(request),
+        )
     except lab_order_service.LabOrderError as err:
-        raise lab_refusal(err)
+        raise lab_refusal(err) from err
     except AuditWriteError:
-        raise audit_unavailable()
+        raise audit_unavailable() from None
 
 
 # ── lis-9: receipt, rejection and the recollect or cancel decision ───────────
 
+
 class ReceiveBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    receipt_note: Optional[str] = Field(None, max_length=500)
+    receipt_note: str | None = Field(None, max_length=500)
     # A sample past its stability time is received only with this set AND a
     # note saying why it is being processed.
     accept_past_stability: bool = False
@@ -176,58 +213,72 @@ class ReceiveBody(BaseModel):
 
 class RejectBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    reason_code: Optional[str] = Field(None, max_length=64)
-    note: Optional[str] = Field(None, max_length=500)
+    reason_code: str | None = Field(None, max_length=64)
+    note: str | None = Field(None, max_length=500)
 
 
 class RecollectBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    note: Optional[str] = Field(None, max_length=500)
+    note: str | None = Field(None, max_length=500)
 
 
 class CancelRejectedBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    reason: Optional[str] = Field(None, max_length=500)
+    reason: str | None = Field(None, max_length=500)
 
 
 def _patient_ids(rows: list[dict]) -> list[str]:
     return sorted({r["patient"]["id"] for r in rows if r.get("patient")})
 
 
+_LIST_RECEIVING_USER_DEFAULT = Depends(require_permission(LAB_RECEIVE))
+
+
 @router.get("/receiving")
-def list_receiving(request: Request, user: dict = Depends(require_permission(LAB_RECEIVE))):
+def list_receiving(request: Request, user: dict = _LIST_RECEIVING_USER_DEFAULT):
     """Samples in transit and rejected samples waiting for a decision. The
     audit row records the patients actually returned."""
     dept = department_scope(user)
     with db_session() as db:
         lists = lab_order_service.list_receiving(db, dept=dept)
-    patient_ids = sorted(set(_patient_ids(lists["in_transit"]))
-                         | set(_patient_ids(lists["rejected"])))
+    patient_ids = sorted(
+        set(_patient_ids(lists["in_transit"])) | set(_patient_ids(lists["rejected"]))
+    )
     log_phi_read(
-        request=request, user=user,
+        request=request,
+        user=user,
         action_type="lab_receiving_list_viewed",
-        summary_message=(f"Laboratory receiving lists viewed ({len(lists['in_transit'])} in "
-                         f"transit, {len(lists['rejected'])} rejected)"),
+        summary_message=(
+            f"Laboratory receiving lists viewed ({len(lists['in_transit'])} in "
+            f"transit, {len(lists['rejected'])} rejected)"
+        ),
         target_type="lab_receiving",
         target_id="open",
-        metadata={"in_transit": len(lists["in_transit"]), "rejected": len(lists["rejected"]),
-                  "patient_count": len(patient_ids), "patient_ids": patient_ids[:200]},
+        metadata={
+            "in_transit": len(lists["in_transit"]),
+            "rejected": len(lists["rejected"]),
+            "patient_count": len(patient_ids),
+            "patient_ids": patient_ids[:200],
+        },
     )
     return {**lists, "scope": {"department": dept, "hospital_wide": dept is None}}
 
 
+_SCAN_SPECIMEN_USER_DEFAULT = Depends(require_permission(LAB_RECEIVE))
+
+
 @router.get("/specimens/scan/{code}")
-def scan_specimen(code: str, request: Request,
-                  user: dict = Depends(require_permission(LAB_RECEIVE))):
+def scan_specimen(code: str, request: Request, user: dict = _SCAN_SPECIMEN_USER_DEFAULT):
     """One scanned or typed sample. A bad check digit is 422 and nothing is
     looked up; unknown and out-of-department are the same 404."""
     try:
         with db_session() as db:
             detail = lab_order_service.scan_specimen(db, code, dept=department_scope(user))
     except lab_order_service.LabOrderError as err:
-        raise lab_refusal(err)
+        raise lab_refusal(err) from err
     log_phi_read(
-        request=request, user=user,
+        request=request,
+        user=user,
         action_type="lab_specimen_viewed",
         summary_message="Laboratory specimen viewed at receipt",
         patient_id=detail["patient"]["id"],
@@ -238,54 +289,99 @@ def scan_specimen(code: str, request: Request,
     return {"specimen": detail}
 
 
+_RECEIVE_SPECIMEN_USER_DEFAULT = Depends(require_permission(LAB_RECEIVE))
+
+
 @router.post("/specimens/{specimen_id}/receive")
-def receive_specimen(specimen_id: str, body: ReceiveBody, request: Request,
-                     user: dict = Depends(require_permission(LAB_RECEIVE))):
+def receive_specimen(
+    specimen_id: str,
+    body: ReceiveBody,
+    request: Request,
+    user: dict = _RECEIVE_SPECIMEN_USER_DEFAULT,
+):
     try:
         return lab_order_service.receive_specimen(
-            specimen_id, actor=user, dept=department_scope(user),
-            receipt_note=body.receipt_note, accept_past_stability=body.accept_past_stability,
-            request_meta=request_meta(request))
+            specimen_id,
+            actor=user,
+            dept=department_scope(user),
+            receipt_note=body.receipt_note,
+            accept_past_stability=body.accept_past_stability,
+            request_meta=request_meta(request),
+        )
     except lab_order_service.LabOrderError as err:
-        raise lab_refusal(err)
+        raise lab_refusal(err) from err
     except AuditWriteError:
-        raise audit_unavailable()
+        raise audit_unavailable() from None
+
+
+_REJECT_SPECIMEN_USER_DEFAULT = Depends(require_permission(LAB_RECEIVE))
 
 
 @router.post("/specimens/{specimen_id}/reject")
-def reject_specimen(specimen_id: str, body: RejectBody, request: Request,
-                    user: dict = Depends(require_permission(LAB_RECEIVE))):
+def reject_specimen(
+    specimen_id: str,
+    body: RejectBody,
+    request: Request,
+    user: dict = _REJECT_SPECIMEN_USER_DEFAULT,
+):
     try:
         return lab_order_service.reject_specimen(
-            specimen_id, actor=user, dept=department_scope(user),
-            reason_code=body.reason_code, note=body.note, request_meta=request_meta(request))
+            specimen_id,
+            actor=user,
+            dept=department_scope(user),
+            reason_code=body.reason_code,
+            note=body.note,
+            request_meta=request_meta(request),
+        )
     except lab_order_service.LabOrderError as err:
-        raise lab_refusal(err)
+        raise lab_refusal(err) from err
     except AuditWriteError:
-        raise audit_unavailable()
+        raise audit_unavailable() from None
+
+
+_RECOLLECT_SPECIMEN_USER_DEFAULT = Depends(require_permission(LAB_RECEIVE))
 
 
 @router.post("/specimens/{specimen_id}/recollect", dependencies=_NEW_WORK)
-def recollect_specimen(specimen_id: str, body: RecollectBody, request: Request,
-                       user: dict = Depends(require_permission(LAB_RECEIVE))):
+def recollect_specimen(
+    specimen_id: str,
+    body: RecollectBody,
+    request: Request,
+    user: dict = _RECOLLECT_SPECIMEN_USER_DEFAULT,
+):
     try:
         return lab_order_service.recollect_specimen(
-            specimen_id, actor=user, dept=department_scope(user), note=body.note,
-            request_meta=request_meta(request))
+            specimen_id,
+            actor=user,
+            dept=department_scope(user),
+            note=body.note,
+            request_meta=request_meta(request),
+        )
     except lab_order_service.LabOrderError as err:
-        raise lab_refusal(err)
+        raise lab_refusal(err) from err
     except AuditWriteError:
-        raise audit_unavailable()
+        raise audit_unavailable() from None
+
+
+_CANCEL_REJECTED_TESTS_USER_DEFAULT = Depends(require_permission(LAB_RECEIVE))
 
 
 @router.post("/specimens/{specimen_id}/cancel-rejected")
-def cancel_rejected_tests(specimen_id: str, body: CancelRejectedBody, request: Request,
-                          user: dict = Depends(require_permission(LAB_RECEIVE))):
+def cancel_rejected_tests(
+    specimen_id: str,
+    body: CancelRejectedBody,
+    request: Request,
+    user: dict = _CANCEL_REJECTED_TESTS_USER_DEFAULT,
+):
     try:
         return lab_order_service.cancel_rejected_tests(
-            specimen_id, actor=user, dept=department_scope(user), reason=body.reason,
-            request_meta=request_meta(request))
+            specimen_id,
+            actor=user,
+            dept=department_scope(user),
+            reason=body.reason,
+            request_meta=request_meta(request),
+        )
     except lab_order_service.LabOrderError as err:
-        raise lab_refusal(err)
+        raise lab_refusal(err) from err
     except AuditWriteError:
-        raise audit_unavailable()
+        raise audit_unavailable() from None

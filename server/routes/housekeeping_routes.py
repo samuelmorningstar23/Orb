@@ -48,14 +48,13 @@ path calls any of them. `POST /units/{id}/state` refusing an illegal transition
 refuses a HOUSEKEEPING RECORD; admission does not consult it. See the PILOT
 SAFETY section of services/housekeeping_service.py.
 """
+
 from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
-
 import config
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from permissions import (
     ADMIN_OVERVIEW,
     FORECAST_READ,
@@ -63,17 +62,18 @@ from permissions import (
     has_permission,
     require_permission,
 )
+from pydantic import BaseModel
 from services.audit_service import log_audit_event
 from services.housekeeping_service import (
     CLEAN_TYPES,
-    HousekeepingError,
-    UnitAlreadyRegistered,
-    UnitManagedByBedSetup,
     LEGAL_TRANSITIONS,
     LINEN_DIRECTIONS,
     PRIORITIES,
     REQUEST_TYPES,
     UNIT_STATES,
+    HousekeepingError,
+    UnitAlreadyRegistered,
+    UnitManagedByBedSetup,
     cancel_cleaning,
     complete_cleaning,
     expected_minutes_for,
@@ -105,6 +105,7 @@ router = APIRouter(prefix="/api/housekeeping", tags=["housekeeping"])
 # Declared models rather than `data: dict`, for the same reason the front-desk
 # module gives: a typed body is one the scope-drift guards can SEE. None of these
 # carries a patient id, and none may ever grow one.
+
 
 class UnitIn(BaseModel):
     unit_code: str
@@ -158,6 +159,7 @@ class LinenIn(BaseModel):
 
 # ── Module switch ────────────────────────────────────────────────────────────
 
+
 def require_housekeeping_module() -> None:
     """404 the whole module when the deployment has switched it off.
 
@@ -196,22 +198,32 @@ def require_housekeeping_module() -> None:
 # cleaning supervisor an administrator account, and so a ward clerk can mark a
 # bed dirty without holding `vitals.write`.
 
+
 def require_housekeeping_read():
     """Dependency: `forecast.read` + the module switch."""
+
+    _CHECKER_USER_DEFAULT = Depends(require_permission(FORECAST_READ))
+    _CHECKER_MODULE_DEFAULT = Depends(require_housekeeping_module)
+
     def _checker(
-        user: dict = Depends(require_permission(FORECAST_READ)),
-        _module: None = Depends(require_housekeeping_module),
+        user: dict = _CHECKER_USER_DEFAULT,
+        _module: None = _CHECKER_MODULE_DEFAULT,
     ) -> dict:
         return user
+
     return _checker
 
 
 def require_housekeeping_write():
     """Dependency: `vitals.write` OR `admin.overview`, with an audited denial."""
+
+    _CHECKER_USER_DEFAULT = Depends(require_permission(FORECAST_READ))
+    _CHECKER_MODULE_DEFAULT = Depends(require_housekeeping_module)
+
     def _checker(
         request: Request,
-        user: dict = Depends(require_permission(FORECAST_READ)),
-        _module: None = Depends(require_housekeeping_module),
+        user: dict = _CHECKER_USER_DEFAULT,
+        _module: None = _CHECKER_MODULE_DEFAULT,
     ) -> dict:
         role = user.get("role", "")
         if has_permission(role, VITALS_WRITE) or has_permission(role, ADMIN_OVERVIEW):
@@ -239,6 +251,7 @@ def require_housekeeping_write():
                 "required": [VITALS_WRITE, ADMIN_OVERVIEW],
             },
         )
+
     return _checker
 
 
@@ -282,8 +295,12 @@ def _audit(request: Request, user: dict, action: str, summary: str, **metadata) 
 #  Vocabulary
 # ═════════════════════════════════════════════════════════════════════════════
 
+
+_HOUSEKEEPING_META_USER_DEFAULT = Depends(require_housekeeping_read())
+
+
 @router.get("/meta")
-def housekeeping_meta(_user: dict = Depends(require_housekeeping_read())):
+def housekeeping_meta(_user: dict = _HOUSEKEEPING_META_USER_DEFAULT):
     """The vocabulary and THE TRANSITION TABLE ITSELF.
 
     The legal moves are published rather than reimplemented in the panel. A UI
@@ -306,10 +323,16 @@ def housekeeping_meta(_user: dict = Depends(require_housekeeping_read())):
     }
 
 
+_HOUSEKEEPING_OVERVIEW_SYNC_DEFAULT = Query(
+    True, description="Run the discharge turnaround sweep first"
+)
+_HOUSEKEEPING_OVERVIEW_USER_DEFAULT = Depends(require_housekeeping_read())
+
+
 @router.get("/overview")
 def housekeeping_overview(
-    sync: bool = Query(True, description="Run the discharge turnaround sweep first"),
-    _user: dict = Depends(require_housekeeping_read()),
+    sync: bool = _HOUSEKEEPING_OVERVIEW_SYNC_DEFAULT,
+    _user: dict = _HOUSEKEEPING_OVERVIEW_USER_DEFAULT,
 ):
     return overview(sync=sync)
 
@@ -318,11 +341,17 @@ def housekeeping_overview(
 #  Units
 # ═════════════════════════════════════════════════════════════════════════════
 
+
+_GET_UNITS_WARD_DEFAULT = Query(None)
+_GET_UNITS_INCLUDE_INACTIVE_DEFAULT = Query(False)
+_GET_UNITS_USER_DEFAULT = Depends(require_housekeeping_read())
+
+
 @router.get("/units")
 def get_units(
-    ward: str | None = Query(None),
-    include_inactive: bool = Query(False),
-    _user: dict = Depends(require_housekeeping_read()),
+    ward: str | None = _GET_UNITS_WARD_DEFAULT,
+    include_inactive: bool = _GET_UNITS_INCLUDE_INACTIVE_DEFAULT,
+    _user: dict = _GET_UNITS_USER_DEFAULT,
 ):
     return {"units": list_units(ward, include_inactive=include_inactive)}
 
@@ -336,8 +365,9 @@ _MANAGED_IN_BEDS_SETUP = (
 
 
 def _managed_in_beds_setup(message: str = _MANAGED_IN_BEDS_SETUP) -> HTTPException:
-    return HTTPException(status_code=409,
-                         detail={"error": "managed_in_beds_setup", "message": message})
+    return HTTPException(
+        status_code=409, detail={"error": "managed_in_beds_setup", "message": message}
+    )
 
 
 def _refuse_beds_while_adt_is_on(body: UnitIn) -> None:
@@ -352,68 +382,106 @@ def _refuse_beds_while_adt_is_on(body: UnitIn) -> None:
     is_bed = (body.unit_type or "").strip().lower() == "bed"
     if not is_bed:
         existing = find_unit_by_code(body.unit_code)
-        is_bed = bool(existing) and existing.get("unit_type") == "bed"
+        is_bed = (existing is not None and bool(existing)) and existing.get("unit_type") == "bed"
     if is_bed:
         raise _managed_in_beds_setup()
 
 
+_POST_UNIT_USER_DEFAULT = Depends(require_housekeeping_write())
+
+
 @router.post("/units")
-def post_unit(body: UnitIn, request: Request, user: dict = Depends(require_housekeeping_write())):
+def post_unit(body: UnitIn, request: Request, user: dict = _POST_UNIT_USER_DEFAULT):
     _refuse_beds_while_adt_is_on(body)
     try:
         unit = register_unit(
-            unit_code=body.unit_code, ward=body.ward, room=body.room,
-            bed_label=body.bed_label, unit_type=body.unit_type,
+            unit_code=body.unit_code,
+            ward=body.ward,
+            room=body.room,
+            bed_label=body.bed_label,
+            unit_type=body.unit_type,
             is_isolation_room=body.is_isolation_room,
-            initial_state=body.initial_state, notes=body.notes,
-            actor_user_id=user.get("id"), actor_role=user.get("role"),
+            initial_state=body.initial_state,
+            notes=body.notes,
+            actor_user_id=user.get("id"),
+            actor_role=user.get("role"),
             create_only=body.create_only,
         )
     except UnitAlreadyRegistered as e:
-        raise HTTPException(status_code=409,
-                            detail={"error": "already_exists", "message": str(e)})
+        raise HTTPException(
+            status_code=409, detail={"error": "already_exists", "message": str(e)}
+        ) from e
     except UnitManagedByBedSetup as e:
         # A bed Bed setup registered (it carries a ward_id) is changed there,
         # whatever the switch says now.
-        raise _managed_in_beds_setup(str(e))
+        raise _managed_in_beds_setup(str(e)) from e
     except HousekeepingError as e:
-        raise _bad_request(e)
-    _audit(request, user, "housekeeping_unit_registered",
-           f"Housekeeping unit {unit['unit_code']} registered on {unit['ward']}",
-           unit_code=unit["unit_code"], ward=unit["ward"], state=unit["state"])
+        raise _bad_request(e) from e
+    _audit(
+        request,
+        user,
+        "housekeeping_unit_registered",
+        f"Housekeeping unit {unit['unit_code']} registered on {unit['ward']}",
+        unit_code=unit["unit_code"],
+        ward=unit["ward"],
+        state=unit["state"],
+    )
     return unit
 
 
+_GET_ONE_UNIT_USER_DEFAULT = Depends(require_housekeeping_read())
+
+
 @router.get("/units/{unit_id}")
-def get_one_unit(unit_id: str, _user: dict = Depends(require_housekeeping_read())):
+def get_one_unit(unit_id: str, _user: dict = _GET_ONE_UNIT_USER_DEFAULT):
     try:
         return get_unit(unit_id)
     except HousekeepingError as e:
-        raise HTTPException(status_code=404, detail={"error": "not_found", "message": str(e)})
+        raise HTTPException(
+            status_code=404, detail={"error": "not_found", "message": str(e)}
+        ) from e
+
+
+_POST_UNIT_STATE_USER_DEFAULT = Depends(require_housekeeping_write())
 
 
 @router.post("/units/{unit_id}/state")
 def post_unit_state(
-    unit_id: str, body: StateIn, request: Request,
-    user: dict = Depends(require_housekeeping_write()),
+    unit_id: str,
+    body: StateIn,
+    request: Request,
+    user: dict = _POST_UNIT_STATE_USER_DEFAULT,
 ):
     try:
         unit = transition_unit(
-            unit_id, body.state, actor_user_id=user.get("id"),
-            actor_role=user.get("role"), reason=body.reason,
+            unit_id,
+            body.state,
+            actor_user_id=user.get("id"),
+            actor_role=user.get("role"),
+            reason=body.reason,
         )
     except HousekeepingError as e:
-        raise _bad_request(e)
-    _audit(request, user, "housekeeping_unit_state_changed",
-           f"{unit['unit_code']} → {unit['state']}",
-           unit_code=unit["unit_code"], state=unit["state"])
+        raise _bad_request(e) from e
+    _audit(
+        request,
+        user,
+        "housekeeping_unit_state_changed",
+        f"{unit['unit_code']} → {unit['state']}",
+        unit_code=unit["unit_code"],
+        state=unit["state"],
+    )
     return unit
+
+
+_POST_UNIT_OCCUPY_USER_DEFAULT = Depends(require_housekeeping_write())
 
 
 @router.post("/units/{unit_id}/occupy")
 def post_unit_occupy(
-    unit_id: str, body: OccupyIn, request: Request,
-    user: dict = Depends(require_housekeeping_write()),
+    unit_id: str,
+    body: OccupyIn,
+    request: Request,
+    user: dict = _POST_UNIT_OCCUPY_USER_DEFAULT,
 ):
     """Record that a unit is occupied — INCLUDING when the clean was skipped.
 
@@ -422,18 +490,23 @@ def post_unit_occupy(
     """
     try:
         unit = force_occupied(
-            unit_id, reason=body.reason,
-            actor_user_id=user.get("id"), actor_role=user.get("role"),
+            unit_id,
+            reason=body.reason,
+            actor_user_id=user.get("id"),
+            actor_role=user.get("role"),
         )
     except HousekeepingError as e:
-        raise _bad_request(e)
+        raise _bad_request(e) from e
     _audit(
-        request, user,
-        "housekeeping_unit_occupied_without_clean" if unit.get("clean_was_skipped")
+        request,
+        user,
+        "housekeeping_unit_occupied_without_clean"
+        if unit.get("clean_was_skipped")
         else "housekeeping_unit_occupied",
         f"{unit['unit_code']} recorded occupied"
         + (" WITHOUT a completed clean" if unit.get("clean_was_skipped") else ""),
-        unit_code=unit["unit_code"], clean_skipped=bool(unit.get("clean_was_skipped")),
+        unit_code=unit["unit_code"],
+        clean_skipped=bool(unit.get("clean_was_skipped")),
     )
     return unit
 
@@ -442,95 +515,157 @@ def post_unit_occupy(
 #  Cleaning requests
 # ═════════════════════════════════════════════════════════════════════════════
 
+
+_GET_TASKS_WARD_DEFAULT = Query(None)
+_GET_TASKS_STATUS_DEFAULT = Query(None)
+_GET_TASKS_PRIORITY_DEFAULT = Query(None)
+_GET_TASKS_LIMIT_DEFAULT = Query(200, ge=1, le=1000)
+_GET_TASKS_USER_DEFAULT = Depends(require_housekeeping_read())
+
+
 @router.get("/tasks")
 def get_tasks(
-    ward: str | None = Query(None),
-    status: str | None = Query(None),
-    priority: str | None = Query(None),
-    limit: int = Query(200, ge=1, le=1000),
-    _user: dict = Depends(require_housekeeping_read()),
+    ward: str | None = _GET_TASKS_WARD_DEFAULT,
+    status: str | None = _GET_TASKS_STATUS_DEFAULT,
+    priority: str | None = _GET_TASKS_PRIORITY_DEFAULT,
+    limit: int = _GET_TASKS_LIMIT_DEFAULT,
+    _user: dict = _GET_TASKS_USER_DEFAULT,
 ):
     try:
         return {"tasks": list_tasks(ward=ward, status=status, priority=priority, limit=limit)}
     except HousekeepingError as e:
-        raise _bad_request(e)
+        raise _bad_request(e) from e
+
+
+_POST_TASK_USER_DEFAULT = Depends(require_housekeeping_write())
 
 
 @router.post("/tasks")
-def post_task(body: TaskIn, request: Request, user: dict = Depends(require_housekeeping_write())):
+def post_task(body: TaskIn, request: Request, user: dict = _POST_TASK_USER_DEFAULT):
     try:
         task = raise_cleaning_request(
-            unit_id=body.unit_id, request_type=body.request_type,
-            priority=body.priority, clean_type=body.clean_type,
-            description=body.description, precaution_note=body.precaution_note,
-            actor_user_id=user.get("id"), actor_role=user.get("role"),
+            unit_id=body.unit_id,
+            request_type=body.request_type,
+            priority=body.priority,
+            clean_type=body.clean_type,
+            description=body.description,
+            precaution_note=body.precaution_note,
+            actor_user_id=user.get("id"),
+            actor_role=user.get("role"),
         )
     except HousekeepingError as e:
-        raise _bad_request(e)
-    _audit(request, user, "housekeeping_request_raised",
-           f"{task['request_type']} ({task['priority']}) raised on {task['ward']}",
-           task_id=task["id"], priority=task["priority"], clean_type=task["clean_type"])
+        raise _bad_request(e) from e
+    _audit(
+        request,
+        user,
+        "housekeeping_request_raised",
+        f"{task['request_type']} ({task['priority']}) raised on {task['ward']}",
+        task_id=task["id"],
+        priority=task["priority"],
+        clean_type=task["clean_type"],
+    )
     return task
 
 
+_GET_ONE_TASK_USER_DEFAULT = Depends(require_housekeeping_read())
+
+
 @router.get("/tasks/{task_id}")
-def get_one_task(task_id: str, _user: dict = Depends(require_housekeeping_read())):
+def get_one_task(task_id: str, _user: dict = _GET_ONE_TASK_USER_DEFAULT):
     try:
         return get_task(task_id)
     except HousekeepingError as e:
-        raise HTTPException(status_code=404, detail={"error": "not_found", "message": str(e)})
+        raise HTTPException(
+            status_code=404, detail={"error": "not_found", "message": str(e)}
+        ) from e
+
+
+_POST_TASK_START_USER_DEFAULT = Depends(require_housekeeping_write())
 
 
 @router.post("/tasks/{task_id}/start")
 def post_task_start(
-    task_id: str, request: Request, user: dict = Depends(require_housekeeping_write()),
+    task_id: str,
+    request: Request,
+    user: dict = _POST_TASK_START_USER_DEFAULT,
 ):
     try:
         task = start_cleaning(task_id, actor_user_id=user.get("id"), actor_role=user.get("role"))
     except HousekeepingError as e:
-        raise _bad_request(e)
-    _audit(request, user, "housekeeping_clean_started",
-           f"Cleaning started on {task.get('unit_code') or task['unit_id']}", task_id=task_id)
+        raise _bad_request(e) from e
+    _audit(
+        request,
+        user,
+        "housekeeping_clean_started",
+        f"Cleaning started on {task.get('unit_code') or task['unit_id']}",
+        task_id=task_id,
+    )
     return task
+
+
+_POST_TASK_COMPLETE_USER_DEFAULT = Depends(require_housekeeping_write())
 
 
 @router.post("/tasks/{task_id}/complete")
 def post_task_complete(
-    task_id: str, body: NoteIn, request: Request,
-    user: dict = Depends(require_housekeeping_write()),
+    task_id: str,
+    body: NoteIn,
+    request: Request,
+    user: dict = _POST_TASK_COMPLETE_USER_DEFAULT,
 ):
     try:
         task = complete_cleaning(
-            task_id, actor_user_id=user.get("id"),
-            actor_role=user.get("role"), note=body.note,
+            task_id,
+            actor_user_id=user.get("id"),
+            actor_role=user.get("role"),
+            note=body.note,
         )
     except HousekeepingError as e:
-        raise _bad_request(e)
-    _audit(request, user, "housekeeping_clean_completed",
-           f"Clean completed; unit is ready ({task['ward']})",
-           task_id=task_id, turnaround_minutes=task.get("turnaround_minutes"))
+        raise _bad_request(e) from e
+    _audit(
+        request,
+        user,
+        "housekeeping_clean_completed",
+        f"Clean completed; unit is ready ({task['ward']})",
+        task_id=task_id,
+        turnaround_minutes=task.get("turnaround_minutes"),
+    )
     return task
+
+
+_POST_TASK_CANCEL_USER_DEFAULT = Depends(require_housekeeping_write())
 
 
 @router.post("/tasks/{task_id}/cancel")
 def post_task_cancel(
-    task_id: str, body: CancelIn, request: Request,
-    user: dict = Depends(require_housekeeping_write()),
+    task_id: str,
+    body: CancelIn,
+    request: Request,
+    user: dict = _POST_TASK_CANCEL_USER_DEFAULT,
 ):
     try:
         task = cancel_cleaning(task_id, reason=body.reason, actor_user_id=user.get("id"))
     except HousekeepingError as e:
-        raise _bad_request(e)
-    _audit(request, user, "housekeeping_request_cancelled",
-           f"Cleaning request cancelled: {body.reason}", task_id=task_id)
+        raise _bad_request(e) from e
+    _audit(
+        request,
+        user,
+        "housekeeping_request_cancelled",
+        f"Cleaning request cancelled: {body.reason}",
+        task_id=task_id,
+    )
     return task
+
+
+_POST_SYNC_DISCHARGES_LOOKBACK_HOURS_DEFAULT = Query(None, ge=1, le=720)
+_POST_SYNC_DISCHARGES_USER_DEFAULT = Depends(require_housekeeping_write())
 
 
 @router.post("/sync-discharges")
 def post_sync_discharges(
     request: Request,
-    lookback_hours: int | None = Query(None, ge=1, le=720),
-    user: dict = Depends(require_housekeeping_write()),
+    lookback_hours: int | None = _POST_SYNC_DISCHARGES_LOOKBACK_HOURS_DEFAULT,
+    user: dict = _POST_SYNC_DISCHARGES_USER_DEFAULT,
 ):
     """Run the discharge turnaround sweep now.
 
@@ -540,18 +675,26 @@ def post_sync_discharges(
     open the board.
     """
     result = sync_discharge_turnarounds(lookback_hours=lookback_hours)
-    _audit(request, user, "housekeeping_discharge_sweep",
-           f"Discharge turnaround sweep: {result['created']} created, "
-           f"{result['unmatched']} discharges with no registered bed",
-           **{k: v for k, v in result.items() if k != "unmatched_wards"})
+    _audit(
+        request,
+        user,
+        "housekeeping_discharge_sweep",
+        f"Discharge turnaround sweep: {result['created']} created, "
+        f"{result['unmatched']} discharges with no registered bed",
+        **{k: v for k, v in result.items() if k != "unmatched_wards"},
+    )
     return result
+
+
+_POST_SYNC_MOVEMENTS_LOOKBACK_HOURS_DEFAULT = Query(None, ge=1, le=720)
+_POST_SYNC_MOVEMENTS_USER_DEFAULT = Depends(require_housekeeping_write())
 
 
 @router.post("/sync-movements")
 def post_sync_movements(
     request: Request,
-    lookback_hours: int | None = Query(None, ge=1, le=720),
-    user: dict = Depends(require_housekeeping_write()),
+    lookback_hours: int | None = _POST_SYNC_MOVEMENTS_LOOKBACK_HOURS_DEFAULT,
+    user: dict = _POST_SYNC_MOVEMENTS_USER_DEFAULT,
 ):
     """Read the bed movement ledger now (Beds and admissions, adt-7): a
     turnaround clean for each bed a patient left, and each bed a patient went
@@ -564,11 +707,15 @@ def post_sync_movements(
     a named patient or patient field is returned.
     """
     result = sync_adt_movements(lookback_hours=lookback_hours)
-    _audit(request, user, "housekeeping_movement_sync",
-           f"Bed movement sync: {result.get('vacated', 0) + result.get('tasks_raised', 0)} "
-           f"turnarounds raised, {result.get('occupied', 0) + result.get('occupied_unclean', 0)} "
-           "beds marked occupied",
-           **result)
+    _audit(
+        request,
+        user,
+        "housekeeping_movement_sync",
+        f"Bed movement sync: {result.get('vacated', 0) + result.get('tasks_raised', 0)} "
+        f"turnarounds raised, {result.get('occupied', 0) + result.get('occupied_unclean', 0)} "
+        "beds marked occupied",
+        **result,
+    )
     return result
 
 
@@ -576,19 +723,29 @@ def post_sync_movements(
 #  Reporting
 # ═════════════════════════════════════════════════════════════════════════════
 
+
+_GET_TURNAROUND_WARD_DEFAULT = Query(None)
+_GET_TURNAROUND_DAYS_DEFAULT = Query(30, ge=1, le=365)
+_GET_TURNAROUND_USER_DEFAULT = Depends(require_housekeeping_read())
+
+
 @router.get("/turnaround")
 def get_turnaround(
-    ward: str | None = Query(None),
-    days: int = Query(30, ge=1, le=365),
-    _user: dict = Depends(require_housekeeping_read()),
+    ward: str | None = _GET_TURNAROUND_WARD_DEFAULT,
+    days: int = _GET_TURNAROUND_DAYS_DEFAULT,
+    _user: dict = _GET_TURNAROUND_USER_DEFAULT,
 ):
     return ward_turnaround_report(ward=ward, days=days)
 
 
+_GET_READINESS_WARD_DEFAULT = Query(None)
+_GET_READINESS_USER_DEFAULT = Depends(require_housekeeping_read())
+
+
 @router.get("/readiness")
 def get_readiness(
-    ward: str | None = Query(None),
-    _user: dict = Depends(require_housekeeping_read()),
+    ward: str | None = _GET_READINESS_WARD_DEFAULT,
+    _user: dict = _GET_READINESS_USER_DEFAULT,
 ):
     """Housekeeping readiness, ALWAYS beside the capacity screen's own number.
 
@@ -603,27 +760,47 @@ def get_readiness(
 #  Linen
 # ═════════════════════════════════════════════════════════════════════════════
 
+
+_GET_LINEN_WARD_DEFAULT = Query(None)
+_GET_LINEN_DAYS_DEFAULT = Query(30, ge=1, le=365)
+_GET_LINEN_USER_DEFAULT = Depends(require_housekeeping_read())
+
+
 @router.get("/linen")
 def get_linen(
-    ward: str | None = Query(None),
-    days: int = Query(30, ge=1, le=365),
-    _user: dict = Depends(require_housekeeping_read()),
+    ward: str | None = _GET_LINEN_WARD_DEFAULT,
+    days: int = _GET_LINEN_DAYS_DEFAULT,
+    _user: dict = _GET_LINEN_USER_DEFAULT,
 ):
     return {**linen_summary(ward=ward, days=days), "items": list_linen_items()}
 
 
+_POST_LINEN_USER_DEFAULT = Depends(require_housekeeping_write())
+
+
 @router.post("/linen")
-def post_linen(body: LinenIn, request: Request, user: dict = Depends(require_housekeeping_write())):
+def post_linen(body: LinenIn, request: Request, user: dict = _POST_LINEN_USER_DEFAULT):
     try:
         movement = record_linen_movement(
-            ward=body.ward, item_code=body.item_code, direction=body.direction,
-            quantity=body.quantity, task_id=body.task_id, note=body.note,
-            actor_user_id=user.get("id"), idempotency_key=body.idempotency_key,
+            ward=body.ward,
+            item_code=body.item_code,
+            direction=body.direction,
+            quantity=body.quantity,
+            task_id=body.task_id,
+            note=body.note,
+            actor_user_id=user.get("id"),
+            idempotency_key=body.idempotency_key,
         )
     except HousekeepingError as e:
-        raise _bad_request(e)
-    _audit(request, user, "housekeeping_linen_movement",
-           f"{body.direction} {body.quantity} x {body.item_code} ({body.ward})",
-           ward=body.ward, item_code=body.item_code, direction=body.direction,
-           quantity=body.quantity)
+        raise _bad_request(e) from e
+    _audit(
+        request,
+        user,
+        "housekeeping_linen_movement",
+        f"{body.direction} {body.quantity} x {body.item_code} ({body.ward})",
+        ward=body.ward,
+        item_code=body.item_code,
+        direction=body.direction,
+        quantity=body.quantity,
+    )
     return movement

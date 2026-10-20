@@ -32,13 +32,16 @@ READ-ONLY, no scoring. Nothing here imports a scoring entry point or reads
 vitals or risk scores (the OPD no-scoring rule); the waits are clock
 arithmetic on the visit's own timestamps.
 """
+
 from __future__ import annotations
 
 import statistics
-from datetime import date, datetime, timezone
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from datetime import UTC, date, datetime
+from typing import Any
 
 from database import db_session
+
 from services.hospital_time import hospital_today, to_hospital
 
 __all__ = [
@@ -76,7 +79,7 @@ class MisError(ValueError):
         self.status = status
 
 
-def resolve_day(value: Optional[str]) -> date:
+def resolve_day(value: str | None) -> date:
     """The hospital-local day asked for: today when blank, never after today."""
     today = hospital_today()
     text = (value or "").strip()
@@ -94,28 +97,31 @@ def resolve_day(value: Optional[str]) -> date:
 
 
 def _table_exists(db, name: str) -> bool:
-    return db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
-    ).fetchone() is not None
+    return (
+        db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
+        is not None
+    )
 
 
 def _columns(db, table: str) -> set[str]:
     return {r[1] for r in db.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
-def _parse_utc(value: Any) -> Optional[datetime]:
+def _parse_utc(value: Any) -> datetime | None:
     if not value:
         return None
     try:
-        stamp = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00").replace(" ", "T", 1))
+        stamp = datetime.fromisoformat(
+            str(value).strip().replace("Z", "+00:00").replace(" ", "T", 1)
+        )
     except ValueError:
         return None
     if stamp.tzinfo is None:
-        stamp = stamp.replace(tzinfo=timezone.utc)
+        stamp = stamp.replace(tzinfo=UTC)
     return stamp
 
 
-def _wait_minutes(visit: dict) -> Optional[int]:
+def _wait_minutes(visit: dict) -> int | None:
     """Registered to called in, in whole minutes; None when either time is
     missing or unreadable (never 0, which would read as 'seen at once')."""
     start = _parse_utc(visit.get("registered_at"))
@@ -125,7 +131,7 @@ def _wait_minutes(visit: dict) -> Optional[int]:
     return max(0, int((called - start).total_seconds() // 60))
 
 
-def _median(values: list[int]) -> Optional[float]:
+def _median(values: list[int]) -> float | None:
     if not values:
         return None
     return round(float(statistics.median(values)), 1)
@@ -148,8 +154,10 @@ def _outcome_counts(visits: list[dict]) -> dict:
         "completed": sum(1 for v in visits if v["status"] == "completed"),
         "cancelled": sum(1 for v in visits if v["status"] == "cancelled"),
         "left_without_being_seen": sum(
-            1 for v in visits
-            if v["status"] == "cancelled" and v.get("cancel_reason_code") == LWBS_CODE),
+            1
+            for v in visits
+            if v["status"] == "cancelled" and v.get("cancel_reason_code") == LWBS_CODE
+        ),
         "admitted": sum(1 for v in visits if _converted(v)),
     }
 
@@ -158,13 +166,24 @@ def _converted(visit: dict) -> bool:
     return (visit.get("disposition") or "") == "admitted" or bool(visit.get("admission_id"))
 
 
-def _visits_on(db, day: str, department: Optional[str]) -> list[dict]:
+def _visits_on(db, day: str, department: str | None) -> list[dict]:
     if not _table_exists(db, "opd_visits"):
         return []
     have = _columns(db, "opd_visits")
-    wanted = ["id", "patient_id", "department", "doctor_id", "doctor_name", "visit_type",
-              "status", "registered_at", "called_at", "cancel_reason_code",
-              "disposition", "admission_id"]
+    wanted = [
+        "id",
+        "patient_id",
+        "department",
+        "doctor_id",
+        "doctor_name",
+        "visit_type",
+        "status",
+        "registered_at",
+        "called_at",
+        "cancel_reason_code",
+        "disposition",
+        "admission_id",
+    ]
     select = ", ".join(c if c in have else f"NULL AS {c}" for c in wanted)
     sql = f"SELECT {select} FROM opd_visits WHERE visit_date = ?"
     params: list[Any] = [day]
@@ -183,12 +202,14 @@ def _registration_split(db, day: date, patient_ids: list[str]) -> dict:
     new = returning = unknown = 0
     has_demo = _table_exists(db, "patient_demographics")
     for start in range(0, len(patient_ids), _CHUNK):
-        chunk = patient_ids[start:start + _CHUNK]
+        chunk = patient_ids[start : start + _CHUNK]
         marks = ",".join("?" for _ in chunk)
         if has_demo:
-            sql = (f"SELECT p.id, COALESCE(d.registered_at, p.created_at) AS created "
-                   f"FROM patients p LEFT JOIN patient_demographics d ON d.patient_id = p.id "
-                   f"WHERE p.id IN ({marks})")
+            sql = (
+                f"SELECT p.id, COALESCE(d.registered_at, p.created_at) AS created "
+                f"FROM patients p LEFT JOIN patient_demographics d ON d.patient_id = p.id "
+                f"WHERE p.id IN ({marks})"
+            )
         else:
             sql = f"SELECT p.id, p.created_at AS created FROM patients p WHERE p.id IN ({marks})"
         found = {r["id"]: r["created"] for r in db.execute(sql, chunk).fetchall()}
@@ -200,11 +221,10 @@ def _registration_split(db, day: date, patient_ids: list[str]) -> dict:
                 new += 1
             else:
                 returning += 1
-    return {"new": new, "returning": returning, "not_known": unknown,
-            "patients": len(patient_ids)}
+    return {"new": new, "returning": returning, "not_known": unknown, "patients": len(patient_ids)}
 
 
-def _no_shows(db, day: date, department: Optional[str]) -> dict:
+def _no_shows(db, day: date, department: str | None) -> dict:
     """Appointments of the day nobody checked in: recorded by the desk, or
     computed on read once their clinic session ended (the Appointments day
     view's rule, appointments_routes._effective_status). Available once the
@@ -215,17 +235,21 @@ def _no_shows(db, day: date, department: Optional[str]) -> dict:
     cols = _columns(db, "appointments")
     if "no_show_at" not in cols:
         return empty
-    from services.hospital_time import hospital_now
     from routes.appointments_routes import _effective_status
+
+    from services.hospital_time import hospital_now
 
     sql = "SELECT * FROM appointments WHERE scheduled_date = ? AND status IN ('booked', 'no_show')"
     params: list[Any] = [day.isoformat()]
     rows = db.execute(sql, params).fetchall()
     if department is not None:
         clinic = department.strip().casefold()
-        rows = [r for r in rows
-                if ((r["department"] if "department" in cols else None) or "").strip().casefold()
-                == clinic]
+        rows = [
+            r
+            for r in rows
+            if ((r["department"] if "department" in cols else None) or "").strip().casefold()
+            == clinic
+        ]
     now = hospital_now()
     cache: dict = {}
     recorded = computed = 0
@@ -236,11 +260,15 @@ def _no_shows(db, day: date, department: Optional[str]) -> dict:
         status, was_computed = _effective_status(db, row, now, cache)
         if status == "no_show" and was_computed:
             computed += 1
-    return {"available": True, "recorded": recorded, "computed": computed,
-            "total": recorded + computed}
+    return {
+        "available": True,
+        "recorded": recorded,
+        "computed": computed,
+        "total": recorded + computed,
+    }
 
 
-def daily_summary(day: Optional[str] = None, *, department: Optional[str] = None) -> dict:
+def daily_summary(day: str | None = None, *, department: str | None = None) -> dict:
     """The day summary for `day` (hospital-local, today when None) and the
     caller's clinic. `department` is permissions.department_scope(user): None
     reads every clinic, never a value the request named."""
@@ -261,50 +289,68 @@ def daily_summary(day: Optional[str] = None, *, department: Optional[str] = None
     for clinic in sorted({v["department"] for v in visits}, key=lambda d: (d or "").casefold()):
         clinic_visits = [v for v in visits if v["department"] == clinic]
         doctors: list[dict] = []
-        keys = sorted({(v.get("doctor_id") or "", v.get("doctor_name") or "") for v in clinic_visits},
-                      key=lambda k: (k[0] == "", k[1].casefold(), k[0]))
+        keys = sorted(
+            {(v.get("doctor_id") or "", v.get("doctor_name") or "") for v in clinic_visits},
+            key=lambda k: (k[0] == "", k[1].casefold(), k[0]),
+        )
         for doctor_id, doctor_name in keys:
-            mine = [v for v in clinic_visits
-                    if (v.get("doctor_id") or "") == doctor_id
-                    and (v.get("doctor_name") or "") == doctor_name]
-            doctors.append({
-                "doctor_id": doctor_id or None,
-                "doctor_name": doctor_name or ("Unassigned" if not doctor_id
-                                               else "Name not recorded"),
-                **_outcome_counts(mine),
-                "wait": _wait_block(mine),
-            })
-        clinics.append({
-            "department": clinic,
-            **_outcome_counts(clinic_visits),
-            "wait": _wait_block(clinic_visits),
-            "doctors": doctors,
-        })
+            mine = [
+                v
+                for v in clinic_visits
+                if (v.get("doctor_id") or "") == doctor_id
+                and (v.get("doctor_name") or "") == doctor_name
+            ]
+            doctors.append(
+                {
+                    "doctor_id": doctor_id or None,
+                    "doctor_name": doctor_name
+                    or ("Unassigned" if not doctor_id else "Name not recorded"),
+                    **_outcome_counts(mine),
+                    "wait": _wait_block(mine),
+                }
+            )
+        clinics.append(
+            {
+                "department": clinic,
+                **_outcome_counts(clinic_visits),
+                "wait": _wait_block(clinic_visits),
+                "doctors": doctors,
+            }
+        )
 
     from services.opd_queue_service import CANCEL_REASON_CODES
+
     cancelled = [v for v in visits if v["status"] == "cancelled"]
     cancellations = [
-        {"code": code, "label": label,
-         "count": sum(1 for v in cancelled if v.get("cancel_reason_code") == code)}
+        {
+            "code": code,
+            "label": label,
+            "count": sum(1 for v in cancelled if v.get("cancel_reason_code") == code),
+        }
         for code, label in CANCEL_REASON_CODES
     ]
     known_codes = {code for code, _ in CANCEL_REASON_CODES}
-    cancellations.append({
-        "code": "not_coded", "label": "No reason code",
-        "count": sum(1 for v in cancelled if v.get("cancel_reason_code") not in known_codes),
-    })
+    cancellations.append(
+        {
+            "code": "not_coded",
+            "label": "No reason code",
+            "count": sum(1 for v in cancelled if v.get("cancel_reason_code") not in known_codes),
+        }
+    )
 
     totals = _outcome_counts(visits)
     return {
         "date": key,
         "department": department,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "registrations": registrations,
         "visits": {
             "total": totals["total"],
             "by_status": {s: totals[s] for s in VISIT_STATUSES},
-            "by_type": [{"code": code, "label": label, "count": by_type.get(code, 0)}
-                        for code, label in VISIT_TYPES],
+            "by_type": [
+                {"code": code, "label": label, "count": by_type.get(code, 0)}
+                for code, label in VISIT_TYPES
+            ],
         },
         "waits": {**_wait_block(visits), "still_waiting": totals["waiting"]},
         "left_without_being_seen": totals["left_without_being_seen"],

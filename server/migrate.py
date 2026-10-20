@@ -26,9 +26,9 @@ from __future__ import annotations
 
 import argparse
 import os
-import sqlite3
-from db_backend import DBError
 import sys
+
+from db_backend import DBError
 
 # ── Path setup ──
 # database.py does `from config import DB_PATH` (bare, non-package imports), so the
@@ -37,6 +37,7 @@ import sys
 _SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SERVER_DIR not in sys.path:
     sys.path.insert(0, _SERVER_DIR)
+
 
 from config import DB_PATH  # noqa: E402
 from database import SCHEMA_VERSION, init_db  # noqa: E402
@@ -57,13 +58,12 @@ def _current_db_version() -> int | None:
         # with its key applied — a plain sqlite3.connect would fail to read the
         # ledger and misreport an encrypted DB as uninitialized.
         from database import get_db
+
         conn = get_db()
     except Exception:
         return None
     try:
-        row = conn.execute(
-            "SELECT MAX(version) FROM schema_version"
-        ).fetchone()
+        row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
         if row is None or row[0] is None:
             return None
         return int(row[0])

@@ -545,7 +545,7 @@ export default function SagePanel({ userName }: SagePanelProps) {
       // sidebar isn't showing a stale list.
       void refreshHistory()
     }
-  }, [cancelTTS, feedTTS, speakNext, refreshHistory])
+  }, [cancelTTS, feedTTS, speakNext, refreshHistory, streaming])
 
   const handleQuery = async () => {
     await submitQuery(query.trim())

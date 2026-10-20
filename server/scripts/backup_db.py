@@ -39,9 +39,9 @@ import uuid
 # codec-aware connection helpers (required now that orb.db is SQLCipher-
 # encrypted — stdlib sqlite3 cannot open it). Mirrors the sibling scripts.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-import time
-from datetime import datetime, timedelta
-from pathlib import Path
+import time  # noqa: E402 - application imports require the path/environment bootstrap above.
+from datetime import datetime, timedelta  # noqa: E402 - application imports require the path/environment bootstrap above.
+from pathlib import Path  # noqa: E402 - application imports require the path/environment bootstrap above.
 
 logger = logging.getLogger("orb.backup")
 
@@ -56,6 +56,7 @@ TIMESTAMP_FMT = "%Y%m%d-%H%M%S"
 def backup_set_lock(out_dir: Path):
     """Serialize producers through final copy/rotation on local Mac/Linux disks."""
     import fcntl
+
     out_dir.mkdir(parents=True, exist_ok=True)
     fd = os.open(out_dir / ".orb-backup.lock", os.O_CREAT | os.O_RDWR, 0o600)
     try:
@@ -90,11 +91,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "--snapshot-only", action="store_true",
+        "--snapshot-only",
+        action="store_true",
         help="Write an integrity-checked snapshot without a receipt or pruning (scheduled wrapper verifies it separately).",
     )
     parser.add_argument(
-        "--print-path", action="store_true", help="Print only the exact produced path to stdout; diagnostics use stderr.",
+        "--print-path",
+        action="store_true",
+        help="Print only the exact produced path to stdout; diagnostics use stderr.",
     )
     parser.add_argument(
         "--db-path",
@@ -115,8 +119,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--retain-days",
         type=int,
         default=14,
-        help="Delete backups in --out-dir older than this many days. "
-        "Use 0 to disable pruning.",
+        help="Delete backups in --out-dir older than this many days. Use 0 to disable pruning.",
     )
     parser.add_argument(
         "--no-integrity-check",
@@ -169,8 +172,9 @@ def make_backup(db_path: Path, out_dir: Path, run_integrity_check: bool = True) 
     if not db_path.is_file():
         raise FileNotFoundError(f"Source database not found: {db_path}")
 
-    from database import _open_raw_connection_at
     from config import DB_ENCRYPTION_KEY
+    from database import _open_raw_connection_at
+
     out_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime(TIMESTAMP_FMT)
     backup_path = out_dir / f"{BACKUP_PREFIX}{timestamp}-{uuid.uuid4().hex}{BACKUP_SUFFIX}"
@@ -217,8 +221,9 @@ def make_backup(db_path: Path, out_dir: Path, run_integrity_check: bool = True) 
 
 def _verify_backup(backup_path: Path) -> None:
     """Run PRAGMA integrity_check on the freshly written backup."""
-    from database import _open_raw_connection_at
     from config import DB_ENCRYPTION_KEY
+    from database import _open_raw_connection_at
+
     check = _open_raw_connection_at(backup_path, apply_key=bool(DB_ENCRYPTION_KEY))
     try:
         result = check.execute("PRAGMA integrity_check").fetchone()
@@ -226,9 +231,7 @@ def _verify_backup(backup_path: Path) -> None:
         check.close()
     status = result[0] if result else None
     if status != "ok":
-        raise RuntimeError(
-            f"Integrity check failed for {backup_path}: {status!r}"
-        )
+        raise RuntimeError(f"Integrity check failed for {backup_path}: {status!r}")
     logger.info("Integrity check passed for %s", backup_path.name)
 
 
@@ -239,7 +242,9 @@ def receipt_for(backup: Path) -> Path:
 def copy_artifact(source: Path, out_dir: Path) -> Path:
     """Publish an offsite set member completely, privately and without overwrite."""
     if not out_dir.is_dir() or source.is_symlink() or not source.is_file():
-        raise ValueError("Backup copy requires a regular source and an existing destination directory")
+        raise ValueError(
+            "Backup copy requires a regular source and an existing destination directory"
+        )
     target = out_dir / source.name
     fd, name = tempfile.mkstemp(prefix=".orb-copy-", suffix=".partial", dir=out_dir)
     scratch = Path(name)
@@ -261,68 +266,106 @@ def passing_receipt(backup: Path) -> bool:
         if backup.is_symlink() or receipt.is_symlink() or not backup.is_file():
             return False
         data = json.loads(receipt.read_text(encoding="utf-8"))
-        return (isinstance(data, dict) and data.get("schema") == "orb.backup.verification/1"
-                and data.get("ok") is True and data.get("backup_file") == backup.name
-                and type(data.get("size_bytes")) is int and data["size_bytes"] == backup.stat().st_size
-                and data.get("integrity_check") == "ok")
+        return (
+            isinstance(data, dict)
+            and data.get("schema") == "orb.backup.verification/1"
+            and data.get("ok") is True
+            and data.get("backup_file") == backup.name
+            and type(data.get("size_bytes")) is int
+            and data["size_bytes"] == backup.stat().st_size
+            and data.get("integrity_check") == "ok"
+        )
     except (OSError, ValueError, TypeError):
         return False
 
 
 def verify_receipt(backup: Path) -> None:
     """Run the shared recovery checks and persist PASS/FAIL before any rotation."""
-    from database import _open_raw_connection_at
     from config import DB_ENCRYPTION_KEY
+    from database import _open_raw_connection_at
+
     path = Path(__file__).resolve().parents[2] / "scripts" / "lib" / "verify_restore.py"
     spec = importlib.util.spec_from_file_location("orb_backup_verifier", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load backup verifier from {path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     conn = None
     try:
         conn = _open_raw_connection_at(backup, apply_key=bool(DB_ENCRYPTION_KEY))
         with contextlib.redirect_stdout(sys.stderr):
-            report = module.verify(conn, prefix="backup", schema_policy="warn",
-                require_nonempty=module._parse_groups(os.getenv("ORB_BACKUP_REQUIRE_NONEMPTY", "")))
+            report = module.verify(
+                conn,
+                prefix="backup",
+                schema_policy="warn",
+                require_nonempty=module._parse_groups(os.getenv("ORB_BACKUP_REQUIRE_NONEMPTY", "")),
+            )
         rows = {t: module._count(conn, t) for t in sorted(module.CLINICAL_FLOOR)}
         version = module._schema_version_found(conn)
     except Exception as exc:
-        module.write_receipt(str(receipt_for(backup)), backup_file=backup.name, ok=False,
-            integrity_check=None, size_bytes=backup.stat().st_size, row_counts={},
-            schema_version=None, failures=["verification_error"], warnings=[],
-            encrypted=bool(DB_ENCRYPTION_KEY))
+        module.write_receipt(
+            str(receipt_for(backup)),
+            backup_file=backup.name,
+            ok=False,
+            integrity_check=None,
+            size_bytes=backup.stat().st_size,
+            row_counts={},
+            schema_version=None,
+            failures=["verification_error"],
+            warnings=[],
+            encrypted=bool(DB_ENCRYPTION_KEY),
+        )
         raise RuntimeError("Backup recovery verification failed; no backups were rotated") from exc
     finally:
         if conn is not None:
             conn.close()
-    module.write_receipt(str(receipt_for(backup)), backup_file=backup.name, ok=not report.failures,
-        integrity_check=report.integrity, size_bytes=backup.stat().st_size, row_counts=rows,
-        schema_version=version, failures=report.failures, warnings=report.warnings,
-        encrypted=bool(DB_ENCRYPTION_KEY))
+    module.write_receipt(
+        str(receipt_for(backup)),
+        backup_file=backup.name,
+        ok=not report.failures,
+        integrity_check=report.integrity,
+        size_bytes=backup.stat().st_size,
+        row_counts=rows,
+        schema_version=version,
+        failures=report.failures,
+        warnings=report.warnings,
+        encrypted=bool(DB_ENCRYPTION_KEY),
+    )
     if report.failures or not passing_receipt(backup):
         raise RuntimeError("Backup recovery verification failed; no backups were rotated")
 
 
-def rotate_backups(out_dir: Path, *, new_backup: Path, retain_days: int = 0,
-                   retain_count: int | None = None) -> int:
+def rotate_backups(
+    out_dir: Path, *, new_backup: Path, retain_days: int = 0, retain_count: int | None = None
+) -> int:
     """Prune only matching verified sets, after this producer's fresh PASS."""
     if new_backup.parent.resolve() != out_dir.resolve() or not passing_receipt(new_backup):
         raise RuntimeError("Rotation requires the newly produced backup's passing receipt")
     if retain_days < 0 or (retain_count is not None and retain_count < 1):
         raise ValueError("Retention must keep at least one verified backup")
-    verified = sorted((p for p in out_dir.glob(f"{BACKUP_PREFIX}*{BACKUP_SUFFIX}") if passing_receipt(p)),
-                      key=lambda p: (p.stat().st_mtime_ns, p.name), reverse=True)
+    verified = sorted(
+        (p for p in out_dir.glob(f"{BACKUP_PREFIX}*{BACKUP_SUFFIX}") if passing_receipt(p)),
+        key=lambda p: (p.stat().st_mtime_ns, p.name),
+        reverse=True,
+    )
     cutoff = (datetime.now() - timedelta(days=retain_days)).timestamp()
     candidates = verified[retain_count:] if retain_count is not None else verified
     deleted = 0
     for candidate in candidates:
-        if candidate == new_backup or (retain_count is None and (not retain_days or candidate.stat().st_mtime >= cutoff)):
+        if candidate == new_backup or (
+            retain_count is None and (not retain_days or candidate.stat().st_mtime >= cutoff)
+        ):
             continue
         try:
             if not passing_receipt(candidate):
                 continue
             candidate.unlink()
-            for companion in (receipt_for(candidate), candidate.with_suffix(".set.json"), candidate.with_name(candidate.stem + "-uploads.tar"),
-                              candidate.with_name(candidate.stem + "-ward-packs.tar.enc")):
+            for companion in (
+                receipt_for(candidate),
+                candidate.with_suffix(".set.json"),
+                candidate.with_name(candidate.stem + "-uploads.tar"),
+                candidate.with_name(candidate.stem + "-ward-packs.tar.enc"),
+            ):
                 companion.unlink(missing_ok=True)
             deleted += 1
         except OSError as exc:

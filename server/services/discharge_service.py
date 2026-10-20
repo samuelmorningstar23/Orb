@@ -1,20 +1,22 @@
 """Orb Discharge — Discharge Summary, Timeline & QR Code Service"""
+
+import hashlib
 import json
 import logging
-import os
 import re
-import uuid
-import hashlib
 import secrets
-from datetime import datetime, timedelta, timezone
-from typing import Optional
-from config import LLM_MODEL, UPLOAD_DIR, DISCHARGE_ACCESS_TTL_DAYS, OLLAMA_KEEP_ALIVE
-from database import get_db, db_session
+import uuid
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+import httpx
+from config import DISCHARGE_ACCESS_TTL_DAYS, LLM_MODEL, OLLAMA_KEEP_ALIVE, UPLOAD_DIR
+from database import db_session, get_db
+
 from services.adt import end_stay as adt_end
 from services.adt.core import AdtConflict, adt_on, current_admission_on
 from services.audit_service import log_audit_event
 from services.vital_charting import charted_text
-import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +43,7 @@ def is_reviewed(row) -> bool:
     return "review_status" in keys and row["review_status"] == REVIEW_REVIEWED
 
 
-def qr_code_url_for(patient_id: str, qr_code_path) -> Optional[str]:
+def qr_code_url_for(patient_id: str, qr_code_path) -> str | None:
     """The authenticated API path that serves a summary's QR, or None when no
     QR was written. Never the file path: that is a location on the appliance's
     disk and means nothing to a browser."""
@@ -53,10 +55,12 @@ def _site_today() -> str:
     ("2 Oct 2026") so it cannot be read two ways. Uses the site timezone when
     one is configured, else the appliance's own zone."""
     from config import HL7_DEFAULT_TZ
-    now = datetime.now(timezone.utc)
+
+    now = datetime.now(UTC)
     try:
         if HL7_DEFAULT_TZ:
             from zoneinfo import ZoneInfo
+
             now = now.astimezone(ZoneInfo(HL7_DEFAULT_TZ))
         else:
             now = now.astimezone()
@@ -85,8 +89,7 @@ def _recorded_context(db, patient_id: str) -> dict:
     allergies", which would be the dangerous reading of a failed query.
     """
     attending = db.execute(
-        "SELECT u.name FROM patients p JOIN users u ON u.id = p.attending_doctor_id "
-        "WHERE p.id = ?",
+        "SELECT u.name FROM patients p JOIN users u ON u.id = p.attending_doctor_id WHERE p.id = ?",
         (patient_id,),
     ).fetchone()
 
@@ -99,8 +102,11 @@ def _recorded_context(db, patient_id: str) -> dict:
         if allergy_rows:
             allergies = "; ".join(
                 a["substance"]
-                + (f" ({', '.join(x for x in (a['reaction'], a['severity']) if x and x != 'unknown')})"
-                   if (a["reaction"] or (a["severity"] and a["severity"] != "unknown")) else "")
+                + (
+                    f" ({', '.join(x for x in (a['reaction'], a['severity']) if x and x != 'unknown')})"
+                    if (a["reaction"] or (a["severity"] and a["severity"] != "unknown"))
+                    else ""
+                )
                 for a in allergy_rows
             )
         else:
@@ -164,10 +170,12 @@ def strip_unresolved_placeholders(text: str) -> str:
         return text
     return _PLACEHOLDER_RE.sub("Not documented", text)
 
+
 # QR code generation
 try:
     import qrcode
     from qrcode.image.pure import PyPNGImage
+
     HAS_QR = True
 except ImportError:
     HAS_QR = False
@@ -181,12 +189,14 @@ def build_patient_timeline(patient_id: str) -> list:
     # Admission
     patient = db.execute("SELECT * FROM patients WHERE id = ?", (patient_id,)).fetchone()
     if patient:
-        timeline.append({
-            "timestamp": patient["admission_date"],
-            "type": "admission",
-            "title": "Admitted",
-            "detail": f"Admitted to {patient['ward']} · Bed {patient['bed']} · Diagnosis: {patient['diagnosis']}",
-        })
+        timeline.append(
+            {
+                "timestamp": patient["admission_date"],
+                "type": "admission",
+                "title": "Admitted",
+                "detail": f"Admitted to {patient['ward']} · Bed {patient['bed']} · Diagnosis: {patient['diagnosis']}",
+            }
+        )
 
     # Clinical notes
     notes = db.execute(
@@ -197,12 +207,14 @@ def build_patient_timeline(patient_id: str) -> list:
         # A simulator's result (migration 46) says so on the timeline, which
         # is stored with the summary and outlives the chart's own labels.
         simulated = "source" in note.keys() and note["source"] == "simulated"
-        timeline.append({
-            "timestamp": note["created_at"],
-            "type": "note",
-            "title": f"{note['doc_type'].upper()} Note" + (" (simulated)" if simulated else ""),
-            "detail": note["content"][:200] + ("…" if len(note["content"]) > 200 else ""),
-        })
+        timeline.append(
+            {
+                "timestamp": note["created_at"],
+                "type": "note",
+                "title": f"{note['doc_type'].upper()} Note" + (" (simulated)" if simulated else ""),
+                "detail": note["content"][:200] + ("…" if len(note["content"]) > 200 else ""),
+            }
+        )
 
     # Scribe notes
     scribe_notes = db.execute(
@@ -210,48 +222,60 @@ def build_patient_timeline(patient_id: str) -> list:
         (patient_id,),
     ).fetchall()
     for sn in scribe_notes:
-        timeline.append({
-            "timestamp": sn["created_at"],
-            "type": "scribe",
-            "title": f"Scribe {(sn['note_format'] or 'raw').upper()}",
-            "detail": (sn["structured_note"] or sn["raw_transcript"])[:200],
-        })
+        timeline.append(
+            {
+                "timestamp": sn["created_at"],
+                "type": "scribe",
+                "title": f"Scribe {(sn['note_format'] or 'raw').upper()}",
+                "detail": (sn["structured_note"] or sn["raw_transcript"])[:200],
+            }
+        )
 
     # Lens analyses: clinician-reviewed reads only, with the text the clinician
     # confirmed. The raw `analysis` is an unvalidated model draft, and the lab
     # bot's 'lab' copies are lab reports already listed above as notes.
     from services.lens_service import REVIEWED_IMAGING_SQL
+
     analyses = db.execute(
         f"SELECT * FROM lens_analyses WHERE patient_id = ? AND {REVIEWED_IMAGING_SQL} "
         "ORDER BY created_at ASC",
         (patient_id,),
     ).fetchall()
     for a in analyses:
-        timeline.append({
-            "timestamp": a["created_at"],
-            "type": "imaging",
-            "title": f"Image Analysis ({a['image_type']}), clinician reviewed",
-            "detail": a["reviewed_text"][:200],
-        })
+        timeline.append(
+            {
+                "timestamp": a["created_at"],
+                "type": "imaging",
+                "title": f"Image Analysis ({a['image_type']}), clinician reviewed",
+                "detail": a["reviewed_text"][:200],
+            }
+        )
 
     # Risk alerts (critical only). Scoring switched off (ORB_SCORING_ENABLED,
     # the Orb Ward Record): a band stored before the switch is not put on the
     # discharge timeline, which is stored with the summary.
     from services.vigil_service import scoring_enabled
-    risk_events = db.execute(
-        "SELECT * FROM risk_scores WHERE patient_id = ? AND level = 'critical' ORDER BY timestamp ASC, id ASC",
-        (patient_id,),
-    ).fetchall() if scoring_enabled() else []
+
+    risk_events = (
+        db.execute(
+            "SELECT * FROM risk_scores WHERE patient_id = ? AND level = 'critical' ORDER BY timestamp ASC, id ASC",
+            (patient_id,),
+        ).fetchall()
+        if scoring_enabled()
+        else []
+    )
     for r in risk_events:
         drivers = json.loads(r["drivers"]) if r["drivers"] else []
-        timeline.append({
-            "timestamp": r["timestamp"],
-            "type": "alert",
-            # Show the NEWS2 clinical band, not the normalized index as a
-            # percentage — the 0-1 index is not a deterioration probability.
-            "title": f"Critical Alert (NEWS2 band: {r['level']})",
-            "detail": ", ".join(drivers),
-        })
+        timeline.append(
+            {
+                "timestamp": r["timestamp"],
+                "type": "alert",
+                # Show the NEWS2 clinical band, not the normalized index as a
+                # percentage — the 0-1 index is not a deterioration probability.
+                "title": f"Critical Alert (NEWS2 band: {r['level']})",
+                "detail": ", ".join(drivers),
+            }
+        )
 
     db.close()
 
@@ -287,6 +311,7 @@ def build_medication_reconciliation(patient_id: str) -> dict:
     exactly as before.
     """
     from services.drug_chart import drug_chart_enabled
+
     store = _reconciliation_reads_store()
     orders: dict = {}
     drafts: list = []
@@ -299,8 +324,8 @@ def build_medication_reconciliation(patient_id: str) -> dict:
                 """SELECT drug_name, dosage, route, frequency, status, source, verified_by,
                           held_at, hold_reason, med_order_id
                    FROM medications WHERE patient_id = ? ORDER BY drug_name COLLATE NOCASE"""
-                if store else
-                """SELECT drug_name, dosage, route, frequency, status, source, verified_by,
+                if store
+                else """SELECT drug_name, dosage, route, frequency, status, source, verified_by,
                           held_at, hold_reason
                    FROM medications WHERE patient_id = ? ORDER BY drug_name COLLATE NOCASE""",
                 (patient_id,),
@@ -311,6 +336,7 @@ def build_medication_reconciliation(patient_id: str) -> dict:
             db.close()
 
     from services.medorders import held as held_labels
+
     # With ORB_MED_ORDER_VERIFY_BEFORE_DOSE on, every linked order waits for a
     # pharmacist (ruling MO-R1), so an unchecked one is called out too.
     every_order_checked = store and _every_order_needs_a_pharmacist()
@@ -338,9 +364,11 @@ def build_medication_reconciliation(patient_id: str) -> dict:
         # AI-extracted / agentic meds not yet pharmacist-verified are called out
         # explicitly rather than presented as a clean discharge medication.
         if ((m.get("source") in ("llm_extracted", "agentic")) and not m.get("verified_by")) or (
-                order is not None and order["status"] in ("prescribed", "held")
-                and not order["verified_by"]
-                and (order["needs_verification"] or every_order_checked)):
+            order is not None
+            and order["status"] in ("prescribed", "held")
+            and not order["verified_by"]
+            and (order["needs_verification"] or every_order_checked)
+        ):
             entry["needs_verification"] = True
             unverified.append(entry)
         # A held order keeps its row active, so it stays in `continued` (a held
@@ -367,7 +395,7 @@ def build_medication_reconciliation(patient_id: str) -> dict:
             continued.append(entry)
         elif status == "discontinued":
             stopped.append(entry)
-    rec = {
+    rec: dict[str, Any] = {
         "continued": continued,
         "stopped": stopped,
         "unverified": unverified,
@@ -392,12 +420,14 @@ def build_medication_reconciliation(patient_id: str) -> dict:
 def _every_order_needs_a_pharmacist() -> bool:
     """True while ORB_MED_ORDER_VERIFY_BEFORE_DOSE is on (MO-R1, W8-I)."""
     from services.medorders import emar_check
+
     return emar_check.verify_before_dose_rule() is not None
 
 
 def _reconciliation_reads_store() -> bool:
     """True while ORB_MED_ORDER_LIFECYCLE is on: the order is the authority."""
     from services.medorders import core as medorder_core
+
     return medorder_core.lifecycle_on()
 
 
@@ -427,23 +457,31 @@ def _store_orders(db, patient_id: str) -> tuple:
         o = dict(r)
         orders[o["id"]] = o
         if o["status"] == "draft" and (stay_id is None or o["admission_id"] in (None, stay_id)):
-            drafts.append({
-                "name": o["drug_name"], "dosage": o["dose"], "route": o["route"],
-                "frequency": o["frequency"], "source": o["source"], "order_status": "draft",
-                "unsigned": True,
-            })
+            drafts.append(
+                {
+                    "name": o["drug_name"],
+                    "dosage": o["dose"],
+                    "route": o["route"],
+                    "frequency": o["frequency"],
+                    "source": o["source"],
+                    "order_status": "draft",
+                    "unsigned": True,
+                }
+            )
     return orders, drafts
 
 
-def _ward_status_for(order: dict, ward_status: Optional[str]) -> Optional[str]:
+def _ward_status_for(order: dict, ward_status: str | None) -> str | None:
     """The ward status the ORDER says the drug has: a live order is 'prn' or
     'active', an ended one 'discontinued'. A state this reconciliation does not
     know keeps the ward row's own reading."""
     from services.medorders import core as medorder_core
+
     status = order.get("status")
     if status in medorder_core.LIVE_STATUSES:
-        return "prn" if (order.get("is_prn") or order.get("projection_status") == "prn") \
-            else "active"
+        return (
+            "prn" if (order.get("is_prn") or order.get("projection_status") == "prn") else "active"
+        )
     if status in medorder_core.TERMINAL_STATUSES:
         return "discontinued"
     return ward_status
@@ -454,11 +492,13 @@ def med_rec_section(rec: dict) -> str:
     Orb Ward Record computer, where the summary says nothing about medicines
     (services/drug_chart)."""
     from services.drug_chart import drug_chart_enabled
+
     return _render_med_rec_text(rec) if drug_chart_enabled() else ""
 
 
 def _render_med_rec_text(rec: dict) -> str:
     """Render the reconciliation into authoritative text for the summary prompt."""
+
     def _fmt(e):
         parts = [e.get("name") or "?"]
         detail = " ".join(x for x in (e.get("dosage"), e.get("route"), e.get("frequency")) if x)
@@ -475,8 +515,7 @@ def _render_med_rec_text(rec: dict) -> str:
         # why, in the words the store recorded.
         if e.get("ended_as"):
             ended = _ENDED_WORDS.get(e["ended_as"], e["ended_as"])
-            parts.append(f"[{ended}: {e['stop_reason']}]" if e.get("stop_reason")
-                         else f"[{ended}]")
+            parts.append(f"[{ended}: {e['stop_reason']}]" if e.get("stop_reason") else f"[{ended}]")
         if e.get("order_record_missing"):
             parts.append("[ORDER RECORD MISSING: check this medicine before the discharge script]")
         return " ".join(parts)
@@ -487,16 +526,22 @@ def _render_med_rec_text(rec: dict) -> str:
     lines.append("Stopped during admission:")
     lines += [f"  - {_fmt(e)}" for e in rec["stopped"]] or ["  - None"]
     if rec["unverified"]:
-        lines.append("WARNING: AI-extracted medications NOT yet pharmacist-verified "
-                     "(do not include on the discharge script until verified):")
+        lines.append(
+            "WARNING: AI-extracted medications NOT yet pharmacist-verified "
+            "(do not include on the discharge script until verified):"
+        )
         lines += [f"  - {_fmt(e)}" for e in rec["unverified"]]
     if rec.get("on_hold"):
-        lines.append("WARNING: medications ON HOLD at discharge (the prescriber decides "
-                     "whether each restarts or stops before the discharge script):")
+        lines.append(
+            "WARNING: medications ON HOLD at discharge (the prescriber decides "
+            "whether each restarts or stops before the discharge script):"
+        )
         lines += [f"  - {_fmt(e)}" for e in rec["on_hold"]]
     if rec.get("unsigned"):
-        lines.append("NOT SIGNED: written during admission but never signed, so never given "
-                     "(not discharge medications unless the prescriber prescribes them):")
+        lines.append(
+            "NOT SIGNED: written during admission but never signed, so never given "
+            "(not discharge medications unless the prescriber prescribes them):"
+        )
         lines += [f"  - {_fmt(e)}" for e in rec["unsigned"]]
     return "\n".join(lines)
 
@@ -510,7 +555,7 @@ _ENDED_WORDS = {
 }
 
 
-def _draft_inputs(patient_id: str) -> Optional[dict]:
+def _draft_inputs(patient_id: str) -> dict | None:
     """Every recorded fact the drafting prompt needs, read in ONE sync hop.
 
     PURE SYNC, reached only through run_db: generate_discharge_summary is an
@@ -538,10 +583,15 @@ def _draft_inputs(patient_id: str) -> Optional[dict]:
         # Risk history. None while scoring is switched off: the draft then
         # names no NEWS2 band stored before the switch.
         from services.vigil_service import scoring_enabled
-        risks = db.execute(
-            "SELECT score, level, drivers, timestamp FROM risk_scores WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 5",
-            (patient_id,),
-        ).fetchall() if scoring_enabled() else []
+
+        risks = (
+            db.execute(
+                "SELECT score, level, drivers, timestamp FROM risk_scores WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 5",
+                (patient_id,),
+            ).fetchall()
+            if scoring_enabled()
+            else []
+        )
 
         recorded = _recorded_context(db, patient_id)
     return {
@@ -566,6 +616,7 @@ async def generate_discharge_summary(patient_id: str) -> str:
     # is drafted and the gateway is not asked; the route stores the recorded
     # data only (offline_discharge_summary), which then says so.
     from services.model_switch import models_enabled
+
     if not models_enabled():
         return ""
 
@@ -573,10 +624,14 @@ async def generate_discharge_summary(patient_id: str) -> str:
     # re-loaded a careful model an administrator had just unloaded. The careful
     # model or nothing: no discharge summary is drafted on the smaller model.
     from services.model_router import select_chat_model
+
     choice = await select_chat_model(preferred=LLM_MODEL)
     if choice.downgraded:
-        logger.info("discharge draft: careful model '%s' unloaded, recorded data only for %s",
-                    choice.preferred, patient_id)
+        logger.info(
+            "discharge draft: careful model '%s' unloaded, recorded data only for %s",
+            choice.preferred,
+            patient_id,
+        )
         return ""
 
     inputs = await run_db(_draft_inputs, patient_id)
@@ -592,11 +647,13 @@ async def generate_discharge_summary(patient_id: str) -> str:
 
     # Build context for LLM. A simulator's result is named as one, so the
     # draft never reports a fabricated lab as the patient's.
-    notes_text = "\n".join([
-        f"[{n['doc_type']}{' (SIMULATED, not a real result)' if n['source'] == 'simulated' else ''}] "
-        f"{n['created_at']}: {n['content']}"
-        for n in notes
-    ])
+    notes_text = "\n".join(
+        [
+            f"[{n['doc_type']}{' (SIMULATED, not a real result)' if n['source'] == 'simulated' else ''}] "
+            f"{n['created_at']}: {n['content']}"
+            for n in notes
+        ]
+    )
     vitals_text = ""
     if latest_vitals:
         # AS CHARTED (services/vital_charting.py), the numbers NEWS2 scored; a
@@ -635,21 +692,21 @@ Use only what is recorded. Where a section has no recorded information, write
 "Not documented". Do not invent findings, procedures, follow-up appointments or
 a condition at discharge.
 
-PATIENT: {patient['name']}, Age {patient['age']}, {patient['sex']}
-MRN: {patient['mrn']}
-ADMISSION DATE: {_clinical_date(patient['admission_date'])}
+PATIENT: {patient["name"]}, Age {patient["age"]}, {patient["sex"]}
+MRN: {patient["mrn"]}
+ADMISSION DATE: {_clinical_date(patient["admission_date"])}
 DISCHARGE DATE: {discharge_date}
-DIAGNOSIS: {patient['diagnosis']}
-WARD: {patient['ward']} · BED: {patient['bed']}
+DIAGNOSIS: {patient["diagnosis"]}
+WARD: {patient["ward"]} · BED: {patient["bed"]}
 ATTENDING DOCTOR: {attending}
-ALLERGIES (from the allergy record): {recorded['allergies']}
-COMORBIDITIES (from the admission record): {recorded['comorbidities']}
+ALLERGIES (from the allergy record): {recorded["allergies"]}
+COMORBIDITIES (from the admission record): {recorded["comorbidities"]}
 
 {vitals_text}
 {risk_text}
 
 CLINICAL NOTES:
-{notes_text if notes_text else 'No clinical notes recorded.'}
+{notes_text if notes_text else "No clinical notes recorded."}
 
 {med_rec_text}
 (Use the MEDICATION RECONCILIATION above verbatim for the DISCHARGE MEDICATIONS
@@ -691,6 +748,7 @@ AI-drafted by Orb. Not reviewed until a clinician marks it reviewed.
     full_response = ""
     from services import ollama_gateway
     from services.llm_queue_service import llm_queue
+
     await llm_queue.acquire(priority=2)
     try:
         async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
@@ -741,30 +799,35 @@ def offline_discharge_summary(patient_id: str) -> str:
     # Models switched off on this computer: say that, not that the assistant
     # was unavailable, which reads as a fault.
     from services.model_switch import models_enabled
+
     if models_enabled():
         course = "Not documented. The drafting assistant was unavailable, so no course was drafted."
         footer = "Drafting assistant unavailable. This summary holds recorded data only."
     else:
-        course = ("Not documented. The drafting assistant is switched off on this computer, "
-                  "so no course was drafted.")
-        footer = ("Drafting assistant switched off on this computer. "
-                  "This summary holds recorded data only.")
+        course = (
+            "Not documented. The drafting assistant is switched off on this computer, "
+            "so no course was drafted."
+        )
+        footer = (
+            "Drafting assistant switched off on this computer. "
+            "This summary holds recorded data only."
+        )
     return f"""DISCHARGE SUMMARY
 ═══════════════════
 
-Patient: {patient['name']} | MRN: {patient['mrn']} | Age/Sex: {patient['age']}/{patient['sex']}
-Admission: {_clinical_date(patient['admission_date'])} → Discharge: {_site_today()}
+Patient: {patient["name"]} | MRN: {patient["mrn"]} | Age/Sex: {patient["age"]}/{patient["sex"]}
+Admission: {_clinical_date(patient["admission_date"])} → Discharge: {_site_today()}
 
 ADMISSION DIAGNOSIS:
-{patient['diagnosis'] or 'Not documented'}
+{patient["diagnosis"] or "Not documented"}
 
-WARD: {patient['ward'] or 'Not recorded'} · BED: {patient['bed'] or 'Not recorded'}
+WARD: {patient["ward"] or "Not recorded"} · BED: {patient["bed"] or "Not recorded"}
 
 ALLERGIES:
-{recorded['allergies']}
+{recorded["allergies"]}
 
 COMORBIDITIES:
-{recorded['comorbidities']}
+{recorded["comorbidities"]}
 
 HOSPITAL COURSE:
 {course}
@@ -775,7 +838,7 @@ Not documented.
 {med_rec_text}
 
 ATTENDING DOCTOR:
-{recorded['attending'] or 'Not recorded'}
+{recorded["attending"] or "Not recorded"}
 
 ---
 {footer}
@@ -786,26 +849,36 @@ def generate_qr_code(patient_id: str, summary_url: str) -> str:
     """Generate a QR code linking to the discharge summary."""
     if not HAS_QR:
         return ""
-    
+
     qr = qrcode.QRCode(version=1, box_size=10, border=2)
     qr.add_data(summary_url)
     qr.make(fit=True)
-    
+
     img = qr.make_image(image_factory=PyPNGImage, fill_color="black", back_color="white")
     from io import BytesIO
+
     from services.crypto_service import write_encrypted
+
     filename = f"qr_{uuid.uuid4().hex}.png"
     qr_path = str(UPLOAD_DIR / filename)
     encoded = BytesIO()
     img.save(encoded)
     write_encrypted(qr_path, encoded.getvalue())
-    
+
     return qr_path
 
 
-def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: list, *,
-                      discharge_type: Optional[str] = None, confirm_mrn: Optional[str] = None,
-                      reason: Optional[str] = None, request_meta: Optional[dict] = None) -> dict:
+def discharge_patient(
+    patient_id: str,
+    author_id: str,
+    summary: str,
+    timeline: list,
+    *,
+    discharge_type: str | None = None,
+    confirm_mrn: str | None = None,
+    reason: str | None = None,
+    request_meta: dict | None = None,
+) -> dict:
     """Discharge a patient: update status, save summary, generate secure QR token.
 
     BEDS AND ADMISSIONS (adt-8a). The status flips and the bundle closure live
@@ -846,7 +919,9 @@ def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: l
     discharge_access_service.public_link_base_status).
     """
     from services.discharge_access_service import (
-        SECOND_FACTOR_FIELD, public_link_base_status, second_factor_status,
+        SECOND_FACTOR_FIELD,
+        public_link_base_status,
+        second_factor_status,
     )
 
     # Beds and admissions (ORB_ADT, default off). Off: nothing below changes.
@@ -861,9 +936,13 @@ def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: l
     # leave the desk with no link. Not when the hospital switched links off:
     # there, "record the date of birth, then issue the link" sends the desk
     # after a link that will never come.
-    withheld_reason = None if issue_link else (
-        address["reason"] if address.get("switched_off") else " ".join(
-            r for r in (address["reason"], factor["reason"]) if r
+    withheld_reason = (
+        None
+        if issue_link
+        else (
+            address["reason"]
+            if address.get("switched_off")
+            else " ".join(r for r in (address["reason"], factor["reason"]) if r)
         )
     )
 
@@ -874,7 +953,7 @@ def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: l
     # discharge_access_service.get_token_record).
     raw_token = token_hash = token_id = summary_url = None
     qr_path = None
-    expires_at = datetime.now(timezone.utc) + timedelta(days=DISCHARGE_ACCESS_TTL_DAYS)
+    expires_at = datetime.now(UTC) + timedelta(days=DISCHARGE_ACCESS_TTL_DAYS)
     if issue_link:
         raw_token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
@@ -907,8 +986,9 @@ def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: l
         # returns [] today, so no discharge is refused here.
         problems = adt_end.discharge_preconditions(db, patient_id, end_type or "routine")
         if problems:
-            raise AdtConflict("This stay cannot end yet", code="discharge_preconditions",
-                              preconditions=problems)
+            raise AdtConflict(
+                "This stay cannot end yet", code="discharge_preconditions", preconditions=problems
+            )
 
         # The stay this summary ends (opd-17b, every flag): the patient's
         # active admission, read BEFORE the close below flips it. Migration 65
@@ -936,8 +1016,15 @@ def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: l
                (patient_id, author_id, summary, timeline_json, qr_code_path, review_status,
                 admission_id)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (patient_id, author_id, summary, json.dumps(timeline), qr_path, REVIEW_DRAFT,
-             stay_admission_id)
+            (
+                patient_id,
+                author_id,
+                summary,
+                json.dumps(timeline),
+                qr_path,
+                REVIEW_DRAFT,
+                stay_admission_id,
+            ),
         )
         summary_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
         discharged_at = db.execute(
@@ -951,7 +1038,7 @@ def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: l
                 """INSERT INTO discharge_access_tokens
                    (token_id, token_hash, patient_id, expires_at, created_by_user_id)
                    VALUES (?, ?, ?, ?, ?)""",
-                (token_id, token_hash, patient_id, expires_at.isoformat(), author_id)
+                (token_id, token_hash, patient_id, expires_at.isoformat(), author_id),
             )
 
         # (patient status already claimed atomically at the top of this block)
@@ -961,11 +1048,17 @@ def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: l
         if adt and admission is not None:
             actor_row = db.execute("SELECT role FROM users WHERE id = ?", (author_id,)).fetchone()
             end_record = adt_end.record_end_on(
-                db, admission=admission, patient=patient_row, end_type=end_type,
-                occurred=datetime.now(timezone.utc),
+                db,
+                admission=admission,
+                patient=patient_row,
+                end_type=end_type,
+                occurred=datetime.now(UTC),
                 actor={"id": author_id, "role": actor_row["role"] if actor_row else None},
-                reason=reason, summary_id=summary_id, door="discharge",
-                request_meta=request_meta, bundles_cancelled=closed["bundles_cancelled"],
+                reason=reason,
+                summary_id=summary_id,
+                door="discharge",
+                request_meta=request_meta,
+                bundles_cancelled=closed["bundles_cancelled"],
                 open_escalations=escalations,
             )
 
@@ -977,7 +1070,7 @@ def discharge_patient(patient_id: str, author_id: str, summary: str, timeline: l
             outcome="success",
             summary_message=f"Discharge QR code and token created, expires in {DISCHARGE_ACCESS_TTL_DAYS} days",
             patient_id=patient_id,
-            actor_user_id=author_id
+            actor_user_id=author_id,
         )
     else:
         # Audited as a refusal, not a silence: the discharge desk sees the reason
@@ -1021,8 +1114,9 @@ class DischargeSummaryNotFound(LookupError):
     """No such summary for this patient."""
 
 
-def mark_discharge_summary_reviewed(patient_id: str, summary_id: int,
-                                    reviewer_id: str, reviewer_role: Optional[str] = None) -> dict:
+def mark_discharge_summary_reviewed(
+    patient_id: str, summary_id: int, reviewer_id: str, reviewer_role: str | None = None
+) -> dict:
     """A prescriber has read the drafted summary: release it to the patient.
 
     Interim step until the draft, edit and sign flow (A002): this records that
@@ -1042,7 +1136,7 @@ def mark_discharge_summary_reviewed(patient_id: str, summary_id: int,
         if row is None:
             raise DischargeSummaryNotFound(summary_id)
         if row["review_status"] != REVIEW_REVIEWED:
-            reviewed_at = datetime.now(timezone.utc).isoformat()
+            reviewed_at = datetime.now(UTC).isoformat()
             db.execute(
                 "UPDATE discharge_summaries SET review_status = ?, reviewed_by = ?, reviewed_at = ? "
                 "WHERE id = ? AND review_status != ?",
@@ -1063,13 +1157,16 @@ def mark_discharge_summary_reviewed(patient_id: str, summary_id: int,
                 target_type="discharge_summary",
                 target_id=str(summary_id),
             )
-        return load_discharge_summary_view(patient_id, db=db)
+        _written_row = load_discharge_summary_view(patient_id, db=db)
+        assert _written_row is not None, "Expected the row written in this transaction"
+        return _written_row
 
 
-def load_discharge_summary_view(patient_id: str, db=None) -> Optional[dict]:
+def load_discharge_summary_view(patient_id: str, db=None) -> dict | None:
     """The latest discharge summary for the clinician's screens, with its review
     state. Clinician-facing: the draft text is included and labelled by
     review_status, because the doctor is the one who has to read it. Sync."""
+
     def _read(conn):
         return conn.execute(
             """SELECT ds.*, u.name AS reviewed_by_name

@@ -59,12 +59,14 @@ patient's visit, a patient admitted meanwhile, or a test already ordered on
 the visit. The orders routes (routes/orders_routes.py) are unchanged and never
 pass it.
 """
+
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from database import db_session
+
 from services import terminology_service
 
 logger = logging.getLogger("orb.orders")
@@ -74,12 +76,12 @@ logger = logging.getLogger("orb.orders")
 #  STATE MACHINE
 # ══════════════════════════════════════════════════════════════════════════
 LEGAL_TRANSITIONS = {
-    "draft":        ["active", "cancelled"],
-    "active":       ["in_progress", "resulted", "cancelled"],
-    "in_progress":  ["completed", "resulted", "cancelled"],
-    "completed":    [],   # terminal
-    "resulted":     [],   # terminal
-    "cancelled":    [],   # terminal
+    "draft": ["active", "cancelled"],
+    "active": ["in_progress", "resulted", "cancelled"],
+    "in_progress": ["completed", "resulted", "cancelled"],
+    "completed": [],  # terminal
+    "resulted": [],  # terminal
+    "cancelled": [],  # terminal
 }
 TERMINAL_STATUSES = {"completed", "resulted", "cancelled"}
 
@@ -146,8 +148,9 @@ class OpdVisitOrderRefused(ValueError):
         self.status = status
 
 
-def _check_opd_visit(conn, opd_visit_id: str, patient_id: str, *,
-                     code_system: str | None, code: str | None) -> None:
+def _check_opd_visit(
+    conn, opd_visit_id: str, patient_id: str, *, code_system: str | None, code: str | None
+) -> None:
     """The visit an outpatient order names, read in the order's own
     transaction: it exists and is this patient's, it was not cancelled or
     finished, the patient has no active admission anywhere (the inpatient
@@ -159,30 +162,37 @@ def _check_opd_visit(conn, opd_visit_id: str, patient_id: str, *,
     if visit is None or visit["patient_id"] != patient_id:
         raise OpdVisitOrderRefused("visit_not_found", "OPD visit not found", status=404)
     if visit["status"] == "cancelled":
-        raise OpdVisitOrderRefused("visit_cancelled",
-                                   "This visit was cancelled; nothing can be ordered on it.")
+        raise OpdVisitOrderRefused(
+            "visit_cancelled", "This visit was cancelled; nothing can be ordered on it."
+        )
     if visit["status"] == "completed":
         raise OpdVisitOrderRefused(
-            "visit_completed",
-            "This visit is finished. Order from the patient's current visit.")
-    if conn.execute(
-        "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' LIMIT 1",
-        (patient_id,),
-    ).fetchone() is not None:
+            "visit_completed", "This visit is finished. Order from the patient's current visit."
+        )
+    if (
+        conn.execute(
+            "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' LIMIT 1",
+            (patient_id,),
+        ).fetchone()
+        is not None
+    ):
         raise OpdVisitOrderRefused(
-            "patient_admitted",
-            "This patient is now admitted. Order from the inpatient chart.")
-    if code and conn.execute(
-        "SELECT 1 FROM orders WHERE opd_visit_id = ? AND upper(code_system) = ? AND code = ? "
-        "AND status != 'cancelled' LIMIT 1",
-        (opd_visit_id, (code_system or "").upper(), code),
-    ).fetchone() is not None:
-        raise OpdVisitOrderRefused(
-            "already_ordered", "This test is already ordered on this visit.")
+            "patient_admitted", "This patient is now admitted. Order from the inpatient chart."
+        )
+    if (
+        code
+        and conn.execute(
+            "SELECT 1 FROM orders WHERE opd_visit_id = ? AND upper(code_system) = ? AND code = ? "
+            "AND status != 'cancelled' LIMIT 1",
+            (opd_visit_id, (code_system or "").upper(), code),
+        ).fetchone()
+        is not None
+    ):
+        raise OpdVisitOrderRefused("already_ordered", "This test is already ordered on this visit.")
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def is_lab_managed(conn, order_id: str) -> bool:
@@ -191,9 +201,12 @@ def is_lab_managed(conn, order_id: str) -> bool:
     hand a half-processed order back to the free-text path. A database
     without the laboratory tables manages nothing."""
     try:
-        return conn.execute(
-            "SELECT 1 FROM lab_order_items WHERE order_id = ? LIMIT 1", (order_id,)
-        ).fetchone() is not None
+        return (
+            conn.execute(
+                "SELECT 1 FROM lab_order_items WHERE order_id = ? LIMIT 1", (order_id,)
+            ).fetchone()
+            is not None
+        )
     except Exception as exc:  # sqlite3 or sqlcipher3 OperationalError
         if "no such table" in str(exc).lower():
             return False
@@ -209,7 +222,8 @@ def medication_order_link(conn, order_id: str) -> str | None:
     try:
         row = conn.execute(
             "SELECT id FROM med_orders WHERE cpoe_order_id = ? "
-            "ORDER BY created_at DESC, id DESC LIMIT 1", (order_id,)
+            "ORDER BY created_at DESC, id DESC LIMIT 1",
+            (order_id,),
         ).fetchone()
     except Exception as exc:  # sqlite3 or sqlcipher3 OperationalError
         if "no such table" in str(exc).lower():
@@ -236,19 +250,24 @@ def _after_lab_activation(order: dict, actor_id: str | None) -> None:
     if order.get("order_type") != "lab" or order.get("status") != "active":
         return
     import config
+
     if config.LAB_ENABLED is not True:
         return
     try:
         from services import lab_order_service
+
         lab_order_service.intake_after_activation(order["id"], actor_id=actor_id)
     except Exception:
-        logger.exception("Laboratory intake hook failed for order %s; the laboratory's "
-                         "sweep will pick it up", order.get("id"))
+        logger.exception(
+            "Laboratory intake hook failed for order %s; the laboratory's sweep will pick it up",
+            order.get("id"),
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════
 #  CREATE
 # ══════════════════════════════════════════════════════════════════════════
+
 
 def create_order(
     patient_id: str,
@@ -316,7 +335,8 @@ def create_order(
                 f"Codes must be validated before ordering."
             )
     elif order_type not in CODELESS_ORDER_TYPES and not (
-            allow_uncoded_medication and order_type == "medication"):
+        allow_uncoded_medication and order_type == "medication"
+    ):
         raise ValueError(
             f"order_type '{order_type}' requires a coded concept "
             f"(code + code_system). Only {sorted(CODELESS_ORDER_TYPES)} may be free-text."
@@ -339,27 +359,50 @@ def create_order(
                    (id, patient_id, order_type, code, code_system, description, priority,
                     status, ordered_by, source, detail_json, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (order_id, patient_id, order_type, code,
-                 code_system.upper() if code_system else None,
-                 description, priority, status, ordered_by, source, detail_json, now, now),
+                (
+                    order_id,
+                    patient_id,
+                    order_type,
+                    code,
+                    code_system.upper() if code_system else None,
+                    description,
+                    priority,
+                    status,
+                    ordered_by,
+                    source,
+                    detail_json,
+                    now,
+                    now,
+                ),
             )
             _record_event(conn, order_id, None, status, ordered_by, "order created")
             row = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
     else:
         with db_session(immediate=True) as conn:
             if opd_visit_id is not None:
-                _check_opd_visit(conn, opd_visit_id, patient_id,
-                                 code_system=code_system, code=code)
+                _check_opd_visit(conn, opd_visit_id, patient_id, code_system=code_system, code=code)
             conn.execute(
                 """INSERT INTO orders
                    (id, patient_id, order_type, code, code_system, description, priority,
                     status, ordered_by, source, detail_json, created_at, updated_at,
                     opd_visit_id)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (order_id, patient_id, order_type, code,
-                 code_system.upper() if code_system else None,
-                 description, priority, status, ordered_by, source, detail_json, now, now,
-                 opd_visit_id),
+                (
+                    order_id,
+                    patient_id,
+                    order_type,
+                    code,
+                    code_system.upper() if code_system else None,
+                    description,
+                    priority,
+                    status,
+                    ordered_by,
+                    source,
+                    detail_json,
+                    now,
+                    now,
+                    opd_visit_id,
+                ),
             )
             _record_event(conn, order_id, None, status, ordered_by, "order created")
             row = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
@@ -374,9 +417,16 @@ def create_order(
 #  TRANSITION
 # ══════════════════════════════════════════════════════════════════════════
 
-def transition_order(order_id: str, to_status: str, actor_id: str | None = None,
-                     detail: str | None = None, *, before_move=None,
-                     in_transaction=None) -> dict:
+
+def transition_order(
+    order_id: str,
+    to_status: str,
+    actor_id: str | None = None,
+    detail: str | None = None,
+    *,
+    before_move=None,
+    in_transaction=None,
+) -> dict:
     """Guarded, idempotent state transition.
 
     Raises ValueError for an unknown order or an illegal transition, and
@@ -455,6 +505,7 @@ def transition_order(order_id: str, to_status: str, actor_id: str | None = None,
 #  RESULT
 # ══════════════════════════════════════════════════════════════════════════
 
+
 def add_result(order_id: str, result_text: str, actor_id: str | None = None) -> dict:
     """Attach a result to a lab/imaging order and transition it to 'resulted'.
 
@@ -525,15 +576,18 @@ def add_result(order_id: str, result_text: str, actor_id: str | None = None) -> 
 # writes the order_events row, and skips the laboratory guard, because the
 # laboratory is the one party allowed past it.
 
+
 def _require_transaction(conn) -> None:
     if not getattr(conn, "in_transaction", False):
         raise RuntimeError(
             "The laboratory's order helpers need the caller's write transaction: open "
-            "it with db_session(immediate=True) and pass that connection.")
+            "it with db_session(immediate=True) and pass that connection."
+        )
 
 
-def transition_in_conn(conn, order_id: str, to_status: str, *, actor_id: str | None = None,
-                       detail: str | None = None) -> dict:
+def transition_in_conn(
+    conn, order_id: str, to_status: str, *, actor_id: str | None = None, detail: str | None = None
+) -> dict:
     """transition_order for the laboratory, on its own transaction. Same
     legality rules and order_events row; no guard and no activation hook (the
     laboratory never activates an order). Moving to the current status is a
@@ -553,17 +607,22 @@ def transition_in_conn(conn, order_id: str, to_status: str, *, actor_id: str | N
             f"Allowed from '{current}': {LEGAL_TRANSITIONS.get(current, [])}"
         )
     if to_status == "resulted" and order["order_type"] not in RESULTABLE_ORDER_TYPES:
-        raise ValueError(
-            f"Cannot set status 'resulted' for order_type '{order['order_type']}'.")
-    conn.execute("UPDATE orders SET status = ?, updated_at = ? WHERE id = ?",
-                 (to_status, _now(), order_id))
+        raise ValueError(f"Cannot set status 'resulted' for order_type '{order['order_type']}'.")
+    conn.execute(
+        "UPDATE orders SET status = ?, updated_at = ? WHERE id = ?", (to_status, _now(), order_id)
+    )
     _record_event(conn, order_id, current, to_status, actor_id, detail)
     return dict(conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone())
 
 
-def set_lab_result_text_in_conn(conn, order_id: str, result_text: str, *,
-                                actor_id: str | None = None,
-                                detail: str = "reported by the laboratory") -> dict:
+def set_lab_result_text_in_conn(
+    conn,
+    order_id: str,
+    result_text: str,
+    *,
+    actor_id: str | None = None,
+    detail: str = "reported by the laboratory",
+) -> dict:
     """Mark an order 'resulted' with the laboratory's fixed result text, on
     the laboratory's own transaction. The text names no accession and no
     version, so an amended laboratory result never makes it stale.
@@ -589,7 +648,9 @@ def set_lab_result_text_in_conn(conn, order_id: str, result_text: str, *,
     now = _now()
     conn.execute(
         "UPDATE orders SET result_text = ?, result_at = ?, status = 'resulted', updated_at = ? "
-        "WHERE id = ?", (result_text, now, now, order_id))
+        "WHERE id = ?",
+        (result_text, now, now, order_id),
+    )
     _record_event(conn, order_id, current, "resulted", actor_id, detail)
     return dict(conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone())
 
@@ -602,9 +663,16 @@ def set_lab_result_text_in_conn(conn, order_id: str, result_text: str, *,
 # so a linked order's status here changes together with the medication order
 # or not at all.
 
-def mirror_medication_status_in_conn(conn, order_id: str, *, expected_status: str,
-                                     to_status: str, actor_id: str | None = None,
-                                     detail: str | None = None) -> dict:
+
+def mirror_medication_status_in_conn(
+    conn,
+    order_id: str,
+    *,
+    expected_status: str,
+    to_status: str,
+    actor_id: str | None = None,
+    detail: str | None = None,
+) -> dict:
     """Move a linked medication order's CPOE view from `expected_status` to
     `to_status`, as a guarded UPDATE (the status must still be the one the
     store expects) plus an order_events row, on the caller's transaction.
@@ -637,8 +705,15 @@ def mirror_medication_status_in_conn(conn, order_id: str, *, expected_status: st
 #  SHADOW INSTRUMENT: clinical.action
 # ══════════════════════════════════════════════════════════════════════════
 
-def record_clinical_action(patient_id: str, order_type: str, order_id: str | None, *,
-                           actor_id: str | None, actor_role: str | None) -> None:
+
+def record_clinical_action(
+    patient_id: str,
+    order_type: str,
+    order_id: str | None,
+    *,
+    actor_id: str | None,
+    actor_role: str | None,
+) -> None:
     """One shadow `clinical.action` for an order a clinician placed through
     CPOE, when a shadow episode is open for the patient. The orders route
     calls it at create (routes/orders_routes._shadow_clinical_action, where
@@ -651,6 +726,7 @@ def record_clinical_action(patient_id: str, order_type: str, order_id: str | Non
     """
     try:
         from services import shadow_service
+
         with db_session() as db:
             episode_id = shadow_service.current_episode(patient_id, db=db)
             if not episode_id:
@@ -665,27 +741,44 @@ def record_clinical_action(patient_id: str, order_type: str, order_id: str | Non
             if last_alert is not None:
                 try:
                     minutes_after = round(
-                        (datetime.fromisoformat(now)
-                         - datetime.fromisoformat(last_alert["occurred_at"])).total_seconds() / 60.0,
-                        1)
+                        (
+                            datetime.fromisoformat(now)
+                            - datetime.fromisoformat(last_alert["occurred_at"])
+                        ).total_seconds()
+                        / 60.0,
+                        1,
+                    )
                 except (TypeError, ValueError):
                     minutes_after = None
-            shadow_service.emit_many([shadow_service.build(
-                "clinical.action", episode_id, "manual",
-                occurred_at=now, patient_id=patient_id,
-                actor_user_id=actor_id, actor_role=actor_role,
-                subject_type="orders", subject_id=order_id,
-                payload={
-                    # Medication orders are classed as `add_medication` so they
-                    # compare directly against the class Sage proposes for a drug
-                    # (`action.proposed.action_class`); anything else keeps its
-                    # own order type rather than being flattened into one bucket.
-                    "action_class": ("add_medication" if order_type == "medication"
-                                     else f"order_{order_type}"),
-                    "source_table": "orders",
-                    "minutes_after_alert": minutes_after,
-                },
-            )], db=db)
+            shadow_service.emit_many(
+                [
+                    shadow_service.build(
+                        "clinical.action",
+                        episode_id,
+                        "manual",
+                        occurred_at=now,
+                        patient_id=patient_id,
+                        actor_user_id=actor_id,
+                        actor_role=actor_role,
+                        subject_type="orders",
+                        subject_id=order_id,
+                        payload={
+                            # Medication orders are classed as `add_medication` so they
+                            # compare directly against the class Sage proposes for a drug
+                            # (`action.proposed.action_class`); anything else keeps its
+                            # own order type rather than being flattened into one bucket.
+                            "action_class": (
+                                "add_medication"
+                                if order_type == "medication"
+                                else f"order_{order_type}"
+                            ),
+                            "source_table": "orders",
+                            "minutes_after_alert": minutes_after,
+                        },
+                    )
+                ],
+                db=db,
+            )
     except Exception:
         # Rule 1: an order must never fail because the observational log did.
         pass
@@ -694,6 +787,7 @@ def record_clinical_action(patient_id: str, order_type: str, order_id: str | Non
 # ══════════════════════════════════════════════════════════════════════════
 #  READ
 # ══════════════════════════════════════════════════════════════════════════
+
 
 def list_orders(patient_id: str, status: str | None = None) -> list[dict]:
     """List a patient's orders, newest first, optionally filtered by status."""

@@ -8,10 +8,11 @@ The HF token MUST come from the environment (HF_TOKEN) — never hardcode it.
 The previously committed literal token has been removed; if it was ever real,
 rotate/revoke it on huggingface.co immediately.
 """
+
 import os
 import sys
 
-from huggingface_hub import snapshot_download, login
+from huggingface_hub import login, snapshot_download
 
 HF_TOKEN = os.environ.get("HF_TOKEN")
 if not HF_TOKEN:

@@ -161,6 +161,7 @@ does not delete or supersede anything, it has no undo beyond the per-run trail,
 and it never creates users — an unknown attending doctor is reported and the
 link is left blank.
 """
+
 from __future__ import annotations
 
 import csv
@@ -171,16 +172,18 @@ import logging
 import os
 import re
 import uuid
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any, Iterable, Iterator, TextIO
+from typing import Any, NotRequired, TextIO, TypedDict
 
 from database import db_session
+
 from services.roster_import import (
+    _NULL_TOKENS,
     IST,
     Issue,
-    _NULL_TOKENS,
     _clean,
     _norm_header,
     _normalise_mrn,
@@ -247,12 +250,13 @@ def _new_id(prefix: str) -> str:
 #  Field + record-type catalogue
 # ══════════════════════════════════════════════════════════════════════════
 
+
 @dataclass(frozen=True)
 class TargetField:
     name: str
     label: str
     required: bool
-    kind: str                     # text | int | date | instant | enum | mrn | id | number
+    kind: str  # text | int | date | instant | enum | mrn | id | number
     synonyms: tuple[str, ...]
     note: str = ""
 
@@ -264,14 +268,45 @@ def _f(name, label, required, kind, synonyms, note="") -> TargetField:
 # The two identity fields every CHILD record type shares. At least one must be
 # mapped; both may be, and then they must agree.
 _PATIENT_LINK_FIELDS: tuple[TargetField, ...] = (
-    _f("external_patient_id", "Patient id in the old system", False, "id",
-       ("patient id", "patientid", "pid", "patient no", "patient code",
-        "legacy patient id", "source patient id", "his patient id"),
-       "Resolved through the cross-system patient map built by the 'patients' import."),
-    _f("mrn", "MRN / Hospital number", False, "mrn",
-       ("mrn", "uhid", "mr no", "mrno", "mr number", "hospital number", "hosp no",
-        "reg no", "regno", "registration number", "ip no", "file no", "cr no"),
-       "Alternative to the old system's patient id. If both are given they must agree."),
+    _f(
+        "external_patient_id",
+        "Patient id in the old system",
+        False,
+        "id",
+        (
+            "patient id",
+            "patientid",
+            "pid",
+            "patient no",
+            "patient code",
+            "legacy patient id",
+            "source patient id",
+            "his patient id",
+        ),
+        "Resolved through the cross-system patient map built by the 'patients' import.",
+    ),
+    _f(
+        "mrn",
+        "MRN / Hospital number",
+        False,
+        "mrn",
+        (
+            "mrn",
+            "uhid",
+            "mr no",
+            "mrno",
+            "mr number",
+            "hospital number",
+            "hosp no",
+            "reg no",
+            "regno",
+            "registration number",
+            "ip no",
+            "file no",
+            "cr no",
+        ),
+        "Alternative to the old system's patient id. If both are given they must agree.",
+    ),
 )
 
 
@@ -305,220 +340,654 @@ def _register(rt: RecordType) -> RecordType:
     return rt
 
 
-_register(RecordType(
-    "patients", "Patients (demographics)", "patients",
-    (
-        _f("external_id", "Patient id in the old system", True, "id",
-           ("patient id", "patientid", "pid", "patient no", "patient code",
-            "legacy id", "source id", "external id", "his id", "record id"),
-           _EXTERNAL_ID_NOTE),
-        _f("mrn", "MRN / Hospital number", True, "mrn",
-           ("mrn", "uhid", "mr no", "mrno", "mr number", "hospital number",
-            "hosp no", "reg no", "regno", "registration number", "ip no",
-            "file no", "cr no"),
-           "Orb's own natural key, and how staff find a patient. Required: a "
-           "patient with no hospital number can never be looked up at the "
-           "bedside. If the legacy export genuinely has none, map the legacy "
-           "patient id column here as well; that is an explicit admin decision, "
-           "which a silently invented MRN would not be."),
-        _f("name", "Patient name", True, "text",
-           ("name", "patient name", "patientname", "full name", "pt name"), ""),
-        _f("date_of_birth", "Date of birth", False, "date",
-           ("dob", "date of birth", "birth date", "birthdate", "d o b"), ""),
-        _f("age", "Age (years)", False, "int",
-           ("age", "age years", "age in years", "yrs"),
-           "Ignored when date of birth is mapped and parses."),
-        _f("sex", "Sex", False, "enum", ("sex", "gender", "m f"),
-           "Normalised to M / F / O; anything else is reported, not defaulted."),
-        _f("phone", "Phone", False, "text",
-           ("phone", "mobile", "contact", "contact no", "phone no", "cell"), ""),
-        _f("address", "Address", False, "text", ("address", "addr", "residence"), ""),
-        _f("emergency_contact_name", "Emergency contact name", False, "text",
-           ("emergency contact", "emergency contact name", "next of kin", "nok",
-            "attendant name"), ""),
-        _f("emergency_contact_phone", "Emergency contact phone", False, "text",
-           ("emergency contact phone", "nok phone", "attendant contact",
-            "emergency phone"), ""),
-    ),
-    "Creates patients as DISCHARGED with no admission. Historical patients are "
-    "not in the building. Never overwrites a value Orb already holds.",
-))
+_register(
+    RecordType(
+        "patients",
+        "Patients (demographics)",
+        "patients",
+        (
+            _f(
+                "external_id",
+                "Patient id in the old system",
+                True,
+                "id",
+                (
+                    "patient id",
+                    "patientid",
+                    "pid",
+                    "patient no",
+                    "patient code",
+                    "legacy id",
+                    "source id",
+                    "external id",
+                    "his id",
+                    "record id",
+                ),
+                _EXTERNAL_ID_NOTE,
+            ),
+            _f(
+                "mrn",
+                "MRN / Hospital number",
+                True,
+                "mrn",
+                (
+                    "mrn",
+                    "uhid",
+                    "mr no",
+                    "mrno",
+                    "mr number",
+                    "hospital number",
+                    "hosp no",
+                    "reg no",
+                    "regno",
+                    "registration number",
+                    "ip no",
+                    "file no",
+                    "cr no",
+                ),
+                "Orb's own natural key, and how staff find a patient. Required: a "
+                "patient with no hospital number can never be looked up at the "
+                "bedside. If the legacy export genuinely has none, map the legacy "
+                "patient id column here as well; that is an explicit admin decision, "
+                "which a silently invented MRN would not be.",
+            ),
+            _f(
+                "name",
+                "Patient name",
+                True,
+                "text",
+                ("name", "patient name", "patientname", "full name", "pt name"),
+                "",
+            ),
+            _f(
+                "date_of_birth",
+                "Date of birth",
+                False,
+                "date",
+                ("dob", "date of birth", "birth date", "birthdate", "d o b"),
+                "",
+            ),
+            _f(
+                "age",
+                "Age (years)",
+                False,
+                "int",
+                ("age", "age years", "age in years", "yrs"),
+                "Ignored when date of birth is mapped and parses.",
+            ),
+            _f(
+                "sex",
+                "Sex",
+                False,
+                "enum",
+                ("sex", "gender", "m f"),
+                "Normalised to M / F / O; anything else is reported, not defaulted.",
+            ),
+            _f(
+                "phone",
+                "Phone",
+                False,
+                "text",
+                ("phone", "mobile", "contact", "contact no", "phone no", "cell"),
+                "",
+            ),
+            _f("address", "Address", False, "text", ("address", "addr", "residence"), ""),
+            _f(
+                "emergency_contact_name",
+                "Emergency contact name",
+                False,
+                "text",
+                (
+                    "emergency contact",
+                    "emergency contact name",
+                    "next of kin",
+                    "nok",
+                    "attendant name",
+                ),
+                "",
+            ),
+            _f(
+                "emergency_contact_phone",
+                "Emergency contact phone",
+                False,
+                "text",
+                ("emergency contact phone", "nok phone", "attendant contact", "emergency phone"),
+                "",
+            ),
+        ),
+        "Creates patients as DISCHARGED with no admission. Historical patients are "
+        "not in the building. Never overwrites a value Orb already holds.",
+    )
+)
 
-_register(RecordType(
-    "admissions", "Past admissions (closed encounters)", "admissions",
-    (
-        _f("external_id", "Encounter id in the old system", True, "id",
-           ("encounter id", "encid", "admission id", "admissionid", "visit id",
-            "visitid", "ip no", "ipno", "ipd no", "episode id", "case no"),
-           _EXTERNAL_ID_NOTE),
-        *_PATIENT_LINK_FIELDS,
-        _f("admitted_at", "Admission date", True, "instant",
-           ("admission date", "admitdate", "admitted on", "doa",
-            "date of admission", "adm date", "admission datetime"), ""),
-        _f("discharged_at", "Discharge date", False, "instant",
-           ("discharge date", "dischdate", "discharged on", "dod",
-            "date of discharge", "disch date"),
-           "Recorded on the admission so length of stay survives the migration."),
-        _f("department", "Department / speciality", False, "text",
-           ("department", "dept", "speciality", "specialty", "service",
-            "clinical unit"),
-           "The clinical service ('General Medicine'), not the ward ('GM-1'). "
-           "Department-scoped boards filter on this."),
-        _f("ward", "Ward", False, "text", ("ward", "ward name", "unit", "location"), ""),
-        _f("bed", "Bed", False, "text", ("bed", "bed no", "bedno", "bed number"), ""),
-        _f("admission_type", "Admission type", False, "text",
-           ("admission type", "type", "admit type", "elective emergency"), ""),
-        _f("chief_complaint", "Chief complaint", False, "text",
-           ("chief complaint", "complaint", "presenting complaint",
-            "reason for admission"), ""),
-        _f("diagnosis", "Diagnosis at admission", False, "text",
-           ("diagnosis", "final diagnosis", "provisional diagnosis", "dx"), ""),
-        _f("attending_doctor_id", "Attending doctor (Orb user id)", False, "text",
-           ("attending", "attending doctor", "consultant", "doctor id",
-            "under care of"),
-           "Must be an existing Orb user id; unknown ids are reported, never created."),
-        _f("status", "Status in the old system", False, "enum",
-           ("status", "encounter status", "admission status"),
-           "A row that says the encounter is still OPEN is imported closed and "
-           "listed for the admin, current inpatients belong to roster import."),
-        _f("notes", "Admission notes", False, "text",
-           ("notes", "admitting notes", "remarks", "comments"), ""),
-    ),
-    "Closed, past encounters. Never opens a live admission.",
-))
+_register(
+    RecordType(
+        "admissions",
+        "Past admissions (closed encounters)",
+        "admissions",
+        (
+            _f(
+                "external_id",
+                "Encounter id in the old system",
+                True,
+                "id",
+                (
+                    "encounter id",
+                    "encid",
+                    "admission id",
+                    "admissionid",
+                    "visit id",
+                    "visitid",
+                    "ip no",
+                    "ipno",
+                    "ipd no",
+                    "episode id",
+                    "case no",
+                ),
+                _EXTERNAL_ID_NOTE,
+            ),
+            *_PATIENT_LINK_FIELDS,
+            _f(
+                "admitted_at",
+                "Admission date",
+                True,
+                "instant",
+                (
+                    "admission date",
+                    "admitdate",
+                    "admitted on",
+                    "doa",
+                    "date of admission",
+                    "adm date",
+                    "admission datetime",
+                ),
+                "",
+            ),
+            _f(
+                "discharged_at",
+                "Discharge date",
+                False,
+                "instant",
+                (
+                    "discharge date",
+                    "dischdate",
+                    "discharged on",
+                    "dod",
+                    "date of discharge",
+                    "disch date",
+                ),
+                "Recorded on the admission so length of stay survives the migration.",
+            ),
+            _f(
+                "department",
+                "Department / speciality",
+                False,
+                "text",
+                ("department", "dept", "speciality", "specialty", "service", "clinical unit"),
+                "The clinical service ('General Medicine'), not the ward ('GM-1'). "
+                "Department-scoped boards filter on this.",
+            ),
+            _f("ward", "Ward", False, "text", ("ward", "ward name", "unit", "location"), ""),
+            _f("bed", "Bed", False, "text", ("bed", "bed no", "bedno", "bed number"), ""),
+            _f(
+                "admission_type",
+                "Admission type",
+                False,
+                "text",
+                ("admission type", "type", "admit type", "elective emergency"),
+                "",
+            ),
+            _f(
+                "chief_complaint",
+                "Chief complaint",
+                False,
+                "text",
+                ("chief complaint", "complaint", "presenting complaint", "reason for admission"),
+                "",
+            ),
+            _f(
+                "diagnosis",
+                "Diagnosis at admission",
+                False,
+                "text",
+                ("diagnosis", "final diagnosis", "provisional diagnosis", "dx"),
+                "",
+            ),
+            _f(
+                "attending_doctor_id",
+                "Attending doctor (Orb user id)",
+                False,
+                "text",
+                ("attending", "attending doctor", "consultant", "doctor id", "under care of"),
+                "Must be an existing Orb user id; unknown ids are reported, never created.",
+            ),
+            _f(
+                "status",
+                "Status in the old system",
+                False,
+                "enum",
+                ("status", "encounter status", "admission status"),
+                "A row that says the encounter is still OPEN is imported closed and "
+                "listed for the admin, current inpatients belong to roster import.",
+            ),
+            _f(
+                "notes",
+                "Admission notes",
+                False,
+                "text",
+                ("notes", "admitting notes", "remarks", "comments"),
+                "",
+            ),
+        ),
+        "Closed, past encounters. Never opens a live admission.",
+    )
+)
 
-_register(RecordType(
-    "diagnoses", "Diagnoses / problems", "problem_list",
-    (
-        _f("external_id", "Diagnosis id in the old system", True, "id",
-           ("diagnosis id", "dxid", "dx id", "problem id", "problemid",
-            "record id", "external id"),
-           _EXTERNAL_ID_NOTE),
-        *_PATIENT_LINK_FIELDS,
-        _f("problem", "Diagnosis / problem", True, "text",
-           ("diagnosis", "problem", "condition", "dx", "problem name",
-            "diagnosis description", "disease"), ""),
-        _f("icd10_code", "ICD-10 code", False, "text",
-           ("icd10", "icd 10", "icd10 code", "icd", "icd code"), ""),
-        _f("snomed_code", "SNOMED code", False, "text",
-           ("snomed", "snomed code", "snomed ct"), ""),
-        _f("status", "Status", False, "enum",
-           ("status", "problem status", "diagnosis status", "active"),
-           "Normalised to active / resolved / inactive. WITHOUT this column an "
-           "imported diagnosis is filed INACTIVE, asserting an old diagnosis as "
-           "a current problem is a claim the export never made."),
-        _f("onset_date", "Onset date", False, "date",
-           ("onset date", "onsetdate", "onset", "diagnosed on", "date diagnosed"), ""),
-        _f("resolved_at", "Resolved date", False, "date",
-           ("resolved date", "resolved at", "resolution date", "date resolved"), ""),
-    ),
-    "Historical problems. Defaults to INACTIVE unless the file states otherwise.",
-))
+_register(
+    RecordType(
+        "diagnoses",
+        "Diagnoses / problems",
+        "problem_list",
+        (
+            _f(
+                "external_id",
+                "Diagnosis id in the old system",
+                True,
+                "id",
+                (
+                    "diagnosis id",
+                    "dxid",
+                    "dx id",
+                    "problem id",
+                    "problemid",
+                    "record id",
+                    "external id",
+                ),
+                _EXTERNAL_ID_NOTE,
+            ),
+            *_PATIENT_LINK_FIELDS,
+            _f(
+                "problem",
+                "Diagnosis / problem",
+                True,
+                "text",
+                (
+                    "diagnosis",
+                    "problem",
+                    "condition",
+                    "dx",
+                    "problem name",
+                    "diagnosis description",
+                    "disease",
+                ),
+                "",
+            ),
+            _f(
+                "icd10_code",
+                "ICD-10 code",
+                False,
+                "text",
+                ("icd10", "icd 10", "icd10 code", "icd", "icd code"),
+                "",
+            ),
+            _f(
+                "snomed_code",
+                "SNOMED code",
+                False,
+                "text",
+                ("snomed", "snomed code", "snomed ct"),
+                "",
+            ),
+            _f(
+                "status",
+                "Status",
+                False,
+                "enum",
+                ("status", "problem status", "diagnosis status", "active"),
+                "Normalised to active / resolved / inactive. WITHOUT this column an "
+                "imported diagnosis is filed INACTIVE, asserting an old diagnosis as "
+                "a current problem is a claim the export never made.",
+            ),
+            _f(
+                "onset_date",
+                "Onset date",
+                False,
+                "date",
+                ("onset date", "onsetdate", "onset", "diagnosed on", "date diagnosed"),
+                "",
+            ),
+            _f(
+                "resolved_at",
+                "Resolved date",
+                False,
+                "date",
+                ("resolved date", "resolved at", "resolution date", "date resolved"),
+                "",
+            ),
+        ),
+        "Historical problems. Defaults to INACTIVE unless the file states otherwise.",
+    )
+)
 
-_register(RecordType(
-    "medications", "Medications", "medications",
-    (
-        _f("external_id", "Prescription id in the old system", True, "id",
-           ("prescription id", "rxid", "rx id", "medication id", "medid",
-            "order id", "drug id", "external id"),
-           _EXTERNAL_ID_NOTE),
-        *_PATIENT_LINK_FIELDS,
-        _f("drug_name", "Drug name", True, "text",
-           ("drug", "drug name", "medicine", "medication", "product",
-            "medicine name", "item name"), ""),
-        _f("dosage", "Dose", False, "text",
-           ("dose", "dosage", "strength", "dose given"),
-           "Missing → recorded as the literal UNKNOWN. Never invented, and never "
-           "a reason to drop the drug: the exposure itself is the clinical fact."),
-        _f("route", "Route", False, "text",
-           ("route", "route of administration", "admin route"),
-           "Missing → UNKNOWN. Oral and IV are not interchangeable, so no default."),
-        _f("frequency", "Frequency", False, "text",
-           ("frequency", "freq", "sig", "dose frequency", "schedule"),
-           "Missing → recorded as the literal UNKNOWN."),
-        _f("status", "Status", False, "enum",
-           ("status", "drug status", "medication status"),
-           "Normalised to active / discontinued / prn. WITHOUT this column an "
-           "imported drug is filed DISCONTINUED, 'active' is read by the live "
-           "drug-interaction check and by the discharge summary."),
-        _f("started_at", "Started on", False, "instant",
-           ("start date", "started on", "startdate", "prescribed on",
-            "date prescribed", "from date"), ""),
-        _f("notes", "Notes", False, "text", ("notes", "remarks", "comments", "instructions"), ""),
-    ),
-    "Historical drugs. Defaults to DISCONTINUED unless the file states otherwise.",
-))
+_register(
+    RecordType(
+        "medications",
+        "Medications",
+        "medications",
+        (
+            _f(
+                "external_id",
+                "Prescription id in the old system",
+                True,
+                "id",
+                (
+                    "prescription id",
+                    "rxid",
+                    "rx id",
+                    "medication id",
+                    "medid",
+                    "order id",
+                    "drug id",
+                    "external id",
+                ),
+                _EXTERNAL_ID_NOTE,
+            ),
+            *_PATIENT_LINK_FIELDS,
+            _f(
+                "drug_name",
+                "Drug name",
+                True,
+                "text",
+                (
+                    "drug",
+                    "drug name",
+                    "medicine",
+                    "medication",
+                    "product",
+                    "medicine name",
+                    "item name",
+                ),
+                "",
+            ),
+            _f(
+                "dosage",
+                "Dose",
+                False,
+                "text",
+                ("dose", "dosage", "strength", "dose given"),
+                "Missing → recorded as the literal UNKNOWN. Never invented, and never "
+                "a reason to drop the drug: the exposure itself is the clinical fact.",
+            ),
+            _f(
+                "route",
+                "Route",
+                False,
+                "text",
+                ("route", "route of administration", "admin route"),
+                "Missing → UNKNOWN. Oral and IV are not interchangeable, so no default.",
+            ),
+            _f(
+                "frequency",
+                "Frequency",
+                False,
+                "text",
+                ("frequency", "freq", "sig", "dose frequency", "schedule"),
+                "Missing → recorded as the literal UNKNOWN.",
+            ),
+            _f(
+                "status",
+                "Status",
+                False,
+                "enum",
+                ("status", "drug status", "medication status"),
+                "Normalised to active / discontinued / prn. WITHOUT this column an "
+                "imported drug is filed DISCONTINUED, 'active' is read by the live "
+                "drug-interaction check and by the discharge summary.",
+            ),
+            _f(
+                "started_at",
+                "Started on",
+                False,
+                "instant",
+                (
+                    "start date",
+                    "started on",
+                    "startdate",
+                    "prescribed on",
+                    "date prescribed",
+                    "from date",
+                ),
+                "",
+            ),
+            _f(
+                "notes",
+                "Notes",
+                False,
+                "text",
+                ("notes", "remarks", "comments", "instructions"),
+                "",
+            ),
+        ),
+        "Historical drugs. Defaults to DISCONTINUED unless the file states otherwise.",
+    )
+)
 
-_register(RecordType(
-    "results", "Results / observations", "observations",
-    (
-        _f("external_id", "Result id in the old system", True, "id",
-           ("result id", "resultid", "lab id", "labid", "observation id",
-            "obsid", "test id", "report id", "external id"),
-           _EXTERNAL_ID_NOTE),
-        *_PATIENT_LINK_FIELDS,
-        _f("observation_name", "Test / observation name", True, "text",
-           ("test", "test name", "observation", "observation name", "analyte",
-            "parameter", "investigation"), ""),
-        _f("value", "Result value", False, "text",
-           ("value", "result", "result value", "observation value", "reading"),
-           "Kept verbatim. Parsed into the numeric column only when the whole "
-           "cell is a clean number, '<0.01' and 'NEGATIVE' keep their text and "
-           "leave the number NULL rather than being coerced into a fake result."),
-        _f("unit", "Unit", False, "text", ("unit", "units", "uom"), ""),
-        _f("reference_range", "Reference range", False, "text",
-           ("reference range", "ref range", "normal range", "range",
-            "biological reference interval"), ""),
-        _f("abnormal_flag", "Abnormal flag", False, "text",
-           ("abnormal flag", "flag", "abnormal", "h l", "interpretation"), ""),
-        _f("observed_at", "Observed / collected at", False, "instant",
-           ("observed at", "observedat", "collected", "collection date",
-            "sample date", "result date", "report date", "date", "datetime"), ""),
-        _f("observation_code", "Code (LOINC or local)", False, "text",
-           ("loinc", "loinc code", "test code", "code", "observation code"), ""),
-        _f("observation_code_system", "Code system", False, "text",
-           ("code system", "coding system", "terminology"), ""),
-        _f("panel_name", "Panel", False, "text",
-           ("panel", "panel name", "profile", "group", "department test"), ""),
-        _f("status", "Status", False, "enum",
-           ("status", "result status"), "Normalised to final / preliminary / corrected."),
-    ),
-    "Historical results. Numeric values are never inferred from non-numeric text.",
-))
+_register(
+    RecordType(
+        "results",
+        "Results / observations",
+        "observations",
+        (
+            _f(
+                "external_id",
+                "Result id in the old system",
+                True,
+                "id",
+                (
+                    "result id",
+                    "resultid",
+                    "lab id",
+                    "labid",
+                    "observation id",
+                    "obsid",
+                    "test id",
+                    "report id",
+                    "external id",
+                ),
+                _EXTERNAL_ID_NOTE,
+            ),
+            *_PATIENT_LINK_FIELDS,
+            _f(
+                "observation_name",
+                "Test / observation name",
+                True,
+                "text",
+                (
+                    "test",
+                    "test name",
+                    "observation",
+                    "observation name",
+                    "analyte",
+                    "parameter",
+                    "investigation",
+                ),
+                "",
+            ),
+            _f(
+                "value",
+                "Result value",
+                False,
+                "text",
+                ("value", "result", "result value", "observation value", "reading"),
+                "Kept verbatim. Parsed into the numeric column only when the whole "
+                "cell is a clean number, '<0.01' and 'NEGATIVE' keep their text and "
+                "leave the number NULL rather than being coerced into a fake result.",
+            ),
+            _f("unit", "Unit", False, "text", ("unit", "units", "uom"), ""),
+            _f(
+                "reference_range",
+                "Reference range",
+                False,
+                "text",
+                (
+                    "reference range",
+                    "ref range",
+                    "normal range",
+                    "range",
+                    "biological reference interval",
+                ),
+                "",
+            ),
+            _f(
+                "abnormal_flag",
+                "Abnormal flag",
+                False,
+                "text",
+                ("abnormal flag", "flag", "abnormal", "h l", "interpretation"),
+                "",
+            ),
+            _f(
+                "observed_at",
+                "Observed / collected at",
+                False,
+                "instant",
+                (
+                    "observed at",
+                    "observedat",
+                    "collected",
+                    "collection date",
+                    "sample date",
+                    "result date",
+                    "report date",
+                    "date",
+                    "datetime",
+                ),
+                "",
+            ),
+            _f(
+                "observation_code",
+                "Code (LOINC or local)",
+                False,
+                "text",
+                ("loinc", "loinc code", "test code", "code", "observation code"),
+                "",
+            ),
+            _f(
+                "observation_code_system",
+                "Code system",
+                False,
+                "text",
+                ("code system", "coding system", "terminology"),
+                "",
+            ),
+            _f(
+                "panel_name",
+                "Panel",
+                False,
+                "text",
+                ("panel", "panel name", "profile", "group", "department test"),
+                "",
+            ),
+            _f(
+                "status",
+                "Status",
+                False,
+                "enum",
+                ("status", "result status"),
+                "Normalised to final / preliminary / corrected.",
+            ),
+        ),
+        "Historical results. Numeric values are never inferred from non-numeric text.",
+    )
+)
 
-_register(RecordType(
-    "documents", "Clinical documents", "clinical_documents",
-    (
-        _f("external_id", "Document id in the old system", True, "id",
-           ("document id", "docid", "doc id", "note id", "report id",
-            "record id", "external id"),
-           _EXTERNAL_ID_NOTE),
-        *_PATIENT_LINK_FIELDS,
-        _f("title", "Title", True, "text",
-           ("title", "document title", "subject", "heading", "name"), ""),
-        _f("content", "Content", True, "text",
-           ("content", "body", "text", "note", "document text", "narrative",
-            "report text"),
-           "An empty document is not a document, such rows are reported, not imported."),
-        _f("doc_type", "Document type", False, "text",
-           ("doc type", "document type", "type", "category", "note type"),
-           "Missing → 'imported_document', which is honest about what it is."),
-        _f("authored_at", "Authored at", False, "instant",
-           ("authored at", "date", "created", "created at", "document date",
-            "note date", "report date"), ""),
-        _f("author_id", "Author (Orb user id)", False, "text",
-           ("author", "author id", "doctor", "created by", "consultant"),
-           "Must be an existing Orb user id; unknown ids are reported, never created."),
-    ),
-    "Historical notes, summaries and reports as free text.",
-))
+_register(
+    RecordType(
+        "documents",
+        "Clinical documents",
+        "clinical_documents",
+        (
+            _f(
+                "external_id",
+                "Document id in the old system",
+                True,
+                "id",
+                (
+                    "document id",
+                    "docid",
+                    "doc id",
+                    "note id",
+                    "report id",
+                    "record id",
+                    "external id",
+                ),
+                _EXTERNAL_ID_NOTE,
+            ),
+            *_PATIENT_LINK_FIELDS,
+            _f(
+                "title",
+                "Title",
+                True,
+                "text",
+                ("title", "document title", "subject", "heading", "name"),
+                "",
+            ),
+            _f(
+                "content",
+                "Content",
+                True,
+                "text",
+                ("content", "body", "text", "note", "document text", "narrative", "report text"),
+                "An empty document is not a document, such rows are reported, not imported.",
+            ),
+            _f(
+                "doc_type",
+                "Document type",
+                False,
+                "text",
+                ("doc type", "document type", "type", "category", "note type"),
+                "Missing → 'imported_document', which is honest about what it is.",
+            ),
+            _f(
+                "authored_at",
+                "Authored at",
+                False,
+                "instant",
+                (
+                    "authored at",
+                    "date",
+                    "created",
+                    "created at",
+                    "document date",
+                    "note date",
+                    "report date",
+                ),
+                "",
+            ),
+            _f(
+                "author_id",
+                "Author (Orb user id)",
+                False,
+                "text",
+                ("author", "author id", "doctor", "created by", "consultant"),
+                "Must be an existing Orb user id; unknown ids are reported, never created.",
+            ),
+        ),
+        "Historical notes, summaries and reports as free text.",
+    )
+)
 
 
 def record_type_catalogue() -> list[dict]:
     """Serialisable catalogue of every record type — drives the UI's first step."""
     return [
-        {"name": rt.name, "label": rt.label, "table": rt.table, "note": rt.note,
-         "required": list(rt.required)}
+        {
+            "name": rt.name,
+            "label": rt.label,
+            "table": rt.table,
+            "note": rt.note,
+            "required": list(rt.required),
+        }
         for rt in RECORD_TYPES.values()
     ]
 
@@ -526,16 +995,16 @@ def record_type_catalogue() -> list[dict]:
 def field_catalogue(record_type: str) -> list[dict]:
     """Serialisable target-field catalogue for one record type."""
     rt = _record_type(record_type)
-    return [{"name": f.name, "label": f.label, "required": f.required,
-             "kind": f.kind, "note": f.note} for f in rt.fields]
+    return [
+        {"name": f.name, "label": f.label, "required": f.required, "kind": f.kind, "note": f.note}
+        for f in rt.fields
+    ]
 
 
 def _record_type(name: str) -> RecordType:
     rt = RECORD_TYPES.get((name or "").strip())
     if rt is None:
-        raise ValueError(
-            f"Unknown record type {name!r}. Expected one of: {sorted(RECORD_TYPES)}."
-        )
+        raise ValueError(f"Unknown record type {name!r}. Expected one of: {sorted(RECORD_TYPES)}.")
     return rt
 
 
@@ -546,45 +1015,102 @@ def _record_type(name: str) -> RecordType:
 # Honorifics an Indian HIS routinely stores inside the name field. Detected and
 # REPORTED, never stripped: the name is a bedside identity check and rewriting
 # it is not this module's call.
-_HONORIFICS = {"mr", "mrs", "ms", "miss", "dr", "shri", "smt", "sri", "kum",
-               "master", "baby", "b o", "prof", "late"}
+_HONORIFICS = {
+    "mr",
+    "mrs",
+    "ms",
+    "miss",
+    "dr",
+    "shri",
+    "smt",
+    "sri",
+    "kum",
+    "master",
+    "baby",
+    "b o",
+    "prof",
+    "late",
+}
 
 _DIAGNOSIS_STATUS = {"active", "resolved", "inactive"}
 _DIAGNOSIS_SYNONYMS = {
-    "active": "active", "current": "active", "ongoing": "active", "open": "active",
-    "chronic": "active", "confirmed": "active",
-    "resolved": "resolved", "cured": "resolved", "closed": "resolved",
-    "recovered": "resolved", "healed": "resolved",
-    "inactive": "inactive", "past": "inactive", "historical": "inactive",
-    "history of": "inactive", "h o": "inactive", "old": "inactive",
+    "active": "active",
+    "current": "active",
+    "ongoing": "active",
+    "open": "active",
+    "chronic": "active",
+    "confirmed": "active",
+    "resolved": "resolved",
+    "cured": "resolved",
+    "closed": "resolved",
+    "recovered": "resolved",
+    "healed": "resolved",
+    "inactive": "inactive",
+    "past": "inactive",
+    "historical": "inactive",
+    "history of": "inactive",
+    "h o": "inactive",
+    "old": "inactive",
 }
 
 _MED_STATUS = {"active", "discontinued", "prn"}
 _MED_SYNONYMS = {
-    "active": "active", "ongoing": "active", "continuing": "active",
-    "current": "active", "running": "active",
-    "discontinued": "discontinued", "stopped": "discontinued",
-    "completed": "discontinued", "ceased": "discontinued", "dc": "discontinued",
-    "d c": "discontinued", "cancelled": "discontinued", "held": "discontinued",
-    "finished": "discontinued", "closed": "discontinued", "inactive": "discontinued",
-    "prn": "prn", "sos": "prn", "as required": "prn", "as needed": "prn",
+    "active": "active",
+    "ongoing": "active",
+    "continuing": "active",
+    "current": "active",
+    "running": "active",
+    "discontinued": "discontinued",
+    "stopped": "discontinued",
+    "completed": "discontinued",
+    "ceased": "discontinued",
+    "dc": "discontinued",
+    "d c": "discontinued",
+    "cancelled": "discontinued",
+    "held": "discontinued",
+    "finished": "discontinued",
+    "closed": "discontinued",
+    "inactive": "discontinued",
+    "prn": "prn",
+    "sos": "prn",
+    "as required": "prn",
+    "as needed": "prn",
     "when required": "prn",
 }
 
 _RESULT_STATUS = {"final", "preliminary", "corrected"}
 _RESULT_SYNONYMS = {
-    "final": "final", "f": "final", "complete": "final", "completed": "final",
-    "authorised": "final", "authorized": "final", "verified": "final",
-    "preliminary": "preliminary", "prelim": "preliminary", "p": "preliminary",
-    "partial": "preliminary", "pending": "preliminary",
-    "corrected": "corrected", "c": "corrected", "amended": "corrected",
+    "final": "final",
+    "f": "final",
+    "complete": "final",
+    "completed": "final",
+    "authorised": "final",
+    "authorized": "final",
+    "verified": "final",
+    "preliminary": "preliminary",
+    "prelim": "preliminary",
+    "p": "preliminary",
+    "partial": "preliminary",
+    "pending": "preliminary",
+    "corrected": "corrected",
+    "c": "corrected",
+    "amended": "corrected",
     "revised": "corrected",
 }
 
 # Encounter statuses that mean "this patient has NOT left" — out of contract for
 # a history import.
-_OPEN_ENCOUNTER_TOKENS = {"active", "open", "admitted", "inpatient", "ip",
-                          "current", "ongoing", "in progress", "occupied"}
+_OPEN_ENCOUNTER_TOKENS = {
+    "active",
+    "open",
+    "admitted",
+    "inpatient",
+    "ip",
+    "current",
+    "ongoing",
+    "in progress",
+    "occupied",
+}
 
 
 def _check_name(value: str, line: int) -> list[Issue]:
@@ -592,23 +1118,42 @@ def _check_name(value: str, line: int) -> list[Issue]:
     issues: list[Issue] = []
     first = re.split(r"[\s.]+", value.strip().lower())[0] if value.strip() else ""
     if first and first.rstrip(".") in _HONORIFICS:
-        issues.append(Issue(
-            line, "honorific_in_name", "warning",
-            f"name '{value}' begins with the honorific '{first}'. Imported VERBATIM: "
-            f"Orb will not edit a name, because the name is what a bedside identity "
-            f"check reads. Clean it in the export if the honorific is not wanted.",
-            "name", value))
+        issues.append(
+            Issue(
+                line,
+                "honorific_in_name",
+                "warning",
+                f"name '{value}' begins with the honorific '{first}'. Imported VERBATIM: "
+                f"Orb will not edit a name, because the name is what a bedside identity "
+                f"check reads. Clean it in the export if the honorific is not wanted.",
+                "name",
+                value,
+            )
+        )
     if not re.search(r"[A-Za-zऀ-ॿ]", value):
-        issues.append(Issue(
-            line, "name_without_letters", "warning",
-            f"name '{value}' contains no letters, imported verbatim; confirm it against "
-            f"the old system.", "name", value))
+        issues.append(
+            Issue(
+                line,
+                "name_without_letters",
+                "warning",
+                f"name '{value}' contains no letters, imported verbatim; confirm it against "
+                f"the old system.",
+                "name",
+                value,
+            )
+        )
     return issues
 
 
-def _parse_enum(value: str, line: int, fname: str, valid: set[str],
-                synonyms: dict[str, str], fallback: str,
-                fallback_code: str) -> tuple[str | None, list[Issue]]:
+def _parse_enum(
+    value: str,
+    line: int,
+    fname: str,
+    valid: set[str],
+    synonyms: dict[str, str],
+    fallback: str,
+    fallback_code: str,
+) -> tuple[str | None, list[Issue]]:
     """Normalise one coded value. An unrecognised token is REPORTED, and the
     caller's safe fallback is used with the reason named."""
     if not value:
@@ -618,19 +1163,25 @@ def _parse_enum(value: str, line: int, fname: str, valid: set[str],
         return key, []
     if key in synonyms:
         return synonyms[key], []
-    return None, [Issue(
-        line, fallback_code, "warning",
-        f"{fname} '{value}' was not recognised, so it was filed as '{fallback}', the "
-        f"safe reading. Check this row against the old system.", fname, value)]
+    return None, [
+        Issue(
+            line,
+            fallback_code,
+            "warning",
+            f"{fname} '{value}' was not recognised, so it was filed as '{fallback}', the "
+            f"safe reading. Check this row against the old system.",
+            fname,
+            value,
+        )
+    ]
 
 
-_TIME_RE = re.compile(
-    r"[ T](\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])?\s*$"
-)
+_TIME_RE = re.compile(r"[ T](\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])?\s*$")
 
 
-def _parse_instant(value: str, fname: str, line: int,
-                   date_order: str) -> tuple[str | None, list[Issue]]:
+def _parse_instant(
+    value: str, fname: str, line: int, date_order: str
+) -> tuple[str | None, list[Issue]]:
     """Parse a legacy date (optionally with a clock time) into UTC ISO-8601.
 
     The hospital is in India and the columns Orb writes are UTC, so a bare date
@@ -663,7 +1214,7 @@ def _parse_instant(value: str, fname: str, line: int,
         return None, issues
     d = date.fromisoformat(iso_date)
     stamp = datetime(d.year, d.month, d.day, hour, minute, second, tzinfo=IST)
-    return stamp.astimezone(timezone.utc).isoformat(), issues
+    return stamp.astimezone(UTC).isoformat(), issues
 
 
 def _parse_result_value(raw: str, line: int) -> tuple[str | None, float | None, list[Issue]]:
@@ -682,17 +1233,28 @@ def _parse_result_value(raw: str, line: int) -> tuple[str | None, float | None, 
         return text, float(text.replace(",", "")), []
     except (TypeError, ValueError):
         pass
-    return text, None, [Issue(
-        line, "non_numeric_value", "warning",
-        f"result value '{text}' is not a plain number, so it was stored as TEXT with no "
-        f"numeric value. Orb will not convert it, '<0.01' is not 0.01 and 'NEGATIVE' is "
-        f"not 0, so this result will not appear on numeric trends.",
-        "value", text)]
+    return (
+        text,
+        None,
+        [
+            Issue(
+                line,
+                "non_numeric_value",
+                "warning",
+                f"result value '{text}' is not a plain number, so it was stored as TEXT with no "
+                f"numeric value. Orb will not convert it, '<0.01' is not 0.01 and 'NEGATIVE' is "
+                f"not 0, so this result will not appear on numeric trends.",
+                "value",
+                text,
+            )
+        ],
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════
 #  Source — bytes or a path on disk, always streamed
 # ══════════════════════════════════════════════════════════════════════════
+
 
 class _Source:
     """An uploaded export, readable as text more than once without buffering it.
@@ -774,11 +1336,19 @@ def _detect_encoding(head: bytes) -> tuple[str, list[Issue]]:
     (what a Windows-era Indian HIS actually emits), then latin-1, which cannot
     fail and so is the terminal fallback.
     """
-    if head[:2] in (b"\xff\xfe", b"\xfe\xff") or head[:4] in (b"\xff\xfe\x00\x00",
-                                                              b"\x00\x00\xfe\xff"):
-        return "utf-16", [Issue(None, "non_utf8_encoding", "warning",
-                                "File is UTF-16 (it carries a byte-order mark). Check that "
-                                "non-Latin names came through correctly.")]
+    if head[:2] in (b"\xff\xfe", b"\xfe\xff") or head[:4] in (
+        b"\xff\xfe\x00\x00",
+        b"\x00\x00\xfe\xff",
+    ):
+        return "utf-16", [
+            Issue(
+                None,
+                "non_utf8_encoding",
+                "warning",
+                "File is UTF-16 (it carries a byte-order mark). Check that "
+                "non-Latin names came through correctly.",
+            )
+        ]
 
     try:
         head.decode("utf-8-sig")
@@ -794,19 +1364,32 @@ def _detect_encoding(head: bytes) -> tuple[str, list[Issue]]:
             head.decode(encoding)
         except (UnicodeDecodeError, UnicodeError):
             continue
-        return encoding, [Issue(None, "non_utf8_encoding", "warning",
-                                f"File is not UTF-8; decoded as {encoding}. Check that "
-                                f"non-Latin names came through correctly, an export in the "
-                                f"wrong encoding is how a patient's name arrives mangled.")]
+        return encoding, [
+            Issue(
+                None,
+                "non_utf8_encoding",
+                "warning",
+                f"File is not UTF-8; decoded as {encoding}. Check that "
+                f"non-Latin names came through correctly, an export in the "
+                f"wrong encoding is how a patient's name arrives mangled.",
+            )
+        ]
 
-    return "latin-1", [Issue(None, "undecodable_bytes", "warning",
-                             "File contained bytes that are not valid in any tried encoding; "
-                             "they were replaced. Names may be corrupted.")]
+    return "latin-1", [
+        Issue(
+            None,
+            "undecodable_bytes",
+            "warning",
+            "File contained bytes that are not valid in any tried encoding; "
+            "they were replaced. Names may be corrupted.",
+        )
+    ]
 
 
 # ══════════════════════════════════════════════════════════════════════════
 #  Header detection + mapping suggestion (per record type)
 # ══════════════════════════════════════════════════════════════════════════
+
 
 def suggest_mapping(headers: Iterable[str], record_type: str) -> dict[str, str]:
     """Suggest ``{orb_field: csv_header}`` from header synonyms.
@@ -828,8 +1411,10 @@ def suggest_mapping(headers: Iterable[str], record_type: str) -> dict[str, str]:
             for original, norm in normalised:
                 if original in taken or not norm:
                     continue
-                hit = (norm in f.synonyms) if exact_pass else any(
-                    s in norm or norm in s for s in f.synonyms if len(s) > 3
+                hit = (
+                    (norm in f.synonyms)
+                    if exact_pass
+                    else any(s in norm or norm in s for s in f.synonyms if len(s) > 3)
                 )
                 if hit:
                     mapping[f.name] = original
@@ -853,13 +1438,21 @@ def _exact_header_hits(fields: Iterable[str], rt: RecordType) -> tuple[str, ...]
     return tuple(hits)
 
 
+class _HeaderCandidate(TypedDict):
+    line: int
+    text: str
+    fields: NotRequired[list[str]]
+    recognised_columns: NotRequired[list[str]]
+    possible_columns: NotRequired[list[str]]
+
+
 @dataclass
 class _HeaderLocation:
-    index: int                  # 0-based physical line index
+    index: int  # 0-based physical line index
     fields: list[str]
     delimiter: str
     confident: bool
-    candidates: list[dict]
+    candidates: list[_HeaderCandidate]
     issues: list[Issue]
 
 
@@ -867,8 +1460,7 @@ def _split(line: str, delimiter: str) -> list[str]:
     return [p.strip() for p in next(csv.reader(io.StringIO(line), delimiter=delimiter), [])]
 
 
-def _locate_header(source: _Source, rt: RecordType,
-                   header_line: int | None) -> _HeaderLocation:
+def _locate_header(source: _Source, rt: RecordType, header_line: int | None) -> _HeaderLocation:
     """Find the column-header row, skipping a junk preamble.
 
     Getting this wrong is not cosmetic: read a report title as the header and
@@ -899,16 +1491,21 @@ def _locate_header(source: _Source, rt: RecordType,
                 f"delimiter '{delimiter}'. That cannot be a header row."
             )
         if not _exact_header_hits(fields, rt) and not suggest_mapping(fields, rt.name):
-            issues.append(Issue(
-                header_line, "header_line_unrecognised", "warning",
-                f"Line {header_line} was used as the header on your instruction, but none of "
-                f"its {named} column name(s) match anything Orb recognises for "
-                f"'{rt.name}': check the mapping column by column before committing."))
+            issues.append(
+                Issue(
+                    header_line,
+                    "header_line_unrecognised",
+                    "warning",
+                    f"Line {header_line} was used as the header on your instruction, but none of "
+                    f"its {named} column name(s) match anything Orb recognises for "
+                    f"'{rt.name}': check the mapping column by column before committing.",
+                )
+            )
         if idx > 0:
             issues.append(_preamble_issue(idx))
         return _HeaderLocation(idx, fields, delimiter, True, [], issues)
 
-    candidates: list[dict] = []
+    candidates: list[_HeaderCandidate] = []
     chosen: int | None = None
     for i, line in enumerate(lines):
         if not line.strip():
@@ -918,43 +1515,67 @@ def _locate_header(source: _Source, rt: RecordType,
             continue
         hits = _exact_header_hits(fields, rt)
         loose = tuple(suggest_mapping(fields, rt.name))
-        candidates.append({"line": i + 1, "text": line[:200], "fields": fields,
-                           "recognised_columns": list(hits),
-                           "possible_columns": list(loose)})
+        candidates.append(
+            {
+                "line": i + 1,
+                "text": line[:200],
+                "fields": fields,
+                "recognised_columns": list(hits),
+                "possible_columns": list(loose),
+            }
+        )
         if chosen is None and len(set(hits)) >= _MIN_HEADER_HITS:
             chosen = i
 
     if chosen is not None:
         if chosen > 0:
             issues.append(_preamble_issue(chosen))
-        return _HeaderLocation(chosen, _split(lines[chosen], delimiter), delimiter,
-                               True, candidates[:5], issues)
+        return _HeaderLocation(
+            chosen, _split(lines[chosen], delimiter), delimiter, True, candidates[:5], issues
+        )
 
-    best = candidates[0] if candidates else {"line": 1, "text": lines[0][:200]}
-    issues.append(Issue(
-        best["line"], "header_ambiguous", "error",
-        f"No line in this file clearly looks like a column-header row for record type "
-        f"'{rt.name}': a header is expected to name at least {_MIN_HEADER_HITS} columns Orb "
-        f"recognises. Reading the wrong line as the header shifts EVERY column into the "
-        f"wrong field, so Orb will not guess. Best candidate is line {best['line']}: "
-        f"{best['text']!r}. Re-run with header_line set to the 1-based line number that "
-        f"holds the column names."))
-    return _HeaderLocation(best["line"] - 1, _split(lines[best["line"] - 1], delimiter),
-                           delimiter, False, candidates[:5], issues)
+    best: _HeaderCandidate = candidates[0] if candidates else {"line": 1, "text": lines[0][:200]}
+    issues.append(
+        Issue(
+            best["line"],
+            "header_ambiguous",
+            "error",
+            f"No line in this file clearly looks like a column-header row for record type "
+            f"'{rt.name}': a header is expected to name at least {_MIN_HEADER_HITS} columns Orb "
+            f"recognises. Reading the wrong line as the header shifts EVERY column into the "
+            f"wrong field, so Orb will not guess. Best candidate is line {best['line']}: "
+            f"{best['text']!r}. Re-run with header_line set to the 1-based line number that "
+            f"holds the column names.",
+        )
+    )
+    return _HeaderLocation(
+        best["line"] - 1,
+        _split(lines[best["line"] - 1], delimiter),
+        delimiter,
+        False,
+        candidates[:5],
+        issues,
+    )
 
 
 def _preamble_issue(header_index: int) -> Issue:
-    return Issue(header_index, "preamble_skipped", "warning",
-                 f"{header_index} line(s) before the header row were ignored "
-                 f"(they did not look like column headers).")
+    return Issue(
+        header_index,
+        "preamble_skipped",
+        "warning",
+        f"{header_index} line(s) before the header row were ignored "
+        f"(they did not look like column headers).",
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════
 #  Row streaming
 # ══════════════════════════════════════════════════════════════════════════
 
-def _iter_rows(source: _Source, header: _HeaderLocation
-               ) -> Iterator[tuple[int, dict, Issue | None, str]]:
+
+def _iter_rows(
+    source: _Source, header: _HeaderLocation
+) -> Iterator[tuple[int, dict, Issue | None, str]]:
     """Stream data rows as (physical_line, {header: value}, rejection, raw_text).
 
     Generator, deliberately: this is what keeps peak memory at one row rather
@@ -985,24 +1606,32 @@ def _iter_rows(source: _Source, header: _HeaderLocation
     emitted = 0
 
     with source.open_text() as fh:
-        for _ in range(header.index + 1):        # skip preamble + the header line
+        for _ in range(header.index + 1):  # skip preamble + the header line
             if fh.readline() == "":
                 return
         reader = csv.reader(fh, delimiter=delimiter)
-        base = header.index + 1                  # physical lines already consumed
+        base = header.index + 1  # physical lines already consumed
         consumed = 0
         for parts in reader:
-            line_no = base + consumed + 1        # FIRST physical line of this record
+            line_no = base + consumed + 1  # FIRST physical line of this record
             consumed = reader.line_num
             if not any(p.strip() for p in parts):
                 yield line_no, {}, None, ""
                 continue
             if emitted >= MAX_ROWS:
-                yield line_no, {}, Issue(
-                    line_no, "row_limit", "error",
-                    f"File exceeds the {MAX_ROWS}-row limit; rows from line {line_no} onward "
-                    f"were NOT read. Split the export (by year, say) and re-run, the import "
-                    f"is idempotent, so the files can be loaded in any order."), ""
+                yield (
+                    line_no,
+                    {},
+                    Issue(
+                        line_no,
+                        "row_limit",
+                        "error",
+                        f"File exceeds the {MAX_ROWS}-row limit; rows from line {line_no} onward "
+                        f"were NOT read. Split the export (by year, say) and re-run, the import "
+                        f"is idempotent, so the files can be loaded in any order.",
+                    ),
+                    "",
+                )
                 return
 
             raw_text = delimiter.join(parts)[:500]
@@ -1011,14 +1640,17 @@ def _iter_rows(source: _Source, header: _HeaderLocation
                 surplus = [p.strip() for p in parts[width:] if p.strip()]
                 if surplus:
                     rejection = Issue(
-                        line_no, "field_count_mismatch", "error",
+                        line_no,
+                        "field_count_mismatch",
+                        "error",
                         f"Row has {len(parts)} fields but the header has {width}, and the "
                         f"surplus value(s) {surplus[:3]} are not empty, so Orb cannot tell "
                         f"which column each value belongs to. The usual cause is an unquoted "
                         f"'{delimiter}' inside a field (an address such as '12 Nehru Street, "
                         f"New Delhi'), which shifts every later column one place. The row was "
                         f"NOT imported. Re-export with fields quoted, or fix this row.",
-                        value=raw_text)
+                        value=raw_text,
+                    )
             row = {headers[i]: (parts[i] if i < len(parts) else "") for i in range(width)}
             emitted += 1
             yield line_no, row, rejection, raw_text
@@ -1028,13 +1660,14 @@ def _iter_rows(source: _Source, header: _HeaderLocation
 #  Accumulator — exact counts, capped detail
 # ══════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class _PlannedRow:
     line: int
     external_id: str | None = None
     external_patient_id: str | None = None
     mrn: str | None = None
-    action: str = "pending"                       # create | update | unchanged | fail
+    action: str = "pending"  # create | update | unchanged | fail
     reason: str = ""
     patient_id: str | None = None
     target_id: str | None = None
@@ -1043,20 +1676,28 @@ class _PlannedRow:
     issues: list[Issue] = field(default_factory=list)
     raw_text: str = ""
 
-    def fail(self, code: str, message: str, field_name: str | None = None,
-             value: str | None = None) -> "_PlannedRow":
+    def fail(
+        self, code: str, message: str, field_name: str | None = None, value: str | None = None
+    ) -> _PlannedRow:
         self.action = "fail"
         self.reason = code
         self.issues.append(Issue(self.line, code, "error", message, field_name, value))
         return self
 
     def to_dict(self) -> dict:
-        return {"line": self.line, "external_id": self.external_id,
-                "external_patient_id": self.external_patient_id, "mrn": self.mrn,
-                "action": self.action, "reason": self.reason,
-                "patient_id": self.patient_id, "target_id": self.target_id,
-                "values": self.values, "changes": self.changes,
-                "issues": [i.to_dict() for i in self.issues]}
+        return {
+            "line": self.line,
+            "external_id": self.external_id,
+            "external_patient_id": self.external_patient_id,
+            "mrn": self.mrn,
+            "action": self.action,
+            "reason": self.reason,
+            "patient_id": self.patient_id,
+            "target_id": self.target_id,
+            "values": self.values,
+            "changes": self.changes,
+            "issues": [i.to_dict() for i in self.issues],
+        }
 
 
 class _Report:
@@ -1065,8 +1706,14 @@ class _Report:
     def __init__(self, detail_limit: int, reject_limit: int):
         self.detail_limit = max(0, int(detail_limit))
         self.reject_limit = max(0, int(reject_limit))
-        self.counts = {"total_rows": 0, "create": 0, "update": 0,
-                       "unchanged": 0, "failed": 0, "warnings": 0}
+        self.counts = {
+            "total_rows": 0,
+            "create": 0,
+            "update": 0,
+            "unchanged": 0,
+            "failed": 0,
+            "warnings": 0,
+        }
         self.issue_summary: dict[str, int] = {}
         self.rows: list[dict] = []
         self.failures: list[dict] = []
@@ -1107,6 +1754,7 @@ class _Report:
 #  Row normalisation, per record type
 # ══════════════════════════════════════════════════════════════════════════
 
+
 class _Cells:
     """Accessor for one CSV row's mapped values.
 
@@ -1146,8 +1794,9 @@ class _Cells:
         return "" if text.lower() in _NULL_TOKENS else text
 
 
-def _normalise(raw: dict, mapping: dict[str, str], rt: RecordType, line: int,
-               date_order: str) -> _PlannedRow:
+def _normalise(
+    raw: dict, mapping: dict[str, str], rt: RecordType, line: int, date_order: str
+) -> _PlannedRow:
     """CSV row → normalised Orb values + issues. Touches no database."""
     pr = _PlannedRow(line)
     cell = _Cells(raw, mapping)
@@ -1161,7 +1810,9 @@ def _normalise(raw: dict, mapping: dict[str, str], rt: RecordType, line: int,
             "missing_external_id",
             "Row has no id from the old system, so it can neither be matched on a re-run "
             "nor traced back to its source record. It was NOT imported.",
-            "external_id", str(raw.get(mapping.get("external_id", "")) or ""))
+            "external_id",
+            str(raw.get(mapping.get("external_id", "")) or ""),
+        )
 
     handler = _NORMALISERS[rt.name]
     handler(pr, cell, line, date_order)
@@ -1170,28 +1821,40 @@ def _normalise(raw: dict, mapping: dict[str, str], rt: RecordType, line: int,
 
 def _n_patients(pr: _PlannedRow, cell, line: int, date_order: str) -> None:
     if not pr.mrn:
-        pr.fail("missing_mrn",
-                "Row has no MRN. Orb finds patients by hospital number, so a patient "
-                "imported without one could never be looked up at the bedside. Orb will not "
-                "invent an identifier. The row was NOT imported.", "mrn", "")
+        pr.fail(
+            "missing_mrn",
+            "Row has no MRN. Orb finds patients by hospital number, so a patient "
+            "imported without one could never be looked up at the bedside. Orb will not "
+            "invent an identifier. The row was NOT imported.",
+            "mrn",
+            "",
+        )
         return
     name = cell("name")
     if not name:
-        pr.fail("missing_name",
-                f"Row for MRN '{pr.mrn}' has no patient name, not imported (a bedside "
-                f"identity check needs a name).", "name", "")
+        pr.fail(
+            "missing_name",
+            f"Row for MRN '{pr.mrn}' has no patient name, not imported (a bedside "
+            f"identity check needs a name).",
+            "name",
+            "",
+        )
         return
 
     # THE registration name rule (services/patient_name_rule.py), applied at
     # import exactly as at the admit desk: fewer than two letters is not a
     # name, so the row is recorded as rejected and not written.
     from services.patient_name_rule import MIN_NAME_LETTERS, name_is_too_short
+
     if name_is_too_short(name):
-        pr.fail("name_too_short",
-                f"Row for MRN '{pr.mrn}' has the name '{name}', which has fewer than "
-                f"{MIN_NAME_LETTERS} letters and cannot identify a patient at the "
-                f"bedside, not imported. Correct it in the export and re-run.",
-                "name", name)
+        pr.fail(
+            "name_too_short",
+            f"Row for MRN '{pr.mrn}' has the name '{name}', which has fewer than "
+            f"{MIN_NAME_LETTERS} letters and cannot identify a patient at the "
+            f"bedside, not imported. Correct it in the export and re-run.",
+            "name",
+            name,
+        )
         return
 
     pr.values["name"] = name
@@ -1233,17 +1896,24 @@ def _n_patients(pr: _PlannedRow, cell, line: int, date_order: str) -> None:
 def _n_admissions(pr: _PlannedRow, cell, line: int, date_order: str) -> None:
     admitted_raw = cell("admitted_at")
     if not admitted_raw:
-        pr.fail("missing_admission_date",
-                "Past admission has no admission date. An encounter with no start cannot be "
-                "placed on a timeline, so it was NOT imported.", "admitted_at", "")
+        pr.fail(
+            "missing_admission_date",
+            "Past admission has no admission date. An encounter with no start cannot be "
+            "placed on a timeline, so it was NOT imported.",
+            "admitted_at",
+            "",
+        )
         return
     admitted, issues = _parse_instant(admitted_raw, "admitted_at", line, date_order)
     pr.issues.extend(issues)
     if not admitted:
-        pr.fail("unparseable_admission_date",
-                f"Admission date '{admitted_raw}' could not be read as a date, and an "
-                f"encounter with no start cannot be placed on a timeline. NOT imported.",
-                "admitted_at", admitted_raw)
+        pr.fail(
+            "unparseable_admission_date",
+            f"Admission date '{admitted_raw}' could not be read as a date, and an "
+            f"encounter with no start cannot be placed on a timeline. NOT imported.",
+            "admitted_at",
+            admitted_raw,
+        )
         return
     pr.values["created_at"] = admitted
 
@@ -1253,19 +1923,29 @@ def _n_admissions(pr: _PlannedRow, cell, line: int, date_order: str) -> None:
         pr.issues.extend(issues)
         if discharged:
             if discharged < admitted:
-                pr.issues.append(Issue(
-                    line, "discharge_before_admission", "warning",
-                    f"discharge date '{disch_raw}' is BEFORE the admission date "
-                    f"'{admitted_raw}'. Both imported as given: Orb will not reorder a "
-                    f"clinical timeline, but length of stay for this encounter is wrong.",
-                    "discharged_at", disch_raw))
+                pr.issues.append(
+                    Issue(
+                        line,
+                        "discharge_before_admission",
+                        "warning",
+                        f"discharge date '{disch_raw}' is BEFORE the admission date "
+                        f"'{admitted_raw}'. Both imported as given: Orb will not reorder a "
+                        f"clinical timeline, but length of stay for this encounter is wrong.",
+                        "discharged_at",
+                        disch_raw,
+                    )
+                )
             pr.values["discharged_at"] = discharged
 
-    for fname, column in (("department", "department"), ("ward", "ward"), ("bed", "bed"),
-                          ("admission_type", "admission_type"),
-                          ("chief_complaint", "chief_complaint"),
-                          ("diagnosis", "initial_diagnosis"),
-                          ("attending_doctor_id", "attending_doctor_id")):
+    for fname, column in (
+        ("department", "department"),
+        ("ward", "ward"),
+        ("bed", "bed"),
+        ("admission_type", "admission_type"),
+        ("chief_complaint", "chief_complaint"),
+        ("diagnosis", "initial_diagnosis"),
+        ("attending_doctor_id", "attending_doctor_id"),
+    ):
         value = cell(fname)
         if value:
             pr.values[column] = value
@@ -1279,22 +1959,35 @@ def _n_admissions(pr: _PlannedRow, cell, line: int, date_order: str) -> None:
     token = re.sub(r"[^a-z0-9]+", " ", status_raw.lower()).strip()
     if token in _OPEN_ENCOUNTER_TOKENS:
         # Out of contract — see rule 1. Imported CLOSED and surfaced.
-        pr.issues.append(Issue(
-            line, "admission_open_in_source", "warning",
-            f"The export says this encounter is still open ('{status_raw}'), but a history "
-            f"import files CLOSED encounters, so it was imported as discharged and listed "
-            f"under 'still_open_in_source'. If this patient is genuinely on the ward today, "
-            f"put them there with the ROSTER import, which has the ward, bed and department "
-            f"discipline that a live admission needs.", "status", status_raw))
-    pr.values["status"] = "transferred" if token in ("transferred", "referred out") else "discharged"
+        pr.issues.append(
+            Issue(
+                line,
+                "admission_open_in_source",
+                "warning",
+                f"The export says this encounter is still open ('{status_raw}'), but a history "
+                f"import files CLOSED encounters, so it was imported as discharged and listed "
+                f"under 'still_open_in_source'. If this patient is genuinely on the ward today, "
+                f"put them there with the ROSTER import, which has the ward, bed and department "
+                f"discipline that a live admission needs.",
+                "status",
+                status_raw,
+            )
+        )
+    pr.values["status"] = (
+        "transferred" if token in ("transferred", "referred out") else "discharged"
+    )
 
 
 def _n_diagnoses(pr: _PlannedRow, cell, line: int, date_order: str) -> None:
     problem = cell("problem")
     if not problem:
-        pr.fail("missing_problem",
-                "Diagnosis row has no diagnosis text. There is nothing clinical to record, "
-                "so it was NOT imported.", "problem", "")
+        pr.fail(
+            "missing_problem",
+            "Diagnosis row has no diagnosis text. There is nothing clinical to record, "
+            "so it was NOT imported.",
+            "problem",
+            "",
+        )
         return
     pr.values["problem"] = problem
     for fname in ("icd10_code", "snomed_code"):
@@ -1312,28 +2005,45 @@ def _n_diagnoses(pr: _PlannedRow, cell, line: int, date_order: str) -> None:
 
     status_raw = cell("status")
     if status_raw:
-        status, issues = _parse_enum(status_raw, line, "status", _DIAGNOSIS_STATUS,
-                                     _DIAGNOSIS_SYNONYMS, "inactive",
-                                     "unrecognised_diagnosis_status")
+        status, issues = _parse_enum(
+            status_raw,
+            line,
+            "status",
+            _DIAGNOSIS_STATUS,
+            _DIAGNOSIS_SYNONYMS,
+            "inactive",
+            "unrecognised_diagnosis_status",
+        )
         pr.issues.extend(issues)
         pr.values["status"] = status or "inactive"
     else:
         # See rule 1: problem_list defaults to 'active', which would assert this
         # old diagnosis as a CURRENT problem the export never claimed.
         pr.values["status"] = "inactive"
-        pr.issues.append(Issue(
-            line, "diagnosis_status_defaulted", "warning",
-            "The export carries no status column, so this diagnosis was filed INACTIVE "
-            "rather than asserted as an active problem. Map a status column to import the "
-            "old system's own answer.", "status", None))
+        pr.issues.append(
+            Issue(
+                line,
+                "diagnosis_status_defaulted",
+                "warning",
+                "The export carries no status column, so this diagnosis was filed INACTIVE "
+                "rather than asserted as an active problem. Map a status column to import the "
+                "old system's own answer.",
+                "status",
+                None,
+            )
+        )
 
 
 def _n_medications(pr: _PlannedRow, cell, line: int, date_order: str) -> None:
     drug = cell("drug_name")
     if not drug:
-        pr.fail("missing_drug_name",
-                "Medication row has no drug name. There is nothing clinical to record, so "
-                "it was NOT imported.", "drug_name", "")
+        pr.fail(
+            "missing_drug_name",
+            "Medication row has no drug name. There is nothing clinical to record, so "
+            "it was NOT imported.",
+            "drug_name",
+            "",
+        )
         return
     pr.values["drug_name"] = drug
 
@@ -1349,12 +2059,19 @@ def _n_medications(pr: _PlannedRow, cell, line: int, date_order: str) -> None:
             pr.values[fname] = UNKNOWN_VALUE
             missing.append(fname)
     if missing:
-        pr.issues.append(Issue(
-            line, "missing_clinical_value", "warning",
-            f"The export gave no {', '.join(missing)} for '{drug}', so {'it was' if len(missing) == 1 else 'they were'} "
-            f"recorded as '{UNKNOWN_VALUE}'. Orb will not invent a dose, a route or a "
-            f"schedule; the row is kept because the fact that the patient was exposed to "
-            f"this drug is itself clinically important.", missing[0], None))
+        pr.issues.append(
+            Issue(
+                line,
+                "missing_clinical_value",
+                "warning",
+                f"The export gave no {', '.join(missing)} for '{drug}', so {'it was' if len(missing) == 1 else 'they were'} "
+                f"recorded as '{UNKNOWN_VALUE}'. Orb will not invent a dose, a route or a "
+                f"schedule; the row is kept because the fact that the patient was exposed to "
+                f"this drug is itself clinically important.",
+                missing[0],
+                None,
+            )
+        )
 
     notes = cell.block("notes")
     if notes:
@@ -1369,29 +2086,46 @@ def _n_medications(pr: _PlannedRow, cell, line: int, date_order: str) -> None:
 
     status_raw = cell("status")
     if status_raw:
-        status, issues = _parse_enum(status_raw, line, "status", _MED_STATUS,
-                                     _MED_SYNONYMS, "discontinued",
-                                     "unrecognised_medication_status")
+        status, issues = _parse_enum(
+            status_raw,
+            line,
+            "status",
+            _MED_STATUS,
+            _MED_SYNONYMS,
+            "discontinued",
+            "unrecognised_medication_status",
+        )
         pr.issues.extend(issues)
         pr.values["status"] = status or "discontinued"
     else:
         # See rule 1. 'active' is read by drug_safety_service's live interaction
         # check, by Sage and by the discharge summary.
         pr.values["status"] = "discontinued"
-        pr.issues.append(Issue(
-            line, "medication_status_defaulted", "warning",
-            "The export carries no status column, so this drug was filed DISCONTINUED "
-            "rather than added to the patient's CURRENT medication list, where it would be "
-            "screened for interactions and handed over as if it were still prescribed. Map "
-            "a status column to import the old system's own answer.", "status", None))
+        pr.issues.append(
+            Issue(
+                line,
+                "medication_status_defaulted",
+                "warning",
+                "The export carries no status column, so this drug was filed DISCONTINUED "
+                "rather than added to the patient's CURRENT medication list, where it would be "
+                "screened for interactions and handed over as if it were still prescribed. Map "
+                "a status column to import the old system's own answer.",
+                "status",
+                None,
+            )
+        )
 
 
 def _n_results(pr: _PlannedRow, cell, line: int, date_order: str) -> None:
     name = cell("observation_name")
     if not name:
-        pr.fail("missing_observation_name",
-                "Result row has no test name. A value with no test is uninterpretable, so "
-                "it was NOT imported.", "observation_name", "")
+        pr.fail(
+            "missing_observation_name",
+            "Result row has no test name. A value with no test is uninterpretable, so "
+            "it was NOT imported.",
+            "observation_name",
+            "",
+        )
         return
     pr.values["observation_name"] = name
 
@@ -1402,16 +2136,26 @@ def _n_results(pr: _PlannedRow, cell, line: int, date_order: str) -> None:
     if numeric is not None:
         pr.values["value_numeric"] = numeric
     if text is None:
-        pr.issues.append(Issue(
-            line, "result_without_value", "warning",
-            f"Result '{name}' has no value. Imported as a record that the test was done, "
-            f"with no result. Orb will not fabricate one.", "value", None))
+        pr.issues.append(
+            Issue(
+                line,
+                "result_without_value",
+                "warning",
+                f"Result '{name}' has no value. Imported as a record that the test was done, "
+                f"with no result. Orb will not fabricate one.",
+                "value",
+                None,
+            )
+        )
 
-    for fname, column in (("unit", "unit"), ("reference_range", "reference_range"),
-                          ("abnormal_flag", "abnormal_flag"),
-                          ("observation_code", "observation_code"),
-                          ("observation_code_system", "observation_code_system"),
-                          ("panel_name", "panel_name")):
+    for fname, column in (
+        ("unit", "unit"),
+        ("reference_range", "reference_range"),
+        ("abnormal_flag", "abnormal_flag"),
+        ("observation_code", "observation_code"),
+        ("observation_code_system", "observation_code_system"),
+        ("panel_name", "panel_name"),
+    ):
         value = cell(fname)
         if value:
             pr.values[column] = value
@@ -1423,16 +2167,29 @@ def _n_results(pr: _PlannedRow, cell, line: int, date_order: str) -> None:
         if observed:
             pr.values["observed_at"] = observed
     else:
-        pr.issues.append(Issue(
-            line, "result_without_time", "warning",
-            f"Result '{name}' has no observation date, so it cannot be placed on the "
-            f"patient's timeline and will not appear in date-ordered views.",
-            "observed_at", None))
+        pr.issues.append(
+            Issue(
+                line,
+                "result_without_time",
+                "warning",
+                f"Result '{name}' has no observation date, so it cannot be placed on the "
+                f"patient's timeline and will not appear in date-ordered views.",
+                "observed_at",
+                None,
+            )
+        )
 
     status_raw = cell("status")
     if status_raw:
-        status, issues = _parse_enum(status_raw, line, "status", _RESULT_STATUS,
-                                     _RESULT_SYNONYMS, "final", "unrecognised_result_status")
+        status, issues = _parse_enum(
+            status_raw,
+            line,
+            "status",
+            _RESULT_STATUS,
+            _RESULT_SYNONYMS,
+            "final",
+            "unrecognised_result_status",
+        )
         pr.issues.extend(issues)
         pr.values["status"] = status or "final"
     else:
@@ -1447,10 +2204,14 @@ def _n_documents(pr: _PlannedRow, cell, line: int, date_order: str) -> None:
         pr.fail("missing_title", "Document row has no title, not imported.", "title", "")
         return
     if not content:
-        pr.fail("missing_content",
-                f"Document '{title}' has no text. An empty document in a chart reads as "
-                f"'nothing was written', which is not what the old system holds, the row "
-                f"was NOT imported so the gap stays visible.", "content", "")
+        pr.fail(
+            "missing_content",
+            f"Document '{title}' has no text. An empty document in a chart reads as "
+            f"'nothing was written', which is not what the old system holds, the row "
+            f"was NOT imported so the gap stays visible.",
+            "content",
+            "",
+        )
         return
     pr.values["title"] = title
     pr.values["content"] = content
@@ -1484,18 +2245,44 @@ _NORMALISERS = {
 
 # Columns each record type is allowed to write, beyond patient_id + provenance.
 _WRITABLE: dict[str, tuple[str, ...]] = {
-    "patients": ("name", "date_of_birth", "age", "sex", "phone", "address",
-                 "emergency_contact_name", "emergency_contact_phone"),
-    "admissions": ("department", "ward", "bed", "admission_type", "chief_complaint",
-                   "initial_diagnosis", "admitting_notes", "attending_doctor_id",
-                   "status", "created_at", "discharged_at"),
-    "diagnoses": ("problem", "icd10_code", "snomed_code", "status", "onset_date",
-                  "resolved_at"),
-    "medications": ("drug_name", "dosage", "route", "frequency", "status",
-                    "started_at", "notes"),
-    "results": ("observation_name", "value_text", "value_numeric", "unit",
-                "reference_range", "abnormal_flag", "observation_code",
-                "observation_code_system", "panel_name", "status", "observed_at"),
+    "patients": (
+        "name",
+        "date_of_birth",
+        "age",
+        "sex",
+        "phone",
+        "address",
+        "emergency_contact_name",
+        "emergency_contact_phone",
+    ),
+    "admissions": (
+        "department",
+        "ward",
+        "bed",
+        "admission_type",
+        "chief_complaint",
+        "initial_diagnosis",
+        "admitting_notes",
+        "attending_doctor_id",
+        "status",
+        "created_at",
+        "discharged_at",
+    ),
+    "diagnoses": ("problem", "icd10_code", "snomed_code", "status", "onset_date", "resolved_at"),
+    "medications": ("drug_name", "dosage", "route", "frequency", "status", "started_at", "notes"),
+    "results": (
+        "observation_name",
+        "value_text",
+        "value_numeric",
+        "unit",
+        "reference_range",
+        "abnormal_flag",
+        "observation_code",
+        "observation_code_system",
+        "panel_name",
+        "status",
+        "observed_at",
+    ),
     "documents": ("doc_type", "title", "content", "author_id", "created_at"),
 }
 
@@ -1526,9 +2313,9 @@ class _Resolver:
         self.db = db
         self.source_system = source_system
         self.rt = rt
-        self.xref: dict[str, str] = {}            # external_patient_id -> orb patient id
-        self.by_mrn: dict[str, Any] = {}          # mrn -> patients row
-        self.existing: dict[str, Any] = {}        # external_id -> target row
+        self.xref: dict[str, str] = {}  # external_patient_id -> orb patient id
+        self.by_mrn: dict[str, Any] = {}  # mrn -> patients row
+        self.existing: dict[str, Any] = {}  # external_id -> target row
         self.known_users: dict[str, str] = {}
 
     # ── batch prefetch ───────────────────────────────────────────────────
@@ -1536,11 +2323,15 @@ class _Resolver:
         self.xref.clear()
         self.by_mrn.clear()
         self.existing.clear()
-        ext_patients = {r.external_patient_id for r in rows
-                        if r.external_patient_id and r.external_patient_id not in self.xref}
+        ext_patients = {
+            r.external_patient_id
+            for r in rows
+            if r.external_patient_id and r.external_patient_id not in self.xref
+        }
         if self.rt.name == "patients":
-            ext_patients |= {r.external_id for r in rows
-                             if r.external_id and r.external_id not in self.xref}
+            ext_patients |= {
+                r.external_id for r in rows if r.external_id and r.external_id not in self.xref
+            }
         for chunk in _chunks(sorted(ext_patients)):
             marks = ",".join("?" * len(chunk))
             for row in self.db.execute(
@@ -1559,14 +2350,15 @@ class _Resolver:
                 self.by_mrn[row["mrn"]] = row
 
         if self.rt.name != "patients":
-            ext_ids = {r.external_id for r in rows
-                       if r.external_id and r.external_id not in self.existing}
+            ext_ids = {
+                r.external_id for r in rows if r.external_id and r.external_id not in self.existing
+            }
             table = self.rt.table
             for chunk in _chunks(sorted(ext_ids)):
                 marks = ",".join("?" * len(chunk))
                 for row in self.db.execute(
                     f'SELECT * FROM "{table}" WHERE import_source_system = ? '
-                    f'AND import_external_id IN ({marks})',
+                    f"AND import_external_id IN ({marks})",
                     (self.source_system, *chunk),
                 ).fetchall():
                     self.existing[row["import_external_id"]] = row
@@ -1597,24 +2389,28 @@ class _Resolver:
         by_mrn = mrn_row["id"] if mrn_row is not None else None
 
         if by_ext and by_mrn and by_ext != by_mrn:
-            pr.fail("patient_identifier_conflict",
-                    f"This row names patient '{pr.external_patient_id}' (which Orb maps to "
-                    f"{by_ext}) AND MRN '{pr.mrn}' (which is patient {by_mrn}), two "
-                    f"different people. Orb will not choose between them, because attaching "
-                    f"this record to the wrong chart is worse than not importing it. Fix the "
-                    f"export, or import only one identifier column.")
+            pr.fail(
+                "patient_identifier_conflict",
+                f"This row names patient '{pr.external_patient_id}' (which Orb maps to "
+                f"{by_ext}) AND MRN '{pr.mrn}' (which is patient {by_mrn}), two "
+                f"different people. Orb will not choose between them, because attaching "
+                f"this record to the wrong chart is worse than not importing it. Fix the "
+                f"export, or import only one identifier column.",
+            )
             return None
         resolved = by_ext or by_mrn
         if resolved:
             return resolved
 
-        pr.fail("unknown_patient",
-                f"No patient in Orb matches "
-                + (f"old-system id '{pr.external_patient_id}'" if pr.external_patient_id else "")
-                + (" or " if pr.external_patient_id and pr.mrn else "")
-                + (f"MRN '{pr.mrn}'" if pr.mrn else "")
-                + ". Import the PATIENTS file for this source system first, a clinical "
-                  "record with no patient is invisible in Orb and cannot be traced.")
+        pr.fail(
+            "unknown_patient",
+            "No patient in Orb matches "
+            + (f"old-system id '{pr.external_patient_id}'" if pr.external_patient_id else "")
+            + (" or " if pr.external_patient_id and pr.mrn else "")
+            + (f"MRN '{pr.mrn}'" if pr.mrn else "")
+            + ". Import the PATIENTS file for this source system first, a clinical "
+            "record with no patient is invisible in Orb and cannot be traced.",
+        )
         return None
 
     def check_user(self, pr: _PlannedRow, key: str) -> None:
@@ -1622,28 +2418,42 @@ class _Resolver:
         if not value:
             return
         if value not in self.known_users:
-            pr.issues.append(Issue(
-                pr.line, "unknown_orb_user", "warning",
-                f"{key} '{value}' is not an Orb user. The link was left blank. Orb does not "
-                f"create staff accounts from a clinical export. Create the user, then re-run "
-                f"the import to attach them.", key, value))
+            pr.issues.append(
+                Issue(
+                    pr.line,
+                    "unknown_orb_user",
+                    "warning",
+                    f"{key} '{value}' is not an Orb user. The link was left blank. Orb does not "
+                    f"create staff accounts from a clinical export. Create the user, then re-run "
+                    f"the import to attach them.",
+                    key,
+                    value,
+                )
+            )
             pr.values.pop(key, None)
 
 
 def _chunks(items: list[str], size: int = 400) -> Iterator[list[str]]:
     for i in range(0, len(items), size):
-        yield items[i:i + size]
+        yield items[i : i + size]
 
 
 # ══════════════════════════════════════════════════════════════════════════
 #  The engine
 # ══════════════════════════════════════════════════════════════════════════
 
-def plan(source: Any, record_type: str, mapping: dict[str, str], *,
-         source_system: str, date_order: str = "auto",
-         header_line: int | None = None,
-         detail_limit: int = DEFAULT_DETAIL_LIMIT,
-         reject_limit: int = DEFAULT_REJECT_LIMIT) -> dict:
+
+def plan(
+    source: Any,
+    record_type: str,
+    mapping: dict[str, str],
+    *,
+    source_system: str,
+    date_order: str = "auto",
+    header_line: int | None = None,
+    detail_limit: int = DEFAULT_DETAIL_LIMIT,
+    reject_limit: int = DEFAULT_REJECT_LIMIT,
+) -> dict:
     """DRY RUN. Reports exactly what an import would do. Writes NOTHING.
 
     ``source`` is bytes (content) or a path (streamed). ``mapping`` is
@@ -1654,18 +2464,34 @@ def plan(source: Any, record_type: str, mapping: dict[str, str], *,
     200 000-row file cannot come back over HTTP; truncation is flagged rather
     than hidden, and commit persists the complete reject list regardless.
     """
-    return _execute(source, record_type, mapping, source_system=source_system,
-                    date_order=date_order, header_line=header_line,
-                    detail_limit=detail_limit, reject_limit=reject_limit,
-                    write=False, actor_user_id=None)
+    return _execute(
+        source,
+        record_type,
+        mapping,
+        source_system=source_system,
+        date_order=date_order,
+        header_line=header_line,
+        detail_limit=detail_limit,
+        reject_limit=reject_limit,
+        write=False,
+        actor_user_id=None,
+    )
 
 
-def apply_import(source: Any, record_type: str, mapping: dict[str, str], *,
-                 source_system: str, actor_user_id: str,
-                 source_filename: str | None = None, date_order: str = "auto",
-                 header_line: int | None = None, note: str | None = None,
-                 detail_limit: int = DEFAULT_DETAIL_LIMIT,
-                 reject_limit: int = DEFAULT_REJECT_LIMIT) -> dict:
+def apply_import(
+    source: Any,
+    record_type: str,
+    mapping: dict[str, str],
+    *,
+    source_system: str,
+    actor_user_id: str,
+    source_filename: str | None = None,
+    date_order: str = "auto",
+    header_line: int | None = None,
+    note: str | None = None,
+    detail_limit: int = DEFAULT_DETAIL_LIMIT,
+    reject_limit: int = DEFAULT_REJECT_LIMIT,
+) -> dict:
     """Apply the import in ONE transaction. All-or-nothing.
 
     Recomputed server-side from the same bytes by the same code as the dry run,
@@ -1677,18 +2503,37 @@ def apply_import(source: Any, record_type: str, mapping: dict[str, str], *,
     """
     if not (actor_user_id or "").strip():
         raise ValueError("actor_user_id is required. A bulk clinical write must be attributable.")
-    return _execute(source, record_type, mapping, source_system=source_system,
-                    date_order=date_order, header_line=header_line,
-                    detail_limit=detail_limit, reject_limit=reject_limit,
-                    write=True, actor_user_id=actor_user_id,
-                    source_filename=source_filename, note=note)
+    return _execute(
+        source,
+        record_type,
+        mapping,
+        source_system=source_system,
+        date_order=date_order,
+        header_line=header_line,
+        detail_limit=detail_limit,
+        reject_limit=reject_limit,
+        write=True,
+        actor_user_id=actor_user_id,
+        source_filename=source_filename,
+        note=note,
+    )
 
 
-def _execute(source: Any, record_type: str, mapping: dict[str, str], *,
-             source_system: str, date_order: str, header_line: int | None,
-             detail_limit: int, reject_limit: int, write: bool,
-             actor_user_id: str | None, source_filename: str | None = None,
-             note: str | None = None) -> dict:
+def _execute(
+    source: Any,
+    record_type: str,
+    mapping: dict[str, str],
+    *,
+    source_system: str,
+    date_order: str,
+    header_line: int | None,
+    detail_limit: int,
+    reject_limit: int,
+    write: bool,
+    actor_user_id: str | None,
+    source_filename: str | None = None,
+    note: str | None = None,
+) -> dict:
     """Shared streaming engine for the dry run and the apply pass.
 
     ONE code path so the plan the admin approved and the plan that executes
@@ -1713,9 +2558,7 @@ def _execute(source: Any, record_type: str, mapping: dict[str, str], *,
         raise ValueError(f"Unknown target field(s) for '{rt.name}': {sorted(unknown)}")
     missing = [f for f in rt.required if f not in mapping]
     if missing:
-        raise ValueError(
-            f"Mapping is missing required field(s) for '{rt.name}': {missing}."
-        )
+        raise ValueError(f"Mapping is missing required field(s) for '{rt.name}': {missing}.")
     if rt.name != "patients" and not ({"external_patient_id", "mrn"} & set(mapping)):
         raise ValueError(
             f"'{rt.name}' rows must be attachable to a patient: map the old system's patient "
@@ -1730,10 +2573,10 @@ def _execute(source: Any, record_type: str, mapping: dict[str, str], *,
     file_issues.extend(header.issues)
     if not header.confident:
         raise ValueError(
-            f"Could not identify the header row with confidence. Reading the wrong line as "
-            f"the header shifts every column into the wrong field, so nothing was planned. "
-            f"Re-run with header_line=<1-based line number> (the preview step lists the "
-            f"candidates)."
+            "Could not identify the header row with confidence. Reading the wrong line as "
+            "the header shifts every column into the wrong field, so nothing was planned. "
+            "Re-run with header_line=<1-based line number> (the preview step lists the "
+            "candidates)."
         )
     unresolved = [f"{k} -> '{v}'" for k, v in mapping.items() if v not in header.fields]
     if unresolved:
@@ -1743,7 +2586,7 @@ def _execute(source: Any, record_type: str, mapping: dict[str, str], *,
         report.note_file_issue(issue)
 
     run_id = f"HI-{uuid.uuid4().hex[:10].upper()}"
-    started = datetime.now(timezone.utc).isoformat()
+    started = datetime.now(UTC).isoformat()
     seen_external: dict[str, int] = {}
     written = {"created": 0, "updated": 0}
 
@@ -1757,10 +2600,19 @@ def _execute(source: Any, record_type: str, mapping: dict[str, str], *,
             # flushed against its foreign key as they are found instead of being
             # held until the end. It is finalised by _record_run in the same
             # transaction, so a run that never completes leaves nothing at all.
-            _open_run(db, run_id=run_id, rt=rt, source_system=source_system,
-                      actor_user_id=actor_user_id, source=src,
-                      source_filename=source_filename, mapping=mapping,
-                      date_order=date_order, note=note, started=started)
+            _open_run(
+                db,
+                run_id=run_id,
+                rt=rt,
+                source_system=source_system,
+                actor_user_id=actor_user_id,
+                source=src,
+                source_filename=source_filename,
+                mapping=mapping,
+                date_order=date_order,
+                note=note,
+                started=started,
+            )
 
         def note_reject(pr: _PlannedRow) -> None:
             """Record a rejected row durably, in batches.
@@ -1783,18 +2635,33 @@ def _execute(source: Any, record_type: str, mapping: dict[str, str], *,
             for pr in batch:
                 _classify(pr, resolver, rt, source_system)
                 if write and pr.action in ("create", "update"):
-                    _write_row(db, pr, resolver, rt, source_system, run_id,
-                               actor_user_id or "system", written)
+                    _write_row(
+                        db,
+                        pr,
+                        resolver,
+                        rt,
+                        source_system,
+                        run_id,
+                        actor_user_id or "system",
+                        written,
+                    )
                 if pr.action == "fail":
                     note_reject(pr)
                 report.add(pr)
-                if (rt.name == "admissions"
-                        and pr.action != "fail"
-                        and any(i.code == "admission_open_in_source" for i in pr.issues)
-                        and len(report.still_open_in_source) < 500):
+                if (
+                    rt.name == "admissions"
+                    and pr.action != "fail"
+                    and any(i.code == "admission_open_in_source" for i in pr.issues)
+                    and len(report.still_open_in_source) < 500
+                ):
                     report.still_open_in_source.append(
-                        {"line": pr.line, "external_id": pr.external_id,
-                         "patient_id": pr.patient_id, "mrn": pr.mrn})
+                        {
+                            "line": pr.line,
+                            "external_id": pr.external_id,
+                            "patient_id": pr.patient_id,
+                            "mrn": pr.mrn,
+                        }
+                    )
             batch.clear()
 
         for line_no, raw, rejection, raw_text in _iter_rows(src, header):
@@ -1821,17 +2688,21 @@ def _execute(source: Any, record_type: str, mapping: dict[str, str], *,
                 report.add(pr)
                 continue
 
-            first_line = seen_external.get(pr.external_id)
+            first_line = seen_external.get(pr.external_id or "")
             if first_line is not None:
-                pr.fail("duplicate_external_id_in_file",
-                        f"Id '{pr.external_id}' already appeared on line {first_line}. Only "
-                        f"the FIRST row is used. The rows were NOT merged, because two "
-                        f"records sharing an id in the export is a defect in the export and "
-                        f"guessing which one is current would be a clinical decision.",
-                        "external_id", pr.external_id)
+                pr.fail(
+                    "duplicate_external_id_in_file",
+                    f"Id '{pr.external_id}' already appeared on line {first_line}. Only "
+                    f"the FIRST row is used. The rows were NOT merged, because two "
+                    f"records sharing an id in the export is a defect in the export and "
+                    f"guessing which one is current would be a clinical decision.",
+                    "external_id",
+                    pr.external_id,
+                )
                 note_reject(pr)
                 report.add(pr)
                 continue
+            assert pr.external_id is not None
             seen_external[pr.external_id] = line_no
 
             batch.append(pr)
@@ -1840,8 +2711,9 @@ def _execute(source: Any, record_type: str, mapping: dict[str, str], *,
         flush()
 
         if report.blank_rows:
-            issue = Issue(None, "blank_rows", "warning",
-                          f"{report.blank_rows} blank row(s) were skipped.")
+            issue = Issue(
+                None, "blank_rows", "warning", f"{report.blank_rows} blank row(s) were skipped."
+            )
             file_issues.append(issue)
             report.note_file_issue(issue)
 
@@ -1850,11 +2722,15 @@ def _execute(source: Any, record_type: str, mapping: dict[str, str], *,
             # the silent-failure class this whole module exists to prevent — just
             # arrived at from the other end. An empty export, a header line picked
             # one row too low, or a filter left on in the old system all land here.
-            issue = Issue(None, "no_data_rows", "error",
-                          f"The file has a header row on line {header.index + 1} but NO data "
-                          f"rows beneath it, so nothing was imported. This reports as a clean "
-                          f"run with zero records. Check that the export actually produced "
-                          f"rows, and that the header line is the one you meant.")
+            issue = Issue(
+                None,
+                "no_data_rows",
+                "error",
+                f"The file has a header row on line {header.index + 1} but NO data "
+                f"rows beneath it, so nothing was imported. This reports as a clean "
+                f"run with zero records. Check that the export actually produced "
+                f"rows, and that the header line is the one you meant.",
+            )
             file_issues.append(issue)
             report.note_file_issue(issue)
 
@@ -1897,8 +2773,9 @@ def _execute(source: Any, record_type: str, mapping: dict[str, str], *,
 
 
 def _reject_row(pr: _PlannedRow) -> dict:
-    worst = next((i for i in pr.issues if i.severity == "error"),
-                 pr.issues[0] if pr.issues else None)
+    worst = next(
+        (i for i in pr.issues if i.severity == "error"), pr.issues[0] if pr.issues else None
+    )
     return {
         "line": pr.line,
         "severity": "error",
@@ -1916,8 +2793,8 @@ def _reject_row(pr: _PlannedRow) -> dict:
 #  Classification
 # ══════════════════════════════════════════════════════════════════════════
 
-def _classify(pr: _PlannedRow, resolver: _Resolver, rt: RecordType,
-              source_system: str) -> None:
+
+def _classify(pr: _PlannedRow, resolver: _Resolver, rt: RecordType, source_system: str) -> None:
     """Decide create / update / unchanged / fail for one normalised row."""
     if pr.action == "fail":
         return
@@ -1932,7 +2809,7 @@ def _classify(pr: _PlannedRow, resolver: _Resolver, rt: RecordType,
     resolver.check_user(pr, "attending_doctor_id")
     resolver.check_user(pr, "author_id")
 
-    existing = resolver.existing.get(pr.external_id)
+    existing = resolver.existing.get(pr.external_id or "")
     if existing is None:
         pr.action = "create"
         return
@@ -1963,23 +2840,27 @@ def _classify_patient(pr: _PlannedRow, resolver: _Resolver, source_system: str) 
     clinician made in Orb is worse than one that fails loudly. So an existing
     non-NULL value is kept and the difference is reported.
     """
-    by_ext = resolver.xref.get(pr.external_id)
+    by_ext = resolver.xref.get(pr.external_id or "")
     mrn_row = resolver.by_mrn.get(pr.mrn) if pr.mrn else None
 
     if by_ext and mrn_row is not None and mrn_row["id"] != by_ext:
-        pr.fail("external_id_mrn_conflict",
-                f"Old-system patient '{pr.external_id}' is already mapped to Orb patient "
-                f"{by_ext}, but this row gives MRN '{pr.mrn}', which is patient "
-                f"{mrn_row['id']}. That is the same legacy id claiming two different people, "
-                f"usually one patient held twice in the old system. Orb will not merge or "
-                f"choose; reconcile them in the export.")
+        pr.fail(
+            "external_id_mrn_conflict",
+            f"Old-system patient '{pr.external_id}' is already mapped to Orb patient "
+            f"{by_ext}, but this row gives MRN '{pr.mrn}', which is patient "
+            f"{mrn_row['id']}. That is the same legacy id claiming two different people, "
+            f"usually one patient held twice in the old system. Orb will not merge or "
+            f"choose; reconcile them in the export.",
+        )
         return
     if by_ext and mrn_row is None:
-        pr.fail("external_id_mrn_conflict",
-                f"Old-system patient '{pr.external_id}' is already mapped to Orb patient "
-                f"{by_ext}, but this row gives a DIFFERENT MRN '{pr.mrn}' that Orb does not "
-                f"hold. Importing it would either rename an existing patient or split one "
-                f"person across two records. Reconcile the duplicate in the export.")
+        pr.fail(
+            "external_id_mrn_conflict",
+            f"Old-system patient '{pr.external_id}' is already mapped to Orb patient "
+            f"{by_ext}, but this row gives a DIFFERENT MRN '{pr.mrn}' that Orb does not "
+            f"hold. Importing it would either rename an existing patient or split one "
+            f"person across two records. Reconcile the duplicate in the export.",
+        )
         return
 
     existing = mrn_row
@@ -1999,12 +2880,17 @@ def _classify_patient(pr: _PlannedRow, resolver: _Resolver, source_system: str) 
         elif not _same(current, pr.values[column]):
             kept.append(column)
     if kept:
-        pr.issues.append(Issue(
-            pr.line, "kept_orb_value", "warning",
-            f"Orb already holds a different {', '.join(kept)} for MRN '{pr.mrn}'. The Orb "
-            f"value was KEPT and the legacy value discarded. The live record is fresher "
-            f"than the export, and an import must never revert a correction made in Orb. "
-            f"Change it in Orb if the legacy value is the right one."))
+        pr.issues.append(
+            Issue(
+                pr.line,
+                "kept_orb_value",
+                "warning",
+                f"Orb already holds a different {', '.join(kept)} for MRN '{pr.mrn}'. The Orb "
+                f"value was KEPT and the legacy value discarded. The live record is fresher "
+                f"than the export, and an import must never revert a correction made in Orb. "
+                f"Change it in Orb if the legacy value is the right one.",
+            )
+        )
     pr.changes = changes
     pr.action = "update" if changes else "unchanged"
     if not changes:
@@ -2015,9 +2901,17 @@ def _classify_patient(pr: _PlannedRow, resolver: _Resolver, source_system: str) 
 #  Writing
 # ══════════════════════════════════════════════════════════════════════════
 
-def _write_row(db, pr: _PlannedRow, resolver: _Resolver, rt: RecordType,
-               source_system: str, run_id: str, actor_user_id: str,
-               written: dict[str, int]) -> None:
+
+def _write_row(
+    db,
+    pr: _PlannedRow,
+    resolver: _Resolver,
+    rt: RecordType,
+    source_system: str,
+    run_id: str,
+    actor_user_id: str,
+    written: dict[str, int],
+) -> None:
     if rt.name == "patients":
         _write_patient(db, pr, resolver, source_system, run_id, written)
         return
@@ -2027,47 +2921,52 @@ def _write_row(db, pr: _PlannedRow, resolver: _Resolver, rt: RecordType,
         columns = [c for c in _WRITABLE[rt.name] if c in pr.changes]
         db.execute(
             f'UPDATE "{table}" SET {", ".join(f"{c} = ?" for c in columns)}, '
-            f'import_run_id = ? WHERE id = ?',
+            f"import_run_id = ? WHERE id = ?",
             [pr.changes[c]["to"] for c in columns] + [run_id, pr.target_id],
         )
         written["updated"] += 1
         return
 
     values = dict(pr.values)
-    columns: dict[str, Any] = {"patient_id": pr.patient_id}
+    insert_values: dict[str, Any] = {"patient_id": pr.patient_id}
     for column in _WRITABLE[rt.name]:
         if column in values:
-            columns[column] = values[column]
+            insert_values[column] = values[column]
 
     if rt.name == "admissions":
-        columns["id"] = _new_id("ADM-HI")
-        columns["admitted_by"] = actor_user_id
+        insert_values["id"] = _new_id("ADM-HI")
+        insert_values["admitted_by"] = actor_user_id
         # `admission_source` is the machine-readable marker. An "Imported from X
         # by run Y" banner was prefixed onto admitting_notes here and has been
-        # removed: the provenance columns already say it, and pushing generated
+        # removed: the provenance insert_values already say it, and pushing generated
         # text into a CLINICAL free-text field broke idempotency — the next run
         # compared the file's plain note against the stored banner+note, found a
         # difference, and reported an update on every single re-run forever.
-        columns["admission_source"] = SOURCE_TAG
+        insert_values["admission_source"] = SOURCE_TAG
     elif rt.name in ("diagnoses", "medications", "results"):
-        columns["source"] = SOURCE_TAG
+        insert_values["source"] = SOURCE_TAG
 
-    columns["import_source_system"] = source_system
-    columns["import_external_id"] = pr.external_id
-    columns["import_run_id"] = run_id
+    insert_values["import_source_system"] = source_system
+    insert_values["import_external_id"] = pr.external_id
+    insert_values["import_run_id"] = run_id
 
-    names = list(columns)
+    names = list(insert_values)
     cursor = db.execute(
-        f'INSERT INTO "{table}" ({", ".join(names)}) '
-        f'VALUES ({", ".join("?" * len(names))})',
-        [columns[n] for n in names],
+        f'INSERT INTO "{table}" ({", ".join(names)}) VALUES ({", ".join("?" * len(names))})',
+        [insert_values[n] for n in names],
     )
-    pr.target_id = str(columns.get("id") or cursor.lastrowid)
+    pr.target_id = str(insert_values.get("id") or cursor.lastrowid)
     written["created"] += 1
 
 
-def _write_patient(db, pr: _PlannedRow, resolver: _Resolver, source_system: str,
-                   run_id: str, written: dict[str, int]) -> None:
+def _write_patient(
+    db,
+    pr: _PlannedRow,
+    resolver: _Resolver,
+    source_system: str,
+    run_id: str,
+    written: dict[str, int],
+) -> None:
     if pr.action == "create":
         patient_id = _new_id("PAT-HI")
         columns: dict[str, Any] = {"id": patient_id, "mrn": pr.mrn}
@@ -2081,8 +2980,7 @@ def _write_patient(db, pr: _PlannedRow, resolver: _Resolver, source_system: str,
         columns["import_run_id"] = run_id
         names = list(columns)
         db.execute(
-            f"INSERT INTO patients ({', '.join(names)}) "
-            f"VALUES ({', '.join('?' * len(names))})",
+            f"INSERT INTO patients ({', '.join(names)}) VALUES ({', '.join('?' * len(names))})",
             [columns[n] for n in names],
         )
         pr.patient_id = pr.target_id = patient_id
@@ -2090,10 +2988,10 @@ def _write_patient(db, pr: _PlannedRow, resolver: _Resolver, source_system: str,
         created_by_import = 1
     else:
         if pr.action == "update":
-            columns = [c for c in _WRITABLE["patients"] if c in pr.changes]
+            update_columns = [c for c in _WRITABLE["patients"] if c in pr.changes]
             db.execute(
-                f"UPDATE patients SET {', '.join(f'{c} = ?' for c in columns)} WHERE id = ?",
-                [pr.changes[c]["to"] for c in columns] + [pr.patient_id],
+                f"UPDATE patients SET {', '.join(f'{c} = ?' for c in update_columns)} WHERE id = ?",
+                [pr.changes[c]["to"] for c in update_columns] + [pr.patient_id],
             )
             written["updated"] += 1
         created_by_import = 0
@@ -2108,6 +3006,7 @@ def _write_patient(db, pr: _PlannedRow, resolver: _Resolver, source_system: str,
            VALUES (?, ?, ?, ?, ?, ?)""",
         (source_system, pr.external_id, pr.patient_id, pr.mrn, created_by_import, run_id),
     )
+    assert pr.external_id is not None and pr.patient_id is not None
     resolver.xref[pr.external_id] = pr.patient_id
     if pr.mrn and pr.mrn not in resolver.by_mrn:
         row = db.execute("SELECT * FROM patients WHERE id = ?", (pr.patient_id,)).fetchone()
@@ -2115,10 +3014,20 @@ def _write_patient(db, pr: _PlannedRow, resolver: _Resolver, source_system: str,
             resolver.by_mrn[pr.mrn] = row
 
 
-def _open_run(db, *, run_id: str, rt: RecordType, source_system: str,
-              actor_user_id: str | None, source: _Source,
-              source_filename: str | None, mapping: dict[str, str],
-              date_order: str, note: str | None, started: str) -> None:
+def _open_run(
+    db,
+    *,
+    run_id: str,
+    rt: RecordType,
+    source_system: str,
+    actor_user_id: str | None,
+    source: _Source,
+    source_filename: str | None,
+    mapping: dict[str, str],
+    date_order: str,
+    note: str | None,
+    started: str,
+) -> None:
     """Open the run ledger row with zero counts, before any row is processed.
 
     Exists so rejects can be written as they are found rather than accumulated
@@ -2132,8 +3041,19 @@ def _open_run(db, *, run_id: str, rt: RecordType, source_system: str,
                (id, record_type, source_system, actor_user_id, source_filename,
                 source_sha256, source_bytes, mapping_json, date_order, note, started_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (run_id, rt.name, source_system, actor_user_id, source_filename,
-         source.sha256, source.size, json.dumps(mapping), date_order, note, started),
+        (
+            run_id,
+            rt.name,
+            source_system,
+            actor_user_id,
+            source_filename,
+            source.sha256,
+            source.size,
+            json.dumps(mapping),
+            date_order,
+            note,
+            started,
+        ),
     )
 
 
@@ -2152,9 +3072,21 @@ def _flush_rejects(db, run_id: str, buffer: list[dict]) -> None:
                (run_id, line, severity, code, field, message, external_id,
                 external_patient_id, patient_id, raw_row)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        [(run_id, r["line"], r["severity"], r["code"], r["field"], r["message"],
-          r["external_id"], r["external_patient_id"], r["patient_id"], r["raw_row"])
-         for r in buffer],
+        [
+            (
+                run_id,
+                r["line"],
+                r["severity"],
+                r["code"],
+                r["field"],
+                r["message"],
+                r["external_id"],
+                r["external_patient_id"],
+                r["patient_id"],
+                r["raw_row"],
+            )
+            for r in buffer
+        ],
     )
     buffer.clear()
 
@@ -2176,16 +3108,24 @@ def _record_run(db, *, run_id: str, report: _Report, written: dict[str, int]) ->
                   rows_unchanged = ?, rows_failed = ?, warning_count = ?,
                   summary_json = ?, finished_at = ?
             WHERE id = ?""",
-        (report.counts["total_rows"], written["created"], written["updated"],
-         report.counts["unchanged"], report.counts["failed"],
-         report.counts["warnings"], json.dumps(summary),
-         datetime.now(timezone.utc).isoformat(), run_id),
+        (
+            report.counts["total_rows"],
+            written["created"],
+            written["updated"],
+            report.counts["unchanged"],
+            report.counts["failed"],
+            report.counts["warnings"],
+            json.dumps(summary),
+            datetime.now(UTC).isoformat(),
+            run_id,
+        ),
     )
 
 
 # ══════════════════════════════════════════════════════════════════════════
 #  Preview + history
 # ══════════════════════════════════════════════════════════════════════════
+
 
 def sniff(source: Any, record_type: str, *, header_line: int | None = None) -> dict:
     """Inspect an upload without importing anything. Reads no patient data.
@@ -2202,13 +3142,25 @@ def sniff(source: Any, record_type: str, *, header_line: int | None = None) -> d
     headers = header.fields
     blank = [i + 1 for i, h in enumerate(headers) if not h]
     if blank:
-        issues.append(Issue(header.index + 1, "blank_header", "warning",
-                            f"Column(s) {blank} have no header name and cannot be mapped."))
+        issues.append(
+            Issue(
+                header.index + 1,
+                "blank_header",
+                "warning",
+                f"Column(s) {blank} have no header name and cannot be mapped.",
+            )
+        )
     dupes = sorted({h for h in headers if h and headers.count(h) > 1})
     if dupes:
-        issues.append(Issue(header.index + 1, "duplicate_header", "warning",
-                            f"Duplicate column header(s) {dupes}; only the LAST column with "
-                            f"each name is readable."))
+        issues.append(
+            Issue(
+                header.index + 1,
+                "duplicate_header",
+                "warning",
+                f"Duplicate column header(s) {dupes}; only the LAST column with "
+                f"each name is readable.",
+            )
+        )
 
     mapping = suggest_mapping(headers, rt.name)
     samples: list[dict] = []
@@ -2275,15 +3227,14 @@ def list_rejects(run_id: str, limit: int = 500, offset: int = 0) -> dict:
     limit = max(1, min(int(limit), 5000))
     offset = max(0, int(offset))
     with db_session() as db:
-        run = db.execute("SELECT * FROM history_import_runs WHERE id = ?",
-                         (run_id,)).fetchone()
+        run = db.execute("SELECT * FROM history_import_runs WHERE id = ?", (run_id,)).fetchone()
         if run is None:
             return {}
-        total = db.execute("SELECT COUNT(*) c FROM history_import_rejects WHERE run_id = ?",
-                           (run_id,)).fetchone()["c"]
+        total = db.execute(
+            "SELECT COUNT(*) c FROM history_import_rejects WHERE run_id = ?", (run_id,)
+        ).fetchone()["c"]
         rows = db.execute(
-            "SELECT * FROM history_import_rejects WHERE run_id = ? "
-            "ORDER BY line LIMIT ? OFFSET ?",
+            "SELECT * FROM history_import_rejects WHERE run_id = ? ORDER BY line LIMIT ? OFFSET ?",
             (run_id, limit, offset),
         ).fetchall()
         by_code = db.execute(

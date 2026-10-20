@@ -13,13 +13,16 @@ Every verify/reject re-runs the order-time drug-safety screen
 (``drug_safety_service.check_medication_safety``) so the pharmacist sees any
 allergy / interaction alerts at the moment of the decision.
 """
+
 from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
 
 from database import db_session
+
 from services.audit_service import log_audit_event
 from services.drug_safety_service import check_medication_safety
 
@@ -33,8 +36,12 @@ STOPPED_ON_CHART_MESSAGE = "This medication was stopped on the chart"
 # Refusals the Verify Queue prints as they are, so they are written for the
 # pharmacist: no row ids, no source codes, no login ids.
 NOT_ON_CHART_MESSAGE = "This medication is no longer on the chart. Refresh the queue."
-NOT_SAGE_CHARTED_MESSAGE = "This medication was charted by a clinician, so it does not need a pharmacist check here."
-ALREADY_DECIDED_MESSAGE = "Another pharmacist has already checked this medication. Refresh the queue."
+NOT_SAGE_CHARTED_MESSAGE = (
+    "This medication was charted by a clinician, so it does not need a pharmacist check here."
+)
+ALREADY_DECIDED_MESSAGE = (
+    "Another pharmacist has already checked this medication. Refresh the queue."
+)
 
 
 class IncompleteOrderError(ValueError):
@@ -52,6 +59,10 @@ def _is_placeholder(value) -> bool:
     return not text or "review" in text.lower()
 
 
+class _SafetyRefusal(ValueError):
+    safety: dict[str, Any]
+
+
 def _corrected(value, stored):
     """The value the order will carry: the pharmacist's entry, else the chart's."""
     text = (value or "").strip()
@@ -59,7 +70,7 @@ def _corrected(value, stored):
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _safety_alerts(patient_id: str, drug_name: str, med_id: int | None = None) -> dict:
@@ -79,12 +90,21 @@ def _safety_alerts(patient_id: str, drug_name: str, med_id: int | None = None) -
         safety = check_medication_safety(patient_id, drug_name, exclude_med_id=med_id)
     except Exception as e:
         logger.warning("drug-safety check failed for '%s' / %s: %s", drug_name, patient_id, e)
-        return {"drug": drug_name, "allergy_alerts": [], "interaction_alerts": [],
-                "max_severity": "unknown", "blocking": True, "safe": False,
-                "screen_failed": True, "interaction_screened": False,
-                "coverage_note": "Drug-safety screening unavailable: verify manually.",
-                "alerts": []}
-    safety["alerts"] = list(safety.get("allergy_alerts", [])) + list(safety.get("interaction_alerts", []))
+        return {
+            "drug": drug_name,
+            "allergy_alerts": [],
+            "interaction_alerts": [],
+            "max_severity": "unknown",
+            "blocking": True,
+            "safe": False,
+            "screen_failed": True,
+            "interaction_screened": False,
+            "coverage_note": "Drug-safety screening unavailable: verify manually.",
+            "alerts": [],
+        }
+    safety["alerts"] = list(safety.get("allergy_alerts", [])) + list(
+        safety.get("interaction_alerts", [])
+    )
     safety["screen_failed"] = False
     return safety
 
@@ -98,7 +118,7 @@ def _actor_role(user_id: str | None) -> str | None:
         with db_session() as db:
             r = db.execute("SELECT role FROM users WHERE id = ?", (user_id,)).fetchone()
         return r["role"] if r else None
-    except Exception:                           # pragma: no cover (defensive)
+    except Exception:  # pragma: no cover (defensive)
         return None
 
 
@@ -112,7 +132,7 @@ def _override_by(user_id: str | None) -> dict:
                 r = db.execute("SELECT name, role FROM users WHERE id = ?", (user_id,)).fetchone()
             if r:
                 name, role = r["name"], r["role"]
-        except Exception:                       # pragma: no cover (audit detail only)
+        except Exception:  # pragma: no cover (audit detail only)
             pass
     return {"user_id": user_id, "display_name": name, "role": role}
 
@@ -122,25 +142,38 @@ def _with_dose_check(safety: dict, drug_name: str, dose, route) -> dict:
     verified. Its findings join ``alerts``, the list the verify queue already
     renders, so a refused dose is shown in the queue's own words."""
     from permissions import MEDICATION_PRESCRIBE
+
     from services import drug_safety_service
     from services.medication_safety_gate import screen_order_dose
+
     if _is_placeholder(dose):
         return safety
     check = screen_order_dose(drug_name, dose, route)
     if not check:
         return safety
     summary = drug_safety_service.summarize_dose_check(check)
+    assert summary is not None
     blocked = check["decision"] == drug_safety_service.DOSE_BLOCK
     summary["override_requires_permission"] = MEDICATION_PRESCRIBE if blocked else None
     extra = [
-        {"type": "dose check",
-         "severity": "severe" if f.get("decision") == drug_safety_service.DOSE_BLOCK else "moderate",
-         "message": f.get("message")}
-        for f in check.get("findings") or [] if f.get("message")
+        {
+            "type": "dose check",
+            "severity": "severe"
+            if f.get("decision") == drug_safety_service.DOSE_BLOCK
+            else "moderate",
+            "message": f.get("message"),
+        }
+        for f in check.get("findings") or []
+        if f.get("message")
     ]
     if check.get("unavailable"):
-        extra.append({"type": "dose check", "severity": "moderate",
-                      "message": "The dose check could not run. This dose has NOT been checked."})
+        extra.append(
+            {
+                "type": "dose check",
+                "severity": "moderate",
+                "message": "The dose check could not run. This dose has NOT been checked.",
+            }
+        )
     out = {**safety, "dose_check": summary, "alerts": list(safety.get("alerts") or []) + extra}
     if blocked:
         out["blocking"] = True
@@ -242,6 +275,7 @@ def source_note(med_id: int) -> dict | None:
     when, and the sentence that names the drug: not the raw transcript.
     """
     from services.note_text import note_plain_text
+
     with db_session() as db:
         row = db.execute(
             """SELECT m.id, m.patient_id, m.source_note_id, m.source_sentence,
@@ -284,8 +318,15 @@ def _fetch_med(db, med_id: int):
     ).fetchone()
 
 
-def _mirror_into_order_store(db, med_id: int, decision: str, pharmacist_id: str, *,
-                             reason: str | None = None, decided_at: str | None = None) -> None:
+def _mirror_into_order_store(
+    db,
+    med_id: int,
+    decision: str,
+    pharmacist_id: str,
+    *,
+    reason: str | None = None,
+    decided_at: str | None = None,
+) -> None:
     """Invariant I2 of the medication-order store (medorders-3, W5-E): when the
     ward row just verified or rejected is LINKED to a medication order, the
     order moves in this same transaction, whatever the store switches say
@@ -293,18 +334,30 @@ def _mirror_into_order_store(db, med_id: int, decision: str, pharmacist_id: str,
     row is untouched. A refusal from the store undoes this decision and reaches
     the pharmacist as a sentence (the route's 400), because the bedside check
     follows the link and the two must never disagree."""
-    from services.medorders import chart_lane, core as medorder_core
+    from services.medorders import chart_lane
+    from services.medorders import core as medorder_core
+
     try:
         chart_lane.mirror_legacy_decision_in_txn(
-            db, medication_id=med_id, decision=decision, actor_id=pharmacist_id,
-            reason=reason, decided_at=decided_at)
+            db,
+            medication_id=med_id,
+            decision=decision,
+            actor_id=pharmacist_id,
+            reason=reason,
+            decided_at=decided_at,
+        )
     except medorder_core.MedOrderError as exc:
         raise ValueError(exc.message) from exc
 
 
-def verify_medication(med_id: int, pharmacist_id: str, dosage: str | None = None,
-                      route: str | None = None, frequency: str | None = None,
-                      ack_reason: str | None = None) -> dict:
+def verify_medication(
+    med_id: int,
+    pharmacist_id: str,
+    dosage: str | None = None,
+    route: str | None = None,
+    frequency: str | None = None,
+    ack_reason: str | None = None,
+) -> dict:
     """Pharmacist verifies an AI/agentic med, optionally correcting the order.
 
     Optionally overwrites dosage/route/frequency (the pharmacist's correction of
@@ -334,20 +387,23 @@ def verify_medication(med_id: int, pharmacist_id: str, dosage: str | None = None
             raise ValueError(ALREADY_DECIDED_MESSAGE)
         if row["status"] != "active":
             raise ValueError(STOPPED_ON_CHART_MESSAGE)
-        if any(_is_placeholder(_corrected(value, row[column]))
-               for value, column in ((dosage, "dosage"), (route, "route"),
-                                     (frequency, "frequency"))):
+        if any(
+            _is_placeholder(_corrected(value, row[column]))
+            for value, column in ((dosage, "dosage"), (route, "route"), (frequency, "frequency"))
+        ):
             raise IncompleteOrderError(INCOMPLETE_ORDER_MESSAGE)
 
     # Screen outside the session (check_medication_safety opens its own), and
     # BEFORE verification so a severe/failed screen can stop it.
     safety = _safety_alerts(row["patient_id"], row["drug_name"], med_id)
     ack_reason = (ack_reason or "").strip()
-    safety = _with_dose_check(safety, row["drug_name"],
-                              _corrected(dosage, row["dosage"]), _corrected(route, row["route"]))
+    safety = _with_dose_check(
+        safety, row["drug_name"], _corrected(dosage, row["dosage"]), _corrected(route, row["route"])
+    )
     dose_check = safety.get("dose_check")
-    dose_blocked = bool(dose_check) and dose_check.get("decision") == "block"
+    dose_blocked = dose_check is not None and dose_check.get("decision") == "block"
     if dose_blocked:
+        assert dose_check is not None
         # THE PHARMACIST'S CORRECTED DOSE GOES THROUGH THE DOSE GUARD (2026-10-03).
         # It used to be stored unchecked, so enoxaparin 400 mg verified with no
         # warning. Decided BEFORE the allergy branch below, so a refused dose
@@ -355,6 +411,7 @@ def verify_medication(med_id: int, pharmacist_id: str, dosage: str | None = None
         # did not happen. A pharmacist holds no medication.prescribe, so the
         # way on is a corrected dose or a rejection, not a typed reason.
         from services.medication_safety_gate import _dose_ack_refusal
+
         refusal = _dose_ack_refusal(_actor_role(pharmacist_id), ack_reason)
         if refusal:
             log_audit_event(
@@ -372,14 +429,15 @@ def verify_medication(med_id: int, pharmacist_id: str, dosage: str | None = None
                 patient_id=row["patient_id"],
                 metadata={"dose_check": dose_check, "ack_refused": refusal if ack_reason else None},
             )
-            err = ValueError(
+            err = _SafetyRefusal(
                 f"severe_ack_required: The dose check stopped {row['drug_name']} "
                 f"{dose_check.get('dose_given')}. {dose_check.get('message') or ''} {refusal}"
             )
             err.safety = {**safety, "ack_refused": refusal if ack_reason else None}
             raise err
-    severe_allergy = any((a or {}).get("severity") == "severe"
-                         for a in safety.get("allergy_alerts") or [])
+    severe_allergy = any(
+        (a or {}).get("severity") == "severe" for a in safety.get("allergy_alerts") or []
+    )
     if severe_allergy:
         # Named by the server so the queue offers a reason box only to a
         # prescriber, as at the bedside and at order time.
@@ -391,6 +449,7 @@ def verify_medication(med_id: int, pharmacist_id: str, dosage: str | None = None
         # drug with their own override. Decided before the override branch
         # below, so a refused attempt leaves no override row.
         from services.medication_safety_gate import _allergy_ack_refusal
+
         refusal = _allergy_ack_refusal(_actor_role(pharmacist_id))
         if refusal:
             log_audit_event(
@@ -406,22 +465,26 @@ def verify_medication(med_id: int, pharmacist_id: str, dosage: str | None = None
                 target_type="medication",
                 target_id=str(med_id),
                 patient_id=row["patient_id"],
-                metadata={"alerts": safety.get("allergy_alerts", []),
-                          "ack_refused": refusal,
-                          "attempted_reason": ack_reason[:500]},
+                metadata={
+                    "alerts": safety.get("allergy_alerts", []),
+                    "ack_refused": refusal,
+                    "attempted_reason": ack_reason[:500],
+                },
             )
-            err = ValueError(
-                f"severe_ack_required: {row['drug_name']} is stopped by a severe allergy. "
-                f"{refusal}"
+            err = _SafetyRefusal(
+                f"severe_ack_required: {row['drug_name']} is stopped by a severe allergy. {refusal}"
             )
             err.safety = {**safety, "ack_refused": refusal}
             raise err
     needs_ack = safety["max_severity"] == "severe" or safety.get("screen_failed")
     if needs_ack:
-        cause = ("the drug-safety screen is unavailable" if safety.get("screen_failed")
-                 else "severe drug-safety alerts were found")
+        cause = (
+            "the drug-safety screen is unavailable"
+            if safety.get("screen_failed")
+            else "severe drug-safety alerts were found"
+        )
         if not ack_reason:
-            err = ValueError(
+            err = _SafetyRefusal(
                 f"severe_ack_required: {cause[0].upper()}{cause[1:]} for {row['drug_name']}. "
                 f"Give a reason to verify it anyway."
             )
@@ -453,6 +516,7 @@ def verify_medication(med_id: int, pharmacist_id: str, dosage: str | None = None
         safety = {**safety, "override": {"by": pharmacist_id, "reason": ack_reason}}
 
     if dose_blocked:
+        assert dose_check is not None
         # Reached only by an actor holding medication.prescribe with a reason
         # the dose guard accepts (a site that grants its clinical pharmacists
         # prescribing authority). Audited like the bedside dose override.
@@ -471,8 +535,10 @@ def verify_medication(med_id: int, pharmacist_id: str, dosage: str | None = None
             patient_id=row["patient_id"],
             metadata={"dose_check": dose_check, "reason": ack_reason},
         )
-        safety = {**safety, "dose_check": {**dose_check,
-                                           "override": {"by": pharmacist_id, "reason": ack_reason}}}
+        safety = {
+            **safety,
+            "dose_check": {**dose_check, "override": {"by": pharmacist_id, "reason": ack_reason}},
+        }
 
     with db_session() as db:
         # Re-guard inside the write session: another pharmacist may have verified
@@ -554,13 +620,16 @@ def reject_medication(med_id: int, pharmacist_id: str, reason: str) -> dict:
             (pharmacist_id, stamp, new_notes, med_id),
         )
         if cur.rowcount == 1:
-            _mirror_into_order_store(db, med_id, "rejected", pharmacist_id, reason=reason,
-                                     decided_at=stamp)
+            _mirror_into_order_store(
+                db, med_id, "rejected", pharmacist_id, reason=reason, decided_at=stamp
+            )
         updated = _fetch_med(db, med_id)
 
     med = _serialize_med(updated)
     safety = _safety_alerts(med["patient_id"], med["drug_name"], med_id)
-    logger.info("Pharmacist %s REJECTED med %s (%s): %s", pharmacist_id, med_id, med["drug_name"], reason)
+    logger.info(
+        "Pharmacist %s REJECTED med %s (%s): %s", pharmacist_id, med_id, med["drug_name"], reason
+    )
     return {
         "status": "rejected",
         "medication": med,

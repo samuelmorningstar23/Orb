@@ -43,16 +43,15 @@ WHY THE ROUTES ARE `admin.overview`
    permission this module cannot grant would produce a screen nobody can open. A
    dedicated `abdm.read` / `abdm.write` pair is recorded as a followup.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Optional
-
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
 
 import config
+from fastapi import APIRouter, Depends, HTTPException, Query
 from permissions import department_scope, enforce_patient_scope, require_permission
+from pydantic import BaseModel, Field
 from services.abdm_service import (
     CONSENT_STATUSES,
     CONSENT_TRANSITIONS,
@@ -106,6 +105,7 @@ router = APIRouter(prefix="/api/abdm", tags=["abdm"])
 
 # ── The module switch ────────────────────────────────────────────────────────
 
+
 def require_module() -> None:
     """404 the whole desk when a deployment has hidden this module.
 
@@ -130,10 +130,10 @@ def _audit(
     *,
     summary: str,
     outcome: str = "success",
-    target_id: Optional[str] = None,
+    target_id: str | int | None = None,
     target_type: str = "abha_identity",
-    patient_id: Optional[str] = None,
-    metadata: Optional[dict] = None,
+    patient_id: str | None = None,
+    metadata: dict | None = None,
     category: str = "compliance",
 ) -> None:
     """One audit line per desk action.
@@ -170,14 +170,14 @@ def _handle(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
     except IllegalConsentTransition as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except AbhaFormatError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (IdentityError, CareContextError, ConsentError, AbdmError) as exc:
         message = str(exc)
         if "not found" in message or message.startswith("unknown patient"):
-            raise HTTPException(status_code=404, detail=message)
-        raise HTTPException(status_code=400, detail=message)
+            raise HTTPException(status_code=404, detail=message) from exc
+        raise HTTPException(status_code=400, detail=message) from exc
 
 
 def _wrap(payload: dict) -> dict:
@@ -201,14 +201,16 @@ def _wrap(payload: dict) -> dict:
 #  Request bodies
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class AbhaCheckIn(BaseModel):
     """A structural check with nothing stored and nothing sent.
 
     POST rather than GET so the ABHA never appears in a URL — see the note at the
     top of this file.
     """
-    abha_number: Optional[str] = None
-    abha_address: Optional[str] = None
+
+    abha_number: str | None = None
+    abha_address: str | None = None
 
 
 class AbhaIn(BaseModel):
@@ -218,30 +220,32 @@ class AbhaIn(BaseModel):
     this route is unverified, whatever the client believes, and the only way to
     'verified' is the verification route below.
     """
+
     patient_id: str
-    abha_number: Optional[str] = None
-    abha_address: Optional[str] = None
+    abha_number: str | None = None
+    abha_address: str | None = None
     source: str = "counter_keyed"
-    notes: Optional[str] = None
+    notes: str | None = None
     is_primary: bool = True
 
 
 class AbhaCorrectionIn(BaseModel):
-    abha_number: Optional[str] = None
-    abha_address: Optional[str] = None
+    abha_number: str | None = None
+    abha_address: str | None = None
     reason: str
 
 
 class VerificationIn(BaseModel):
     """Recording a verification performed ELSEWHERE. Orb verified nothing."""
+
     method: str = Field(description="aadhaar_otp | mobile_otp | demographic_match | …")
     outcome: str = Field(description="verified | failed | inconclusive")
     performed_by: str = Field(description="The person who did it, on the portal")
-    performed_at: Optional[str] = None
+    performed_at: str | None = None
     performed_where: str = "outside_orb"
-    reference: Optional[str] = None
-    failure_reason: Optional[str] = None
-    notes: Optional[str] = None
+    reference: str | None = None
+    failure_reason: str | None = None
+    notes: str | None = None
 
 
 class DeactivationIn(BaseModel):
@@ -250,99 +254,122 @@ class DeactivationIn(BaseModel):
 
 class CareContextIn(BaseModel):
     """Recording a link a human performed on a HIP console elsewhere."""
+
     identity_id: int
     care_context_reference: str
     hi_type: str = "OPConsultation"
-    display: Optional[str] = None
+    display: str | None = None
     encounter_type: str = "admission"
-    encounter_ref: Optional[str] = None
-    encounter_date: Optional[str] = None
+    encounter_ref: str | None = None
+    encounter_date: str | None = None
     linked_by: str
-    linked_at: Optional[str] = None
+    linked_at: str | None = None
     link_method: str = "abdm_portal"
-    link_reference: Optional[str] = None
-    notes: Optional[str] = None
+    link_reference: str | None = None
+    notes: str | None = None
 
 
 class UnlinkIn(BaseModel):
     """A reason is REQUIRED by the schema of this request, not just by the
     service. A linked care context cannot silently unlink."""
+
     reason: str
-    unlinked_at: Optional[str] = None
+    unlinked_at: str | None = None
 
 
 class ConsentRequestIn(BaseModel):
     patient_id: str
     requester_name: str
     purpose_code: str = "CAREMGT"
-    purpose_text: Optional[str] = None
+    purpose_text: str | None = None
     hi_types: list[str] = Field(default_factory=list)
-    date_range_from: Optional[str] = None
-    date_range_to: Optional[str] = None
-    expires_at: Optional[str] = None
-    request_id: Optional[str] = None
-    identity_id: Optional[int] = None
+    date_range_from: str | None = None
+    date_range_to: str | None = None
+    expires_at: str | None = None
+    request_id: str | None = None
+    identity_id: int | None = None
     requester_type: str = "hiu"
     recorded_where: str = "consent_manager"
-    notes: Optional[str] = None
+    notes: str | None = None
 
 
 class ConsentGrantIn(BaseModel):
     artefact_id: str
-    granted_at: Optional[str] = None
-    expires_at: Optional[str] = None
-    hi_types: Optional[list[str]] = None
+    granted_at: str | None = None
+    expires_at: str | None = None
+    hi_types: list[str] | None = None
 
 
 class ReasonIn(BaseModel):
     reason: str
-    occurred_at: Optional[str] = None
+    occurred_at: str | None = None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  Reference / meta
 # ══════════════════════════════════════════════════════════════════════════════
 
+
+_META_USER_DEFAULT = Depends(_DESK)
+_META_M_DEFAULT = Depends(require_module)
+
+
 @router.get("/meta")
-def meta(user: dict = Depends(_DESK), _m: None = Depends(require_module)) -> dict:
+def meta(user: dict = _META_USER_DEFAULT, _m: None = _META_M_DEFAULT) -> dict:
     """Everything the panel needs to render its forms without hard-coding a
     vocabulary that could drift from the server's."""
-    return _wrap({
-        "verification_statuses": list(VERIFICATION_STATUSES),
-        "verification_methods": [{"code": c, "label": l} for c, l in VERIFICATION_METHODS],
-        "verification_outcomes": list(VERIFICATION_OUTCOMES),
-        "verification_places": [{"code": c, "label": l} for c, l in VERIFICATION_PLACES],
-        "identity_sources": [{"code": c, "label": l} for c, l in IDENTITY_SOURCES],
-        "hi_types": list(HI_TYPES),
-        "link_methods": [{"code": c, "label": l} for c, l in LINK_METHODS],
-        "encounter_types": list(ENCOUNTER_TYPES),
-        "consent_statuses": list(CONSENT_STATUSES),
-        "consent_transitions": {k: sorted(v) for k, v in CONSENT_TRANSITIONS.items()},
-        "purpose_codes": [{"code": c, "label": l} for c, l in PURPOSE_CODES],
-        "requester_types": list(REQUESTER_TYPES),
-        "queue_buckets": [{"id": b, "label": l} for b, l in QUEUE_BUCKETS],
-        "recognised_abha_suffixes": sorted(RECOGNISED_ABHA_SUFFIXES),
-        # Stated in the meta payload so even a client that renders none of the
-        # prose above still receives the fact in a form it cannot miss.
-        "checks_abha_check_digit": False,
-        "milestone_status": (
-            "Orb records ABDM steps performed elsewhere. It is not an onboarded "
-            "HIP or HIU, holds no NHA milestone certification, and performs no "
-            "M1/M2/M3 transaction."
-        ),
-    })
+    return _wrap(
+        {
+            "verification_statuses": list(VERIFICATION_STATUSES),
+            "verification_methods": [
+                {"code": c, "label": left_item} for c, left_item in VERIFICATION_METHODS
+            ],
+            "verification_outcomes": list(VERIFICATION_OUTCOMES),
+            "verification_places": [
+                {"code": c, "label": left_item} for c, left_item in VERIFICATION_PLACES
+            ],
+            "identity_sources": [
+                {"code": c, "label": left_item} for c, left_item in IDENTITY_SOURCES
+            ],
+            "hi_types": list(HI_TYPES),
+            "link_methods": [{"code": c, "label": left_item} for c, left_item in LINK_METHODS],
+            "encounter_types": list(ENCOUNTER_TYPES),
+            "consent_statuses": list(CONSENT_STATUSES),
+            "consent_transitions": {k: sorted(v) for k, v in CONSENT_TRANSITIONS.items()},
+            "purpose_codes": [{"code": c, "label": left_item} for c, left_item in PURPOSE_CODES],
+            "requester_types": list(REQUESTER_TYPES),
+            "queue_buckets": [{"id": b, "label": left_item} for b, left_item in QUEUE_BUCKETS],
+            "recognised_abha_suffixes": sorted(RECOGNISED_ABHA_SUFFIXES),
+            # Stated in the meta payload so even a client that renders none of the
+            # prose above still receives the fact in a form it cannot miss.
+            "checks_abha_check_digit": False,
+            "milestone_status": (
+                "Orb records ABDM steps performed elsewhere. It is not an onboarded "
+                "HIP or HIU, holds no NHA milestone certification, and performs no "
+                "M1/M2/M3 transaction."
+            ),
+        }
+    )
+
+
+_SUMMARY_USER_DEFAULT = Depends(_DESK)
+_SUMMARY_M_DEFAULT = Depends(require_module)
 
 
 @router.get("/summary")
-def summary(user: dict = Depends(_DESK), _m: None = Depends(require_module)) -> dict:
+def summary(user: dict = _SUMMARY_USER_DEFAULT, _m: None = _SUMMARY_M_DEFAULT) -> dict:
     return _wrap(abdm_summary(department=department_scope(user)))
+
+
+_CHECK_USER_DEFAULT = Depends(_DESK)
+_CHECK_M_DEFAULT = Depends(require_module)
 
 
 @router.post("/check")
 def check(
     body: AbhaCheckIn,
-    user: dict = Depends(_DESK),
-    _m: None = Depends(require_module),
+    user: dict = _CHECK_USER_DEFAULT,
+    _m: None = _CHECK_M_DEFAULT,
 ) -> dict:
     """Structural check of an ABHA number and/or address. STORES NOTHING.
 
@@ -366,14 +393,23 @@ def check(
 #  ABHA identities
 # ══════════════════════════════════════════════════════════════════════════════
 
+
+_IDENTITIES_PATIENT_ID_DEFAULT = Query(None)
+_IDENTITIES_VERIFICATION_STATUS_DEFAULT = Query(None)
+_IDENTITIES_ACTIVE_ONLY_DEFAULT = Query(True)
+_IDENTITIES_LIMIT_DEFAULT = Query(200, ge=1, le=1000)
+_IDENTITIES_USER_DEFAULT = Depends(_DESK)
+_IDENTITIES_M_DEFAULT = Depends(require_module)
+
+
 @router.get("/identities")
 def identities(
-    patient_id: Optional[str] = Query(None),
-    verification_status: Optional[str] = Query(None),
-    active_only: bool = Query(True),
-    limit: int = Query(200, ge=1, le=1000),
-    user: dict = Depends(_DESK),
-    _m: None = Depends(require_module),
+    patient_id: str | None = _IDENTITIES_PATIENT_ID_DEFAULT,
+    verification_status: str | None = _IDENTITIES_VERIFICATION_STATUS_DEFAULT,
+    active_only: bool = _IDENTITIES_ACTIVE_ONLY_DEFAULT,
+    limit: int = _IDENTITIES_LIMIT_DEFAULT,
+    user: dict = _IDENTITIES_USER_DEFAULT,
+    _m: None = _IDENTITIES_M_DEFAULT,
 ) -> dict:
     """ABHA records. `patient_id` arrives on the QUERY STRING, so the scope check
     is explicit — enforce_patient_scope, not require_patient_access."""
@@ -389,7 +425,8 @@ def identities(
         # Fail-closed: a named patient's national health id is PHI, and a read
         # that cannot be audited is a read that does not happen.
         _audit(
-            user, "identities_read",
+            user,
+            "identities_read",
             category="phi_access",
             summary=f"ABHA records read for {patient_id}",
             patient_id=patient_id,
@@ -398,11 +435,15 @@ def identities(
     return _wrap({"identities": rows, "total": len(rows)})
 
 
+_IDENTITY_DETAIL_USER_DEFAULT = Depends(_DESK)
+_IDENTITY_DETAIL_M_DEFAULT = Depends(require_module)
+
+
 @router.get("/identities/{identity_id}")
 def identity_detail(
     identity_id: int,
-    user: dict = Depends(_DESK),
-    _m: None = Depends(require_module),
+    user: dict = _IDENTITY_DETAIL_USER_DEFAULT,
+    _m: None = _IDENTITY_DETAIL_M_DEFAULT,
 ) -> dict:
     """One ABHA record with its verifications, links and history.
 
@@ -413,7 +454,8 @@ def identity_detail(
     record = _handle(get_abha, identity_id)
     enforce_patient_scope(user, record.get("patient_id"))
     _audit(
-        user, "identity_read",
+        user,
+        "identity_read",
         category="phi_access",
         summary=f"ABHA record {identity_id} read",
         target_id=str(identity_id),
@@ -422,11 +464,15 @@ def identity_detail(
     return _wrap({"identity": record})
 
 
+_CREATE_IDENTITY_USER_DEFAULT = Depends(_DESK)
+_CREATE_IDENTITY_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/identities")
 def create_identity(
     body: AbhaIn,
-    user: dict = Depends(_DESK),
-    _m: None = Depends(require_module),
+    user: dict = _CREATE_IDENTITY_USER_DEFAULT,
+    _m: None = _CREATE_IDENTITY_M_DEFAULT,
 ) -> dict:
     """Record an ABHA a patient presented. It is stored UNVERIFIED."""
     enforce_patient_scope(user, body.patient_id)
@@ -443,7 +489,8 @@ def create_identity(
         department=department_scope(user),
     )
     _audit(
-        user, "identity_recorded",
+        user,
+        "identity_recorded",
         summary=f"ABHA recorded for {body.patient_id} (unverified)",
         target_id=str(record["id"]),
         patient_id=body.patient_id,
@@ -452,12 +499,16 @@ def create_identity(
     return _wrap({"identity": record})
 
 
+_CREATE_VERIFICATION_USER_DEFAULT = Depends(_DESK)
+_CREATE_VERIFICATION_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/identities/{identity_id}/verification")
 def create_verification(
     identity_id: int,
     body: VerificationIn,
-    user: dict = Depends(_DESK),
-    _m: None = Depends(require_module),
+    user: dict = _CREATE_VERIFICATION_USER_DEFAULT,
+    _m: None = _CREATE_VERIFICATION_M_DEFAULT,
 ) -> dict:
     """Record a verification a human performed on the ABDM portal / ABHA app /
     another onboarded system. ORB PERFORMED NO VERIFICATION."""
@@ -477,7 +528,8 @@ def create_verification(
         recorded_by=user.get("id"),
     )
     _audit(
-        user, "verification_recorded",
+        user,
+        "verification_recorded",
         summary=(
             f"ABHA verification recorded for {record['patient_id']}: "
             f"{body.method} → {body.outcome} (performed outside Orb)"
@@ -495,12 +547,16 @@ def create_verification(
     return _wrap({"identity": record})
 
 
+_CORRECT_IDENTITY_USER_DEFAULT = Depends(_DESK)
+_CORRECT_IDENTITY_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/identities/{identity_id}/correction")
 def correct_identity(
     identity_id: int,
     body: AbhaCorrectionIn,
-    user: dict = Depends(_DESK),
-    _m: None = Depends(require_module),
+    user: dict = _CORRECT_IDENTITY_USER_DEFAULT,
+    _m: None = _CORRECT_IDENTITY_M_DEFAULT,
 ) -> dict:
     """Correct a mis-keyed ABHA. The verification is RESET to unverified."""
     existing = _handle(get_abha, identity_id, include_events=False)
@@ -514,7 +570,8 @@ def correct_identity(
         actor_id=user.get("id"),
     )
     _audit(
-        user, "identity_corrected",
+        user,
+        "identity_corrected",
         summary=f"ABHA corrected for {record['patient_id']}; verification reset",
         target_id=str(identity_id),
         patient_id=record.get("patient_id"),
@@ -523,12 +580,16 @@ def correct_identity(
     return _wrap({"identity": record})
 
 
+_DEACTIVATE_IDENTITY_USER_DEFAULT = Depends(_DESK)
+_DEACTIVATE_IDENTITY_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/identities/{identity_id}/deactivation")
 def deactivate_identity(
     identity_id: int,
     body: DeactivationIn,
-    user: dict = Depends(_DESK),
-    _m: None = Depends(require_module),
+    user: dict = _DEACTIVATE_IDENTITY_USER_DEFAULT,
+    _m: None = _DEACTIVATE_IDENTITY_M_DEFAULT,
 ) -> dict:
     """Record that the desk was TOLD this ABHA is no longer valid."""
     existing = _handle(get_abha, identity_id, include_events=False)
@@ -540,7 +601,8 @@ def deactivate_identity(
         actor_id=user.get("id"),
     )
     _audit(
-        user, "deactivation_recorded",
+        user,
+        "deactivation_recorded",
         summary=f"ABHA reported deactivated for {record['patient_id']}",
         target_id=str(identity_id),
         patient_id=record.get("patient_id"),
@@ -553,14 +615,23 @@ def deactivate_identity(
 #  Care contexts
 # ══════════════════════════════════════════════════════════════════════════════
 
+
+_CARE_CONTEXTS_PATIENT_ID_DEFAULT = Query(None)
+_CARE_CONTEXTS_IDENTITY_ID_DEFAULT = Query(None)
+_CARE_CONTEXTS_STATUS_DEFAULT = Query(None)
+_CARE_CONTEXTS_LIMIT_DEFAULT = Query(200, ge=1, le=1000)
+_CARE_CONTEXTS_USER_DEFAULT = Depends(_DESK)
+_CARE_CONTEXTS_M_DEFAULT = Depends(require_module)
+
+
 @router.get("/care-contexts")
 def care_contexts(
-    patient_id: Optional[str] = Query(None),
-    identity_id: Optional[int] = Query(None),
-    status: Optional[str] = Query(None),
-    limit: int = Query(200, ge=1, le=1000),
-    user: dict = Depends(_DESK),
-    _m: None = Depends(require_module),
+    patient_id: str | None = _CARE_CONTEXTS_PATIENT_ID_DEFAULT,
+    identity_id: int | None = _CARE_CONTEXTS_IDENTITY_ID_DEFAULT,
+    status: str | None = _CARE_CONTEXTS_STATUS_DEFAULT,
+    limit: int = _CARE_CONTEXTS_LIMIT_DEFAULT,
+    user: dict = _CARE_CONTEXTS_USER_DEFAULT,
+    _m: None = _CARE_CONTEXTS_M_DEFAULT,
 ) -> dict:
     enforce_patient_scope(user, patient_id)
     rows = list_care_contexts(
@@ -572,7 +643,8 @@ def care_contexts(
     )
     if patient_id:
         _audit(
-            user, "care_contexts_read",
+            user,
+            "care_contexts_read",
             category="phi_access",
             summary=f"Care-context links read for {patient_id}",
             target_type="care_context",
@@ -582,11 +654,15 @@ def care_contexts(
     return _wrap({"care_contexts": rows, "total": len(rows)})
 
 
+_CREATE_CARE_CONTEXT_USER_DEFAULT = Depends(_DESK)
+_CREATE_CARE_CONTEXT_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/care-contexts")
 def create_care_context(
     body: CareContextIn,
-    user: dict = Depends(_DESK),
-    _m: None = Depends(require_module),
+    user: dict = _CREATE_CARE_CONTEXT_USER_DEFAULT,
+    _m: None = _CREATE_CARE_CONTEXT_M_DEFAULT,
 ) -> dict:
     """RECORD a link a human performed elsewhere. Orb linked nothing."""
     existing = _handle(get_abha, body.identity_id, include_events=False)
@@ -608,7 +684,8 @@ def create_care_context(
         recorded_by=user.get("id"),
     )
     _audit(
-        user, "care_context_linked",
+        user,
+        "care_context_linked",
         summary=(
             f"Care context '{body.care_context_reference}' recorded as linked "
             f"for {record['patient_id']} (linked outside Orb)"
@@ -626,12 +703,16 @@ def create_care_context(
     return _wrap({"care_context": record})
 
 
+_UNLINK_USER_DEFAULT = Depends(_DESK)
+_UNLINK_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/care-contexts/{care_context_id}/unlink")
 def unlink(
     care_context_id: int,
     body: UnlinkIn,
-    user: dict = Depends(_DESK),
-    _m: None = Depends(require_module),
+    user: dict = _UNLINK_USER_DEFAULT,
+    _m: None = _UNLINK_M_DEFAULT,
 ) -> dict:
     """RECORD an unlink a human performed elsewhere.
 
@@ -646,7 +727,8 @@ def unlink(
         unlinked_at=body.unlinked_at,
     )
     _audit(
-        user, "care_context_unlinked",
+        user,
+        "care_context_unlinked",
         summary=(
             f"Care context '{record['care_context_reference']}' recorded as "
             f"unlinked for {record['patient_id']}"
@@ -663,13 +745,21 @@ def unlink(
 #  Consent artefacts
 # ══════════════════════════════════════════════════════════════════════════════
 
+
+_CONSENTS_PATIENT_ID_DEFAULT = Query(None)
+_CONSENTS_STATUS_DEFAULT = Query(None)
+_CONSENTS_LIMIT_DEFAULT = Query(200, ge=1, le=1000)
+_CONSENTS_USER_DEFAULT = Depends(_DESK)
+_CONSENTS_M_DEFAULT = Depends(require_module)
+
+
 @router.get("/consents")
 def consents(
-    patient_id: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
-    limit: int = Query(200, ge=1, le=1000),
-    user: dict = Depends(_DESK),
-    _m: None = Depends(require_module),
+    patient_id: str | None = _CONSENTS_PATIENT_ID_DEFAULT,
+    status: str | None = _CONSENTS_STATUS_DEFAULT,
+    limit: int = _CONSENTS_LIMIT_DEFAULT,
+    user: dict = _CONSENTS_USER_DEFAULT,
+    _m: None = _CONSENTS_M_DEFAULT,
 ) -> dict:
     enforce_patient_scope(user, patient_id)
     rows = list_consents(
@@ -680,7 +770,8 @@ def consents(
     )
     if patient_id:
         _audit(
-            user, "consents_read",
+            user,
+            "consents_read",
             category="phi_access",
             summary=f"ABDM consent artefacts read for {patient_id}",
             target_type="consent_artefact",
@@ -690,16 +781,21 @@ def consents(
     return _wrap({"consents": rows, "total": len(rows)})
 
 
+_CONSENT_DETAIL_USER_DEFAULT = Depends(_DESK)
+_CONSENT_DETAIL_M_DEFAULT = Depends(require_module)
+
+
 @router.get("/consents/{consent_id}")
 def consent_detail(
     consent_id: int,
-    user: dict = Depends(_DESK),
-    _m: None = Depends(require_module),
+    user: dict = _CONSENT_DETAIL_USER_DEFAULT,
+    _m: None = _CONSENT_DETAIL_M_DEFAULT,
 ) -> dict:
     record = _handle(get_consent, consent_id)
     enforce_patient_scope(user, record.get("patient_id"))
     _audit(
-        user, "consent_read",
+        user,
+        "consent_read",
         category="phi_access",
         summary=f"ABDM consent artefact {consent_id} read",
         target_type="consent_artefact",
@@ -709,11 +805,15 @@ def consent_detail(
     return _wrap({"consent": record})
 
 
+_CREATE_CONSENT_USER_DEFAULT = Depends(_DESK)
+_CREATE_CONSENT_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/consents")
 def create_consent(
     body: ConsentRequestIn,
-    user: dict = Depends(_DESK),
-    _m: None = Depends(require_module),
+    user: dict = _CREATE_CONSENT_USER_DEFAULT,
+    _m: None = _CREATE_CONSENT_M_DEFAULT,
 ) -> dict:
     enforce_patient_scope(user, body.patient_id)
     record = _handle(
@@ -734,7 +834,8 @@ def create_consent(
         notes=body.notes,
     )
     _audit(
-        user, "consent_request_recorded",
+        user,
+        "consent_request_recorded",
         summary=(
             f"ABDM consent request recorded for {body.patient_id} by "
             f"{body.requester_name} ({body.purpose_code})"
@@ -746,12 +847,16 @@ def create_consent(
     return _wrap({"consent": record})
 
 
+_GRANT_CONSENT_USER_DEFAULT = Depends(_DESK)
+_GRANT_CONSENT_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/consents/{consent_id}/grant")
 def grant_consent(
     consent_id: int,
     body: ConsentGrantIn,
-    user: dict = Depends(_DESK),
-    _m: None = Depends(require_module),
+    user: dict = _GRANT_CONSENT_USER_DEFAULT,
+    _m: None = _GRANT_CONSENT_M_DEFAULT,
 ) -> dict:
     """Record that the patient granted it on their consent manager.
 
@@ -771,7 +876,8 @@ def grant_consent(
         actor_id=user.get("id"),
     )
     _audit(
-        user, "consent_granted",
+        user,
+        "consent_granted",
         summary=f"ABDM consent {consent_id} recorded as granted by the patient",
         target_type="consent_artefact",
         target_id=str(consent_id),
@@ -781,12 +887,16 @@ def grant_consent(
     return _wrap({"consent": record})
 
 
+_DENY_CONSENT_USER_DEFAULT = Depends(_DESK)
+_DENY_CONSENT_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/consents/{consent_id}/denial")
 def deny_consent(
     consent_id: int,
     body: ReasonIn,
-    user: dict = Depends(_DESK),
-    _m: None = Depends(require_module),
+    user: dict = _DENY_CONSENT_USER_DEFAULT,
+    _m: None = _DENY_CONSENT_M_DEFAULT,
 ) -> dict:
     existing = _handle(get_consent, consent_id, include_events=False)
     enforce_patient_scope(user, existing.get("patient_id"))
@@ -798,7 +908,8 @@ def deny_consent(
         actor_id=user.get("id"),
     )
     _audit(
-        user, "consent_denied",
+        user,
+        "consent_denied",
         summary=f"ABDM consent {consent_id} recorded as refused by the patient",
         target_type="consent_artefact",
         target_id=str(consent_id),
@@ -808,12 +919,16 @@ def deny_consent(
     return _wrap({"consent": record})
 
 
+_REVOKE_USER_DEFAULT = Depends(_DESK)
+_REVOKE_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/consents/{consent_id}/revocation")
 def revoke(
     consent_id: int,
     body: ReasonIn,
-    user: dict = Depends(_DESK),
-    _m: None = Depends(require_module),
+    user: dict = _REVOKE_USER_DEFAULT,
+    _m: None = _REVOKE_M_DEFAULT,
 ) -> dict:
     """Record that the patient WITHDREW consent. One way. No return.
 
@@ -830,7 +945,8 @@ def revoke(
         revoked_at=body.occurred_at,
     )
     _audit(
-        user, "consent_revoked",
+        user,
+        "consent_revoked",
         summary=f"ABDM consent {consent_id} recorded as revoked by the patient",
         target_type="consent_artefact",
         target_id=str(consent_id),
@@ -840,17 +956,22 @@ def revoke(
     return _wrap({"consent": record})
 
 
+_EXPIRE_USER_DEFAULT = Depends(_DESK)
+_EXPIRE_M_DEFAULT = Depends(require_module)
+
+
 @router.post("/consents/{consent_id}/expiry")
 def expire(
     consent_id: int,
-    user: dict = Depends(_DESK),
-    _m: None = Depends(require_module),
+    user: dict = _EXPIRE_USER_DEFAULT,
+    _m: None = _EXPIRE_M_DEFAULT,
 ) -> dict:
     existing = _handle(get_consent, consent_id, include_events=False)
     enforce_patient_scope(user, existing.get("patient_id"))
     record = _handle(expire_consent, consent_id=consent_id, actor_id=user.get("id"))
     _audit(
-        user, "consent_expired",
+        user,
+        "consent_expired",
         summary=f"ABDM consent {consent_id} recorded as expired",
         target_type="consent_artefact",
         target_id=str(consent_id),
@@ -863,13 +984,21 @@ def expire(
 #  The work queue
 # ══════════════════════════════════════════════════════════════════════════════
 
+
+_QUEUE_BUCKET_DEFAULT = Query(None)
+_QUEUE_INCLUDE_DISCHARGED_DEFAULT = Query(True)
+_QUEUE_LIMIT_DEFAULT = Query(200, ge=1, le=1000)
+_QUEUE_USER_DEFAULT = Depends(_DESK)
+_QUEUE_M_DEFAULT = Depends(require_module)
+
+
 @router.get("/queue")
 def queue(
-    bucket: Optional[str] = Query(None),
-    include_discharged: bool = Query(True),
-    limit: int = Query(200, ge=1, le=1000),
-    user: dict = Depends(_DESK),
-    _m: None = Depends(require_module),
+    bucket: str | None = _QUEUE_BUCKET_DEFAULT,
+    include_discharged: bool = _QUEUE_INCLUDE_DISCHARGED_DEFAULT,
+    limit: int = _QUEUE_LIMIT_DEFAULT,
+    user: dict = _QUEUE_USER_DEFAULT,
+    _m: None = _QUEUE_M_DEFAULT,
 ) -> dict:
     """Encounters with no live care-context link, oldest first.
 
@@ -885,7 +1014,8 @@ def queue(
         limit=limit,
     )
     _audit(
-        user, "queue_read",
+        user,
+        "queue_read",
         category="phi_access",
         summary=f"ABDM linking queue read ({payload['total']} encounters)",
         target_type="care_context",

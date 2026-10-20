@@ -82,10 +82,12 @@ With the store off nothing here is called and both lanes write exactly what
 they always wrote. Not touched: relay_routes.py (the synchronous confirm),
 held rulings W111 and R010.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Any, Mapping, NamedTuple, Optional
+from collections.abc import Mapping
+from typing import Any, NamedTuple
 
 from services.clinical_time import utc_iso_now
 from services.medorders import core, queries
@@ -93,13 +95,31 @@ from services.medorders import core, queries
 logger = logging.getLogger("orb.medorders.ai_lanes")
 
 __all__ = [
-    "ENTRY_SAGE", "LANE_SAGE", "SOURCE_SAGE", "ENTRY_SCRIBE", "LANE_SCRIBE", "SOURCE_SCRIBE",
-    "WARD_SOURCE", "BINDING_NAME_MATCH", "BINDING_RECONCILED", "BINDING_NOT_BOUND",
-    "RECONCILE_THRESHOLD", "NOT_BOUND_NO_MATCH", "NOT_BOUND_PARTIAL_NAME",
-    "NOT_BOUND_NOT_SCREENED", "NOT_BOUND_UNAVAILABLE", "NOT_BOUND_CATALOGUE_UNREADABLE",
-    "SUPPLY_PHARMACY", "SageOrder", "SageBinding",
-    "store_on", "exact_binding_on", "bind_sage_product", "unbound",
-    "write_sage_order_in_txn", "write_scribe_order_in_txn",
+    "ENTRY_SAGE",
+    "LANE_SAGE",
+    "SOURCE_SAGE",
+    "ENTRY_SCRIBE",
+    "LANE_SCRIBE",
+    "SOURCE_SCRIBE",
+    "WARD_SOURCE",
+    "BINDING_NAME_MATCH",
+    "BINDING_RECONCILED",
+    "BINDING_NOT_BOUND",
+    "RECONCILE_THRESHOLD",
+    "NOT_BOUND_NO_MATCH",
+    "NOT_BOUND_PARTIAL_NAME",
+    "NOT_BOUND_NOT_SCREENED",
+    "NOT_BOUND_UNAVAILABLE",
+    "NOT_BOUND_CATALOGUE_UNREADABLE",
+    "SUPPLY_PHARMACY",
+    "SageOrder",
+    "SageBinding",
+    "store_on",
+    "exact_binding_on",
+    "bind_sage_product",
+    "unbound",
+    "write_sage_order_in_txn",
+    "write_scribe_order_in_txn",
 ]
 
 #: The Sage handoff lane: its gate entry point (sage_handoff_service._screen_helix
@@ -143,10 +163,11 @@ class SageOrder(NamedTuple):
     """What write_sage_order_in_txn wrote: the chart row's id, the order as it
     now stands, its supply row (None when the catalogue had no match) and,
     then, why no supply row was written, in the card's words."""
+
     medication_id: int
     order: dict
-    supply: Optional[dict]
-    not_sent: Optional[str]
+    supply: dict | None
+    not_sent: str | None
 
 
 class SageBinding(NamedTuple):
@@ -155,12 +176,13 @@ class SageBinding(NamedTuple):
     `code` (NOT_BOUND_*) and `note`, the card's words for why nothing was sent
     to pharmacy. `candidate` is the product the reconciler named, bound or
     not; `target` the card's drug name the binding was made for."""
+
     target: str
-    product: Optional[dict]
+    product: dict | None
     score: float
-    code: Optional[str]
-    note: Optional[str]
-    candidate: Optional[dict]
+    code: str | None
+    note: str | None
+    candidate: dict | None
 
     @property
     def bound(self) -> bool:
@@ -201,12 +223,18 @@ def _unboosted_score(name: str, med: Mapping) -> float:
     """The reconciler's hybrid score for `med` WITHOUT its substring boost:
     the same formula as rxnorm_reconciler.reconcile_medication (pinned equal
     on names with no substring match by tests/test_medorder_sage_binding.py)."""
-    from services.rxnorm_reconciler import calculate_metaphone_similarity, calculate_similarity
+    from services.rxnorm_reconciler import (
+        calculate_metaphone_similarity,
+        calculate_similarity,
+    )
+
     cand_name = med.get("name") or ""
     cand_generic = med.get("generic_name") or ""
     lex = max(calculate_similarity(name, cand_name), calculate_similarity(name, cand_generic))
-    meta = max(calculate_metaphone_similarity(name, cand_name),
-               calculate_metaphone_similarity(name, cand_generic))
+    meta = max(
+        calculate_metaphone_similarity(name, cand_name),
+        calculate_metaphone_similarity(name, cand_generic),
+    )
     return (lex * 0.7) + (meta * 0.3)
 
 
@@ -217,6 +245,7 @@ def _names_every_ingredient(target: str, med: Mapping) -> bool:
     insulin glargine, 'Vitamin' does not name Vitamin K, and 'Amox' does not
     name amoxicillin."""
     from services.medorders.screening import ingredient_word_set
+
     said = ingredient_word_set(target)
     for name in (med.get("generic_name"), med.get("name")):
         wanted = ingredient_word_set(name or "")
@@ -230,39 +259,62 @@ def bind_sage_product(target: str) -> SageBinding:
     (the reconciler reads the catalogue in a session of its own): call it
     outside any write transaction. Raises only if the catalogue cannot be read."""
     from services.rxnorm_reconciler import reconcile_medication
+
     name = (target or "").strip()
     match, score = reconcile_medication(name)
     if not match:
-        return SageBinding(name, None, float(score or 0.0), NOT_BOUND_NO_MATCH,
-                           f"Medication {name} not found in Helix master catalog", None)
-    candidate = {"id": match["id"], "name": match["name"],
-                 "generic_name": match.get("generic_name")}
+        return SageBinding(
+            name,
+            None,
+            float(score or 0.0),
+            NOT_BOUND_NO_MATCH,
+            f"Medication {name} not found in Helix master catalog",
+            None,
+        )
+    candidate = {
+        "id": match["id"],
+        "name": match["name"],
+        "generic_name": match.get("generic_name"),
+    }
     if _unboosted_score(name, match) < RECONCILE_THRESHOLD and not _names_every_ingredient(
-            name, match):
+        name, match
+    ):
         # The match stands only on the substring boost, and the card names
         # only part of the product: which product was meant is a guess.
         return SageBinding(
-            name, None, float(score), NOT_BOUND_PARTIAL_NAME,
+            name,
+            None,
+            float(score),
+            NOT_BOUND_PARTIAL_NAME,
             f"{name} matches only part of the name {match['name']}, so no product was chosen",
-            candidate)
+            candidate,
+        )
     return SageBinding(name, candidate, float(score), None, None, candidate)
 
 
-def _role_of(conn, user_id: Optional[str]) -> Optional[str]:
+def _role_of(conn, user_id: str | None) -> str | None:
     if not user_id:
         return None
     row = conn.execute("SELECT role FROM users WHERE id = ?", (user_id,)).fetchone()
     return row["role"] if row else None
 
 
-def write_sage_order_in_txn(conn, *, patient_id: str, drug_name: str, dose: str,
-                            route: str, frequency: str, actor_id: str,
-                            safety: Optional[Mapping] = None,
-                            sage_action_id: Optional[str] = None,
-                            sage_handoff_id: Optional[str] = None,
-                            request_meta: Optional[Mapping] = None,
-                            now: Optional[str] = None,
-                            binding: Optional[SageBinding] = None) -> SageOrder:
+def write_sage_order_in_txn(
+    conn,
+    *,
+    patient_id: str,
+    drug_name: str,
+    dose: str,
+    route: str,
+    frequency: str,
+    actor_id: str,
+    safety: Mapping | None = None,
+    sage_action_id: str | None = None,
+    sage_handoff_id: str | None = None,
+    request_meta: Mapping | None = None,
+    now: str | None = None,
+    binding: SageBinding | None = None,
+) -> SageOrder:
     """The Sage handoff's chart row, medication order and supply row, on the
     caller's transaction (the handoff's own savepoint). Never commits.
 
@@ -296,10 +348,14 @@ def write_sage_order_in_txn(conn, *, patient_id: str, drug_name: str, dose: str,
         binding_mode = BINDING_RECONCILED
         product = None
         if binding.target != (drug_name or "").strip():
-            binding = unbound(drug_name, NOT_BOUND_NOT_SCREENED,
-                              f"the product for {drug_name} was not checked against this "
-                              "patient's allergies and medicines")
+            binding = unbound(
+                drug_name,
+                NOT_BOUND_NOT_SCREENED,
+                f"the product for {drug_name} was not checked against this "
+                "patient's allergies and medicines",
+            )
         if binding.bound:
+            assert binding.product is not None
             row = conn.execute(
                 "SELECT id, name, generic_name FROM helix_medication_master "
                 "WHERE id = ? AND identity_status = ?",
@@ -308,9 +364,14 @@ def write_sage_order_in_txn(conn, *, patient_id: str, drug_name: str, dose: str,
             if row is not None:
                 product = dict(row)
             else:
-                binding = SageBinding(binding.target, None, binding.score, NOT_BOUND_UNAVAILABLE,
-                                      f"{binding.product['name']} can no longer be ordered",
-                                      binding.candidate)
+                binding = SageBinding(
+                    binding.target,
+                    None,
+                    binding.score,
+                    NOT_BOUND_UNAVAILABLE,
+                    f"{binding.product['name']} can no longer be ordered",
+                    binding.candidate,
+                )
         if product is None:
             not_bound_note = binding.note
         created_payload = {"formulary_binding": binding.record()}
@@ -360,43 +421,85 @@ def write_sage_order_in_txn(conn, *, patient_id: str, drug_name: str, dose: str,
 
     # 4. The supply row, through the unchanged insert_order ('pending'), and
     #    its link to the order, written once and never changed.
-    supply = helix_service.insert_order(conn, patient_id, product["id"], dose, route,
-                                        frequency, actor_id)
-    conn.execute("UPDATE helix_patient_med_orders SET med_order_id = ? "
-                 "WHERE id = ? AND med_order_id IS NULL", (order["id"], supply["id"]))
-    payload = {"helix_order_id": supply["id"], "product_id": product["id"],
-               "binding": binding_mode, "supply_source": SUPPLY_PHARMACY}
-    extra = {"helix_order_id": str(supply["id"]), "product_id": str(product["id"]),
-             "binding": binding_mode}
+    supply = helix_service.insert_order(
+        conn, patient_id, product["id"], dose, route, frequency, actor_id
+    )
+    conn.execute(
+        "UPDATE helix_patient_med_orders SET med_order_id = ? "
+        "WHERE id = ? AND med_order_id IS NULL",
+        (order["id"], supply["id"]),
+    )
+    payload: dict[str, Any] = {
+        "helix_order_id": supply["id"],
+        "product_id": product["id"],
+        "binding": binding_mode,
+        "supply_source": SUPPLY_PHARMACY,
+    }
+    extra: dict[str, Any] = {
+        "helix_order_id": str(supply["id"]),
+        "product_id": str(product["id"]),
+        "binding": binding_mode,
+    }
     if binding is not None:
         payload["score"] = extra["score"] = round(float(binding.score or 0.0), 3)
     event_id = core.record_event_in_txn(
-        conn, order=order, kind="supply_requested", from_status=order["status"],
-        to_status=order["status"], actor_id=actor_id, actor_role=role, entry_point=ENTRY_SAGE,
-        ref_type="helix_order", ref_id=supply["id"], payload=payload, created_at=now)
+        conn,
+        order=order,
+        kind="supply_requested",
+        from_status=order["status"],
+        to_status=order["status"],
+        actor_id=actor_id,
+        actor_role=role,
+        entry_point=ENTRY_SAGE,
+        ref_type="helix_order",
+        ref_id=supply["id"],
+        payload=payload,
+        created_at=now,
+    )
     core.audit_in_txn(
-        conn, order=order, action="med_order_supply_requested", actor_id=actor_id,
-        actor_role=role, entry_point=ENTRY_SAGE, from_status=order["status"],
-        to_status=order["status"], lane=LANE_SAGE, event_id=event_id,
-        extra=extra, request_meta=request_meta)
-    row = conn.execute("SELECT * FROM helix_patient_med_orders WHERE id = ?",
-                       (supply["id"],)).fetchone()
+        conn,
+        order=order,
+        action="med_order_supply_requested",
+        actor_id=actor_id,
+        actor_role=role,
+        entry_point=ENTRY_SAGE,
+        from_status=order["status"],
+        to_status=order["status"],
+        lane=LANE_SAGE,
+        event_id=event_id,
+        extra=extra,
+        request_meta=request_meta,
+    )
+    row = conn.execute(
+        "SELECT * FROM helix_patient_med_orders WHERE id = ?", (supply["id"],)
+    ).fetchone()
     return SageOrder(medication_id, order, dict(row), None)
 
 
-def write_scribe_order_in_txn(conn, *, medication_id: int, patient_id: str,
-                              author_id: Optional[str], note_id: Any, drug_name: str,
-                              dose: Optional[str], route: Optional[str],
-                              frequency: Optional[str], notes: Optional[str] = None,
-                              source_sentence: Optional[str] = None,
-                              request_meta: Optional[Mapping] = None) -> dict:
+def write_scribe_order_in_txn(
+    conn,
+    *,
+    medication_id: int,
+    patient_id: str,
+    author_id: str | None,
+    note_id: Any,
+    drug_name: str,
+    dose: str | None,
+    route: str | None,
+    frequency: str | None,
+    notes: str | None = None,
+    source_sentence: str | None = None,
+    request_meta: Mapping | None = None,
+) -> dict:
     """One medication order for a drug a signed note starts, linked to the
     chart row `medication_id` the caller has just written in this same
     transaction. Never commits; anything it raises rolls the caller's whole
     extraction back (the chart row included), so a chart row is never left
     without its order. Returns the order."""
+    if author_id is None:
+        raise core.MedOrderInvalid("A signed note must name its author", code="actor_required")
     role = _role_of(conn, author_id)
-    payload = {"source_note_id": str(note_id) if note_id is not None else None}
+    payload: dict[str, Any] = {"source_note_id": str(note_id) if note_id is not None else None}
     if source_sentence:
         payload["source_sentence"] = source_sentence
     write = core.create_in_txn(

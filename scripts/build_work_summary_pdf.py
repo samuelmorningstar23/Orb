@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 from reportlab.pdfgen import canvas
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, KeepTogether
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -7,6 +8,8 @@ from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.pagesizes import A4
 
 ROOT = Path(__file__).resolve().parents[1]
+VERIFICATION = json.loads((ROOT / 'docs/audit-2026-10/legacy-lint-types-20261020/verification.json').read_text())
+assert VERIFICATION['backend']['failures'] == 0 and VERIFICATION['backend']['errors'] == 0
 OUT = ROOT / 'output/pdf/Orb_Work_Summary_2026-10-19.pdf'
 NAVY = colors.HexColor('#102C3A')
 TEAL = colors.HexColor('#087E82')
@@ -94,7 +97,7 @@ add('Request limits now count actual streamed bytes, including routes that previ
 add('Bridge and six hospital-domain clients, plus Forecast and Appointments, use the shared cookie/session/CSRF transport. Sage history groups the latest 200 stored messages by original thread and local date; delayed microphone, ASR and speech callbacks cannot submit into a replacement conversation.')
 h('Startup, backups and engineering tools [1, 3, 4]')
 add('Added database-aware readiness, installer failure propagation and shutdown checks that target owned processes. Backup publication now uses unique private destinations, shared locks and integrity receipts before rotation. Restore verification covers 199 tables in 47 groups, including all 45 tables added by migrations 81-86. The later extraction-security finding is now fixed through authenticated staging and archive containment (page 6).')
-add('Browser and speech benchmarks now use owned disposable databases and synthetic data. Removed confirmed unused code and duplicate parsers, updated supported timestamp/model APIs, bounded Vite discovery, added advisory scanning and a candidate packaging workflow. The earlier strict Python gate covered two utility files. The follow-ups expand the independent gate to six utilities and add full-backend regression budgets (pages 8-9); legacy diagnostics remain explicit.')
+add('Browser and speech benchmarks now use owned disposable databases and synthetic data. Removed confirmed unused code and duplicate parsers, updated supported timestamp/model APIs, bounded Vite discovery, added advisory scanning and a candidate packaging workflow. The earlier strict Python gate covered two utility files. The follow-ups expand the independent gate to six utilities and add full-backend regression budgets (pages 8-9); the configured legacy lint/type/format findings are closed in the latest cleanup (page 10).')
 h('ML dependencies and honest answer completion [4]')
 add('Replaced the legacy FlagEmbedding training dependency chain with local-only inference adapters, updated Torch/Transformers, and required safe checkpoint loading. Fresh candidate scans reported zero advisories across 70 installed packages and the 76-package Apple production resolution. Existing appliance environments were not upgraded.')
 add('Sage now requires nonempty content, valid stream framing and explicit successful completion. Engine errors, premature EOF and length-truncated output do not become successful replayable answers. We also repaired an informational prompt being misclassified as a medication command and aligned shared-model context reuse.')
@@ -187,9 +190,27 @@ table(['Area','What changed'],[
 ],[145,354],compact=True)
 h('Verification and the remaining engineering debt')
 add('Full working-copy evidence: 17,410 backend passes and 8 explicit skips; 3,722 frontend tests passed. Final selected frontend: 3,252 passed, with typecheck and production build. A final selected backend fix selection passed 696 tests with one skip; all seven previously expected backend failures now pass normally. The coverage cohort, fixture reruns and later defect delta have separate source records. Statement/branch coverage for the working-copy snapshot was 88.37% / 80.18%. [15]', 'SmallOrb')
-add('Legacy cleanup is still open: the selected source inventory has 7,835 lint diagnostics, 996 typing diagnostics, 4,117 missing annotation slots and 371 files needing formatting. The gate prevents unreviewed regressions; it does not remove this existing debt. Hosted CI and site/hardware acceptance are unperformed.', 'SmallOrb')
+add('Historical inventory: the earlier engineering snapshot recorded 7,835 lint diagnostics, 996 typing diagnostics, 4,117 missing annotation slots and 371 unformatted files. Page 10 supersedes its lint/type/format status using the newer 59ee1bc starting point. Hosted CI and site/hardware acceptance remain unperformed.', 'SmallOrb')
 
-page(10,'What is still left to do in Orb')
+page(10,'Legacy lint and type cleanup')
+add('20 October 2026 follow-up. Removed the configured diagnostics from the reviewed committed source, including the HIS changes present at starting commit 59ee1bc. [16]')
+table(['Check','Before cleanup','After cleanup'],[
+('Production Python scope','398 files','398 files'),
+('Ruff diagnostics','8,314','0'),
+('Mypy errors','1,051','0'),
+('Unformatted Python files','382','0'),
+('Frontend ESLint','1 error / 9 warnings','0 errors / 0 warnings'),
+('Enforced diagnostic budgets','Legacy allowances','Zero lint/type/format')
+],[215,142,142])
+h('What we fixed')
+add('Modernized Python imports, annotations and formatting; corrected configuration, provider, payload and nullable-value types; and made exception chaining explicit. Named FastAPI dependencies retain authorization checks. Fixed React effect dependencies, backup retention arguments and the reset tool database exception tuples. Regression tests preserve Sage streaming, deferred import barriers and existing API contracts.')
+h('Fresh verification')
+add(f"The full disposable backend run passed {VERIFICATION['backend']['passed']:,} tests, with {VERIFICATION['backend']['skipped']} explicit skips and no failures or errors. The frontend passed 3,481 tests across 357 files. TypeScript, ESLint and the production build passed. All 24 quality-tool tests and 67 strict utility tests passed; the six utilities retain 100% coverage of 122 statements and 34 branches.")
+add('Documentation checks pass for all 9,028 citations and 490 symbol anchors. A final whitespace-only SQL edit passed 163 Relay tests, with one skip. Counts overlap; exact source hashes and run boundaries are recorded. Tests used synthetic, disposable state. No appliance deployment, integration connection or hosted CI run is claimed.', 'SmallOrb')
+h('Remaining quality work')
+add('The backend check is clean under its configured mypy rules. Full strict annotation coverage is a separate future migration: 4,334 preexisting missing parameter/return slots remain, down from 4,345 at the starting commit. The annotation gate prevents new debt. Optional SDKs and concurrent unfinished changes are outside this compliance claim. The per-module coverage budget check still fails: older baseline drift and uncovered defensive guards remain. Its budgets were not increased; a full CI pass is not claimed.', 'SmallOrb')
+
+page(11,'What is still left to do')
 add('This is the remaining-work summary as of 20 October. Built-but-disabled modules are not counted as missing. Open engineering, owner decisions and site acceptance require different next steps. [1-3, 7, 11-13, 15]')
 table(['Area / status','Remaining work and next step'],[
 
@@ -198,14 +219,14 @@ table(['Area / status','Remaining work and next step'],[
 ('Clinical governance / decisions','Resolve discharge/escalation handling, laboratory critical-result and restricted-record/break-glass rules. Obtain approved local ranges, thresholds, protocols and sign-offs before enabling dependent behavior.'),
 ('Sage bed locator / follow-ups','R026 itself shipped on 19 October (f5a0afb). Four separate items remain: an unrecognised off-ward drug destination, order-notice wording, bare-number matching on coded wards, and relative/unsupported patient references carried in a confirmed reply. These require their own rulings.'),
 ('AI / validation + performance','Measure cold startup, chart preparation and busy-ward concurrency. Complete clinical model validation, train/serve parity, benchmark/promotion gates and licensed-data work. The existing non-sepsis extract adapter is not evidence of a trained or approved model.'),
-('Infrastructure / remaining debt','Six utilities now pass strict typing and full scoped coverage; full-backend diagnostic and coverage regression gates are implemented. Legacy lint/type/annotation/format cleanup and further decomposition remain. Hosted CI/release acceptance is unperformed. PostgreSQL requires its own integration and environment.'),
+('Infrastructure / remaining debt','Six utilities now pass strict typing and full scoped coverage; full-backend diagnostic and coverage regression gates are implemented. The configured legacy lint/type/format findings are now closed. Full strict annotations (4,334 missing slots), per-module coverage budget failures and further decomposition remain. Hosted CI/release acceptance is unperformed. PostgreSQL requires its own integration and environment.'),
 ('Recovery / site acceptance','Rebuild/validate the candidate runtime on the intended appliance. Run restore/key-escrow, signed-media recovery, power-loss, backup-under-load and hardware soak/concurrency drills.'),
 ('Hospital adoption / field work','Confirm the pilot site, accountable clinical lead, workflows, training, acceptance criteria and approved feature enablement. The 13 local modules remain default-off until deliberately accepted.'),
 ('External integration / scope decision','ABDM, claims/insurers, payment gateways, PACS/DICOM, analysers/devices and external reporting remain unconnected. Reconcile any proposed transport with the strict offline policy before implementation.'),
 ('Product expansion / backlog','Inter-facility transfer and unswept multi-site surfaces remain gated. Later Pulse stages (authored warnings/LAN sensors, local disease trends and recall/stock workflows) remain future work; existing local records do not complete every HIS epic.')
 ],[154,345], compact=True)
 
-page(11,'Source record and status boundaries')
+page(12,'Source record and status boundaries')
 h('How to use the remaining-work list')
 add('Engineering items can move through implementation and focused acceptance. Held behavior needs the owner or clinical authority to decide first. Site/hardware evidence requires a real controlled exercise. External integrations require both an explicit product decision and compatible permissions/transport. Earlier foundation logs are historical: later executable behavior and current rulings take precedence.')
 h('Sources used')
@@ -226,9 +247,10 @@ sources=[
 ('13','HIS epic plan and held follow-ons','docs/HIS_BUILD_PLAN_2026-10.md'),
 ('14','Independent engineering fixes and fresh verification','docs/ORB_AUTONOMOUS_FIXES_2026-10-19.md; docs/audit-2026-10/autonomous-fixes-20261019/verification.json'),
 ('15','20 October engineering follow-up and verification','docs/ORB_ENGINEERING_COMPLETION_2026-10-20.md; docs/audit-2026-10/engineering-20261020/verification.json'),
+('16','20 October legacy lint/type cleanup and acceptance','docs/audit-2026-10/legacy-lint-types-20261020/verification.json'),
 ]
 for n,label,path in sources: add(f'<b>[{n}] {label}</b><br/>{path}','SmallOrb')
-add('Repository reviewed through fa1159a, including bed-locator shipment f5a0afb, the security/UI remediation and both engineering follow-ups. Existing concurrent changes remain separate from this work. Updated 20 October 2026; this document records implementation and evidence, not deployment or clinical approval.', 'SmallOrb')
+add('Repository reviewed through 59ee1bc plus this lint/type cleanup, including bed-locator shipment f5a0afb, the security/UI remediation, engineering commit a1fd336 and the intervening HIS/Sage commits. Existing concurrent changes remain separate from this work. Updated 20 October 2026; this document records implementation and evidence, not deployment or clinical approval.', 'SmallOrb')
 
 def footer(c, doc):
     w,hh=A4

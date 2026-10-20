@@ -83,19 +83,19 @@ trail (`surgical_scope`), and both are fixable without a deploy by setting
 ``ORB_PERIOPERATIVE_DEPARTMENTS`` to an exact, comma-separated allowlist, which
 REPLACES the token match entirely.
 """
+
 from __future__ import annotations
 
 import os
 
-from fastapi import HTTPException, Request
-
 from database import db_session
+from fastapi import HTTPException, Request
 from permissions import department_scope, log_phi_read, scope_patient_ids_sql
 
 # ── Scope verdicts. These strings land in the audit trail; do not rename. ──
-SCOPE_HOSPITAL_WIDE = "hospital_wide"   # (A) no department on the user row
-SCOPE_PERIOPERATIVE = "perioperative"   # (B) theatre / anaesthesia department
-SCOPE_DEPARTMENT = "department"         # (C)+(D) ward + named case team
+SCOPE_HOSPITAL_WIDE = "hospital_wide"  # (A) no department on the user row
+SCOPE_PERIOPERATIVE = "perioperative"  # (B) theatre / anaesthesia department
+SCOPE_DEPARTMENT = "department"  # (C)+(D) ward + named case team
 
 # Lower-cased substrings that mark a department as perioperative. "surg" catches
 # General Surgery, Neurosurgery, Cardiothoracic Surgery and Surgical Oncology.
@@ -106,7 +106,12 @@ SCOPE_DEPARTMENT = "department"         # (C)+(D) ward + named case team
 # of this tuple said "anaesthes" and silently ward-scoped a department called
 # "Anaesthetics" to a ward that admits nobody.
 _PERIOPERATIVE_TOKENS = (
-    "surg", "anesth", "anaesth", "theatre", "theater", "operating room",
+    "surg",
+    "anesth",
+    "anaesth",
+    "theatre",
+    "theater",
+    "operating room",
 )
 
 _PERIOP_ENV = "ORB_PERIOPERATIVE_DEPARTMENTS"
@@ -187,10 +192,13 @@ def surgery_in_scope(db, user: dict, surgery_id: str | None) -> bool:
     if not surgery_id:
         return False
     frag, params = surgical_list_filter(user)
-    return db.execute(
-        f"SELECT 1 FROM surgeries s WHERE s.id = ?{frag}",
-        (surgery_id,) + params,
-    ).fetchone() is not None
+    return (
+        db.execute(
+            f"SELECT 1 FROM surgeries s WHERE s.id = ?{frag}",
+            (surgery_id,) + params,
+        ).fetchone()
+        is not None
+    )
 
 
 def surgery_in_scope_blocking(user: dict, surgery_id: str | None) -> bool:
@@ -221,9 +229,7 @@ def enforce_surgery_scope(user: dict, surgery_id: str | None) -> None:
 
 def surgery_patient_id(db, surgery_id: str) -> str | None:
     """The case's patient, for the audit row. Takes an open connection."""
-    row = db.execute(
-        "SELECT patient_id FROM surgeries WHERE id = ?", (surgery_id,)
-    ).fetchone()
+    row = db.execute("SELECT patient_id FROM surgeries WHERE id = ?", (surgery_id,)).fetchone()
     return row["patient_id"] if row else None
 
 

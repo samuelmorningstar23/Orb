@@ -70,18 +70,26 @@ Built in lis-16 (W8-G), the ward's side:
 Interfaced criticals (lis-22, ORB_LAB_CRITICAL_INTERFACED) are raised by
 the ingestion pipeline and use these same routes.
 """
-from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal
 
 from database import db_session
-from permissions import (LAB_CRITICAL_ACK, LAB_CRITICAL_LOG, LAB_READ, department_scope,
-                         has_permission, log_phi_read, require_permission)
+from fastapi import APIRouter, Depends, HTTPException, Request
+from permissions import (
+    LAB_CRITICAL_ACK,
+    LAB_CRITICAL_LOG,
+    LAB_READ,
+    department_scope,
+    has_permission,
+    log_phi_read,
+    require_permission,
+)
+from pydantic import BaseModel, ConfigDict, Field
+from services.audit_service import AuditWriteError
+
 from routes.lab.orders import audit_unavailable, request_meta
 from routes.opt_in_gates import require_lab_critical_surface
 from services import lab_critical_service
-from services.audit_service import AuditWriteError
 
 router = APIRouter(dependencies=[Depends(require_lab_critical_surface)])
 
@@ -93,7 +101,7 @@ class CallbackBody(BaseModel):
     method: Literal["phone", "in_person"]
     # Must be true: a callback without a read-back closes nothing.
     read_back: bool
-    note: Optional[str] = Field(None, max_length=lab_critical_service.NOTE_MAX)
+    note: str | None = Field(None, max_length=lab_critical_service.NOTE_MAX)
     # The value the screen showed as told to the ward, which is the value read
     # back. Required: the stale-screen guard, like `expected` on a result.
     value_told: str = Field(..., max_length=lab_critical_service.VALUE_TOLD_MAX)
@@ -111,34 +119,38 @@ class AcknowledgeBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     # The person who was told: typically the person acknowledging.
     recipient_name: str = Field(..., max_length=lab_critical_service.NAME_MAX)
-    recipient_role: Optional[str] = Field(None, max_length=40)
+    recipient_role: str | None = Field(None, max_length=40)
     # Read on the ward screen, or a phone call from the laboratory.
     method: Literal["in_app", "phone"] = "in_app"
     # Who phoned from the laboratory, when it was a call.
-    caller_name: Optional[str] = Field(None, max_length=lab_critical_service.NAME_MAX)
+    caller_name: str | None = Field(None, max_length=lab_critical_service.NAME_MAX)
     # Must be true: an acknowledgement without a read-back closes nothing.
     read_back: bool
-    note: Optional[str] = Field(None, max_length=lab_critical_service.NOTE_MAX)
+    note: str | None = Field(None, max_length=lab_critical_service.NOTE_MAX)
     # The value the card showed, which is the value read back.
     value_told: str = Field(..., max_length=lab_critical_service.VALUE_TOLD_MAX)
 
 
 def _refusal(err: lab_critical_service.LabCriticalError) -> HTTPException:
-    return HTTPException(status_code=err.status,
-                         detail={"error": err.code, "message": err.message, **err.extra})
+    return HTTPException(
+        status_code=err.status, detail={"error": err.code, "message": err.message, **err.extra}
+    )
 
 
 def _write(call):
     try:
         return call()
     except lab_critical_service.LabCriticalError as err:
-        raise _refusal(err)
+        raise _refusal(err) from err
     except AuditWriteError:
-        raise audit_unavailable()
+        raise audit_unavailable() from None
+
+
+_LIST_CRITICALS_USER_DEFAULT = Depends(require_permission(LAB_READ))
 
 
 @router.get("/criticals")
-def list_criticals(request: Request, user: dict = Depends(require_permission(LAB_READ))):
+def list_criticals(request: Request, user: dict = _LIST_CRITICALS_USER_DEFAULT):
     """The laboratory's Critical results screen. The audit row records the
     patients actually returned."""
     dept = department_scope(user)
@@ -147,40 +159,83 @@ def list_criticals(request: Request, user: dict = Depends(require_permission(LAB
     shown = body["open"] + body["recent"]
     patient_ids = sorted({n["patient"]["id"] for n in shown})
     log_phi_read(
-        request=request, user=user,
+        request=request,
+        user=user,
         action_type="lab_critical_list_viewed",
-        summary_message=(f"Laboratory critical results viewed ({len(body['open'])} open, "
-                         f"{len(body['recent'])} recently closed)"),
+        summary_message=(
+            f"Laboratory critical results viewed ({len(body['open'])} open, "
+            f"{len(body['recent'])} recently closed)"
+        ),
         target_type="lab_critical_list",
         target_id="criticals",
-        metadata={"open": len(body["open"]), "recent": len(body["recent"]),
-                  "patient_count": len(patient_ids), "patient_ids": patient_ids[:200]},
+        metadata={
+            "open": len(body["open"]),
+            "recent": len(body["recent"]),
+            "patient_count": len(patient_ids),
+            "patient_ids": patient_ids[:200],
+        },
     )
-    return {**body, "can_log": has_permission(user.get("role", ""), LAB_CRITICAL_LOG),
-            "scope": {"department": dept, "hospital_wide": dept is None}}
+    return {
+        **body,
+        "can_log": has_permission(user.get("role", ""), LAB_CRITICAL_LOG),
+        "scope": {"department": dept, "hospital_wide": dept is None},
+    }
+
+
+_LOG_CALLBACK_USER_DEFAULT = Depends(require_permission(LAB_CRITICAL_LOG))
 
 
 @router.post("/criticals/{notification_id}/callback")
-def log_callback(notification_id: str, body: CallbackBody, request: Request,
-                 user: dict = Depends(require_permission(LAB_CRITICAL_LOG))):
-    return _write(lambda: lab_critical_service.log_callback(
-        notification_id, actor=user, recipient_name=body.recipient_name,
-        recipient_role=body.recipient_role, method=body.method, read_back=body.read_back,
-        note=body.note, value_told=body.value_told, dept=department_scope(user),
-        request_meta=request_meta(request)))
+def log_callback(
+    notification_id: str,
+    body: CallbackBody,
+    request: Request,
+    user: dict = _LOG_CALLBACK_USER_DEFAULT,
+):
+    return _write(
+        lambda: lab_critical_service.log_callback(
+            notification_id,
+            actor=user,
+            recipient_name=body.recipient_name,
+            recipient_role=body.recipient_role,
+            method=body.method,
+            read_back=body.read_back,
+            note=body.note,
+            value_told=body.value_told,
+            dept=department_scope(user),
+            request_meta=request_meta(request),
+        )
+    )
+
+
+_LOG_ATTEMPT_USER_DEFAULT = Depends(require_permission(LAB_CRITICAL_LOG))
 
 
 @router.post("/criticals/{notification_id}/attempt")
-def log_attempt(notification_id: str, body: AttemptBody, request: Request,
-                user: dict = Depends(require_permission(LAB_CRITICAL_LOG))):
-    return _write(lambda: lab_critical_service.log_attempt(
-        notification_id, actor=user, method=body.method, note=body.note,
-        value_told=body.value_told, dept=department_scope(user),
-        request_meta=request_meta(request)))
+def log_attempt(
+    notification_id: str,
+    body: AttemptBody,
+    request: Request,
+    user: dict = _LOG_ATTEMPT_USER_DEFAULT,
+):
+    return _write(
+        lambda: lab_critical_service.log_attempt(
+            notification_id,
+            actor=user,
+            method=body.method,
+            note=body.note,
+            value_told=body.value_told,
+            dept=department_scope(user),
+            request_meta=request_meta(request),
+        )
+    )
+
+
+_WARD_CRITICALS_USER_DEFAULT = Depends(require_permission(LAB_CRITICAL_ACK))
 
 
 @router.get("/criticals/ward")
-def ward_criticals(request: Request, user: dict = Depends(require_permission(LAB_CRITICAL_ACK))):
+def ward_criticals(request: Request, user: dict = _WARD_CRITICALS_USER_DEFAULT):
     """The ward card: open criticals of the patients on the caller's ward,
     scoped from the signed-in account, never from the request. The audit row
     records the patients returned; an empty card discloses nothing and
@@ -192,26 +247,48 @@ def ward_criticals(request: Request, user: dict = Depends(require_permission(LAB
     if patient_ids:
         try:
             log_phi_read(
-                request=request, user=user,
+                request=request,
+                user=user,
                 action_type="lab_critical_ward_viewed",
-                summary_message=(f"Ward critical laboratory results viewed "
-                                 f"({len(body['open'])} open)"),
+                summary_message=(
+                    f"Ward critical laboratory results viewed ({len(body['open'])} open)"
+                ),
                 target_type="lab_critical_list",
                 target_id="ward",
-                metadata={"open": len(body["open"]), "patient_count": len(patient_ids),
-                          "patient_ids": patient_ids[:200]},
+                metadata={
+                    "open": len(body["open"]),
+                    "patient_count": len(patient_ids),
+                    "patient_ids": patient_ids[:200],
+                },
             )
         except AuditWriteError:
             # Fail-closed: no audit row, no patient data.
-            raise audit_unavailable()
+            raise audit_unavailable() from None
     return {**body, "scope": {"department": dept, "hospital_wide": dept is None}}
 
 
+_ACKNOWLEDGE_USER_DEFAULT = Depends(require_permission(LAB_CRITICAL_ACK))
+
+
 @router.post("/criticals/{notification_id}/acknowledge")
-def acknowledge(notification_id: str, body: AcknowledgeBody, request: Request,
-                user: dict = Depends(require_permission(LAB_CRITICAL_ACK))):
-    return _write(lambda: lab_critical_service.acknowledge(
-        notification_id, actor=user, recipient_name=body.recipient_name,
-        recipient_role=body.recipient_role, method=body.method, caller_name=body.caller_name,
-        read_back=body.read_back, note=body.note, value_told=body.value_told,
-        dept=department_scope(user), request_meta=request_meta(request)))
+def acknowledge(
+    notification_id: str,
+    body: AcknowledgeBody,
+    request: Request,
+    user: dict = _ACKNOWLEDGE_USER_DEFAULT,
+):
+    return _write(
+        lambda: lab_critical_service.acknowledge(
+            notification_id,
+            actor=user,
+            recipient_name=body.recipient_name,
+            recipient_role=body.recipient_role,
+            method=body.method,
+            caller_name=body.caller_name,
+            read_back=body.read_back,
+            note=body.note,
+            value_told=body.value_told,
+            dept=department_scope(user),
+            request_meta=request_meta(request),
+        )
+    )

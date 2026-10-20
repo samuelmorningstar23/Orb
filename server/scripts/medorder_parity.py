@@ -23,6 +23,7 @@ says so and stops.
 
 Exit codes: 0 clean; 1 the report found problems; 2 refused or could not run.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -33,6 +34,7 @@ from pathlib import Path
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SERVER_DIR))
+
 
 from database import db_session  # noqa: E402
 from services.audit_service import log_audit_event  # noqa: E402
@@ -52,14 +54,15 @@ _SECTION_WORDS = {
 def _print_report(report: dict) -> None:
     print("Medication-order store parity report")
     print(f"  generated {report['generated_at']}")
-    print(f"  store {'on' if report['store_on'] else 'off'}, "
-          f"lifecycle {'on' if report['lifecycle_on'] else 'off'}")
+    print(
+        f"  store {'on' if report['store_on'] else 'off'}, "
+        f"lifecycle {'on' if report['lifecycle_on'] else 'off'}"
+    )
     print(f"  {report['orders']} orders, {report['events']} ledger events")
     for group in ("problems", "pending", "informational"):
         print(f"\n{group.capitalize()}")
         for key, section in report[group].items():
-            extra = (f" ({section['open_count']} still open)"
-                     if "open_count" in section else "")
+            extra = f" ({section['open_count']} still open)" if "open_count" in section else ""
             print(f"  {_SECTION_WORDS.get(key, key)}: {section['count']}{extra}")
             for item in section["sample"][:10]:
                 print("    " + ", ".join(f"{k} {v}" for k, v in item.items()))
@@ -81,27 +84,37 @@ def _audit_report(report: dict, actor: str) -> None:
             target_id="parity",
             metadata={
                 "clean": report["clean"],
-                "counts": {k: s["count"] for g in ("problems", "pending", "informational")
-                           for k, s in report[g].items()},
+                "counts": {
+                    k: s["count"]
+                    for g in ("problems", "pending", "informational")
+                    for k, s in report[g].items()
+                },
             },
         )
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Medication-order store parity report.")
-    ap.add_argument("--adopt", action="store_true",
-                    help="adopt unlinked chart rows first (needs ORB_MED_ORDER_STORE on)")
+    ap.add_argument(
+        "--adopt",
+        action="store_true",
+        help="adopt unlinked chart rows first (needs ORB_MED_ORDER_STORE on)",
+    )
     ap.add_argument("--json", action="store_true", help="print the report as JSON")
-    ap.add_argument("--actor", default=adoption.SYSTEM_ACTOR,
-                    help="the user id recorded on the audit rows (default: system)")
+    ap.add_argument(
+        "--actor",
+        default=adoption.SYSTEM_ACTOR,
+        help="the user id recorded on the audit rows (default: system)",
+    )
     ap.add_argument("--sample", type=int, default=50, help="ids listed per section")
     args = ap.parse_args(argv)
 
     adopted = None
     if args.adopt:
         try:
-            adopted = adoption.adopt_legacy(actor_id=args.actor, actor_role="system",
-                                            trigger="script")
+            adopted = adoption.adopt_legacy(
+                actor_id=args.actor, actor_role="system", trigger="script"
+            )
         except adoption.AdoptionRefused as e:
             print(str(e), file=sys.stderr)
             return 2
@@ -116,8 +129,10 @@ def main(argv=None) -> int:
         print(json.dumps({"adopted": adopted, "report": report}, indent=2, default=str))
     else:
         if adopted is not None:
-            print(f"Adopted {adopted['adopted']} chart row(s) in {adopted['batches']} batch(es); "
-                  f"{adopted['unadoptable']} unreadable, {adopted['conflict']} with a broken link.\n")
+            print(
+                f"Adopted {adopted['adopted']} chart row(s) in {adopted['batches']} batch(es); "
+                f"{adopted['unadoptable']} unreadable, {adopted['conflict']} with a broken link.\n"
+            )
         _print_report(report)
     return 0 if report["clean"] else 1
 

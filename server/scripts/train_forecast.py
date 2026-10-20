@@ -16,115 +16,375 @@ Usage:
   cd server && .venv/bin/python3 scripts/train_forecast.py
 """
 
-import sys
-import os
 import random
-import json
-import math
+import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
+from typing import TypedDict
 
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import numpy as np
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
-
-from models.forecast_lstm import OrbForecastLSTM, INPUT_DIM, HIDDEN_DIM, NUM_LAYERS
+import numpy as np  # noqa: E402 - application imports require the path/environment bootstrap above.
+import torch  # noqa: E402 - application imports require the path/environment bootstrap above.
+import torch.nn as nn  # noqa: E402 - application imports require the path/environment bootstrap above.
+import torch.optim as optim  # noqa: E402 - application imports require the path/environment bootstrap above.
+from models.forecast_lstm import HIDDEN_DIM, INPUT_DIM, NUM_LAYERS, OrbForecastLSTM  # noqa: E402 - application imports require the path/environment bootstrap above.
+from torch.utils.data import DataLoader, Dataset  # noqa: E402 - application imports require the path/environment bootstrap above.
 
 # ══════════════════════════════════════════════════════════════════════
 # INDIAN CLINICAL DATA PROFILES
 # Calibrated to published Indian hospital statistics
 # ══════════════════════════════════════════════════════════════════════
 
+
 # Common Indian diagnoses with LoS distributions (days)
 # Source: Multiple Indian hospital studies (AIIMS, CMC Vellore, JIPMER)
-INDIAN_DIAGNOSES = {
+class _DiagnosisProfile(TypedDict):
+    diag: str
+    los_mu: float
+    los_sigma: float
+    base_hr: float
+    base_sbp: float
+
+
+INDIAN_DIAGNOSES: dict[str, list[_DiagnosisProfile]] = {
     "critical": [
-        {"diag": "Acute MI: STEMI", "los_mu": 2.0, "los_sigma": 0.4, "base_hr": 118, "base_sbp": 85},
-        {"diag": "Acute stroke: MCA territory", "los_mu": 2.1, "los_sigma": 0.5, "base_hr": 95, "base_sbp": 165},
-        {"diag": "Sepsis: multi-organ", "los_mu": 2.2, "los_sigma": 0.5, "base_hr": 125, "base_sbp": 78},
-        {"diag": "Severe pre-eclampsia", "los_mu": 1.6, "los_sigma": 0.3, "base_hr": 105, "base_sbp": 170},
-        {"diag": "Pulmonary embolism", "los_mu": 1.9, "los_sigma": 0.4, "base_hr": 115, "base_sbp": 90},
-        {"diag": "Bacterial meningitis", "los_mu": 2.3, "los_sigma": 0.5, "base_hr": 110, "base_sbp": 88},
+        {
+            "diag": "Acute MI: STEMI",
+            "los_mu": 2.0,
+            "los_sigma": 0.4,
+            "base_hr": 118,
+            "base_sbp": 85,
+        },
+        {
+            "diag": "Acute stroke: MCA territory",
+            "los_mu": 2.1,
+            "los_sigma": 0.5,
+            "base_hr": 95,
+            "base_sbp": 165,
+        },
+        {
+            "diag": "Sepsis: multi-organ",
+            "los_mu": 2.2,
+            "los_sigma": 0.5,
+            "base_hr": 125,
+            "base_sbp": 78,
+        },
+        {
+            "diag": "Severe pre-eclampsia",
+            "los_mu": 1.6,
+            "los_sigma": 0.3,
+            "base_hr": 105,
+            "base_sbp": 170,
+        },
+        {
+            "diag": "Pulmonary embolism",
+            "los_mu": 1.9,
+            "los_sigma": 0.4,
+            "base_hr": 115,
+            "base_sbp": 90,
+        },
+        {
+            "diag": "Bacterial meningitis",
+            "los_mu": 2.3,
+            "los_sigma": 0.5,
+            "base_hr": 110,
+            "base_sbp": 88,
+        },
         {"diag": "Thyroid storm", "los_mu": 1.7, "los_sigma": 0.3, "base_hr": 140, "base_sbp": 155},
-        {"diag": "Unstable angina", "los_mu": 1.8, "los_sigma": 0.4, "base_hr": 100, "base_sbp": 95},
-        {"diag": "DKA with complications", "los_mu": 1.9, "los_sigma": 0.4, "base_hr": 112, "base_sbp": 92},
-        {"diag": "Acute respiratory failure", "los_mu": 2.3, "los_sigma": 0.6, "base_hr": 120, "base_sbp": 80},
+        {
+            "diag": "Unstable angina",
+            "los_mu": 1.8,
+            "los_sigma": 0.4,
+            "base_hr": 100,
+            "base_sbp": 95,
+        },
+        {
+            "diag": "DKA with complications",
+            "los_mu": 1.9,
+            "los_sigma": 0.4,
+            "base_hr": 112,
+            "base_sbp": 92,
+        },
+        {
+            "diag": "Acute respiratory failure",
+            "los_mu": 2.3,
+            "los_sigma": 0.6,
+            "base_hr": 120,
+            "base_sbp": 80,
+        },
     ],
     "elevated": [
-        {"diag": "Community-acquired pneumonia", "los_mu": 1.4, "los_sigma": 0.3, "base_hr": 98, "base_sbp": 108},
-        {"diag": "Diabetic ketoacidosis", "los_mu": 1.3, "los_sigma": 0.3, "base_hr": 102, "base_sbp": 105},
-        {"diag": "COPD exacerbation", "los_mu": 1.4, "los_sigma": 0.4, "base_hr": 95, "base_sbp": 110},
-        {"diag": "Congestive heart failure", "los_mu": 1.5, "los_sigma": 0.4, "base_hr": 92, "base_sbp": 100},
-        {"diag": "Dengue fever: warning signs", "los_mu": 1.2, "los_sigma": 0.3, "base_hr": 90, "base_sbp": 95},
-        {"diag": "Acute pancreatitis", "los_mu": 1.5, "los_sigma": 0.4, "base_hr": 96, "base_sbp": 108},
+        {
+            "diag": "Community-acquired pneumonia",
+            "los_mu": 1.4,
+            "los_sigma": 0.3,
+            "base_hr": 98,
+            "base_sbp": 108,
+        },
+        {
+            "diag": "Diabetic ketoacidosis",
+            "los_mu": 1.3,
+            "los_sigma": 0.3,
+            "base_hr": 102,
+            "base_sbp": 105,
+        },
+        {
+            "diag": "COPD exacerbation",
+            "los_mu": 1.4,
+            "los_sigma": 0.4,
+            "base_hr": 95,
+            "base_sbp": 110,
+        },
+        {
+            "diag": "Congestive heart failure",
+            "los_mu": 1.5,
+            "los_sigma": 0.4,
+            "base_hr": 92,
+            "base_sbp": 100,
+        },
+        {
+            "diag": "Dengue fever: warning signs",
+            "los_mu": 1.2,
+            "los_sigma": 0.3,
+            "base_hr": 90,
+            "base_sbp": 95,
+        },
+        {
+            "diag": "Acute pancreatitis",
+            "los_mu": 1.5,
+            "los_sigma": 0.4,
+            "base_hr": 96,
+            "base_sbp": 108,
+        },
         {"diag": "Lower GI bleed", "los_mu": 1.3, "los_sigma": 0.3, "base_hr": 100, "base_sbp": 98},
-        {"diag": "Acute kidney injury", "los_mu": 1.4, "los_sigma": 0.4, "base_hr": 88, "base_sbp": 105},
-        {"diag": "SLE flare: nephritis", "los_mu": 1.6, "los_sigma": 0.4, "base_hr": 94, "base_sbp": 125},
-        {"diag": "Aspiration pneumonia", "los_mu": 1.5, "los_sigma": 0.4, "base_hr": 96, "base_sbp": 102},
-        {"diag": "Liver cirrhosis decompensation", "los_mu": 1.7, "los_sigma": 0.5, "base_hr": 90, "base_sbp": 95},
-        {"diag": "Malaria: P. falciparum", "los_mu": 1.2, "los_sigma": 0.3, "base_hr": 100, "base_sbp": 100},
-        {"diag": "Tuberculosis: pulmonary", "los_mu": 1.6, "los_sigma": 0.5, "base_hr": 95, "base_sbp": 108},
+        {
+            "diag": "Acute kidney injury",
+            "los_mu": 1.4,
+            "los_sigma": 0.4,
+            "base_hr": 88,
+            "base_sbp": 105,
+        },
+        {
+            "diag": "SLE flare: nephritis",
+            "los_mu": 1.6,
+            "los_sigma": 0.4,
+            "base_hr": 94,
+            "base_sbp": 125,
+        },
+        {
+            "diag": "Aspiration pneumonia",
+            "los_mu": 1.5,
+            "los_sigma": 0.4,
+            "base_hr": 96,
+            "base_sbp": 102,
+        },
+        {
+            "diag": "Liver cirrhosis decompensation",
+            "los_mu": 1.7,
+            "los_sigma": 0.5,
+            "base_hr": 90,
+            "base_sbp": 95,
+        },
+        {
+            "diag": "Malaria: P. falciparum",
+            "los_mu": 1.2,
+            "los_sigma": 0.3,
+            "base_hr": 100,
+            "base_sbp": 100,
+        },
+        {
+            "diag": "Tuberculosis: pulmonary",
+            "los_mu": 1.6,
+            "los_sigma": 0.5,
+            "base_hr": 95,
+            "base_sbp": 108,
+        },
     ],
     "stable": [
-        {"diag": "Cholecystitis: post lap chole", "los_mu": 0.7, "los_sigma": 0.2, "base_hr": 78, "base_sbp": 122},
-        {"diag": "Hyperemesis gravidarum", "los_mu": 0.6, "los_sigma": 0.2, "base_hr": 85, "base_sbp": 115},
-        {"diag": "Acute pyelonephritis", "los_mu": 0.8, "los_sigma": 0.2, "base_hr": 88, "base_sbp": 118},
-        {"diag": "Hip fracture: NOF", "los_mu": 1.0, "los_sigma": 0.3, "base_hr": 82, "base_sbp": 130},
-        {"diag": "Cellulitis lower limb", "los_mu": 0.8, "los_sigma": 0.2, "base_hr": 80, "base_sbp": 120},
-        {"diag": "Acute asthma exacerbation", "los_mu": 0.6, "los_sigma": 0.2, "base_hr": 90, "base_sbp": 125},
-        {"diag": "Atrial fibrillation: new", "los_mu": 0.7, "los_sigma": 0.2, "base_hr": 95, "base_sbp": 128},
-        {"diag": "Acute diverticulitis", "los_mu": 0.7, "los_sigma": 0.2, "base_hr": 82, "base_sbp": 120},
-        {"diag": "Post appendectomy", "los_mu": 0.5, "los_sigma": 0.2, "base_hr": 76, "base_sbp": 118},
+        {
+            "diag": "Cholecystitis: post lap chole",
+            "los_mu": 0.7,
+            "los_sigma": 0.2,
+            "base_hr": 78,
+            "base_sbp": 122,
+        },
+        {
+            "diag": "Hyperemesis gravidarum",
+            "los_mu": 0.6,
+            "los_sigma": 0.2,
+            "base_hr": 85,
+            "base_sbp": 115,
+        },
+        {
+            "diag": "Acute pyelonephritis",
+            "los_mu": 0.8,
+            "los_sigma": 0.2,
+            "base_hr": 88,
+            "base_sbp": 118,
+        },
+        {
+            "diag": "Hip fracture: NOF",
+            "los_mu": 1.0,
+            "los_sigma": 0.3,
+            "base_hr": 82,
+            "base_sbp": 130,
+        },
+        {
+            "diag": "Cellulitis lower limb",
+            "los_mu": 0.8,
+            "los_sigma": 0.2,
+            "base_hr": 80,
+            "base_sbp": 120,
+        },
+        {
+            "diag": "Acute asthma exacerbation",
+            "los_mu": 0.6,
+            "los_sigma": 0.2,
+            "base_hr": 90,
+            "base_sbp": 125,
+        },
+        {
+            "diag": "Atrial fibrillation: new",
+            "los_mu": 0.7,
+            "los_sigma": 0.2,
+            "base_hr": 95,
+            "base_sbp": 128,
+        },
+        {
+            "diag": "Acute diverticulitis",
+            "los_mu": 0.7,
+            "los_sigma": 0.2,
+            "base_hr": 82,
+            "base_sbp": 120,
+        },
+        {
+            "diag": "Post appendectomy",
+            "los_mu": 0.5,
+            "los_sigma": 0.2,
+            "base_hr": 76,
+            "base_sbp": 118,
+        },
         {"diag": "PID", "los_mu": 0.6, "los_sigma": 0.2, "base_hr": 84, "base_sbp": 115},
-        {"diag": "Viral gastroenteritis", "los_mu": 0.5, "los_sigma": 0.1, "base_hr": 80, "base_sbp": 118},
-        {"diag": "Urinary tract infection", "los_mu": 0.6, "los_sigma": 0.2, "base_hr": 82, "base_sbp": 120},
-        {"diag": "Alcoholic hepatitis", "los_mu": 0.9, "los_sigma": 0.3, "base_hr": 86, "base_sbp": 115},
+        {
+            "diag": "Viral gastroenteritis",
+            "los_mu": 0.5,
+            "los_sigma": 0.1,
+            "base_hr": 80,
+            "base_sbp": 118,
+        },
+        {
+            "diag": "Urinary tract infection",
+            "los_mu": 0.6,
+            "los_sigma": 0.2,
+            "base_hr": 82,
+            "base_sbp": 120,
+        },
+        {
+            "diag": "Alcoholic hepatitis",
+            "los_mu": 0.9,
+            "los_sigma": 0.3,
+            "base_hr": 86,
+            "base_sbp": 115,
+        },
     ],
 }
 
 # Indian name pools (Census-representative)
 INDIAN_MALE_NAMES = [
-    "Rajesh Kumar", "Suresh Pillai", "Manoj Tiwari", "Vikram Singh", "Arun Nambiar",
-    "Harish Bhat", "Sanjay Kulkarni", "Prakash Joshi", "Ganesh Mukherjee", "Ramesh Iyengar",
-    "Amit Sharma", "Deepak Verma", "Sunil Patil", "Ravi Shankar", "Mohan Das",
-    "Venkat Raman", "Ashok Reddy", "Balaji Srinivasan", "Jagdish Prasad", "Kishore Nair",
-    "Dinesh Gupta", "Rajiv Menon", "Santosh Kumar", "Anil Kapoor", "Girish Hegde",
-    "Mahesh Babu", "Prabhu Dev", "Rakesh Roshan", "Satish Kaushik", "Umesh Yadav",
+    "Rajesh Kumar",
+    "Suresh Pillai",
+    "Manoj Tiwari",
+    "Vikram Singh",
+    "Arun Nambiar",
+    "Harish Bhat",
+    "Sanjay Kulkarni",
+    "Prakash Joshi",
+    "Ganesh Mukherjee",
+    "Ramesh Iyengar",
+    "Amit Sharma",
+    "Deepak Verma",
+    "Sunil Patil",
+    "Ravi Shankar",
+    "Mohan Das",
+    "Venkat Raman",
+    "Ashok Reddy",
+    "Balaji Srinivasan",
+    "Jagdish Prasad",
+    "Kishore Nair",
+    "Dinesh Gupta",
+    "Rajiv Menon",
+    "Santosh Kumar",
+    "Anil Kapoor",
+    "Girish Hegde",
+    "Mahesh Babu",
+    "Prabhu Dev",
+    "Rakesh Roshan",
+    "Satish Kaushik",
+    "Umesh Yadav",
 ]
 
 INDIAN_FEMALE_NAMES = [
-    "Priya Reddy", "Lakshmi Devi", "Sunita Rao", "Deepa Krishnan", "Fatima Begum",
-    "Shalini Gupta", "Meenakshi Sundaram", "Divya Menon", "Gayathri Venkat", "Padma Lakshmi",
-    "Revathi Subramaniam", "Savitha Hegde", "Preethi Das", "Usha Rani", "Nandini Shetty",
-    "Kavitha Iyer", "Anjali Sharma", "Bhavani Devi", "Chitra Ramesh", "Dhanalakshmi P",
-    "Geetha Rajan", "Hema Malini", "Indira Bai", "Jyothi Kumari", "Kamala Hassan",
-    "Lalitha Rao", "Malathi Krishnan", "Nalini Suresh", "Parvathi Amma", "Radha Kumari",
+    "Priya Reddy",
+    "Lakshmi Devi",
+    "Sunita Rao",
+    "Deepa Krishnan",
+    "Fatima Begum",
+    "Shalini Gupta",
+    "Meenakshi Sundaram",
+    "Divya Menon",
+    "Gayathri Venkat",
+    "Padma Lakshmi",
+    "Revathi Subramaniam",
+    "Savitha Hegde",
+    "Preethi Das",
+    "Usha Rani",
+    "Nandini Shetty",
+    "Kavitha Iyer",
+    "Anjali Sharma",
+    "Bhavani Devi",
+    "Chitra Ramesh",
+    "Dhanalakshmi P",
+    "Geetha Rajan",
+    "Hema Malini",
+    "Indira Bai",
+    "Jyothi Kumari",
+    "Kamala Hassan",
+    "Lalitha Rao",
+    "Malathi Krishnan",
+    "Nalini Suresh",
+    "Parvathi Amma",
+    "Radha Kumari",
 ]
+
 
 # Indian age distribution (weighted toward elderly for hospital admissions)
 # Based on: Indian hospital admission age distributions from NITI Aayog health data
 def sample_indian_age() -> int:
     """Sample age from Indian hospital admission distribution."""
     r = random.random()
-    if r < 0.05:     return random.randint(18, 25)   # Young adults
-    elif r < 0.15:   return random.randint(26, 35)   # Adults
-    elif r < 0.30:   return random.randint(36, 45)   # Middle-aged
-    elif r < 0.50:   return random.randint(46, 55)   # Late middle-aged
-    elif r < 0.72:   return random.randint(56, 65)   # Senior
-    elif r < 0.90:   return random.randint(66, 75)   # Elderly
-    else:            return random.randint(76, 90)   # Very elderly
+    if r < 0.05:
+        return random.randint(18, 25)  # Young adults
+    elif r < 0.15:
+        return random.randint(26, 35)  # Adults
+    elif r < 0.30:
+        return random.randint(36, 45)  # Middle-aged
+    elif r < 0.50:
+        return random.randint(46, 55)  # Late middle-aged
+    elif r < 0.72:
+        return random.randint(56, 65)  # Senior
+    elif r < 0.90:
+        return random.randint(66, 75)  # Elderly
+    else:
+        return random.randint(76, 90)  # Very elderly
 
 
 # Ward assignment probabilities by severity
 WARD_MAP = {
     "critical": ["ICU"] * 8 + ["W1"] * 2,
     "elevated": ["W1"] * 3 + ["W2"] * 3 + ["W3"] * 4,
-    "stable":   ["W1"] * 2 + ["W2"] * 4 + ["W3"] * 4,
+    "stable": ["W1"] * 2 + ["W2"] * 4 + ["W3"] * 4,
 }
 
 # Day-of-week admission multipliers (Indian hospitals — higher on Mon/Tue)
@@ -141,6 +401,7 @@ DOW_MULTIPLIERS = {
 # ══════════════════════════════════════════════════════════════════════
 # SYNTHETIC DATASET GENERATION
 # ══════════════════════════════════════════════════════════════════════
+
 
 class SyntheticPatientTrajectory:
     """Generate a single patient's multivariate time-series + labels."""
@@ -168,15 +429,17 @@ class SyntheticPatientTrajectory:
         self.sex = random.choice(["M", "F"])
         self.age = sample_indian_age()
         self.ward = random.choice(WARD_MAP[self.severity])
-        self.med_count = {"critical": random.randint(6, 12),
-                         "elevated": random.randint(3, 8),
-                         "stable": random.randint(1, 5)}[self.severity]
+        self.med_count = {
+            "critical": random.randint(6, 12),
+            "elevated": random.randint(3, 8),
+            "stable": random.randint(1, 5),
+        }[self.severity]
 
         # Base vitals from diagnosis profile
         self.base_hr = profile["base_hr"]
         self.base_sbp = profile["base_sbp"]
 
-    def generate_sequence(self, current_day: float = None) -> tuple:
+    def generate_sequence(self, current_day: float | None = None) -> tuple:
         """
         Generate (features_tensor, labels_dict) for training.
 
@@ -197,7 +460,9 @@ class SyntheticPatientTrajectory:
             day_progress = current_day - (1.0 - time_frac) * 2.0  # Look-back window
 
             # Vital sign trajectory (with realistic drift + noise)
-            improvement_factor = min(1.0, day_progress / self.true_los) if self.severity != "critical" else 0.0
+            improvement_factor = (
+                min(1.0, day_progress / self.true_los) if self.severity != "critical" else 0.0
+            )
 
             # Heart Rate
             hr_target = self.base_hr + (78 - self.base_hr) * improvement_factor * 0.5
@@ -229,7 +494,7 @@ class SyntheticPatientTrajectory:
             features[t, 6] = self.age
             features[t, 7] = 1.0 if self.sex == "M" else 0.0  # Sex_M
             features[t, 8] = 1.0 if self.sex == "F" else 0.0  # Sex_F
-            features[t, 9]  = 1.0 if self.ward == "ICU" else 0.0
+            features[t, 9] = 1.0 if self.ward == "ICU" else 0.0
             features[t, 10] = 1.0 if self.ward == "W1" else 0.0
             features[t, 11] = 1.0 if self.ward == "W2" else 0.0
             features[t, 12] = 1.0 if self.ward == "W3" else 0.0
@@ -243,8 +508,8 @@ class SyntheticPatientTrajectory:
             # Add crisis spikes for critical patients
             if self.severity == "critical" and random.random() < 0.05:
                 features[t, 0] += random.uniform(10, 25)  # HR spike
-                features[t, 3] -= random.uniform(2, 6)     # SpO2 drop
-                features[t, 1] -= random.uniform(10, 20)   # SBP drop
+                features[t, 3] -= random.uniform(2, 6)  # SpO2 drop
+                features[t, 1] -= random.uniform(10, 20)  # SBP drop
 
         # Labels
         # NOTE (data-quality, deferred): this whole generator is a SMOKE TEST, not
@@ -263,8 +528,7 @@ class SyntheticPatientTrajectory:
         # discharge-ready even with low remaining LoS.
         if self.severity == "critical" and improvement_factor < 0.2:
             base_discharge *= 0.3
-        discharge_prob = float(np.clip(
-            base_discharge + np.random.normal(0, 0.08), 0.0, 0.95))
+        discharge_prob = float(np.clip(base_discharge + np.random.normal(0, 0.08), 0.0, 0.95))
 
         # Acuity trajectory
         if improvement_factor > 0.5:
@@ -298,7 +562,9 @@ class ClinicalDataset(Dataset):
                 features, labels = patient.generate_sequence()
                 self.samples.append((features, labels))
 
-        print(f"  [Dataset] Generated {len(self.samples)} training samples from {n_patients} synthetic patients")
+        print(
+            f"  [Dataset] Generated {len(self.samples)} training samples from {n_patients} synthetic patients"
+        )
 
     def __len__(self):
         return len(self.samples)
@@ -316,6 +582,7 @@ class ClinicalDataset(Dataset):
 # ══════════════════════════════════════════════════════════════════════
 # TRAINING LOOP
 # ══════════════════════════════════════════════════════════════════════
+
 
 def train_model(epochs: int = 50, lr: float = 1e-3, batch_size: int = 32):
     """Train the multi-task LSTM and save checkpoint."""
@@ -343,9 +610,9 @@ def train_model(epochs: int = 50, lr: float = 1e-3, batch_size: int = 32):
     acuity_criterion = nn.CrossEntropyLoss()
 
     # Task loss weights
-    alpha = 1.0   # LoS regression
-    beta = 0.5    # Discharge probability
-    gamma = 0.3   # Acuity trajectory
+    alpha = 1.0  # LoS regression
+    beta = 0.5  # Discharge probability
+    gamma = 0.3  # Acuity trajectory
 
     # Optimizer
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
@@ -401,23 +668,28 @@ def train_model(epochs: int = 50, lr: float = 1e-3, batch_size: int = 32):
         avg_val = val_loss / len(val_loader)
 
         if (epoch + 1) % 5 == 0 or epoch == 0:
-            print(f"  Epoch {epoch+1:3d}/{epochs} │ Train: {avg_train:.4f} "
-                  f"(LoS:{los_total/len(loader):.3f} Dis:{dis_total/len(loader):.3f} "
-                  f"Acu:{acu_total/len(loader):.3f}) │ Val: {avg_val:.4f}")
+            print(
+                f"  Epoch {epoch + 1:3d}/{epochs} │ Train: {avg_train:.4f} "
+                f"(LoS:{los_total / len(loader):.3f} Dis:{dis_total / len(loader):.3f} "
+                f"Acu:{acu_total / len(loader):.3f}) │ Val: {avg_val:.4f}"
+            )
 
         # Save best
         if avg_val < best_val_loss:
             best_val_loss = avg_val
-            torch.save({
-                "model_state_dict": model.state_dict(),
-                "epoch": epoch + 1,
-                "best_loss": best_val_loss,
-                "input_dim": INPUT_DIM,
-                "hidden_dim": HIDDEN_DIM,
-                "num_layers": NUM_LAYERS,
-                "training_date": datetime.now(timezone.utc).isoformat(),
-                "data_source": "indian_synthetic_clinical_v1",
-            }, str(checkpoint_path))
+            torch.save(
+                {
+                    "model_state_dict": model.state_dict(),
+                    "epoch": epoch + 1,
+                    "best_loss": best_val_loss,
+                    "input_dim": INPUT_DIM,
+                    "hidden_dim": HIDDEN_DIM,
+                    "num_layers": NUM_LAYERS,
+                    "training_date": datetime.now(UTC).isoformat(),
+                    "data_source": "indian_synthetic_clinical_v1",
+                },
+                str(checkpoint_path),
+            )
 
     print(f"\n✓ Training complete. Best val loss: {best_val_loss:.4f}")
     print(f"✓ Checkpoint saved: {checkpoint_path}")
@@ -430,12 +702,13 @@ def train_model(epochs: int = 50, lr: float = 1e-3, batch_size: int = 32):
 # 30-DAY ADMISSION HISTORY GENERATOR
 # ══════════════════════════════════════════════════════════════════════
 
+
 def generate_admission_history():
     """
     Generate 30 days of realistic Indian hospital admission history.
-    
+
     Calibrated to:
-      - Base rate: ~4-6 admissions/day (small Indian hospital, 30-bed capacity)  
+      - Base rate: ~4-6 admissions/day (small Indian hospital, 30-bed capacity)
       - Day-of-week seasonality (Mon/Tue surge, weekend dip)
       - Severity distribution: 25% critical, 30% elevated, 45% stable
       - LoS: LogNormal distributions matching Indian hospital data
@@ -448,6 +721,7 @@ def generate_admission_history():
     # sqlite3 when no key is configured, and it honours the configured DB path
     # instead of assuming server/orb.db.
     from database import _open_raw_connection
+
     conn = _open_raw_connection()
     cursor = conn.cursor()
 
@@ -470,7 +744,7 @@ def generate_admission_history():
     # Clear existing history
     cursor.execute("DELETE FROM admission_history")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     total_records = 0
 
     for day_offset in range(30, 0, -1):
@@ -498,7 +772,7 @@ def generate_admission_history():
             # LoS
             los = max(1.0, round(np.random.lognormal(profile["los_mu"], profile["los_sigma"]), 1))
 
-            # Demographics  
+            # Demographics
             sex = random.choice(["M", "F"])
             age = sample_indian_age()
             name = random.choice(INDIAN_MALE_NAMES if sex == "M" else INDIAN_FEMALE_NAMES)
@@ -519,8 +793,13 @@ def generate_admission_history():
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     admission_dt.strftime("%Y-%m-%d"),
-                    name, age, sex, ward,
-                    profile["diag"], severity, los,
+                    name,
+                    age,
+                    sex,
+                    ward,
+                    profile["diag"],
+                    severity,
+                    los,
                     discharged,
                     discharge_date.strftime("%Y-%m-%d") if discharged else None,
                 ),
@@ -531,7 +810,7 @@ def generate_admission_history():
     conn.close()
 
     print(f"✓ Generated {total_records} admission records over 30 days")
-    print(f"  Avg: {total_records/30:.1f} admissions/day")
+    print(f"  Avg: {total_records / 30:.1f} admissions/day")
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -550,10 +829,12 @@ if __name__ == "__main__":
     print("\n→ Running inference test...")
     test_input = torch.randn(1, 48, INPUT_DIM)
     result = model.predict(test_input)
-    print(f"  Test prediction: LoS={result['predicted_los_days']}d, "
-          f"P(discharge)={result['discharge_probability']:.1%}, "
-          f"Trajectory={result['acuity_trajectory']} "
-          f"(conf={result['confidence']:.1%})")
+    print(
+        f"  Test prediction: LoS={result['predicted_los_days']}d, "
+        f"P(discharge)={result['discharge_probability']:.1%}, "
+        f"Trajectory={result['acuity_trajectory']} "
+        f"(conf={result['confidence']:.1%})"
+    )
 
     # Step 3: Generate 30-day admission history
     generate_admission_history()

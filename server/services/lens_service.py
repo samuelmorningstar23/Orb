@@ -2,16 +2,18 @@
 
 Uses MedGemma 27B Multimodal for interpreting medical images (X-rays, ECGs, CT scans, etc.)
 """
+
 import asyncio
 import base64
 import json
 import os
-from typing import Optional, AsyncGenerator
-from config import VISION_MODEL, UPLOAD_DIR, OLLAMA_KEEP_ALIVE
-from database import db_session
-from services.crypto_service import read_decrypted
-import httpx
+from collections.abc import AsyncGenerator
 
+import httpx
+from config import OLLAMA_KEEP_ALIVE, VISION_MODEL
+from database import db_session
+
+from services.crypto_service import read_decrypted
 
 # REGULATORY/CLINICAL-SAFETY: a non-model, application-layer disclaimer that is
 # ALWAYS appended to Lens output. We do not rely on the model to add its own
@@ -69,21 +71,21 @@ def _encode_image(image_path: str) -> str:
 
 async def analyze_image_stream(
     image_path: str,
-    clinical_context: Optional[str] = None,
-    patient_context: Optional[str] = None,
+    clinical_context: str | None = None,
+    patient_context: str | None = None,
     *,
-    patient_id: Optional[str] = None,
-    user_id: Optional[str] = None,
+    patient_id: str | None = None,
+    user_id: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """Stream analysis of a medical image using vision LLM.
 
     `patient_id` / `user_id` only label the inference's audit row, so "which
     model saw this patient's image" is answerable."""
-    
+
     # Whole-file I/O, AES and base64 encoding must stay off the event loop.
     # The gateway accepts bytes encoded in JSON, so no plaintext temp is needed.
     image_data = await asyncio.to_thread(_encode_image, image_path)
-    
+
     # Build prompt — untrusted free-text (clinical_context is a client Form field;
     # patient_context is DB-sourced) is fenced so it cannot be interpreted as
     # instructions (prompt-injection hardening).
@@ -92,9 +94,10 @@ async def analyze_image_stream(
         user_prompt += "\n\n" + _delimit_untrusted("Clinical context", clinical_context)
     if patient_context:
         user_prompt += "\n\n" + _delimit_untrusted("Patient context", patient_context)
-    
+
     from services import ollama_gateway
     from services.llm_queue_service import llm_queue
+
     await llm_queue.acquire(priority=2)
     try:
         async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
@@ -168,8 +171,8 @@ async def analyze_image_stream(
 
 async def analyze_image_full(
     image_path: str,
-    clinical_context: Optional[str] = None,
-    patient_context: Optional[str] = None,
+    clinical_context: str | None = None,
+    patient_context: str | None = None,
 ) -> str:
     """Get full analysis of a medical image."""
     full_response = ""
@@ -179,11 +182,11 @@ async def analyze_image_full(
 
 
 def save_lens_analysis(
-    patient_id: Optional[str],
+    patient_id: str | None,
     author_id: str,
     image_path: str,
     image_type: str,
-    clinical_context: Optional[str],
+    clinical_context: str | None,
     analysis: str,
 ) -> int:
     """Save a lens analysis to the database."""
@@ -217,7 +220,7 @@ REVIEWED_IMAGING_SQL = (
 MAX_REVIEWED_TEXT = 10000
 
 
-def image_url_for(image_path: Optional[str]) -> Optional[str]:
+def image_url_for(image_path: str | None) -> str | None:
     """The authenticated URL a browser loads the image from, or None.
 
     image_path is where the file sits on the appliance's disk (absolute for an
@@ -235,7 +238,7 @@ def decorate_analysis(row) -> dict:
     return out
 
 
-def get_lens_analyses(patient_id: Optional[str] = None) -> list:
+def get_lens_analyses(patient_id: str | None = None) -> list:
     """Get lens analyses, optionally filtered by patient."""
     with db_session() as db:
         if patient_id:

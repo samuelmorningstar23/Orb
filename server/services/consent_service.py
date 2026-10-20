@@ -103,13 +103,15 @@ counsel can disagree with a specific sentence and change a specific row of
 `retention_policies` — which is why that one table is mutable and everything
 else in this module is append-only.
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from database import db_session
 
@@ -145,8 +147,13 @@ CONSENT_METHODS: dict[str, str] = {
 GIVEN_BY = ("patient", "guardian", "proxy")
 
 BREACH_NATURES = (
-    "unauthorised_access", "unauthorised_disclosure", "loss", "alteration",
-    "destruction", "system_compromise", "misdirected_communication",
+    "unauthorised_access",
+    "unauthorised_disclosure",
+    "loss",
+    "alteration",
+    "destruction",
+    "system_compromise",
+    "misdirected_communication",
 )
 
 
@@ -154,8 +161,9 @@ BREACH_NATURES = (
 #  Small helpers
 # ════════════════════════════════════════════════════════════════
 
+
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _rows(cursor) -> list[dict]:
@@ -175,6 +183,7 @@ def _require(value: Any, name: str) -> Any:
 # ════════════════════════════════════════════════════════════════
 #  1. CONSENT RECORDS
 # ════════════════════════════════════════════════════════════════
+
 
 def record_consent(
     *,
@@ -201,15 +210,26 @@ def record_consent(
     """
     with db_session() as db:
         rec = record_consent_on(
-            db, patient_id=patient_id, purpose=purpose, method=method,
-            recorded_by=recorded_by, recorded_by_role=recorded_by_role,
-            scope_detail=scope_detail, notice_version=notice_version,
-            notice_language=notice_language, granted_at=granted_at,
-            expires_at=expires_at, given_by=given_by, proxy_name=proxy_name,
-            proxy_relationship=proxy_relationship, evidence_ref=evidence_ref,
+            db,
+            patient_id=patient_id,
+            purpose=purpose,
+            method=method,
+            recorded_by=recorded_by,
+            recorded_by_role=recorded_by_role,
+            scope_detail=scope_detail,
+            notice_version=notice_version,
+            notice_language=notice_language,
+            granted_at=granted_at,
+            expires_at=expires_at,
+            given_by=given_by,
+            proxy_name=proxy_name,
+            proxy_relationship=proxy_relationship,
+            evidence_ref=evidence_ref,
         )
     logger.info("consent %s recorded for %s (%s)", rec["id"], patient_id, purpose)
-    return get_consent(rec["id"])
+    _written_row = get_consent(rec["id"])
+    assert _written_row is not None, "Expected the row written in this transaction"
+    return _written_row
 
 
 def record_consent_on(
@@ -237,13 +257,9 @@ def record_consent_on(
     _require(patient_id, "patient_id")
     _require(recorded_by, "recorded_by")
     if purpose not in CONSENT_PURPOSES:
-        raise ValueError(
-            f"unknown consent purpose {purpose!r}; one of: {sorted(CONSENT_PURPOSES)}"
-        )
+        raise ValueError(f"unknown consent purpose {purpose!r}; one of: {sorted(CONSENT_PURPOSES)}")
     if method not in CONSENT_METHODS:
-        raise ValueError(
-            f"unknown consent method {method!r}; one of: {sorted(CONSENT_METHODS)}"
-        )
+        raise ValueError(f"unknown consent method {method!r}; one of: {sorted(CONSENT_METHODS)}")
     if given_by not in GIVEN_BY:
         raise ValueError(f"given_by must be one of {GIVEN_BY}")
     if given_by != "patient" and not (proxy_name and proxy_relationship):
@@ -265,9 +281,23 @@ def record_consent_on(
             method, granted_at, expires_at, given_by, proxy_name, proxy_relationship,
             evidence_ref, recorded_by, recorded_by_role)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (cid, patient_id, purpose, scope_detail, notice_version, notice_language,
-         method, ts, expires_at, given_by, proxy_name, proxy_relationship,
-         evidence_ref, recorded_by, recorded_by_role),
+        (
+            cid,
+            patient_id,
+            purpose,
+            scope_detail,
+            notice_version,
+            notice_language,
+            method,
+            ts,
+            expires_at,
+            given_by,
+            proxy_name,
+            proxy_relationship,
+            evidence_ref,
+            recorded_by,
+            recorded_by_role,
+        ),
     )
     row = db.execute("SELECT * FROM consent_records WHERE id = ?", (cid,)).fetchone()
     return _hydrate_consent(db, dict(row))
@@ -293,15 +323,12 @@ def withdraw_consent(
     _require(consent_id, "consent_id")
     _require(recorded_by, "recorded_by")
     if method not in CONSENT_METHODS:
-        raise ValueError(
-            f"unknown withdrawal method {method!r}; one of: {sorted(CONSENT_METHODS)}"
-        )
+        raise ValueError(f"unknown withdrawal method {method!r}; one of: {sorted(CONSENT_METHODS)}")
 
     wid = _new_id("CNW")
     ts = withdrawn_at or _now()
     with db_session() as db:
-        row = db.execute("SELECT * FROM consent_records WHERE id = ?",
-                         (consent_id,)).fetchone()
+        row = db.execute("SELECT * FROM consent_records WHERE id = ?", (consent_id,)).fetchone()
         if not row:
             raise ValueError(f"unknown consent {consent_id}")
         existing = db.execute(
@@ -316,8 +343,7 @@ def withdraw_consent(
                (id, consent_id, patient_id, withdrawn_at, method, reason,
                 recorded_by, recorded_by_role)
                VALUES (?,?,?,?,?,?,?,?)""",
-            (wid, consent_id, row["patient_id"], ts, method, reason,
-             recorded_by, recorded_by_role),
+            (wid, consent_id, row["patient_id"], ts, method, reason, recorded_by, recorded_by_role),
         )
         purpose = row["purpose"]
         patient_id = row["patient_id"]
@@ -359,8 +385,7 @@ _PURPOSE_TO_CATEGORIES: dict[str, set[str]] = {
 }
 
 
-def _effective_status(consent: dict, withdrawal: dict | None,
-                      now: str | None = None) -> str:
+def _effective_status(consent: dict, withdrawal: dict | None, now: str | None = None) -> str:
     """Derived, never stored. See the migration-14 docstring for why there is no
     `status` column to flip."""
     if withdrawal:
@@ -372,8 +397,9 @@ def _effective_status(consent: dict, withdrawal: dict | None,
 
 
 def _hydrate_consent(db, row: dict) -> dict:
-    wd = db.execute("SELECT * FROM consent_withdrawals WHERE consent_id = ?",
-                    (row["id"],)).fetchone()
+    wd = db.execute(
+        "SELECT * FROM consent_withdrawals WHERE consent_id = ?", (row["id"],)
+    ).fetchone()
     wd = dict(wd) if wd else None
     out = dict(row)
     out["purpose_label"] = CONSENT_PURPOSES.get(row["purpose"], row["purpose"])
@@ -385,8 +411,7 @@ def _hydrate_consent(db, row: dict) -> dict:
 
 def get_consent(consent_id: str) -> dict | None:
     with db_session() as db:
-        row = db.execute("SELECT * FROM consent_records WHERE id = ?",
-                         (consent_id,)).fetchone()
+        row = db.execute("SELECT * FROM consent_records WHERE id = ?", (consent_id,)).fetchone()
         if not row:
             return None
         return _hydrate_consent(db, dict(row))
@@ -398,16 +423,23 @@ def list_consents(patient_id: str) -> list[dict]:
     ALWAYS included — a register that hides them cannot show the history the
     Board asks for."""
     with db_session() as db:
-        rows = _rows(db.execute(
-            "SELECT * FROM consent_records WHERE patient_id = ? "
-            "ORDER BY granted_at DESC, rowid DESC", (patient_id,)))
+        rows = _rows(
+            db.execute(
+                "SELECT * FROM consent_records WHERE patient_id = ? "
+                "ORDER BY granted_at DESC, rowid DESC",
+                (patient_id,),
+            )
+        )
         return [_hydrate_consent(db, r) for r in rows]
 
 
 def has_active_consent(patient_id: str, purpose: str) -> bool:
     """Is there an unwithdrawn, unexpired consent for this purpose right now?"""
-    return any(c["effective_status"] == "active"
-               for c in list_consents(patient_id) if c["purpose"] == purpose)
+    return any(
+        c["effective_status"] == "active"
+        for c in list_consents(patient_id)
+        if c["purpose"] == purpose
+    )
 
 
 # ════════════════════════════════════════════════════════════════
@@ -442,9 +474,7 @@ _EXPORT_EXCLUDED: dict[str, str] = {
         "A short-lived performance cache rebuilt from the record it duplicates; "
         "including it would repeat the same clinical content twice."
     ),
-    "event_deliveries": (
-        "Internal message-delivery bookkeeping with no personal content."
-    ),
+    "event_deliveries": ("Internal message-delivery bookkeeping with no personal content."),
     "world_model_state": (
         "A derived, versioned and encrypted snapshot of the same clinical picture "
         "already set out above. It holds nothing that is not in the record itself."
@@ -462,8 +492,15 @@ _EXPORT_RENDERED_ELSEWHERE = frozenset({"consent_records", "consent_withdrawals"
 #: patient's — an access history is "who looked and when", not a dossier on the
 #: nurse.
 _ACCESS_HISTORY_COLUMNS = (
-    "timestamp", "event_category", "action_type", "outcome", "actor_user_id",
-    "actor_role", "request_path", "http_method", "summary_message",
+    "timestamp",
+    "event_category",
+    "action_type",
+    "outcome",
+    "actor_user_id",
+    "actor_role",
+    "request_path",
+    "http_method",
+    "summary_message",
 )
 _ACCESS_HISTORY_LIMIT = 2000
 
@@ -478,13 +515,17 @@ def _patient_tables(db) -> tuple[list[str], dict[str, str], int]:
     """
     rows = db.execute(
         "SELECT name, sql FROM sqlite_master WHERE type='table' "
-        "AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall()
+        "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+    ).fetchall()
     included: list[str] = []
     refused: dict[str, str] = {}
     for row in rows:
         name, ddl = row[0], (row[1] or "")
-        if (name in _EXPORT_EXCLUDED or name in _EXPORT_RENDERED_ELSEWHERE
-                or name in ("patients", "audit_logs")):
+        if (
+            name in _EXPORT_EXCLUDED
+            or name in _EXPORT_RENDERED_ELSEWHERE
+            or name in ("patients", "audit_logs")
+        ):
             continue
 
         # VIRTUAL TABLES ARE SKIPPED BEFORE THEY ARE TOUCHED, and this is a
@@ -553,8 +594,7 @@ def _patient_tables(db) -> tuple[list[str], dict[str, str], int]:
     return included, refused, len(rows)
 
 
-def data_principal_export(patient_id: str, *,
-                          include_access_history: bool = True) -> dict:
+def data_principal_export(patient_id: str, *, include_access_history: bool = True) -> dict:
     """Everything Orb holds about ONE patient, section by section.
 
     Read-only. Returns plain JSON-able dicts so the caller can render it, hand it
@@ -567,8 +607,7 @@ def data_principal_export(patient_id: str, *,
     total = 0
 
     with db_session() as db:
-        patient = db.execute("SELECT * FROM patients WHERE id = ?",
-                             (patient_id,)).fetchone()
+        patient = db.execute("SELECT * FROM patients WHERE id = ?", (patient_id,)).fetchone()
         if not patient:
             raise ValueError(f"unknown patient {patient_id}")
 
@@ -584,12 +623,12 @@ def data_principal_export(patient_id: str, *,
 
         for table in tables:
             try:
-                rows = _rows(db.execute(
-                    f"SELECT * FROM {table} WHERE patient_id = ?", (patient_id,)))
+                rows = _rows(
+                    db.execute(f"SELECT * FROM {table} WHERE patient_id = ?", (patient_id,))
+                )
             except Exception as exc:  # pragma: no cover — defensive
                 logger.warning("export: table %s unreadable: %s", table, exc)
-                excluded_reasons[table] = (
-                    f"This table could not be read at export time ({exc}).")
+                excluded_reasons[table] = f"This table could not be read at export time ({exc})."
                 continue
             if not rows:
                 continue
@@ -602,9 +641,13 @@ def data_principal_export(patient_id: str, *,
 
         if include_access_history:
             cols = ", ".join(_ACCESS_HISTORY_COLUMNS)
-            rows = _rows(db.execute(
-                f"SELECT {cols} FROM audit_logs WHERE patient_id = ? "
-                f"ORDER BY id DESC LIMIT {_ACCESS_HISTORY_LIMIT}", (patient_id,)))
+            rows = _rows(
+                db.execute(
+                    f"SELECT {cols} FROM audit_logs WHERE patient_id = ? "
+                    f"ORDER BY id DESC LIMIT {_ACCESS_HISTORY_LIMIT}",
+                    (patient_id,),
+                )
+            )
             sections["access_history"] = {
                 "title": "Who has opened your record, and when",
                 "rows": rows,
@@ -617,9 +660,15 @@ def data_principal_export(patient_id: str, *,
             }
             total += len(rows)
 
-        consents = [_hydrate_consent(db, r) for r in _rows(db.execute(
-            "SELECT * FROM consent_records WHERE patient_id = ? "
-            "ORDER BY granted_at DESC", (patient_id,)))]
+        consents = [
+            _hydrate_consent(db, r)
+            for r in _rows(
+                db.execute(
+                    "SELECT * FROM consent_records WHERE patient_id = ? ORDER BY granted_at DESC",
+                    (patient_id,),
+                )
+            )
+        ]
 
     if consents:
         sections["consents"] = {
@@ -630,13 +679,14 @@ def data_principal_export(patient_id: str, *,
         total += len(consents)
 
     excluded = [{"name": k, "reason": v} for k, v in sorted(excluded_reasons.items())]
-    excluded.append({
-        "name": "hash-chain columns of the audit trail",
-        "reason": (
-            "prev_hash/row_hash are tamper-evidence internals, not information "
-            "about you."
-        ),
-    })
+    excluded.append(
+        {
+            "name": "hash-chain columns of the audit trail",
+            "reason": (
+                "prev_hash/row_hash are tamper-evidence internals, not information about you."
+            ),
+        }
+    )
 
     return {
         "patient_id": patient_id,
@@ -688,7 +738,7 @@ def data_principal_export(patient_id: str, *,
 # tests/test_opt_in_platform.py checks that every registered table that DOES
 # exist has the patient and timestamp columns named here: a later migration
 # that names them differently fails there, not silently here.
-_RETENTION_SOURCES: dict[str, list[tuple[str, str, str]]] = {
+_RETENTION_SOURCES: dict[str, list[tuple[str, str | None, str]]] = {
     # category: [(table, patient_column, timestamp_column)]
     "clinical_record": [
         ("clinical_documents", "patient_id", "created_at"),
@@ -800,11 +850,13 @@ GST_RETENTION_CATEGORY = "gst_tax_record"
 # Only the categories held to answer a CLAIM are protected. The consent-basis
 # categories (AI transcripts, portal accounts, marketing) are not evidence in a
 # limitation suit and a child has the same erasure rights over them as anyone.
-_MINORITY_PROTECTED_CATEGORIES = frozenset({
-    "clinical_record",
-    "prescription_and_dispensing",
-    "imaging",
-})
+_MINORITY_PROTECTED_CATEGORIES = frozenset(
+    {
+        "clinical_record",
+        "prescription_and_dispensing",
+        "imaging",
+    }
+)
 
 # Releasable ONLY if the patient is demonstrably past the protected age.
 #
@@ -839,6 +891,7 @@ def _majority_cutoff(ref: datetime) -> str:
     the birthday, and steps 29 February back to the 28th rather than raising.
     """
     from config import MINOR_RETENTION_AGE
+
     try:
         return ref.replace(year=ref.year - MINOR_RETENTION_AGE).date().isoformat()
     except ValueError:  # 29 Feb in a non-leap target year
@@ -847,12 +900,10 @@ def _majority_cutoff(ref: datetime) -> str:
 
 def list_retention_policies() -> list[dict]:
     with db_session() as db:
-        return _rows(db.execute(
-            "SELECT * FROM retention_policies ORDER BY erasable, category"))
+        return _rows(db.execute("SELECT * FROM retention_policies ORDER BY erasable, category"))
 
 
-def retention_review(*, now: datetime | None = None,
-                     patient_id: str | None = None) -> dict:
+def retention_review(*, now: datetime | None = None, patient_id: str | None = None) -> dict:
     """What is past its retention period, per category. DELETES NOTHING.
 
     `deleted_anything` is returned as a literal False, and it is not decoration:
@@ -863,7 +914,7 @@ def retention_review(*, now: datetime | None = None,
     from config import MINOR_RETENTION_AGE as minor_age
 
     policies = list_retention_policies()
-    ref = now or datetime.now(timezone.utc)
+    ref = now or datetime.now(UTC)
     maj = _majority_cutoff(ref)
     out: list[dict] = []
 
@@ -872,8 +923,8 @@ def retention_review(*, now: datetime | None = None,
         # skipped silently (see _RETENTION_SOURCES), so the review reads the same
         # as before they were registered.
         existing_tables = {
-            r[0] for r in db.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+            r[0]
+            for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
         }
         for p in policies:
             days = p["retention_days"]
@@ -892,9 +943,7 @@ def retention_review(*, now: datetime | None = None,
                 "measurable": bool(days) and p["category"] in _RETENTION_SOURCES,
             }
             if not days:
-                entry["note"] = (
-                    "No fixed period: retained until a named person lifts the hold."
-                )
+                entry["note"] = "No fixed period: retained until a named person lifts the hold."
                 out.append(entry)
                 continue
             if p["category"] not in _RETENTION_SOURCES:
@@ -939,9 +988,12 @@ def retention_review(*, now: datetime | None = None,
                     params.append(patient_id)
 
                 def _count(clause: str, args: list[Any], _t=table) -> int:
-                    return int(db.execute(
-                        f"SELECT COUNT(*) AS c FROM {_t} WHERE {clause}",
-                        tuple(args)).fetchone()["c"] or 0)
+                    return int(
+                        db.execute(
+                            f"SELECT COUNT(*) AS c FROM {_t} WHERE {clause}", tuple(args)
+                        ).fetchone()["c"]
+                        or 0
+                    )
 
                 try:
                     if protected and pcol:
@@ -951,11 +1003,11 @@ def retention_review(*, now: datetime | None = None,
                         # it is protected, and it must not appear on a list a
                         # hospital destroys from.
                         n = _count(
-                            f"{where} AND {pcol} IN ({_RELEASABLE_PATIENT_SQL})",
-                            params + age_args)
+                            f"{where} AND {pcol} IN ({_RELEASABLE_PATIENT_SQL})", params + age_args
+                        )
                         held_minor = _count(
-                            f"{where} AND {pcol} IN ({_MINOR_PATIENT_SQL})",
-                            params + age_args)
+                            f"{where} AND {pcol} IN ({_MINOR_PATIENT_SQL})", params + age_args
+                        )
                         total = _count(where, params)
                         mp = entry["minority_protection"]
                         mp["held_minor"] += held_minor
@@ -974,8 +1026,7 @@ def retention_review(*, now: datetime | None = None,
                         # overdue would put a possibly paediatric result on the
                         # list a hospital destroys from before s.6 allows.
                         n = 0
-                        entry["minority_protection"]["held_age_unknown"] += _count(
-                            where, params)
+                        entry["minority_protection"]["held_age_unknown"] += _count(where, params)
                     else:
                         n = _count(where, params)
                 except Exception as exc:  # pragma: no cover — defensive
@@ -1021,14 +1072,20 @@ def retention_review(*, now: datetime | None = None,
 # executor is honoured in law and reported as `executable: False` with a plain
 # sentence saying so — Orb does not claim an erasure it did not perform.
 
+
 def _erase_ai_transcripts(db, patient_id: str) -> tuple[int, dict]:
     """Sage's working memory. Derived material: every one of these tables is
     regenerated from the clinical record, so erasing them removes the AI's notes
     about the patient without touching a single word a clinician wrote."""
     detail: dict[str, int] = {}
     total = 0
-    for table in ("sage_observations", "sage_room_memory", "sage_decision_cache",
-                  "sage_insights", "insight_feedback"):
+    for table in (
+        "sage_observations",
+        "sage_room_memory",
+        "sage_decision_cache",
+        "sage_insights",
+        "insight_feedback",
+    ):
         try:
             cur = db.execute(f"DELETE FROM {table} WHERE patient_id = ?", (patient_id,))
             n = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
@@ -1063,12 +1120,13 @@ def _erase_portal_account(db, patient_id: str) -> tuple[int, dict]:
     total = 0
     cur = db.execute(
         "UPDATE discharge_access_tokens SET revoked_at = ? "
-        "WHERE patient_id = ? AND revoked_at IS NULL", (_now(), patient_id))
+        "WHERE patient_id = ? AND revoked_at IS NULL",
+        (_now(), patient_id),
+    )
     detail["discharge_access_tokens_revoked"] = max(cur.rowcount or 0, 0)
     total += detail["discharge_access_tokens_revoked"]
 
-    row = db.execute("SELECT user_id FROM patients WHERE id = ?",
-                     (patient_id,)).fetchone()
+    row = db.execute("SELECT user_id FROM patients WHERE id = ?", (patient_id,)).fetchone()
     uid = row["user_id"] if row else None
     if uid:
         tombstone = f"erased-{secrets.token_hex(32)}"
@@ -1076,7 +1134,9 @@ def _erase_portal_account(db, patient_id: str) -> tuple[int, dict]:
             "UPDATE users SET password_hash = ?, pin_hash = NULL, "
             "totp_secret = NULL, totp_enabled = 0, device_pin_hash = NULL, "
             "is_active = 0, token_version = COALESCE(token_version, 0) + 1 "
-            "WHERE id = ? AND role = 'patient'", (tombstone, uid))
+            "WHERE id = ? AND role = 'patient'",
+            (tombstone, uid),
+        )
         detail["portal_logins_disabled"] = max(cur.rowcount or 0, 0)
         total += detail["portal_logins_disabled"]
     else:
@@ -1100,6 +1160,7 @@ def _erase_ambient_audio(db, patient_id: str) -> tuple[int, dict]:
     its pointer and is counted, so the administrator can see it.
     """
     import os
+
     from config import UPLOAD_DIR
 
     def _resolve(p) -> str | None:
@@ -1113,7 +1174,8 @@ def _erase_ambient_audio(db, patient_id: str) -> tuple[int, dict]:
     root = os.path.realpath(str(UPLOAD_DIR))
     rows = db.execute(
         "SELECT DISTINCT audio_path FROM scribe_notes WHERE patient_id = ? "
-        "AND audio_path IS NOT NULL AND TRIM(audio_path) <> ''", (patient_id,)
+        "AND audio_path IS NOT NULL AND TRIM(audio_path) <> ''",
+        (patient_id,),
     ).fetchall()
 
     files: list[str] = []
@@ -1122,15 +1184,15 @@ def _erase_ambient_audio(db, patient_id: str) -> tuple[int, dict]:
     for r in rows:
         raw = r["audio_path"]
         resolved = _resolve(raw)
-        if (resolved is None or os.path.commonpath([root, resolved]) != root
-                or resolved == root):
+        if resolved is None or os.path.commonpath([root, resolved]) != root or resolved == root:
             outside += 1
             continue
         base = os.path.basename(resolved)
         like = "%" + base.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         others = db.execute(
             "SELECT audio_path FROM scribe_notes WHERE audio_path LIKE ? ESCAPE '\\' "
-            "AND (patient_id IS NULL OR patient_id <> ?)", (like, patient_id)
+            "AND (patient_id IS NULL OR patient_id <> ?)",
+            (like, patient_id),
         ).fetchall()
         if any(_resolve(o["audio_path"]) == resolved for o in others):
             shared += 1
@@ -1141,8 +1203,9 @@ def _erase_ambient_audio(db, patient_id: str) -> tuple[int, dict]:
     notes = 0
     for raw in detach:
         cur = db.execute(
-            "UPDATE scribe_notes SET audio_path = NULL WHERE patient_id = ? "
-            "AND audio_path = ?", (patient_id, raw))
+            "UPDATE scribe_notes SET audio_path = NULL WHERE patient_id = ? AND audio_path = ?",
+            (patient_id, raw),
+        )
         notes += max(cur.rowcount or 0, 0)
 
     return len(files), {
@@ -1161,6 +1224,7 @@ def _unlink_erased_audio(names: Iterable[str]) -> list[str]:
     the line that deletes.
     """
     import os
+
     from config import UPLOAD_DIR
 
     root = os.path.realpath(str(UPLOAD_DIR))
@@ -1261,9 +1325,11 @@ def _retained_after_erasure(db, patient_id: str) -> list[dict]:
             if "patient_id" not in cols:
                 continue
             row_filter = ERASURE_RETAINED_ROW_FILTERS.get(table)
-            n = db.execute(f'SELECT COUNT(*) AS n FROM "{table}" WHERE patient_id = ?'
-                           + (f" AND {row_filter}" if row_filter else ""),
-                           (patient_id,)).fetchone()["n"]
+            n = db.execute(
+                f'SELECT COUNT(*) AS n FROM "{table}" WHERE patient_id = ?'
+                + (f" AND {row_filter}" if row_filter else ""),
+                (patient_id,),
+            ).fetchone()["n"]
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("erasure: could not count retained %s: %s", table, exc)
             continue
@@ -1276,7 +1342,7 @@ def record_erasure_request(
     *,
     patient_id: str,
     requested_by: str,
-    categories: Optional[Iterable[str]] = None,
+    categories: Iterable[str] | None = None,
     requester_identity: str = "patient",
     channel: str = "in_person",
     note: str | None = None,
@@ -1293,8 +1359,9 @@ def record_erasure_request(
     with db_session() as db:
         if not db.execute("SELECT 1 FROM patients WHERE id = ?", (patient_id,)).fetchone():
             raise ValueError(f"unknown patient {patient_id}")
-        known = {r["category"] for r in db.execute(
-            "SELECT category FROM retention_policies").fetchall()}
+        known = {
+            r["category"] for r in db.execute("SELECT category FROM retention_policies").fetchall()
+        }
         if cats:
             unknown = [c for c in cats if c not in known]
             if unknown:
@@ -1304,8 +1371,16 @@ def record_erasure_request(
                (id, patient_id, requested_at, requested_by, requester_identity,
                 channel, categories_json, note)
                VALUES (?,?,?,?,?,?,?,?)""",
-            (rid, patient_id, _now(), requested_by, requester_identity, channel,
-             json.dumps(cats) if cats else None, note),
+            (
+                rid,
+                patient_id,
+                _now(),
+                requested_by,
+                requester_identity,
+                channel,
+                json.dumps(cats) if cats else None,
+                note,
+            ),
         )
     return get_erasure_request(rid)["request"]
 
@@ -1319,8 +1394,7 @@ def adjudicate_erasure_request(request_id: str, *, decided_by: str) -> dict:
     """
     _require(decided_by, "decided_by")
     with db_session() as db:
-        req = db.execute("SELECT * FROM erasure_requests WHERE id = ?",
-                         (request_id,)).fetchone()
+        req = db.execute("SELECT * FROM erasure_requests WHERE id = ?", (request_id,)).fetchone()
         if not req:
             raise ValueError(f"unknown erasure request {request_id}")
         if req["status"] != "recorded":
@@ -1369,18 +1443,37 @@ def adjudicate_erasure_request(request_id: str, *, decided_by: str) -> dict:
                    (id, request_id, patient_id, category, disposition, basis,
                     reason, authority, executable, decided_at, decided_by)
                    VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-                (did, request_id, patient_id, cat, disposition, p["legal_basis"],
-                 reason, authority, 1 if executable else 0, ts, decided_by),
+                (
+                    did,
+                    request_id,
+                    patient_id,
+                    cat,
+                    disposition,
+                    p["legal_basis"],
+                    reason,
+                    authority,
+                    1 if executable else 0,
+                    ts,
+                    decided_by,
+                ),
             )
-            decisions.append({
-                "id": did, "category": cat, "disposition": disposition,
-                "basis": p["legal_basis"], "reason": reason, "authority": authority,
-                "executable": executable,
-            })
+            decisions.append(
+                {
+                    "id": did,
+                    "category": cat,
+                    "disposition": disposition,
+                    "basis": p["legal_basis"],
+                    "reason": reason,
+                    "authority": authority,
+                    "executable": executable,
+                }
+            )
 
         db.execute(
             "UPDATE erasure_requests SET status = 'decided', decided_at = ?, "
-            "decided_by = ? WHERE id = ?", (ts, decided_by, request_id))
+            "decided_by = ? WHERE id = ?",
+            (ts, decided_by, request_id),
+        )
 
     honoured = [d for d in decisions if d["disposition"] == "honoured"]
     return {
@@ -1409,8 +1502,7 @@ def execute_erasure_request(request_id: str, *, executed_by: str) -> dict:
     """
     _require(executed_by, "executed_by")
     with db_session() as db:
-        req = db.execute("SELECT * FROM erasure_requests WHERE id = ?",
-                         (request_id,)).fetchone()
+        req = db.execute("SELECT * FROM erasure_requests WHERE id = ?", (request_id,)).fetchone()
         if not req:
             raise ValueError(f"unknown erasure request {request_id}")
         if req["status"] == "recorded":
@@ -1422,9 +1514,13 @@ def execute_erasure_request(request_id: str, *, executed_by: str) -> dict:
             raise ValueError(f"request {request_id} was already executed")
 
         patient_id = req["patient_id"]
-        decisions = _rows(db.execute(
-            "SELECT * FROM erasure_decisions WHERE request_id = ? "
-            "AND disposition = 'honoured' AND executable = 1", (request_id,)))
+        decisions = _rows(
+            db.execute(
+                "SELECT * FROM erasure_decisions WHERE request_id = ? "
+                "AND disposition = 'honoured' AND executable = 1",
+                (request_id,),
+            )
+        )
 
         ts = _now()
         total = 0
@@ -1441,15 +1537,25 @@ def execute_erasure_request(request_id: str, *, executed_by: str) -> dict:
                    (id, request_id, decision_id, patient_id, category, rows_erased,
                     detail_json, executed_at, executed_by)
                    VALUES (?,?,?,?,?,?,?,?,?)""",
-                (eid, request_id, d["id"], patient_id, d["category"], n,
-                 json.dumps(detail), ts, executed_by),
+                (
+                    eid,
+                    request_id,
+                    d["id"],
+                    patient_id,
+                    d["category"],
+                    n,
+                    json.dumps(detail),
+                    ts,
+                    executed_by,
+                ),
             )
-            performed.append({"category": d["category"], "rows_erased": n,
-                              "detail": detail})
+            performed.append({"category": d["category"], "rows_erased": n, "detail": detail})
 
         db.execute(
             "UPDATE erasure_requests SET status = 'executed', executed_at = ?, "
-            "executed_by = ? WHERE id = ?", (ts, executed_by, request_id))
+            "executed_by = ? WHERE id = ?",
+            (ts, executed_by, request_id),
+        )
         retained = _retained_after_erasure(db, patient_id)
 
     # Files only after the commit above: a rolled-back execution must not have
@@ -1478,27 +1584,35 @@ def execute_erasure_request(request_id: str, *, executed_by: str) -> dict:
 
 def get_erasure_request(request_id: str) -> dict:
     with db_session() as db:
-        req = db.execute("SELECT * FROM erasure_requests WHERE id = ?",
-                         (request_id,)).fetchone()
+        req = db.execute("SELECT * FROM erasure_requests WHERE id = ?", (request_id,)).fetchone()
         if not req:
             raise ValueError(f"unknown erasure request {request_id}")
         req = dict(req)
-        req["categories"] = (json.loads(req["categories_json"])
-                             if req["categories_json"] else None)
-        decisions = _rows(db.execute(
-            "SELECT * FROM erasure_decisions WHERE request_id = ? ORDER BY category",
-            (request_id,)))
+        req["categories"] = json.loads(req["categories_json"]) if req["categories_json"] else None
+        decisions = _rows(
+            db.execute(
+                "SELECT * FROM erasure_decisions WHERE request_id = ? ORDER BY category",
+                (request_id,),
+            )
+        )
         for d in decisions:
             d["executable"] = bool(d["executable"])
-        executions = _rows(db.execute(
-            "SELECT * FROM erasure_executions WHERE request_id = ? ORDER BY category",
-            (request_id,)))
+        executions = _rows(
+            db.execute(
+                "SELECT * FROM erasure_executions WHERE request_id = ? ORDER BY category",
+                (request_id,),
+            )
+        )
     return {"request": req, "decisions": decisions, "executions": executions}
 
 
-def list_erasure_requests(*, patient_id: str | None = None,
-                          status: str | None = None, limit: int = 200,
-                          department: str | None = None) -> list[dict]:
+def list_erasure_requests(
+    *,
+    patient_id: str | None = None,
+    status: str | None = None,
+    limit: int = 200,
+    department: str | None = None,
+) -> list[dict]:
     """The register of erasure requests.
 
     `department` is the CALLER'S ward scope, and it is not optional in spirit:
@@ -1512,6 +1626,7 @@ def list_erasure_requests(*, patient_id: str | None = None,
     from permissions import scope_patient_ids_sql
 
     sql = "SELECT * FROM erasure_requests"
+    params: list[str | int | float | bytes | None]
     where, params = [], []
     if patient_id:
         where.append("patient_id = ?")
@@ -1538,6 +1653,7 @@ def list_erasure_requests(*, patient_id: str | None = None,
 #  5. BREACH REGISTER — DPDP s.8(6)
 # ════════════════════════════════════════════════════════════════
 
+
 def record_breach(
     *,
     nature: str,
@@ -1546,10 +1662,10 @@ def record_breach(
     discovered_at: str | None = None,
     occurred_at: str | None = None,
     exposed_to: str | None = None,
-    data_categories: Optional[Iterable[str]] = None,
+    data_categories: Iterable[str] | None = None,
     records_affected: int | None = None,
     principals_affected: int | None = None,
-    affected_patient_ids: Optional[Iterable[str]] = None,
+    affected_patient_ids: Iterable[str] | None = None,
     containment_at: str | None = None,
     containment_actions: str | None = None,
 ) -> dict:
@@ -1573,12 +1689,21 @@ def record_breach(
                 affected_patient_ids_json, containment_at, containment_actions,
                 status, reported_by)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'open',?)""",
-            (bid, nature, description, occurred_at, discovered_at or _now(),
-             exposed_to,
-             json.dumps(sorted(set(data_categories))) if data_categories else None,
-             records_affected, principals_affected,
-             json.dumps(sorted(set(affected_patient_ids))) if affected_patient_ids else None,
-             containment_at, containment_actions, reported_by),
+            (
+                bid,
+                nature,
+                description,
+                occurred_at,
+                discovered_at or _now(),
+                exposed_to,
+                json.dumps(sorted(set(data_categories))) if data_categories else None,
+                records_affected,
+                principals_affected,
+                json.dumps(sorted(set(affected_patient_ids))) if affected_patient_ids else None,
+                containment_at,
+                containment_actions,
+                reported_by,
+            ),
         )
     return get_breach(bid)
 
@@ -1610,27 +1735,38 @@ def record_breach_notification(
     nid = _new_id("BRN")
     ts = notified_at or _now()
     with db_session() as db:
-        if not db.execute("SELECT 1 FROM breach_records WHERE id = ?",
-                          (breach_id,)).fetchone():
+        if not db.execute("SELECT 1 FROM breach_records WHERE id = ?", (breach_id,)).fetchone():
             raise ValueError(f"unknown breach {breach_id}")
         db.execute(
             """INSERT INTO breach_notifications
                (id, breach_id, party_type, notified_party, notified_at, method,
                 reference, content_summary, recorded_by)
                VALUES (?,?,?,?,?,?,?,?,?)""",
-            (nid, breach_id, party_type, notified_party, ts, method, reference,
-             content_summary, recorded_by),
+            (
+                nid,
+                breach_id,
+                party_type,
+                notified_party,
+                ts,
+                method,
+                reference,
+                content_summary,
+                recorded_by,
+            ),
         )
         if party_type == "board":
             db.execute(
                 "UPDATE breach_records SET board_notified_at = COALESCE(board_notified_at, ?), "
-                "status = 'notified', updated_at = ? WHERE id = ?", (ts, _now(), breach_id))
+                "status = 'notified', updated_at = ? WHERE id = ?",
+                (ts, _now(), breach_id),
+            )
         elif party_type == "data_principal":
             db.execute(
                 "UPDATE breach_records SET principals_notified_at = COALESCE(principals_notified_at, ?), "
-                "updated_at = ? WHERE id = ?", (ts, _now(), breach_id))
-        row = db.execute("SELECT * FROM breach_notifications WHERE id = ?",
-                         (nid,)).fetchone()
+                "updated_at = ? WHERE id = ?",
+                (ts, _now(), breach_id),
+            )
+        row = db.execute("SELECT * FROM breach_notifications WHERE id = ?", (nid,)).fetchone()
         return dict(row)
 
 
@@ -1648,15 +1784,16 @@ def get_breach(breach_id: str, *, department: str | None = None) -> dict:
     from permissions import scope_patient_ids_sql
 
     with db_session() as db:
-        row = db.execute("SELECT * FROM breach_records WHERE id = ?",
-                         (breach_id,)).fetchone()
+        row = db.execute("SELECT * FROM breach_records WHERE id = ?", (breach_id,)).fetchone()
         if not row:
             raise ValueError(f"unknown breach {breach_id}")
         out = dict(row)
-        out["data_categories"] = (json.loads(out["data_categories_json"])
-                                  if out["data_categories_json"] else [])
-        affected = (json.loads(out["affected_patient_ids_json"])
-                    if out["affected_patient_ids_json"] else [])
+        out["data_categories"] = (
+            json.loads(out["data_categories_json"]) if out["data_categories_json"] else []
+        )
+        affected = (
+            json.loads(out["affected_patient_ids_json"]) if out["affected_patient_ids_json"] else []
+        )
         out["affected_patient_ids_withheld"] = 0
         if department is not None and affected:
             scope_sql, scope_params = scope_patient_ids_sql(department)
@@ -1665,28 +1802,38 @@ def get_breach(breach_id: str, *, department: str | None = None) -> dict:
             out["affected_patient_ids_withheld"] = len(affected) - len(visible)
             affected = visible
         out["affected_patient_ids"] = affected
-        out["notifications"] = _rows(db.execute(
-            "SELECT * FROM breach_notifications WHERE breach_id = ? "
-            "ORDER BY notified_at", (breach_id,)))
+        out["notifications"] = _rows(
+            db.execute(
+                "SELECT * FROM breach_notifications WHERE breach_id = ? ORDER BY notified_at",
+                (breach_id,),
+            )
+        )
     out["outstanding"] = [
-        label for label, done in (
+        label
+        for label, done in (
             ("Data Protection Board not yet notified", out["board_notified_at"]),
             ("Affected patients not yet notified", out["principals_notified_at"]),
-        ) if not done
+        )
+        if not done
     ]
     return out
 
 
 def list_breaches(*, limit: int = 200) -> list[dict]:
     with db_session() as db:
-        rows = _rows(db.execute(
-            "SELECT b.*, "
-            "(SELECT COUNT(*) FROM breach_notifications n WHERE n.breach_id = b.id) "
-            "AS notification_count "
-            "FROM breach_records b ORDER BY discovered_at DESC LIMIT ?", (int(limit),)))
+        rows = _rows(
+            db.execute(
+                "SELECT b.*, "
+                "(SELECT COUNT(*) FROM breach_notifications n WHERE n.breach_id = b.id) "
+                "AS notification_count "
+                "FROM breach_records b ORDER BY discovered_at DESC LIMIT ?",
+                (int(limit),),
+            )
+        )
     for r in rows:
-        r["data_categories"] = (json.loads(r["data_categories_json"])
-                                if r["data_categories_json"] else [])
+        r["data_categories"] = (
+            json.loads(r["data_categories_json"]) if r["data_categories_json"] else []
+        )
         # The affected-patient id list is deliberately NOT expanded in a listing:
         # a register page is read by whoever is on shift, and it does not need
         # the names to show that a breach is open and unnotified.
@@ -1698,10 +1845,12 @@ def list_breaches(*, limit: int = 200) -> list[dict]:
 #  Posture summary — consumed by services/compliance_service.py
 # ════════════════════════════════════════════════════════════════
 
+
 def dpdp_posture() -> dict:
     """Counts the Trust Center renders as DPDP controls. Never raises on a fresh
     DB — an empty register is a legitimate state, not an error."""
     with db_session() as db:
+
         def count(sql: str, params: tuple = ()) -> int:
             try:
                 return int(db.execute(sql, params).fetchone()[0] or 0)
@@ -1710,16 +1859,15 @@ def dpdp_posture() -> dict:
 
         consents = count("SELECT COUNT(*) FROM consent_records")
         withdrawals = count("SELECT COUNT(*) FROM consent_withdrawals")
-        patients_with_consent = count(
-            "SELECT COUNT(DISTINCT patient_id) FROM consent_records")
+        patients_with_consent = count("SELECT COUNT(DISTINCT patient_id) FROM consent_records")
         policies = count("SELECT COUNT(*) FROM retention_policies")
-        erasure_open = count(
-            "SELECT COUNT(*) FROM erasure_requests WHERE status = 'recorded'")
+        erasure_open = count("SELECT COUNT(*) FROM erasure_requests WHERE status = 'recorded'")
         erasure_total = count("SELECT COUNT(*) FROM erasure_requests")
         breaches_total = count("SELECT COUNT(*) FROM breach_records")
         breaches_unnotified = count(
             "SELECT COUNT(*) FROM breach_records WHERE board_notified_at IS NULL "
-            "AND status != 'closed'")
+            "AND status != 'closed'"
+        )
     return {
         "consents_recorded": consents,
         "consents_withdrawn": withdrawals,

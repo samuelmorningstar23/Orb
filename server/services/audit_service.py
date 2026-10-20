@@ -13,19 +13,18 @@ audit write cannot be persisted, log_audit_event raises AuditWriteError so the
 caller can refuse to proceed with an unaudited PHI/security action. For purely
 operational/simulation categories it stays fail-soft (logged, non-fatal).
 """
+
 from __future__ import annotations
 
 import hashlib
 import json
 import logging
 import re
-import sqlite3
-from db_backend import DBIntegrityError
-from datetime import datetime, timezone
-from typing import Optional, Any
+from datetime import UTC, datetime
+from typing import Any
 
-from database import db_session
 from config import AUDIT_SIMULATION_EVENTS
+from db_backend import DBIntegrityError
 
 logger = logging.getLogger("orb.audit")
 
@@ -52,10 +51,18 @@ logger = logging.getLogger("orb.audit")
 #                     limits, analyser mapping and credentials (LIS)
 # The test file lists them as pre-registered with the increment that will emit
 # each; that list must shrink, never grow, as the writers land.
-_FAIL_CLOSED_CATEGORIES = frozenset({
-    "security", "clinical_access", "phi_access", "authentication", "ai_inference",
-    "patient_identity", "patient_movement", "clinical_config",
-})
+_FAIL_CLOSED_CATEGORIES = frozenset(
+    {
+        "security",
+        "clinical_access",
+        "phi_access",
+        "authentication",
+        "ai_inference",
+        "patient_identity",
+        "patient_movement",
+        "clinical_config",
+    }
+)
 
 
 class AuditWriteError(RuntimeError):
@@ -89,7 +96,7 @@ class AuditWriteError(RuntimeError):
 # Limits are generous against real traffic and ruinous against abuse: a real
 # user-agent is ~200 chars, a UUID correlation id is 36, and the longest
 # summary any call site in this repo builds is well under 4 KB.
-_MAX_ID_CHARS = 200          # correlation/actor/target/patient/session/ip/method…
+_MAX_ID_CHARS = 200  # correlation/actor/target/patient/session/ip/method…
 _MAX_PATH_CHARS = 512
 _MAX_USER_AGENT_CHARS = 512
 _MAX_SUMMARY_CHARS = 4000
@@ -101,9 +108,20 @@ _MAX_METADATA_BYTES = 8192
 #: embed a newline plus a plausible-looking row into it can make an exported or
 #: rendered trail read as though it contains events it does not.
 _ID_FIELDS = (
-    "correlation_id", "event_category", "actor_user_id", "actor_role",
-    "target_type", "target_id", "patient_id", "encounter_id", "source_type",
-    "http_method", "ip_address", "session_id", "outcome", "action_type",
+    "correlation_id",
+    "event_category",
+    "actor_user_id",
+    "actor_role",
+    "target_type",
+    "target_id",
+    "patient_id",
+    "encounter_id",
+    "source_type",
+    "http_method",
+    "ip_address",
+    "session_id",
+    "outcome",
+    "action_type",
 )
 
 # Chars that must never survive into a single-line audit column: C0 controls
@@ -124,10 +142,25 @@ def _clip(value: Any, limit: int, *, strip_controls: bool = False) -> Any:
 #: The hashed columns that are TEXT in `audit_logs`: every one but
 #: `source_event_id`, which is INTEGER.
 _TEXT_COLUMNS = (
-    "timestamp", "correlation_id", "event_category", "actor_user_id", "actor_role",
-    "target_type", "target_id", "patient_id", "encounter_id", "source_type",
-    "request_path", "http_method", "ip_address", "user_agent", "session_id",
-    "outcome", "action_type", "summary_message", "metadata_json",
+    "timestamp",
+    "correlation_id",
+    "event_category",
+    "actor_user_id",
+    "actor_role",
+    "target_type",
+    "target_id",
+    "patient_id",
+    "encounter_id",
+    "source_type",
+    "request_path",
+    "http_method",
+    "ip_address",
+    "user_agent",
+    "session_id",
+    "outcome",
+    "action_type",
+    "summary_message",
+    "metadata_json",
 )
 
 
@@ -150,7 +183,7 @@ def _as_stored_integer(value: Any) -> Any:
         return value
     # Outside SQLite's 64-bit range the driver refuses a Python int outright,
     # where the value as given still stores.
-    return number if -(2 ** 63) <= number < 2 ** 63 else value
+    return number if -(2**63) <= number < 2**63 else value
 
 
 # An ASCII integer literal, with the whitespace SQLite's affinity skips.
@@ -205,14 +238,30 @@ def bound_audit_fields(row: dict[str, Any]) -> dict[str, Any]:
 # Fields (in fixed order) that participate in the per-row hash chain. Order and
 # membership are part of the chain contract — do NOT reorder without a schema bump.
 _HASH_FIELDS = (
-    "timestamp", "correlation_id", "event_category", "actor_user_id", "actor_role",
-    "target_type", "target_id", "patient_id", "encounter_id", "source_type",
-    "source_event_id", "request_path", "http_method", "ip_address", "user_agent",
-    "session_id", "outcome", "action_type", "summary_message", "metadata_json",
+    "timestamp",
+    "correlation_id",
+    "event_category",
+    "actor_user_id",
+    "actor_role",
+    "target_type",
+    "target_id",
+    "patient_id",
+    "encounter_id",
+    "source_type",
+    "source_event_id",
+    "request_path",
+    "http_method",
+    "ip_address",
+    "user_agent",
+    "session_id",
+    "outcome",
+    "action_type",
+    "summary_message",
+    "metadata_json",
 )
 
 
-def compute_audit_row_hash(row: dict[str, Any], prev_hash: Optional[str]) -> str:
+def compute_audit_row_hash(row: dict[str, Any], prev_hash: str | None) -> str:
     """Compute the tamper-evidence hash for an audit row.
 
     row_hash = SHA256( prev_hash || canonical_json(selected fields) ).
@@ -231,26 +280,26 @@ def compute_audit_row_hash(row: dict[str, Any], prev_hash: Optional[str]) -> str
 
 
 def log_audit_event(
-    correlation_id: str,
+    correlation_id: str | None,
     event_category: str,
     action_type: str,
     outcome: str,
     db: Any = None,
-    summary_message: Optional[str] = None,
-    actor_user_id: Optional[str] = None,
-    actor_role: Optional[str] = None,
-    target_type: Optional[str] = None,
-    target_id: Optional[str] = None,
-    patient_id: Optional[str] = None,
-    encounter_id: Optional[str] = None,
-    source_type: Optional[str] = None,
-    source_event_id: Optional[int] = None,
-    request_path: Optional[str] = None,
-    http_method: Optional[str] = None,
-    ip_address: Optional[str] = None,
-    user_agent: Optional[str] = None,
-    session_id: Optional[str] = None,
-    metadata: Optional[dict[str, Any]] = None,
+    summary_message: str | None = None,
+    actor_user_id: str | None = None,
+    actor_role: str | None = None,
+    target_type: str | None = None,
+    target_id: str | None = None,
+    patient_id: str | None = None,
+    encounter_id: str | None = None,
+    source_type: str | None = None,
+    source_event_id: int | None = None,
+    request_path: str | None = None,
+    http_method: str | None = None,
+    ip_address: str | None = None,
+    user_agent: str | None = None,
+    session_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ):
     """Log an append-only, tamper-evident audit event.
 
@@ -268,13 +317,15 @@ def log_audit_event(
     # Suppress ONLY genuinely synthetic demo data — never suppress on actor_role
     # alone. The old `actor_role == "system"` clause was a latent footgun: the day a
     # system/automated actor mutates real PHI, its audit row would silently vanish.
-    if not AUDIT_SIMULATION_EVENTS and (source_type == "simulation" or event_category == "simulation"):
+    if not AUDIT_SIMULATION_EVENTS and (
+        source_type == "simulation" or event_category == "simulation"
+    ):
         return
 
     fail_closed = event_category in _FAIL_CLOSED_CATEGORIES
 
     try:
-        timestamp = datetime.now(timezone.utc).isoformat()
+        timestamp = datetime.now(UTC).isoformat()
         metadata_json = json.dumps(metadata) if metadata else None
 
         row = {
@@ -312,10 +363,26 @@ def log_audit_event(
         # thing and attest to another — every such row would then verify as
         # tampered. One dict, used by both, cannot drift.
         _COLUMNS = (
-            "timestamp", "correlation_id", "event_category", "actor_user_id", "actor_role",
-            "target_type", "target_id", "patient_id", "encounter_id", "source_type",
-            "source_event_id", "request_path", "http_method", "ip_address", "user_agent",
-            "session_id", "outcome", "action_type", "summary_message", "metadata_json",
+            "timestamp",
+            "correlation_id",
+            "event_category",
+            "actor_user_id",
+            "actor_role",
+            "target_type",
+            "target_id",
+            "patient_id",
+            "encounter_id",
+            "source_type",
+            "source_event_id",
+            "request_path",
+            "http_method",
+            "ip_address",
+            "user_agent",
+            "session_id",
+            "outcome",
+            "action_type",
+            "summary_message",
+            "metadata_json",
         )
 
         def _do_insert(conn):
@@ -375,6 +442,7 @@ def log_audit_event(
             # the whole read-prev + insert once against the fresh chain head.
             from database import get_db
             from db_backend import is_pooled
+
             for attempt in range(2):
                 conn = get_db()
                 if is_pooled(conn) and conn.in_transaction:
@@ -420,7 +488,9 @@ def log_audit_event(
     except Exception as e:
         logger.critical(
             "[Audit Log Failure] Failed to write audit event (%s, category=%s): %s",
-            action_type, event_category, e,
+            action_type,
+            event_category,
+            e,
         )
         if fail_closed:
             # Fail closed: a security/clinical-access action MUST NOT proceed

@@ -34,10 +34,10 @@ in use that the list lacks), as facility 1's identity can be edited.
 No route serves this yet: the design's GET and POST /api/facilities/{id}/
 departments wait for the Facilities screen (see the wave report).
 """
+
 from __future__ import annotations
 
 import uuid
-from typing import Optional
 
 from database import db_session
 
@@ -59,7 +59,7 @@ class DepartmentError(Exception):
         return {"error": self.code, "message": self.message, **self.extra}
 
 
-def normalise_name(raw) -> Optional[str]:
+def normalise_name(raw) -> str | None:
     """A department name as the master stores it: outer spaces dropped and
     every run of inner spaces made one. None when nothing is left."""
     if not isinstance(raw, str):
@@ -73,12 +73,20 @@ def name_key(name: str) -> str:
     return " ".join(name.split()).casefold()
 
 
-def _actor_id(actor) -> Optional[str]:
+def _actor_id(actor) -> str | None:
     return None if actor is None else actor.get("id")
 
 
-def _audit_on(db, actor: dict, action: str, summary: str, *, department_id: int,
-              metadata: dict, request_meta: Optional[dict]) -> None:
+def _audit_on(
+    db,
+    actor: dict,
+    action: str,
+    summary: str,
+    *,
+    department_id: int,
+    metadata: dict,
+    request_meta: dict | None,
+) -> None:
     from services.audit_service import log_audit_event
 
     meta = request_meta or {}
@@ -105,33 +113,44 @@ def _require_manager(actor: dict) -> None:
     from permissions import FACILITY_MANAGE, has_permission
 
     if not has_permission((actor or {}).get("role", ""), FACILITY_MANAGE):
-        raise DepartmentError("permission_denied",
-                              "Only an administrator can change the departments list.",
-                              status=403)
+        raise DepartmentError(
+            "permission_denied",
+            "Only an administrator can change the departments list.",
+            status=403,
+        )
 
 
 def _facility_on(db, facility_id) -> dict:
-    row = db.execute("SELECT id, code, is_active FROM facilities WHERE id = ?",
-                     (facility_id,)).fetchone()
+    row = db.execute(
+        "SELECT id, code, is_active FROM facilities WHERE id = ?", (facility_id,)
+    ).fetchone()
     if row is None:
-        raise DepartmentError("facility_not_found", "There is no facility with that number.",
-                              status=404)
+        raise DepartmentError(
+            "facility_not_found", "There is no facility with that number.", status=404
+        )
     if not row["is_active"]:
-        raise DepartmentError("facility_inactive",
-                              "That facility is closed, so its departments cannot change.",
-                              status=409)
+        raise DepartmentError(
+            "facility_inactive",
+            "That facility is closed, so its departments cannot change.",
+            status=409,
+        )
     return {"id": int(row["id"]), "code": row["code"]}
 
 
 def _require_growth_switch(facility_id: int) -> None:
     import config
+
     from services import facility_service
 
-    if facility_id != facility_service.MAIN_FACILITY_ID and not config.feature_enabled("multi_site"):
+    if facility_id != facility_service.MAIN_FACILITY_ID and not config.feature_enabled(
+        "multi_site"
+    ):
         raise DepartmentError(
             "multi_site_off",
             "Multi-site is switched off on this site, so departments belong to the first "
-            "facility only.", status=404)
+            "facility only.",
+            status=404,
+        )
 
 
 def _require_in_scope(actor: dict, facility_ids, db) -> None:
@@ -143,7 +162,9 @@ def _require_in_scope(actor: dict, facility_ids, db) -> None:
     raise DepartmentError(
         "facility_scope",
         "That facility is not yours. Only an administrator at that facility, or one with "
-        "group-wide access, can change its departments.", status=403)
+        "group-wide access, can change its departments.",
+        status=403,
+    )
 
 
 def _row_view(row, codes: dict) -> dict:
@@ -164,7 +185,7 @@ def _codes_on(db) -> dict:
     return {int(r["id"]): r["code"] for r in db.execute("SELECT id, code FROM facilities")}
 
 
-def list_departments(*, facility_id: Optional[int] = None) -> list[dict]:
+def list_departments(*, facility_id: int | None = None) -> list[dict]:
     """The departments master, one facility's or every facility's, by name.
     Department names and facility codes only; no patient data."""
     with db_session() as db:
@@ -172,8 +193,10 @@ def list_departments(*, facility_id: Optional[int] = None) -> list[dict]:
         if facility_id is None:
             rows = db.execute("SELECT * FROM departments ORDER BY name COLLATE NOCASE").fetchall()
         else:
-            rows = db.execute("SELECT * FROM departments WHERE facility_id = ? "
-                              "ORDER BY name COLLATE NOCASE", (facility_id,)).fetchall()
+            rows = db.execute(
+                "SELECT * FROM departments WHERE facility_id = ? ORDER BY name COLLATE NOCASE",
+                (facility_id,),
+            ).fetchall()
     return [_row_view(r, codes) for r in rows]
 
 
@@ -187,7 +210,7 @@ def _same_name_on(db, name: str):
     return None
 
 
-def canonical_name(name, *, db=None) -> Optional[str]:
+def canonical_name(name, *, db=None) -> str | None:
     """The master's own spelling of a department (case and spacing folded),
     or None when the master does not list it."""
     clean = normalise_name(name)
@@ -196,8 +219,12 @@ def canonical_name(name, *, db=None) -> Optional[str]:
     if db is None:
         with db_session() as own:
             return canonical_name(clean, db=own)
-    if db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'departments'"
-                  ).fetchone() is None:
+    if (
+        db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'departments'"
+        ).fetchone()
+        is None
+    ):
         return None
     row = _same_name_on(db, clean)
     return None if row is None else row["name"]
@@ -210,30 +237,37 @@ def department_references(db, name: str) -> list[dict]:
     every such column in the schema is read, not a list kept by hand."""
     wanted = name.strip().lower()
     found: list[dict] = []
-    tables = [r[0] for r in db.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' "
-        "AND name NOT LIKE 'sqlite_%' AND name != 'departments' ORDER BY name").fetchall()]
+    tables = [
+        r[0]
+        for r in db.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            "AND name NOT LIKE 'sqlite_%' AND name != 'departments' ORDER BY name"
+        ).fetchall()
+    ]
     for table in tables:
         columns = [r[1] for r in db.execute(f'PRAGMA table_info("{table}")').fetchall()]
         for column in columns:
             if column != "department" and not column.endswith("_department"):
                 continue
             hit = db.execute(
-                f'SELECT 1 FROM "{table}" WHERE LOWER(TRIM("{column}")) = ? LIMIT 1',
-                (wanted,)).fetchone()
+                f'SELECT 1 FROM "{table}" WHERE LOWER(TRIM("{column}")) = ? LIMIT 1', (wanted,)
+            ).fetchone()
             if hit is not None:
                 found.append({"where": table, "column": column})
         if table == "channels" and {"name", "type"} <= set(columns):
             hit = db.execute(
                 "SELECT 1 FROM channels WHERE type = 'department' AND LOWER(TRIM(name)) = ? "
-                "LIMIT 1", (wanted,)).fetchone()
+                "LIMIT 1",
+                (wanted,),
+            ).fetchone()
             if hit is not None:
                 found.append({"where": "channels", "column": "name"})
     return found
 
 
-def add_department(name, facility_id: int, *, actor: dict, display_name=None,
-                   request_meta: Optional[dict] = None) -> dict:
+def add_department(
+    name, facility_id: int, *, actor: dict, display_name=None, request_meta: dict | None = None
+) -> dict:
     """Add a department to a facility's list. Refused: not an administrator
     (403), a blank, overlong or bed-prefix-shaped name (400), a facility that
     does not exist (404) or is closed (409), a facility other than 1 with
@@ -248,13 +282,16 @@ def add_department(name, facility_id: int, *, actor: dict, display_name=None,
     if clean is None:
         raise DepartmentError("name_required", "Type the department's name.", status=400)
     if len(clean) > MAX_NAME:
-        raise DepartmentError("name_too_long",
-                              f"A department name is at most {MAX_NAME} characters.", status=400)
+        raise DepartmentError(
+            "name_too_long", f"A department name is at most {MAX_NAME} characters.", status=400
+        )
     if looks_like_bed_prefix(clean):
         raise DepartmentError(
             "looks_like_a_bed",
             f"'{clean}' looks like a bed or ward label, not a department. A department is "
-            "the clinical service, such as General Medicine.", status=400)
+            "the clinical service, such as General Medicine.",
+            status=400,
+        )
     shown = normalise_name(display_name) if display_name is not None else None
     _require_growth_switch(int(facility_id))
     with db_session(immediate=True) as db:
@@ -268,26 +305,36 @@ def add_department(name, facility_id: int, *, actor: dict, display_name=None,
                 f"'{existing['name']}' is already on the departments list of facility "
                 f"{codes.get(int(existing['facility_id']), existing['facility_id'])}. A "
                 "department name belongs to one facility of the group.",
-                facility_code=codes.get(int(existing["facility_id"])))
+                facility_code=codes.get(int(existing["facility_id"])),
+            )
         cur = db.execute(
             "INSERT INTO departments (facility_id, name, display_name, is_active, seeded_from, "
             "created_by) VALUES (?, ?, ?, 1, 'admin', ?)",
-            (facility["id"], clean, shown, _actor_id(actor)))
+            (facility["id"], clean, shown, _actor_id(actor)),
+        )
         department_id = int(cur.lastrowid)
-        _audit_on(db, actor, "department_created",
-                  f"Department {clean!r} added to facility {facility['code']}",
-                  department_id=department_id,
-                  metadata={"name": clean, "facility_id": facility["id"],
-                            "facility_code": facility["code"]},
-                  request_meta=request_meta)
+        _audit_on(
+            db,
+            actor,
+            "department_created",
+            f"Department {clean!r} added to facility {facility['code']}",
+            department_id=department_id,
+            metadata={
+                "name": clean,
+                "facility_id": facility["id"],
+                "facility_code": facility["code"],
+            },
+            request_meta=request_meta,
+        )
         row = db.execute("SELECT * FROM departments WHERE id = ?", (department_id,)).fetchone()
         view = _row_view(row, _codes_on(db))
     facility_service.invalidate_cache()
     return view
 
 
-def move_department(department_id: int, facility_id: int, *, actor: dict, reason,
-                    request_meta: Optional[dict] = None) -> dict:
+def move_department(
+    department_id: int, facility_id: int, *, actor: dict, reason, request_meta: dict | None = None
+) -> dict:
     """Move a department nothing names yet to another facility. Refused: not
     an administrator (403), ORB_MULTI_SITE off (404 multi_site_off), an
     unknown department (404), a facility that does not exist (404) or is
@@ -299,19 +346,23 @@ def move_department(department_id: int, facility_id: int, *, actor: dict, reason
 
     _require_manager(actor)
     import config
+
     if not config.feature_enabled("multi_site"):
         raise DepartmentError(
             "multi_site_off",
             "Multi-site is switched off on this site, so departments belong to the first "
-            "facility only.", status=404)
+            "facility only.",
+            status=404,
+        )
     why = normalise_name(reason)
     if why is None or len(why) < MIN_REASON:
         raise DepartmentError("reason_required", "Say why the department moves.", status=400)
     with db_session(immediate=True) as db:
         row = db.execute("SELECT * FROM departments WHERE id = ?", (department_id,)).fetchone()
         if row is None:
-            raise DepartmentError("department_not_found", "There is no such department.",
-                                  status=404)
+            raise DepartmentError(
+                "department_not_found", "There is no such department.", status=404
+            )
         target = _facility_on(db, facility_id)
         current = int(row["facility_id"])
         if current == target["id"]:
@@ -323,16 +374,25 @@ def move_department(department_id: int, facility_id: int, *, actor: dict, reason
                 "department_in_use",
                 f"'{row['name']}' is already in use, so it stays at its facility: moving it "
                 "would move every patient and member of staff recorded under it.",
-                where=sorted({u["where"] for u in used}))
-        db.execute("UPDATE departments SET facility_id = ? WHERE id = ?",
-                   (target["id"], department_id))
-        _audit_on(db, actor, "department_facility_changed",
-                  f"Department {row['name']!r} moved from facility {current} to "
-                  f"{target['code']}",
-                  department_id=int(row["id"]),
-                  metadata={"name": row["name"], "from_facility_id": current,
-                            "to_facility_id": target["id"], "reason": why},
-                  request_meta=request_meta)
+                where=sorted({u["where"] for u in used}),
+            )
+        db.execute(
+            "UPDATE departments SET facility_id = ? WHERE id = ?", (target["id"], department_id)
+        )
+        _audit_on(
+            db,
+            actor,
+            "department_facility_changed",
+            f"Department {row['name']!r} moved from facility {current} to {target['code']}",
+            department_id=int(row["id"]),
+            metadata={
+                "name": row["name"],
+                "from_facility_id": current,
+                "to_facility_id": target["id"],
+                "reason": why,
+            },
+            request_meta=request_meta,
+        )
         moved = db.execute("SELECT * FROM departments WHERE id = ?", (department_id,)).fetchone()
         view = _row_view(moved, _codes_on(db))
     facility_service.invalidate_cache()

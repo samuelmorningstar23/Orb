@@ -26,10 +26,11 @@ Every status other than 'admitted' and 'discharged' ('transferred' out,
 'registered' and never admitted) has no open portal. An account with no linked
 patient row is left as it was: the portal itself says it cannot find records.
 """
+
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any
 
 PORTAL_CLOSED_MESSAGE = (
     "Your hospital stay has ended, so this portal is closed. Your discharge "
@@ -37,7 +38,7 @@ PORTAL_CLOSED_MESSAGE = (
 )
 
 
-def _end_of_local_day_utc(stamp) -> Optional[datetime]:
+def _end_of_local_day_utc(stamp) -> datetime | None:
     """The UTC instant the hospital-local day containing `stamp` ends, or None."""
     from services.hospital_time import local_day_bounds_utc, to_hospital
 
@@ -47,7 +48,7 @@ def _end_of_local_day_utc(stamp) -> Optional[datetime]:
     return local_day_bounds_utc(local.date())[1]
 
 
-def portal_access(db, user_id: str) -> Dict[str, Any]:
+def portal_access(db, user_id: str) -> dict[str, Any]:
     """Is this patient login's portal open right now? Blocking; pass an open db.
 
     Returns {"open": bool, "status": str|None, "until": iso str|None,
@@ -74,12 +75,15 @@ def portal_access(db, user_id: str) -> Dict[str, Any]:
         until = _end_of_local_day_utc(last["at"]) if last and last["at"] else None
         if until is not None and _utc_now() < until:
             return {"open": True, "status": status, "until": until.isoformat(), "reason": None}
-    return {"open": False, "status": status,
-            "until": until.isoformat() if until else None,
-            "reason": PORTAL_CLOSED_MESSAGE}
+    return {
+        "open": False,
+        "status": status,
+        "until": until.isoformat() if until else None,
+        "reason": PORTAL_CLOSED_MESSAGE,
+    }
 
 
-def portal_access_for(user_id: str) -> Dict[str, Any]:
+def portal_access_for(user_id: str) -> dict[str, Any]:
     """portal_access with its own session. Blocking; call via run_db from async."""
     from database import db_session
 

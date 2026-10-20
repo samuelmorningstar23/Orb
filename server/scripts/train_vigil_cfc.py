@@ -20,28 +20,30 @@ live-runnable (case-specific labs are a planned extended schema).
 Usage:
   cd server && .venv/bin/python scripts/train_vigil_cfc.py --outcome sepsis
 """
-import sys
+
 import argparse
 import random
+import sys
 from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SERVER_DIR))
 
-from models.vigil_cfc import (
-    OrbVigilCfC, HORIZONS_HOURS,
-    PRODUCTION_FEATURE_ORDER, PRODUCTION_FEATURE_MEAN, PRODUCTION_FEATURE_STD,
+from models.vigil_cfc import (  # noqa: E402 - application imports require the path/environment bootstrap above.
+    HORIZONS_HOURS,
+    PRODUCTION_FEATURE_ORDER,
+    OrbVigilCfC,
 )
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 HIDDEN_DIM = 64
-MAX_SEQ_LEN = 48           # cap on observation window (hours)
-MIN_OBS = 3                # need at least this many observations to predict
+MAX_SEQ_LEN = 48  # cap on observation window (hours)
+MIN_OBS = 3  # need at least this many observations to predict
 MAX_WINDOWS_PER_PATIENT = 6
 BATCH_SIZE = 64
 EPOCHS = 30
@@ -49,7 +51,9 @@ LR = 1e-3
 TRAIN_SPLIT = 0.85
 SEED = 42
 
-random.seed(SEED); np.random.seed(SEED); torch.manual_seed(SEED)
+random.seed(SEED)
+np.random.seed(SEED)
+torch.manual_seed(SEED)
 
 # PhysioNet column -> production feature (avpu/age handled specially).
 # TODO (train/serve skew, deferred — needs vigil_service.py change, other cluster):
@@ -57,12 +61,25 @@ random.seed(SEED); np.random.seed(SEED); torch.manual_seed(SEED)
 # derives MAP = DBP + (SBP-DBP)/3. Pick ONE definition across train + serve
 # (either always measured or always derived) or this channel is skewed at inference.
 _PSV_VITALS = {
-    "heart_rate": "HR", "spo2": "O2Sat", "temperature": "Temp",
-    "systolic_bp": "SBP", "map": "MAP", "diastolic_bp": "DBP",
+    "heart_rate": "HR",
+    "spo2": "O2Sat",
+    "temperature": "Temp",
+    "systolic_bp": "SBP",
+    "map": "MAP",
+    "diastolic_bp": "DBP",
     "respiratory_rate": "Resp",
 }
-_DEFAULTS = {"heart_rate": 80.0, "spo2": 97.0, "temperature": 36.8, "systolic_bp": 120.0,
-             "map": 82.0, "diastolic_bp": 63.0, "respiratory_rate": 18.0, "avpu": 0.0, "age": 62.0}
+_DEFAULTS = {
+    "heart_rate": 80.0,
+    "spo2": 97.0,
+    "temperature": 36.8,
+    "systolic_bp": 120.0,
+    "map": 82.0,
+    "diastolic_bp": 63.0,
+    "respiratory_rate": 18.0,
+    "avpu": 0.0,
+    "age": 62.0,
+}
 
 
 # ── PhysioNet sepsis adapter ───────────────────────────────────────────────────
@@ -85,7 +102,7 @@ def parse_psv(filepath: Path):
         if len(f) <= max(idx.values()):
             continue
 
-        def val(col):
+        def val(col: str, f: list[str] = f) -> float | None:
             if col not in idx:
                 return None
             s = f[idx[col]]
@@ -143,16 +160,22 @@ def make_windows(parsed):
         pred_points = sorted(random.sample(pred_points, MAX_WINDOWS_PER_PATIENT))
 
     for t in pred_points:
-        window = filled[max(0, t - MAX_SEQ_LEN):t]
+        window = filled[max(0, t - MAX_SEQ_LEN) : t]
         if len(window) < MIN_OBS:
             continue
         feats = [[row[feat] for feat in PRODUCTION_FEATURE_ORDER] for row in window]
         dt = [[1.0]] * len(window)  # PhysioNet is hourly -> Δt = 1h
-        labels = [1.0 if (onset_idx is not None and 0 <= onset_idx - t <= h) else 0.0
-                  for h in HORIZONS_HOURS]
-        samples.append((torch.tensor(feats, dtype=torch.float32),
-                        torch.tensor(dt, dtype=torch.float32),
-                        torch.tensor(labels)))
+        labels = [
+            1.0 if (onset_idx is not None and 0 <= onset_idx - t <= h) else 0.0
+            for h in HORIZONS_HOURS
+        ]
+        samples.append(
+            (
+                torch.tensor(feats, dtype=torch.float32),
+                torch.tensor(dt, dtype=torch.float32),
+                torch.tensor(labels),
+            )
+        )
     return samples
 
 
@@ -165,7 +188,7 @@ def _compute_corpus_stats(samples):
     """
     stacked = torch.cat([f.reshape(-1, f.shape[-1]) for f, _, _ in samples], dim=0)
     mean = stacked.mean(0)
-    std = stacked.std(0).clamp(min=1e-3)   # guard against constant channels
+    std = stacked.std(0).clamp(min=1e-3)  # guard against constant channels
     return mean, std
 
 
@@ -182,27 +205,30 @@ def load_sepsis_dataset():
         if parsed:
             samples.extend(make_windows(parsed))
     if not samples:
-        print("❌ No windows produced from corpus."); sys.exit(1)
+        print("❌ No windows produced from corpus.")
+        sys.exit(1)
 
     # Compute normalization from the real corpus, then z-score every window.
     mean, std = _compute_corpus_stats(samples)
     norm_samples = [((f - mean) / std, d, y) for f, d, y in samples]
 
     pos = sum(int(s[2].max() > 0.5) for s in norm_samples)
-    print(f"[Data] {len(norm_samples)} windows | {pos} with a positive horizon "
-          f"({100*pos/max(1,len(norm_samples)):.1f}%)")
+    print(
+        f"[Data] {len(norm_samples)} windows | {pos} with a positive horizon "
+        f"({100 * pos / max(1, len(norm_samples)):.1f}%)"
+    )
     return norm_samples, mean, std
 
 
 def collate(batch):
-    feats, dts, labels = zip(*batch)
+    feats, dts, labels = zip(*batch, strict=False)
     max_len = max(f.shape[0] for f in feats)
     F = feats[0].shape[1]
     vp = torch.zeros(len(batch), max_len, F)
     dp = torch.ones(len(batch), max_len, 1)
-    for i, (f, d) in enumerate(zip(feats, dts)):
-        vp[i, :f.shape[0]] = f
-        dp[i, :d.shape[0]] = d
+    for i, (f, d) in enumerate(zip(feats, dts, strict=False)):
+        vp[i, : f.shape[0]] = f
+        dp[i, : d.shape[0]] = d
     return vp, dp, torch.stack(labels)
 
 
@@ -214,7 +240,8 @@ def load_dataset_for(outcome: str):
     raise NotImplementedError(
         f"Outcome '{outcome}' needs timestamped {outcome} labels from a credentialed "
         "ICU dataset (MIMIC-IV / eICU / AmsterdamUMCdb). Build that adapter once data "
-        "access clears. See docs/ORB_TRAINING_PLAYBOOK.md.")
+        "access clears. See docs/ORB_TRAINING_PLAYBOOK.md."
+    )
 
 
 # ── Validation metrics ───────────────────────────────────────────────────────────
@@ -235,7 +262,7 @@ def _auroc(probs: np.ndarray, targets: np.ndarray) -> float:
         while j + 1 < len(sorted_p) and sorted_p[j + 1] == sorted_p[i]:
             j += 1
         if j > i:
-            ranks[order[i:j + 1]] = (i + 1 + j + 1) / 2.0
+            ranks[order[i : j + 1]] = (i + 1 + j + 1) / 2.0
         i = j + 1
     sum_pos = ranks[targets == 1].sum()
     n_pos, n_neg = len(pos), len(neg)
@@ -254,7 +281,7 @@ def _auprc(probs: np.ndarray, targets: np.ndarray) -> float:
     recall = tp / t.sum()
     # step-wise integration over recall increments
     ap, prev_recall = 0.0, 0.0
-    for p, r in zip(precision, recall):
+    for p, r in zip(precision, recall, strict=False):
         ap += p * (r - prev_recall)
         prev_recall = r
     return float(ap)
@@ -266,26 +293,33 @@ def _val_metrics(probs: torch.Tensor, targets: torch.Tensor) -> tuple[float, flo
     y = targets.reshape(-1).numpy()
     auroc = _auroc(p, y)
     auprc = _auprc(p, y)
-    return (0.0 if np.isnan(auroc) else auroc,
-            0.0 if np.isnan(auprc) else auprc)
+    return (0.0 if np.isnan(auroc) else auroc, 0.0 if np.isnan(auprc) else auprc)
 
 
 # ── Train ──────────────────────────────────────────────────────────────────────
 def train(outcome: str):
     samples, feat_mean, feat_std = load_dataset_for(outcome)
     if len(samples) < 100:
-        print("❌ Insufficient samples."); sys.exit(1)
+        print("❌ Insufficient samples.")
+        sys.exit(1)
 
     random.shuffle(samples)
     split = int(len(samples) * TRAIN_SPLIT)
-    train_loader = DataLoader(samples[:split], batch_size=BATCH_SIZE, shuffle=True,
-                              collate_fn=collate, drop_last=True)
+    train_loader = DataLoader(
+        samples[:split], batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate, drop_last=True
+    )
     val_loader = DataLoader(samples[split:], batch_size=BATCH_SIZE, collate_fn=collate)
 
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-    model = OrbVigilCfC(input_dim=len(PRODUCTION_FEATURE_ORDER), hidden_dim=HIDDEN_DIM,
-                        horizons=HORIZONS_HOURS, outcome=outcome).to(device)
-    print(f"[Model] OrbVigilCfC '{outcome}' — {sum(p.numel() for p in model.parameters()):,} params on {device}")
+    model = OrbVigilCfC(
+        input_dim=len(PRODUCTION_FEATURE_ORDER),
+        hidden_dim=HIDDEN_DIM,
+        horizons=HORIZONS_HOURS,
+        outcome=outcome,
+    ).to(device)
+    print(
+        f"[Model] OrbVigilCfC '{outcome}' — {sum(p.numel() for p in model.parameters()):,} params on {device}"
+    )
 
     # Class imbalance: weight positives per horizon.
     all_labels = torch.stack([s[2] for s in samples])
@@ -300,19 +334,23 @@ def train(outcome: str):
     best_val = float("inf")
 
     for epoch in range(1, EPOCHS + 1):
-        model.train(); tr = 0.0
+        model.train()
+        tr = 0.0
         for v, d, y in train_loader:
             v, d, y = v.to(device), d.to(device), y.to(device)
             # Train on RAW logits — feeding BCEWithLogitsLoss reconstructed logits
             # from clamped sigmoids is numerically lossy and saturates gradients.
             logits = model(v, d, return_logits=True)
             loss = criterion(logits, y)
-            opt.zero_grad(); loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0); opt.step()
+            opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            opt.step()
             tr += loss.item()
         sched.step()
 
-        model.eval(); vl = 0.0
+        model.eval()
+        vl = 0.0
         val_probs, val_targets = [], []
         with torch.no_grad():
             for v, d, y in val_loader:
@@ -327,27 +365,34 @@ def train(outcome: str):
         # alone — a clinical risk model must be judged on AUROC/AUPRC). Computed
         # over all horizons pooled; falls back gracefully if a horizon is single-class.
         auroc, auprc = _val_metrics(torch.cat(val_probs), torch.cat(val_targets))
-        print(f"  epoch {epoch:>2} | train {tr/max(1,len(train_loader)):.4f} | "
-              f"val {vl:.4f} | AUROC {auroc:.3f} | AUPRC {auprc:.3f}")
+        print(
+            f"  epoch {epoch:>2} | train {tr / max(1, len(train_loader)):.4f} | "
+            f"val {vl:.4f} | AUROC {auroc:.3f} | AUPRC {auprc:.3f}"
+        )
 
         if vl < best_val:
             best_val = vl
-            torch.save({
-                "model_state_dict": model.state_dict(),
-                "outcome": outcome,
-                "input_dim": len(PRODUCTION_FEATURE_ORDER),
-                "hidden_dim": HIDDEN_DIM,
-                "horizons": list(HORIZONS_HOURS),
-                "feature_order": list(PRODUCTION_FEATURE_ORDER),
-                # Stats computed from the ACTUAL training corpus (not the
-                # hardcoded PRODUCTION_FEATURE_* guesses) so inference normalizes
-                # with the same calibration the model was trained under.
-                "feature_mean": feat_mean.tolist(),
-                "feature_std": feat_std.tolist(),
-                "epoch": epoch, "val_loss": vl,
-                "val_auroc": round(auroc, 4), "val_auprc": round(auprc, 4),
-                "data_source": "physionet_cinc2019" if outcome == "sepsis" else "unknown",
-            }, str(ckpt_path))
+            torch.save(
+                {
+                    "model_state_dict": model.state_dict(),
+                    "outcome": outcome,
+                    "input_dim": len(PRODUCTION_FEATURE_ORDER),
+                    "hidden_dim": HIDDEN_DIM,
+                    "horizons": list(HORIZONS_HOURS),
+                    "feature_order": list(PRODUCTION_FEATURE_ORDER),
+                    # Stats computed from the ACTUAL training corpus (not the
+                    # hardcoded PRODUCTION_FEATURE_* guesses) so inference normalizes
+                    # with the same calibration the model was trained under.
+                    "feature_mean": feat_mean.tolist(),
+                    "feature_std": feat_std.tolist(),
+                    "epoch": epoch,
+                    "val_loss": vl,
+                    "val_auroc": round(auroc, 4),
+                    "val_auprc": round(auprc, 4),
+                    "data_source": "physionet_cinc2019" if outcome == "sepsis" else "unknown",
+                },
+                str(ckpt_path),
+            )
 
     print(f"\n✓ Best val {best_val:.4f} — saved {ckpt_path}")
     # TODO (deferred, cross-cutting): gate promotion of any checkpoint on beating

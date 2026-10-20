@@ -17,12 +17,19 @@ bash tools/local-inference-quality/check.sh
 
 The mandatory critical categories have **no allowlist**: syntax errors,
 undefined bindings, invalid control flow and duplicate unused definitions fail.
-Existing broader lint/type debt is fingerprinted by module, diagnostic and source
-expression. It cannot increase or move to a new expression. New functions cannot
-add unannotated parameters/returns. An unformatted legacy file is allowed only
-with its exact reviewed content hash; editing it requires formatting it. This is
-a gradual adoption gate, not a claim that existing legacy diagnostics are fixed
-or that third-party libraries are fully typed. The checker does not import Orb,
+The reviewed production scope now has **zero lint diagnostics, zero mypy
+errors and zero unformatted files**. The versioned lint/type/format budgets are
+empty, so any new finding fails. FastAPI dependency objects are named at their
+original construction points; intentional import-time path/configuration and
+cycle barriers retain documented E402 exceptions.
+
+The annotation inventory remains a separate adoption gate: new functions cannot
+add unannotated parameters/returns. The 20 October cleanup lowered the starting
+commit's inventory from 4,345 to 4,334 missing slots; it did not claim full strict
+annotation coverage or complete typing for optional third-party SDKs. This
+inventory was reconciled against starting commit `59ee1bc`, which includes the
+HIS work committed after the earlier engineering report. No new annotation debt
+was added by this cleanup. The checker does not import Orb,
 open its database, load models or contact a service.
 
 `record` is a deliberate baseline authoring command, never run by CI. Baseline
@@ -59,12 +66,19 @@ python tools/backend-quality/run_backend.py --python /path/to/test-env/bin/pytho
   --output /private/tmp/orb-backend-acceptance --workers 6
 ```
 
-The initial reviewed baseline covers both the selected commit and the concurrent
-working-copy snapshot; approved format hashes are explicit lists. Their diagnostic
-counts are recorded separately in the engineering report. This does not authorize
-future debt increases.
+The current zero-diagnostic baseline describes the reviewed commit source.
+The preserved concurrent working copy can contain additional unfinished changes;
+its results must be measured separately and must not be substituted for committed
+source acceptance. The cleanup evidence records the source hashes and scope.
 
 The output directory must be new and outside the checkout. It contains source
 hashes, exact commands, logs, JUnit results and combined coverage. Keyboard interruption
 stops only process groups the runner created. It never deploys or starts a live
 appliance. Keep virtual-environment interpreter symlinks intact.
+
+The 20 October lint/type cleanup does **not** establish a passing coverage-budget
+gate. The starting commit already exceeds older per-module budgets; new defensive
+guards also add uncovered branches and type declarations alter statement counts.
+The limits were left unchanged. See the cleanup verification and coverage-budget
+findings under `docs/audit-2026-10/legacy-lint-types-20261020/` for exact totals
+and remaining failures. Coverage follow-up remains open.

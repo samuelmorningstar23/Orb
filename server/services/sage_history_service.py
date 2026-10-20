@@ -44,15 +44,16 @@ OFF: the continuity evals (Groups 3+4, the 40-turn suites) have not been re-run
 against summarized history. When OFF, prompt assembly is byte-identical to
 today's (pinned by tests/test_sage_history_summarize.py).
 """
+
 import asyncio
 import hashlib
 import logging
 import re
 
 import httpx
-
 from config import LLM_MODEL, OLLAMA_KEEP_ALIVE
 from database import db_session, run_db
+
 from services import llm_queue_service
 from services.gpu_coordinator import PRIORITY_BACKGROUND
 
@@ -89,6 +90,7 @@ def enabled() -> bool:
     """Live read of the flag so tests (and a future admin reload) can flip it
     without re-importing every consumer."""
     import config
+
     return bool(getattr(config, "SAGE_HISTORY_SUMMARIZE", False))
 
 
@@ -155,14 +157,10 @@ def extract_facts(text: str) -> list[str]:
         if fact not in facts:
             facts.append(fact)
     # Substring de-duplication (order-preserving).
-    return [
-        f for f in facts
-        if not any(f != other and f in other for other in facts)
-    ]
+    return [f for f in facts if not any(f != other and f in other for other in facts)]
 
 
-def guard_summary(summary: str, facts: list[str],
-                  budget: int = SUMMARY_BUDGET_CHARS) -> str:
+def guard_summary(summary: str, facts: list[str], budget: int = SUMMARY_BUDGET_CHARS) -> str:
     """Deterministically enforce the fact guard on a generated summary.
 
     Every fact must appear verbatim in the result; the ones the model dropped
@@ -199,8 +197,7 @@ CREATE TABLE IF NOT EXISTS sage_history_summaries (
 )
 """
 _INDEX_SQL = (
-    "CREATE INDEX IF NOT EXISTS idx_sage_hist_summ_conv "
-    "ON sage_history_summaries(conversation_id)"
+    "CREATE INDEX IF NOT EXISTS idx_sage_hist_summ_conv ON sage_history_summaries(conversation_id)"
 )
 
 
@@ -213,8 +210,9 @@ def _content_hash(content: str) -> str:
     return hashlib.sha256((content or "").encode("utf-8")).hexdigest()
 
 
-def store_summary_sync(turn_id: int, conversation_id: str, content: str,
-                       summary: str, model: str | None = None) -> None:
+def store_summary_sync(
+    turn_id: int, conversation_id: str, content: str, summary: str, model: str | None = None
+) -> None:
     """Persist one turn's summary. PURE SYNC — call via run_db from async."""
     with db_session() as db:
         _ensure_schema(db)
@@ -226,8 +224,7 @@ def store_summary_sync(turn_id: int, conversation_id: str, content: str,
         )
 
 
-def load_summaries(db, conversation_id: str,
-                   turns: list[tuple[int, str]]) -> dict[int, str]:
+def load_summaries(db, conversation_id: str, turns: list[tuple[int, str]]) -> dict[int, str]:
     """Cached summaries for `turns` ([(turn_id, raw_content), …]) of one
     conversation, keyed by turn_id. Runs on the CALLER's open session (the
     history read is already off-loop in a worker thread). A row whose
@@ -282,6 +279,7 @@ async def _call_careful_model(prompt: str) -> str | None:
     is an optimisation for the NEXT turn and must never slow the current one.
     LaneYielded lands in the except below, and the head-trim stands."""
     from services import ollama_gateway
+
     try:
         async with httpx.AsyncClient(timeout=90.0, trust_env=False) as client:
             resp = await ollama_gateway.post(
@@ -318,6 +316,7 @@ def _interactive_num_ctx() -> int:
     # Lazy: sage_service imports this module lazily and vice versa; a
     # module-level import in either direction would be a cycle.
     from services.sage_service import INTERACTIVE_NUM_CTX
+
     return INTERACTIVE_NUM_CTX
 
 
@@ -342,12 +341,13 @@ async def _generate(cleaned: str) -> str | None:
     for attempt in range(SUMMARIZE_MAX_ATTEMPTS):
         try:
             await llm_queue_service.llm_queue.acquire(
-                priority=PRIORITY_BACKGROUND, timeout=SUMMARIZE_QUEUE_WAIT_SECONDS)
+                priority=PRIORITY_BACKGROUND, timeout=SUMMARIZE_QUEUE_WAIT_SECONDS
+            )
             acquired = True
             break
         except asyncio.CancelledError:
             return None
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if attempt + 1 >= SUMMARIZE_MAX_ATTEMPTS:
                 break
             try:
@@ -386,8 +386,8 @@ async def summarize_turn(turn: dict) -> str | None:
         return None
 
     from services.sage_service import _history_turn_text
-    cleaned = _history_turn_text(content, SUMMARIZE_INPUT_CHARS,
-                                 keep_marker=False)
+
+    cleaned = _history_turn_text(content, SUMMARIZE_INPUT_CHARS, keep_marker=False)
     if not cleaned:
         return None
 
@@ -403,8 +403,7 @@ async def summarize_turn(turn: dict) -> str | None:
     if not guarded:
         return None
 
-    await run_db(store_summary_sync, turn_id, conversation_id, content,
-                 guarded, LLM_MODEL)
+    await run_db(store_summary_sync, turn_id, conversation_id, content, guarded, LLM_MODEL)
     return guarded
 
 
@@ -430,8 +429,7 @@ async def _summarize_and_forget(turn: dict) -> None:
     try:
         await summarize_turn(turn)
     except Exception as e:  # a background task must never propagate
-        logger.debug("history summarization failed for turn %s: %s",
-                     turn.get("turn_id"), e)
+        logger.debug("history summarization failed for turn %s: %s", turn.get("turn_id"), e)
     finally:
         _inflight.discard(turn.get("turn_id"))
 

@@ -4,14 +4,22 @@ Provides adapter logic to dispatch confirmed Sage actions to downstream modules 
 Maintains the `sage_handoffs` and `sage_handoff_events` tables to provide an auditable
 cross-module coordination layer without overloading the Stage 3 Relay actions.
 """
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from services.medorders.ai_lanes import SageBinding
+
+import json
 import logging
 import re
 import uuid
-import json
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 from database import db_session, run_db
-from typing import Dict, Any, Optional
 
 from services.helix_service import insert_order, resolve_by_name_in_txn
 from services.scribe_service import save_scribe_note
@@ -28,7 +36,7 @@ logger = logging.getLogger("orb.sage_handoff")
 # the handoff is stored 'unsupported' and says it needs manual dispatch.
 # sage_ambient_service reads this same table to drop a classifier verb before
 # it can become a card.
-ACTION_ROUTES: Dict[str, str] = {
+ACTION_ROUTES: dict[str, str] = {
     # Start a medication: the one thing `_dispatch_to_helix` does.
     "start_medication": "helix",
     "add_medication": "helix",
@@ -51,7 +59,7 @@ def normalize_action_verb(verb) -> str:
     return re.sub(r"[\s\-]+", "_", str(verb or "").strip().lower())
 
 
-def route_for_action(verb) -> Optional[str]:
+def route_for_action(verb) -> str | None:
     """The module a confirmed action dispatches to, or None when it needs manual dispatch."""
     return ACTION_ROUTES.get(normalize_action_verb(verb))
 
@@ -113,7 +121,8 @@ class _ScreenedOrder(dict):
     binding it was screened for (medorders-20, ai_lanes.SageBinding). A dict,
     so every reader of the screen reads it as before; the binding goes no
     further than _write_helix."""
-    binding = None
+
+    binding: SageBinding | None = None
 
 
 def _norm_name(name) -> str:
@@ -132,12 +141,13 @@ def _merge_screens(screens: list, names: list) -> dict:
             have = list(merged.get(key) or [])
             have += [a for a in (extra.get(key) or []) if a not in have]
             merged[key] = have
-        if rank.get(extra.get("max_severity"), 0) > rank.get(merged.get("max_severity"), 0):
+        if rank.get(extra.get("max_severity"), 0) > rank.get((merged.get("max_severity") or ""), 0):
             merged["max_severity"] = extra.get("max_severity")
         merged["blocking"] = bool(merged.get("blocking")) or bool(extra.get("blocking"))
         merged["safe"] = bool(merged.get("safe", True)) and bool(extra.get("safe", True))
-        merged["interaction_screened"] = (bool(merged.get("interaction_screened"))
-                                          and bool(extra.get("interaction_screened")))
+        merged["interaction_screened"] = bool(merged.get("interaction_screened")) and bool(
+            extra.get("interaction_screened")
+        )
         notes = [n for n in (merged.get("coverage_note"), extra.get("coverage_note")) if n]
         merged["coverage_note"] = " ".join(dict.fromkeys(notes)) or None
     merged["screened_names"] = list(names)
@@ -193,6 +203,7 @@ def _drug_chart_refusal():
     (services/drug_chart): a medication handoff is blocked before any drug is
     screened or charted, and the card says why in these words."""
     from services.drug_chart import DRUG_CHART_OFF, drug_chart_enabled
+
     if drug_chart_enabled():
         return None
     return HandoffBlocked(DRUG_CHART_OFF, {"blocking": True, "drug_chart": False})
@@ -253,12 +264,12 @@ def dispatch_in_transaction(db, action: dict, actor_id: str, screened) -> tuple:
     (schedule_prep_package), or None.
     """
     handoff_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     # Idempotency check: see if a pending/accepted handoff already exists for this action
     existing = db.execute(
         "SELECT * FROM sage_handoffs WHERE source_action_id = ? ORDER BY created_at DESC LIMIT 1",
-        (action["id"],)
+        (action["id"],),
     ).fetchone()
 
     # 'blocked' is terminal like 'accepted': a stopped order is not quietly
@@ -271,14 +282,24 @@ def dispatch_in_transaction(db, action: dict, actor_id: str, screened) -> tuple:
         """INSERT INTO sage_handoffs 
            (id, source_action_id, room_id, patient_id, target_module, handoff_type, payload_json, status, created_by, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)""",
-        (handoff_id, action["id"], action["room_id"], action["patient_id"], 
-         "unknown", action["action_type"], json.dumps(action), actor_id, now, now)
+        (
+            handoff_id,
+            action["id"],
+            action["room_id"],
+            action["patient_id"],
+            "unknown",
+            action["action_type"],
+            json.dumps(action),
+            actor_id,
+            now,
+            now,
+        ),
     )
 
     db.execute(
         """INSERT INTO sage_handoff_events (handoff_id, prior_status, new_status, actor_id, source, reason)
            VALUES (?, NULL, 'pending', ?, 'system', 'Handoff initialized')""",
-        (handoff_id, actor_id)
+        (handoff_id, actor_id),
     )
 
     return _dispatch_handoff(db, handoff_id, action, actor_id, screened)
@@ -313,7 +334,8 @@ def _dispatch_handoff(db, handoff_id: str, action: dict, actor_id: str, screened
             target_module = "helix"
             with _savepoint(db, "handoff_adapter"):
                 downstream_ref_id, safety, error_summary = _write_helix(
-                    db, action, actor_id, screened, handoff_id=handoff_id)
+                    db, action, actor_id, screened, handoff_id=handoff_id
+                )
             safety_json = json.dumps(safety)
             new_status = "accepted"
         elif module == "scribe":
@@ -326,10 +348,15 @@ def _dispatch_handoff(db, handoff_id: str, action: dict, actor_id: str, screened
             # summary is written for the clinician who confirmed the card.
             new_status = "unsupported"
             verb = action_type.replace("_", " ") or "this action"
-            error_summary = (f"Needs manual dispatch: Orb has no automatic route for "
-                             f"\"{verb}\", so nothing was sent or changed. Do it by hand.")
-            logger.warning("Handoff %s: no route for action_type %r, needs manual dispatch",
-                           handoff_id, action.get("action_type"))
+            error_summary = (
+                f"Needs manual dispatch: Orb has no automatic route for "
+                f'"{verb}", so nothing was sent or changed. Do it by hand.'
+            )
+            logger.warning(
+                "Handoff %s: no route for action_type %r, needs manual dispatch",
+                handoff_id,
+                action.get("action_type"),
+            )
     except TransactionLost:
         raise
     except HandoffBlocked as e:
@@ -341,7 +368,7 @@ def _dispatch_handoff(db, handoff_id: str, action: dict, actor_id: str, screened
         error_summary = str(e)
         logger.warning("Handoff %s to %s failed: %s", handoff_id, target_module, e, exc_info=True)
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     # Fetch prior status for event log
     row = db.execute("SELECT status FROM sage_handoffs WHERE id = ?", (handoff_id,)).fetchone()
@@ -352,13 +379,22 @@ def _dispatch_handoff(db, handoff_id: str, action: dict, actor_id: str, screened
            SET target_module = ?, status = ?, downstream_ref_id = ?, error_summary = ?, safety_json = ?,
                last_attempted_at = ?, updated_at = ?
            WHERE id = ?""",
-        (target_module, new_status, downstream_ref_id, error_summary, safety_json, now, now, handoff_id)
+        (
+            target_module,
+            new_status,
+            downstream_ref_id,
+            error_summary,
+            safety_json,
+            now,
+            now,
+            handoff_id,
+        ),
     )
 
     db.execute(
         """INSERT INTO sage_handoff_events (handoff_id, prior_status, new_status, actor_id, source, reason)
            VALUES (?, ?, ?, ?, 'system', ?)""",
-        (handoff_id, prior_status, new_status, actor_id, error_summary)
+        (handoff_id, prior_status, new_status, actor_id, error_summary),
     )
 
     updated_row = db.execute("SELECT * FROM sage_handoffs WHERE id = ?", (handoff_id,)).fetchone()
@@ -397,10 +433,13 @@ def _helix_order_fields(action: dict) -> tuple:
     route = "Review"
     frequency = "REVIEW REQUIRED"
 
-    clean_rat = re.sub(r'[^\w\s]', ' ', (action.get("rationale", "") or "").lower())
-    if " iv " in f" {clean_rat} ": route = "IV"
-    elif " im " in f" {clean_rat} ": route = "IM"
-    elif " sc " in f" {clean_rat} ": route = "SC"
+    clean_rat = re.sub(r"[^\w\s]", " ", (action.get("rationale", "") or "").lower())
+    if " iv " in f" {clean_rat} ":
+        route = "IV"
+    elif " im " in f" {clean_rat} ":
+        route = "IM"
+    elif " sc " in f" {clean_rat} ":
+        route = "SC"
     return dose, route, frequency
 
 
@@ -410,7 +449,7 @@ def _screen_helix(action: dict, actor_id: str) -> dict:
 
     Runs OUTSIDE any write transaction (see prescreen_handoff).
     """
-    patient_id = action.get("patient_id")
+    patient_id = action["patient_id"]
     target_med = action.get("target", "Unknown Medication")
 
     # ORDER-TIME SAFETY GATE: screen the drug against the patient's allergies and
@@ -439,10 +478,12 @@ def _screen_helix(action: dict, actor_id: str) -> dict:
     # stopping the order stops it. With the lifecycle off, exactly as before:
     # the card's words, one screen.
     from services.medication_safety_gate import (
-        MedicationSafetyBlocked, enforce_medication_safety,
+        MedicationSafetyBlocked,
+        enforce_medication_safety,
     )
     from services.medorders import ai_lanes
-    binding = None
+
+    binding: SageBinding | None = None
     names = [target_med]
     if ai_lanes.exact_binding_on():
         try:
@@ -452,12 +493,15 @@ def _screen_helix(action: dict, actor_id: str) -> dict:
             # goes to pharmacy; the card's drug is still screened and charted.
             logger.error("Sage binding for '%s' failed: %s", target_med, e)
             binding = ai_lanes.unbound(
-                (target_med or "").strip(), ai_lanes.NOT_BOUND_CATALOGUE_UNREADABLE,
-                "the formulary could not be read, so no product was chosen")
+                (target_med or "").strip(),
+                ai_lanes.NOT_BOUND_CATALOGUE_UNREADABLE,
+                "the formulary could not be read, so no product was chosen",
+            )
         if binding.bound:
             # The product's name; its generic name when the name does not
             # carry it (a brand: the order-time allergy match reads names,
             # not the formulary); the card's words when they read differently.
+            assert binding.product is not None
             names = [binding.product["name"]]
             generic = binding.product.get("generic_name")
             if generic and _norm_name(generic) not in _norm_name(binding.product["name"]):
@@ -468,34 +512,52 @@ def _screen_helix(action: dict, actor_id: str) -> dict:
     try:
         screens = []
         for screened_name in names:
-            screens.append(enforce_medication_safety(
-                patient_id, screened_name,
-                actor_id=actor_id,
-                entry_point="sage.agentic_handoff",
-                interactive=False,
-            ))
+            screens.append(
+                enforce_medication_safety(
+                    patient_id,
+                    screened_name,
+                    actor_id=actor_id,
+                    entry_point="sage.agentic_handoff",
+                    interactive=False,
+                )
+            )
     except MedicationSafetyBlocked as e:
-        logger.warning("BLOCKED agentic order '%s' for %s: %s (%s)",
-                       screened_name, patient_id,
-                       e.safety.get("allergy_alerts"), e.reason)
+        logger.warning(
+            "BLOCKED agentic order '%s' for %s: %s (%s)",
+            screened_name,
+            patient_id,
+            e.safety.get("allergy_alerts"),
+            e.reason,
+        )
         if e.safety.get("screen_failed"):
-            reason = (f"Not charted: the drug-safety screen could not run, so {screened_name} "
-                      "was not checked. Order it through pharmacist verification.")
+            reason = (
+                f"Not charted: the drug-safety screen could not run, so {screened_name} "
+                "was not checked. Order it through pharmacist verification."
+            )
         else:
-            severe = [a.get("message") for a in
-                      (e.safety.get("allergy_alerts") or []) + (e.safety.get("interaction_alerts") or [])
-                      if a.get("severity") == "severe" and a.get("message")]
+            severe = [
+                a.get("message")
+                for a in (e.safety.get("allergy_alerts") or [])
+                + (e.safety.get("interaction_alerts") or [])
+                if a.get("severity") == "severe" and a.get("message")
+            ]
             # The same medicine already ordered (ruling MO-R6, lifecycle on).
             duplicate = (e.safety.get("duplicate_check") or {}).get("message")
             if duplicate:
                 severe.append(duplicate)
-            reason = f"Not charted: the drug-safety screen blocked {screened_name}. " + " ".join(severe)
+            reason = f"Not charted: the drug-safety screen blocked {screened_name}. " + " ".join(
+                severe
+            )
         raise HandoffBlocked(reason.strip(), _safety_summary(e.safety)) from e
     except Exception as e:
         # The gate itself could not run. Fail CLOSED: nothing is charted, and the
         # card says so rather than reading as sent.
-        logger.error("BLOCKED agentic order '%s' for %s: safety gate unavailable: %s",
-                     screened_name, patient_id, e)
+        logger.error(
+            "BLOCKED agentic order '%s' for %s: safety gate unavailable: %s",
+            screened_name,
+            patient_id,
+            e,
+        )
         raise HandoffBlocked(
             f"Not charted: the drug-safety screen could not run, so {screened_name} "
             "was not checked. Order it through pharmacist verification.",
@@ -508,8 +570,9 @@ def _screen_helix(action: dict, actor_id: str) -> dict:
     return out
 
 
-def _write_helix(db, action: dict, actor_id: str, screened, *,
-                 handoff_id: Optional[str] = None) -> tuple:
+def _write_helix(
+    db, action: dict, actor_id: str, screened, *, handoff_id: str | None = None
+) -> tuple:
     """Chart the drug and place the Helix order on ``db``, after a screen that
     has already run (``screened``, from _screen_helix / prescreen_handoff).
     Never commits. Returns ``(downstream_ref_id, safety, note)`` as
@@ -531,10 +594,11 @@ def _write_helix(db, action: dict, actor_id: str, screened, *,
     safety = screened
 
     from services.medorders import ai_lanes
+
     if ai_lanes.store_on():
         return _write_helix_through_store(db, action, actor_id, safety, handoff_id)
 
-    patient_id = action.get("patient_id")
+    patient_id = action["patient_id"]
     target_med = action.get("target", "Unknown Medication")
     dose, route, frequency = _helix_order_fields(action)
 
@@ -580,13 +644,16 @@ def _write_helix(db, action: dict, actor_id: str, screened, *,
         logger.warning("charted '%s' but Helix order failed: %s", target_med, e)
         # The card used to read "Sent to Helix" here, though no pharmacy order
         # exists (typically a target that is not in the Helix catalog). Say so.
-        note = (f"Charted for review, but not sent to pharmacy: {str(e).rstrip('.')}. "
-                "Place the order in Helix.")
+        note = (
+            f"Charted for review, but not sent to pharmacy: {str(e).rstrip('.')}. "
+            "Place the order in Helix."
+        )
         return "charted-only", _safety_summary(safety), note
 
 
-def _write_helix_through_store(db, action: dict, actor_id: str, safety: dict,
-                               handoff_id: Optional[str]) -> tuple:
+def _write_helix_through_store(
+    db, action: dict, actor_id: str, safety: dict, handoff_id: str | None
+) -> tuple:
     """The Sage lane with the medication-order store on (medorders-8): the
     chart row, the order and its supply row in ONE write on ``db``
     (services/medorders/ai_lanes.write_sage_order_in_txn). In record mode the
@@ -599,26 +666,39 @@ def _write_helix_through_store(db, action: dict, actor_id: str, safety: dict,
     row back, and the card reads 'failed'. Never commits."""
     from services.medorders import ai_lanes
 
-    patient_id = action.get("patient_id")
+    patient_id = action["patient_id"]
     target_med = action.get("target", "Unknown Medication")
     dose, route, frequency = _helix_order_fields(action)
     # medorders-20: with the lifecycle on, the product is the one the screen
     # was run for, carried on the screen itself; a screen made anywhere else
     # carries none, and then no product is bound (fail closed).
-    binding = None
+    binding: SageBinding | None = None
     if ai_lanes.exact_binding_on():
         binding = getattr(safety, "binding", None) or ai_lanes.unbound(
-            (target_med or "").strip(), ai_lanes.NOT_BOUND_NOT_SCREENED,
+            (target_med or "").strip(),
+            ai_lanes.NOT_BOUND_NOT_SCREENED,
             f"the product for {target_med} was not checked against this patient's "
-            "allergies and medicines")
+            "allergies and medicines",
+        )
     written = ai_lanes.write_sage_order_in_txn(
-        db, patient_id=patient_id, drug_name=target_med, dose=dose, route=route,
-        frequency=frequency, actor_id=actor_id, safety=safety,
-        sage_action_id=action.get("id"), sage_handoff_id=handoff_id, binding=binding)
+        db,
+        patient_id=patient_id,
+        drug_name=target_med,
+        dose=dose,
+        route=route,
+        frequency=frequency,
+        actor_id=actor_id,
+        safety=safety,
+        sage_action_id=action.get("id"),
+        sage_handoff_id=handoff_id,
+        binding=binding,
+    )
     if written.supply is None:
         logger.warning("charted '%s' but Helix order failed: %s", target_med, written.not_sent)
-        note = (f"Charted for review, but not sent to pharmacy: {written.not_sent}. "
-                "Place the order in Helix.")
+        note = (
+            f"Charted for review, but not sent to pharmacy: {written.not_sent}. "
+            "Place the order in Helix."
+        )
         return "charted-only", _safety_summary(safety), note
     return written.supply["id"], _safety_summary(safety), None
 
@@ -626,27 +706,28 @@ def _write_helix_through_store(db, action: dict, actor_id: str, safety: dict,
 def _dispatch_to_scribe(action: dict, actor_id: str, db) -> str:
     """Dispatches a document action to the Scribe service, on ``db``. Returns the Scribe note_id."""
     # Scribe requires: patient_id, author_id, raw_transcript, structured_note, note_format
-    
-    patient_id = action.get("patient_id")
+
+    patient_id = action["patient_id"]
     target = action.get("target", "")
     rationale = action.get("rationale", "")
-    
+
     raw_transcript = f"Sage Ambient Observation: {target}. {rationale}"
-    note_format = "soap" # Default
-    
+    note_format = "soap"  # Default
+
     try:
         note_id = save_scribe_note(
             patient_id=patient_id,
             author_id=actor_id,
             raw_transcript=raw_transcript,
-            structured_note=None, # Will be structured asynchronously if needed
+            structured_note=None,  # Will be structured asynchronously if needed
             note_format=note_format,
             ai_generated=True,
             db=db,
         )
         return str(note_id)
     except Exception as e:
-        raise RuntimeError(f"Scribe note creation failed: {e}")
+        raise RuntimeError(f"Scribe note creation failed: {e}") from e
+
 
 def _resolve_surgeon_id(db, patient_id: str, actor_id: str) -> str:
     """Pick the LEAD SURGEON for a surgical case. When a medical patient is transferred
@@ -658,10 +739,13 @@ def _resolve_surgeon_id(db, patient_id: str, actor_id: str) -> str:
     ).fetchone()
     attending = pat["attending_doctor_id"] if pat else None
     # 1. Attending only if they are already a surgeon (an existing surgical patient).
-    if attending and db.execute(
-        "SELECT 1 FROM users WHERE id = ? AND role = 'doctor' AND department LIKE '%Surg%'",
-        (attending,),
-    ).fetchone():
+    if (
+        attending
+        and db.execute(
+            "SELECT 1 FROM users WHERE id = ? AND role = 'doctor' AND department LIKE '%Surg%'",
+            (attending,),
+        ).fetchone()
+    ):
         return attending
     # 2. The on-call Surgery-department doctor for the transfer.
     surg_doc = db.execute(
@@ -672,17 +756,28 @@ def _resolve_surgeon_id(db, patient_id: str, actor_id: str) -> str:
     if surg_doc:
         return surg_doc["id"]
     # 3. Fall back to the attending doctor, then the confirming clinician.
-    if attending and db.execute(
-        "SELECT 1 FROM users WHERE id = ? AND role = 'doctor'", (attending,)
-    ).fetchone():
+    if (
+        attending
+        and db.execute(
+            "SELECT 1 FROM users WHERE id = ? AND role = 'doctor'", (attending,)
+        ).fetchone()
+    ):
         return attending
     return actor_id
 
 
 # Card targets that name a destination, not an operation.
 _GENERIC_SURGICAL_TARGETS = {
-    "surgery", "general surgery", "surgical", "surgical team", "surgeon",
-    "theatre", "operating theatre", "operating room", "ot", "or",
+    "surgery",
+    "general surgery",
+    "surgical",
+    "surgical team",
+    "surgeon",
+    "theatre",
+    "operating theatre",
+    "operating room",
+    "ot",
+    "or",
 }
 
 
@@ -793,8 +888,9 @@ def _relay_destination(raw_target: str, *, covering: list, named: set) -> str:
     return resolve_cover(_DEFAULT_SURGICAL_DEPARTMENT, covering=covering)
 
 
-def _transfer_through_adt_on(db, *, action: dict, actor_id: str, admission_id: str,
-                             raw_target: str, named: set) -> tuple:
+def _transfer_through_adt_on(
+    db, *, action: dict, actor_id: str, admission_id: str, raw_target: str, named: set
+) -> tuple:
     """The confirmed card's transfer through the ADT writer, on the confirm's
     connection (see the section comment). Returns (the department the
     patient is now treated by, the covering list it was resolved against).
@@ -808,23 +904,37 @@ def _transfer_through_adt_on(db, *, action: dict, actor_id: str, admission_id: s
         raise RuntimeError("The Relay transfer lane must run inside the confirm's transaction.")
     names = set(named)
     if db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'wards'").fetchone():
-        names |= {r[0] for r in db.execute(
-            "SELECT DISTINCT department FROM wards WHERE department IS NOT NULL").fetchall()}
+        names |= {
+            r[0]
+            for r in db.execute(
+                "SELECT DISTINCT department FROM wards WHERE department IS NOT NULL"
+            ).fetchall()
+        }
     covering = _covering_departments_on(db)
     canonical = _relay_destination(raw_target, covering=covering, named=names)
-    current = db.execute("SELECT department FROM admissions WHERE id = ?",
-                         (admission_id,)).fetchone()
-    if current is not None and str(current["department"] or "").strip().casefold() \
-            == canonical.casefold():
+    current = db.execute(
+        "SELECT department FROM admissions WHERE id = ?", (admission_id,)
+    ).fetchone()
+    if (
+        current is not None
+        and str(current["department"] or "").strip().casefold() == canonical.casefold()
+    ):
         return canonical, covering
-    user = db.execute("SELECT id, name, role, department FROM users WHERE id = ?",
-                      (actor_id,)).fetchone()
+    user = db.execute(
+        "SELECT id, name, role, department FROM users WHERE id = ?", (actor_id,)
+    ).fetchone()
     actor = dict(user) if user is not None else {"id": actor_id}
     adt_transfer.transfer_on(
-        db, actor=actor, to_department=canonical, reason=RELAY_TRANSFER_REASON,
-        admission_id=admission_id, keep_location=True, boarder_acknowledged=True,
+        db,
+        actor=actor,
+        to_department=canonical,
+        reason=RELAY_TRANSFER_REASON,
+        admission_id=admission_id,
+        keep_location=True,
+        boarder_acknowledged=True,
         notes=f"Transfer card confirmed in Relay (Sage action {action.get('id')})",
-        idempotency_key=f"relay-action-{action.get('id')}")
+        idempotency_key=f"relay-action-{action.get('id')}",
+    )
     return canonical, covering
 
 
@@ -833,13 +943,16 @@ def _dispatch_to_transfer(action: dict, actor_id: str, db) -> tuple:
     on ``db`` (never commits). Returns ``(surgery_id, needs_package)``: True when a NEW
     case was booked, whose prep package the caller starts after the commit
     (schedule_prep_package)."""
-    patient_id = action.get("patient_id")
+    patient_id = action["patient_id"]
     room_id = action.get("room_id")
     raw_target = (action.get("target") or "").strip()
     target_dept = raw_target or "General Surgery"
 
     # 1. Update Admission
-    active_adm = db.execute("SELECT id FROM admissions WHERE patient_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1", (patient_id,)).fetchone()
+    active_adm = db.execute(
+        "SELECT id FROM admissions WHERE patient_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1",
+        (patient_id,),
+    ).fetchone()
     if not active_adm:
         raise RuntimeError(f"No active admission found for patient {patient_id}")
 
@@ -860,14 +973,21 @@ def _dispatch_to_transfer(action: dict, actor_id: str, db) -> tuple:
         # raises here with rule C's words, the savepoint rolls this adapter
         # back, and the handoff is stored 'failed' with nothing changed.
         target_dept, covering = _transfer_through_adt_on(
-            db, action=action, actor_id=actor_id, admission_id=active_adm["id"],
-            raw_target=raw_target, named=known_depts)
+            db,
+            action=action,
+            actor_id=actor_id,
+            admission_id=active_adm["id"],
+            raw_target=raw_target,
+            named=known_depts,
+        )
         known_depts = known_depts | set(covering)
     else:
         if target_dept not in known_depts:
             target_dept = "General Surgery"
 
-        db.execute("UPDATE admissions SET department = ? WHERE id = ?", (target_dept, active_adm["id"]))
+        db.execute(
+            "UPDATE admissions SET department = ? WHERE id = ?", (target_dept, active_adm["id"])
+        )
 
     # 2. Add System Message to Relay
     if room_id:
@@ -875,7 +995,7 @@ def _dispatch_to_transfer(action: dict, actor_id: str, db) -> tuple:
         db.execute(
             """INSERT INTO messages (channel_id, sender_id, sender_name, sender_role, content, message_type, is_bot, source)
                VALUES (?, 'system', 'Orb System', 'system', ?, 'system', 1, 'system')""",
-            (room_id, sys_msg)
+            (room_id, sys_msg),
         )
 
     # 3. Reuse an existing emergency surgery seed for THIS patient if one is
@@ -884,7 +1004,7 @@ def _dispatch_to_transfer(action: dict, actor_id: str, db) -> tuple:
         """SELECT id FROM surgeries
            WHERE patient_id = ? AND status LIKE 'emergency_%'
            ORDER BY created_at DESC LIMIT 1""",
-        (patient_id,)
+        (patient_id,),
     ).fetchone()
     if seeded:
         db.execute("UPDATE surgeries SET status = 'emergency_ready' WHERE id = ?", (seeded["id"],))
@@ -897,6 +1017,7 @@ def _dispatch_to_transfer(action: dict, actor_id: str, db) -> tuple:
     # Hospital calendar, like the schedule that lists it: a UTC date put a
     # case raised 00:00-05:30 IST under yesterday.
     from services.hospital_time import hospital_now
+
     local_now = hospital_now()
     now_date = local_now.strftime("%Y-%m-%d")
     now_time = local_now.strftime("%H:%M")
@@ -909,7 +1030,7 @@ def _dispatch_to_transfer(action: dict, actor_id: str, db) -> tuple:
     prof = db.execute(
         "SELECT comorbidities FROM patient_profiles WHERE patient_id = ?", (patient_id,)
     ).fetchone()
-    co_morbidities_json = (prof["comorbidities"] if prof and prof["comorbidities"] else "[]")
+    co_morbidities_json = prof["comorbidities"] if prof and prof["comorbidities"] else "[]"
 
     surgeon_id = _resolve_surgeon_id(db, patient_id, actor_id)
 
@@ -926,8 +1047,18 @@ def _dispatch_to_transfer(action: dict, actor_id: str, db) -> tuple:
             scheduled_date, scheduled_time, estimated_duration_min, operating_room,
             status, co_morbidities)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'emergency_pending', ?)""",
-        (surgery_id, patient_id, surgeon_id, procedure_name, diag,
-         now_date, now_time, 120, "OR-E (Emergency)", co_morbidities_json)
+        (
+            surgery_id,
+            patient_id,
+            surgeon_id,
+            procedure_name,
+            diag,
+            now_date,
+            now_time,
+            120,
+            "OR-E (Emergency)",
+            co_morbidities_json,
+        ),
     )
 
     # Alert ONLY the relevant staff for this case (not the whole department).
@@ -949,6 +1080,7 @@ def schedule_prep_package(surgery_id: str) -> None:
     the case stays at 'emergency_pending', as it always has without a loop.
     """
     import asyncio
+
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -971,8 +1103,7 @@ def _alert_assigned_team(db, surgery_id: str, patient_id: str) -> None:
 
     # Resolve the case room channel for this patient.
     chan = db.execute(
-        "SELECT id FROM channels WHERE patient_id = ? AND type = 'case_room' LIMIT 1",
-        (patient_id,)
+        "SELECT id FROM channels WHERE patient_id = ? AND type = 'case_room' LIMIT 1", (patient_id,)
     ).fetchone()
     if not chan:
         return
@@ -984,9 +1115,7 @@ def _alert_assigned_team(db, surgery_id: str, patient_id: str) -> None:
     if surgeon_id:
         roster.append((surgeon_id, "Lead Surgeon"))
 
-    nurse = db.execute(
-        "SELECT id FROM users WHERE role = 'nurse' ORDER BY id LIMIT 1"
-    ).fetchone()
+    nurse = db.execute("SELECT id FROM users WHERE role = 'nurse' ORDER BY id LIMIT 1").fetchone()
     if nurse:
         roster.append((nurse["id"], "Scrub Nurse"))
 
@@ -1003,19 +1132,22 @@ def _alert_assigned_team(db, surgery_id: str, patient_id: str) -> None:
     for user_id, role_name in roster:
         db.execute(
             "INSERT INTO surgery_team_assignments (surgery_id, user_id, role_name, status) VALUES (?, ?, ?, 'alerted')",
-            (surgery_id, user_id, role_name)
+            (surgery_id, user_id, role_name),
         )
-        alert_json = json.dumps({
-            "text": f"SURGICAL ALERT: You are assigned as {role_name} for an emergency procedure.",
-            "target_user_id": user_id,
-            "surgery_id": surgery_id,
-            "role": role_name,
-        })
+        alert_json = json.dumps(
+            {
+                "text": f"SURGICAL ALERT: You are assigned as {role_name} for an emergency procedure.",
+                "target_user_id": user_id,
+                "surgery_id": surgery_id,
+                "role": role_name,
+            }
+        )
         db.execute(
             """INSERT INTO messages (channel_id, sender_id, sender_name, sender_role, content, message_type, is_bot, source)
                VALUES (?, 'system', 'Sage Ambient', 'ai', ?, 'surgical_alert', 1, 'ai')""",
-            (channel_id, alert_json)
+            (channel_id, alert_json),
         )
+
 
 # The run_db payloads below are module-level rather than closures defined inside
 # their async callers. They take every value as an explicit argument (they close
@@ -1027,7 +1159,7 @@ def _load_alert_rows(patient_id):
     with db_session() as db:
         chan = db.execute(
             "SELECT id FROM channels WHERE patient_id = ? AND type = 'case_room' LIMIT 1",
-            (patient_id,)
+            (patient_id,),
         ).fetchone()
         if not chan:
             return None
@@ -1036,7 +1168,7 @@ def _load_alert_rows(patient_id):
             """SELECT * FROM messages
                WHERE channel_id = ? AND message_type = 'surgical_alert'
                ORDER BY id DESC LIMIT 8""",
-            (channel_id,)
+            (channel_id,),
         ).fetchall()
         return channel_id, rows
 
@@ -1062,6 +1194,7 @@ async def emit_team_alerts_live(surgery_id: str, patient_id: str):
         # The history endpoint's serializer: carries `is_bot` (AUTO chip) and
         # `source`, which a hand-built copy left out (2026-10-03).
         from services.relay_service import _message_row_to_dict
+
         msg = _message_row_to_dict(r)
         try:
             await sio.emit("message:new", msg, room=channel_id)
@@ -1078,13 +1211,16 @@ async def emit_team_alerts_live(surgery_id: str, patient_id: str):
 # two run_db hops would let a concurrent re-confirm land in between.
 def _mark_generating(surgery_id):
     with db_session() as db:
-        db.execute("UPDATE surgeries SET status = 'emergency_context_generating' WHERE id = ?", (surgery_id,))
+        db.execute(
+            "UPDATE surgeries SET status = 'emergency_context_generating' WHERE id = ?",
+            (surgery_id,),
+        )
         # Fetch patient details for customization
         surg = db.execute(
             """SELECT s.procedure_name, p.name as patient_name, p.diagnosis as patient_diagnosis
                FROM surgeries s JOIN patients p ON s.patient_id = p.id
                WHERE s.id = ?""",
-            (surgery_id,)
+            (surgery_id,),
         ).fetchone()
         procedure_name = surg["procedure_name"] if surg else "Emergency Surgery"
         patient_name = surg["patient_name"] if surg else "Patient"
@@ -1092,9 +1228,16 @@ def _mark_generating(surgery_id):
         return procedure_name, patient_name, patient_diag
 
 
-def _persist_package(surgery_id, risk_assessment, possible_complications,
-                     success_probability, surgical_checklist,
-                     instruments_required, staff_required, notes_payload):
+def _persist_package(
+    surgery_id,
+    risk_assessment,
+    possible_complications,
+    success_probability,
+    surgical_checklist,
+    instruments_required,
+    staff_required,
+    notes_payload,
+):
     with db_session() as db:
         db.execute(
             """UPDATE surgeries SET
@@ -1115,14 +1258,15 @@ def _persist_package(surgery_id, risk_assessment, possible_complications,
                 json.dumps(instruments_required),
                 json.dumps(staff_required),
                 json.dumps(notes_payload),
-                surgery_id
-            )
+                surgery_id,
+            ),
         )
 
 
 async def generate_transfer_surgery_package_async(surgery_id: str):
     # Deferred: ws.realtime imports back into the service layer.
     from ws.realtime import sio
+
     from services.surgery_escalation_service import PREP_PACKAGE
 
     # 1. Transition to emergency_context_generating
@@ -1138,24 +1282,27 @@ async def generate_transfer_surgery_package_async(surgery_id: str):
     # template (no ASA class, no sepsis claim, no success estimate, no named
     # staff). This used to write "ASA IV, septic shock" and a 78.5% success
     # figure with invented clinicians onto every real transfer.
-    notes_payload = {
-        "ai_package_status": "template",
-        "finalized_at": datetime.now(timezone.utc).isoformat()
-    }
+    notes_payload = {"ai_package_status": "template", "finalized_at": datetime.now(UTC).isoformat()}
 
     try:
-        await run_db(_persist_package, surgery_id, PREP_PACKAGE["risk_assessment"],
-                     PREP_PACKAGE["possible_complications"],
-                     PREP_PACKAGE["success_probability"],
-                     PREP_PACKAGE["surgical_checklist"],
-                     PREP_PACKAGE["instruments_required"],
-                     PREP_PACKAGE["staff_required"], notes_payload)
+        await run_db(
+            _persist_package,
+            surgery_id,
+            PREP_PACKAGE["risk_assessment"],
+            PREP_PACKAGE["possible_complications"],
+            PREP_PACKAGE["success_probability"],
+            PREP_PACKAGE["surgical_checklist"],
+            PREP_PACKAGE["instruments_required"],
+            PREP_PACKAGE["staff_required"],
+            notes_payload,
+        )
     except Exception as e:
         # A failed write must still open the case: left at
         # 'emergency_context_generating' it sat behind a spinner forever, with
         # its WHO checklist out of reach. Same fallback as the Relay prep lane.
         logger.error("Transfer package write failed for %s: %s", surgery_id, e, exc_info=True)
         from services.surgery_escalation_service import FALLBACK_DATA, _finalize_surgery
+
         await run_db(_finalize_surgery, surgery_id, FALLBACK_DATA, "failed", f"Error: {e}")
 
     # Emit socket event again so frontend knows it is completed/ready

@@ -25,6 +25,7 @@ constraints, and lab_results is not a parent of anything. Indexes are partial
 where the column is NULL for every interfaced row, so they cost nothing until
 the laboratory module writes linked rows.
 """
+
 from migrations import Migration
 
 _COLUMNS = (

@@ -42,6 +42,7 @@ table nothing references, so it can still be rebuilt in a transaction).
 Idempotent: the column, the backfill (only NULL rows are filled) and both
 indexes are safe to run twice.
 """
+
 from __future__ import annotations
 
 import logging
@@ -80,7 +81,8 @@ class OneActiveAdmissionRefused(RuntimeError):
             f"Migration 65 refused: {len(self.patient_ids)} patient(s) hold more than one "
             f"active admission ({named}{f', and {more} more' if more > 0 else ''}). Close the "
             "admissions that are not the patient's current stay, then start Orb again. "
-            "Nothing was changed.")
+            "Nothing was changed."
+        )
 
 
 def _columns(conn, table: str) -> set:
@@ -127,7 +129,8 @@ def backfill_summary_admission_id(conn) -> dict:
     )
     filled["single_admission"] = max(0, cur.rowcount or 0)
     if {"admission_id", "movement_type", "discharge_summary_id"} <= _columns(
-            conn, "patient_movements"):
+        conn, "patient_movements"
+    ):
         linked = (
             "SELECT m.admission_id FROM patient_movements m "
             "JOIN admissions a ON a.id = m.admission_id "
@@ -153,9 +156,12 @@ def apply(conn) -> None:
     if add_summary_admission_id(conn):
         filled = backfill_summary_admission_id(conn)
         if filled["single_admission"] or filled["ledger"]:
-            logger.info("Migration 65: %d summary(ies) keyed to their only admission, %d "
-                        "through the movement ledger", filled["single_admission"],
-                        filled["ledger"])
+            logger.info(
+                "Migration 65: %d summary(ies) keyed to their only admission, %d "
+                "through the movement ledger",
+                filled["single_admission"],
+                filled["ledger"],
+            )
         conn.execute(SUMMARY_ADMISSION_INDEX)
     if _columns(conn, "admissions"):
         conn.execute(ONE_ACTIVE_INDEX)

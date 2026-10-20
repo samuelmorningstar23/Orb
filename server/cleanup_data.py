@@ -1,4 +1,5 @@
 """Clean up clinical_documents and lens_analyses to keep max 2-5 per day per patient."""
+
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -8,7 +9,7 @@ SERVER_DIR = Path(__file__).resolve().parent
 if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
 
-from database import _open_raw_connection, _row_factory_for
+from database import _open_raw_connection, _row_factory_for  # noqa: E402 - application imports require the path/environment bootstrap above.
 
 
 def cleanup():
@@ -32,12 +33,16 @@ def cleanup():
     # Group by (patient_id, date_str)
     groups: dict[str, list] = {}
     for d in docs:
-        day = datetime.fromisoformat(d["created_at"]).strftime("%Y-%m-%d") if d["created_at"] else "unknown"
+        day = (
+            datetime.fromisoformat(d["created_at"]).strftime("%Y-%m-%d")
+            if d["created_at"]
+            else "unknown"
+        )
         key = f"{d['patient_id']}_{day}"
         groups.setdefault(key, []).append(d)
 
     delete_doc_ids = []
-    for key, items in groups.items():
+    for _key, items in groups.items():
         # Keep only the first 3 per patient per day (target 2-5 range)
         if len(items) > 3:
             for excess in items[3:]:
@@ -66,12 +71,16 @@ def cleanup():
 
     r_groups: dict[str, list] = {}
     for r in reports:
-        day = datetime.fromisoformat(r["created_at"]).strftime("%Y-%m-%d") if r["created_at"] else "unknown"
+        day = (
+            datetime.fromisoformat(r["created_at"]).strftime("%Y-%m-%d")
+            if r["created_at"]
+            else "unknown"
+        )
         key = f"{r['patient_id']}_{day}"
         r_groups.setdefault(key, []).append(r)
 
     delete_report_ids = []
-    for key, items in r_groups.items():
+    for _key, items in r_groups.items():
         if len(items) > 3:
             for excess in items[3:]:
                 delete_report_ids.append(excess["id"])
@@ -95,11 +104,12 @@ def cleanup():
     # Print final counts
     doc_count = db.execute("SELECT COUNT(*) FROM clinical_documents").fetchone()[0]
     report_count = db.execute("SELECT COUNT(*) FROM lens_analyses").fetchone()[0]
-    print(f"\n  Final counts:")
+    print("\n  Final counts:")
     print(f"    Clinical documents: {doc_count}")
     print(f"    Diagnostic reports: {report_count}")
 
     db.close()
+
 
 if __name__ == "__main__":
     print("═══ Cleaning up notes/reports ═══")

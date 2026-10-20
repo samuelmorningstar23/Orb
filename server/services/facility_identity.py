@@ -39,13 +39,15 @@ Every function here takes the caller's connection (db=) or opens its own
 session; none commits a connection it was given. Nothing here is async: async
 callers go through database.run_db.
 """
+
 from __future__ import annotations
 
 import logging
 import re
 import uuid
-from datetime import date, datetime, timezone
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from datetime import UTC, date, datetime
+from typing import Any
 
 logger = logging.getLogger("orb.facility_identity")
 
@@ -108,18 +110,45 @@ _MAX_TEXT = 200
 
 #: GST state and union territory codes (the first two digits of a GSTIN).
 GST_STATE_CODES = {
-    "01": "Jammu and Kashmir", "02": "Himachal Pradesh", "03": "Punjab",
-    "04": "Chandigarh", "05": "Uttarakhand", "06": "Haryana", "07": "Delhi",
-    "08": "Rajasthan", "09": "Uttar Pradesh", "10": "Bihar", "11": "Sikkim",
-    "12": "Arunachal Pradesh", "13": "Nagaland", "14": "Manipur", "15": "Mizoram",
-    "16": "Tripura", "17": "Meghalaya", "18": "Assam", "19": "West Bengal",
-    "20": "Jharkhand", "21": "Odisha", "22": "Chhattisgarh", "23": "Madhya Pradesh",
-    "24": "Gujarat", "25": "Daman and Diu",
-    "26": "Dadra and Nagar Haveli and Daman and Diu", "27": "Maharashtra",
-    "28": "Andhra Pradesh (before 2014)", "29": "Karnataka", "30": "Goa",
-    "31": "Lakshadweep", "32": "Kerala", "33": "Tamil Nadu", "34": "Puducherry",
-    "35": "Andaman and Nicobar Islands", "36": "Telangana", "37": "Andhra Pradesh",
-    "38": "Ladakh", "97": "Other territory",
+    "01": "Jammu and Kashmir",
+    "02": "Himachal Pradesh",
+    "03": "Punjab",
+    "04": "Chandigarh",
+    "05": "Uttarakhand",
+    "06": "Haryana",
+    "07": "Delhi",
+    "08": "Rajasthan",
+    "09": "Uttar Pradesh",
+    "10": "Bihar",
+    "11": "Sikkim",
+    "12": "Arunachal Pradesh",
+    "13": "Nagaland",
+    "14": "Manipur",
+    "15": "Mizoram",
+    "16": "Tripura",
+    "17": "Meghalaya",
+    "18": "Assam",
+    "19": "West Bengal",
+    "20": "Jharkhand",
+    "21": "Odisha",
+    "22": "Chhattisgarh",
+    "23": "Madhya Pradesh",
+    "24": "Gujarat",
+    "25": "Daman and Diu",
+    "26": "Dadra and Nagar Haveli and Daman and Diu",
+    "27": "Maharashtra",
+    "28": "Andhra Pradesh (before 2014)",
+    "29": "Karnataka",
+    "30": "Goa",
+    "31": "Lakshadweep",
+    "32": "Kerala",
+    "33": "Tamil Nadu",
+    "34": "Puducherry",
+    "35": "Andaman and Nicobar Islands",
+    "36": "Telangana",
+    "37": "Andhra Pradesh",
+    "38": "Ladakh",
+    "97": "Other territory",
 }
 
 _GSTIN_RE = re.compile(r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$")
@@ -136,8 +165,15 @@ class FacilityIdentityError(Exception):
     """A refused identity read or write. `status` is the HTTP status a route
     answers with; `errors` lists {field, code, message} for each bad field."""
 
-    def __init__(self, message: str, *, code: str, status: int = 400,
-                 errors: Optional[list] = None, detail: Optional[dict] = None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str,
+        status: int = 400,
+        errors: list | None = None,
+        detail: dict | None = None,
+    ):
         super().__init__(message)
         self.message = message
         self.code = code
@@ -146,7 +182,7 @@ class FacilityIdentityError(Exception):
         self.detail = detail or {}
 
     def body(self) -> dict:
-        out = {"error": self.code, "message": self.message}
+        out: dict[str, Any] = {"error": self.code, "message": self.message}
         if self.errors:
             out["errors"] = self.errors
         out.update(self.detail)
@@ -156,6 +192,7 @@ class FacilityIdentityError(Exception):
 # ═════════════════════════════════════════════════════════════════════════════
 #  Validation
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def gstin_check_character(first14: str) -> str:
     """The GSTIN's fifteenth character for its first fourteen (the base-36
@@ -167,60 +204,78 @@ def gstin_check_character(first14: str) -> str:
     return _GSTIN_CHARS[(36 - total % 36) % 36]
 
 
-def gstin_problem(value: str) -> Optional[str]:
+def gstin_problem(value: str) -> str | None:
     """None for a well-formed GSTIN, else what is wrong, in words."""
     if not _GSTIN_RE.match(value):
-        return ("A GSTIN is 15 characters: the 2-digit state code, the 10-character "
-                "PAN, an entity number, the letter Z and a check character.")
+        return (
+            "A GSTIN is 15 characters: the 2-digit state code, the 10-character "
+            "PAN, an entity number, the letter Z and a check character."
+        )
     if value[:2] not in GST_STATE_CODES:
         return f"{value[:2]} is not a GST state code."
     if gstin_check_character(value[:14]) != value[14]:
-        return "The last character does not match the rest of the GSTIN. Check it for a typing slip."
+        return (
+            "The last character does not match the rest of the GSTIN. Check it for a typing slip."
+        )
     return None
 
 
-def pan_of_gstin(gstin: Optional[str]) -> Optional[str]:
+def pan_of_gstin(gstin: str | None) -> str | None:
     return gstin[2:12] if gstin and len(gstin) == 15 else None
 
 
-def _clean_text(value: Any, field: str, errors: list) -> Optional[str]:
+def _clean_text(value: Any, field: str, errors: list) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str):
-        errors.append({"field": field, "code": "not_text",
-                       "message": f"{FIELD_LABELS.get(field, field)} must be text."})
+        errors.append(
+            {
+                "field": field,
+                "code": "not_text",
+                "message": f"{FIELD_LABELS.get(field, field)} must be text.",
+            }
+        )
         return None
     text = " ".join(value.split())
     if not text:
         return None
     if len(text) > _MAX_TEXT:
-        errors.append({"field": field, "code": "too_long",
-                       "message": f"{FIELD_LABELS.get(field, field)} must be "
-                                  f"{_MAX_TEXT} characters or fewer."})
+        errors.append(
+            {
+                "field": field,
+                "code": "too_long",
+                "message": f"{FIELD_LABELS.get(field, field)} must be "
+                f"{_MAX_TEXT} characters or fewer.",
+            }
+        )
         return None
     return text
 
 
-def appliance_zone_problem(value: str) -> Optional[str]:
+def appliance_zone_problem(value: str) -> str | None:
     """None when `value` is an IANA timezone keeping the appliance's offsets
     (ruling MS-R8: one zone in v1), else what is wrong."""
     try:
         from zoneinfo import ZoneInfo
+
         zone = ZoneInfo(value)
     except Exception:
         return f"{value} is not a timezone name Orb knows, for example Asia/Kolkata."
     from services.hospital_time import hospital_timezone
+
     appliance = hospital_timezone()
-    year = datetime.now(timezone.utc).year
+    year = datetime.now(UTC).year
     for month in (1, 7):
-        probe = datetime(year, month, 15, 12, tzinfo=timezone.utc)
+        probe = datetime(year, month, 15, 12, tzinfo=UTC)
         if probe.astimezone(zone).utcoffset() != probe.astimezone(appliance).utcoffset():
-            return ("Every facility on this computer keeps the computer's own timezone "
-                    "for now, so this one must match it.")
+            return (
+                "Every facility on this computer keeps the computer's own timezone "
+                "for now, so this one must match it."
+            )
     return None
 
 
-def _normalise(field: str, value: Any, errors: list) -> Optional[str]:
+def _normalise(field: str, value: Any, errors: list) -> str | None:
     """One field's stored value, or None for blank; problems go to `errors`."""
     text = _clean_text(value, field, errors)
     if text is None:
@@ -275,17 +330,23 @@ def _normalise(field: str, value: Any, errors: list) -> Optional[str]:
         if problem:
             bad("bad_timezone", problem)
             return None
-    elif field in ("hfr_id", "abdm_hip_id", "nabh_accreditation_no",
-                   "clinical_establishment_reg_no"):
+    elif field in (
+        "hfr_id",
+        "abdm_hip_id",
+        "nabh_accreditation_no",
+        "clinical_establishment_reg_no",
+    ):
         if not _REG_RE.match(text):
-            bad("bad_registration_number",
+            bad(
+                "bad_registration_number",
                 f"{label} is letters and digits, with spaces, dots, slashes or dashes, "
-                "at most 64 characters.")
+                "at most 64 characters.",
+            )
             return None
     return text
 
 
-def _effective_pan(row: dict) -> Optional[str]:
+def _effective_pan(row: dict) -> str | None:
     return row.get("pan") or pan_of_gstin(row.get("gstin"))
 
 
@@ -298,29 +359,43 @@ def cross_field_problems(merged: dict, others: Iterable[dict]) -> list:
     gstin = merged.get("gstin")
     if gstin:
         if merged.get("state_code") and merged["state_code"] != gstin[:2]:
-            errors.append({
-                "field": "state_code", "code": "state_mismatch",
-                "message": (f"The GST state code is {merged['state_code']} but the GSTIN "
-                            f"starts with {gstin[:2]}. They must be the same."),
-            })
+            errors.append(
+                {
+                    "field": "state_code",
+                    "code": "state_mismatch",
+                    "message": (
+                        f"The GST state code is {merged['state_code']} but the GSTIN "
+                        f"starts with {gstin[:2]}. They must be the same."
+                    ),
+                }
+            )
         if merged.get("pan") and merged["pan"] != pan_of_gstin(gstin):
-            errors.append({
-                "field": "pan", "code": "pan_mismatch",
-                "message": ("The PAN is not the one inside the GSTIN (characters 3 to 12). "
-                            "They must be the same."),
-            })
+            errors.append(
+                {
+                    "field": "pan",
+                    "code": "pan_mismatch",
+                    "message": (
+                        "The PAN is not the one inside the GSTIN (characters 3 to 12). "
+                        "They must be the same."
+                    ),
+                }
+            )
     mine = _effective_pan(merged)
     if mine:
         for other in others:
             theirs = _effective_pan(other)
             if theirs and theirs != mine:
-                errors.append({
-                    "field": "pan" if merged.get("pan") else "gstin",
-                    "code": "pan_differs_from_group",
-                    "message": ("Every facility on this computer belongs to one legal entity, "
-                                f"so they share one PAN. Facility {other.get('code')} carries "
-                                "a different one."),
-                })
+                errors.append(
+                    {
+                        "field": "pan" if merged.get("pan") else "gstin",
+                        "code": "pan_differs_from_group",
+                        "message": (
+                            "Every facility on this computer belongs to one legal entity, "
+                            f"so they share one PAN. Facility {other.get('code')} carries "
+                            "a different one."
+                        ),
+                    }
+                )
                 break
     return errors
 
@@ -329,8 +404,10 @@ def cross_field_problems(merged: dict, others: Iterable[dict]) -> list:
 #  Reading identity
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _db_session(immediate: bool = False):
     import database
+
     return database.db_session(immediate=immediate) if immediate else database.db_session()
 
 
@@ -338,24 +415,27 @@ def _row_dict(row) -> dict:
     return {k: row[k] for k in row.keys()}
 
 
-def _facility_row(db, facility_id: int) -> Optional[dict]:
+def _facility_row(db, facility_id: int) -> dict | None:
     from services import facility_service
+
     if not facility_service._table_exists(db, "facilities"):
         return None
     row = db.execute("SELECT * FROM facilities WHERE id = ?", (int(facility_id),)).fetchone()
     return _row_dict(row) if row else None
 
 
-def _site_name() -> Optional[str]:
+def _site_name() -> str | None:
     from services import facility_service
+
     return facility_service._site_name()
 
 
-def configured_name(row: Optional[dict], facility_id: int) -> Optional[str]:
+def configured_name(row: dict | None, facility_id: int) -> str | None:
     """The name a facility is known by when someone set one: its stored name,
     or for facility 1 the site settings file's [site] name. None otherwise
     (never the "This hospital" fallback, which is not a configured name)."""
     from services.facility_service import MAIN_FACILITY_ID
+
     stored = ((row or {}).get("name") or "").strip()
     if stored:
         return stored
@@ -364,24 +444,28 @@ def configured_name(row: Optional[dict], facility_id: int) -> Optional[str]:
     return None
 
 
-def format_address(row: Optional[dict]) -> Optional[str]:
+def format_address(row: dict | None) -> str | None:
     """The registered address on one line: lines, city, district, then the
     state with the PIN code. None when no part is set."""
     row = row or {}
-    parts = [row.get(k) for k in ("address_line1", "address_line2", "city", "district")]
-    parts = [p.strip() for p in parts if isinstance(p, str) and p.strip()]
-    tail = " ".join(p.strip() for p in (row.get("state"), row.get("pincode"))
-                    if isinstance(p, str) and p.strip())
+    address_parts = [row.get(k) for k in ("address_line1", "address_line2", "city", "district")]
+    parts = [p.strip() for p in address_parts if isinstance(p, str) and p.strip()]
+    tail = " ".join(
+        p.strip()
+        for p in (row.get("state"), row.get("pincode"))
+        if isinstance(p, str) and p.strip()
+    )
     if tail:
         parts.append(tail)
     return ", ".join(parts) or None
 
 
-def identity_block(facility_id: int = 1, *, db=None, row: Optional[dict] = None) -> dict:
+def identity_block(facility_id: int = 1, *, db=None, row: dict | None = None) -> dict:
     """Everything a print needs to say who the facility is. Keys that are not
     set are None; `invoice_ready` is True once the supplier name, address and
     GSTIN are all set, and `missing_for_invoice` names what is not."""
     from services import facility_service
+
     if row is None:
         if db is None:
             with _db_session() as own:
@@ -393,9 +477,15 @@ def identity_block(facility_id: int = 1, *, db=None, row: Optional[dict] = None)
     name = configured_name(row, fid)
     supplier = legal or name
     address = format_address(row)
-    missing = [label for value, label in ((supplier, "Legal name"),
-                                          (address, "Address"),
-                                          (row.get("gstin"), "GSTIN")) if not value]
+    missing = [
+        label
+        for value, label in (
+            (supplier, "Legal name"),
+            (address, "Address"),
+            (row.get("gstin"), "GSTIN"),
+        )
+        if not value
+    ]
     state_code = row.get("state_code")
     return {
         "facility_id": fid,
@@ -423,31 +513,36 @@ def identity_block(facility_id: int = 1, *, db=None, row: Optional[dict] = None)
     }
 
 
-def document_facility_id(db, *, patient_id: Optional[str] = None,
-                         admission_id: Optional[str] = None) -> int:
+def document_facility_id(
+    db, *, patient_id: str | None = None, admission_id: str | None = None
+) -> int:
     """The facility a bill or receipt belongs to: facility 1 while only one is
     on record (no statement beyond the cached count); otherwise the
     admission's facility, else the facility of the patient's latest encounter
     (permissions.FACILITY_PATIENT_SQL), else facility 1. Invoices gain their
     own facility_id in multisite-7b."""
     from services import facility_service
+
     if not facility_service.multi_facility_data(db=db):
         return facility_service.MAIN_FACILITY_ID
     if admission_id:
-        row = db.execute("SELECT facility_id FROM admissions WHERE id = ?",
-                         (admission_id,)).fetchone()
+        row = db.execute(
+            "SELECT facility_id FROM admissions WHERE id = ?", (admission_id,)
+        ).fetchone()
         if row is not None and row[0] is not None:
             return int(row[0])
     if patient_id:
         from permissions import FACILITY_PATIENT_SQL
-        row = db.execute(f"SELECT {FACILITY_PATIENT_SQL} FROM patients p WHERE p.id = ?",
-                         (patient_id,)).fetchone()
+
+        row = db.execute(
+            f"SELECT {FACILITY_PATIENT_SQL} FROM patients p WHERE p.id = ?", (patient_id,)
+        ).fetchone()
         if row is not None and row[0] is not None:
             return int(row[0])
     return facility_service.MAIN_FACILITY_ID
 
 
-def print_site_name(patient_id: Optional[str] = None, *, db=None) -> Optional[str]:
+def print_site_name(patient_id: str | None = None, *, db=None) -> str | None:
     """The hospital name a printed record or the patient's discharge page
     carries: the configured name of the patient's facility (facility 1 while
     only one is on record), or None when nobody set one. Never raises: a
@@ -467,24 +562,40 @@ def print_site_name(patient_id: Optional[str] = None, *, db=None) -> Optional[st
 #  The supplier snapshot (migration 72)
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _utc_now() -> str:
     from services.clinical_time import utc_iso_now
+
     return utc_iso_now()
 
 
-def supplier_snapshot(db, *, patient_id: Optional[str] = None,
-                      admission_id: Optional[str] = None) -> tuple:
+def supplier_snapshot(
+    db, *, patient_id: str | None = None, admission_id: str | None = None
+) -> tuple:
     """The six SNAPSHOT_COLUMNS values for a document numbered now, read from
     the facility's live identity inside the caller's transaction."""
     fid = document_facility_id(db, patient_id=patient_id, admission_id=admission_id)
     block = identity_block(fid, db=db)
-    return (fid, block["supplier_name"], block["address"], block["gstin"],
-            block["state_code"], _utc_now())
+    return (
+        fid,
+        block["supplier_name"],
+        block["address"],
+        block["gstin"],
+        block["state_code"],
+        _utc_now(),
+    )
 
 
-def _block_from(*, name: Optional[str], address: Optional[str], gstin: Optional[str],
-                state_code: Optional[str], facility_id: Optional[int], source: str,
-                snapshot_at: Optional[str]) -> dict:
+def _block_from(
+    *,
+    name: str | None,
+    address: str | None,
+    gstin: str | None,
+    state_code: str | None,
+    facility_id: int | None,
+    source: str,
+    snapshot_at: str | None,
+) -> dict:
     return {
         "name": name or NOT_CONFIGURED,
         "name_is_configured": bool(name),
@@ -527,34 +638,48 @@ def supplier_block(row: dict, *, number_field: str, db=None) -> dict:
     if row.get(number_field):
         if row.get("supplier_snapshot_at"):
             return _block_from(
-                name=row.get("supplier_legal_name"), address=row.get("supplier_address"),
-                gstin=row.get("supplier_gstin"), state_code=row.get("supplier_state_code"),
-                facility_id=row.get("supplier_facility_id"), source="snapshot",
-                snapshot_at=row.get("supplier_snapshot_at"))
+                name=row.get("supplier_legal_name"),
+                address=row.get("supplier_address"),
+                gstin=row.get("supplier_gstin"),
+                state_code=row.get("supplier_state_code"),
+                facility_id=row.get("supplier_facility_id"),
+                source="snapshot",
+                snapshot_at=row.get("supplier_snapshot_at"),
+            )
         return legacy_supplier_block()
     if db is None:
         with _db_session() as own:
             return supplier_block(row, number_field=number_field, db=own)
-    fid = document_facility_id(db, patient_id=row.get("patient_id"),
-                               admission_id=row.get("admission_id"))
+    fid = document_facility_id(
+        db, patient_id=row.get("patient_id"), admission_id=row.get("admission_id")
+    )
     block = identity_block(fid, db=db)
-    return _block_from(name=block["supplier_name"], address=block["address"],
-                       gstin=block["gstin"], state_code=block["state_code"],
-                       facility_id=fid, source="live", snapshot_at=None)
+    return _block_from(
+        name=block["supplier_name"],
+        address=block["address"],
+        gstin=block["gstin"],
+        state_code=block["state_code"],
+        facility_id=fid,
+        source="live",
+        snapshot_at=None,
+    )
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  Who may edit, and the facility as the screen sees it
 # ═════════════════════════════════════════════════════════════════════════════
 
-def actor_facility_id(user: dict, *, db=None) -> Optional[int]:
+
+def actor_facility_id(user: dict, *, db=None) -> int | None:
     from services import facility_service
+
     return facility_service.user_facility_id(user, db=db)
 
 
 def actor_is_group_wide(user: dict, *, db=None) -> bool:
     """An admin holding a live enterprise grant (ruling MS-R6 (a))."""
     from services import facility_service
+
     if (user or {}).get("role") not in facility_service.ENTERPRISE_GRANT_ROLES:
         return False
     return facility_service.has_enterprise_grant((user or {}).get("id"), db=db)
@@ -565,7 +690,9 @@ def can_edit(user: dict, facility_id: int, *, db=None) -> bool:
     is group-wide). Another facility than 1 also needs ORB_MULTI_SITE."""
     import config
     from permissions import FACILITY_MANAGE, has_permission
+
     from services.facility_service import MAIN_FACILITY_ID
+
     if not has_permission((user or {}).get("role", ""), FACILITY_MANAGE):
         return False
     if int(facility_id) != MAIN_FACILITY_ID and not config.feature_enabled("multi_site"):
@@ -575,32 +702,47 @@ def can_edit(user: dict, facility_id: int, *, db=None) -> bool:
     return actor_is_group_wide(user, db=db)
 
 
-def facility_view(row: dict, *, user: Optional[dict] = None, db=None) -> dict:
+def facility_view(row: dict, *, user: dict | None = None, db=None) -> dict:
     """One facility as the Facilities screen and GET /api/facilities read it."""
     from services.facility_service import MAIN_FACILITY_ID
+
     fid = int(row["id"])
     block = identity_block(fid, row=row)
-    out = {k: row.get(k) for k in ("id", "uuid", "code", "created_at", "created_by",
-                                   "updated_at", "updated_by", "audit_epoch_id")}
+    out = {
+        k: row.get(k)
+        for k in (
+            "id",
+            "uuid",
+            "code",
+            "created_at",
+            "created_by",
+            "updated_at",
+            "updated_by",
+            "audit_epoch_id",
+        )
+    }
     for field in EDITABLE_FIELDS:
         out[field] = row.get(field)
-    out.update({
-        "is_active": bool(row.get("is_active")),
-        "is_main": fid == MAIN_FACILITY_ID,
-        "display_name": block["name"],
-        "site_name": _site_name() if fid == MAIN_FACILITY_ID else None,
-        "address": block["address"],
-        "supplier_name": block["supplier_name"],
-        "state_code_name": block["state_code_name"],
-        "invoice_ready": block["invoice_ready"],
-        "missing_for_invoice": block["missing_for_invoice"],
-        "can_edit": bool(user) and can_edit(user, fid, db=db),
-    })
+    out.update(
+        {
+            "is_active": bool(row.get("is_active")),
+            "is_main": fid == MAIN_FACILITY_ID,
+            "display_name": block["name"],
+            "site_name": _site_name() if fid == MAIN_FACILITY_ID else None,
+            "address": block["address"],
+            "supplier_name": block["supplier_name"],
+            "state_code_name": block["state_code_name"],
+            "invoice_ready": block["invoice_ready"],
+            "missing_for_invoice": block["missing_for_invoice"],
+            "can_edit": user is not None and bool(user) and can_edit(user, fid, db=db),
+        }
+    )
     return out
 
 
 def list_views(user: dict, *, db=None) -> list[dict]:
     from services import facility_service
+
     if db is None:
         with _db_session() as own:
             return list_views(user, db=own)
@@ -621,9 +763,10 @@ def get_view(facility_id: int, user: dict, *, db=None) -> dict:
 #  Editing identity
 # ═════════════════════════════════════════════════════════════════════════════
 
-def _audit(db, *, action: str, user: dict, facility: dict, summary: str,
-           metadata: dict) -> None:
+
+def _audit(db, *, action: str, user: dict, facility: dict, summary: str, metadata: dict) -> None:
     from services.audit_service import log_audit_event
+
     log_audit_event(
         correlation_id=str(uuid.uuid4()),
         event_category="site_admin",
@@ -635,13 +778,13 @@ def _audit(db, *, action: str, user: dict, facility: dict, summary: str,
         actor_role=(user or {}).get("role"),
         target_type="facility",
         target_id=str(facility["id"]),
-        metadata={"facility_id": int(facility["id"]), "code": facility.get("code"),
-                  **metadata},
+        metadata={"facility_id": int(facility["id"]), "code": facility.get("code"), **metadata},
     )
 
 
 def _forget_caches() -> None:
     from services import facility_service
+
     facility_service.invalidate_cache()
 
 
@@ -650,25 +793,36 @@ def _validated_changes(changes: dict, *, allow: Iterable[str]) -> tuple[dict, li
     errors: list = []
     out: dict = {}
     if not isinstance(changes, dict):
-        raise FacilityIdentityError("Send the fields to change as an object.",
-                                    code="invalid_identity")
+        raise FacilityIdentityError(
+            "Send the fields to change as an object.", code="invalid_identity"
+        )
     for field, value in changes.items():
         if field in CREATE_ONLY_FIELDS and field not in allowed:
-            errors.append({"field": field, "code": "code_fixed",
-                           "message": "A facility's code cannot be changed once it is created."})
+            errors.append(
+                {
+                    "field": field,
+                    "code": "code_fixed",
+                    "message": "A facility's code cannot be changed once it is created.",
+                }
+            )
             continue
         if field not in allowed:
-            errors.append({"field": field, "code": "not_editable",
-                           "message": f"{field} cannot be set here."})
+            errors.append(
+                {"field": field, "code": "not_editable", "message": f"{field} cannot be set here."}
+            )
             continue
         out[field] = _normalise(field, value, errors)
     return out, errors
 
 
-def _others(db, facility_id: Optional[int]) -> list[dict]:
+def _others(db, facility_id: int | None) -> list[dict]:
     from services import facility_service
-    return [r for r in facility_service.list_facilities(db=db)
-            if facility_id is None or int(r["id"]) != int(facility_id)]
+
+    return [
+        r
+        for r in facility_service.list_facilities(db=db)
+        if facility_id is None or int(r["id"]) != int(facility_id)
+    ]
 
 
 def update_facility(facility_id: int, changes: dict, *, user: dict, db=None) -> dict:
@@ -686,18 +840,24 @@ def update_facility(facility_id: int, changes: dict, *, user: dict, db=None) -> 
         _forget_caches()
         return result
     from services.facility_service import MAIN_FACILITY_ID
+
     row = _facility_row(db, facility_id)
     if row is None:
         raise FacilityIdentityError("No facility has that number.", code="not_found", status=404)
     if not can_edit(user, int(facility_id), db=db):
         raise FacilityIdentityError(
-            "You can change only your own facility's details.", code="not_your_facility",
-            status=403)
+            "You can change only your own facility's details.", code="not_your_facility", status=403
+        )
     cleaned, errors = _validated_changes(changes, allow=EDITABLE_FIELDS)
     merged = {**row, **cleaned}
     if int(facility_id) != MAIN_FACILITY_ID and "name" in cleaned and not cleaned["name"]:
-        errors.append({"field": "name", "code": "name_required",
-                       "message": "Every facility but the first needs a name."})
+        errors.append(
+            {
+                "field": "name",
+                "code": "name_required",
+                "message": "Every facility but the first needs a name.",
+            }
+        )
     if merged.get("gstin") and not merged.get("state_code"):
         merged["state_code"] = merged["gstin"][:2]
         cleaned["state_code"] = merged["state_code"]
@@ -705,21 +865,35 @@ def update_facility(facility_id: int, changes: dict, *, user: dict, db=None) -> 
     if errors:
         raise FacilityIdentityError(
             "Some details need correcting before they can be saved.",
-            code="invalid_identity", errors=errors)
-    diff = {f: {"from": row.get(f), "to": cleaned[f]}
-            for f in cleaned if (row.get(f) or None) != (cleaned[f] or None)}
+            code="invalid_identity",
+            errors=errors,
+        )
+    diff = {
+        f: {"from": row.get(f), "to": cleaned[f]}
+        for f in cleaned
+        if (row.get(f) or None) != (cleaned[f] or None)
+    }
     if not diff:
         return facility_view(row, user=user, db=db)
     now = _utc_now()
     assignments = ", ".join(f"{f} = ?" for f in diff)
     db.execute(
         f"UPDATE facilities SET {assignments}, updated_at = ?, updated_by = ? WHERE id = ?",
-        (*[cleaned[f] for f in diff], now, (user or {}).get("id"), int(facility_id)))
-    _audit(db, action="facility_updated", user=user, facility=row,
-           summary=(f"Facility {row.get('code')} details changed: "
-                    + ", ".join(FIELD_LABELS.get(f, f) for f in diff)),
-           metadata={"changes": diff})
+        (*[cleaned[f] for f in diff], now, (user or {}).get("id"), int(facility_id)),
+    )
+    _audit(
+        db,
+        action="facility_updated",
+        user=user,
+        facility=row,
+        summary=(
+            f"Facility {row.get('code')} details changed: "
+            + ", ".join(FIELD_LABELS.get(f, f) for f in diff)
+        ),
+        metadata={"changes": diff},
+    )
     fresh = _facility_row(db, facility_id)
+    assert fresh is not None
     return facility_view(fresh, user=user, db=db)
 
 
@@ -742,7 +916,9 @@ def can_create_facility(user: dict, *, db=None) -> list[dict]:
             return can_create_facility(user, db=own)
     import config
     import facility_fence
+
     from services import facility_service
+
     reasons: list[dict] = []
 
     def no(code: str, message: str) -> None:
@@ -751,33 +927,47 @@ def can_create_facility(user: dict, *, db=None) -> list[dict]:
     if not config.feature_enabled("multi_site"):
         no("switch_off", "The multi-site switch (ORB_MULTI_SITE) is off on this computer.")
     if not actor_is_group_wide(user, db=db):
-        no("no_group_grant",
-           "Only an administrator with group-wide access can add a facility. That access "
-           "is granted at the computer itself, and every grant is recorded.")
+        no(
+            "no_group_grant",
+            "Only an administrator with group-wide access can add a facility. That access "
+            "is granted at the computer itself, and every grant is recorded.",
+        )
     blind = facility_fence.FACILITY_BLIND_SURFACES
     if blind == facility_fence.SENTINEL:
-        no("screens_not_ready",
-           "Orb's screens are not yet ready to keep two facilities' patients apart, so "
-           "every patient screen would close the moment a second facility exists.")
+        no(
+            "screens_not_ready",
+            "Orb's screens are not yet ready to keep two facilities' patients apart, so "
+            "every patient screen would close the moment a second facility exists.",
+        )
     elif blind:
-        no("screens_not_ready",
-           f"{len(blind)} group(s) of screens are not yet ready to keep two facilities' "
-           "patients apart.")
-    has_index = db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?",
-        (AUDIT_FACILITY_INDEX,)).fetchone() is not None
+        no(
+            "screens_not_ready",
+            f"{len(blind)} group(s) of screens are not yet ready to keep two facilities' "
+            "patients apart.",
+        )
+    has_index = (
+        db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?", (AUDIT_FACILITY_INDEX,)
+        ).fetchone()
+        is not None
+    )
     if not has_index:
-        no("audit_index_missing",
-           "The audit log has not been indexed by facility yet. That is done once, in a "
-           "maintenance window, before a second facility is added.")
+        no(
+            "audit_index_missing",
+            "The audit log has not been indexed by facility yet. That is done once, in a "
+            "maintenance window, before a second facility is added.",
+        )
     main = _facility_row(db, facility_service.MAIN_FACILITY_ID) or {}
     if not main.get("gstin"):
         no("main_gstin_missing", "Facility 1 has no GSTIN yet. Enter it on its details first.")
     pans = {_effective_pan(r) for r in facility_service.list_facilities(db=db)}
     pans.discard(None)
     if len(pans) > 1:
-        no("pan_rule", "The facilities on record carry more than one PAN. One computer holds "
-                       "one legal entity.")
+        no(
+            "pan_rule",
+            "The facilities on record carry more than one PAN. One computer holds "
+            "one legal entity.",
+        )
     return reasons
 
 
@@ -793,39 +983,64 @@ def create_facility(body: dict, *, user: dict, db=None) -> dict:
     reasons = can_create_facility(user, db=db)
     if reasons:
         raise FacilityIdentityError(
-            "A facility cannot be added yet.", code="facility_create_refused", status=409,
-            detail={"reasons": reasons})
+            "A facility cannot be added yet.",
+            code="facility_create_refused",
+            status=409,
+            detail={"reasons": reasons},
+        )
     cleaned, errors = _validated_changes(body or {}, allow=EDITABLE_FIELDS + CREATE_ONLY_FIELDS)
     if not cleaned.get("code") and not any(e["field"] == "code" for e in errors):
-        errors.append({"field": "code", "code": "code_required",
-                       "message": "A new facility needs a code, 2 to 12 capital letters or digits."})
+        errors.append(
+            {
+                "field": "code",
+                "code": "code_required",
+                "message": "A new facility needs a code, 2 to 12 capital letters or digits.",
+            }
+        )
     if not cleaned.get("name"):
-        errors.append({"field": "name", "code": "name_required",
-                       "message": "A new facility needs a name."})
-    if cleaned.get("code") and db.execute(
-            "SELECT 1 FROM facilities WHERE code = ? COLLATE NOCASE",
-            (cleaned["code"],)).fetchone():
-        errors.append({"field": "code", "code": "code_taken",
-                       "message": f"Another facility already uses the code {cleaned['code']}."})
+        errors.append(
+            {"field": "name", "code": "name_required", "message": "A new facility needs a name."}
+        )
+    if (
+        cleaned.get("code")
+        and db.execute(
+            "SELECT 1 FROM facilities WHERE code = ? COLLATE NOCASE", (cleaned["code"],)
+        ).fetchone()
+    ):
+        errors.append(
+            {
+                "field": "code",
+                "code": "code_taken",
+                "message": f"Another facility already uses the code {cleaned['code']}.",
+            }
+        )
     if cleaned.get("gstin") and not cleaned.get("state_code"):
         cleaned["state_code"] = cleaned["gstin"][:2]
     errors.extend(cross_field_problems(cleaned, _others(db, None)))
     if errors:
         raise FacilityIdentityError(
             "Some details need correcting before the facility can be added.",
-            code="invalid_identity", errors=errors)
+            code="invalid_identity",
+            errors=errors,
+        )
     epoch = db.execute("SELECT MAX(id) FROM audit_logs").fetchone()[0]
     fields = [f for f in cleaned if cleaned[f] is not None]
     now = _utc_now()
     cur = db.execute(
         f"INSERT INTO facilities (uuid, {', '.join(fields)}, audit_epoch_id, is_active, "
-        "created_at, created_by) VALUES (?, "
-        + ", ".join("?" for _ in fields) + ", ?, 1, ?, ?)",
-        (str(uuid.uuid4()), *[cleaned[f] for f in fields], epoch, now, (user or {}).get("id")))
+        "created_at, created_by) VALUES (?, " + ", ".join("?" for _ in fields) + ", ?, 1, ?, ?)",
+        (str(uuid.uuid4()), *[cleaned[f] for f in fields], epoch, now, (user or {}).get("id")),
+    )
     row = _facility_row(db, int(cur.lastrowid))
-    _audit(db, action="facility_created", user=user, facility=row,
-           summary=f"Facility {row.get('code')} added: {row.get('name')}",
-           metadata={"fields": {f: cleaned[f] for f in fields}, "audit_epoch_id": epoch})
+    assert row is not None
+    _audit(
+        db,
+        action="facility_created",
+        user=user,
+        facility=row,
+        summary=f"Facility {row.get('code')} added: {row.get('name')}",
+        metadata={"fields": {f: cleaned[f] for f in fields}, "audit_epoch_id": epoch},
+    )
     return facility_view(row, user=user, db=db)
 
 
@@ -834,34 +1049,45 @@ def open_work_problems(db, facility_id: int) -> list[dict]:
     whose facility cannot be told yet (outpatient visits and cash counters
     carry no facility until multisite-4 and 7b), which keeps it open."""
     from services import facility_service
+
     reasons: list[dict] = []
-    n = db.execute("SELECT COUNT(*) FROM admissions WHERE facility_id = ? AND status = 'active'",
-                   (int(facility_id),)).fetchone()[0]
+    n = db.execute(
+        "SELECT COUNT(*) FROM admissions WHERE facility_id = ? AND status = 'active'",
+        (int(facility_id),),
+    ).fetchone()[0]
     if n:
-        reasons.append({"code": "active_admissions",
-                        "message": f"{n} patient(s) are still admitted there."})
+        reasons.append(
+            {"code": "active_admissions", "message": f"{n} patient(s) are still admitted there."}
+        )
     for table, words, open_sql in (
-            ("opd_visits", "outpatient visits", "status IN ('waiting', 'in_consultation')"),
-            ("cash_counter_sessions", "cash counters", "status = 'open'")):
+        ("opd_visits", "outpatient visits", "status IN ('waiting', 'in_consultation')"),
+        ("cash_counter_sessions", "cash counters", "status = 'open'"),
+    ):
         if not facility_service._table_exists(db, table):
             continue
         cols = facility_service._columns(db, table)
         if "facility_id" not in cols:
-            reasons.append({"code": f"{table}_unattributed",
-                            "message": f"Orb cannot yet tell which facility {words} belong to, "
-                                       "so no facility can be closed."})
+            reasons.append(
+                {
+                    "code": f"{table}_unattributed",
+                    "message": f"Orb cannot yet tell which facility {words} belong to, "
+                    "so no facility can be closed.",
+                }
+            )
             continue
         if "status" in cols:
-            m = db.execute(f"SELECT COUNT(*) FROM {table} WHERE facility_id = ? AND {open_sql}",
-                           (int(facility_id),)).fetchone()[0]
+            m = db.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE facility_id = ? AND {open_sql}",
+                (int(facility_id),),
+            ).fetchone()[0]
             if m:
-                reasons.append({"code": f"open_{table}",
-                                "message": f"{m} {words} are still open there."})
+                reasons.append(
+                    {"code": f"open_{table}", "message": f"{m} {words} are still open there."}
+                )
     return reasons
 
 
-def deactivate_facility(facility_id: int, *, user: dict, reason: Optional[str],
-                        db=None) -> dict:
+def deactivate_facility(facility_id: int, *, user: dict, reason: str | None, db=None) -> dict:
     """Close a facility (rows are never deleted). Facility 1 never; otherwise
     only after the create gate passes, with a reason, and with no open work."""
     if db is None:
@@ -870,14 +1096,19 @@ def deactivate_facility(facility_id: int, *, user: dict, reason: Optional[str],
         _forget_caches()
         return result
     from services.facility_service import MAIN_FACILITY_ID
+
     if int(facility_id) == MAIN_FACILITY_ID:
-        raise FacilityIdentityError("Facility 1 can never be closed.",
-                                    code="main_facility_permanent", status=409)
+        raise FacilityIdentityError(
+            "Facility 1 can never be closed.", code="main_facility_permanent", status=409
+        )
     reasons = can_create_facility(user, db=db)
     if reasons:
         raise FacilityIdentityError(
-            "A facility cannot be closed yet.", code="facility_deactivate_refused", status=409,
-            detail={"reasons": reasons})
+            "A facility cannot be closed yet.",
+            code="facility_deactivate_refused",
+            status=409,
+            detail={"reasons": reasons},
+        )
     row = _facility_row(db, facility_id)
     if row is None:
         raise FacilityIdentityError("No facility has that number.", code="not_found", status=404)
@@ -885,27 +1116,60 @@ def deactivate_facility(facility_id: int, *, user: dict, reason: Optional[str],
         return facility_view(row, user=user, db=db)
     text = " ".join((reason or "").split())
     if not text:
-        raise FacilityIdentityError("Say why the facility is being closed.",
-                                    code="reason_required")
+        raise FacilityIdentityError("Say why the facility is being closed.", code="reason_required")
     work = open_work_problems(db, int(facility_id))
     if work:
         raise FacilityIdentityError(
-            "The facility still has open work.", code="facility_has_open_work", status=409,
-            detail={"reasons": work})
+            "The facility still has open work.",
+            code="facility_has_open_work",
+            status=409,
+            detail={"reasons": work},
+        )
     now = _utc_now()
-    db.execute("UPDATE facilities SET is_active = 0, updated_at = ?, updated_by = ? WHERE id = ?",
-               (now, (user or {}).get("id"), int(facility_id)))
-    _audit(db, action="facility_deactivated", user=user, facility=row,
-           summary=f"Facility {row.get('code')} closed: {text}", metadata={"reason": text})
-    return facility_view(_facility_row(db, facility_id), user=user, db=db)
+    db.execute(
+        "UPDATE facilities SET is_active = 0, updated_at = ?, updated_by = ? WHERE id = ?",
+        (now, (user or {}).get("id"), int(facility_id)),
+    )
+    _audit(
+        db,
+        action="facility_deactivated",
+        user=user,
+        facility=row,
+        summary=f"Facility {row.get('code')} closed: {text}",
+        metadata={"reason": text},
+    )
+    refreshed = _facility_row(db, facility_id)
+    assert refreshed is not None
+    return facility_view(refreshed, user=user, db=db)
 
 
 __all__ = [
-    "FacilityIdentityError", "NOT_CONFIGURED", "LEGACY_NOTICE", "SNAPSHOT_COLUMNS",
-    "SNAPSHOT_COLUMNS_SQL", "SNAPSHOT_PLACEHOLDERS", "FIELD_LABELS", "EDITABLE_FIELDS",
-    "GST_STATE_CODES", "gstin_check_character", "gstin_problem", "identity_block",
-    "document_facility_id", "print_site_name", "supplier_snapshot", "supplier_block",
-    "legacy_supplier_block", "can_edit", "facility_view", "list_views", "get_view",
-    "update_facility", "can_create_facility", "create_facility", "deactivate_facility",
-    "open_work_problems", "cross_field_problems", "AUDIT_FACILITY_INDEX",
+    "FacilityIdentityError",
+    "NOT_CONFIGURED",
+    "LEGACY_NOTICE",
+    "SNAPSHOT_COLUMNS",
+    "SNAPSHOT_COLUMNS_SQL",
+    "SNAPSHOT_PLACEHOLDERS",
+    "FIELD_LABELS",
+    "EDITABLE_FIELDS",
+    "GST_STATE_CODES",
+    "gstin_check_character",
+    "gstin_problem",
+    "identity_block",
+    "document_facility_id",
+    "print_site_name",
+    "supplier_snapshot",
+    "supplier_block",
+    "legacy_supplier_block",
+    "can_edit",
+    "facility_view",
+    "list_views",
+    "get_view",
+    "update_facility",
+    "can_create_facility",
+    "create_facility",
+    "deactivate_facility",
+    "open_work_problems",
+    "cross_field_problems",
+    "AUDIT_FACILITY_INDEX",
 ]

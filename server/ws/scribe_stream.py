@@ -9,18 +9,18 @@ Protocol:
     scribe:audio_chunk    → client sends binary PCM16 audio data
     scribe:end_utterance  → client tells server VAD detected silence
     scribe:stop_session   → cleanup
-    
+
     scribe:transcript     → server emits {text, duration_ms, is_final, utterance_index}
     scribe:status         → server emits {status}
     scribe:error          → server emits {error}
 """
+
+import asyncio
 import logging
 import os
-import wave
-import asyncio
-import time
 import tempfile
-from typing import Optional
+import time
+import wave
 
 from ws.realtime import sio
 
@@ -39,8 +39,9 @@ _inference_slots = asyncio.Semaphore(2)
 
 
 async def _authorized(sid: str, patient_id: str = "") -> bool:
-    from permissions import SCRIBE_CREATE_DRAFT, enforce_patient_scope, has_permission
     from database import run_db
+    from permissions import SCRIBE_CREATE_DRAFT, enforce_patient_scope, has_permission
+
     try:
         principal = await sio.get_session(sid)
         if not principal or not principal.get("user_id"):
@@ -48,7 +49,9 @@ async def _authorized(sid: str, patient_id: str = "") -> bool:
         if not has_permission(principal.get("role", ""), SCRIBE_CREATE_DRAFT):
             return False
         if patient_id:
-            await run_db(enforce_patient_scope, {**principal, "id": principal["user_id"]}, patient_id)
+            await run_db(
+                enforce_patient_scope, {**principal, "id": principal["user_id"]}, patient_id
+            )
         return True
     except Exception:
         return False
@@ -65,15 +68,22 @@ async def _fail(sid: str, session: dict, message: str, code: str):
         _destroy_session(sid)
 
 
-async def _active_session(sid: str) -> Optional[dict]:
+async def _active_session(sid: str) -> dict | None:
     session = _sessions.get(sid)
     if not session or not session["is_active"]:
         return None
     if not await _authorized(sid, session["patient_id"]):
-        await _fail(sid, session, "Dictation is not authorized for this patient.", "scribe_forbidden")
+        await _fail(
+            sid, session, "Dictation is not authorized for this patient.", "scribe_forbidden"
+        )
         return None
     if time.monotonic() - session["created_at"] > MAX_SESSION_SECONDS:
-        await _fail(sid, session, "Dictation session expired. Start a new recording.", "scribe_session_limit")
+        await _fail(
+            sid,
+            session,
+            "Dictation session expired. Start a new recording.",
+            "scribe_session_limit",
+        )
         return None
     if _sessions.get(sid) is not session:
         return None
@@ -94,7 +104,7 @@ async def _require_authenticated(sid: str) -> bool:
     return bool(session and session.get("user_id"))
 
 
-def _get_session(sid: str) -> Optional[dict]:
+def _get_session(sid: str) -> dict | None:
     """Get session state for a Socket.IO client."""
     return _sessions.get(sid)
 
@@ -129,6 +139,7 @@ def _destroy_session(sid: str):
 
 def _write_wav(pcm_data: bytes, sample_rate: int = 16000) -> str:
     """Write PCM16 to a private, exclusively created temporary WAV file."""
+    fd: int | None
     fd, wav_path = tempfile.mkstemp(suffix=".wav", prefix="orb_stream_")
     try:
         raw = os.fdopen(fd, "wb")
@@ -162,11 +173,13 @@ def _transcribe_buffer(audio_data: bytes, hints: str, language: str) -> tuple[st
     wav_path = None
     try:
         wav_path = _write_wav(audio_data)
-        from services.scribe_service import (
-            _transcribe_via_daemon, _transcribe_via_subprocess,
-            _apply_rxnorm_correction, _resolve_language,
-        )
         from config import SCRIBE
+        from services.scribe_service import (
+            _apply_rxnorm_correction,
+            _resolve_language,
+            _transcribe_via_daemon,
+            _transcribe_via_subprocess,
+        )
 
         lang = _resolve_language(language)
         started = time.time()
@@ -183,7 +196,11 @@ def _transcribe_buffer(audio_data: bytes, hints: str, language: str) -> tuple[st
             except FileNotFoundError:
                 pass
             except OSError:
-                logger.warning("Scribe audio cleanup failed", exc_info=True, extra={"event": "scribe_audio_cleanup_failed"})
+                logger.warning(
+                    "Scribe audio cleanup failed",
+                    exc_info=True,
+                    extra={"event": "scribe_audio_cleanup_failed"},
+                )
 
 
 async def _transcribe_utterance(sid: str, session: dict, audio_data: bytes | None = None):
@@ -200,22 +217,40 @@ async def _transcribe_utterance(sid: str, session: dict, audio_data: bytes | Non
     await _emit(sid, session, "scribe:status", {"status": "processing"})
     try:
         text, duration_ms = await asyncio.to_thread(
-            _transcribe_buffer, audio_data, session.get("hints", ""), session.get("language", ""),
+            _transcribe_buffer,
+            audio_data,
+            session.get("hints", ""),
+            session.get("language", ""),
         )
         if await _active_session(sid) is not session:
             return
         if text:
-            await _emit(sid, session, "scribe:transcript", {
-                "text": text, "duration_ms": duration_ms, "is_final": True,
-                "utterance_index": utterance_idx,
-            })
+            await _emit(
+                sid,
+                session,
+                "scribe:transcript",
+                {
+                    "text": text,
+                    "duration_ms": duration_ms,
+                    "is_final": True,
+                    "utterance_index": utterance_idx,
+                },
+            )
         await _emit(sid, session, "scribe:status", {"status": "ready"})
     except Exception:
-        logger.exception("Scribe live transcription failed", extra={"event": "scribe_live_transcription_failed"})
-        await _emit(sid, session, "scribe:error", {
-            "error": "Speech transcription failed. Please retry.",
-            "code": "scribe_transcription_failed", "retryable": True,
-        })
+        logger.exception(
+            "Scribe live transcription failed", extra={"event": "scribe_live_transcription_failed"}
+        )
+        await _emit(
+            sid,
+            session,
+            "scribe:error",
+            {
+                "error": "Speech transcription failed. Please retry.",
+                "code": "scribe_transcription_failed",
+                "retryable": True,
+            },
+        )
         await _emit(sid, session, "scribe:status", {"status": "ready"})
 
 
@@ -224,7 +259,9 @@ async def _queue_utterance(sid: str, session: dict):
         session["audio_buffer"].clear()
         return
     if len(_jobs) >= MAX_JOBS or session["pending"] >= 2:
-        await _fail(sid, session, "Dictation is busy. Stop and retry this utterance.", "scribe_busy")
+        await _fail(
+            sid, session, "Dictation is busy. Stop and retry this utterance.", "scribe_busy"
+        )
         return
     audio = bytes(session["audio_buffer"])
     session["audio_buffer"].clear()
@@ -248,6 +285,7 @@ async def _queue_utterance(sid: str, session: dict):
 
 # ── Socket.IO Event Handlers ──
 
+
 @sio.on("scribe:start_session")
 async def handle_start_session(sid, data=None):
     """Client starts a new streaming transcription session."""
@@ -257,6 +295,7 @@ async def handle_start_session(sid, data=None):
     # Speech transcription is a model: none starts while the models are
     # switched off (ORB_MODELS_ENABLED, or the Orb Ward Record).
     from services.model_switch import SWITCHED_OFF_DETAIL, models_enabled
+
     if not models_enabled():
         await sio.emit("scribe:error", {"error": SWITCHED_OFF_DETAIL}, to=sid)
         return
@@ -267,29 +306,66 @@ async def handle_start_session(sid, data=None):
     hints = data.get("hints") or ""
     language = data.get("language") or ""
     stream_id = data.get("stream_id") or ""
-    if any(not isinstance(x, str) for x in (patient_id, hints, language, stream_id)) or len(patient_id) > 128 or len(hints) > 8192 or len(language) > 32 or len(stream_id) > 128:
-        await sio.emit("scribe:error", {"error": "Invalid dictation settings.", "stream_id": stream_id if isinstance(stream_id, str) else ""}, to=sid)
+    if (
+        any(not isinstance(x, str) for x in (patient_id, hints, language, stream_id))
+        or len(patient_id) > 128
+        or len(hints) > 8192
+        or len(language) > 32
+        or len(stream_id) > 128
+    ):
+        await sio.emit(
+            "scribe:error",
+            {
+                "error": "Invalid dictation settings.",
+                "stream_id": stream_id if isinstance(stream_id, str) else "",
+            },
+            to=sid,
+        )
         return
     if not await _authorized(sid, patient_id):
-        await sio.emit("scribe:error", {"error": "Dictation is not authorized for this patient.", "code": "scribe_forbidden", "stream_id": stream_id, "retryable": False}, to=sid)
+        await sio.emit(
+            "scribe:error",
+            {
+                "error": "Dictation is not authorized for this patient.",
+                "code": "scribe_forbidden",
+                "stream_id": stream_id,
+                "retryable": False,
+            },
+            to=sid,
+        )
         return
     # Expired idle clients must not occupy the admission cap indefinitely.
     for old_sid, old_session in list(_sessions.items()):
         if time.monotonic() - old_session["created_at"] > MAX_SESSION_SECONDS:
             if old_session["is_active"]:
-                await _fail(old_sid, old_session, "Dictation session expired. Start a new recording.", "scribe_session_limit")
+                await _fail(
+                    old_sid,
+                    old_session,
+                    "Dictation session expired. Start a new recording.",
+                    "scribe_session_limit",
+                )
             else:
                 _destroy_session(old_sid)
     if sid in _sessions or len(_sessions) >= MAX_SESSIONS:
-        await sio.emit("scribe:error", {"error": "Dictation is busy. Stop and retry.", "code": "scribe_busy", "stream_id": stream_id, "retryable": False}, to=sid)
+        await sio.emit(
+            "scribe:error",
+            {
+                "error": "Dictation is busy. Stop and retry.",
+                "code": "scribe_busy",
+                "stream_id": stream_id,
+                "retryable": False,
+            },
+            to=sid,
+        )
         return
     session = _create_session(sid, patient_id=patient_id, hints=hints, language=language)
     session["stream_id"] = stream_id
     session["is_active"] = False
     try:
         if patient_id:
-            from services.scribe_service import build_whisper_hints
             from database import run_db
+            from services.scribe_service import build_whisper_hints
+
             db_hints = await run_db(build_whisper_hints, patient_id)
             if db_hints:
                 session["hints"] = (f"{hints}, {db_hints}" if hints else db_hints)[:8192]
@@ -316,7 +392,12 @@ async def handle_audio_chunk(sid, data):
         await _fail(sid, session, "Invalid audio data. Please retry.", "scribe_invalid_audio")
         return
     if len(audio) > MAX_CHUNK_BYTES or len(session["audio_buffer"]) + len(audio) > MAX_AUDIO_BYTES:
-        await _fail(sid, session, "Dictation limit reached. Use shorter utterances and retry.", "scribe_audio_limit")
+        await _fail(
+            sid,
+            session,
+            "Dictation limit reached. Use shorter utterances and retry.",
+            "scribe_audio_limit",
+        )
         return
     session["audio_buffer"].extend(audio)
 

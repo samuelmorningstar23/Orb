@@ -45,16 +45,14 @@ All handlers are plain `def`, so FastAPI runs them in a threadpool: everything
 below opens SQLite, and blocking the event loop is the failure mode this repo
 has shipped three production freezes from.
 """
+
 from __future__ import annotations
 
 import logging
 import uuid
-from typing import Optional
-
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
 
 import config
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from permissions import (
     ADMIN_OVERVIEW,
     HELIX_READ,
@@ -62,8 +60,10 @@ from permissions import (
     VITALS_READ,
     require_permission,
 )
-from services import biomedical_service as svc
+from pydantic import BaseModel, Field
 from services.audit_service import log_audit_event
+
+from services import biomedical_service as svc
 
 logger = logging.getLogger("orb.biomedical_routes")
 
@@ -71,6 +71,7 @@ router = APIRouter(prefix="/api/biomedical", tags=["Biomedical Equipment"])
 
 
 # ── Module switch ────────────────────────────────────────────────────────────
+
 
 def require_module() -> None:
     """404 when the site has switched biomedical tracking off.
@@ -108,13 +109,19 @@ def _fail(exc: svc.BiomedicalError) -> HTTPException:
         "future_date": 422,
         "bad_date_order": 422,
     }.get(exc.code, 400)
-    return HTTPException(status_code=status,
-                         detail={"error": exc.code, "message": str(exc)})
+    return HTTPException(status_code=status, detail={"error": exc.code, "message": str(exc)})
 
 
-def _audit(request: Request, user: dict, action: str, *, summary: str,
-           target_type: str, target_id: Optional[str] = None,
-           metadata: Optional[dict] = None) -> None:
+def _audit(
+    request: Request,
+    user: dict,
+    action: str,
+    *,
+    summary: str,
+    target_type: str,
+    target_id: str | int | None = None,
+    metadata: dict | None = None,
+) -> None:
     """Every biomedical WRITE leaves a trail.
 
     Category is `security` (fail-closed, awaited) rather than a clinical
@@ -145,25 +152,26 @@ def _audit(request: Request, user: dict, action: str, *, summary: str,
 #  Request bodies
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class AssetBody(BaseModel):
     asset_tag: str = Field(..., min_length=1, max_length=64)
     name: str = Field(..., min_length=1, max_length=200)
     category: str = "other"
-    manufacturer: Optional[str] = None
-    model: Optional[str] = None
-    serial_number: Optional[str] = None
-    department: Optional[str] = None
-    ward: Optional[str] = None
-    location_detail: Optional[str] = None
+    manufacturer: str | None = None
+    model: str | None = None
+    serial_number: str | None = None
+    department: str | None = None
+    ward: str | None = None
+    location_detail: str | None = None
     criticality: str = "routine"
     status: str = "in_service"
-    purchase_date: Optional[str] = None
-    commissioned_date: Optional[str] = None
-    purchase_cost_paise: Optional[int] = None
-    warranty_expiry_date: Optional[str] = None
-    vendor_id: Optional[int] = None
+    purchase_date: str | None = None
+    commissioned_date: str | None = None
+    purchase_cost_paise: int | None = None
+    warranty_expiry_date: str | None = None
+    vendor_id: int | None = None
     produces_clinical_readings: bool = False
-    notes: Optional[str] = None
+    notes: str | None = None
     is_active: bool = True
     #: The Add form sets this: a tag already on the register is refused (409)
     #: rather than overwritten.
@@ -172,67 +180,67 @@ class AssetBody(BaseModel):
 
 class AssetStatusBody(BaseModel):
     status: str
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 class ScheduleBody(BaseModel):
-    asset_id: Optional[int] = None
-    asset_tag: Optional[str] = None
+    asset_id: int | None = None
+    asset_tag: str | None = None
     schedule_type: str
     interval_days: int = Field(..., gt=0)
-    last_done_date: Optional[str] = None
-    first_due_date: Optional[str] = None
+    last_done_date: str | None = None
+    first_due_date: str | None = None
     grace_days: int = 0
     lead_days: int = svc.DEFAULT_LEAD_DAYS
-    responsible: Optional[str] = None
-    vendor_id: Optional[int] = None
-    certificate_reference: Optional[str] = None
+    responsible: str | None = None
+    vendor_id: int | None = None
+    certificate_reference: str | None = None
     is_active: bool = True
 
 
 class CompletionBody(BaseModel):
-    schedule_id: Optional[int] = None
-    asset_id: Optional[int] = None
-    asset_tag: Optional[str] = None
-    schedule_type: Optional[str] = None
-    performed_date: Optional[str] = None
+    schedule_id: int | None = None
+    asset_id: int | None = None
+    asset_tag: str | None = None
+    schedule_type: str | None = None
+    performed_date: str | None = None
     result: str = "pass"
-    certificate_reference: Optional[str] = None
-    performed_by: Optional[str] = None
-    vendor_id: Optional[int] = None
-    cost_paise: Optional[int] = None
-    notes: Optional[str] = None
+    certificate_reference: str | None = None
+    performed_by: str | None = None
+    vendor_id: int | None = None
+    cost_paise: int | None = None
+    notes: str | None = None
 
 
 class ServiceCallBody(BaseModel):
-    asset_id: Optional[int] = None
-    asset_tag: Optional[str] = None
+    asset_id: int | None = None
+    asset_tag: str | None = None
     fault_description: str = Field(..., min_length=1)
     severity: str = "breakdown"
-    reported_at: Optional[str] = None
-    reported_by: Optional[str] = None
-    ward: Optional[str] = None
+    reported_at: str | None = None
+    reported_by: str | None = None
+    ward: str | None = None
     took_out_of_service: bool = True
-    down_from: Optional[str] = None
-    call_number: Optional[str] = None
-    vendor_id: Optional[int] = None
+    down_from: str | None = None
+    call_number: str | None = None
+    vendor_id: int | None = None
 
 
 class ServiceCallUpdateBody(BaseModel):
-    status: Optional[str] = None
-    resolution: Optional[str] = None
-    attended_by: Optional[str] = None
-    vendor_id: Optional[int] = None
-    contract_id: Optional[int] = None
+    status: str | None = None
+    resolution: str | None = None
+    attended_by: str | None = None
+    vendor_id: int | None = None
+    contract_id: int | None = None
 
 
 class ServiceCallCloseBody(BaseModel):
-    restored_at: Optional[str] = None
-    resolution: Optional[str] = None
-    attended_by: Optional[str] = None
-    vendor_id: Optional[int] = None
-    contract_id: Optional[int] = None
-    cost_paise: Optional[int] = None
+    restored_at: str | None = None
+    resolution: str | None = None
+    attended_by: str | None = None
+    vendor_id: int | None = None
+    contract_id: int | None = None
+    cost_paise: int | None = None
     return_to_service: bool = True
 
 
@@ -241,26 +249,30 @@ class ContractBody(BaseModel):
     contract_type: str = "amc"
     start_date: str
     end_date: str
-    vendor_id: Optional[int] = None
-    vendor_name: Optional[str] = None
-    value_paise: Optional[int] = None
+    vendor_id: int | None = None
+    vendor_name: str | None = None
+    value_paise: int | None = None
     notice_days: int = svc.DEFAULT_NOTICE_DAYS
     covers_calibration: bool = False
     covers_parts: bool = False
-    response_hours: Optional[int] = None
+    response_hours: int | None = None
     status: str = "active"
-    scope_notes: Optional[str] = None
-    asset_ids: Optional[list[int]] = None
-    asset_tags: Optional[list[str]] = None
+    scope_notes: str | None = None
+    asset_ids: list[int] | None = None
+    asset_tags: list[str] | None = None
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  Meta
 # ═════════════════════════════════════════════════════════════════════════════
 
+
+_META__DEFAULT = Depends(require_module)
+_META_USER_DEFAULT = Depends(require_permission(HELIX_READ))
+
+
 @router.get("/meta")
-def meta(_: None = Depends(require_module),
-         user: dict = Depends(require_permission(HELIX_READ))) -> dict:
+def meta(_: None = _META__DEFAULT, user: dict = _META_USER_DEFAULT) -> dict:
     """The module's vocabulary, so the panel never hard-codes a status list that
     can drift from the CHECK constraints behind it."""
     return {
@@ -295,31 +307,46 @@ def meta(_: None = Depends(require_module),
 #  Overview and the overdue register
 # ═════════════════════════════════════════════════════════════════════════════
 
+
+_OVERVIEW__DEFAULT = Depends(require_module)
+_OVERVIEW_USER_DEFAULT = Depends(require_permission(HELIX_READ))
+
+
 @router.get("/overview")
-def overview(_: None = Depends(require_module),
-             user: dict = Depends(require_permission(HELIX_READ))) -> dict:
+def overview(_: None = _OVERVIEW__DEFAULT, user: dict = _OVERVIEW_USER_DEFAULT) -> dict:
     return svc.biomedical_overview()
+
+
+_DUE_REGISTER_SCHEDULE_TYPE_DEFAULT = Query(None)
+_DUE_REGISTER_WARD_DEFAULT = Query(None)
+_DUE_REGISTER_ONLY_OVERDUE_DEFAULT = Query(False)
+_DUE_REGISTER__DEFAULT = Depends(require_module)
+_DUE_REGISTER_USER_DEFAULT = Depends(require_permission(HELIX_READ))
 
 
 @router.get("/due")
 def due_register(
-    schedule_type: Optional[str] = Query(None),
-    ward: Optional[str] = Query(None),
-    only_overdue: bool = Query(False),
-    _: None = Depends(require_module),
-    user: dict = Depends(require_permission(HELIX_READ)),
+    schedule_type: str | None = _DUE_REGISTER_SCHEDULE_TYPE_DEFAULT,
+    ward: str | None = _DUE_REGISTER_WARD_DEFAULT,
+    only_overdue: bool = _DUE_REGISTER_ONLY_OVERDUE_DEFAULT,
+    _: None = _DUE_REGISTER__DEFAULT,
+    user: dict = _DUE_REGISTER_USER_DEFAULT,
 ) -> dict:
     """THE OVERDUE VIEW — what is out of calibration or maintenance right now."""
     try:
-        return svc.due_register(schedule_type=schedule_type, ward=ward,
-                                only_overdue=only_overdue)
+        return svc.due_register(schedule_type=schedule_type, ward=ward, only_overdue=only_overdue)
     except svc.BiomedicalError as exc:
         raise _fail(exc) from exc
 
 
+_COVERAGE_GAPS__DEFAULT = Depends(require_module)
+_COVERAGE_GAPS_USER_DEFAULT = Depends(require_permission(HELIX_READ))
+
+
 @router.get("/coverage-gaps")
-def coverage_gaps(_: None = Depends(require_module),
-                  user: dict = Depends(require_permission(HELIX_READ))) -> dict:
+def coverage_gaps(
+    _: None = _COVERAGE_GAPS__DEFAULT, user: dict = _COVERAGE_GAPS_USER_DEFAULT
+) -> dict:
     """Active assets with no maintenance schedule at all — the register's own
     blind spot, reported rather than hidden."""
     rows = svc.coverage_gaps()
@@ -330,11 +357,16 @@ def coverage_gaps(_: None = Depends(require_module),
 #  The ward view — the clinically-scoped slice
 # ═════════════════════════════════════════════════════════════════════════════
 
+
+_WARD_ATTENTION__DEFAULT = Depends(require_module)
+_WARD_ATTENTION_USER_DEFAULT = Depends(require_permission(VITALS_READ))
+
+
 @router.get("/wards/{ward}/attention")
 def ward_attention(
     ward: str,
-    _: None = Depends(require_module),
-    user: dict = Depends(require_permission(VITALS_READ)),
+    _: None = _WARD_ATTENTION__DEFAULT,
+    user: dict = _WARD_ATTENTION_USER_DEFAULT,
 ) -> dict:
     """What a ward needs to know about its own equipment.
 
@@ -355,61 +387,109 @@ def ward_attention(
 #  Assets
 # ═════════════════════════════════════════════════════════════════════════════
 
+
+_LIST_ASSETS_WARD_DEFAULT = Query(None)
+_LIST_ASSETS_DEPARTMENT_DEFAULT = Query(None)
+_LIST_ASSETS_CATEGORY_DEFAULT = Query(None)
+_LIST_ASSETS_CRITICALITY_DEFAULT = Query(None)
+_LIST_ASSETS_STATUS_DEFAULT = Query(None)
+_LIST_ASSETS_SEARCH_DEFAULT = Query(None, max_length=100)
+_LIST_ASSETS_INCLUDE_INACTIVE_DEFAULT = Query(False)
+_LIST_ASSETS_LIMIT_DEFAULT = Query(200, ge=1, le=1000)
+_LIST_ASSETS__DEFAULT = Depends(require_module)
+_LIST_ASSETS_USER_DEFAULT = Depends(require_permission(HELIX_READ))
+
+
 @router.get("/assets")
 def list_assets(
-    ward: Optional[str] = Query(None),
-    department: Optional[str] = Query(None),
-    category: Optional[str] = Query(None),
-    criticality: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
-    search: Optional[str] = Query(None, max_length=100),
-    include_inactive: bool = Query(False),
-    limit: int = Query(200, ge=1, le=1000),
-    _: None = Depends(require_module),
-    user: dict = Depends(require_permission(HELIX_READ)),
+    ward: str | None = _LIST_ASSETS_WARD_DEFAULT,
+    department: str | None = _LIST_ASSETS_DEPARTMENT_DEFAULT,
+    category: str | None = _LIST_ASSETS_CATEGORY_DEFAULT,
+    criticality: str | None = _LIST_ASSETS_CRITICALITY_DEFAULT,
+    status: str | None = _LIST_ASSETS_STATUS_DEFAULT,
+    search: str | None = _LIST_ASSETS_SEARCH_DEFAULT,
+    include_inactive: bool = _LIST_ASSETS_INCLUDE_INACTIVE_DEFAULT,
+    limit: int = _LIST_ASSETS_LIMIT_DEFAULT,
+    _: None = _LIST_ASSETS__DEFAULT,
+    user: dict = _LIST_ASSETS_USER_DEFAULT,
 ) -> dict:
     try:
         rows = svc.list_assets(
-            ward=ward, department=department, category=category,
-            criticality=criticality, status=status, search=search,
-            include_inactive=include_inactive, limit=limit)
+            ward=ward,
+            department=department,
+            category=category,
+            criticality=criticality,
+            status=status,
+            search=search,
+            include_inactive=include_inactive,
+            limit=limit,
+        )
     except svc.BiomedicalError as exc:
         raise _fail(exc) from exc
     return {"assets": rows, "count": len(rows)}
 
 
+_GET_ASSET__DEFAULT = Depends(require_module)
+_GET_ASSET_USER_DEFAULT = Depends(require_permission(HELIX_READ))
+
+
 @router.get("/assets/{asset_id}")
-def get_asset(asset_id: int, _: None = Depends(require_module),
-              user: dict = Depends(require_permission(HELIX_READ))) -> dict:
+def get_asset(
+    asset_id: int,
+    _: None = _GET_ASSET__DEFAULT,
+    user: dict = _GET_ASSET_USER_DEFAULT,
+) -> dict:
     asset = svc.get_asset(asset_id)
     if not asset:
-        raise HTTPException(status_code=404,
-                            detail={"error": "unknown_asset",
-                                    "message": f"no asset {asset_id}"})
+        raise HTTPException(
+            status_code=404, detail={"error": "unknown_asset", "message": f"no asset {asset_id}"}
+        )
     return asset
 
 
+_UPSERT_ASSET__DEFAULT = Depends(require_module)
+_UPSERT_ASSET_USER_DEFAULT = Depends(require_permission(HELIX_WRITE))
+
+
 @router.post("/assets")
-def upsert_asset(body: AssetBody, request: Request,
-                 _: None = Depends(require_module),
-                 user: dict = Depends(require_permission(HELIX_WRITE))) -> dict:
+def upsert_asset(
+    body: AssetBody,
+    request: Request,
+    _: None = _UPSERT_ASSET__DEFAULT,
+    user: dict = _UPSERT_ASSET_USER_DEFAULT,
+) -> dict:
     try:
         asset = svc.upsert_asset(**body.model_dump(), actor=user.get("id"))
     except svc.BiomedicalError as exc:
         raise _fail(exc) from exc
-    _audit(request, user, "biomedical_asset_saved",
-           summary=f"Equipment record saved: {asset.get('asset_tag')} ({asset.get('name')})",
-           target_type="biomedical_asset", target_id=asset.get("id"),
-           metadata={"asset_tag": asset.get("asset_tag"),
-                     "criticality": asset.get("criticality"),
-                     "ward": asset.get("ward")})
+    _audit(
+        request,
+        user,
+        "biomedical_asset_saved",
+        summary=f"Equipment record saved: {asset.get('asset_tag')} ({asset.get('name')})",
+        target_type="biomedical_asset",
+        target_id=asset.get("id"),
+        metadata={
+            "asset_tag": asset.get("asset_tag"),
+            "criticality": asset.get("criticality"),
+            "ward": asset.get("ward"),
+        },
+    )
     return asset
 
 
+_SET_ASSET_STATUS__DEFAULT = Depends(require_module)
+_SET_ASSET_STATUS_USER_DEFAULT = Depends(require_permission(HELIX_WRITE))
+
+
 @router.post("/assets/{asset_id}/status")
-def set_asset_status(asset_id: int, body: AssetStatusBody, request: Request,
-                     _: None = Depends(require_module),
-                     user: dict = Depends(require_permission(HELIX_WRITE))) -> dict:
+def set_asset_status(
+    asset_id: int,
+    body: AssetStatusBody,
+    request: Request,
+    _: None = _SET_ASSET_STATUS__DEFAULT,
+    user: dict = _SET_ASSET_STATUS_USER_DEFAULT,
+) -> dict:
     """Move an asset between statuses.
 
     CONDEMNING needs `admin.overview` on top of `helix.write`: it retires a
@@ -420,21 +500,33 @@ def set_asset_status(asset_id: int, body: AssetStatusBody, request: Request,
     """
     if (body.status or "").strip().lower() == "condemned":
         from permissions import ROLE_PERMISSIONS
+
         if ADMIN_OVERVIEW not in ROLE_PERMISSIONS.get(user.get("role", ""), set()):
             raise HTTPException(
                 status_code=403,
-                detail={"error": "condemn_requires_admin",
-                        "message": ("Condemning an asset retires it from the "
-                                    "register and needs an administrator.")})
+                detail={
+                    "error": "condemn_requires_admin",
+                    "message": (
+                        "Condemning an asset retires it from the "
+                        "register and needs an administrator."
+                    ),
+                },
+            )
     try:
-        asset = svc.set_asset_status(asset_id=asset_id, status=body.status,
-                                     reason=body.reason, actor=user.get("id"))
+        asset = svc.set_asset_status(
+            asset_id=asset_id, status=body.status, reason=body.reason, actor=user.get("id")
+        )
     except svc.BiomedicalError as exc:
         raise _fail(exc) from exc
-    _audit(request, user, "biomedical_asset_status_changed",
-           summary=f"Equipment {asset.get('asset_tag')} set to {body.status}",
-           target_type="biomedical_asset", target_id=asset_id,
-           metadata={"status": body.status, "reason": body.reason})
+    _audit(
+        request,
+        user,
+        "biomedical_asset_status_changed",
+        summary=f"Equipment {asset.get('asset_tag')} set to {body.status}",
+        target_type="biomedical_asset",
+        target_id=asset_id,
+        metadata={"status": body.status, "reason": body.reason},
+    )
     return asset
 
 
@@ -442,44 +534,74 @@ def set_asset_status(asset_id: int, body: AssetStatusBody, request: Request,
 #  Schedules
 # ═════════════════════════════════════════════════════════════════════════════
 
+
+_LIST_SCHEDULES_ASSET_ID_DEFAULT = Query(None)
+_LIST_SCHEDULES_SCHEDULE_TYPE_DEFAULT = Query(None)
+_LIST_SCHEDULES_WARD_DEFAULT = Query(None)
+_LIST_SCHEDULES__DEFAULT = Depends(require_module)
+_LIST_SCHEDULES_USER_DEFAULT = Depends(require_permission(HELIX_READ))
+
+
 @router.get("/schedules")
 def list_schedules(
-    asset_id: Optional[int] = Query(None),
-    schedule_type: Optional[str] = Query(None),
-    ward: Optional[str] = Query(None),
-    _: None = Depends(require_module),
-    user: dict = Depends(require_permission(HELIX_READ)),
+    asset_id: int | None = _LIST_SCHEDULES_ASSET_ID_DEFAULT,
+    schedule_type: str | None = _LIST_SCHEDULES_SCHEDULE_TYPE_DEFAULT,
+    ward: str | None = _LIST_SCHEDULES_WARD_DEFAULT,
+    _: None = _LIST_SCHEDULES__DEFAULT,
+    user: dict = _LIST_SCHEDULES_USER_DEFAULT,
 ) -> dict:
     try:
-        rows = svc.list_schedules(asset_id=asset_id, schedule_type=schedule_type,
-                                  ward=ward)
+        rows = svc.list_schedules(asset_id=asset_id, schedule_type=schedule_type, ward=ward)
     except svc.BiomedicalError as exc:
         raise _fail(exc) from exc
     return {"schedules": rows, "count": len(rows)}
 
 
+_UPSERT_SCHEDULE__DEFAULT = Depends(require_module)
+_UPSERT_SCHEDULE_USER_DEFAULT = Depends(require_permission(HELIX_WRITE))
+
+
 @router.post("/schedules")
-def upsert_schedule(body: ScheduleBody, request: Request,
-                    _: None = Depends(require_module),
-                    user: dict = Depends(require_permission(HELIX_WRITE))) -> dict:
+def upsert_schedule(
+    body: ScheduleBody,
+    request: Request,
+    _: None = _UPSERT_SCHEDULE__DEFAULT,
+    user: dict = _UPSERT_SCHEDULE_USER_DEFAULT,
+) -> dict:
     try:
         sched = svc.upsert_schedule(**body.model_dump(), actor=user.get("id"))
     except svc.BiomedicalError as exc:
         raise _fail(exc) from exc
-    _audit(request, user, "biomedical_schedule_saved",
-           summary=(f"{sched.get('schedule_type_label')} schedule saved for asset "
-                    f"{sched.get('asset_id')}, next due {sched.get('next_due_date')}"),
-           target_type="biomedical_schedule", target_id=sched.get("id"),
-           metadata={"schedule_type": sched.get("schedule_type"),
-                     "interval_days": sched.get("interval_days"),
-                     "next_due_date": sched.get("next_due_date")})
+    _audit(
+        request,
+        user,
+        "biomedical_schedule_saved",
+        summary=(
+            f"{sched.get('schedule_type_label')} schedule saved for asset "
+            f"{sched.get('asset_id')}, next due {sched.get('next_due_date')}"
+        ),
+        target_type="biomedical_schedule",
+        target_id=sched.get("id"),
+        metadata={
+            "schedule_type": sched.get("schedule_type"),
+            "interval_days": sched.get("interval_days"),
+            "next_due_date": sched.get("next_due_date"),
+        },
+    )
     return sched
 
 
+_RECORD_COMPLETION__DEFAULT = Depends(require_module)
+_RECORD_COMPLETION_USER_DEFAULT = Depends(require_permission(HELIX_WRITE))
+
+
 @router.post("/schedules/complete")
-def record_completion(body: CompletionBody, request: Request,
-                      _: None = Depends(require_module),
-                      user: dict = Depends(require_permission(HELIX_WRITE))) -> dict:
+def record_completion(
+    body: CompletionBody,
+    request: Request,
+    _: None = _RECORD_COMPLETION__DEFAULT,
+    user: dict = _RECORD_COMPLETION_USER_DEFAULT,
+) -> dict:
     """Record that a PM or calibration was done and roll the schedule forward.
 
     A `result` of `fail` does NOT roll it forward — nothing was certified — and
@@ -489,15 +611,24 @@ def record_completion(body: CompletionBody, request: Request,
         sched = svc.record_schedule_completion(**body.model_dump(), actor=user.get("id"))
     except svc.BiomedicalError as exc:
         raise _fail(exc) from exc
-    _audit(request, user, "biomedical_maintenance_recorded",
-           summary=(f"{sched.get('schedule_type_label')} recorded for asset "
-                    f"{sched.get('asset_id')} (result {sched.get('recorded_result')}); "
-                    f"next due {sched.get('next_due_date')}"),
-           target_type="biomedical_schedule", target_id=sched.get("id"),
-           metadata={"result": sched.get("recorded_result"),
-                     "was_overdue": sched.get("recorded_was_overdue"),
-                     "days_overdue": sched.get("recorded_days_overdue"),
-                     "certificate_reference": body.certificate_reference})
+    _audit(
+        request,
+        user,
+        "biomedical_maintenance_recorded",
+        summary=(
+            f"{sched.get('schedule_type_label')} recorded for asset "
+            f"{sched.get('asset_id')} (result {sched.get('recorded_result')}); "
+            f"next due {sched.get('next_due_date')}"
+        ),
+        target_type="biomedical_schedule",
+        target_id=sched.get("id"),
+        metadata={
+            "result": sched.get("recorded_result"),
+            "was_overdue": sched.get("recorded_was_overdue"),
+            "days_overdue": sched.get("recorded_days_overdue"),
+            "certificate_reference": body.certificate_reference,
+        },
+    )
     return sched
 
 
@@ -505,81 +636,137 @@ def record_completion(body: CompletionBody, request: Request,
 #  Service calls and downtime
 # ═════════════════════════════════════════════════════════════════════════════
 
+
+_LIST_SERVICE_CALLS_ASSET_ID_DEFAULT = Query(None)
+_LIST_SERVICE_CALLS_WARD_DEFAULT = Query(None)
+_LIST_SERVICE_CALLS_STATUS_DEFAULT = Query(None)
+_LIST_SERVICE_CALLS_OPEN_ONLY_DEFAULT = Query(False)
+_LIST_SERVICE_CALLS_LIMIT_DEFAULT = Query(100, ge=1, le=500)
+_LIST_SERVICE_CALLS__DEFAULT = Depends(require_module)
+_LIST_SERVICE_CALLS_USER_DEFAULT = Depends(require_permission(HELIX_READ))
+
+
 @router.get("/service-calls")
 def list_service_calls(
-    asset_id: Optional[int] = Query(None),
-    ward: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
-    open_only: bool = Query(False),
-    limit: int = Query(100, ge=1, le=500),
-    _: None = Depends(require_module),
-    user: dict = Depends(require_permission(HELIX_READ)),
+    asset_id: int | None = _LIST_SERVICE_CALLS_ASSET_ID_DEFAULT,
+    ward: str | None = _LIST_SERVICE_CALLS_WARD_DEFAULT,
+    status: str | None = _LIST_SERVICE_CALLS_STATUS_DEFAULT,
+    open_only: bool = _LIST_SERVICE_CALLS_OPEN_ONLY_DEFAULT,
+    limit: int = _LIST_SERVICE_CALLS_LIMIT_DEFAULT,
+    _: None = _LIST_SERVICE_CALLS__DEFAULT,
+    user: dict = _LIST_SERVICE_CALLS_USER_DEFAULT,
 ) -> dict:
     try:
-        rows = svc.list_service_calls(asset_id=asset_id, ward=ward, status=status,
-                                      open_only=open_only, limit=limit)
+        rows = svc.list_service_calls(
+            asset_id=asset_id, ward=ward, status=status, open_only=open_only, limit=limit
+        )
     except svc.BiomedicalError as exc:
         raise _fail(exc) from exc
     return {"service_calls": rows, "count": len(rows)}
 
 
+_OPEN_SERVICE_CALL__DEFAULT = Depends(require_module)
+_OPEN_SERVICE_CALL_USER_DEFAULT = Depends(require_permission(HELIX_WRITE))
+
+
 @router.post("/service-calls")
-def open_service_call(body: ServiceCallBody, request: Request,
-                      _: None = Depends(require_module),
-                      user: dict = Depends(require_permission(HELIX_WRITE))) -> dict:
+def open_service_call(
+    body: ServiceCallBody,
+    request: Request,
+    _: None = _OPEN_SERVICE_CALL__DEFAULT,
+    user: dict = _OPEN_SERVICE_CALL_USER_DEFAULT,
+) -> dict:
     try:
         call = svc.open_service_call(**body.model_dump(), actor=user.get("id"))
     except svc.BiomedicalError as exc:
         raise _fail(exc) from exc
-    _audit(request, user, "biomedical_service_call_opened",
-           summary=(f"Service call opened on asset {call.get('asset_id')}: "
-                    f"{call.get('fault_description')}"),
-           target_type="biomedical_service_call", target_id=call.get("id"),
-           metadata={"severity": call.get("severity"),
-                     "took_out_of_service": call.get("took_out_of_service")})
+    _audit(
+        request,
+        user,
+        "biomedical_service_call_opened",
+        summary=(
+            f"Service call opened on asset {call.get('asset_id')}: {call.get('fault_description')}"
+        ),
+        target_type="biomedical_service_call",
+        target_id=call.get("id"),
+        metadata={
+            "severity": call.get("severity"),
+            "took_out_of_service": call.get("took_out_of_service"),
+        },
+    )
     return call
+
+
+_UPDATE_SERVICE_CALL__DEFAULT = Depends(require_module)
+_UPDATE_SERVICE_CALL_USER_DEFAULT = Depends(require_permission(HELIX_WRITE))
 
 
 @router.post("/service-calls/{call_id}")
-def update_service_call(call_id: int, body: ServiceCallUpdateBody, request: Request,
-                        _: None = Depends(require_module),
-                        user: dict = Depends(require_permission(HELIX_WRITE))) -> dict:
+def update_service_call(
+    call_id: int,
+    body: ServiceCallUpdateBody,
+    request: Request,
+    _: None = _UPDATE_SERVICE_CALL__DEFAULT,
+    user: dict = _UPDATE_SERVICE_CALL_USER_DEFAULT,
+) -> dict:
     try:
-        call = svc.update_service_call(call_id=call_id, **body.model_dump(),
-                                       actor=user.get("id"))
+        call = svc.update_service_call(call_id=call_id, **body.model_dump(), actor=user.get("id"))
     except svc.BiomedicalError as exc:
         raise _fail(exc) from exc
-    _audit(request, user, "biomedical_service_call_updated",
-           summary=f"Service call {call_id} updated to {call.get('status')}",
-           target_type="biomedical_service_call", target_id=call_id,
-           metadata={"status": call.get("status")})
+    _audit(
+        request,
+        user,
+        "biomedical_service_call_updated",
+        summary=f"Service call {call_id} updated to {call.get('status')}",
+        target_type="biomedical_service_call",
+        target_id=call_id,
+        metadata={"status": call.get("status")},
+    )
     return call
+
+
+_CLOSE_SERVICE_CALL__DEFAULT = Depends(require_module)
+_CLOSE_SERVICE_CALL_USER_DEFAULT = Depends(require_permission(HELIX_WRITE))
 
 
 @router.post("/service-calls/{call_id}/close")
-def close_service_call(call_id: int, body: ServiceCallCloseBody, request: Request,
-                       _: None = Depends(require_module),
-                       user: dict = Depends(require_permission(HELIX_WRITE))) -> dict:
+def close_service_call(
+    call_id: int,
+    body: ServiceCallCloseBody,
+    request: Request,
+    _: None = _CLOSE_SERVICE_CALL__DEFAULT,
+    user: dict = _CLOSE_SERVICE_CALL_USER_DEFAULT,
+) -> dict:
     try:
-        call = svc.close_service_call(call_id=call_id, **body.model_dump(),
-                                      actor=user.get("id"))
+        call = svc.close_service_call(call_id=call_id, **body.model_dump(), actor=user.get("id"))
     except svc.BiomedicalError as exc:
         raise _fail(exc) from exc
-    _audit(request, user, "biomedical_service_call_closed",
-           summary=(f"Service call {call_id} closed; "
-                    f"{call.get('downtime_minutes')} minutes downtime"),
-           target_type="biomedical_service_call", target_id=call_id,
-           metadata={"downtime_minutes": call.get("downtime_minutes")})
+    _audit(
+        request,
+        user,
+        "biomedical_service_call_closed",
+        summary=(f"Service call {call_id} closed; {call.get('downtime_minutes')} minutes downtime"),
+        target_type="biomedical_service_call",
+        target_id=call_id,
+        metadata={"downtime_minutes": call.get("downtime_minutes")},
+    )
     return call
+
+
+_DOWNTIME_WARD_DEFAULT = Query(None)
+_DOWNTIME_DAYS_DEFAULT = Query(30, ge=1, le=730)
+_DOWNTIME_LIMIT_DEFAULT = Query(25, ge=1, le=200)
+_DOWNTIME__DEFAULT = Depends(require_module)
+_DOWNTIME_USER_DEFAULT = Depends(require_permission(HELIX_READ))
 
 
 @router.get("/downtime")
 def downtime(
-    ward: Optional[str] = Query(None),
-    days: int = Query(30, ge=1, le=730),
-    limit: int = Query(25, ge=1, le=200),
-    _: None = Depends(require_module),
-    user: dict = Depends(require_permission(HELIX_READ)),
+    ward: str | None = _DOWNTIME_WARD_DEFAULT,
+    days: int = _DOWNTIME_DAYS_DEFAULT,
+    limit: int = _DOWNTIME_LIMIT_DEFAULT,
+    _: None = _DOWNTIME__DEFAULT,
+    user: dict = _DOWNTIME_USER_DEFAULT,
 ) -> dict:
     """Downtime per asset over a window, accumulated across every service call."""
     from datetime import timedelta
@@ -589,8 +776,10 @@ def downtime(
     today = hospital_today()
     rows = svc.downtime_summary(since=today - timedelta(days=days), limit=limit)
     return {
-        "as_of": today.isoformat(), "window_days": days,
-        "assets": rows, "count": len(rows),
+        "as_of": today.isoformat(),
+        "window_days": days,
+        "assets": rows,
+        "count": len(rows),
         "total_minutes": sum(r["downtime_minutes"] for r in rows),
     }
 
@@ -599,12 +788,19 @@ def downtime(
 #  Contracts
 # ═════════════════════════════════════════════════════════════════════════════
 
+
+_LIST_CONTRACTS_STATUS_DEFAULT = Query(None)
+_LIST_CONTRACTS_CONTRACT_TYPE_DEFAULT = Query(None)
+_LIST_CONTRACTS__DEFAULT = Depends(require_module)
+_LIST_CONTRACTS_USER_DEFAULT = Depends(require_permission(HELIX_READ))
+
+
 @router.get("/contracts")
 def list_contracts(
-    status: Optional[str] = Query(None),
-    contract_type: Optional[str] = Query(None),
-    _: None = Depends(require_module),
-    user: dict = Depends(require_permission(HELIX_READ)),
+    status: str | None = _LIST_CONTRACTS_STATUS_DEFAULT,
+    contract_type: str | None = _LIST_CONTRACTS_CONTRACT_TYPE_DEFAULT,
+    _: None = _LIST_CONTRACTS__DEFAULT,
+    user: dict = _LIST_CONTRACTS_USER_DEFAULT,
 ) -> dict:
     try:
         rows = svc.list_contracts(status=status, contract_type=contract_type)
@@ -613,11 +809,16 @@ def list_contracts(
     return {"contracts": rows, "count": len(rows)}
 
 
+_EXPIRING_CONTRACTS_WITHIN_DAYS_DEFAULT = Query(None, ge=0, le=1095)
+_EXPIRING_CONTRACTS__DEFAULT = Depends(require_module)
+_EXPIRING_CONTRACTS_USER_DEFAULT = Depends(require_permission(HELIX_READ))
+
+
 @router.get("/contracts/expiring")
 def expiring_contracts(
-    within_days: Optional[int] = Query(None, ge=0, le=1095),
-    _: None = Depends(require_module),
-    user: dict = Depends(require_permission(HELIX_READ)),
+    within_days: int | None = _EXPIRING_CONTRACTS_WITHIN_DAYS_DEFAULT,
+    _: None = _EXPIRING_CONTRACTS__DEFAULT,
+    user: dict = _EXPIRING_CONTRACTS_USER_DEFAULT,
 ) -> dict:
     """Contracts inside their notice window, plus the ones already expired."""
     try:
@@ -626,34 +827,57 @@ def expiring_contracts(
         raise _fail(exc) from exc
 
 
+_GET_CONTRACT__DEFAULT = Depends(require_module)
+_GET_CONTRACT_USER_DEFAULT = Depends(require_permission(HELIX_READ))
+
+
 @router.get("/contracts/{contract_id}")
-def get_contract(contract_id: int, _: None = Depends(require_module),
-                 user: dict = Depends(require_permission(HELIX_READ))) -> dict:
+def get_contract(
+    contract_id: int,
+    _: None = _GET_CONTRACT__DEFAULT,
+    user: dict = _GET_CONTRACT_USER_DEFAULT,
+) -> dict:
     contract = svc.get_contract(contract_id)
     if not contract:
-        raise HTTPException(status_code=404,
-                            detail={"error": "not_found",
-                                    "message": f"no contract {contract_id}"})
+        raise HTTPException(
+            status_code=404, detail={"error": "not_found", "message": f"no contract {contract_id}"}
+        )
     return contract
 
 
+_UPSERT_CONTRACT__DEFAULT = Depends(require_module)
+_UPSERT_CONTRACT_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+
+
 @router.post("/contracts")
-def upsert_contract(body: ContractBody, request: Request,
-                    _: None = Depends(require_module),
-                    user: dict = Depends(require_permission(ADMIN_OVERVIEW))) -> dict:
+def upsert_contract(
+    body: ContractBody,
+    request: Request,
+    _: None = _UPSERT_CONTRACT__DEFAULT,
+    user: dict = _UPSERT_CONTRACT_USER_DEFAULT,
+) -> dict:
     """Create or amend an AMC/CMC. `admin.overview` because a maintenance
     contract is money the hospital has committed, not a workshop record."""
     try:
         contract = svc.upsert_contract(**body.model_dump(), actor=user.get("id"))
     except svc.BiomedicalError as exc:
         raise _fail(exc) from exc
-    _audit(request, user, "biomedical_contract_saved",
-           summary=(f"{contract.get('contract_type', '').upper()} "
-                    f"{contract.get('contract_number')} saved, ends "
-                    f"{contract.get('end_date')}, covering "
-                    f"{contract.get('asset_count')} asset(s)"),
-           target_type="biomedical_contract", target_id=contract.get("id"),
-           metadata={"contract_number": contract.get("contract_number"),
-                     "end_date": contract.get("end_date"),
-                     "asset_count": contract.get("asset_count")})
+    _audit(
+        request,
+        user,
+        "biomedical_contract_saved",
+        summary=(
+            f"{contract.get('contract_type', '').upper()} "
+            f"{contract.get('contract_number')} saved, ends "
+            f"{contract.get('end_date')}, covering "
+            f"{contract.get('asset_count')} asset(s)"
+        ),
+        target_type="biomedical_contract",
+        target_id=contract.get("id"),
+        metadata={
+            "contract_number": contract.get("contract_number"),
+            "end_date": contract.get("end_date"),
+            "asset_count": contract.get("asset_count"),
+        },
+    )
     return contract

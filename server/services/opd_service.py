@@ -37,14 +37,17 @@ Rules this module keeps (tests/test_opd_no_scoring.py enforces the first):
     and visit-addressed answers carry a review only as visit_review_summary
     gives it, so an old visit id never reads the allergy list.
 """
+
 from __future__ import annotations
 
 import json
 import uuid
-from datetime import date, datetime, timedelta, timezone
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
 from database import db_session
+
 from services.clinical_time import parse_to_utc, to_utc_iso, utc_iso_now
 
 __all__ = [
@@ -77,24 +80,30 @@ RECORD_RESULT_LIMIT = 50
 _HIDDEN_ORDER_STATUSES = ("draft", "cancelled")
 
 
-def _same_clinic(a: Optional[str], b: Optional[str]) -> bool:
+def _same_clinic(a: str | None, b: str | None) -> bool:
     return (a or "").strip().casefold() == (b or "").strip().casefold()
 
 
 def _table_exists(db, name: str) -> bool:
-    return db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
-    ).fetchone() is not None
+    return (
+        db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+        ).fetchone()
+        is not None
+    )
 
 
 def _identity(db, patient) -> dict:
     """Name, UHID, age, sex and the record's state. No date of birth, phone,
     address or next of kin (see the module docstring)."""
     pid = patient["id"]
-    inpatient_now = db.execute(
-        "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' LIMIT 1",
-        (pid,),
-    ).fetchone() is not None
+    inpatient_now = (
+        db.execute(
+            "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' LIMIT 1",
+            (pid,),
+        ).fetchone()
+        is not None
+    )
     demo = None
     if _table_exists(db, "patient_demographics"):
         demo = db.execute(
@@ -136,7 +145,7 @@ def _problems(db, patient_id: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def _visits(db, patient_id: str, viewer_department: Optional[str]) -> list[dict]:
+def _visits(db, patient_id: str, viewer_department: str | None) -> list[dict]:
     """The patient's OPD visits, every clinic, cancelled ones left out.
 
     Which clinic saw the patient and when is part of extent ii (every clinic's
@@ -154,16 +163,18 @@ def _visits(db, patient_id: str, viewer_department: Optional[str]) -> list[dict]
     visits = []
     for r in rows:
         own = viewer_department is None or _same_clinic(r["department"], viewer_department)
-        visits.append({
-            "id": r["id"],
-            "department": r["department"],
-            "doctor_name": r["doctor_name"],
-            "visit_date": r["visit_date"],
-            "visit_type": r["visit_type"],
-            "status": r["status"],
-            "chief_complaint": r["chief_complaint"] if own else None,
-            "own_clinic": own,
-        })
+        visits.append(
+            {
+                "id": r["id"],
+                "department": r["department"],
+                "doctor_name": r["doctor_name"],
+                "visit_date": r["visit_date"],
+                "visit_type": r["visit_type"],
+                "status": r["status"],
+                "chief_complaint": r["chief_complaint"] if own else None,
+                "own_clinic": own,
+            }
+        )
     return visits
 
 
@@ -190,9 +201,9 @@ def _opd_results(db, patient_id: str) -> list[dict]:
 def get_opd_record(
     patient_id: str,
     *,
-    viewer_department: Optional[str],
-    access: Optional[dict] = None,
-) -> Optional[dict]:
+    viewer_department: str | None,
+    access: dict | None = None,
+) -> dict | None:
     """The OPD record view for one patient, or None when there is no such patient.
 
     `viewer_department` is permissions.department_scope(user), never a value
@@ -332,7 +343,7 @@ def _user_names(db, ids) -> dict:
     return {r["id"]: r["name"] for r in rows}
 
 
-def _loads(text: Optional[str], default):
+def _loads(text: str | None, default):
     if not text:
         return default
     try:
@@ -342,7 +353,7 @@ def _loads(text: Optional[str], default):
     return value if isinstance(value, type(default)) else default
 
 
-def _clean_text(value: Any, limit: int) -> Optional[str]:
+def _clean_text(value: Any, limit: int) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
@@ -380,23 +391,26 @@ def normalise_diagnoses(raw: Any) -> list[dict]:
         if code and not system:
             system = "ICD10"
         if code and system not in _CODE_SYSTEMS:
-            raise ConsultationError("bad_diagnoses",
-                                    f"Code system must be one of {', '.join(_CODE_SYSTEMS)}")
+            raise ConsultationError(
+                "bad_diagnoses", f"Code system must be one of {', '.join(_CODE_SYSTEMS)}"
+            )
         if code:
-            status = "validated" if validate_code(system, code) else "unvalidated"
+            status = "validated" if validate_code(system or "", code) else "unvalidated"
         else:
             system, status = None, "none"
-        out.append({
-            "text": text,
-            "code_system": system,
-            "code": code,
-            "code_status": status,
-            "add_to_problems": bool(item.get("add_to_problems")) and status == "validated",
-        })
+        out.append(
+            {
+                "text": text,
+                "code_system": system,
+                "code": code,
+                "code_status": status,
+                "add_to_problems": bool(item.get("add_to_problems")) and status == "validated",
+            }
+        )
     return out
 
 
-def _normalise_vitals(raw: Any, *, actor_id: str) -> Optional[dict]:
+def _normalise_vitals(raw: Any, *, actor_id: str) -> dict | None:
     """OPD vitals as stored: {values, measured_at, measured_by}, or None.
 
     Plain numbers in their plausible range, with the time they were measured
@@ -408,6 +422,7 @@ def _normalise_vitals(raw: Any, *, actor_id: str) -> Optional[dict]:
         raise ConsultationError("bad_vitals", "Vitals must be an object")
     values_in = raw.get("values") if isinstance(raw.get("values"), dict) else {}
     values: dict[str, float] = {}
+    assert values_in is not None
     for key, value in values_in.items():
         if key not in OPD_VITAL_FIELDS:
             raise ConsultationError("bad_vitals", f"{key} is not an outpatient vital")
@@ -432,12 +447,12 @@ def _normalise_vitals(raw: Any, *, actor_id: str) -> Optional[dict]:
         when = parse_to_utc(str(measured))
     except ValueError:
         raise ConsultationError("bad_vitals", "The measured time is not a valid time") from None
-    if when > datetime.now(timezone.utc) + _MEASURED_AT_SKEW:
+    if when > datetime.now(UTC) + _MEASURED_AT_SKEW:
         raise ConsultationError("bad_vitals", "The measured time is in the future")
     return {"values": values, "measured_at": to_utc_iso(when), "measured_by": actor_id}
 
 
-def _follow_up_date(value: Any) -> Optional[str]:
+def _follow_up_date(value: Any) -> str | None:
     text = _clean_text(value, 10)
     if not text:
         return None
@@ -452,15 +467,17 @@ def _visit_row(db, visit_id: str):
 
 
 def _consultation_row(db, visit_id: str):
-    return db.execute("SELECT * FROM opd_consultations WHERE visit_id = ?",
-                      (visit_id,)).fetchone()
+    return db.execute("SELECT * FROM opd_consultations WHERE visit_id = ?", (visit_id,)).fetchone()
 
 
 def _active_admission(db, patient_id: str) -> bool:
-    return db.execute(
-        "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' LIMIT 1",
-        (patient_id,),
-    ).fetchone() is not None
+    return (
+        db.execute(
+            "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' LIMIT 1",
+            (patient_id,),
+        ).fetchone()
+        is not None
+    )
 
 
 def _writable_visit(db, visit_id: str):
@@ -469,12 +486,15 @@ def _writable_visit(db, visit_id: str):
     if visit is None:
         raise ConsultationError("visit_not_found", "OPD visit not found", status=404)
     if visit["status"] == "cancelled":
-        raise ConsultationError("visit_cancelled",
-                                "This visit was cancelled; it has no consultation", status=409)
+        raise ConsultationError(
+            "visit_cancelled", "This visit was cancelled; it has no consultation", status=409
+        )
     if _active_admission(db, visit["patient_id"]):
         raise ConsultationError(
             "patient_admitted",
-            "This patient is now admitted. Record it on the inpatient chart.", status=409)
+            "This patient is now admitted. Record it on the inpatient chart.",
+            status=409,
+        )
     return visit
 
 
@@ -495,12 +515,16 @@ def _require_current_visit(visit) -> None:
         raise ConsultationError(
             "visit_not_current",
             "This visit is booked for a later day. Record the allergy review on the day "
-            "of the visit.", status=409)
+            "of the visit.",
+            status=409,
+        )
     if not day or day < first_day:
         raise ConsultationError(
             "visit_not_current",
             "This visit is too old for an allergy review. Record it on the patient's "
-            "current visit.", status=409)
+            "current visit.",
+            status=409,
+        )
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -550,7 +574,7 @@ _MIN_REVIEW_REASON = 3
 _MAX_REVIEW_NOTE = 1000
 
 
-def _assessment_summary(db, row) -> Optional[dict]:
+def _assessment_summary(db, row) -> dict | None:
     if row is None:
         return None
     names = _user_names(db, [row["assessed_by"]])
@@ -570,7 +594,7 @@ def _assessment_summary(db, row) -> Optional[dict]:
     }
 
 
-def visit_review_summary(assessment: Optional[dict]) -> Optional[dict]:
+def visit_review_summary(assessment: dict | None) -> dict | None:
     """A review as a VISIT-addressed answer may carry it: what it said and
     when, never what it names or who wrote it where.
 
@@ -592,8 +616,7 @@ def visit_review_summary(assessment: Optional[dict]) -> Optional[dict]:
     }
 
 
-def latest_allergy_assessment(db, patient_id: str, *,
-                              visit_id: Optional[str] = None) -> Optional[dict]:
+def latest_allergy_assessment(db, patient_id: str, *, visit_id: str | None = None) -> dict | None:
     """The patient's most recent allergy review (or this visit's, when
     `visit_id` is given), or None when there is none. Newest by the time it
     was recorded, then by id, the same tie-break every 'latest' read keeps."""
@@ -615,14 +638,17 @@ def latest_allergy_assessment(db, patient_id: str, *,
 
 
 def _active_allergy_substances(db, patient_id: str) -> list[str]:
-    return [r["substance"] for r in db.execute(
-        "SELECT substance FROM patient_allergies WHERE patient_id = ? AND status = 'active' "
-        "ORDER BY substance",
-        (patient_id,),
-    ).fetchall()]
+    return [
+        r["substance"]
+        for r in db.execute(
+            "SELECT substance FROM patient_allergies WHERE patient_id = ? AND status = 'active' "
+            "ORDER BY substance",
+            (patient_id,),
+        ).fetchall()
+    ]
 
 
-def allergy_review_status(db, patient_id: str, visit_id: Optional[str] = None) -> dict:
+def allergy_review_status(db, patient_id: str, visit_id: str | None = None) -> dict:
     """Whether a note for this patient may be signed (ruling OPD-S7, option a).
 
     The deciding review is the latest one recorded on THIS visit, or failing
@@ -645,16 +671,18 @@ def allergy_review_status(db, patient_id: str, visit_id: Optional[str] = None) -
     request, so the full review stays on the record view.
     """
     charted = len(_active_allergy_substances(db, patient_id))
-    this_visit = (latest_allergy_assessment(db, patient_id, visit_id=visit_id)
-                  if visit_id else None)
+    this_visit = latest_allergy_assessment(db, patient_id, visit_id=visit_id) if visit_id else None
     deciding = this_visit or latest_allergy_assessment(db, patient_id)
     basis = None
     if deciding is not None:
         contradicted = deciding["status"] == "none_known" and charted > 0
         if this_visit is not None and not contradicted:
             basis = "this_visit"
-        elif (this_visit is None and not contradicted
-              and deciding["status"] in ("allergies_recorded", "none_known")):
+        elif (
+            this_visit is None
+            and not contradicted
+            and deciding["status"] in ("allergies_recorded", "none_known")
+        ):
             basis = "earlier_review"
     return {
         "status": deciding["status"] if deciding else "not_reviewed",
@@ -679,13 +707,14 @@ def _review_substances(raw: Any) -> list[str]:
         raise ConsultationError("bad_substances", "List the allergies as text")
     entries = allergy_entries(raw)
     if len(entries) > _MAX_REVIEW_SUBSTANCES:
-        raise ConsultationError("bad_substances",
-                                f"At most {_MAX_REVIEW_SUBSTANCES} allergies in one review")
+        raise ConsultationError(
+            "bad_substances", f"At most {_MAX_REVIEW_SUBSTANCES} allergies in one review"
+        )
     for entry in entries:
         if len(entry) > _MAX_SUBSTANCE_TEXT:
             raise ConsultationError(
-                "bad_substances",
-                f"Keep each allergy under {_MAX_SUBSTANCE_TEXT} characters")
+                "bad_substances", f"Keep each allergy under {_MAX_SUBSTANCE_TEXT} characters"
+            )
     return entries
 
 
@@ -697,7 +726,7 @@ def record_allergy_review(
     reason: Any = None,
     note: Any = None,
     actor_id: str,
-    on_done: Optional[Callable[[Any, dict, dict], None]] = None,
+    on_done: Callable[[Any, dict, dict], None] | None = None,
 ) -> dict:
     """Record the consulting doctor's allergy review on an OPD visit.
 
@@ -732,24 +761,28 @@ def record_allergy_review(
         raise ConsultationError(
             "bad_allergy_status",
             "Choose what the patient said: allergies recorded, no known allergies, or "
-            "unable to obtain")
+            "unable to obtain",
+        )
     named = _review_substances(substances)
     why = _clean_text(reason, _MAX_REVIEW_REASON)
     remark = _clean_text(note, _MAX_REVIEW_NOTE)
     if word == "none_known" and named:
         raise ConsultationError(
             "substances_not_allowed",
-            "You named an allergy, so record 'allergies recorded', not 'no known allergies'")
+            "You named an allergy, so record 'allergies recorded', not 'no known allergies'",
+        )
     if word == "unable_to_obtain":
         if named:
             raise ConsultationError(
                 "substances_not_allowed",
-                "Chart the allergies you were told about with 'allergies recorded'")
+                "Chart the allergies you were told about with 'allergies recorded'",
+            )
         if not why or len(why) < _MIN_REVIEW_REASON:
             raise ConsultationError(
                 "reason_required",
                 "Say why the allergies could not be obtained, for example the patient "
-                "cannot speak and nobody with them knows")
+                "cannot speak and nobody with them knows",
+            )
 
     with db_session(immediate=True) as db:
         visit = _writable_visit(db, visit_id)
@@ -757,22 +790,28 @@ def record_allergy_review(
         if not _table_exists(db, "patient_allergy_assessments"):
             raise ConsultationError(
                 "allergy_review_unavailable",
-                "Allergy reviews cannot be recorded on this database yet", status=503)
+                "Allergy reviews cannot be recorded on this database yet",
+                status=503,
+            )
         pid = visit["patient_id"]
         active = _active_allergy_substances(db, pid)
         if word == "none_known" and active:
             raise ConsultationError(
                 "allergies_on_chart",
-                "This patient has allergies on the chart: " + ", ".join(active)
+                "This patient has allergies on the chart: "
+                + ", ".join(active)
                 + ". Confirm them with 'allergies recorded' instead.",
-                status=409, charted=active)
+                status=409,
+                charted=active,
+            )
         if word == "allergies_recorded" and not named and not active:
             raise ConsultationError(
-                "no_allergies_named",
-                "Name at least one allergy, or record 'no known allergies'")
+                "no_allergies_named", "Name at least one allergy, or record 'no known allergies'"
+            )
         now = utc_iso_now()
-        charted = record_allergies_on(db, pid, named, source="opd",
-                                      recorded_by=actor_id, recorded_at=now)
+        charted = record_allergies_on(
+            db, pid, named, source="opd", recorded_by=actor_id, recorded_at=now
+        )
         reactivated: list[str] = []
         for entry in named:
             norm = entry.strip().lower()
@@ -783,22 +822,33 @@ def record_allergy_review(
                 (pid, norm),
             ).fetchone()
             if row is not None and row["status"] != "active":
-                db.execute("UPDATE patient_allergies SET status = 'active' WHERE id = ?",
-                           (row["id"],))
+                db.execute(
+                    "UPDATE patient_allergies SET status = 'active' WHERE id = ?", (row["id"],)
+                )
                 reactivated.append(norm)
         on_chart = _active_allergy_substances(db, pid)
         cur = db.execute(
             "INSERT INTO patient_allergy_assessments (patient_id, status, substances_json, "
             "reason, note, opd_visit_id, admission_id, department, source, assessed_by, "
             "assessed_at) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, 'opd', ?, ?)",
-            (pid, word,
-             json.dumps(on_chart) if word == "allergies_recorded" else None,
-             why if word == "unable_to_obtain" else None,
-             remark, visit_id, visit["department"], actor_id, now),
+            (
+                pid,
+                word,
+                json.dumps(on_chart) if word == "allergies_recorded" else None,
+                why if word == "unable_to_obtain" else None,
+                remark,
+                visit_id,
+                visit["department"],
+                actor_id,
+                now,
+            ),
         )
-        assessment = _assessment_summary(db, db.execute(
-            "SELECT * FROM patient_allergy_assessments WHERE id = ?", (cur.lastrowid,)
-        ).fetchone())
+        assessment = _assessment_summary(
+            db,
+            db.execute(
+                "SELECT * FROM patient_allergy_assessments WHERE id = ?", (cur.lastrowid,)
+            ).fetchone(),
+        )
         result = {
             "visit_id": visit_id,
             "patient_id": pid,
@@ -808,14 +858,21 @@ def record_allergy_review(
             "allergy_review": allergy_review_status(db, pid, visit_id),
         }
         if on_done is not None:
-            on_done(db, result, {"status": word, "charted": charted,
-                                 "reactivated": reactivated,
-                                 "on_chart_count": len(on_chart),
-                                 "assessment_id": assessment["id"] if assessment else None})
+            on_done(
+                db,
+                result,
+                {
+                    "status": word,
+                    "charted": charted,
+                    "reactivated": reactivated,
+                    "on_chart_count": len(on_chart),
+                    "assessment_id": assessment["id"] if assessment else None,
+                },
+            )
         return result
 
 
-def _serialize(db, row, *, with_addenda: bool = True) -> Optional[dict]:
+def _serialize(db, row, *, with_addenda: bool = True) -> dict | None:
     if row is None:
         return None
     data = dict(row)
@@ -828,25 +885,37 @@ def _serialize(db, row, *, with_addenda: bool = True) -> Optional[dict]:
             "WHERE consultation_id = ? ORDER BY id",
             (data["id"],),
         ).fetchall()
-    names = _user_names(db, [data.get("author_id"), data.get("signed_by"),
-                             data.get("updated_by"),
-                             (vitals or {}).get("measured_by"),
-                             *(r["author_id"] for r in addenda_rows)])
+    names = _user_names(
+        db,
+        [
+            data.get("author_id"),
+            data.get("signed_by"),
+            data.get("updated_by"),
+            (vitals or {}).get("measured_by"),
+            *(r["author_id"] for r in addenda_rows),
+        ],
+    )
     if vitals:
         vitals = {**vitals, "measured_by_name": names.get(vitals.get("measured_by"))}
-    data.update({
-        "author_name": names.get(data.get("author_id")),
-        "signed_by_name": names.get(data.get("signed_by")),
-        "updated_by_name": names.get(data.get("updated_by")),
-        "admission_advised": bool(data.get("admission_advised")),
-        "vitals": vitals,
-        "diagnoses": diagnoses,
-    })
+    data.update(
+        {
+            "author_name": names.get(data.get("author_id")),
+            "signed_by_name": names.get(data.get("signed_by")),
+            "updated_by_name": names.get(data.get("updated_by")),
+            "admission_advised": bool(data.get("admission_advised")),
+            "vitals": vitals,
+            "diagnoses": diagnoses,
+        }
+    )
     if with_addenda:
         data["addenda"] = [
-            {"id": r["id"], "author_id": r["author_id"],
-             "author_name": names.get(r["author_id"]), "body": r["body"],
-             "created_at": r["created_at"]}
+            {
+                "id": r["id"],
+                "author_id": r["author_id"],
+                "author_name": names.get(r["author_id"]),
+                "body": r["body"],
+                "created_at": r["created_at"],
+            }
             for r in addenda_rows
         ]
     return data
@@ -856,10 +925,13 @@ def consultation_signed(db, visit_id: str) -> bool:
     """Is this visit's consultation note signed? (The OPD-N8 completion rule.)"""
     if not _table_exists(db, "opd_consultations"):
         return False
-    return db.execute(
-        "SELECT 1 FROM opd_consultations WHERE visit_id = ? AND status = 'signed'",
-        (visit_id,),
-    ).fetchone() is not None
+    return (
+        db.execute(
+            "SELECT 1 FROM opd_consultations WHERE visit_id = ? AND status = 'signed'",
+            (visit_id,),
+        ).fetchone()
+        is not None
+    )
 
 
 def get_consultation(visit_id: str) -> dict:
@@ -884,9 +956,9 @@ def save_consultation(
     visit_id: str,
     fields: dict,
     *,
-    row_version: Optional[int],
+    row_version: int | None,
     actor_id: str,
-    on_done: Optional[Callable[[Any, dict, dict], None]] = None,
+    on_done: Callable[[Any, dict, dict], None] | None = None,
 ) -> dict:
     """Start or update the visit's draft note.
 
@@ -919,47 +991,72 @@ def save_consultation(
         if row is None:
             if row_version not in (None, 0):
                 raise ConsultationError(
-                    "stale_version", "This note was not found at that version", status=409,
-                    current_version=None)
+                    "stale_version",
+                    "This note was not found at that version",
+                    status=409,
+                    current_version=None,
+                )
             cid = _new_consultation_id()
             db.execute(
                 "INSERT INTO opd_consultations (id, visit_id, patient_id, department, "
                 "author_id, status, row_version, created_at, updated_at, updated_by) "
                 "VALUES (?, ?, ?, ?, ?, 'draft', 1, ?, ?, ?)",
-                (cid, visit_id, visit["patient_id"], visit["department"], actor_id,
-                 now, now, actor_id),
+                (
+                    cid,
+                    visit_id,
+                    visit["patient_id"],
+                    visit["department"],
+                    actor_id,
+                    now,
+                    now,
+                    actor_id,
+                ),
             )
             if updates:
                 sets = ", ".join(f"{k} = ?" for k in updates)
-                db.execute(f"UPDATE opd_consultations SET {sets} WHERE id = ?",
-                           (*updates.values(), cid))
+                db.execute(
+                    f"UPDATE opd_consultations SET {sets} WHERE id = ?", (*updates.values(), cid)
+                )
             facts = {"created": True, "fields": sorted(updates)}
         else:
             if row["status"] == "signed":
                 raise ConsultationError(
                     "consultation_signed",
-                    "This note is signed and cannot change. Add an addendum.", status=409)
+                    "This note is signed and cannot change. Add an addendum.",
+                    status=409,
+                )
             if row_version != row["row_version"]:
                 raise ConsultationError(
                     "stale_version",
                     "Someone saved this note after you opened it. Reload it, then save again.",
-                    status=409, current_version=row["row_version"])
-            updates.update({"row_version": row["row_version"] + 1, "updated_at": now,
-                            "updated_by": actor_id})
+                    status=409,
+                    current_version=row["row_version"],
+                )
+            updates.update(
+                {"row_version": row["row_version"] + 1, "updated_at": now, "updated_by": actor_id}
+            )
             sets = ", ".join(f"{k} = ?" for k in updates)
-            db.execute(f"UPDATE opd_consultations SET {sets} WHERE id = ? AND row_version = ?",
-                       (*updates.values(), row["id"], row["row_version"]))
-            facts = {"created": False,
-                     "fields": sorted(k for k in updates
-                                      if k not in ("row_version", "updated_at", "updated_by"))}
+            db.execute(
+                f"UPDATE opd_consultations SET {sets} WHERE id = ? AND row_version = ?",
+                (*updates.values(), row["id"], row["row_version"]),
+            )
+            facts = {
+                "created": False,
+                "fields": sorted(
+                    k for k in updates if k not in ("row_version", "updated_at", "updated_by")
+                ),
+            }
         note = _serialize(db, _consultation_row(db, visit_id))
         if on_done is not None:
+            assert note is not None
             on_done(db, note, facts)
+        assert note is not None, "Expected the row written in this transaction"
         return note
 
 
-def _add_signed_problems(db, note_row, diagnoses: list[dict], *, actor_id: str,
-                         now: str) -> list[int]:
+def _add_signed_problems(
+    db, note_row, diagnoses: list[dict], *, actor_id: str, now: str
+) -> list[int]:
     """Problem-list rows for the validated diagnoses the doctor ticked, inside
     the signing transaction. The same columns clinical_records_service.
     add_problem writes; an active problem with the same code is not added
@@ -991,9 +1088,9 @@ def _add_signed_problems(db, note_row, diagnoses: list[dict], *, actor_id: str,
 def sign_consultation(
     visit_id: str,
     *,
-    row_version: Optional[int],
+    row_version: int | None,
     actor_id: str,
-    on_done: Optional[Callable[[Any, dict, dict], None]] = None,
+    on_done: Callable[[Any, dict, dict], None] | None = None,
 ) -> dict:
     """Sign the draft. After this it never changes (the database refuses).
 
@@ -1006,28 +1103,38 @@ def sign_consultation(
         visit = _writable_visit(db, visit_id)
         row = _consultation_row(db, visit_id)
         if row is None:
-            raise ConsultationError("no_consultation", "There is no note to sign yet",
-                                    status=404)
+            raise ConsultationError("no_consultation", "There is no note to sign yet", status=404)
         if row["status"] == "signed":
-            raise ConsultationError("consultation_signed", "This note is already signed",
-                                    status=409)
+            raise ConsultationError(
+                "consultation_signed", "This note is already signed", status=409
+            )
         if row_version != row["row_version"]:
             raise ConsultationError(
                 "stale_version",
                 "Someone saved this note after you opened it. Reload it, then sign.",
-                status=409, current_version=row["row_version"])
+                status=409,
+                current_version=row["row_version"],
+            )
         diagnoses = _loads(row["diagnoses_json"], [])
-        if not (diagnoses or any(_clean_text(row[k], 10) for k in
-                                 ("chief_complaint", "history", "examination", "plan"))):
-            raise ConsultationError("empty_note",
-                                    "Write the findings, a diagnosis or a plan before signing")
+        if not (
+            diagnoses
+            or any(
+                _clean_text(row[k], 10)
+                for k in ("chief_complaint", "history", "examination", "plan")
+            )
+        ):
+            raise ConsultationError(
+                "empty_note", "Write the findings, a diagnosis or a plan before signing"
+            )
         review = allergy_review_status(db, visit["patient_id"], visit_id)
         if not review["can_sign"]:
             raise ConsultationError(
                 "allergy_review_required",
                 "Record the allergy review before signing: the patient's allergies, no "
                 "known allergies, or why they could not be asked.",
-                status=409, allergy_review=review)
+                status=409,
+                allergy_review=review,
+            )
         now = utc_iso_now()
         db.execute(
             "UPDATE opd_consultations SET status = 'signed', signed_by = ?, signed_at = ?, "
@@ -1038,10 +1145,18 @@ def sign_consultation(
         problems = _add_signed_problems(db, row, diagnoses, actor_id=actor_id, now=now)
         note = _serialize(db, _consultation_row(db, visit_id))
         if on_done is not None:
-            on_done(db, note, {"problem_ids": problems,
-                               "diagnosis_count": len(diagnoses),
-                               "allergy_review": review["status"],
-                               "allergy_review_basis": review["basis"]})
+            assert note is not None
+            on_done(
+                db,
+                note,
+                {
+                    "problem_ids": problems,
+                    "diagnosis_count": len(diagnoses),
+                    "allergy_review": review["status"],
+                    "allergy_review_basis": review["basis"],
+                },
+            )
+        assert note is not None, "Expected the row written in this transaction"
         return note
 
 
@@ -1050,7 +1165,7 @@ def add_addendum(
     body: Any,
     *,
     actor_id: str,
-    on_done: Optional[Callable[[Any, dict, dict], None]] = None,
+    on_done: Callable[[Any, dict, dict], None] | None = None,
 ) -> dict:
     """Append an addendum to a signed note. Addenda are never edited."""
     text = _clean_text(body, _MAX_ADDENDUM)
@@ -1061,8 +1176,10 @@ def add_addendum(
         row = _consultation_row(db, visit_id)
         if row is None or row["status"] != "signed":
             raise ConsultationError(
-                "not_signed", "Only a signed note takes an addendum; edit the draft instead",
-                status=409)
+                "not_signed",
+                "Only a signed note takes an addendum; edit the draft instead",
+                status=409,
+            )
         cur = db.execute(
             "INSERT INTO opd_consultation_addenda (consultation_id, visit_id, patient_id, "
             "author_id, body, created_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -1070,7 +1187,9 @@ def add_addendum(
         )
         note = _serialize(db, row)
         if on_done is not None:
+            assert note is not None
             on_done(db, note, {"addendum_id": int(cur.lastrowid)})
+        assert note is not None, "Expected the row written in this transaction"
         return note
 
 
@@ -1086,22 +1205,28 @@ def _signed_summaries(db, patient_id: str) -> list[dict]:
         (patient_id, RECORD_VISIT_LIMIT),
     ).fetchall()
     names = _user_names(db, [r["signed_by"] for r in rows])
-    return [{
-        "id": r["id"],
-        "visit_id": r["visit_id"],
-        "department": r["department"],
-        "visit_date": r["visit_date"],
-        "diagnoses": [d.get("text") for d in _loads(r["diagnoses_json"], [])
-                      if isinstance(d, dict) and d.get("text")],
-        "plan": r["plan"],
-        "advice": r["advice"],
-        "follow_up_date": r["follow_up_date"],
-        "signed_by_name": names.get(r["signed_by"]),
-        "signed_at": r["signed_at"],
-    } for r in rows]
+    return [
+        {
+            "id": r["id"],
+            "visit_id": r["visit_id"],
+            "department": r["department"],
+            "visit_date": r["visit_date"],
+            "diagnoses": [
+                d.get("text")
+                for d in _loads(r["diagnoses_json"], [])
+                if isinstance(d, dict) and d.get("text")
+            ],
+            "plan": r["plan"],
+            "advice": r["advice"],
+            "follow_up_date": r["follow_up_date"],
+            "signed_by_name": names.get(r["signed_by"]),
+            "signed_at": r["signed_at"],
+        }
+        for r in rows
+    ]
 
 
-def list_patient_consultations(patient_id: str, *, viewer_department: Optional[str]) -> dict:
+def list_patient_consultations(patient_id: str, *, viewer_department: str | None) -> dict:
     """The patient's OPD notes in full (with addenda), newest first: every
     clinic's signed notes (OPD-N2 extent ii), plus the viewer's own clinic's
     drafts. Another clinic's draft is not a record yet and is not shown."""
@@ -1119,6 +1244,7 @@ def list_patient_consultations(patient_id: str, *, viewer_department: Optional[s
             if r["status"] != "signed" and not own:
                 continue
             note = _serialize(db, r)
+            assert note is not None
             note["own_clinic"] = own
             out.append(note)
     return {"patient_id": patient_id, "consultations": out}

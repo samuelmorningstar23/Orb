@@ -37,34 +37,46 @@ row cannot be written the answer is 503 and nothing is shown):
 The report shows released values only (ruling LIS-R4): a test that is not
 released is 'Pending' with no value, whatever the bench has entered.
 """
+
 import uuid
 from datetime import date
-from typing import Optional
-
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from database import db_session
-from permissions import (LAB_READ, ORDER_READ, department_scope, log_phi_read,
-                         require_any_permission, require_patient_access, require_permission)
-from routes.opt_in_gates import require_lab_module
-from services import lab_report_service
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from permissions import (
+    LAB_READ,
+    ORDER_READ,
+    department_scope,
+    log_phi_read,
+    require_any_permission,
+    require_patient_access,
+    require_permission,
+)
 from services.audit_service import AuditWriteError, log_audit_event
 from services.clinical_time import utc_iso_now
 from services.hospital_time import hospital_today
+
+from routes.opt_in_gates import require_lab_module
+from services import lab_report_service
 
 router = APIRouter(dependencies=[Depends(require_lab_module(allow_draining=True))])
 
 
 def _refusal(err: lab_report_service.LabReportError) -> HTTPException:
-    return HTTPException(status_code=err.status,
-                         detail={"error": err.code, "message": err.message})
+    return HTTPException(status_code=err.status, detail={"error": err.code, "message": err.message})
 
 
 def _audit_unavailable() -> HTTPException:
-    return HTTPException(status_code=503, detail={
-        "error": "audit_unavailable",
-        "message": ("This report could not be shown because the audit trail is not "
-                    "available. Try again in a moment.")})
+    return HTTPException(
+        status_code=503,
+        detail={
+            "error": "audit_unavailable",
+            "message": (
+                "This report could not be shown because the audit trail is not "
+                "available. Try again in a moment."
+            ),
+        },
+    )
 
 
 def _scope_denied(request: Request, user: dict, patient_id: str, accession: str) -> None:
@@ -75,8 +87,10 @@ def _scope_denied(request: Request, user: dict, patient_id: str, accession: str)
         event_category="authorization",
         action_type="patient_scope_denied",
         outcome="denied",
-        summary_message=(f"Laboratory report {accession} is for a patient outside the "
-                         f"caller's department ({department_scope(user)})"),
+        summary_message=(
+            f"Laboratory report {accession} is for a patient outside the "
+            f"caller's department ({department_scope(user)})"
+        ),
         actor_user_id=user.get("id"),
         actor_role=user.get("role"),
         patient_id=patient_id,
@@ -99,43 +113,61 @@ def _one_report(accession: str, request: Request, user: dict) -> dict:
         out_of_scope = err.extra.get("out_of_scope_patient_id")
         if out_of_scope:
             _scope_denied(request, user, out_of_scope, str(accession))
-        raise _refusal(err)
+        raise _refusal(err) from err
 
 
-def _audit_read(request: Request, user: dict, report: dict, *, action: str,
-                summary: str, extra: Optional[dict] = None) -> None:
+def _audit_read(
+    request: Request,
+    user: dict,
+    report: dict,
+    *,
+    action: str,
+    summary: str,
+    extra: dict | None = None,
+) -> None:
     try:
         log_phi_read(
-            request=request, user=user,
+            request=request,
+            user=user,
             action_type=action,
             summary_message=summary,
             patient_id=report["patient"]["id"],
             target_type="lab_report",
             target_id=report["accession"],
-            metadata={"status": report["status"], "amended": report["amended"],
-                      "result_ids": [i["result"]["id"] for i in report["items"]
-                                     if i.get("result")],
-                      **(extra or {})},
+            metadata={
+                "status": report["status"],
+                "amended": report["amended"],
+                "result_ids": [i["result"]["id"] for i in report["items"] if i.get("result")],
+                **(extra or {}),
+            },
         )
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
 
 
-def _parse_day(text: Optional[str]) -> date:
+def _parse_day(text: str | None) -> date:
     if not text:
         return hospital_today()
     try:
         return date.fromisoformat(text.strip())
     except ValueError:
-        raise HTTPException(status_code=422, detail={
-            "error": "bad_day", "message": "Give the day as YYYY-MM-DD."})
+        raise HTTPException(
+            status_code=422, detail={"error": "bad_day", "message": "Give the day as YYYY-MM-DD."}
+        ) from None
+
+
+_LIST_REPORTS_DAY_DEFAULT = Query(None, max_length=10)
+_LIST_REPORTS_UHID_DEFAULT = Query(None, max_length=64)
+_LIST_REPORTS_USER_DEFAULT = Depends(require_permission(LAB_READ))
 
 
 @router.get("/reports")
-def list_reports(request: Request,
-                 day: Optional[str] = Query(None, max_length=10),
-                 uhid: Optional[str] = Query(None, max_length=64),
-                 user: dict = Depends(require_permission(LAB_READ))):
+def list_reports(
+    request: Request,
+    day: str | None = _LIST_REPORTS_DAY_DEFAULT,
+    uhid: str | None = _LIST_REPORTS_UHID_DEFAULT,
+    user: dict = _LIST_REPORTS_USER_DEFAULT,
+):
     """The laboratory's report list: one hospital-local day, or one patient by
     exact UHID. The audit row records the patients actually returned."""
     dept = department_scope(user)
@@ -143,37 +175,56 @@ def list_reports(request: Request,
     with db_session() as db:
         if uhid:
             patient = lab_report_service.patient_by_uhid(db, uhid, dept=dept)
-            reports = (lab_report_service.reports_for_patient(db, patient["id"])
-                       if patient else [])
+            reports = lab_report_service.reports_for_patient(db, patient["id"]) if patient else []
         else:
+            assert wanted is not None
             reports = lab_report_service.reports_for_day(db, wanted, dept=dept)
     patient_ids = sorted({r["patient"]["id"] for r in reports})
     if reports:
         try:
             log_phi_read(
-                request=request, user=user,
+                request=request,
+                user=user,
                 action_type="lab_reports_listed",
                 summary_message=f"Laboratory reports listed ({len(reports)})",
                 target_type="lab_reports",
-                target_id=(f"uhid:{uhid.strip()}" if uhid else wanted.isoformat()),
-                metadata={"count": len(reports), "patient_count": len(patient_ids),
-                          "patient_ids": patient_ids[:200],
-                          "by": "uhid" if uhid else "day"},
+                target_id=(
+                    f"uhid:{uhid.strip()}"
+                    if uhid
+                    else wanted.isoformat()
+                    if wanted is not None
+                    else ""
+                ),
+                metadata={
+                    "count": len(reports),
+                    "patient_count": len(patient_ids),
+                    "patient_ids": patient_ids[:200],
+                    "by": "uhid" if uhid else "day",
+                },
             )
         except AuditWriteError:
-            raise _audit_unavailable()
-    return {"reports": reports,
-            "day": wanted.isoformat() if wanted else None,
-            "uhid": uhid.strip() if uhid else None,
-            "cap": lab_report_service.REPORT_LIST_CAP,
-            "scope": {"department": dept, "hospital_wide": dept is None}}
+            raise _audit_unavailable() from None
+    return {
+        "reports": reports,
+        "day": wanted.isoformat() if wanted else None,
+        "uhid": uhid.strip() if uhid else None,
+        "cap": lab_report_service.REPORT_LIST_CAP,
+        "scope": {"department": dept, "hospital_wide": dept is None},
+    }
+
+
+_LIST_PATIENT_REPORTS_USER_DEFAULT = Depends(
+    require_patient_access(
+        LAB_READ, ORDER_READ, any_of=True, audit_action="lab_patient_reports_listed"
+    )
+)
 
 
 @router.get("/reports/patient/{patient_id}")
 def list_patient_reports(
-        patient_id: str,
-        user: dict = Depends(require_patient_access(
-            LAB_READ, ORDER_READ, any_of=True, audit_action="lab_patient_reports_listed"))):
+    patient_id: str,
+    user: dict = _LIST_PATIENT_REPORTS_USER_DEFAULT,
+):
     """Every laboratory report of one patient, newest collection first. The
     guard checks the ward (404 outside it) and writes the read audit row."""
     with db_session() as db:
@@ -181,44 +232,72 @@ def list_patient_reports(
         if exists is None:
             raise HTTPException(status_code=404, detail="Patient not found")
         reports = lab_report_service.reports_for_patient(db, patient_id)
-    return {"patient_id": patient_id, "reports": reports,
-            "cap": lab_report_service.REPORT_LIST_CAP}
+    return {"patient_id": patient_id, "reports": reports, "cap": lab_report_service.REPORT_LIST_CAP}
+
+
+_GET_REPORT_USER_DEFAULT = Depends(require_any_permission(LAB_READ, ORDER_READ))
 
 
 @router.get("/reports/{accession}")
-def get_report(accession: str, request: Request,
-               user: dict = Depends(require_any_permission(LAB_READ, ORDER_READ))):
+def get_report(
+    accession: str,
+    request: Request,
+    user: dict = _GET_REPORT_USER_DEFAULT,
+):
     report = _one_report(accession, request, user)
-    _audit_read(request, user, report, action="lab_report_viewed",
-                summary=f"Laboratory report {report['accession']} viewed")
+    _audit_read(
+        request,
+        user,
+        report,
+        action="lab_report_viewed",
+        summary=f"Laboratory report {report['accession']} viewed",
+    )
     return {"report": report}
 
 
+_PRINT_REPORT_USER_DEFAULT = Depends(require_any_permission(LAB_READ, ORDER_READ))
+
+
 @router.get("/reports/{accession}/print")
-def print_report(accession: str, request: Request,
-                 user: dict = Depends(require_any_permission(LAB_READ, ORDER_READ))):
+def print_report(
+    accession: str,
+    request: Request,
+    user: dict = _PRINT_REPORT_USER_DEFAULT,
+):
     """The report as it is printed: the same content, with when and by whom.
     Audited as a print, fail-closed, before the body leaves."""
     report = _one_report(accession, request, user)
     printed_at = utc_iso_now()
-    _audit_read(request, user, report, action="lab_report_printed",
-                summary=f"Laboratory report {report['accession']} printed",
-                extra={"printed_at": printed_at})
+    _audit_read(
+        request,
+        user,
+        report,
+        action="lab_report_printed",
+        summary=f"Laboratory report {report['accession']} printed",
+        extra={"printed_at": printed_at},
+    )
     with db_session() as db:
         site_name = _site_name()
-        printer = db.execute("SELECT name FROM users WHERE id = ?",
-                             (user.get("id"),)).fetchone()
-    return {"report": {**report,
-                       "printed_at": printed_at,
-                       "printed_by": {"name": (printer["name"] if printer else None)
-                                      or user.get("name") or "Name not on file"},
-                       "hospital": {"name": site_name}}}
+        printer = db.execute("SELECT name FROM users WHERE id = ?", (user.get("id"),)).fetchone()
+    return {
+        "report": {
+            **report,
+            "printed_at": printed_at,
+            "printed_by": {
+                "name": (printer["name"] if printer else None)
+                or user.get("name")
+                or "Name not on file"
+            },
+            "hospital": {"name": site_name},
+        }
+    }
 
 
-def _site_name() -> Optional[str]:
+def _site_name() -> str | None:
     """The hospital's name from the site settings, never invented."""
     try:
         from services.site_config_service import current_site_config
+
         return current_site_config().site_name or None
     except Exception:  # the settings file is optional
         return None

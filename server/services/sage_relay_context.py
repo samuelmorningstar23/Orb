@@ -94,12 +94,14 @@ facts). Feeding a 4B summary into the 27B's clinical context would launder that
 model's inventions into the interactive lane wearing the chart's authority. Raw
 messages are quotable and attributable; a summary of them is neither.
 """
+
 from __future__ import annotations
 
 import logging
 import re
 
 from permissions import RELAY_READ, has_permission
+
 # The department gate is REUSED, not reimplemented. See rule 2 above: a second
 # copy of a scoping predicate is a second thing to forget to update.
 from services.sage_service import _patient_in_scope, _scope_sql
@@ -220,8 +222,9 @@ _ROOM_MESSAGE_SQL = """
 """
 
 
-def fetch_room_messages(db, patient_id: str, dept: str | None, user: dict,
-                        limit: int = MAX_ROOM_MESSAGES) -> list[dict]:
+def fetch_room_messages(
+    db, patient_id: str, dept: str | None, user: dict, limit: int = MAX_ROOM_MESSAGES
+) -> list[dict]:
     """The most recent clinician text messages from THIS patient's case room(s).
 
     `dept` and `user` are REQUIRED and positional, for the same reason
@@ -251,8 +254,7 @@ def fetch_room_messages(db, patient_id: str, dept: str | None, user: dict,
         # the message query itself, through the one helper that knows it. If
         # gate 2 is ever refactored away, this query still cannot return another
         # department's room.
-        sql, params = _scope_sql(
-            _ROOM_MESSAGE_SQL, dept, (patient_id, _ALLOWED_MESSAGE_TYPE))
+        sql, params = _scope_sql(_ROOM_MESSAGE_SQL, dept, (patient_id, _ALLOWED_MESSAGE_TYPE))
         # Newest first for the LIMIT (that is what "recent" means), reversed to
         # chronological below. `m.id` breaks ties: relay writes several messages
         # inside one second routinely, and CURRENT_TIMESTAMP has second
@@ -357,8 +359,9 @@ def format_room_channel(messages: list[dict]) -> list[str]:
     return parts
 
 
-def build_room_context(db, query: str, patient_id: str, dept: str | None,
-                       user: dict) -> tuple[list[str], int]:
+def build_room_context(
+    db, query: str, patient_id: str, dept: str | None, user: dict
+) -> tuple[list[str], int]:
     """Intent gate + retrieval + rendering. Returns (prompt_lines, n_messages).
 
     The single entry point `sage_service` calls, so the gate order (ask first,

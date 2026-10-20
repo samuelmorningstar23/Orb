@@ -26,19 +26,18 @@ the reasoning behind their grading are in services/drug_safety_service.py (the
 "DOSE SAFETY" section); this module owns the database half — reading the recent
 administration history, the override ledger, and the audit rows.
 """
+
 from __future__ import annotations
 
 import json
 import logging
-import sqlite3
-from datetime import datetime, timedelta
-from db_backend import DBIntegrityError
 import uuid
-from typing import Optional
+from datetime import datetime, timedelta
 
 from database import db_session
+from db_backend import DBIntegrityError
+
 from services import allergy_interlock, drug_safety_service
-from services.allergy_interlock import AllergyInterlockBlocked
 from services.audit_service import log_audit_event
 from services.drug_safety_service import DoseGuardBlocked
 from services.medorders import emar_check
@@ -56,6 +55,7 @@ def _givable_statuses() -> tuple:
     """Ward row statuses a dose may be recorded against: 'active', and 'prn'
     too while ORB_MED_ORDER_LIFECYCLE is on (MO-R3 (a), medorders-9)."""
     from services.medorders import screening
+
     return ("active", "prn") if screening.prn_givable() else ("active",)
 
 
@@ -80,8 +80,7 @@ def _hydrate(row) -> dict:
     back clean.
     """
     d = dict(row)
-    for column, key in (("allergy_check_json", "allergy_check"),
-                        ("dose_check_json", "dose_check")):
+    for column, key in (("allergy_check_json", "allergy_check"), ("dose_check_json", "dose_check")):
         raw = d.pop(column, None)
         if raw:
             try:
@@ -97,11 +96,15 @@ def _hydrate(row) -> dict:
 # DOSE GUARD — the database half. The clinical rules are in
 # services/drug_safety_service.py; this is history, ledger and audit.
 # ═════════════════════════════════════════════════════════════════════════════
-_TS_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S",
-               "%Y-%m-%dT%H:%M:%S.%f")
+_TS_FORMATS = (
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d %H:%M:%S.%f",
+    "%Y-%m-%dT%H:%M:%S",
+    "%Y-%m-%dT%H:%M:%S.%f",
+)
 
 
-def _parse_ts(value) -> Optional[datetime]:
+def _parse_ts(value) -> datetime | None:
     """A stored administered_at → naive UTC datetime, or None.
 
     SQLite's CURRENT_TIMESTAMP writes 'YYYY-MM-DD HH:MM:SS' in UTC, which is
@@ -134,7 +137,7 @@ def _read_recent_administrations(
     patient_id: str,
     *,
     lookback_hours: float,
-    exclude_idempotency_key: Optional[str] = None,
+    exclude_idempotency_key: str | None = None,
 ) -> list[dict]:
     """Doses actually GIVEN to this patient recently, newest first.
 
@@ -192,7 +195,7 @@ def _read_recent_administrations(
     return out
 
 
-def _find_carried_dose_override(db, med_id, fingerprint: Optional[str]) -> Optional[dict]:
+def _find_carried_dose_override(db, med_id, fingerprint: str | None) -> dict | None:
     """The most recent override for THIS order at THIS dose/route/rule.
 
     None when there is no fingerprint (an unreadable check is never carried) or
@@ -230,10 +233,10 @@ def _screen_dose(
     *,
     med,
     med_id: int,
-    dose_given: Optional[str],
-    route_given: Optional[str],
-    idempotency_key: Optional[str],
-    override_reason: Optional[str],
+    dose_given: str | None,
+    route_given: str | None,
+    idempotency_key: str | None,
+    override_reason: str | None,
 ) -> dict:
     """Full bedside dose screen for one dose, including the override decision.
 
@@ -286,28 +289,33 @@ def _screen_dose(
     ingredients: list[str] = []
     try:
         ingredients = allergy_interlock.resolve_ingredients(db, drug_name)
-    except Exception as e:                      # pragma: no cover — defensive
+    except Exception as e:  # pragma: no cover — defensive
         logger.warning("[DoseGuard] formulary resolution failed for %s: %s", drug_name, e)
 
     # ── (1) magnitude + never-correct route ──────────────────────────────────
     rule = None
     try:
         magnitude = drug_safety_service.evaluate_dose(
-            drug_name, dose_given, route_given, ingredients,
+            drug_name,
+            dose_given,
+            route_given,
+            ingredients,
             ordered_dose=med["dosage"],
         )
-        check.update({
-            "decision": magnitude["decision"],
-            "rule": magnitude["rule"],
-            "parsed_dose": magnitude["parsed_dose"],
-            "route_tags": magnitude["route_tags"],
-            "findings": list(magnitude["findings"]),
-        })
+        check.update(
+            {
+                "decision": magnitude["decision"],
+                "rule": magnitude["rule"],
+                "parsed_dose": magnitude["parsed_dose"],
+                "route_tags": magnitude["route_tags"],
+                "findings": list(magnitude["findings"]),
+            }
+        )
         rule = drug_safety_service.find_dose_rule(
-            [drug_name, *ingredients], frozenset(magnitude["route_tags"]))
+            [drug_name, *ingredients], frozenset(magnitude["route_tags"])
+        )
     except Exception as e:
-        logger.error("[DoseGuard] dose evaluation FAILED for %s (%s): %s",
-                     drug_name, dose_given, e)
+        logger.error("[DoseGuard] dose evaluation FAILED for %s (%s): %s", drug_name, dose_given, e)
         unavailable.append("dose magnitude check")
 
     # ── (2) duplicate ────────────────────────────────────────────────────────
@@ -316,10 +324,10 @@ def _screen_dose(
     # to be wrong (oral methotrexate — see DOSE_RULES).
     floor = (rule or {}).get("min_interval_hours")
     try:
-        window, _basis = drug_safety_service.duplicate_window_hours(
-            med["frequency"], floor)
+        window, _basis = drug_safety_service.duplicate_window_hours(med["frequency"], floor)
         priors = _read_recent_administrations(
-            db, med["patient_id"],
+            db,
+            med["patient_id"],
             lookback_hours=window,
             exclude_idempotency_key=idempotency_key,
         )
@@ -328,33 +336,37 @@ def _screen_dose(
         prior_doses = []
         for p in priors:
             gap = (now - p["_when"]).total_seconds() / 3600.0
-            prior_doses.append({
-                "administration_id": p["id"],
-                "medication_id": p["medication_id"],
-                "drug_name": p["drug_name"],
-                "administered_at": p["administered_at"],
-                "administered_by": p["administered_by"],
-                "same_order": p["medication_id"] == med_id,
-                "names": prior_names.get(p["id"], [p["drug_name"]]),
-                "hours_ago": gap,
-            })
+            prior_doses.append(
+                {
+                    "administration_id": p["id"],
+                    "medication_id": p["medication_id"],
+                    "drug_name": p["drug_name"],
+                    "administered_at": p["administered_at"],
+                    "administered_by": p["administered_by"],
+                    "same_order": p["medication_id"] == med_id,
+                    "names": prior_names.get(p["id"], [p["drug_name"]]),
+                    "hours_ago": gap,
+                }
+            )
         duplicate = drug_safety_service.evaluate_duplicate(
-            drug_name, ingredients, med["frequency"], prior_doses, floor)
+            drug_name, ingredients, med["frequency"], prior_doses, floor
+        )
         if duplicate:
             check["duplicate"] = duplicate
             check["findings"] = [*check["findings"], duplicate]
             check["decision"] = drug_safety_service.worse_dose_decision(
-                check["decision"], duplicate["decision"])
+                check["decision"], duplicate["decision"]
+            )
     except Exception as e:
-        logger.error("[DoseGuard] duplicate check FAILED for %s / %s: %s",
-                     med["patient_id"], drug_name, e)
+        logger.error(
+            "[DoseGuard] duplicate check FAILED for %s / %s: %s", med["patient_id"], drug_name, e
+        )
         unavailable.append("duplicate-dose check")
 
     if unavailable:
         check["unavailable"] = True
         check["unavailable_reason"] = (
-            "could not run: " + ", ".join(unavailable) +
-            ". This dose has NOT been fully checked"
+            "could not run: " + ", ".join(unavailable) + ". This dose has NOT been fully checked"
         )
         # Surfaced, not swallowed: at least a WARN so the clinician sees it.
         if check["decision"] == drug_safety_service.DOSE_ALLOW:
@@ -371,26 +383,29 @@ def _screen_dose(
     # exists to catch — so it is never carried, and must be justified afresh
     # every single time. That distinction is baked into the fingerprint, so the
     # two can never be confused for one another.
-    matches_order = (
-        drug_safety_service._norm(dose_given or "") ==
-        drug_safety_service._norm(med["dosage"] or "")
-        and drug_safety_service._norm(route_given or "") ==
-        drug_safety_service._norm(med["route"] or "")
+    matches_order = drug_safety_service._norm(dose_given or "") == drug_safety_service._norm(
+        med["dosage"] or ""
+    ) and drug_safety_service._norm(route_given or "") == drug_safety_service._norm(
+        med["route"] or ""
     )
     check["matches_order"] = matches_order
     if not check["unavailable"]:
         # An unreadable check is not a decision anyone made about a known risk,
         # so it gets no fingerprint and can never be inherited by a later dose.
         check["fingerprint"] = drug_safety_service.dose_fingerprint(
-            drug_name, _override_scope(check),
-            check["parsed_dose"], check["route_tags"], matches_order,
+            drug_name,
+            _override_scope(check),
+            check["parsed_dose"],
+            check["route_tags"],
+            matches_order,
         )
 
     if check["decision"] != drug_safety_service.DOSE_BLOCK:
         return check
 
     check["message"] = " ".join(
-        f["message"] for f in check["findings"]
+        f["message"]
+        for f in check["findings"]
         if f.get("decision") == drug_safety_service.DOSE_BLOCK
     )
 
@@ -413,7 +428,7 @@ def _screen_dose(
     raise DoseGuardBlocked(check, check["message"] or "dose guard: this dose was stopped")
 
 
-def _override_scope(check: dict) -> Optional[str]:
+def _override_scope(check: dict) -> str | None:
     """Everything a typed reason would have to cover, as ONE identity.
 
     Not simply ``check["rule"]``. A dose can trip a magnitude rule AND a
@@ -444,7 +459,7 @@ def _resolve_prior_names(db, priors: list[dict]) -> dict:
     names = {p["drug_name"] for p in priors if p.get("drug_name")}
     try:
         resolved = allergy_interlock.resolve_ingredients_bulk(db, names)
-    except Exception:                            # pragma: no cover — defensive
+    except Exception:  # pragma: no cover — defensive
         resolved = {}
     out: dict = {}
     for p in priors:
@@ -458,11 +473,11 @@ def _record_dose_override(
     db,
     *,
     check: dict,
-    med_id: Optional[int],
+    med_id: int | None,
     patient_id: str,
     actor_id: str,
-    administration_id: Optional[int],
-) -> Optional[int]:
+    administration_id: int | None,
+) -> int | None:
     """Persist a NEW dose override on the caller's connection/transaction.
 
     Deliberately inside the SAME transaction as the administration row: the dose
@@ -500,14 +515,14 @@ def record_administration(
     actor_id: str,
     *,
     status: str,
-    dose_given: Optional[str] = None,
-    route_given: Optional[str] = None,
-    not_given_reason: Optional[str] = None,
+    dose_given: str | None = None,
+    route_given: str | None = None,
+    not_given_reason: str | None = None,
     confirmation_method: str = "typed",
-    idempotency_key: Optional[str] = None,
-    notes: Optional[str] = None,
-    allergy_override_reason: Optional[str] = None,
-    dose_override_reason: Optional[str] = None,
+    idempotency_key: str | None = None,
+    notes: str | None = None,
+    allergy_override_reason: str | None = None,
+    dose_override_reason: str | None = None,
 ) -> dict:
     """Record one bedside administration attempt of a charted medication.
 
@@ -573,9 +588,7 @@ def record_administration(
         # its repeat window. With it off, as before: every PRN dose is refused,
         # which leaves a PRN dose given off the record and past the interlock.
         if med["status"] not in _givable_statuses():
-            raise ValueError(
-                f"medication {med_id} is not an active order (status={med['status']})"
-            )
+            raise ValueError(f"medication {med_id} is not an active order (status={med['status']})")
         if med["source"] in _UNVERIFIED_SOURCES and med["verified_by"] is None:
             raise ValueError("unverified medication: pharmacist verification required")
 
@@ -601,7 +614,8 @@ def record_administration(
             if existing:
                 (replay,) = _mark_before_check(
                     [_hydrate(_fetch_administration(db, existing["id"]))],
-                    _before_check_administration_ids(db, med["patient_id"]))
+                    _before_check_administration_ids(db, med["patient_id"]),
+                )
                 return {**replay, "replayed": True}
 
         # ── The patient must still be an inpatient ────────────────────────────
@@ -627,7 +641,11 @@ def record_administration(
             patient_status = db.execute(
                 "SELECT status FROM patients WHERE id = ?", (med["patient_id"],)
             ).fetchone()
-            if patient_status is not None and patient_status["status"] not in (None, "", "admitted"):
+            if patient_status is not None and patient_status["status"] not in (
+                None,
+                "",
+                "admitted",
+            ):
                 raise ValueError(
                     f"patient {med['patient_id']} is not admitted "
                     f"(status={patient_status['status']}): a dose cannot be administered "
@@ -657,7 +675,10 @@ def record_administration(
         allergy_screen = None
         if status == "given":
             allergy_screen = allergy_interlock.screen_for_administration(
-                db, med["patient_id"], record_drug_name, med_id,
+                db,
+                med["patient_id"],
+                record_drug_name,
+                med_id,
                 override_reason=allergy_override_reason,
                 # WHO is giving it decides whether a typed reason counts.
                 # Clearing a charted allergy is a prescribing decision
@@ -667,8 +688,7 @@ def record_administration(
                 actor_id=actor_id,
             )
         allergy_json = (
-            json.dumps(allergy_interlock.summarize(allergy_screen))
-            if allergy_screen else None
+            json.dumps(allergy_interlock.summarize(allergy_screen)) if allergy_screen else None
         )
 
         # ── Dose guard ────────────────────────────────────────────────────────
@@ -685,14 +705,16 @@ def record_administration(
         dose_check = None
         if status == "given":
             dose_check = _screen_dose(
-                db, med=med, med_id=med_id,
-                dose_given=dose_given, route_given=route_given,
+                db,
+                med=med,
+                med_id=med_id,
+                dose_given=dose_given,
+                route_given=route_given,
                 idempotency_key=idempotency_key,
                 override_reason=dose_override_reason,
             )
         dose_json = (
-            json.dumps(drug_safety_service.summarize_dose_check(dose_check))
-            if dose_check else None
+            json.dumps(drug_safety_service.summarize_dose_check(dose_check)) if dose_check else None
         )
 
         try:
@@ -702,23 +724,39 @@ def record_administration(
                         dose_given, route_given, confirmation_method, idempotency_key, notes,
                         allergy_check_json, dose_check_json)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (med_id, med["patient_id"], actor_id, status, not_given_reason,
-                 dose_given, route_given, confirmation_method, idempotency_key, notes,
-                 allergy_json, dose_json),
+                (
+                    med_id,
+                    med["patient_id"],
+                    actor_id,
+                    status,
+                    not_given_reason,
+                    dose_given,
+                    route_given,
+                    confirmation_method,
+                    idempotency_key,
+                    notes,
+                    allergy_json,
+                    dose_json,
+                ),
             )
             inserted_id = cur.lastrowid
         except DBIntegrityError:
             # Concurrent replay raced past the pre-INSERT check — return the
             # existing row for this key rather than a duplicate.
-            existing = db.execute(
-                "SELECT id FROM medication_administrations WHERE idempotency_key = ?",
-                (idempotency_key,),
-            ).fetchone() if idempotency_key else None
+            existing = (
+                db.execute(
+                    "SELECT id FROM medication_administrations WHERE idempotency_key = ?",
+                    (idempotency_key,),
+                ).fetchone()
+                if idempotency_key
+                else None
+            )
             if not existing:
                 raise
             (replay,) = _mark_before_check(
                 [_hydrate(_fetch_administration(db, existing["id"]))],
-                _before_check_administration_ids(db, med["patient_id"]))
+                _before_check_administration_ids(db, med["patient_id"]),
+            )
             return {**replay, "replayed": True}
 
         # The order-state check again, now that this transaction holds the
@@ -730,19 +768,26 @@ def record_administration(
         # dose does not count itself, while a second nurse's 'first' dose,
         # committed before this lock was taken, does.
         linked_order = emar_check.check_dose_in_txn(
-            db, med_id, status, exclude_administration_id=inserted_id)
+            db, med_id, status, exclude_administration_id=inserted_id
+        )
         before_check = bool(linked_order and linked_order.get("before_pharmacist_check"))
         # A given dose names the supply row it came from only when exactly one
         # received, unused unit of the order is on the ward; otherwise its
         # event says 'supply not linked' (medorders-5b). Read here, under the
         # write lock, so two doses cannot both take the last unit. None for an
         # unlinked ward row.
-        custody = (medorder_supply.custody_for_dose_in_txn(db, linked_order)
-                   if status == "given" else None)
+        custody = (
+            medorder_supply.custody_for_dose_in_txn(db, linked_order) if status == "given" else None
+        )
         order_event_id = emar_check.record_bedside_event_in_txn(
-            db, linked_order, medication_id=med_id, administration_id=inserted_id,
-            administration_status=status, actor_id=actor_id,
-            not_given_reason=not_given_reason, confirmation_method=confirmation_method,
+            db,
+            linked_order,
+            medication_id=med_id,
+            administration_id=inserted_id,
+            administration_status=status,
+            actor_id=actor_id,
+            not_given_reason=not_given_reason,
+            confirmation_method=confirmation_method,
             custody=custody,
         )
 
@@ -789,8 +834,11 @@ def record_administration(
             db=db,
             summary_message=(
                 f"Medication {med_id} ({record['drug_name']}) "
-                + (f"administered ({dose_given}, {route_given})" if status == "given"
-                   else f"NOT given: {not_given_reason}")
+                + (
+                    f"administered ({dose_given}, {route_given})"
+                    if status == "given"
+                    else f"NOT given: {not_given_reason}"
+                )
                 + (" before the pharmacist check" if before_check else "")
                 + f" by {actor_id}"
             ),
@@ -820,18 +868,36 @@ def record_administration(
                 # The medication order this ward row is linked to, and the
                 # bedside event written for it (medorders-3). Absent for an
                 # unlinked row, so its audit row is exactly as before.
-                **({"med_order_id": linked_order["med_order_id"],
-                    "med_order_event_id": order_event_id} if linked_order else {}),
+                **(
+                    {
+                        "med_order_id": linked_order["med_order_id"],
+                        "med_order_event_id": order_event_id,
+                    }
+                    if linked_order
+                    else {}
+                ),
                 # The supply row this dose came from, or None with the event
                 # saying 'supply not linked' (medorders-5b). Linked rows only.
-                **({"supply_helix_order_id": custody.get("helix_order_id")}
-                   if linked_order and custody is not None else {}),
+                **(
+                    {"supply_helix_order_id": custody.get("helix_order_id")}
+                    if linked_order and custody is not None
+                    else {}
+                ),
                 # A first stat or urgent dose given before the pharmacist's
                 # check (ruling MO-R1 (a), medorders-11). Absent otherwise.
-                **({"given_before_pharmacist_check": True,
-                    "first_dose_rule": linked_order.get("first_dose_rule"),
-                    "order_priority": linked_order.get("priority")}
-                   if before_check else {}),
+                **(
+                    {
+                        "given_before_pharmacist_check": True,
+                        "first_dose_rule": linked_order.get("first_dose_rule")
+                        if linked_order is not None
+                        else None,
+                        "order_priority": linked_order.get("priority")
+                        if linked_order is not None
+                        else None,
+                    }
+                    if before_check
+                    else {}
+                ),
             },
         )
 
@@ -839,8 +905,10 @@ def record_administration(
         # but written with the fail-closed clinical_access category and inside
         # this transaction, so "the dose committed but the reason for
         # overriding the allergy did not" is not a reachable state.
-        if allergy_screen and (allergy_screen.get("override") or
-                               allergy_screen.get("decision") == allergy_interlock.BLOCK):
+        if allergy_screen and (
+            allergy_screen.get("override")
+            or allergy_screen.get("decision") == allergy_interlock.BLOCK
+        ):
             ov = allergy_screen.get("override") or {}
             authority = allergy_screen.get("override_authority") or {}
             # The allergen(s) NAMED in the summary line, not only buried in the
@@ -858,10 +926,16 @@ def record_administration(
                     f"{actor_id} administered {record['drug_name']} (medication {med_id}) "
                     f"DESPITE the allergy interlock"
                     + (f", documented allergy: {', '.join(allergens)}" if allergens else "")
-                    + (" (allergy screening unavailable)" if allergy_screen.get("screen_failed")
-                       else "")
-                    + (" [reason carried forward from an earlier dose of this order]"
-                       if ov.get("carried") else "")
+                    + (
+                        " (allergy screening unavailable)"
+                        if allergy_screen.get("screen_failed")
+                        else ""
+                    )
+                    + (
+                        " [reason carried forward from an earlier dose of this order]"
+                        if ov.get("carried")
+                        else ""
+                    )
                     + f": {ov.get('reason')}"
                 ),
                 actor_user_id=actor_id,
@@ -907,8 +981,11 @@ def record_administration(
                 summary_message=(
                     f"{actor_id} administered {record['drug_name']} {dose_given} "
                     f"({route_given}, medication {med_id}) DESPITE the dose guard"
-                    + (" [reason carried forward from an earlier dose of this order]"
-                       if ov.get("carried") else "")
+                    + (
+                        " [reason carried forward from an earlier dose of this order]"
+                        if ov.get("carried")
+                        else ""
+                    )
                     + f": {ov.get('reason')}"
                 ),
                 actor_user_id=actor_id,
@@ -945,19 +1022,29 @@ def record_administration(
     if dose_check and dose_check.get("decision") != drug_safety_service.DOSE_ALLOW:
         logger.warning(
             "eMAR: DOSE %s on med %s (%s %s %s) for patient %s by %s%s%s",
-            dose_check["decision"].upper(), med_id, record_drug_name,
-            dose_given, route_given, record["patient_id"], actor_id,
+            dose_check["decision"].upper(),
+            med_id,
+            record_drug_name,
+            dose_given,
+            route_given,
+            record["patient_id"],
+            actor_id,
             " [OVERRIDDEN]" if dose_check.get("override") else "",
             " [CHECK UNAVAILABLE]" if dose_check.get("unavailable") else "",
         )
     if allergy_screen and allergy_screen.get("decision") != allergy_interlock.ALLOW:
         logger.warning(
             "eMAR: ALLERGY %s on med %s (%s) for patient %s by %s%s",
-            allergy_screen["decision"].upper(), med_id, record_drug_name,
-            record["patient_id"], actor_id,
+            allergy_screen["decision"].upper(),
+            med_id,
+            record_drug_name,
+            record["patient_id"],
+            actor_id,
             " [OVERRIDDEN]" if allergy_screen.get("override") else "",
         )
-    logger.info("eMAR: med %s %s by %s (patient %s)", med_id, status, actor_id, record["patient_id"])
+    logger.info(
+        "eMAR: med %s %s by %s (patient %s)", med_id, status, actor_id, record["patient_id"]
+    )
     if before_check:
         record["given_before_pharmacist_check"] = True
     return {**record, "replayed": False}
@@ -979,21 +1066,32 @@ def _book_ward_stock_use(administration_id: int, linked_order: dict, actor_id: s
             return
         with db_session(immediate=True) as conn:
             outcome = stock.record_ward_consumption_in_txn(
-                conn, administration_id, med_order_id=linked_order.get("med_order_id"),
-                actor_id=actor_id)
+                conn,
+                administration_id,
+                med_order_id=linked_order.get("med_order_id"),
+                actor_id=actor_id,
+            )
     except Exception as exc:  # the dose is charted; the stock books must never touch it
         logger.warning(
             "eMAR: administration %s is charted, but its ward stock use was not booked (%s)",
-            administration_id, getattr(exc, "code", None) or type(exc).__name__)
+            administration_id,
+            getattr(exc, "code", None) or type(exc).__name__,
+        )
         return
     if outcome.get("status") == "consumed" and outcome.get("below_zero"):
         logger.warning(
             "eMAR: administration %s was booked against ward stock that the books did not "
             "hold (lot %s now %s): the ward should count this drug",
-            administration_id, outcome.get("lot_id"), outcome.get("balance_after_units"))
+            administration_id,
+            outcome.get("lot_id"),
+            outcome.get("balance_after_units"),
+        )
     elif outcome.get("status") == "skipped":
-        logger.info("eMAR: administration %s took nothing off ward stock: %s",
-                    administration_id, outcome.get("reason_words") or outcome.get("reason"))
+        logger.info(
+            "eMAR: administration %s took nothing off ward stock: %s",
+            administration_id,
+            outcome.get("reason_words") or outcome.get("reason"),
+        )
 
 
 def _before_check_administration_ids(db, patient_id: str) -> set[int]:

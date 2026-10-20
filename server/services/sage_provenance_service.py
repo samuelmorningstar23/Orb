@@ -109,6 +109,7 @@ Since 2026-10-03 migration 44 (sage_provenance_schema) runs the same
 `_apply_schema` at boot, so a fresh appliance has the tables before its first
 answer; `ensure_schema` stays as the guard for any path that runs before it.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -118,7 +119,7 @@ import os
 import threading
 import uuid
 import zlib
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from database import db_session
 
@@ -190,7 +191,11 @@ _TRUNCATION_MARKER = "\n… [truncated by provenance store]"
 # ════════════════════════════════════════════════════════════════════════════
 def enabled() -> bool:
     return os.getenv("ORB_SAGE_PROVENANCE_ENABLED", "1").strip().lower() not in (
-        "0", "false", "no", "off")
+        "0",
+        "false",
+        "no",
+        "off",
+    )
 
 
 def retention_days() -> int:
@@ -271,8 +276,7 @@ CREATE TABLE IF NOT EXISTS sage_provenance_turns (
     bytes_logical            INTEGER NOT NULL DEFAULT 0,
     schema_v                 INTEGER NOT NULL DEFAULT 1
 )""",
-    "CREATE INDEX IF NOT EXISTS idx_sage_prov_time "
-    "ON sage_provenance_turns(occurred_at)",
+    "CREATE INDEX IF NOT EXISTS idx_sage_prov_time ON sage_provenance_turns(occurred_at)",
     "CREATE INDEX IF NOT EXISTS idx_sage_prov_patient "
     "ON sage_provenance_turns(patient_id, occurred_at)",
     "CREATE INDEX IF NOT EXISTS idx_sage_prov_actor "
@@ -346,12 +350,18 @@ CREATE TABLE IF NOT EXISTS sage_provenance_refs (
 #: SAFETY_FLOOR_UNKNOWN; ADD COLUMN fires no UPDATE trigger and validates no
 #: old rows, so the migration cannot touch what was already recorded.
 _ADDITIVE_COLUMNS = (
-    ("sage_provenance_turns", "safety_floor_state",
-     "ALTER TABLE sage_provenance_turns ADD COLUMN safety_floor_state TEXT "
-     "CHECK (safety_floor_state IN ('fired','not_fired','not_evaluated'))"),
-    ("sage_provenance_turns", "safety_floor_armed",
-     "ALTER TABLE sage_provenance_turns ADD COLUMN safety_floor_armed INTEGER "
-     "CHECK (safety_floor_armed IN (0, 1))"),
+    (
+        "sage_provenance_turns",
+        "safety_floor_state",
+        "ALTER TABLE sage_provenance_turns ADD COLUMN safety_floor_state TEXT "
+        "CHECK (safety_floor_state IN ('fired','not_fired','not_evaluated'))",
+    ),
+    (
+        "sage_provenance_turns",
+        "safety_floor_armed",
+        "ALTER TABLE sage_provenance_turns ADD COLUMN safety_floor_armed INTEGER "
+        "CHECK (safety_floor_armed IN (0, 1))",
+    ),
 )
 
 _schema_lock = threading.Lock()
@@ -404,7 +414,7 @@ def drop_schema(db) -> None:
 #  Helpers
 # ════════════════════════════════════════════════════════════════════════════
 def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    return datetime.now(UTC).isoformat(timespec="milliseconds")
 
 
 def new_turn_id() -> str:
@@ -416,8 +426,7 @@ def _canon(obj) -> str:
 
     Determinism is what makes deduplication work at all — two identical charts
     that serialise differently are two blobs."""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"),
-                      ensure_ascii=False, default=str)
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
 
 
 def _clip(text: str) -> str:
@@ -445,22 +454,22 @@ def _put_blob(db, kind: str, text: str) -> tuple[str, int, int]:
     """
     raw = (text or "").encode("utf-8")
     cid = hashlib.sha256(raw).hexdigest()[:_CID_LEN]
-    existing = db.execute(
-        "SELECT 1 FROM sage_provenance_blobs WHERE cid = ?", (cid,)).fetchone()
+    existing = db.execute("SELECT 1 FROM sage_provenance_blobs WHERE cid = ?", (cid,)).fetchone()
     if existing is not None:
         return cid, 0, len(raw)
     body = zlib.compress(raw, 6)
     db.execute(
         "INSERT OR IGNORE INTO sage_provenance_blobs "
         "(cid, kind, encoding, logical_len, first_seen, body) VALUES (?, ?, 'z', ?, ?, ?)",
-        (cid, kind, len(raw), int(datetime.now(timezone.utc).timestamp()), body),
+        (cid, kind, len(raw), int(datetime.now(UTC).timestamp()), body),
     )
     return cid, len(body), len(raw)
 
 
 def _get_blob(db, cid: str) -> str | None:
     row = db.execute(
-        "SELECT body, encoding FROM sage_provenance_blobs WHERE cid = ?", (cid,)).fetchone()
+        "SELECT body, encoding FROM sage_provenance_blobs WHERE cid = ?", (cid,)
+    ).fetchone()
     if row is None:
         return None
     body = row["body"]
@@ -560,14 +569,29 @@ def record_turn(
         return None
     try:
         return _record_turn_inner(
-            turn_id=turn_id, lane=lane, outcome=outcome, user=user, question=question,
-            patient_id=patient_id, patient_context=patient_context,
-            prompt_context=prompt_context, sources=sources, route_info=route_info,
-            answer=answer, raw_output=raw_output, structured=structured,
-            cited_doc_ids=cited_doc_ids, citation_basis=citation_basis,
-            confidence=confidence, escalation=escalation, query_scope=query_scope,
-            action_status=action_status, refusal_class=refusal_class, timings=timings,
-            occurred_at=occurred_at, db=db,
+            turn_id=turn_id,
+            lane=lane,
+            outcome=outcome,
+            user=user,
+            question=question,
+            patient_id=patient_id,
+            patient_context=patient_context,
+            prompt_context=prompt_context,
+            sources=sources,
+            route_info=route_info,
+            answer=answer,
+            raw_output=raw_output,
+            structured=structured,
+            cited_doc_ids=cited_doc_ids,
+            citation_basis=citation_basis,
+            confidence=confidence,
+            escalation=escalation,
+            query_scope=query_scope,
+            action_status=action_status,
+            refusal_class=refusal_class,
+            timings=timings,
+            occurred_at=occurred_at,
+            db=db,
         )
     except Exception:
         # Rule: the record degrades, the care does not.
@@ -575,11 +599,32 @@ def record_turn(
         return None
 
 
-def _record_turn_inner(*, turn_id, lane, outcome, user, question, patient_id,
-                       patient_context, prompt_context, sources, route_info, answer,
-                       raw_output, structured, cited_doc_ids, citation_basis, confidence,
-                       escalation, query_scope, action_status, refusal_class, timings,
-                       occurred_at, db):
+def _record_turn_inner(
+    *,
+    turn_id,
+    lane,
+    outcome,
+    user,
+    question,
+    patient_id,
+    patient_context,
+    prompt_context,
+    sources,
+    route_info,
+    answer,
+    raw_output,
+    structured,
+    cited_doc_ids,
+    citation_basis,
+    confidence,
+    escalation,
+    query_scope,
+    action_status,
+    refusal_class,
+    timings,
+    occurred_at,
+    db,
+):
     from permissions import department_scope
 
     user = user or {}
@@ -650,32 +695,43 @@ def _write(db, ns: dict) -> str:
         written += new_bytes
         logical += logical_bytes
         refs.append((ROLE_GUIDELINE_BODY, i, cid))
-        manifest.append({
-            "document_id": s.get("document_id"),
-            "title": s.get("title"),
-            "source": s.get("source"),
-            "source_type": s.get("source_type"),
-            "trust_tier": s.get("trust_tier"),
-            "is_synthetic": bool(s.get("is_synthetic", False)),
-            "category": s.get("category"),
-            "fusion_score": s.get("fusion_score"),
-            "passage_cid": cid,
-        })
+        manifest.append(
+            {
+                "document_id": s.get("document_id"),
+                "title": s.get("title"),
+                "source": s.get("source"),
+                "source_type": s.get("source_type"),
+                "trust_tier": s.get("trust_tier"),
+                "is_synthetic": bool(s.get("is_synthetic", False)),
+                "category": s.get("category"),
+                "fusion_score": s.get("fusion_score"),
+                "passage_cid": cid,
+            }
+        )
     if manifest:
         add(ROLE_GUIDELINE_MANIFEST, ROLE_GUIDELINE_MANIFEST, _canon(manifest))
 
     # ── the answer as delivered, and what the model actually emitted first ──
-    add(ROLE_ANSWER, ROLE_ANSWER, _canon({
-        "text": ns["answer"] or "",
-        "structured": ns["structured"] or {},
-        "cited_document_ids": ns["cited_doc_ids"],
-    }))
+    add(
+        ROLE_ANSWER,
+        ROLE_ANSWER,
+        _canon(
+            {
+                "text": ns["answer"] or "",
+                "structured": ns["structured"] or {},
+                "cited_document_ids": ns["cited_doc_ids"],
+            }
+        ),
+    )
     if ns["raw_output"]:
         add(ROLE_RAW, ROLE_RAW, ns["raw_output"])
 
     info = ns["info"]
-    prompt_sha = (hashlib.sha256(ns["prompt_context"].encode("utf-8")).hexdigest()
-                  if ns["prompt_context"] else None)
+    prompt_sha = (
+        hashlib.sha256(ns["prompt_context"].encode("utf-8")).hexdigest()
+        if ns["prompt_context"]
+        else None
+    )
     retrieved_ids = [s.get("document_id") for s in ns["sources"]]
     timings = ns["timings"]
 
@@ -696,33 +752,49 @@ def _write(db, ns: dict) -> str:
                bytes_written, bytes_logical, schema_v
            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
-            turn_id, ns["occurred_at"], ns["lane"], ns["outcome"],
-            (ns["user"] or {}).get("id"), (ns["user"] or {}).get("role"),
-            ns["dept"], 1 if ns["dept"] is None else 0,
-            ns["patient_id"], 1 if ns["patient_context"] is not None else 0, ns["query_scope"],
-            info.get("thinking_model") or info.get("model"), info.get("model"),
+            turn_id,
+            ns["occurred_at"],
+            ns["lane"],
+            ns["outcome"],
+            (ns["user"] or {}).get("id"),
+            (ns["user"] or {}).get("role"),
+            ns["dept"],
+            1 if ns["dept"] is None else 0,
+            ns["patient_id"],
+            1 if ns["patient_context"] is not None else 0,
+            ns["query_scope"],
+            info.get("thinking_model") or info.get("model"),
+            info.get("model"),
             info.get("provider"),
             None if info.get("thinking") is None else int(bool(info.get("thinking"))),
-            None if info.get("thinking_requested") is None
+            None
+            if info.get("thinking_requested") is None
             else int(bool(info.get("thinking_requested"))),
-            info.get("thinking_tier"), info.get("thinking_reason"),
+            info.get("thinking_tier"),
+            info.get("thinking_reason"),
             int(bool(info.get("safety_floor"))),
             _canon(list(info.get("safety_floor_rules") or [])),
             int(bool(info.get("safety_floor_unsatisfied"))),
-            _safety_floor_state(info), _safety_floor_armed(info),
-            ns["citation_basis"], ns["confidence"], int(bool(ns["escalation"])),
-            _canon(retrieved_ids), _canon(ns["cited_doc_ids"]),
-            ns["action_status"], ns["refusal_class"],
+            _safety_floor_state(info),
+            _safety_floor_armed(info),
+            ns["citation_basis"],
+            ns["confidence"],
+            int(bool(ns["escalation"])),
+            _canon(retrieved_ids),
+            _canon(ns["cited_doc_ids"]),
+            ns["action_status"],
+            ns["refusal_class"],
             prompt_sha,
             _int_or_none(timings.get("retrieval_ms")),
             _int_or_none(timings.get("ttft_ms")),
             _int_or_none(timings.get("total_ms")),
-            written, logical, SCHEMA_V,
+            written,
+            logical,
+            SCHEMA_V,
         ),
     )
     db.executemany(
-        "INSERT OR IGNORE INTO sage_provenance_refs (turn_id, role, ord, cid) "
-        "VALUES (?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO sage_provenance_refs (turn_id, role, ord, cid) VALUES (?, ?, ?, ?)",
         [(turn_id, role, ord_, cid) for role, ord_, cid in refs],
     )
     return turn_id
@@ -742,8 +814,7 @@ def get_turn_row(turn_id: str, db=None) -> dict | None:
 
 def _get_turn_row(db, turn_id: str) -> dict | None:
     ensure_schema(db)
-    row = db.execute(
-        "SELECT * FROM sage_provenance_turns WHERE turn_id = ?", (turn_id,)).fetchone()
+    row = db.execute("SELECT * FROM sage_provenance_turns WHERE turn_id = ?", (turn_id,)).fetchone()
     return dict(row) if row is not None else None
 
 
@@ -762,7 +833,8 @@ def _replay(db, turn_id: str) -> dict | None:
 
     refs = db.execute(
         "SELECT role, ord, cid FROM sage_provenance_refs WHERE turn_id = ? ORDER BY role, ord",
-        (turn_id,)).fetchall()
+        (turn_id,),
+    ).fetchall()
     by_role: dict[str, list[tuple[int, str]]] = {}
     for r in refs:
         by_role.setdefault(r["role"], []).append((r["ord"], r["cid"]))
@@ -839,8 +911,9 @@ def _replay(db, turn_id: str) -> dict | None:
             "safety_floor": bool(row["safety_floor"]),
             "safety_floor_rules": jload("safety_floor_rules", []),
             "safety_floor_unsatisfied": bool(row["safety_floor_unsatisfied"]),
-            "safety_floor_state": _floor_state_label(row.get("safety_floor_state"),
-                                                     row.get("safety_floor_armed")),
+            "safety_floor_state": _floor_state_label(
+                row.get("safety_floor_state"), row.get("safety_floor_armed")
+            ),
         },
         "answer": {
             "text": answer_blob.get("text", ""),
@@ -871,10 +944,17 @@ def _replay(db, turn_id: str) -> dict | None:
     }
 
 
-def list_turns(*, patient_ids_sql: tuple | None = None, scope_department: str | None = None,
-               patient_id: str | None = None, actor_user_id: str | None = None,
-               since: str | None = None, limit: int = 50, offset: int = 0,
-               db=None) -> list[dict]:
+def list_turns(
+    *,
+    patient_ids_sql: tuple | None = None,
+    scope_department: str | None = None,
+    patient_id: str | None = None,
+    actor_user_id: str | None = None,
+    since: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    db=None,
+) -> list[dict]:
     """Metadata only — no question text, no chart, no answer.
 
     `patient_ids_sql` is (sql, params) from permissions.scope_patient_ids_sql; when
@@ -892,22 +972,27 @@ def list_turns(*, patient_ids_sql: tuple | None = None, scope_department: str | 
     every scoped listing — the fail-closed direction, and the reason no backfill
     is needed (the append-only trigger forbids one anyway)."""
     if db is not None:
-        return _list_turns(db, patient_ids_sql, scope_department, patient_id,
-                           actor_user_id, since, limit, offset)
+        return _list_turns(
+            db, patient_ids_sql, scope_department, patient_id, actor_user_id, since, limit, offset
+        )
     with db_session() as conn:
-        return _list_turns(conn, patient_ids_sql, scope_department, patient_id,
-                           actor_user_id, since, limit, offset)
+        return _list_turns(
+            conn, patient_ids_sql, scope_department, patient_id, actor_user_id, since, limit, offset
+        )
 
 
-def _list_turns(db, patient_ids_sql, scope_department, patient_id, actor_user_id,
-                since, limit, offset):
+def _list_turns(
+    db, patient_ids_sql, scope_department, patient_id, actor_user_id, since, limit, offset
+):
     ensure_schema(db)
     where = ["1=1"]
     params: list = []
     if patient_ids_sql is not None:
         sql, sql_params = patient_ids_sql
-        where.append(f"((patient_id IS NOT NULL AND patient_id IN ({sql})) "
-                     "OR (patient_id IS NULL AND department = ?))")
+        where.append(
+            f"((patient_id IS NOT NULL AND patient_id IN ({sql})) "
+            "OR (patient_id IS NULL AND department = ?))"
+        )
         params.extend(sql_params)
         params.append(scope_department)
     if patient_id:
@@ -939,8 +1024,9 @@ def _list_turns(db, patient_ids_sql, scope_department, patient_id, actor_user_id
         d["thinking"] = _as_bool(d["thinking"])
         d["safety_floor"] = bool(d["safety_floor"])
         d["safety_floor_unsatisfied"] = bool(d["safety_floor_unsatisfied"])
-        d["safety_floor_state"] = _floor_state_label(d["safety_floor_state"],
-                                                     d.pop("safety_floor_armed", None))
+        d["safety_floor_state"] = _floor_state_label(
+            d["safety_floor_state"], d.pop("safety_floor_armed", None)
+        )
         d["escalation"] = bool(d["escalation"])
         # A COUNT of retrieved documents, not their ids: the listing stays the
         # thin metadata surface, and "did retrieval inform this answer?" is the
@@ -970,28 +1056,32 @@ def prune(*, now: datetime | None = None, days: int | None = None, db=None) -> d
 
 def _prune(db, now, days) -> dict:
     ensure_schema(db)
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     cutoff = (now - timedelta(days=days if days is not None else retention_days())).isoformat()
 
-    doomed = [r["turn_id"] for r in db.execute(
-        "SELECT turn_id FROM sage_provenance_turns WHERE occurred_at < ?", (cutoff,)).fetchall()]
+    doomed = [
+        r["turn_id"]
+        for r in db.execute(
+            "SELECT turn_id FROM sage_provenance_turns WHERE occurred_at < ?", (cutoff,)
+        ).fetchall()
+    ]
     if not doomed:
         return {"cutoff": cutoff, "turns_deleted": 0, "blobs_deleted": 0, "bytes_reclaimed": 0}
 
-    db.executemany("DELETE FROM sage_provenance_refs WHERE turn_id = ?",
-                   [(t,) for t in doomed])
-    db.executemany("DELETE FROM sage_provenance_turns WHERE turn_id = ?",
-                   [(t,) for t in doomed])
+    db.executemany("DELETE FROM sage_provenance_refs WHERE turn_id = ?", [(t,) for t in doomed])
+    db.executemany("DELETE FROM sage_provenance_turns WHERE turn_id = ?", [(t,) for t in doomed])
 
     # ONE scan of the edge table, not a correlated lookup per blob: `refs` has no
     # cid index (see the schema note) because this is the only query that wants
     # one and it runs at most once a day.
     orphans = db.execute(
         "SELECT cid, LENGTH(body) sz FROM sage_provenance_blobs "
-        "WHERE cid NOT IN (SELECT cid FROM sage_provenance_refs)").fetchall()
+        "WHERE cid NOT IN (SELECT cid FROM sage_provenance_refs)"
+    ).fetchall()
     reclaimed = sum(int(o["sz"] or 0) for o in orphans)
-    db.executemany("DELETE FROM sage_provenance_blobs WHERE cid = ?",
-                   [(o["cid"],) for o in orphans])
+    db.executemany(
+        "DELETE FROM sage_provenance_blobs WHERE cid = ?", [(o["cid"],) for o in orphans]
+    )
     return {
         "cutoff": cutoff,
         "turns_deleted": len(doomed),
@@ -1041,8 +1131,7 @@ def _storage_stats(db, turns_per_day: int) -> dict:
         "SELECT COUNT(*) c, COALESCE(SUM(bytes_logical),0) logical FROM sage_provenance_turns"
     ).fetchone()
     b = db.execute(
-        "SELECT COUNT(*) c, COALESCE(SUM(LENGTH(body)),0) stored "
-        "FROM sage_provenance_blobs"
+        "SELECT COUNT(*) c, COALESCE(SUM(LENGTH(body)),0) stored FROM sage_provenance_blobs"
     ).fetchone()
     refs = db.execute("SELECT COUNT(*) c FROM sage_provenance_refs").fetchone()["c"]
 

@@ -115,21 +115,37 @@ are listed in NOT_DUPLICATE_SCREENED with the reason; every entry point the
 server passes to the gate is in one list or the other
 (tests/test_medorder_screen_scope.py reads the code to hold it there).
 """
+
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping, Optional
+from collections.abc import Iterable, Mapping
+from datetime import UTC, datetime
+from typing import Any
 
 from services.medorders import core
 
 __all__ = [
-    "ENTRY_OPD", "DUPLICATE_SCREENED_ENTRY_POINTS", "NOT_DUPLICATE_SCREENED",
-    "DUPLICATE_RULES", "DUPLICATE_RULE_BLOCK", "DUPLICATE_RULE_ACKNOWLEDGE",
-    "DUPLICATE_ERROR", "MIN_DUPLICATE_REASON_CHARS",
-    "store_screen_on", "prn_givable", "duplicate_rule", "duplicate_rule_for",
-    "comparison_rows", "outpatient_rows", "row_label", "find_duplicates",
-    "same_ingredient", "ingredient_word_set", "rule_for_findings", "duplicate_check",
+    "ENTRY_OPD",
+    "DUPLICATE_SCREENED_ENTRY_POINTS",
+    "NOT_DUPLICATE_SCREENED",
+    "DUPLICATE_RULES",
+    "DUPLICATE_RULE_BLOCK",
+    "DUPLICATE_RULE_ACKNOWLEDGE",
+    "DUPLICATE_ERROR",
+    "MIN_DUPLICATE_REASON_CHARS",
+    "store_screen_on",
+    "prn_givable",
+    "duplicate_rule",
+    "duplicate_rule_for",
+    "comparison_rows",
+    "outpatient_rows",
+    "row_label",
+    "find_duplicates",
+    "same_ingredient",
+    "ingredient_word_set",
+    "rule_for_findings",
+    "duplicate_check",
     "validate_duplicate_reason",
 ]
 
@@ -141,26 +157,32 @@ ENTRY_OPD = "opd_prescription"
 
 #: Where the duplicate rule applies: a drug becomes live on the patient, or a
 #: pharmacy order is raised for a new drug.
-DUPLICATE_SCREENED_ENTRY_POINTS = frozenset({
-    "vigil.med_add",            # the chart add: live at once
-    "medorder.create.cpoe",     # create-and-sign in one step
-    "medorder.sign.cpoe",       # a draft becomes live
-    "relay.confirm_agentic",    # a pharmacy order for a new drug
-    "sage.agentic_handoff",     # chart row, order and supply (non-interactive)
-    "scribe.auto_extraction",   # a drug a signed note starts (non-interactive)
-    "sage_assessment",          # a drug Sage proposes (non-interactive)
-    "helix.approve",            # a pharmacy order for a new drug
-    ENTRY_OPD,                  # an outpatient prescription line
-})
+DUPLICATE_SCREENED_ENTRY_POINTS = frozenset(
+    {
+        "vigil.med_add",  # the chart add: live at once
+        "medorder.create.cpoe",  # create-and-sign in one step
+        "medorder.sign.cpoe",  # a draft becomes live
+        "relay.confirm_agentic",  # a pharmacy order for a new drug
+        "sage.agentic_handoff",  # chart row, order and supply (non-interactive)
+        "scribe.auto_extraction",  # a drug a signed note starts (non-interactive)
+        "sage_assessment",  # a drug Sage proposes (non-interactive)
+        "helix.approve",  # a pharmacy order for a new drug
+        ENTRY_OPD,  # an outpatient prescription line
+    }
+)
 
 #: Gate entry points the duplicate rule deliberately does not apply to, and why.
 NOT_DUPLICATE_SCREENED: dict[str, str] = {
-    "orders.cpoe": ("with the lifecycle on a CPOE medicine is a draft that reaches nothing; "
-                    "the duplicate rule runs when it is signed (medorder.sign.cpoe)"),
+    "orders.cpoe": (
+        "with the lifecycle on a CPOE medicine is a draft that reaches nothing; "
+        "the duplicate rule runs when it is signed (medorder.sign.cpoe)"
+    ),
     "order_set.preview": "an order set's medicines are drafts, screened again when signed",
     "order_set.apply": "an order set's medicines are drafts, screened again when signed",
-    "helix.<step>": ("a pharmacist's supply step on an order that already exists; the "
-                     "prescriber answered the duplicate rule when it was ordered"),
+    "helix.<step>": (
+        "a pharmacist's supply step on an order that already exists; the "
+        "prescriber answered the duplicate rule when it was ordered"
+    ),
     "seed.pharmacy_queue": "the demonstration seed script, never a clinical order",
 }
 
@@ -178,6 +200,7 @@ MIN_DUPLICATE_REASON_CHARS = 10
 
 # ── The switches, read at call time ───────────────────────────────────────────
 
+
 def store_screen_on() -> bool:
     """The interaction screen reads the order store (MO-R3 (a), screening)."""
     return core.lifecycle_on()
@@ -188,17 +211,18 @@ def prn_givable() -> bool:
     return core.lifecycle_on()
 
 
-def duplicate_rule() -> Optional[str]:
+def duplicate_rule() -> str | None:
     """'block' or 'acknowledge' while the lifecycle is on (MO-R6), else None.
     An unreadable setting is the strictest rule."""
     if not core.lifecycle_on():
         return None
     import config
+
     rule = getattr(config, "MED_ORDER_DUPLICATE_RULE", DUPLICATE_RULE_BLOCK)
     return rule if rule in DUPLICATE_RULES else DUPLICATE_RULE_BLOCK
 
 
-def duplicate_rule_for(entry_point: Optional[str]) -> Optional[str]:
+def duplicate_rule_for(entry_point: str | None) -> str | None:
     """The duplicate rule for one gate call, or None when it does not apply."""
     if entry_point not in DUPLICATE_SCREENED_ENTRY_POINTS:
         return None
@@ -207,31 +231,35 @@ def duplicate_rule_for(entry_point: Optional[str]) -> Optional[str]:
 
 # ── The comparison set ────────────────────────────────────────────────────────
 
-def _excluded(conn, exclude_med_id: Optional[int],
-              exclude_order_id: Optional[str]) -> tuple[set, set]:
+
+def _excluded(conn, exclude_med_id: int | None, exclude_order_id: str | None) -> tuple[set, set]:
     """(order ids, ward row ids) the screened order itself occupies."""
     orders: set = set()
     meds: set = set()
     if exclude_order_id:
         orders.add(str(exclude_order_id))
-        row = conn.execute("SELECT legacy_medication_id FROM med_orders WHERE id = ?",
-                           (str(exclude_order_id),)).fetchone()
+        row = conn.execute(
+            "SELECT legacy_medication_id FROM med_orders WHERE id = ?", (str(exclude_order_id),)
+        ).fetchone()
         if row is not None and row["legacy_medication_id"] is not None:
             meds.add(int(row["legacy_medication_id"]))
     if exclude_med_id is not None:
         meds.add(int(exclude_med_id))
-        row = conn.execute("SELECT med_order_id FROM medications WHERE id = ?",
-                           (int(exclude_med_id),)).fetchone()
+        row = conn.execute(
+            "SELECT med_order_id FROM medications WHERE id = ?", (int(exclude_med_id),)
+        ).fetchone()
         if row is not None and row["med_order_id"]:
             orders.add(str(row["med_order_id"]))
-        for r in conn.execute("SELECT id FROM med_orders WHERE legacy_medication_id = ?",
-                              (int(exclude_med_id),)).fetchall():
+        for r in conn.execute(
+            "SELECT id FROM med_orders WHERE legacy_medication_id = ?", (int(exclude_med_id),)
+        ).fetchall():
             orders.add(str(r["id"]))
     return orders, meds
 
 
-def comparison_rows(conn, patient_id: str, *, exclude_med_id: Optional[int] = None,
-                    exclude_order_id: Optional[str] = None) -> list[dict]:
+def comparison_rows(
+    conn, patient_id: str, *, exclude_med_id: int | None = None, exclude_order_id: str | None = None
+) -> list[dict]:
     """Every drug the order-time screen compares a new one with (the module
     note): live inpatient orders, PRN and held included, then live ward rows
     with no order behind them, less the screened order's own rows. Each item:
@@ -251,13 +279,21 @@ def comparison_rows(conn, patient_id: str, *, exclude_med_id: Optional[int] = No
             continue
         if r["legacy_medication_id"] is not None and int(r["legacy_medication_id"]) in skip_meds:
             continue
-        out.append({
-            "drug_name": r["drug_name"], "med_order_id": r["id"],
-            "medication_id": r["legacy_medication_id"], "status": r["status"],
-            "is_prn": bool(r["is_prn"]) or r["projection_status"] == "prn",
-            "held": r["status"] == "held", "dose": r["dose"], "route": r["route"],
-            "frequency": r["frequency"], "setting": "inpatient", "kind": "order",
-        })
+        out.append(
+            {
+                "drug_name": r["drug_name"],
+                "med_order_id": r["id"],
+                "medication_id": r["legacy_medication_id"],
+                "status": r["status"],
+                "is_prn": bool(r["is_prn"]) or r["projection_status"] == "prn",
+                "held": r["status"] == "held",
+                "dose": r["dose"],
+                "route": r["route"],
+                "frequency": r["frequency"],
+                "setting": "inpatient",
+                "kind": "order",
+            }
+        )
     for r in conn.execute(
         "SELECT m.id, m.drug_name, m.status, m.dosage, m.route, m.frequency, m.held_at "
         "FROM medications m LEFT JOIN med_orders o ON o.id = m.med_order_id "
@@ -267,32 +303,43 @@ def comparison_rows(conn, patient_id: str, *, exclude_med_id: Optional[int] = No
     ).fetchall():
         if int(r["id"]) in skip_meds:
             continue
-        out.append({
-            "drug_name": r["drug_name"], "med_order_id": None, "medication_id": r["id"],
-            "status": r["status"], "is_prn": r["status"] == "prn",
-            "held": bool(r["held_at"]), "dose": r["dosage"], "route": r["route"],
-            "frequency": r["frequency"], "setting": "inpatient", "kind": "chart",
-        })
+        out.append(
+            {
+                "drug_name": r["drug_name"],
+                "med_order_id": None,
+                "medication_id": r["id"],
+                "status": r["status"],
+                "is_prn": r["status"] == "prn",
+                "held": bool(r["held_at"]),
+                "dose": r["dosage"],
+                "route": r["route"],
+                "frequency": r["frequency"],
+                "setting": "inpatient",
+                "kind": "chart",
+            }
+        )
     return out
 
 
-def _course_ended(end_at: Optional[str], now: datetime) -> bool:
+def _course_ended(end_at: str | None, now: datetime) -> bool:
     """An outpatient course whose end has passed. An unreadable end is live:
     the screen stays stricter, never quieter (outpatient._course_ended)."""
     if not end_at:
         return False
     from services.clinical_time import parse_to_utc
+
     try:
         return parse_to_utc(end_at) <= now
     except (TypeError, ValueError):
         return False
 
 
-def _line_visit(payload_json: Optional[str]) -> Optional[str]:
+def _line_visit(payload_json: str | None) -> str | None:
     """The visit an outpatient line was written on, from its 'created' event
     (outpatient.py keeps it there: migration 61 has no column for it), or
     None when it cannot be read."""
     import json
+
     try:
         payload = json.loads(payload_json) if payload_json else None
     except (TypeError, ValueError):
@@ -309,12 +356,15 @@ def _open_visits_from_today(conn, visit_ids: set) -> set:
         return set()
     try:
         from services.hospital_time import hospital_today
+
         today = hospital_today().isoformat()
         wanted = sorted(visit_ids)
         marks = ", ".join("?" for _ in wanted)
         return {
-            str(r["id"]) for r in conn.execute(
-                f"SELECT id, status, visit_date FROM opd_visits WHERE id IN ({marks})", wanted,
+            str(r["id"])
+            for r in conn.execute(
+                f"SELECT id, status, visit_date FROM opd_visits WHERE id IN ({marks})",
+                wanted,
             ).fetchall()
             if r["status"] not in ("completed", "cancelled")
             and str(r["visit_date"] or "")[:10] >= today
@@ -323,18 +373,23 @@ def _open_visits_from_today(conn, visit_ids: set) -> set:
         return set(visit_ids)
 
 
-def outpatient_rows(conn, patient_id: str, *, exclude_order_id: Optional[str] = None,
-                    now: Optional[datetime] = None,
-                    opd_visit_id: Optional[str] = None) -> list[dict]:
+def outpatient_rows(
+    conn,
+    patient_id: str,
+    *,
+    exclude_order_id: str | None = None,
+    now: datetime | None = None,
+    opd_visit_id: str | None = None,
+) -> list[dict]:
     """The patient's live outpatient lines whose course has not ended, in the
     comparison_rows shape (setting 'outpatient'), each with the visit it was
     written on (opd_visit_id) and this_visit: True only for a line on the
     visit being prescribed on (the module note: `opd_visit_id` names it; with
     none named, any open visit dated today or later). For the outpatient
     lane's duplicate check only."""
-    when = now or datetime.now(timezone.utc)
+    when = now or datetime.now(UTC)
     marks = ", ".join("?" for _ in core.LIVE_STATUSES)
-    lines: list[tuple[Any, Optional[str]]] = []
+    lines: list[tuple[Any, str | None]] = []
     for r in conn.execute(
         f"SELECT o.id, o.drug_name, o.status, o.is_prn, o.dose, o.route, o.frequency, o.end_at, "
         f"(SELECT e.payload_json FROM med_order_events e WHERE e.med_order_id = o.id "
@@ -354,25 +409,38 @@ def outpatient_rows(conn, patient_id: str, *, exclude_order_id: Optional[str] = 
         current = _open_visits_from_today(conn, {v for _, v in lines if v})
     out: list[dict] = []
     for r, visit in lines:
-        out.append({
-            "drug_name": r["drug_name"], "med_order_id": r["id"], "medication_id": None,
-            "status": r["status"], "is_prn": bool(r["is_prn"]), "held": r["status"] == "held",
-            "dose": r["dose"], "route": r["route"], "frequency": r["frequency"],
-            "setting": "outpatient", "kind": "order",
-            "opd_visit_id": visit, "this_visit": visit is not None and visit in current,
-        })
+        out.append(
+            {
+                "drug_name": r["drug_name"],
+                "med_order_id": r["id"],
+                "medication_id": None,
+                "status": r["status"],
+                "is_prn": bool(r["is_prn"]),
+                "held": r["status"] == "held",
+                "dose": r["dose"],
+                "route": r["route"],
+                "frequency": r["frequency"],
+                "setting": "outpatient",
+                "kind": "order",
+                "opd_visit_id": visit,
+                "this_visit": visit is not None and visit in current,
+            }
+        )
     return out
 
 
 def _admitted(conn, patient_id: str) -> bool:
     """An active admission (outpatient._active_admission's reading)."""
-    return conn.execute(
-        "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' LIMIT 1",
-        (patient_id,),
-    ).fetchone() is not None
+    return (
+        conn.execute(
+            "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' LIMIT 1",
+            (patient_id,),
+        ).fetchone()
+        is not None
+    )
 
 
-def row_label(row: Mapping) -> Optional[str]:
+def row_label(row: Mapping) -> str | None:
     """What a comparison row is, in words, when that matters to the reader of
     an alert: on hold, or as needed. None for an ordinary live drug."""
     if row.get("held"):
@@ -383,6 +451,7 @@ def row_label(row: Mapping) -> Optional[str]:
 
 
 # ── The same-ingredient duplicate ─────────────────────────────────────────────
+
 
 def _norm(name: Any) -> str:
     return " ".join(str(name or "").lower().split())
@@ -410,57 +479,202 @@ _TOKEN_RE = re.compile(r"[a-z0-9]+(?:'[a-z]+)?")
 #: word. Three letters or fewer is a code ('b12', 'd3', 'k1') and stays whole.
 _GLUED_RE = re.compile(r"^([a-z]{4,})\d[a-z0-9]*$")
 #: A strength: a number, with a unit glued on or not ('500', '500mg', '60k').
-_STRENGTH_RE = re.compile(
-    r"^\d+(?:mg|g|gm|gms|kg|mcg|ug|ml|l|iu|u|mu|k|mmol|meq|lakh|lac|x)?$")
-_UNIT_WORDS = frozenset({
-    "mg", "g", "gm", "gms", "gram", "grams", "kg", "mcg", "ug", "microgram", "micrograms",
-    "milligram", "milligrams", "ml", "l", "litre", "litres", "liter", "liters", "iu", "u",
-    "mu", "unit", "units", "mmol", "meq", "lakh", "lac", "million", "x", "w", "v",
-    "percent",
-})
+_STRENGTH_RE = re.compile(r"^\d+(?:mg|g|gm|gms|kg|mcg|ug|ml|l|iu|u|mu|k|mmol|meq|lakh|lac|x)?$")
+_UNIT_WORDS = frozenset(
+    {
+        "mg",
+        "g",
+        "gm",
+        "gms",
+        "gram",
+        "grams",
+        "kg",
+        "mcg",
+        "ug",
+        "microgram",
+        "micrograms",
+        "milligram",
+        "milligrams",
+        "ml",
+        "l",
+        "litre",
+        "litres",
+        "liter",
+        "liters",
+        "iu",
+        "u",
+        "mu",
+        "unit",
+        "units",
+        "mmol",
+        "meq",
+        "lakh",
+        "lac",
+        "million",
+        "x",
+        "w",
+        "v",
+        "percent",
+    }
+)
 #: Dosage-form and release words: the same medicine in another form is the
 #: same ingredient.
-_FORM_WORDS = frozenset({
-    "tablet", "tablets", "tab", "tabs", "capsule", "capsules", "cap", "caps", "injection",
-    "injections", "inj", "infusion", "syrup", "suspension", "susp", "solution", "soln",
-    "oral", "cream", "ointment", "drops", "drop", "vial", "vials", "ampoule", "ampoules",
-    "amp", "inhaler", "extended", "release", "sr", "er", "xr", "xl", "cr", "mr", "dt",
-    "sachet", "sachets", "powder", "granules", "gel", "spray", "lotion", "elixir",
-    "emulsion", "nebules", "respules", "lozenge", "lozenges", "iv", "im", "sc",
-})
+_FORM_WORDS = frozenset(
+    {
+        "tablet",
+        "tablets",
+        "tab",
+        "tabs",
+        "capsule",
+        "capsules",
+        "cap",
+        "caps",
+        "injection",
+        "injections",
+        "inj",
+        "infusion",
+        "syrup",
+        "suspension",
+        "susp",
+        "solution",
+        "soln",
+        "oral",
+        "cream",
+        "ointment",
+        "drops",
+        "drop",
+        "vial",
+        "vials",
+        "ampoule",
+        "ampoules",
+        "amp",
+        "inhaler",
+        "extended",
+        "release",
+        "sr",
+        "er",
+        "xr",
+        "xl",
+        "cr",
+        "mr",
+        "dt",
+        "sachet",
+        "sachets",
+        "powder",
+        "granules",
+        "gel",
+        "spray",
+        "lotion",
+        "elixir",
+        "emulsion",
+        "nebules",
+        "respules",
+        "lozenge",
+        "lozenges",
+        "iv",
+        "im",
+        "sc",
+    }
+)
 #: Cations that are a counter-ion beside a drug ('Losartan Potassium') and the
 #: medicine itself on their own ('Potassium Chloride').
-_CATION_WORDS = frozenset({
-    "sodium", "disodium", "potassium", "dipotassium", "calcium", "magnesium",
-})
+_CATION_WORDS = frozenset(
+    {
+        "sodium",
+        "disodium",
+        "potassium",
+        "dipotassium",
+        "calcium",
+        "magnesium",
+    }
+)
 #: Anions, acids' salts and hydrates that are never the medicine beside a drug.
-_ANION_WORDS = frozenset({
-    "hydrochloride", "dihydrochloride", "hcl", "hydrobromide", "chloride", "bromide",
-    "iodide", "fluoride", "sulphate", "sulfate", "bisulphate", "bisulfate", "acetate",
-    "phosphate", "citrate", "maleate", "succinate", "tartrate", "bitartrate", "besylate",
-    "besilate", "mesylate", "mesilate", "tosylate", "fumarate", "carbonate", "bicarbonate",
-    "gluconate", "lactate", "hydroxide", "oxide", "trisilicate", "glycerophosphate",
-    "nitrate", "stearate", "palmitate", "propionate", "dipropionate", "valerate",
-    "furoate", "hyclate", "estolate", "ethylsuccinate", "pamoate", "embonate", "orotate",
-    "glycinate", "bisglycinate", "aspartate", "monohydrate", "dihydrate", "trihydrate",
-    "hydrate", "anhydrous",
-})
+_ANION_WORDS = frozenset(
+    {
+        "hydrochloride",
+        "dihydrochloride",
+        "hcl",
+        "hydrobromide",
+        "chloride",
+        "bromide",
+        "iodide",
+        "fluoride",
+        "sulphate",
+        "sulfate",
+        "bisulphate",
+        "bisulfate",
+        "acetate",
+        "phosphate",
+        "citrate",
+        "maleate",
+        "succinate",
+        "tartrate",
+        "bitartrate",
+        "besylate",
+        "besilate",
+        "mesylate",
+        "mesilate",
+        "tosylate",
+        "fumarate",
+        "carbonate",
+        "bicarbonate",
+        "gluconate",
+        "lactate",
+        "hydroxide",
+        "oxide",
+        "trisilicate",
+        "glycerophosphate",
+        "nitrate",
+        "stearate",
+        "palmitate",
+        "propionate",
+        "dipropionate",
+        "valerate",
+        "furoate",
+        "hyclate",
+        "estolate",
+        "ethylsuccinate",
+        "pamoate",
+        "embonate",
+        "orotate",
+        "glycinate",
+        "bisglycinate",
+        "aspartate",
+        "monohydrate",
+        "dihydrate",
+        "trihydrate",
+        "hydrate",
+        "anhydrous",
+    }
+)
 _SALT_WORDS = _CATION_WORDS | _ANION_WORDS
 #: Endings of a word that may be an anion the list above does not know.
 _ANION_ENDINGS = ("ate", "ide", "ite")
 #: Words that name a class of medicines, never one ingredient on their own.
-_CLASS_WORDS = frozenset({
-    "vitamin", "vitamins", "insulin", "insulins", "vaccine", "vaccines", "supplement",
-    "supplements", "antacid", "antacids", "electrolyte", "electrolytes", "mineral",
-    "minerals",
-})
+_CLASS_WORDS = frozenset(
+    {
+        "vitamin",
+        "vitamins",
+        "insulin",
+        "insulins",
+        "vaccine",
+        "vaccines",
+        "supplement",
+        "supplements",
+        "antacid",
+        "antacids",
+        "electrolyte",
+        "electrolytes",
+        "mineral",
+        "minerals",
+    }
+)
 
 
 def _drug_word(word: str) -> bool:
     """A word that can be the medicine beside a salt: not a short code, not a
     class word, not a word that may itself be an anion."""
-    return (len(word) >= 4 and word not in _CLASS_WORDS
-            and not word.endswith(_ANION_ENDINGS))
+    return len(word) >= 4 and word not in _CLASS_WORDS and not word.endswith(_ANION_ENDINGS)
 
 
 def _part_form(words: list[str]) -> list[str]:
@@ -534,7 +748,7 @@ def _same_product(stem: str, longer: str) -> bool:
     Their generics would join every ingredient of that other product to the
     charted name, and the duplicate rule would then refuse a different
     medicine as the same one."""
-    tail = longer[len(stem):]
+    tail = longer[len(stem) :]
     if _COMBINATION_MARK_RE.search(tail):
         return False
     if any(word in _CATION_WORDS for word in _TOKEN_RE.findall(tail)):
@@ -567,8 +781,9 @@ def _names(drug_name: str, catalogue: list[tuple[str, str]]) -> list[str]:
             continue
         hit = name == want or generic == want
         if not hit and not exact_only:
-            hit = ((name.startswith(want + " ") and _same_product(want, name))
-                   or (want.startswith(name + " ") and not _bare(_ingredient_form(name))))
+            hit = (name.startswith(want + " ") and _same_product(want, name)) or (
+                want.startswith(name + " ") and not _bare(_ingredient_form(name))
+            )
         if hit:
             resolved = _ingredient_form(generic) or generic
             if resolved not in out:
@@ -586,13 +801,14 @@ def _run_in(words: list[str], other: list[str]) -> bool:
     """`words`, whole and in order, inside `other` ('vitamin d3' inside
     'calcium vitamin d3'; never 'vitamin b1' inside 'vitamin b12')."""
     size = len(words)
-    return any(other[i:i + size] == words for i in range(len(other) - size + 1))
+    return any(other[i : i + size] == words for i in range(len(other) - size + 1))
 
 
 def _strong_overlap(a: str, b: str) -> bool:
     """drug_safety_service.names_overlap, less a substring match that runs
     into a number on either side."""
     from services.drug_safety_service import names_overlap
+
     if not names_overlap(a, b):
         return False
     if a in b.split() or b in a.split():
@@ -635,8 +851,7 @@ def _same_ingredient(names_a: Iterable[str], names_b: Iterable[str]) -> bool:
     return any(_overlap(x, y) for x in names_a for y in names_b)
 
 
-def same_ingredient(drug_a: str, drug_b: str,
-                    catalogue: Iterable[tuple[str, str]] = ()) -> bool:
+def same_ingredient(drug_a: str, drug_b: str, catalogue: Iterable[tuple[str, str]] = ()) -> bool:
     """Do two drug names name the same ingredient (the module note)? The
     duplicate rule's own test; `catalogue` is (name, generic) pairs in lower
     case, as _catalogue reads them."""
@@ -646,33 +861,44 @@ def same_ingredient(drug_a: str, drug_b: str,
 
 def _status_words(row: Mapping) -> str:
     if row.get("setting") == "outpatient":
-        words = ("an outpatient prescription on this visit" if row.get("this_visit")
-                 else "an outpatient prescription from another visit")
+        words = (
+            "an outpatient prescription on this visit"
+            if row.get("this_visit")
+            else "an outpatient prescription from another visit"
+        )
     elif row.get("kind") == "chart":
         words = "on the chart"
     else:
-        words = {"prescribed": "prescribed", "verified": "checked by a pharmacist",
-                 "held": "on hold"}.get(row.get("status"), row.get("status") or "live")
+        words = {
+            "prescribed": "prescribed",
+            "verified": "checked by a pharmacist",
+            "held": "on hold",
+        }.get((row.get("status") or ""), row.get("status") or "live")
     if row.get("is_prn") and not row.get("held"):
         words += ", as needed"
     return words
 
 
 def _describe(row: Mapping) -> str:
-    detail = ", ".join(str(v).strip() for v in (row.get("dose"), row.get("route"),
-                                                row.get("frequency"))
-                       if v and str(v).strip())
-    return (f"{row['drug_name']}"
-            + (f" {detail}" if detail else "")
-            + f" ({_status_words(row)})")
+    detail = ", ".join(
+        str(v).strip()
+        for v in (row.get("dose"), row.get("route"), row.get("frequency"))
+        if v and str(v).strip()
+    )
+    return f"{row['drug_name']}" + (f" {detail}" if detail else "") + f" ({_status_words(row)})"
 
 
-def find_duplicates(conn, patient_id: str, drug_name: str, *,
-                    exclude_med_id: Optional[int] = None,
-                    exclude_order_id: Optional[str] = None,
-                    include_outpatient: bool = False,
-                    opd_visit_id: Optional[str] = None,
-                    now: Optional[datetime] = None) -> list[dict]:
+def find_duplicates(
+    conn,
+    patient_id: str,
+    drug_name: str,
+    *,
+    exclude_med_id: int | None = None,
+    exclude_order_id: str | None = None,
+    include_outpatient: bool = False,
+    opd_visit_id: str | None = None,
+    now: datetime | None = None,
+) -> list[dict]:
     """The live drugs that name the same ingredient as `drug_name`, each as a
     finding {kind 'duplicate', drug_name, med_order_id, medication_id, status,
     setting, record ('order' or 'chart'), dose, route, frequency, description,
@@ -682,14 +908,20 @@ def find_duplicates(conn, patient_id: str, drug_name: str, *,
     `opd_visit_id` clearing with a written reason. Reads only; raises on a
     read that fails (the gate then treats the whole screen as unavailable)."""
     if include_outpatient:
-        rows = (comparison_rows(conn, patient_id, exclude_med_id=exclude_med_id,
-                                exclude_order_id=exclude_order_id)
-                if _admitted(conn, patient_id) else [])
-        rows += outpatient_rows(conn, patient_id, exclude_order_id=exclude_order_id, now=now,
-                                opd_visit_id=opd_visit_id)
+        rows = (
+            comparison_rows(
+                conn, patient_id, exclude_med_id=exclude_med_id, exclude_order_id=exclude_order_id
+            )
+            if _admitted(conn, patient_id)
+            else []
+        )
+        rows += outpatient_rows(
+            conn, patient_id, exclude_order_id=exclude_order_id, now=now, opd_visit_id=opd_visit_id
+        )
     else:
-        rows = comparison_rows(conn, patient_id, exclude_med_id=exclude_med_id,
-                               exclude_order_id=exclude_order_id)
+        rows = comparison_rows(
+            conn, patient_id, exclude_med_id=exclude_med_id, exclude_order_id=exclude_order_id
+        )
     if not rows:
         return []
     catalogue = _catalogue(conn)
@@ -699,32 +931,40 @@ def find_duplicates(conn, patient_id: str, drug_name: str, *,
         if not _same_ingredient(mine, _names(row["drug_name"], catalogue)):
             continue
         described = _describe(row)
-        found.append({
-            "kind": "duplicate",
-            "drug_name": row["drug_name"],
-            "med_order_id": row["med_order_id"],
-            "medication_id": row["medication_id"],
-            "status": row["status"],
-            "setting": row["setting"],
-            "record": row["kind"],
-            "dose": row["dose"], "route": row["route"], "frequency": row["frequency"],
-            "description": described,
-            "message": f"Already ordered: {described}.",
-            # Only an outpatient line on another visit (the module note).
-            "clears_with_reason": (row["setting"] == "outpatient"
-                                   and not row.get("this_visit")),
-        })
+        found.append(
+            {
+                "kind": "duplicate",
+                "drug_name": row["drug_name"],
+                "med_order_id": row["med_order_id"],
+                "medication_id": row["medication_id"],
+                "status": row["status"],
+                "setting": row["setting"],
+                "record": row["kind"],
+                "dose": row["dose"],
+                "route": row["route"],
+                "frequency": row["frequency"],
+                "description": described,
+                "message": f"Already ordered: {described}.",
+                # Only an outpatient line on another visit (the module note).
+                "clears_with_reason": (
+                    row["setting"] == "outpatient" and not row.get("this_visit")
+                ),
+            }
+        )
     return found
 
 
-def rule_for_findings(findings: Iterable[Mapping], rule: Optional[str]) -> Optional[str]:
+def rule_for_findings(findings: Iterable[Mapping], rule: str | None) -> str | None:
     """The rule one gate call applies to its findings: the configured rule,
     except that findings which ALL clear with a written reason (outpatient
     lines from another visit) are 'acknowledge' under 'block' too. One
     finding the prescriber could cancel on this visit keeps the block."""
     findings = list(findings)
-    if (rule == DUPLICATE_RULE_BLOCK and findings
-            and all(f.get("clears_with_reason") for f in findings)):
+    if (
+        rule == DUPLICATE_RULE_BLOCK
+        and findings
+        and all(f.get("clears_with_reason") for f in findings)
+    ):
         return DUPLICATE_RULE_ACKNOWLEDGE
     return rule
 
@@ -734,19 +974,28 @@ def duplicate_check(findings: Iterable[Mapping], drug_name: str, *, rule: str) -
     way the dose guard's rides on safety['dose_check']."""
     findings = [dict(f) for f in findings]
     listed = "; ".join(f.get("description") or str(f.get("drug_name")) for f in findings)
-    if rule == DUPLICATE_RULE_ACKNOWLEDGE and findings and all(
-            f.get("clears_with_reason") for f in findings):
-        message = (f"{drug_name} is already prescribed for this patient: {listed}. "
-                   "Give a reason to prescribe it again, for example a refill of a "
-                   "continuing medicine.")
+    if (
+        rule == DUPLICATE_RULE_ACKNOWLEDGE
+        and findings
+        and all(f.get("clears_with_reason") for f in findings)
+    ):
+        message = (
+            f"{drug_name} is already prescribed for this patient: {listed}. "
+            "Give a reason to prescribe it again, for example a refill of a "
+            "continuing medicine."
+        )
         decision = "acknowledge"
     elif rule == DUPLICATE_RULE_ACKNOWLEDGE:
-        message = (f"{drug_name} is already ordered for this patient: {listed}. "
-                   "Give a reason to order the same medicine again.")
+        message = (
+            f"{drug_name} is already ordered for this patient: {listed}. "
+            "Give a reason to order the same medicine again."
+        )
         decision = "acknowledge"
     else:
-        message = (f"{drug_name} is already ordered for this patient: {listed}. "
-                   "A second order for the same medicine is not allowed.")
+        message = (
+            f"{drug_name} is already ordered for this patient: {listed}. "
+            "A second order for the same medicine is not allowed."
+        )
         decision = "block"
     return {"rule": rule, "decision": decision, "findings": findings, "message": message}
 
@@ -754,11 +1003,12 @@ def duplicate_check(findings: Iterable[Mapping], drug_name: str, *, rule: str) -
 _REASON_EXAMPLE = "for example 'IV while nil by mouth, oral doses not being given'"
 
 
-def validate_duplicate_reason(reason: Optional[str]) -> str:
+def validate_duplicate_reason(reason: str | None) -> str:
     """Clean the reason for a second order of the same medicine, or raise
     ValueError in words the prescriber reads. The same floor as the dose
     override: 'ok' never clears it."""
     from services.drug_safety_service import JUNK_OVERRIDE_REASONS
+
     cleaned = re.sub(r"\s+", " ", (reason or "").strip())
     if not cleaned:
         raise ValueError("Say why this patient needs a second order for the same medicine.")
@@ -767,5 +1017,6 @@ def validate_duplicate_reason(reason: Optional[str]) -> str:
     if len(cleaned) < MIN_DUPLICATE_REASON_CHARS:
         raise ValueError(
             f"The reason must be at least {MIN_DUPLICATE_REASON_CHARS} characters and say why "
-            "a second order for the same medicine is right, " + _REASON_EXAMPLE + ".")
+            "a second order for the same medicine is right, " + _REASON_EXAMPLE + "."
+        )
     return cleaned

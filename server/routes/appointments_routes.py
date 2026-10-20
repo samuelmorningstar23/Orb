@@ -55,18 +55,19 @@ origin='patient'), because it is the only appointment store any staff surface
 reads — services/forecast_service.get_appointments merges its booked rows into
 the Appointments panel. See the ORIGIN_* block below.
 """
+
 from __future__ import annotations
 
 import sqlite3
-from db_backend import DBIntegrityError
 import uuid
-from datetime import datetime, date, time as dt_time, timedelta
-
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from datetime import date, datetime, timedelta
+from datetime import time as dt_time
 
 import config
 from auth import get_current_user
+from database import db_session
+from db_backend import DBIntegrityError
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from permissions import (
     OPD_CONSULT,
     PATIENT_WRITE,
@@ -80,12 +81,18 @@ from permissions import (
     require_permission,
     require_registration_desk,
 )
-from database import db_session
+from pydantic import BaseModel, ConfigDict, Field
+from services.appointment_types import (
+    APPOINTMENT_TYPES,
+    parse_type,
+    type_key,
+    type_label,
+)
+from services.audit_service import AuditWriteError, log_audit_event
+from services.clinical_time import utc_iso_now
+
 from routes.opt_in_gates import require_opd_feature
 from services import hospital_time
-from services.audit_service import AuditWriteError, log_audit_event
-from services.appointment_types import APPOINTMENT_TYPES, parse_type, type_key, type_label
-from services.clinical_time import utc_iso_now
 
 router = APIRouter(prefix="/api/appointments", tags=["appointments"])
 
@@ -142,6 +149,7 @@ FIRST_CLINIC_SLOT = "09:00"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+
 def _row_get(row, key, default=None):
     """Read a column that may not exist on this row.
 
@@ -155,6 +163,7 @@ def _row_get(row, key, default=None):
         return default
     return default if value is None else value
 
+
 def _resolve_own_patient_id(user_id: str) -> str:
     """Resolve the caller's OWN patient record id from their login id.
 
@@ -163,9 +172,7 @@ def _resolve_own_patient_id(user_id: str) -> str:
     the request body.
     """
     with db_session() as db:
-        row = db.execute(
-            "SELECT id FROM patients WHERE user_id = ?", (user_id,)
-        ).fetchone()
+        row = db.execute("SELECT id FROM patients WHERE user_id = ?", (user_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="No patient record found for your account")
     return row["id"]
@@ -229,11 +236,11 @@ def _validate_slot(scheduled_date: str, scheduled_time: str) -> None:
     try:
         parsed_date = datetime.strptime(scheduled_date, "%Y-%m-%d").date()
     except (ValueError, TypeError):
-        raise HTTPException(status_code=422, detail="scheduled_date must be YYYY-MM-DD")
+        raise HTTPException(status_code=422, detail="scheduled_date must be YYYY-MM-DD") from None
     try:
         parsed_time = datetime.strptime(scheduled_time, "%H:%M").time()
     except (ValueError, TypeError):
-        raise HTTPException(status_code=422, detail="scheduled_time must be HH:MM (24h)")
+        raise HTTPException(status_code=422, detail="scheduled_time must be HH:MM (24h)") from None
     now = hospital_time.hospital_now()
     today = now.date()
     if parsed_date < today:
@@ -259,7 +266,7 @@ def _validate_date_only(scheduled_date: str) -> date:
     try:
         parsed_date = datetime.strptime(scheduled_date, "%Y-%m-%d").date()
     except (ValueError, TypeError):
-        raise HTTPException(status_code=422, detail="scheduled_date must be YYYY-MM-DD")
+        raise HTTPException(status_code=422, detail="scheduled_date must be YYYY-MM-DD") from None
     today = hospital_time.hospital_today()
     if parsed_date < today:
         raise HTTPException(status_code=422, detail="Cannot book an appointment in the past")
@@ -334,18 +341,21 @@ def persist_appointment(
 
     def _replayed(row) -> tuple[dict, bool]:
         if bind_replay and not _replay_is_this_booking(
-                row, patient_id=patient_id, scheduled_date=scheduled_date,
-                scheduled_time=scheduled_time, doctor_id=None,
-                department=department, origin=origin):
+            row,
+            patient_id=patient_id,
+            scheduled_date=scheduled_date,
+            scheduled_time=scheduled_time,
+            doctor_id=None,
+            department=department,
+            origin=origin,
+        ):
             raise _ReplayConflict(row["id"])
         return _serialize(row), False
 
     with db_session() as db:
         # Confirm the target patient exists (FK is enforced, but a 404 is clearer
         # than a raw IntegrityError for clinician-supplied ids).
-        patient = db.execute(
-            "SELECT id FROM patients WHERE id = ?", (patient_id,)
-        ).fetchone()
+        patient = db.execute("SELECT id FROM patients WHERE id = ?", (patient_id,)).fetchone()
         if not patient:
             raise HTTPException(status_code=404, detail="Patient not found")
 
@@ -381,8 +391,18 @@ def persist_appointment(
                        (id, patient_id, booked_by_user_id, scheduled_date, scheduled_time,
                         appointment_type, reason, status, idempotency_key, origin, department)
                    VALUES (?, ?, ?, ?, ?, ?, ?, 'booked', ?, ?, ?)""",
-                (appt_id, patient_id, booked_by_user_id, scheduled_date, scheduled_time,
-                 appointment_type, reason, idem, origin, department),
+                (
+                    appt_id,
+                    patient_id,
+                    booked_by_user_id,
+                    scheduled_date,
+                    scheduled_time,
+                    appointment_type,
+                    reason,
+                    idem,
+                    origin,
+                    department,
+                ),
             )
         except DBIntegrityError:
             # Concurrent replay won the unique-idempotency-key race — return theirs.
@@ -398,6 +418,7 @@ def persist_appointment(
 
 
 # ── Scope: which appointments a staff caller may see and act on ─────────────
+
 
 def _has_admission(db, patient_id: str, *, active_only: bool) -> bool:
     sql = "SELECT 1 FROM admissions WHERE patient_id = ?"
@@ -465,8 +486,7 @@ def _require_booking_staff(request: Request, user: dict) -> None:
     )
     raise HTTPException(
         status_code=403,
-        detail={"error": "permission_denied",
-                "message": "Not permitted to manage appointments"},
+        detail={"error": "permission_denied", "message": "Not permitted to manage appointments"},
     )
 
 
@@ -475,11 +495,16 @@ def _conflict(code: str, message: str, status: int = 409, **extra) -> HTTPExcept
 
 
 def _audit_unavailable() -> HTTPException:
-    return HTTPException(status_code=503, detail={
-        "error": "audit_unavailable",
-        "message": ("The audit trail could not be written, so nothing was saved or shown. "
-                    "Try again in a moment."),
-    })
+    return HTTPException(
+        status_code=503,
+        detail={
+            "error": "audit_unavailable",
+            "message": (
+                "The audit trail could not be written, so nothing was saved or shown. "
+                "Try again in a moment."
+            ),
+        },
+    )
 
 
 def _same_clinic(a: str | None, b: str | None) -> bool:
@@ -487,6 +512,7 @@ def _same_clinic(a: str | None, b: str | None) -> bool:
 
 
 # ── OPD mode: a replay answers only its own booking (opd-16) ────────────────
+
 
 class _ReplayConflict(HTTPException):
     """409 idempotency_key_reused: this request's Idempotency-Key already names
@@ -498,18 +524,30 @@ class _ReplayConflict(HTTPException):
     _reschedule_replay below keep the same rule."""
 
     def __init__(self, appointment_id: str):
-        super().__init__(status_code=409, detail={
-            "error": "idempotency_key_reused",
-            "message": ("This request was already used for a different booking. "
-                        "Nothing was saved. Close this and book again."),
-        })
+        super().__init__(
+            status_code=409,
+            detail={
+                "error": "idempotency_key_reused",
+                "message": (
+                    "This request was already used for a different booking. "
+                    "Nothing was saved. Close this and book again."
+                ),
+            },
+        )
         self.appointment_id = str(appointment_id)
 
 
-def _replay_is_this_booking(row, *, patient_id: str, scheduled_date: str,
-                            scheduled_time: str, doctor_id: str | None,
-                            department: str | None, origin: str = ORIGIN_STAFF,
-                            rescheduled_from_id: str | None = None) -> bool:
+def _replay_is_this_booking(
+    row,
+    *,
+    patient_id: str,
+    scheduled_date: str,
+    scheduled_time: str,
+    doctor_id: str | None,
+    department: str | None,
+    origin: str = ORIGIN_STAFF,
+    rescheduled_from_id: str | None = None,
+) -> bool:
     """Is the booking an Idempotency-Key names the one this request asks for?
     The same patient, doctor (or none), day, time, clinic, origin and
     predecessor.
@@ -530,8 +568,9 @@ def _replay_is_this_booking(row, *, patient_id: str, scheduled_date: str,
     )
 
 
-def _audit_replay_refused(request: Request, user: dict, *, patient_id: str,
-                          err: _ReplayConflict, requested: dict) -> None:
+def _audit_replay_refused(
+    request: Request, user: dict, *, patient_id: str, err: _ReplayConflict, requested: dict
+) -> None:
     """A booking refused because its Idempotency-Key names another booking,
     written after the rollback (the refusal saved nothing). The footing of the
     front desk's opd_visit_replay_refused ('authorization', denied), so a key
@@ -544,7 +583,8 @@ def _audit_replay_refused(request: Request, user: dict, *, patient_id: str,
         outcome="denied",
         summary_message=(
             f"Appointment booking for {patient_id} refused: its idempotency key already "
-            f"names appointment {err.appointment_id}, which is a different booking"),
+            f"names appointment {err.appointment_id}, which is a different booking"
+        ),
         actor_user_id=user.get("id"),
         actor_role=user.get("role", ""),
         patient_id=patient_id,
@@ -559,6 +599,7 @@ def _audit_replay_refused(request: Request, user: dict, *, patient_id: str,
 
 # ── OPD mode: a doctor's slot (opd-16) ──────────────────────────────────────
 
+
 def _slot_offer(doctor_id: str, scheduled_date: str, scheduled_time: str) -> dict:
     """The clinic session and slot this doctor offers at this hospital-local
     day and time (services.clinic_schedule_service.availability, computed in
@@ -569,14 +610,18 @@ def _slot_offer(doctor_id: str, scheduled_date: str, scheduled_time: str) -> dic
     try:
         offer = schedule.availability(day=scheduled_date, days=1, doctor_id=doctor_id)
     except schedule.ClinicScheduleError as err:
-        raise _conflict(err.code, str(err), status=err.status)
+        raise _conflict(err.code, str(err), status=err.status) from err
     for day in offer["days"]:
         for session in day["sessions"]:
-            if session["cancelled"] and session["start_time"] <= scheduled_time < session["end_time"]:
+            if (
+                session["cancelled"]
+                and session["start_time"] <= scheduled_time < session["end_time"]
+            ):
                 raise _conflict(
                     "clinic_not_running",
                     "This clinic does not run that day"
-                    + (f": {session['cancel_reason']}" if session.get("cancel_reason") else "."))
+                    + (f": {session['cancel_reason']}" if session.get("cancel_reason") else "."),
+                )
             for slot in session["slots"]:
                 if slot["start"] != scheduled_time:
                     continue
@@ -585,13 +630,24 @@ def _slot_offer(doctor_id: str, scheduled_date: str, scheduled_time: str) -> dic
                 return {"session": session, "slot": slot}
     raise _conflict(
         "no_such_slot",
-        "That doctor has no clinic slot at that time. Choose a slot from the clinic's timings.")
+        "That doctor has no clinic slot at that time. Choose a slot from the clinic's timings.",
+    )
 
 
-def _book_slot_on(db, *, patient_id: str, booked_by: str, doctor_id: str,
-                  scheduled_date: str, scheduled_time: str, appointment_type: str,
-                  reason: str | None, offer: dict, idem: str | None,
-                  rescheduled_from_id: str | None = None):
+def _book_slot_on(
+    db,
+    *,
+    patient_id: str,
+    booked_by: str,
+    doctor_id: str,
+    scheduled_date: str,
+    scheduled_time: str,
+    appointment_type: str,
+    reason: str | None,
+    offer: dict,
+    idem: str | None,
+    rescheduled_from_id: str | None = None,
+):
     """Write one booking into a doctor's slot on the caller's (immediate)
     transaction. Returns (row, created).
 
@@ -608,13 +664,18 @@ def _book_slot_on(db, *, patient_id: str, booked_by: str, doctor_id: str,
     capacity = int(offer["slot"]["capacity"] or 1)
     if idem:
         existing = db.execute(
-            "SELECT * FROM appointments WHERE idempotency_key = ?", (idem,)).fetchone()
+            "SELECT * FROM appointments WHERE idempotency_key = ?", (idem,)
+        ).fetchone()
         if existing is not None:
             if not _replay_is_this_booking(
-                    existing, patient_id=patient_id, scheduled_date=scheduled_date,
-                    scheduled_time=scheduled_time, doctor_id=doctor_id,
-                    department=session["department"],
-                    rescheduled_from_id=rescheduled_from_id):
+                existing,
+                patient_id=patient_id,
+                scheduled_date=scheduled_date,
+                scheduled_time=scheduled_time,
+                doctor_id=doctor_id,
+                department=session["department"],
+                rescheduled_from_id=rescheduled_from_id,
+            ):
                 raise _ReplayConflict(existing["id"])
             return existing, False
     duplicate = db.execute(
@@ -626,10 +687,12 @@ def _book_slot_on(db, *, patient_id: str, booked_by: str, doctor_id: str,
     if duplicate is not None:
         if _row_get(duplicate, "doctor_id") == doctor_id:
             return duplicate, False
-        raise _conflict("patient_already_booked",
-                        "This patient already has an appointment at that time.")
+        raise _conflict(
+            "patient_already_booked", "This patient already has an appointment at that time."
+        )
     used = {
-        int(r["slot_position"]) for r in db.execute(
+        int(r["slot_position"])
+        for r in db.execute(
             "SELECT slot_position FROM appointments WHERE doctor_id = ? AND scheduled_date = ? "
             "AND scheduled_time = ? AND status != 'cancelled' AND slot_position IS NOT NULL",
             (doctor_id, scheduled_date, scheduled_time),
@@ -637,8 +700,9 @@ def _book_slot_on(db, *, patient_id: str, booked_by: str, doctor_id: str,
     }
     position = next((n for n in range(1, capacity + 1) if n not in used), None)
     if position is None:
-        raise _conflict("slot_full", "That slot is fully booked. Choose another.",
-                        capacity=capacity)
+        raise _conflict(
+            "slot_full", "That slot is fully booked. Choose another.", capacity=capacity
+        )
     appt_id = str(uuid.uuid4())
     try:
         db.execute(
@@ -647,18 +711,40 @@ def _book_slot_on(db, *, patient_id: str, booked_by: str, doctor_id: str,
                     appointment_type, reason, status, idempotency_key, origin, department,
                     doctor_id, session_id, slot_position, rescheduled_from_id)
                VALUES (?, ?, ?, ?, ?, ?, ?, 'booked', ?, ?, ?, ?, ?, ?, ?)""",
-            (appt_id, patient_id, booked_by, scheduled_date, scheduled_time,
-             appointment_type, reason, idem, ORIGIN_STAFF, session["department"],
-             doctor_id, session["session_id"], position, rescheduled_from_id),
+            (
+                appt_id,
+                patient_id,
+                booked_by,
+                scheduled_date,
+                scheduled_time,
+                appointment_type,
+                reason,
+                idem,
+                ORIGIN_STAFF,
+                session["department"],
+                doctor_id,
+                session["session_id"],
+                position,
+                rescheduled_from_id,
+            ),
         )
     except DBIntegrityError:
-        raise _conflict("slot_full", "That slot was just booked. Choose another.",
-                        capacity=capacity)
+        raise _conflict(
+            "slot_full", "That slot was just booked. Choose another.", capacity=capacity
+        ) from None
     return db.execute("SELECT * FROM appointments WHERE id = ?", (appt_id,)).fetchone(), True
 
 
-def _audit_appointment(db, request: Request, user: dict, *, action: str, row,
-                       summary: str, metadata: dict | None = None) -> None:
+def _audit_appointment(
+    db,
+    request: Request,
+    user: dict,
+    *,
+    action: str,
+    row,
+    summary: str,
+    metadata: dict | None = None,
+) -> None:
     """One clinical_record row for an appointment change, in its transaction."""
     log_audit_event(
         correlation_id=f"appointment-{action.removeprefix('appointment_')}-{row['id']}",
@@ -695,13 +781,20 @@ def _staff_view(db, rows) -> list[dict]:
         data["patient_sex"] = patient["sex"] if patient else None
         data["inpatient_now"] = _has_admission(db, row["patient_id"], active_only=True)
         doctor_id = _row_get(row, "doctor_id")
-        doctor = db.execute("SELECT name FROM users WHERE id = ?", (doctor_id,)).fetchone() \
-            if doctor_id else None
+        doctor = (
+            db.execute("SELECT name FROM users WHERE id = ?", (doctor_id,)).fetchone()
+            if doctor_id
+            else None
+        )
         data["doctor_name"] = doctor["name"] if doctor else None
         visit_id = _row_get(row, "opd_visit_id")
-        visit = db.execute(
-            "SELECT token_number, status FROM opd_visits WHERE id = ?", (visit_id,)
-        ).fetchone() if visit_id else None
+        visit = (
+            db.execute(
+                "SELECT token_number, status FROM opd_visits WHERE id = ?", (visit_id,)
+            ).fetchone()
+            if visit_id
+            else None
+        )
         data["token_number"] = visit["token_number"] if visit else None
         data["visit_status"] = visit["status"] if visit else None
         out.append(data)
@@ -715,16 +808,18 @@ def _session_end(db, row, cache: dict) -> datetime | None:
     if not session_id:
         return None
     if session_id not in cache:
-        found = db.execute("SELECT end_time FROM clinic_sessions WHERE id = ?",
-                           (session_id,)).fetchone()
+        found = db.execute(
+            "SELECT end_time FROM clinic_sessions WHERE id = ?", (session_id,)
+        ).fetchone()
         cache[session_id] = found["end_time"] if found else None
     end_time = cache[session_id]
     if not end_time:
         return None
     try:
         day = date.fromisoformat(str(row["scheduled_date"]))
-        return datetime.combine(day, dt_time.fromisoformat(end_time),
-                                tzinfo=hospital_time.hospital_timezone())
+        return datetime.combine(
+            day, dt_time.fromisoformat(end_time), tzinfo=hospital_time.hospital_timezone()
+        )
     except ValueError:
         return None
 
@@ -749,15 +844,18 @@ def _effective_status(db, row, now: datetime, cache: dict) -> tuple[str, bool]:
 
 def _slot_started(row, now: datetime) -> bool:
     try:
-        start = datetime.combine(date.fromisoformat(str(row["scheduled_date"])),
-                                 dt_time.fromisoformat(str(row["scheduled_time"])),
-                                 tzinfo=hospital_time.hospital_timezone())
+        start = datetime.combine(
+            date.fromisoformat(str(row["scheduled_date"])),
+            dt_time.fromisoformat(str(row["scheduled_time"])),
+            tzinfo=hospital_time.hospital_timezone(),
+        )
     except ValueError:
         return False
     return now >= start
 
 
 # ── Book ─────────────────────────────────────────────────────────────────────
+
 
 class BookAppointmentRequest(BaseModel):
     """The booking body, TYPED — and typing it is a security decision here.
@@ -776,6 +874,7 @@ class BookAppointmentRequest(BaseModel):
     FastAPI's list-shaped validation error — the existing clients and tests read
     `detail` as a string.
     """
+
     patient_id: str | None = None
     scheduled_date: str | None = None
     scheduled_time: str | None = None
@@ -788,12 +887,16 @@ class BookAppointmentRequest(BaseModel):
     department: str | None = None
 
 
+_BOOK_APPOINTMENT_IDEMPOTENCY_KEY_DEFAULT = Header(default=None, alias="Idempotency-Key")
+_BOOK_APPOINTMENT_USER_DEFAULT = Depends(get_current_user)
+
+
 @router.post("")
 def book_appointment(
     data: BookAppointmentRequest,
     request: Request,
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    user: dict = Depends(get_current_user),
+    idempotency_key: str | None = _BOOK_APPOINTMENT_IDEMPOTENCY_KEY_DEFAULT,
+    user: dict = _BOOK_APPOINTMENT_USER_DEFAULT,
 ):
     """Book an appointment.
 
@@ -850,8 +953,9 @@ def book_appointment(
 
     appointment_type = str(data.appointment_type or "Follow-up").strip() or "Follow-up"
     if len(appointment_type) > _MAX_TYPE_LEN:
-        raise HTTPException(status_code=422,
-                            detail=f"appointment_type exceeds {_MAX_TYPE_LEN} characters")
+        raise HTTPException(
+            status_code=422, detail=f"appointment_type exceeds {_MAX_TYPE_LEN} characters"
+        )
     # A clinician books one of the fixed types (services/appointment_types.py).
     # Free text made the list impossible to count by type. The stored value is
     # the label, the spelling the column has always defaulted to. A patient's
@@ -868,8 +972,7 @@ def book_appointment(
     if reason is not None:
         reason = str(reason).strip() or None
     if reason and len(reason) > _MAX_REASON_LEN:
-        raise HTTPException(status_code=422,
-                            detail=f"reason exceeds {_MAX_REASON_LEN} characters")
+        raise HTTPException(status_code=422, detail=f"reason exceeds {_MAX_REASON_LEN} characters")
 
     idem = idempotency_key.strip() if idempotency_key else None
 
@@ -929,8 +1032,9 @@ def _staff_type_and_reason(data: BookAppointmentRequest) -> tuple[str, str | Non
     same 422s the route has always given."""
     raw_type = str(data.appointment_type or "Follow-up").strip() or "Follow-up"
     if len(raw_type) > _MAX_TYPE_LEN:
-        raise HTTPException(status_code=422,
-                            detail=f"appointment_type exceeds {_MAX_TYPE_LEN} characters")
+        raise HTTPException(
+            status_code=422, detail=f"appointment_type exceeds {_MAX_TYPE_LEN} characters"
+        )
     key = parse_type(data.appointment_type)
     if key is None:
         raise HTTPException(
@@ -941,13 +1045,17 @@ def _staff_type_and_reason(data: BookAppointmentRequest) -> tuple[str, str | Non
     if reason is not None:
         reason = str(reason).strip() or None
     if reason and len(reason) > _MAX_REASON_LEN:
-        raise HTTPException(status_code=422,
-                            detail=f"reason exceeds {_MAX_REASON_LEN} characters")
+        raise HTTPException(status_code=422, detail=f"reason exceeds {_MAX_REASON_LEN} characters")
     return APPOINTMENT_TYPES[key], reason
 
 
-def _book_as_staff_opd(data: BookAppointmentRequest, request: Request,
-                       idempotency_key: str | None, user: dict, patient_id: str) -> dict:
+def _book_as_staff_opd(
+    data: BookAppointmentRequest,
+    request: Request,
+    idempotency_key: str | None,
+    user: dict,
+    patient_id: str,
+) -> dict:
     """The staff booking in OPD mode, after the endpoint scoped the patient.
 
     The clinic: with doctor_id it is the doctor's clinic session's department;
@@ -972,19 +1080,35 @@ def _book_as_staff_opd(data: BookAppointmentRequest, request: Request,
     if doctor_id is None:
         department = str(data.department or "").strip() or dept
         if dept is not None and not _same_clinic(department, dept):
-            raise _conflict("department_scope", f"You can only book appointments in {dept}",
-                            status=403)
+            raise _conflict(
+                "department_scope", f"You can only book appointments in {dept}", status=403
+            )
         try:
             appointment, created = persist_appointment(
-                patient_id=patient_id, booked_by_user_id=user["id"],
-                scheduled_date=scheduled_date, scheduled_time=scheduled_time,
-                appointment_type=appointment_type, reason=reason,
-                department=department, origin=ORIGIN_STAFF, idem=idem, bind_replay=True,
+                patient_id=patient_id,
+                booked_by_user_id=user["id"],
+                scheduled_date=scheduled_date,
+                scheduled_time=scheduled_time,
+                appointment_type=appointment_type,
+                reason=reason,
+                department=department,
+                origin=ORIGIN_STAFF,
+                idem=idem,
+                bind_replay=True,
             )
         except _ReplayConflict as err:
-            _audit_replay_refused(request, user, patient_id=patient_id, err=err, requested={
-                "requested_doctor_id": None, "requested_date": scheduled_date,
-                "requested_time": scheduled_time, "requested_department": department})
+            _audit_replay_refused(
+                request,
+                user,
+                patient_id=patient_id,
+                err=err,
+                requested={
+                    "requested_doctor_id": None,
+                    "requested_date": scheduled_date,
+                    "requested_time": scheduled_time,
+                    "requested_department": department,
+                },
+            )
             raise
         if created:
             log_audit_event(
@@ -992,8 +1116,9 @@ def _book_as_staff_opd(data: BookAppointmentRequest, request: Request,
                 event_category="clinical_record",
                 action_type="appointment_booked",
                 outcome="success",
-                summary_message=(f"Appointment booked for {patient_id} on "
-                                 f"{scheduled_date} {scheduled_time}"),
+                summary_message=(
+                    f"Appointment booked for {patient_id} on {scheduled_date} {scheduled_time}"
+                ),
                 actor_user_id=user["id"],
                 actor_role=user.get("role", ""),
                 patient_id=patient_id,
@@ -1002,67 +1127,114 @@ def _book_as_staff_opd(data: BookAppointmentRequest, request: Request,
                 request_path=request.url.path,
                 http_method=request.method,
                 ip_address=request.client.host if request.client else None,
-                metadata={"appointment_type": appointment_type, "origin": ORIGIN_STAFF,
-                          "department": department, "opd_mode": True},
+                metadata={
+                    "appointment_type": appointment_type,
+                    "origin": ORIGIN_STAFF,
+                    "department": department,
+                    "opd_mode": True,
+                },
             )
         return appointment
 
     offer = _slot_offer(doctor_id, scheduled_date, scheduled_time)
     session = offer["session"]
     if dept is not None and not _same_clinic(session["department"], dept):
-        raise _conflict("department_scope",
-                        f"You can only book appointments in {dept}", status=403)
+        raise _conflict("department_scope", f"You can only book appointments in {dept}", status=403)
     try:
         with db_session(immediate=True) as db:
-            if db.execute("SELECT 1 FROM patients WHERE id = ?",
-                          (patient_id,)).fetchone() is None:
+            if db.execute("SELECT 1 FROM patients WHERE id = ?", (patient_id,)).fetchone() is None:
                 raise HTTPException(status_code=404, detail="Patient not found")
             row, created = _book_slot_on(
-                db, patient_id=patient_id, booked_by=user["id"], doctor_id=doctor_id,
-                scheduled_date=scheduled_date, scheduled_time=scheduled_time,
-                appointment_type=appointment_type, reason=reason, offer=offer, idem=idem)
+                db,
+                patient_id=patient_id,
+                booked_by=user["id"],
+                doctor_id=doctor_id,
+                scheduled_date=scheduled_date,
+                scheduled_time=scheduled_time,
+                appointment_type=appointment_type,
+                reason=reason,
+                offer=offer,
+                idem=idem,
+            )
             if created:
                 _audit_appointment(
-                    db, request, user, action="appointment_booked", row=row,
-                    summary=(f"Appointment booked for {patient_id} with {doctor_id} on "
-                             f"{scheduled_date} {scheduled_time}"),
-                    metadata={"appointment_type": appointment_type, "origin": ORIGIN_STAFF,
-                              "doctor_id": doctor_id, "session_id": session["session_id"],
-                              "slot_position": row["slot_position"],
-                              "department": session["department"]})
+                    db,
+                    request,
+                    user,
+                    action="appointment_booked",
+                    row=row,
+                    summary=(
+                        f"Appointment booked for {patient_id} with {doctor_id} on "
+                        f"{scheduled_date} {scheduled_time}"
+                    ),
+                    metadata={
+                        "appointment_type": appointment_type,
+                        "origin": ORIGIN_STAFF,
+                        "doctor_id": doctor_id,
+                        "session_id": session["session_id"],
+                        "slot_position": row["slot_position"],
+                        "department": session["department"],
+                    },
+                )
             else:
                 # Nothing new was saved, but the answer names the patient
                 # again: its own action, so a count of bookings stays true.
-                matched_by = ("idempotency_key"
-                              if idem and _row_get(row, "idempotency_key") == idem
-                              else "same_patient_and_slot")
+                matched_by = (
+                    "idempotency_key"
+                    if idem and _row_get(row, "idempotency_key") == idem
+                    else "same_patient_and_slot"
+                )
                 _audit_appointment(
-                    db, request, user, action="appointment_booking_repeated", row=row,
-                    summary=(f"Appointment {row['id']} booking repeated for {patient_id} "
-                             f"with {doctor_id} on {scheduled_date} {scheduled_time}; "
-                             "nothing new was saved"),
-                    metadata={"replay": True, "matched_by": matched_by,
-                              "doctor_id": doctor_id,
-                              "session_id": _row_get(row, "session_id"),
-                              "slot_position": _row_get(row, "slot_position"),
-                              "department": _row_get(row, "department")})
+                    db,
+                    request,
+                    user,
+                    action="appointment_booking_repeated",
+                    row=row,
+                    summary=(
+                        f"Appointment {row['id']} booking repeated for {patient_id} "
+                        f"with {doctor_id} on {scheduled_date} {scheduled_time}; "
+                        "nothing new was saved"
+                    ),
+                    metadata={
+                        "replay": True,
+                        "matched_by": matched_by,
+                        "doctor_id": doctor_id,
+                        "session_id": _row_get(row, "session_id"),
+                        "slot_position": _row_get(row, "slot_position"),
+                        "department": _row_get(row, "department"),
+                    },
+                )
             return _staff_view(db, [row])[0]
     except _ReplayConflict as err:
-        _audit_replay_refused(request, user, patient_id=patient_id, err=err, requested={
-            "requested_doctor_id": doctor_id, "requested_date": scheduled_date,
-            "requested_time": scheduled_time,
-            "requested_department": session["department"]})
+        _audit_replay_refused(
+            request,
+            user,
+            patient_id=patient_id,
+            err=err,
+            requested={
+                "requested_doctor_id": doctor_id,
+                "requested_date": scheduled_date,
+                "requested_time": scheduled_time,
+                "requested_department": session["department"],
+            },
+        )
         raise
 
 
 # ── OPD mode: the front desk's day (opd-16) ──────────────────────────────────
 
+
+_APPOINTMENTS_DAY_DATE_DEFAULT = Query(default=None, alias="date", max_length=10)
+_APPOINTMENTS_DAY_DOCTOR_ID_DEFAULT = Query(default=None, max_length=64)
+_APPOINTMENTS_DAY_USER_DEFAULT = Depends(require_registration_desk("read"))
+
+
 @router.get("/day", dependencies=[Depends(require_opd_feature)])
 def appointments_day(
     request: Request,
-    date_: str | None = Query(default=None, alias="date", max_length=10),
-    doctor_id: str | None = Query(default=None, max_length=64),
-    user: dict = Depends(require_registration_desk("read")),
+    date_: str | None = _APPOINTMENTS_DAY_DATE_DEFAULT,
+    doctor_id: str | None = _APPOINTMENTS_DAY_DOCTOR_ID_DEFAULT,
+    user: dict = _APPOINTMENTS_DAY_USER_DEFAULT,
 ):
     """One hospital day of appointments for the caller's clinic, with each
     clinic session's slots and how many are taken.
@@ -1080,7 +1252,7 @@ def appointments_day(
     try:
         day = date.fromisoformat(date_) if date_ else now.date()
     except ValueError:
-        raise HTTPException(status_code=422, detail="date must be YYYY-MM-DD")
+        raise HTTPException(status_code=422, detail="date must be YYYY-MM-DD") from None
     doctor = (doctor_id or "").strip() or None
     sql = "SELECT * FROM appointments WHERE scheduled_date = ?"
     params: list = [day.isoformat()]
@@ -1090,45 +1262,56 @@ def appointments_day(
     sql += " ORDER BY scheduled_time, COALESCE(doctor_id, ''), slot_position, created_at, id"
     cache: dict = {}
     with db_session() as db:
-        rows = [r for r in db.execute(sql, params).fetchall()
-                if _appointment_visible(db, r, dept)]
+        rows = [r for r in db.execute(sql, params).fetchall() if _appointment_visible(db, r, dept)]
         listed = _staff_view(db, rows)
-        for data, row in zip(listed, rows):
+        for data, row in zip(listed, rows, strict=False):
             data["effective_status"], data["no_show_computed"] = _effective_status(
-                db, row, now, cache)
+                db, row, now, cache
+            )
         booked = {
-            (r["doctor_id"], r["scheduled_time"]): r["n"] for r in db.execute(
+            (r["doctor_id"], r["scheduled_time"]): r["n"]
+            for r in db.execute(
                 "SELECT doctor_id, scheduled_time, COUNT(*) AS n FROM appointments "
                 "WHERE scheduled_date = ? AND doctor_id IS NOT NULL AND status != 'cancelled' "
-                "GROUP BY doctor_id, scheduled_time", (day.isoformat(),)).fetchall()
+                "GROUP BY doctor_id, scheduled_time",
+                (day.isoformat(),),
+            ).fetchall()
         }
     try:
         offer = schedule.availability(day=day, days=1, doctor_id=doctor, department=dept)
     except schedule.ClinicScheduleError as err:
-        raise _conflict(err.code, str(err), status=err.status)
+        raise _conflict(err.code, str(err), status=err.status) from err
     sessions = []
     for offered in offer["days"]:
         for session in offered["sessions"]:
             slots = []
             for slot in session["slots"]:
                 taken = int(booked.get((session["doctor_id"], slot["start"]), 0))
-                slots.append({**slot, "booked": taken,
-                              "free": max(0, int(slot["capacity"]) - taken)})
+                slots.append(
+                    {**slot, "booked": taken, "free": max(0, int(slot["capacity"]) - taken)}
+                )
             sessions.append({**session, "slots": slots})
 
     if listed:
         try:
             log_phi_read(
-                request=request, user=user, action_type="appointments_day_viewed",
-                summary_message=(f"Appointments for {day.isoformat()} viewed ({len(listed)}) "
-                                 f"for {dept or '(all clinics, no department on record)'}"),
-                target_type="appointment_day", target_id=day.isoformat(),
-                metadata={"result_count": len(listed),
-                          "appointment_ids": [a["id"] for a in listed],
-                          "matched_patient_ids": sorted({a["patient_id"] for a in listed})},
+                request=request,
+                user=user,
+                action_type="appointments_day_viewed",
+                summary_message=(
+                    f"Appointments for {day.isoformat()} viewed ({len(listed)}) "
+                    f"for {dept or '(all clinics, no department on record)'}"
+                ),
+                target_type="appointment_day",
+                target_id=day.isoformat(),
+                metadata={
+                    "result_count": len(listed),
+                    "appointment_ids": [a["id"] for a in listed],
+                    "matched_patient_ids": sorted({a["patient_id"] for a in listed}),
+                },
             )
         except AuditWriteError:
-            raise _audit_unavailable()
+            raise _audit_unavailable() from None
     return {
         "date": day.isoformat(),
         "hospital_today": now.date().isoformat(),
@@ -1141,8 +1324,12 @@ def appointments_day(
 
 # ── Patient portal: own upcoming ─────────────────────────────────────────────
 
+
+_MY_APPOINTMENTS_USER_DEFAULT = Depends(require_patient_self())
+
+
 @router.get("/mine")
-def my_appointments(user: dict = Depends(require_patient_self())):
+def my_appointments(user: dict = _MY_APPOINTMENTS_USER_DEFAULT):
     """List the logged-in patient's own upcoming (booked, not-past) appointments.
     "Not past" is the hospital's day (services.hospital_time), not the server's."""
     patient_id = _resolve_own_patient_id(user["id"])
@@ -1159,11 +1346,15 @@ def my_appointments(user: dict = Depends(require_patient_self())):
 
 # ── Clinician: list by patient ───────────────────────────────────────────────
 
+
+_LIST_APPOINTMENTS_USER_DEFAULT = Depends(require_permission("patient.read_all"))
+
+
 @router.get("")
 def list_appointments(
     patient_id: str,
     request: Request,
-    user: dict = Depends(require_permission("patient.read_all")),
+    user: dict = _LIST_APPOINTMENTS_USER_DEFAULT,
 ):
     """List all appointments for a patient (clinician view).
 
@@ -1199,12 +1390,17 @@ def list_appointments(
 
 # ── Cancel ───────────────────────────────────────────────────────────────────
 
+
+_CANCEL_APPOINTMENT_REASON_DEFAULT = Query(default=None, max_length=_MAX_CANCEL_REASON_LEN)
+_CANCEL_APPOINTMENT_USER_DEFAULT = Depends(get_current_user)
+
+
 @router.delete("/{appointment_id}")
 def cancel_appointment(
     appointment_id: str,
     request: Request,
-    reason: str | None = Query(default=None, max_length=_MAX_CANCEL_REASON_LEN),
-    user: dict = Depends(get_current_user),
+    reason: str | None = _CANCEL_APPOINTMENT_REASON_DEFAULT,
+    user: dict = _CANCEL_APPOINTMENT_USER_DEFAULT,
 ):
     """Cancel an appointment (soft: status -> 'cancelled', row is kept).
 
@@ -1221,9 +1417,7 @@ def cancel_appointment(
     note = (reason or "").strip()[:_MAX_CANCEL_REASON_LEN] or None
 
     with db_session(immediate=True) as db:
-        row = db.execute(
-            "SELECT * FROM appointments WHERE id = ?", (appointment_id,)
-        ).fetchone()
+        row = db.execute("SELECT * FROM appointments WHERE id = ?", (appointment_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Appointment not found")
 
@@ -1236,7 +1430,10 @@ def cancel_appointment(
         elif not _may_book_for_patients(role):
             raise HTTPException(
                 status_code=403,
-                detail={"error": "permission_denied", "message": "Not permitted to cancel appointments"},
+                detail={
+                    "error": "permission_denied",
+                    "message": "Not permitted to cancel appointments",
+                },
             )
         elif not _appointment_visible(db, row, dept):
             raise HTTPException(status_code=404, detail="Appointment not found")
@@ -1254,8 +1451,10 @@ def cancel_appointment(
         if row["status"] == "checked_in":
             raise HTTPException(
                 status_code=409,
-                detail=("This patient has checked in. Cancel the outpatient visit at the "
-                        "front desk instead, and the appointment is closed with it."),
+                detail=(
+                    "This patient has checked in. Cancel the outpatient visit at the "
+                    "front desk instead, and the appointment is closed with it."
+                ),
             )
         if row["status"] == "no_show":
             raise HTTPException(
@@ -1294,11 +1493,15 @@ def cancel_appointment(
 
 # ── Complete ─────────────────────────────────────────────────────────────────
 
+
+_COMPLETE_APPOINTMENT_USER_DEFAULT = Depends(require_permission(PATIENT_WRITE))
+
+
 @router.post("/{appointment_id}/complete")
 def complete_appointment(
     appointment_id: str,
     request: Request,
-    user: dict = Depends(require_permission(PATIENT_WRITE)),
+    user: dict = _COMPLETE_APPOINTMENT_USER_DEFAULT,
 ):
     """Mark an appointment as attended (status -> 'completed'). Clinician-only.
 
@@ -1314,9 +1517,7 @@ def complete_appointment(
     """
     dept = department_scope(user)
     with db_session(immediate=True) as db:
-        row = db.execute(
-            "SELECT * FROM appointments WHERE id = ?", (appointment_id,)
-        ).fetchone()
+        row = db.execute("SELECT * FROM appointments WHERE id = ?", (appointment_id,)).fetchone()
         if not row or not _appointment_visible(db, row, dept):
             raise HTTPException(status_code=404, detail="Appointment not found")
         if row["status"] == "completed":
@@ -1372,15 +1573,18 @@ _NOT_OPEN = {
 
 
 def _not_open(status: str) -> HTTPException:
-    return _conflict("appointment_not_open",
-                     _NOT_OPEN.get(status, "This appointment cannot be changed now."),
-                     appointment_status=status)
+    return _conflict(
+        "appointment_not_open",
+        _NOT_OPEN.get(status, "This appointment cannot be changed now."),
+        appointment_status=status,
+    )
 
 
 class StatedIdentityIn(BaseModel):
     """What the patient STATES at check-in (ruling OPD-S1), compared on the
     server exactly as at the front desk; never echoed back. The same fields
     as routes/frontdesk_routes.IdentityStatedIn."""
+
     model_config = ConfigDict(extra="forbid")
     name: str | None = Field(None, max_length=200)
     date_of_birth: str | None = Field(None, max_length=40)
@@ -1396,12 +1600,15 @@ class CheckInRequest(BaseModel):
     identity_check: StatedIdentityIn | None = None
 
 
+_CHECK_IN_APPOINTMENT_USER_DEFAULT = Depends(require_registration_desk("write"))
+
+
 @router.post("/{appointment_id}/check-in", dependencies=[Depends(require_opd_feature)])
 def check_in_appointment(
     appointment_id: str,
     request: Request,
     data: CheckInRequest | None = None,
-    user: dict = Depends(require_registration_desk("write")),
+    user: dict = _CHECK_IN_APPOINTMENT_USER_DEFAULT,
 ):
     """The patient has arrived: open their OPD visit with a token.
 
@@ -1414,7 +1621,6 @@ def check_in_appointment(
     visit in that same transaction, or nothing is saved. Only on the
     appointment's own day. A repeat answers the same visit (the visit's
     idempotency key is the appointment's)."""
-    from routes import frontdesk_routes as desk
     from services.frontdesk_service import (
         FrontDeskError,
         OpdReplayConflict,
@@ -1422,6 +1628,8 @@ def check_in_appointment(
         register_opd_visit,
     )
     from services.opd_queue_service import nudge_queue_changed
+
+    from routes import frontdesk_routes as desk
 
     body = data or CheckInRequest()
     dept = department_scope(user)
@@ -1434,15 +1642,17 @@ def check_in_appointment(
         raise _conflict(
             "not_today",
             f"This appointment is for {row['scheduled_date']}. Check the patient in on the "
-            "day of their appointment, or reschedule it.")
+            "day of their appointment, or reschedule it.",
+        )
     department = (_row_get(row, "department") or dept or "").strip()
     if not department:
-        raise _conflict("department_required",
-                        "This appointment names no clinic. Reschedule it into a clinic first.",
-                        status=422)
+        raise _conflict(
+            "department_required",
+            "This appointment names no clinic. Reschedule it into a clinic first.",
+            status=422,
+        )
     if dept is not None and not _same_clinic(department, dept):
-        raise _conflict("department_scope", f"You can only check patients in to {dept}",
-                        status=403)
+        raise _conflict("department_scope", f"You can only check patients in to {dept}", status=403)
     patient_id = row["patient_id"]
     with db_session() as db:
         if not opd_registration_allowed(db, patient_id, dept):
@@ -1450,13 +1660,19 @@ def check_in_appointment(
 
     identity = None
     if config.feature_enabled("registration"):
-        identity = desk._confirm_identity(request, user, patient_id=patient_id, dept=dept,
-                                          stated=body.identity_check)
+        identity = desk._confirm_identity(
+            request, user, patient_id=patient_id, dept=dept, stated=body.identity_check
+        )
 
     self_registered = has_permission(user.get("role", ""), OPD_CONSULT)
     registration_audit = desk._registration_audit(
-        request, user, patient_id=patient_id, dept=dept,
-        self_registered=self_registered, identity=identity)
+        request,
+        user,
+        patient_id=patient_id,
+        dept=dept,
+        self_registered=self_registered,
+        identity=identity,
+    )
     replay_audit = desk._registration_replay_audit(request, user)
 
     def _on_registered(db, visit: dict) -> None:
@@ -1467,26 +1683,41 @@ def check_in_appointment(
             (utc_iso_now(), user["id"], visit["id"], appointment_id),
         )
         if moved.rowcount != 1:
-            raise _conflict("appointment_changed",
-                            "This appointment changed while the patient was being checked in. "
-                            "Nothing was saved.")
-        fresh = db.execute("SELECT * FROM appointments WHERE id = ?",
-                           (appointment_id,)).fetchone()
+            raise _conflict(
+                "appointment_changed",
+                "This appointment changed while the patient was being checked in. "
+                "Nothing was saved.",
+            )
+        fresh = db.execute("SELECT * FROM appointments WHERE id = ?", (appointment_id,)).fetchone()
         _audit_appointment(
-            db, request, user, action="appointment_checked_in", row=fresh,
-            summary=(f"Appointment {appointment_id} checked in: OPD visit {visit['id']}, "
-                     f"token {visit['token_number']}"),
-            metadata={"opd_visit_id": visit["id"], "token_number": visit["token_number"],
-                      "department": visit["department"], "doctor_id": visit.get("doctor_id"),
-                      **desk._identity_facts(identity)})
+            db,
+            request,
+            user,
+            action="appointment_checked_in",
+            row=fresh,
+            summary=(
+                f"Appointment {appointment_id} checked in: OPD visit {visit['id']}, "
+                f"token {visit['token_number']}"
+            ),
+            metadata={
+                "opd_visit_id": visit["id"],
+                "token_number": visit["token_number"],
+                "department": visit["department"],
+                "doctor_id": visit.get("doctor_id"),
+                **desk._identity_facts(identity),
+            },
+        )
 
     def _on_replay(db, visit: dict, facts: dict) -> None:
         replay_audit(db, visit, facts)
-        current = db.execute("SELECT opd_visit_id FROM appointments WHERE id = ?",
-                             (appointment_id,)).fetchone()
+        current = db.execute(
+            "SELECT opd_visit_id FROM appointments WHERE id = ?", (appointment_id,)
+        ).fetchone()
         if current is None or current["opd_visit_id"] != visit["id"]:
-            raise _conflict("appointment_changed",
-                            "This appointment no longer names that visit. Nothing was saved.")
+            raise _conflict(
+                "appointment_changed",
+                "This appointment no longer names that visit. Nothing was saved.",
+            )
 
     try:
         visit = register_opd_visit(
@@ -1503,17 +1734,17 @@ def check_in_appointment(
             identity_check=identity,
         )
     except OpdReplayConflict as err:
-        desk._audit_replay_refused(request, user, patient_id=patient_id,
-                                   department=department, err=err)
-        raise desk._replay_conflict()
+        desk._audit_replay_refused(
+            request, user, patient_id=patient_id, department=department, err=err
+        )
+        raise desk._replay_conflict() from err
     except FrontDeskError as err:
-        raise HTTPException(status_code=422, detail=str(err))
+        raise HTTPException(status_code=422, detail=str(err)) from err
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
     nudge_queue_changed(visit.get("department"))
     with db_session() as db:
-        fresh = db.execute("SELECT * FROM appointments WHERE id = ?",
-                           (appointment_id,)).fetchone()
+        fresh = db.execute("SELECT * FROM appointments WHERE id = ?", (appointment_id,)).fetchone()
         appointment = _staff_view(db, [fresh])[0]
     return {
         "appointment": appointment,
@@ -1522,11 +1753,14 @@ def check_in_appointment(
     }
 
 
+_MARK_NO_SHOW_USER_DEFAULT = Depends(get_current_user)
+
+
 @router.post("/{appointment_id}/no-show", dependencies=[Depends(require_opd_feature)])
 def mark_no_show(
     appointment_id: str,
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = _MARK_NO_SHOW_USER_DEFAULT,
 ):
     """The patient did not come: marked by the desk once the appointment time
     has started (409 not_yet_due before it). Only an open booking; a repeat
@@ -1541,21 +1775,28 @@ def mark_no_show(
         if row["status"] != "booked":
             raise _not_open(row["status"])
         if not _slot_started(row, now):
-            raise _conflict("not_yet_due",
-                            "The appointment time has not come yet, so it cannot be a no-show.")
+            raise _conflict(
+                "not_yet_due", "The appointment time has not come yet, so it cannot be a no-show."
+            )
         db.execute(
             "UPDATE appointments SET status = 'no_show', no_show_at = ?, no_show_by = ? "
             "WHERE id = ? AND status = 'booked'",
             (utc_iso_now(), user["id"], appointment_id),
         )
-        fresh = db.execute("SELECT * FROM appointments WHERE id = ?",
-                           (appointment_id,)).fetchone()
+        fresh = db.execute("SELECT * FROM appointments WHERE id = ?", (appointment_id,)).fetchone()
         _audit_appointment(
-            db, request, user, action="appointment_no_show", row=fresh,
+            db,
+            request,
+            user,
+            action="appointment_no_show",
+            row=fresh,
             summary=f"Appointment {appointment_id} marked as a no-show",
-            metadata={"scheduled_date": fresh["scheduled_date"],
-                      "scheduled_time": fresh["scheduled_time"],
-                      "doctor_id": _row_get(fresh, "doctor_id")})
+            metadata={
+                "scheduled_date": fresh["scheduled_date"],
+                "scheduled_time": fresh["scheduled_time"],
+                "doctor_id": _row_get(fresh, "doctor_id"),
+            },
+        )
         return _staff_view(db, [fresh])[0]
 
 
@@ -1565,15 +1806,20 @@ def _reschedule_replay(db, idem: str | None, appointment_id: str, old) -> dict |
     None when the key is new (or there is none)."""
     if not idem:
         return None
-    replayed = db.execute("SELECT * FROM appointments WHERE idempotency_key = ?",
-                          (idem,)).fetchone()
+    replayed = db.execute(
+        "SELECT * FROM appointments WHERE idempotency_key = ?", (idem,)
+    ).fetchone()
     if replayed is None:
         return None
     if _row_get(replayed, "rescheduled_from_id") != appointment_id:
-        raise _conflict("idempotency_key_reused",
-                        "This request key was already used for another booking.")
-    return {"appointment": _staff_view(db, [replayed])[0],
-            "previous": _staff_view(db, [old])[0], "replayed": True}
+        raise _conflict(
+            "idempotency_key_reused", "This request key was already used for another booking."
+        )
+    return {
+        "appointment": _staff_view(db, [replayed])[0],
+        "previous": _staff_view(db, [old])[0],
+        "replayed": True,
+    }
 
 
 class RescheduleRequest(BaseModel):
@@ -1586,13 +1832,17 @@ class RescheduleRequest(BaseModel):
     reason: str | None = Field(None, max_length=_MAX_CANCEL_REASON_LEN)
 
 
+_RESCHEDULE_APPOINTMENT_IDEMPOTENCY_KEY_DEFAULT = Header(default=None, alias="Idempotency-Key")
+_RESCHEDULE_APPOINTMENT_USER_DEFAULT = Depends(get_current_user)
+
+
 @router.post("/{appointment_id}/reschedule", dependencies=[Depends(require_opd_feature)])
 def reschedule_appointment(
     appointment_id: str,
     data: RescheduleRequest,
     request: Request,
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    user: dict = Depends(get_current_user),
+    idempotency_key: str | None = _RESCHEDULE_APPOINTMENT_IDEMPOTENCY_KEY_DEFAULT,
+    user: dict = _RESCHEDULE_APPOINTMENT_USER_DEFAULT,
 ):
     """Move a booking to another day or slot as a NEW row that points at the
     old one (rescheduled_from_id). The old row is kept: an open booking is
@@ -1617,16 +1867,16 @@ def reschedule_appointment(
     if old["status"] not in ("booked", "no_show"):
         raise _not_open(old["status"])
     doctor_id = (data.doctor_id or "").strip() or _row_get(old, "doctor_id")
-    if (doctor_id == _row_get(old, "doctor_id") and scheduled_date == old["scheduled_date"]
-            and scheduled_time == old["scheduled_time"]):
-        raise _conflict("same_slot", "That is the time the appointment already has.",
-                        status=422)
+    if (
+        doctor_id == _row_get(old, "doctor_id")
+        and scheduled_date == old["scheduled_date"]
+        and scheduled_time == old["scheduled_time"]
+    ):
+        raise _conflict("same_slot", "That is the time the appointment already has.", status=422)
     offer = _slot_offer(doctor_id, scheduled_date, scheduled_time) if doctor_id else None
-    department = offer["session"]["department"] if offer else (
-        _row_get(old, "department") or dept)
+    department = offer["session"]["department"] if offer else (_row_get(old, "department") or dept)
     if dept is not None and not _same_clinic(department, dept):
-        raise _conflict("department_scope", f"You can only book appointments in {dept}",
-                        status=403)
+        raise _conflict("department_scope", f"You can only book appointments in {dept}", status=403)
 
     with db_session(immediate=True) as db:
         old = _appointment_or_404(db, appointment_id, dept)
@@ -1637,11 +1887,14 @@ def reschedule_appointment(
             raise _not_open(old["status"])
         successor = db.execute(
             "SELECT id FROM appointments WHERE rescheduled_from_id = ? AND status != 'cancelled'",
-            (appointment_id,)).fetchone()
+            (appointment_id,),
+        ).fetchone()
         if successor is not None:
-            raise _conflict("already_rescheduled",
-                            "This appointment was already moved to another time.",
-                            appointment_id=successor["id"])
+            raise _conflict(
+                "already_rescheduled",
+                "This appointment was already moved to another time.",
+                appointment_id=successor["id"],
+            )
         # The old booking gives its slot back first, so a move to the same
         # time with another doctor is not refused as a clash with itself. If
         # the new booking is refused, the transaction rolls this back too.
@@ -1650,27 +1903,43 @@ def reschedule_appointment(
             db.execute(
                 "UPDATE appointments SET status = 'cancelled', cancelled_at = ?, "
                 "cancelled_by = ?, cancel_reason = ? WHERE id = ? AND status = 'booked'",
-                (utc_iso_now(), user["id"],
-                 (f"{moved_to}: {note}" if note else moved_to)[:_MAX_CANCEL_REASON_LEN],
-                 appointment_id),
+                (
+                    utc_iso_now(),
+                    user["id"],
+                    (f"{moved_to}: {note}" if note else moved_to)[:_MAX_CANCEL_REASON_LEN],
+                    appointment_id,
+                ),
             )
         if offer is not None:
             new_row, _created = _book_slot_on(
-                db, patient_id=old["patient_id"], booked_by=user["id"], doctor_id=doctor_id,
-                scheduled_date=scheduled_date, scheduled_time=scheduled_time,
-                appointment_type=old["appointment_type"], reason=old["reason"], offer=offer,
-                idem=idem, rescheduled_from_id=appointment_id)
+                db,
+                patient_id=old["patient_id"],
+                booked_by=user["id"],
+                doctor_id=doctor_id,
+                scheduled_date=scheduled_date,
+                scheduled_time=scheduled_time,
+                appointment_type=old["appointment_type"],
+                reason=old["reason"],
+                offer=offer,
+                idem=idem,
+                rescheduled_from_id=appointment_id,
+            )
             if _row_get(new_row, "rescheduled_from_id") != appointment_id:
-                raise _conflict("patient_already_booked",
-                                "This patient already has an appointment at that time.")
+                raise _conflict(
+                    "patient_already_booked",
+                    "This patient already has an appointment at that time.",
+                )
         else:
             clash = db.execute(
                 "SELECT 1 FROM appointments WHERE patient_id = ? AND scheduled_date = ? "
                 "AND scheduled_time = ? AND status IN ('booked', 'checked_in')",
-                (old["patient_id"], scheduled_date, scheduled_time)).fetchone()
+                (old["patient_id"], scheduled_date, scheduled_time),
+            ).fetchone()
             if clash is not None:
-                raise _conflict("patient_already_booked",
-                                "This patient already has an appointment at that time.")
+                raise _conflict(
+                    "patient_already_booked",
+                    "This patient already has an appointment at that time.",
+                )
             new_id = str(uuid.uuid4())
             db.execute(
                 """INSERT INTO appointments
@@ -1678,21 +1947,45 @@ def reschedule_appointment(
                         appointment_type, reason, status, idempotency_key, origin, department,
                         rescheduled_from_id)
                    VALUES (?, ?, ?, ?, ?, ?, ?, 'booked', ?, ?, ?, ?)""",
-                (new_id, old["patient_id"], user["id"], scheduled_date, scheduled_time,
-                 old["appointment_type"], old["reason"], idem, ORIGIN_STAFF, department,
-                 appointment_id),
+                (
+                    new_id,
+                    old["patient_id"],
+                    user["id"],
+                    scheduled_date,
+                    scheduled_time,
+                    old["appointment_type"],
+                    old["reason"],
+                    idem,
+                    ORIGIN_STAFF,
+                    department,
+                    appointment_id,
+                ),
             )
             new_row = db.execute("SELECT * FROM appointments WHERE id = ?", (new_id,)).fetchone()
-        previous = db.execute("SELECT * FROM appointments WHERE id = ?",
-                              (appointment_id,)).fetchone()
+        previous = db.execute(
+            "SELECT * FROM appointments WHERE id = ?", (appointment_id,)
+        ).fetchone()
         _audit_appointment(
-            db, request, user, action="appointment_rescheduled", row=new_row,
-            summary=(f"Appointment {appointment_id} rescheduled to {scheduled_date} "
-                     f"{scheduled_time} as {new_row['id']}"),
-            metadata={"rescheduled_from_id": appointment_id,
-                      "previous_status": old["status"],
-                      "from": f"{old['scheduled_date']} {old['scheduled_time']}",
-                      "to": f"{scheduled_date} {scheduled_time}",
-                      "doctor_id": doctor_id, "reason_given": note is not None})
-        return {"appointment": _staff_view(db, [new_row])[0],
-                "previous": _staff_view(db, [previous])[0], "replayed": False}
+            db,
+            request,
+            user,
+            action="appointment_rescheduled",
+            row=new_row,
+            summary=(
+                f"Appointment {appointment_id} rescheduled to {scheduled_date} "
+                f"{scheduled_time} as {new_row['id']}"
+            ),
+            metadata={
+                "rescheduled_from_id": appointment_id,
+                "previous_status": old["status"],
+                "from": f"{old['scheduled_date']} {old['scheduled_time']}",
+                "to": f"{scheduled_date} {scheduled_time}",
+                "doctor_id": doctor_id,
+                "reason_given": note is not None,
+            },
+        )
+        return {
+            "appointment": _staff_view(db, [new_row])[0],
+            "previous": _staff_view(db, [previous])[0],
+            "replayed": False,
+        }

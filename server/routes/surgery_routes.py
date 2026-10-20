@@ -1,23 +1,18 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from database import db_session, run_db
-from auth import get_current_user
-from permissions import require_permission
+import json
 import logging
 import os
-import uuid
-import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
+from database import db_session, run_db
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
+from permissions import require_permission
+from services.audit_service import log_audit_event
+
 # The pre-operative risk stream is drafted by a model: 404 "Switched off on
 # this computer" while the models are off (services/model_switch.py).
 from services.model_switch import require_models_on as _require_models_on
-from services.audit_service import log_audit_event
 from services.scribe_service import save_scribe_note
-from services.surgery_service import (
-    generate_risk_assessment,
-    trigger_surgery_prep,
-    turnaround_minutes,
-)
 from services.surgery_escalation_service import acknowledge_emergency
 from services.surgery_scope import (
     enforce_surgery_scope,
@@ -26,6 +21,11 @@ from services.surgery_scope import (
     surgery_patient_id,
     surgical_list_filter,
     surgical_scope,
+)
+from services.surgery_service import (
+    generate_risk_assessment,
+    trigger_surgery_prep,
+    turnaround_minutes,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,11 +60,14 @@ router = APIRouter(prefix="/api/surgery", tags=["surgery"])
 # excluded so a completed operation can never be reopened by an errant click —
 # the previous blind UPDATE happily flipped 'completed' back to 'in_progress',
 # which would have detached the case from its post-op note.
-_STARTABLE_STATUSES = {"scheduled", "emergency_ready", "emergency_acknowledged",
-                       "emergency_staged"}
+_STARTABLE_STATUSES = {"scheduled", "emergency_ready", "emergency_acknowledged", "emergency_staged"}
 # Statuses an emergency intake can be acknowledged from.
-_ACKNOWLEDGEABLE_STATUSES = {"emergency_pending", "emergency_context_generating",
-                             "emergency_ready", "emergency_staged"}
+_ACKNOWLEDGEABLE_STATUSES = {
+    "emergency_pending",
+    "emergency_context_generating",
+    "emergency_ready",
+    "emergency_staged",
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  COMPLETION IS A TRANSITION, NOT A FLAG — and what gates it
@@ -130,8 +133,15 @@ class _CompletionRefused(Exception):
     this module.
     """
 
-    def __init__(self, *, reason: str, detail: str, from_status: str | None,
-                 patient_id: str | None, metadata: dict | None = None):
+    def __init__(
+        self,
+        *,
+        reason: str,
+        detail: str,
+        from_status: str | None,
+        patient_id: str | None,
+        metadata: dict | None = None,
+    ):
         super().__init__(detail)
         self.reason = reason
         self.detail = detail
@@ -139,15 +149,23 @@ class _CompletionRefused(Exception):
         self.patient_id = patient_id
         self.metadata = metadata or {}
 
+
 # A schedule request is a per-day fan-out loop plus a date-range scan; an
 # unbounded `days` let any authenticated caller ask for a 100000-day window and
 # tie up a DB worker building the empty days.
 _MAX_SCHEDULE_DAYS = 90
 
 
-def _audit_surgery(request: Request, user: dict, action_type: str, surgery_id: str,
-                   summary: str, patient_id: str | None = None,
-                   metadata: dict | None = None, outcome: str = "success") -> None:
+def _audit_surgery(
+    request: Request,
+    user: dict,
+    action_type: str,
+    surgery_id: str,
+    summary: str,
+    patient_id: str | None = None,
+    metadata: dict | None = None,
+    outcome: str = "success",
+) -> None:
     """Domain audit event for a surgical state change.
 
     The generic mutation middleware records that a POST happened; a surgical
@@ -176,11 +194,16 @@ def _audit_surgery(request: Request, user: dict, action_type: str, surgery_id: s
 # READ ENDPOINTS (Schedule, Emergency Queue, Detail)
 # ═══════════════════════════════════════════════════════════════════
 
+
+_GET_SURGERY_SCHEDULE_DAYS_DEFAULT = Query(7, ge=1, le=_MAX_SCHEDULE_DAYS)
+_GET_SURGERY_SCHEDULE_USER_DEFAULT = Depends(require_permission("surgery.read"))
+
+
 @router.get("/schedule")
 def get_surgery_schedule(
     request: Request,
-    days: int = Query(7, ge=1, le=_MAX_SCHEDULE_DAYS),
-    user: dict = Depends(require_permission("surgery.read")),
+    days: int = _GET_SURGERY_SCHEDULE_DAYS_DEFAULT,
+    user: dict = _GET_SURGERY_SCHEDULE_USER_DEFAULT,
 ):
     """Get scheduled surgeries grouped by day for the week view.
 
@@ -190,7 +213,9 @@ def get_surgery_schedule(
     middleware fires on writes only.
     """
     from datetime import timedelta
+
     from services.hospital_time import hospital_today
+
     # HOSPITAL-local today, not UTC. `surgeries.scheduled_date` is a local
     # calendar date, and the UTC date is a different day for the first 5.5 hours
     # of every IST day: before 05:30 the week view opened on YESTERDAY's list.
@@ -212,7 +237,7 @@ def get_surgery_schedule(
                LEFT JOIN users u ON s.surgeon_id = u.id
                WHERE s.scheduled_date BETWEEN ? AND ?{scope_sql}
                ORDER BY s.scheduled_date ASC, s.scheduled_time ASC""",
-            (today.isoformat(), end_date.isoformat()) + scope_params
+            (today.isoformat(), end_date.isoformat()) + scope_params,
         ).fetchall()
         # The band is the NEWS2 of each patient's LATEST VITALS row (id breaks
         # a timestamp tie), the Vigil board's rule since 3 October. It came off
@@ -236,10 +261,14 @@ def get_surgery_schedule(
     on_scale_2 = {r["patient_id"]: bool(r["patient_on_scale_2"]) for r in rows}
     # With scoring switched off (ORB_SCORING_ENABLED, the Orb Ward Record) no
     # NEWS2 is computed and every case carries risk_level and news2 None.
-    scores = {
-        pid: score_vitals_row(v, patient_id=pid, on_scale_2=on_scale_2[pid])
-        for pid, v in latest_vitals.items()
-    } if scoring_enabled() else {}
+    scores = (
+        {
+            pid: score_vitals_row(v, patient_id=pid, on_scale_2=on_scale_2[pid])
+            for pid, v in latest_vitals.items()
+        }
+        if scoring_enabled()
+        else {}
+    )
 
     # Group by date
     grouped: dict[str, list] = {}
@@ -262,15 +291,17 @@ def get_surgery_schedule(
     for i in range(days):
         day = today + timedelta(days=i)
         day_str = day.isoformat()
-        schedule.append({
-            "date": day_str,
-            "day_label": day.strftime("%A"),
-            # SurgicalSuitePanel renders a 'Today' badge off this flag; the
-            # route never sent it, so the badge was unreachable and every
-            # day card in the week view looked alike.
-            "is_today": day == today,
-            "surgeries": grouped.get(day_str, []),
-        })
+        schedule.append(
+            {
+                "date": day_str,
+                "day_label": day.strftime("%A"),
+                # SurgicalSuitePanel renders a 'Today' badge off this flag; the
+                # route never sent it, so the badge was unreachable and every
+                # day card in the week view looked alike.
+                "is_today": day == today,
+                "surgeries": grouped.get(day_str, []),
+            }
+        )
 
     # Audited only when PHI actually left — same rule as the Vigil patient board
     # (routes/vigil_routes.py): this endpoint is polled by every open Surgical
@@ -294,9 +325,12 @@ def get_surgery_schedule(
 
     return schedule
 
+
+_GET_EMERGENCY_QUEUE_USER_DEFAULT = Depends(require_permission("surgery.read"))
+
+
 @router.get("/emergency-queue")
-def get_emergency_queue(request: Request,
-                        user: dict = Depends(require_permission("surgery.read"))):
+def get_emergency_queue(request: Request, user: dict = _GET_EMERGENCY_QUEUE_USER_DEFAULT):
     """Get current emergency surgical cases. WARD SCOPED + READ AUDITED."""
     scope_sql, scope_params = surgical_list_filter(user)
     with db_session() as db:
@@ -308,7 +342,7 @@ def get_emergency_queue(request: Request,
                WHERE s.status IN ('emergency_pending', 'emergency_ready', 'emergency_context_generating')
                  {scope_sql}
                ORDER BY s.scheduled_date ASC, s.scheduled_time ASC""",
-            scope_params
+            scope_params,
         ).fetchall()
         result = [dict(r) for r in rows]
 
@@ -328,9 +362,12 @@ def get_emergency_queue(request: Request,
         )
     return result
 
+
+_GET_SURGERY_CASES_USER_DEFAULT = Depends(require_permission("surgery.read"))
+
+
 @router.get("/cases")
-def get_surgery_cases(request: Request,
-                      user: dict = Depends(require_permission("surgery.read"))):
+def get_surgery_cases(request: Request, user: dict = _GET_SURGERY_CASES_USER_DEFAULT):
     """Get all active surgical cases. WARD SCOPED + READ AUDITED."""
     scope_sql, scope_params = surgical_list_filter(user)
     with db_session() as db:
@@ -341,7 +378,7 @@ def get_surgery_cases(request: Request,
                WHERE s.status NOT IN ('completed', 'cancelled')
                  {scope_sql}
                ORDER BY s.scheduled_date ASC, s.scheduled_time ASC""",
-            scope_params
+            scope_params,
         ).fetchall()
 
         # Also fetch team assignments
@@ -351,9 +388,9 @@ def get_surgery_cases(request: Request,
             placeholders = ",".join(["?"] * len(case_ids))
             team_assignments = db.execute(
                 f"""SELECT * FROM surgery_team_assignments WHERE surgery_id IN ({placeholders})""",
-                case_ids
+                case_ids,
             ).fetchall()
-            
+
         result = []
         for c in cases:
             case_dict = dict(c)
@@ -376,9 +413,14 @@ def get_surgery_cases(request: Request,
         )
     return result
 
+
+_GET_SURGERY_DETAIL_USER_DEFAULT = Depends(require_permission("surgery.read"))
+
+
 @router.get("/{surgery_id}")
-def get_surgery_detail(surgery_id: str, request: Request,
-                       user: dict = Depends(require_permission("surgery.read"))):
+def get_surgery_detail(
+    surgery_id: str, request: Request, user: dict = _GET_SURGERY_DETAIL_USER_DEFAULT
+):
     """Get full details for a specific surgery. WARD SCOPED + READ AUDITED.
 
     THE SCOPE FILTER IS IN THE SAME QUERY as the lookup, not a second round
@@ -408,7 +450,7 @@ def get_surgery_detail(surgery_id: str, request: Request,
                    ORDER BY rs2.timestamp DESC, rs2.id DESC LIMIT 1
                )
                WHERE s.id = ?{scope_sql}""",
-            (surgery_id,) + scope_params
+            (surgery_id,) + scope_params,
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Surgery not found")
@@ -433,6 +475,7 @@ def get_surgery_detail(surgery_id: str, request: Request,
         # Audit fix: read comorbidities from the SURGERIES row first (the agentic
         # flow snapshots them onto s.co_morbidities at case creation), and only
         # fall back to the patient_profiles table when the surgery row is empty.
+        co_morbidities: list[str]
         co_morbidities = []
         surg_co = result.get("co_morbidities")
         if surg_co and str(surg_co).strip() not in ("", "[]", "Reviewing context..."):
@@ -450,6 +493,7 @@ def get_surgery_detail(surgery_id: str, request: Request,
 
         # Parse allergies (JSON array on patient_profiles.allergies) for the safety
         # banner — surgeons must see drug allergies before an emergency case.
+        allergies: list[str]
         allergies = []
         raw_al = result.get("allergies")
         if raw_al:
@@ -460,10 +504,15 @@ def get_surgery_detail(surgery_id: str, request: Request,
                 allergies = [a.strip() for a in str(raw_al).split(",") if a.strip()]
         result["allergies"] = allergies
 
-        for field in ["surgical_checklist", "instruments_required", "staff_required", "possible_complications"]:
+        for field in [
+            "surgical_checklist",
+            "instruments_required",
+            "staff_required",
+            "possible_complications",
+        ]:
             try:
-                result[field] = json.loads(result.get(field)) if result.get(field) else []
-            except:
+                result[field] = json.loads(result[field]) if result.get(field) else []
+            except Exception:
                 result[field] = []
         # The prep steps the Surgical Suite maps over must be a list. The WHO
         # checklist used to be stored in this column as an object, and the
@@ -472,13 +521,13 @@ def get_surgery_detail(surgery_id: str, request: Request,
         if not isinstance(result["surgical_checklist"], list):
             result["surgical_checklist"] = []
         result.pop("who_checklist", None)
-                
+
         # Also parse notes for imported_context if it's a JSON package
         try:
             notes_obj = json.loads(result.get("notes", "{}"))
             if isinstance(notes_obj, dict) and "imported_context" in notes_obj:
                 result["imported_context"] = notes_obj["imported_context"]
-        except:
+        except Exception:
             pass
 
     # OUTSIDE the read session on purpose: log_phi_read opens its own writing
@@ -501,20 +550,29 @@ def get_surgery_detail(surgery_id: str, request: Request,
 # WHO SURGICAL SAFETY CHECKLIST
 # ═══════════════════════════════════════════════════════════════════
 
+
+_WHO_CHECKLIST_TEMPLATE_USER_DEFAULT = Depends(require_permission("surgery.read"))
+
+
 @router.get("/checklist/template")
-def who_checklist_template(user: dict = Depends(require_permission("surgery.read"))):
+def who_checklist_template(user: dict = _WHO_CHECKLIST_TEMPLATE_USER_DEFAULT):
     """Return the canonical WHO Surgical Safety Checklist template.
 
     NO SCOPE CHECK AND NO PHI AUDIT, deliberately: this is the static WHO 2009
     template, identical for every patient in every hospital. It names nobody.
     """
     from services.who_checklist import get_template
+
     return get_template()
 
 
+_GET_WHO_CHECKLIST_USER_DEFAULT = Depends(require_permission("surgery.read"))
+
+
 @router.get("/{surgery_id}/checklist")
-def get_who_checklist(surgery_id: str, request: Request,
-                      user: dict = Depends(require_permission("surgery.read"))):
+def get_who_checklist(
+    surgery_id: str, request: Request, user: dict = _GET_WHO_CHECKLIST_USER_DEFAULT
+):
     """Return the WHO checklist completion state for a surgery.
 
     SCOPED AND AUDITED even though the state itself is item ids and attesting
@@ -523,6 +581,7 @@ def get_who_checklist(surgery_id: str, request: Request,
     404, same detail string, for out-of-scope and unknown.
     """
     from services.who_checklist import get_checklist_state
+
     enforce_surgery_scope(user, surgery_id)
     state = get_checklist_state(surgery_id)
     if state.get("error") == "not_found":
@@ -543,11 +602,19 @@ def get_who_checklist(surgery_id: str, request: Request,
     return state
 
 
+_SET_WHO_CHECKLIST_ITEM_USER_DEFAULT = Depends(require_permission("surgery.write"))
+
+
 @router.post("/{surgery_id}/checklist")
-def set_who_checklist_item(surgery_id: str, payload: dict, request: Request,
-                           user: dict = Depends(require_permission("surgery.write"))):
+def set_who_checklist_item(
+    surgery_id: str,
+    payload: dict,
+    request: Request,
+    user: dict = _SET_WHO_CHECKLIST_ITEM_USER_DEFAULT,
+):
     """Check/uncheck a WHO checklist item. Body: {item_id, checked}."""
     from services.who_checklist import set_item
+
     # A WRITE on a named patient's OR safety record. Scoped for the same reason
     # the read is: without it any authenticated clinician could attest "site
     # marked" on another ward's operation.
@@ -561,16 +628,20 @@ def set_who_checklist_item(surgery_id: str, payload: dict, request: Request,
     except ValueError as e:
         # "Surgery not found" is a 404, not a 400 — a bad item id is the 400.
         if "not found" in str(e).lower():
-            raise HTTPException(status_code=404, detail=str(e))
-        raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     # The WHO checklist is the OR's safety record: who attested what, and when.
     # It has to be in the tamper-evident trail, not only in the surgeries row.
-    _audit_surgery(request, user, "who_checklist_item_set", surgery_id,
-                   f"WHO checklist item {item_id} {'checked' if checked else 'unchecked'} "
-                   f"on surgery {surgery_id}",
-                   metadata={"item_id": item_id, "checked": checked,
-                             "progress": state.get("progress")})
+    _audit_surgery(
+        request,
+        user,
+        "who_checklist_item_set",
+        surgery_id,
+        f"WHO checklist item {item_id} {'checked' if checked else 'unchecked'} "
+        f"on surgery {surgery_id}",
+        metadata={"item_id": item_id, "checked": checked, "progress": state.get("progress")},
+    )
     return state
 
 
@@ -598,28 +669,32 @@ def _persist_alerts(surgery_id, team):
         clean_team: list[tuple[str, str]] = []
         for idx, member in enumerate(team):
             if not isinstance(member, dict):
-                raise HTTPException(status_code=422,
-                                    detail=f"team[{idx}] must be an object with user_id and role")
+                raise HTTPException(
+                    status_code=422, detail=f"team[{idx}] must be an object with user_id and role"
+                )
             member_id = str(member.get("user_id") or "").strip()
             role_name = str(member.get("role") or "").strip()
             if not member_id or not role_name:
-                raise HTTPException(status_code=422,
-                                    detail=f"team[{idx}] requires both user_id and role")
+                raise HTTPException(
+                    status_code=422, detail=f"team[{idx}] requires both user_id and role"
+                )
             exists = db.execute("SELECT 1 FROM users WHERE id = ?", (member_id,)).fetchone()
             if not exists:
-                raise HTTPException(status_code=422,
-                                    detail=f"team[{idx}]: no such user '{member_id}'")
+                raise HTTPException(
+                    status_code=422, detail=f"team[{idx}]: no such user '{member_id}'"
+                )
             clean_team.append((member_id, role_name))
 
         dupes = {u for u, _ in clean_team if [m for m, _ in clean_team].count(u) > 1}
         if dupes:
-            raise HTTPException(status_code=422,
-                                detail=f"Duplicate team member(s) in one alert: {sorted(dupes)}")
+            raise HTTPException(
+                status_code=422, detail=f"Duplicate team member(s) in one alert: {sorted(dupes)}"
+            )
 
         # Get patient's case room
         channel = db.execute(
             "SELECT id FROM channels WHERE patient_id = ? AND type = 'case_room' LIMIT 1",
-            (surgery["patient_id"],)
+            (surgery["patient_id"],),
         ).fetchone()
 
         if not channel:
@@ -633,24 +708,26 @@ def _persist_alerts(surgery_id, team):
         for user_id, role_name in clean_team:
             db.execute(
                 "INSERT INTO surgery_team_assignments (surgery_id, user_id, role_name, status) VALUES (?, ?, ?, 'alerted')",
-                (surgery_id, user_id, role_name)
+                (surgery_id, user_id, role_name),
             )
 
             alert_content = f"SURGICAL ALERT: You have been assigned as {role_name} for an emergency procedure (Source Control)."
 
             # Send targeted message (custom message_type 'surgical_alert' + we can encode user_id in content or read_by logic)
             # We'll use a JSON payload in content for structured rendering in the frontend.
-            alert_json = json.dumps({
-                "text": alert_content,
-                "target_user_id": user_id,
-                "surgery_id": surgery_id,
-                "role": role_name
-            })
+            alert_json = json.dumps(
+                {
+                    "text": alert_content,
+                    "target_user_id": user_id,
+                    "surgery_id": surgery_id,
+                    "role": role_name,
+                }
+            )
 
             cur = db.execute(
                 """INSERT INTO messages (channel_id, sender_id, sender_name, sender_role, content, message_type, is_bot, source)
                    VALUES (?, 'system', 'Orb System', 'system', ?, 'surgical_alert', 1, 'system')""",
-                (channel_id, alert_json)
+                (channel_id, alert_json),
             )
             # Read back inside the same session: the row must be materialised
             # into a plain dict here, because the socket emit below runs on the
@@ -662,9 +739,16 @@ def _persist_alerts(surgery_id, team):
         return live_emits, surgery["patient_id"], [u for u, _ in clean_team]
 
 
+_ALERT_SURGICAL_TEAM_USER_DEFAULT = Depends(require_permission("surgery.write"))
+
+
 @router.post("/{surgery_id}/alert-team")
-async def alert_surgical_team(surgery_id: str, payload: dict, request: Request,
-                              user: dict = Depends(require_permission("surgery.write"))):
+async def alert_surgical_team(
+    surgery_id: str,
+    payload: dict,
+    request: Request,
+    user: dict = _ALERT_SURGICAL_TEAM_USER_DEFAULT,
+):
     """Alerts specific team members via targeted Relay messages."""
     team = payload.get("team", [])
     if not isinstance(team, list) or not team:
@@ -680,14 +764,22 @@ async def alert_surgical_team(surgery_id: str, payload: dict, request: Request,
 
     # Audit must not run on the loop — log_audit_event writes the hash-chained
     # audit row synchronously.
-    await run_db(_audit_surgery, request, user, "surgical_team_alerted", surgery_id,
-                 f"Surgical team alerted for {surgery_id}: {len(alerted_ids)} member(s)",
-                 patient_id, {"alerted_user_ids": alerted_ids})
+    await run_db(
+        _audit_surgery,
+        request,
+        user,
+        "surgical_team_alerted",
+        surgery_id,
+        f"Surgical team alerted for {surgery_id}: {len(alerted_ids)} member(s)",
+        patient_id,
+        {"alerted_user_ids": alerted_ids},
+    )
 
     # Deliver each alert LIVE: to the case-room channel and to the targeted user's
     # personal room only — not a department-wide broadcast.
-    from ws.realtime import sio
     from services.relay_service import _message_row_to_dict
+    from ws.realtime import sio
+
     for msg_row, target_user_id in live_emits:
         # The history endpoint's serializer: carries `is_bot` (AUTO chip) and
         # `source`, which a hand-built copy left out (2026-10-03).
@@ -697,9 +789,17 @@ async def alert_surgical_team(surgery_id: str, payload: dict, request: Request,
             await sio.emit("message:new", emit_msg, room=f"user:{target_user_id}")
     return {"status": "success"}
 
+
+_SURGICAL_TEAM_RESPONSE_USER_DEFAULT = Depends(require_permission("surgery.read"))
+
+
 @router.post("/{surgery_id}/team-response")
-def surgical_team_response(surgery_id: str, payload: dict, request: Request,
-                           user: dict = Depends(require_permission("surgery.read"))):
+def surgical_team_response(
+    surgery_id: str,
+    payload: dict,
+    request: Request,
+    user: dict = _SURGICAL_TEAM_RESPONSE_USER_DEFAULT,
+):
     """Handles a confirm or decline from a targeted team member."""
     action = str(payload.get("action") or "").strip().lower()
     # Previously ANY value that was not exactly 'confirm' was recorded as a
@@ -717,79 +817,97 @@ def surgical_team_response(surgery_id: str, payload: dict, request: Request,
         surgery = db.execute("SELECT * FROM surgeries WHERE id = ?", (surgery_id,)).fetchone()
         if not surgery:
             raise HTTPException(status_code=404, detail="Surgery not found")
-            
+
         assignment = db.execute(
             "SELECT * FROM surgery_team_assignments WHERE surgery_id = ? AND user_id = ?",
-            (surgery_id, user["id"])
+            (surgery_id, user["id"]),
         ).fetchone()
-        
+
         if not assignment:
             raise HTTPException(status_code=400, detail="User not assigned to this surgery")
-            
-        new_status = 'confirmed' if action == 'confirm' else 'declined'
-        
+
+        new_status = "confirmed" if action == "confirm" else "declined"
+
         db.execute(
             "UPDATE surgery_team_assignments SET status = ?, updated_at = ? WHERE id = ?",
-            (new_status, datetime.now(timezone.utc).isoformat(), assignment["id"])
+            (new_status, datetime.now(UTC).isoformat(), assignment["id"]),
         )
-        
+
         # Post system message reflecting the choice
         channel = db.execute(
             "SELECT id FROM channels WHERE patient_id = ? AND type = 'case_room' LIMIT 1",
-            (surgery["patient_id"],)
+            (surgery["patient_id"],),
         ).fetchone()
-        
+
         if channel:
             sys_msg = f"SYSTEM: {user['name']} ({assignment['role_name']}) has {new_status} the surgical assignment."
             db.execute(
                 """INSERT INTO messages (channel_id, sender_id, sender_name, sender_role, content, message_type, is_bot, source)
                    VALUES (?, 'system', 'Orb System', 'system', ?, 'system', 1, 'system')""",
-                (channel["id"], sys_msg)
+                (channel["id"], sys_msg),
             )
-            
+
             # If declined, Sage suggests replacement.
             # DEMO-ONLY: the "replacement" is a hardcoded id pair, not a real
             # availability lookup. It is gated on DEMO_MODE so a live ward never
             # sees Orb assert that a named anaesthetist is available, and the id
             # is existence-checked so a missing seed user cannot turn a decline
             # into a 500 (surgery_team_assignments.user_id is a FK).
-            if new_status == 'declined':
+            if new_status == "declined":
                 from config import DEMO_MODE
-                fallback_user = "anesthetist_2" if (DEMO_MODE and user["id"] == "anesthetist_1") else None
-                if fallback_user and not db.execute(
-                    "SELECT 1 FROM users WHERE id = ?", (fallback_user,)
-                ).fetchone():
-                    logger.warning("[Surgery] demo fallback user %s does not exist — no re-route",
-                                   fallback_user)
+
+                fallback_user = (
+                    "anesthetist_2" if (DEMO_MODE and user["id"] == "anesthetist_1") else None
+                )
+                if (
+                    fallback_user
+                    and not db.execute(
+                        "SELECT 1 FROM users WHERE id = ?", (fallback_user,)
+                    ).fetchone()
+                ):
+                    logger.warning(
+                        "[Surgery] demo fallback user %s does not exist — no re-route",
+                        fallback_user,
+                    )
                     fallback_user = None
 
                 if fallback_user:
                     db.execute(
                         "INSERT INTO surgery_team_assignments (surgery_id, user_id, role_name, status) VALUES (?, ?, ?, 'alerted')",
-                        (surgery_id, fallback_user, assignment["role_name"])
+                        (surgery_id, fallback_user, assignment["role_name"]),
                     )
-                    alert_json = json.dumps({
-                        "text": f"SAGE SUGGESTION: Re-routing assignment to available {assignment['role_name']}.",
-                        "target_user_id": fallback_user,
-                        "surgery_id": surgery_id,
-                        "role": assignment["role_name"]
-                    })
+                    alert_json = json.dumps(
+                        {
+                            "text": f"SAGE SUGGESTION: Re-routing assignment to available {assignment['role_name']}.",
+                            "target_user_id": fallback_user,
+                            "surgery_id": surgery_id,
+                            "role": assignment["role_name"],
+                        }
+                    )
                     db.execute(
                         """INSERT INTO messages (channel_id, sender_id, sender_name, sender_role, content, message_type, is_bot, source)
                            VALUES (?, 'system', 'Sage Ambient', 'ai', ?, 'surgical_alert', 1, 'ai')""",
-                        (channel["id"], alert_json)
+                        (channel["id"], alert_json),
                     )
 
-    _audit_surgery(request, user, "surgical_team_response", surgery_id,
-                   f"{user.get('name', user['id'])} ({assignment['role_name']}) {new_status} "
-                   f"the assignment on surgery {surgery_id}",
-                   surgery["patient_id"],
-                   {"role_name": assignment["role_name"], "response": new_status})
+    _audit_surgery(
+        request,
+        user,
+        "surgical_team_response",
+        surgery_id,
+        f"{user.get('name', user['id'])} ({assignment['role_name']}) {new_status} "
+        f"the assignment on surgery {surgery_id}",
+        surgery["patient_id"],
+        {"role_name": assignment["role_name"], "response": new_status},
+    )
     return {"status": "success"}
 
+
+_START_SURGERY_USER_DEFAULT = Depends(require_permission("surgery.write"))
+
+
 @router.post("/{surgery_id}/start")
-def start_surgery(surgery_id: str, request: Request,
-                  user: dict = Depends(require_permission("surgery.write"))):
+def start_surgery(surgery_id: str, request: Request, user: dict = _START_SURGERY_USER_DEFAULT):
     """Transitions status to 'in_progress' only if all required non-declined roles are confirmed."""
     enforce_surgery_scope(user, surgery_id)
     with db_session() as db:
@@ -808,24 +926,29 @@ def start_surgery(surgery_id: str, request: Request,
                 detail=f"Cannot start a surgery in status '{surgery['status']}'.",
             )
 
-        assignments = db.execute("SELECT * FROM surgery_team_assignments WHERE surgery_id = ?", (surgery_id,)).fetchall()
+        assignments = db.execute(
+            "SELECT * FROM surgery_team_assignments WHERE surgery_id = ?", (surgery_id,)
+        ).fetchall()
 
         # We need at least one confirmed, and no still-outstanding ones. 'pending'
         # is the schema DEFAULT for surgery_team_assignments (database.py) and was
         # not counted, so a roster written with the default status let the case
         # start with nobody having actually confirmed.
         outstanding = [a for a in assignments if a["status"] in ("alerted", "pending")]
-        confirmed = [a for a in assignments if a["status"] == 'confirmed']
+        confirmed = [a for a in assignments if a["status"] == "confirmed"]
 
         if len(outstanding) > 0 or len(confirmed) == 0:
-            raise HTTPException(status_code=400, detail="Cannot start surgery until all assigned team members have confirmed.")
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot start surgery until all assigned team members have confirmed.",
+            )
 
         # started_at is the FIRST half of surgical turnaround (migration 27).
         # COALESCE, not a plain assignment: the guard above already refuses a
         # second start, but if a future path ever re-enters this line the
         # ORIGINAL knife-in time must win — a start time that can be overwritten
         # measures the last button press, not the operation.
-        started_at = datetime.now(timezone.utc).isoformat()
+        started_at = datetime.now(UTC).isoformat()
         db.execute(
             "UPDATE surgeries SET status = 'in_progress', "
             "started_at = COALESCE(started_at, ?) WHERE id = ?",
@@ -837,16 +960,30 @@ def start_surgery(surgery_id: str, request: Request,
         patient_id = surgery["patient_id"]
         previous = surgery["status"]
 
-    _audit_surgery(request, user, "surgery_started", surgery_id,
-                   f"Surgery {surgery_id} started ({previous} -> in_progress)",
-                   patient_id, {"from_status": previous, "to_status": "in_progress",
-                                "confirmed_team": len(confirmed),
-                                "started_at": started_at})
+    _audit_surgery(
+        request,
+        user,
+        "surgery_started",
+        surgery_id,
+        f"Surgery {surgery_id} started ({previous} -> in_progress)",
+        patient_id,
+        {
+            "from_status": previous,
+            "to_status": "in_progress",
+            "confirmed_team": len(confirmed),
+            "started_at": started_at,
+        },
+    )
     return {"status": "success", "started_at": started_at}
 
+
+_COMPLETE_SURGERY_USER_DEFAULT = Depends(require_permission("surgery.write"))
+
+
 @router.post("/{surgery_id}/complete")
-def complete_surgery(surgery_id: str, request: Request,
-                     user: dict = Depends(require_permission("surgery.write"))):
+def complete_surgery(
+    surgery_id: str, request: Request, user: dict = _COMPLETE_SURGERY_USER_DEFAULT
+):
     """Marks surgery completed, files the post-op note, and removes the case from the active queue."""
     # Scoped because this WRITES INTO THE PATIENT'S CHART — it saves a post-op
     # scribe note against surgeries.patient_id. Unscoped, any authenticated
@@ -880,9 +1017,11 @@ def complete_surgery(surgery_id: str, request: Request,
             if surgery["status"] not in _COMPLETABLE_STATUSES:
                 raise _CompletionRefused(
                     reason="not_started",
-                    detail=(f"Cannot complete a surgery in status "
-                            f"'{surgery['status']}': the case must be in "
-                            f"progress. Start it first."),
+                    detail=(
+                        f"Cannot complete a surgery in status "
+                        f"'{surgery['status']}': the case must be in "
+                        f"progress. Start it first."
+                    ),
                     from_status=surgery["status"],
                     patient_id=surgery["patient_id"],
                 )
@@ -892,21 +1031,24 @@ def complete_surgery(surgery_id: str, request: Request,
             # session, and no window in which an item could be un-ticked between
             # the check and the UPDATE.
             from services.who_checklist import summarize_state, who_raw
+
             checklist = summarize_state(who_raw(surgery))
             progress = checklist["progress"]
             if checklist_required and not checklist["completed"]:
                 raise _CompletionRefused(
                     reason="checklist_incomplete",
-                    detail=(f"WHO Surgical Safety Checklist is "
-                            f"{progress['checked']}/{progress['total']} complete, "
-                            f"every item must be attested before the case can be "
-                            f"closed."),
+                    detail=(
+                        f"WHO Surgical Safety Checklist is "
+                        f"{progress['checked']}/{progress['total']} complete, "
+                        f"every item must be attested before the case can be "
+                        f"closed."
+                    ),
                     from_status=surgery["status"],
                     patient_id=surgery["patient_id"],
                     metadata={"checklist_progress": progress},
                 )
 
-            completed_at = datetime.now(timezone.utc).isoformat()
+            completed_at = datetime.now(UTC).isoformat()
             db.execute(
                 "UPDATE surgeries SET status = 'completed', completed_at = ? WHERE id = ?",
                 (completed_at, surgery_id),
@@ -920,7 +1062,9 @@ def complete_surgery(surgery_id: str, request: Request,
             # operative account left for the surgeon to write. A DEMO_MODE branch
             # used to file an invented laparotomy account ("EBL 150mL, no
             # complications") on whatever case was closed; it is gone.
-            post_op_transcript = f"Surgery {surgery['procedure_name']} marked complete by {user['name']}."
+            post_op_transcript = (
+                f"Surgery {surgery['procedure_name']} marked complete by {user['name']}."
+            )
             post_op_note = f"# Post-Operative Note\\n\\n**Procedure:** {surgery['procedure_name']}\\n**Diagnosis:** {surgery['diagnosis']}\\n**Surgeon:** {user['name']}\\n\\n_Operative note pending, to be authored by the operating surgeon._"
             patient_id = surgery["patient_id"]
             previous_status = surgery["status"]
@@ -935,14 +1079,21 @@ def complete_surgery(surgery_id: str, request: Request,
         # route holds — the nested-writer stall this module has already paid for
         # once (see the compensation comment below).
         _audit_surgery(
-            request, user, "surgery_completion_refused", surgery_id,
+            request,
+            user,
+            "surgery_completion_refused",
+            surgery_id,
             f"Completion of surgery {surgery_id} refused: {refused.detail}",
             refused.patient_id,
-            {"from_status": refused.from_status, "refusal_reason": refused.reason,
-             "checklist_gate": checklist_required, **refused.metadata},
+            {
+                "from_status": refused.from_status,
+                "refusal_reason": refused.reason,
+                "checklist_gate": checklist_required,
+                **refused.metadata,
+            },
             outcome="denied",
         )
-        raise HTTPException(status_code=409, detail=refused.detail)
+        raise HTTPException(status_code=409, detail=refused.detail) from refused
 
     # save_scribe_note opens its OWN db_session; calling it while the status
     # UPDATE above sat uncommitted made the inner INSERT contend with our own
@@ -963,7 +1114,7 @@ def complete_surgery(surgery_id: str, request: Request,
             raw_transcript=post_op_transcript,
             structured_note=json.dumps({"content": post_op_note}),
             note_format="soap",
-            ai_generated=False
+            ai_generated=False,
         )
     except Exception:
         try:
@@ -984,28 +1135,47 @@ def complete_surgery(surgery_id: str, request: Request,
             logger.error(
                 "[Surgery] Post-op note failed for %s AND status rollback failed — "
                 "surgery is 'completed' with NO operative note and needs manual repair",
-                surgery_id, exc_info=True,
+                surgery_id,
+                exc_info=True,
             )
         raise
 
     # `/cases` filters `status NOT IN ('completed')`, so the completed surgery
     # already left the active prep queue when the transaction above committed.
-    _audit_surgery(request, user, "surgery_completed", surgery_id,
-                   f"Surgery {surgery_id} marked complete by {user.get('name', user['id'])}"
-                   + (f", turnaround {turnaround} min" if turnaround is not None else ""),
-                   patient_id, {"from_status": previous_status, "note_id": note_id,
-                                "started_at": started_at, "completed_at": completed_at,
-                                "turnaround_min": turnaround,
-                                "checklist_progress": progress,
-                                "checklist_gate": checklist_required})
-    return {"status": "success", "note_id": note_id,
-            "started_at": started_at, "completed_at": completed_at,
-            "turnaround_min": turnaround}
+    _audit_surgery(
+        request,
+        user,
+        "surgery_completed",
+        surgery_id,
+        f"Surgery {surgery_id} marked complete by {user.get('name', user['id'])}"
+        + (f", turnaround {turnaround} min" if turnaround is not None else ""),
+        patient_id,
+        {
+            "from_status": previous_status,
+            "note_id": note_id,
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "turnaround_min": turnaround,
+            "checklist_progress": progress,
+            "checklist_gate": checklist_required,
+        },
+    )
+    return {
+        "status": "success",
+        "note_id": note_id,
+        "started_at": started_at,
+        "completed_at": completed_at,
+        "turnaround_min": turnaround,
+    }
+
+
+_PREP_FOR_SURGERY_USER_DEFAULT = Depends(require_permission("surgery.write"))
 
 
 @router.post("/{surgery_id}/prep")
-def prep_for_surgery(surgery_id: str, request: Request,
-                     user: dict = Depends(require_permission("surgery.write"))):
+def prep_for_surgery(
+    surgery_id: str, request: Request, user: dict = _PREP_FOR_SURGERY_USER_DEFAULT
+):
     """Trigger a surgical prep package (alerts pharmacy / blood bank / anesthesia via Relay).
 
     The frontend 'Prep for Surgery' button was a 404 (no route); now wired to the existing
@@ -1026,17 +1196,26 @@ def prep_for_surgery(surgery_id: str, request: Request,
     except ValueError as e:
         # The service raises ValueError("Surgery not found") — that is a 404 for
         # the caller, not the 500 an unhandled ValueError used to produce.
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e
 
-    _audit_surgery(request, user, "surgery_prep_triggered", surgery_id,
-                   f"Surgical prep package triggered for {surgery_id}",
-                   metadata={"result_status": (result or {}).get("status")})
+    _audit_surgery(
+        request,
+        user,
+        "surgery_prep_triggered",
+        surgery_id,
+        f"Surgical prep package triggered for {surgery_id}",
+        metadata={"result_status": (result or {}).get("status")},
+    )
     return {"status": "success", **(result or {})}
 
 
+_ACKNOWLEDGE_EMERGENCY_SURGERY_USER_DEFAULT = Depends(require_permission("surgery.write"))
+
+
 @router.post("/emergency/{surgery_id}/acknowledge")
-def acknowledge_emergency_surgery(surgery_id: str, request: Request,
-                                  user: dict = Depends(require_permission("surgery.write"))):
+def acknowledge_emergency_surgery(
+    surgery_id: str, request: Request, user: dict = _ACKNOWLEDGE_EMERGENCY_SURGERY_USER_DEFAULT
+):
     """Acknowledge an emergency surgery intake (status -> emergency_acknowledged).
 
     The frontend Emergency Intake popup 'Acknowledge' button was a 404; now wired to
@@ -1059,19 +1238,29 @@ def acknowledge_emergency_surgery(surgery_id: str, request: Request,
         raise HTTPException(
             status_code=409,
             detail=f"Surgery {surgery_id} is in status '{row['status']}' and is not an "
-                   f"outstanding emergency intake.",
+            f"outstanding emergency intake.",
         )
 
     acknowledge_emergency(surgery_id)
-    _audit_surgery(request, user, "emergency_surgery_acknowledged", surgery_id,
-                   f"Emergency surgery {surgery_id} acknowledged by {user.get('name', user['id'])}",
-                   row["patient_id"], {"from_status": row["status"]})
+    _audit_surgery(
+        request,
+        user,
+        "emergency_surgery_acknowledged",
+        surgery_id,
+        f"Emergency surgery {surgery_id} acknowledged by {user.get('name', user['id'])}",
+        row["patient_id"],
+        {"from_status": row["status"]},
+    )
     return {"status": "success", "surgery_id": surgery_id}
 
 
+_SURGERY_RISK_ASSESSMENT_USER_DEFAULT = Depends(require_permission("surgery.read"))
+
+
 @router.get("/{surgery_id}/risk", dependencies=[Depends(_require_models_on)])
-async def surgery_risk_assessment(surgery_id: str, request: Request,
-                                  user: dict = Depends(require_permission("surgery.read"))):
+async def surgery_risk_assessment(
+    surgery_id: str, request: Request, user: dict = _SURGERY_RISK_ASSESSMENT_USER_DEFAULT
+):
     """Stream the MedGemma surgical risk assessment as SSE — the frontend reads this
     (the route was missing, so the Tier-3 risk panel 404'd).
 
@@ -1114,7 +1303,11 @@ async def surgery_risk_assessment(surgery_id: str, request: Request,
     return StreamingResponse(
         generate_risk_assessment(surgery_id, detail=detail),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
@@ -1126,4 +1319,5 @@ def _load_risk_detail(surgery_id: str):
     level, which is why get_surgery_detail can assemble the chart unscoped.
     """
     from services.surgery_service import get_surgery_detail as _detail
+
     return _detail(surgery_id)

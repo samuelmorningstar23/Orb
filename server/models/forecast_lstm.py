@@ -25,6 +25,7 @@ Interface (call sites depend on it):
                                       #         acuity_trajectory, confidence, icu_transfer_risk_3h)
     model = load_model()              # build + load models/forecast_checkpoint.pt
 """
+
 from __future__ import annotations
 
 import logging
@@ -38,11 +39,11 @@ import torch.nn.functional as F
 logger = logging.getLogger("orb.forecast")
 
 # ── Channel / architecture constants (imported by training + service) ──────────
-INPUT_DIM = 19      # vitals(6) + demographics(3) + ward(4) + severity(3) + ops markers(3)
+INPUT_DIM = 19  # vitals(6) + demographics(3) + ward(4) + severity(3) + ops markers(3)
 HIDDEN_DIM = 64
 NUM_LAYERS = 2
 
-ICU_TRANSFER_WINDOW_H = 3   # ICU-transfer-risk head horizon (hours)
+ICU_TRANSFER_WINDOW_H = 3  # ICU-transfer-risk head horizon (hours)
 ACUITY_LABELS = {0: "improving", 1: "stable", 2: "worsening"}
 
 _CHECKPOINT_PATH = Path(__file__).resolve().parent / "forecast_checkpoint.pt"
@@ -97,7 +98,7 @@ class OrbForecastLSTM(nn.Module):
         self.los_head = nn.Linear(ctx_dim, 1)
         self.discharge_head = nn.Linear(ctx_dim, 1)
         self.acuity_head = nn.Linear(ctx_dim, 3)
-        self.icu_head = nn.Linear(ctx_dim, 1)   # ICU-transfer within ICU_TRANSFER_WINDOW_H
+        self.icu_head = nn.Linear(ctx_dim, 1)  # ICU-transfer within ICU_TRANSFER_WINDOW_H
 
     def forward(self, x: torch.Tensor) -> dict:
         """x: (B, seq_len, input_dim) -> dict of raw head outputs."""
@@ -105,16 +106,16 @@ class OrbForecastLSTM(nn.Module):
             x = x.unsqueeze(0)
 
         x = self.input_norm(x)
-        lstm_out, _ = self.lstm(x)            # (B, seq, ctx_dim)
+        lstm_out, _ = self.lstm(x)  # (B, seq, ctx_dim)
 
         attn_weights = torch.softmax(self.attn(lstm_out), dim=1)
-        context = torch.sum(attn_weights * lstm_out, dim=1)   # (B, ctx_dim)
+        context = torch.sum(attn_weights * lstm_out, dim=1)  # (B, ctx_dim)
 
         return {
-            "los": F.softplus(self.los_head(context)),                  # (B,1) >= 0
+            "los": F.softplus(self.los_head(context)),  # (B,1) >= 0
             "discharge_prob": torch.sigmoid(self.discharge_head(context)),
-            "acuity_logits": self.acuity_head(context),                 # (B,3)
-            "icu_transfer_prob": torch.sigmoid(self.icu_head(context)), # (B,1)
+            "acuity_logits": self.acuity_head(context),  # (B,3)
+            "icu_transfer_prob": torch.sigmoid(self.icu_head(context)),  # (B,1)
         }
 
     @torch.no_grad()
@@ -181,17 +182,20 @@ def load_model(checkpoint_path=None, device=None) -> OrbForecastLSTM:
             # never sets this, so the head stays gated off.
             model.icu_head_trained = bool(ckpt.get("icu_head_trained", False))
             logger.info(
-                "Loaded checkpoint (epoch %s, source=%s, input_dim=%s, "
-                "icu_head_trained=%s) on %s",
-                ckpt.get("epoch", "?"), ckpt.get("data_source", "?"),
-                input_dim, model.icu_head_trained, device,
+                "Loaded checkpoint (epoch %s, source=%s, input_dim=%s, icu_head_trained=%s) on %s",
+                ckpt.get("epoch", "?"),
+                ckpt.get("data_source", "?"),
+                input_dim,
+                model.icu_head_trained,
+                device,
             )
         else:
             model = OrbForecastLSTM()  # trained stays False
             logger.warning(
                 "No checkpoint at %s — using UNTRAINED model. Predictions will be "
                 "flagged model_trained=false; run scripts/train_forecast.py once "
-                "real data is available.", path,
+                "real data is available.",
+                path,
             )
     except Exception as e:
         model = OrbForecastLSTM()  # trained stays False

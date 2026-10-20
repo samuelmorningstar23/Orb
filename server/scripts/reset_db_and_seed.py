@@ -1,16 +1,16 @@
 """Reset database patient-related tables and run the clean clinical seeder."""
+
 import os
 import sys
-import sqlite3
 
 # Ensure server root is in path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from config import DB_PATH
-from database import _build_connection
-from db_backend import DBIntegrityError, DBOperationalError
-from scripts.seed_clinical_data import seed
-from scripts.seed_helix import seed_helix
+from config import DB_PATH  # noqa: E402 - application imports require the path/environment bootstrap above.
+from database import _build_connection  # noqa: E402 - application imports require the path/environment bootstrap above.
+from db_backend import DBIntegrityError, DBOperationalError  # noqa: E402 - application imports require the path/environment bootstrap above.
+from scripts.seed_clinical_data import seed  # noqa: E402 - application imports require the path/environment bootstrap above.
+from scripts.seed_helix import seed_helix  # noqa: E402 - application imports require the path/environment bootstrap above.
 
 # Tables that must SURVIVE a reseed even though the schema walk below would
 # otherwise select them.
@@ -23,12 +23,12 @@ TABLES_TO_KEEP = {
 # Patient-derived tables the schema walk cannot reach on its own: no patient_id
 # column and no foreign key into a patient-scoped table.
 EXTRA_TABLES_TO_CLEAR = [
-    "patients",             # the root row itself — its key is `id`, not patient_id
-    "hospital_forecasts",   # ward-level aggregates, rebuilt by the forecast service
-    "admission_history",    # census history aggregates
-    "world_model_state",    # keyed entity_type/entity_id, holds PHI-derived state
-    "event_deliveries",     # keyed on event_log.event_id, no FK declared
-    "ingestion_events",     # raw HL7/FHIR payloads — the PARENT of vitals/observations
+    "patients",  # the root row itself — its key is `id`, not patient_id
+    "hospital_forecasts",  # ward-level aggregates, rebuilt by the forecast service
+    "admission_history",  # census history aggregates
+    "world_model_state",  # keyed entity_type/entity_id, holds PHI-derived state
+    "event_deliveries",  # keyed on event_log.event_id, no FK declared
+    "ingestion_events",  # raw HL7/FHIR payloads — the PARENT of vitals/observations
     # ── Sage's conversational record (2026-09-07) ──
     # These four hold patient data as FREE TEXT. None has a patient_id and none
     # has a foreign key into anything that does, so the walk below is blind to
@@ -50,10 +50,10 @@ EXTRA_TABLES_TO_CLEAR = [
     #
     # Wiping provenance is not a new policy call: `sage_provenance_turns` is
     # already wiped today, so these two only stop it being wiped by halves.
-    "sage_conversations",      # clinician/Sage transcripts; PHI in free text
+    "sage_conversations",  # clinician/Sage transcripts; PHI in free text
     "sage_history_summaries",  # cached summaries of those turns; same PHI
-    "sage_provenance_refs",    # turn_id -> cid; child of the wiped provenance turns
-    "sage_provenance_blobs",   # content-addressed prompt/answer bodies
+    "sage_provenance_refs",  # turn_id -> cid; child of the wiped provenance turns
+    "sage_provenance_blobs",  # content-addressed prompt/answer bodies
     # ── Module documents whose stock or bed state the wipe already resets ──
     # stock_movements carries a (nullable) patient_id, so the walk wipes it, GRN
     # receipts included. The purchase orders and goods receipts those receipts
@@ -96,7 +96,7 @@ EXTRA_TABLES_TO_CLEAR = [
 
 
 # Sentinels for the protection map returned by delete_protected_tables().
-_UNPROTECTED = object()      # no guard — plain DELETE
+_UNPROTECTED = object()  # no guard — plain DELETE
 _FULLY_PROTECTED = object()  # unconditional guard — never delete anything
 
 # For tables whose guard is CONDITIONAL, the predicate selecting the rows a
@@ -131,7 +131,7 @@ def delete_protected_tables(conn) -> dict:
     Returns {table: _FULLY_PROTECTED | "<sql predicate>"}.
     """
     protection: dict = {}
-    for name, tbl_name, sql in conn.execute(
+    for _name, tbl_name, sql in conn.execute(
         "SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger'"
     ).fetchall():
         text = (sql or "").replace("\n", " ")
@@ -183,7 +183,8 @@ def patient_scoped_tables(conn) -> list[str]:
     Delete order does not matter here: the wipe runs with foreign_keys=OFF.
     """
     names = [
-        r[0] for r in conn.execute(
+        r[0]
+        for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
         ).fetchall()
     ]
@@ -193,14 +194,16 @@ def patient_scoped_tables(conn) -> list[str]:
     fk_columns: dict[str, set[str]] = {}
     for table in names:
         try:
-            columns[table] = [c[1] for c in conn.execute(f'PRAGMA table_info("{table}")').fetchall()]
+            columns[table] = [
+                c[1] for c in conn.execute(f'PRAGMA table_info("{table}")').fetchall()
+            ]
             fks = conn.execute(f'PRAGMA foreign_key_list("{table}")').fetchall()
         except DBOperationalError:
             # A virtual table whose module is not loaded (sqlite-vec shadow
             # tables) cannot be introspected; it holds no patient rows.
             continue
-        parents[table] = {r[2] for r in fks}      # r[2] = referenced table
-        fk_columns[table] = {r[3] for r in fks}   # r[3] = the referencing column
+        parents[table] = {r[2] for r in fks}  # r[2] = referenced table
+        fk_columns[table] = {r[3] for r in fks}  # r[3] = the referencing column
 
     # Undeclared references: `<parent>_id` naming a real table, on a column with no
     # foreign key of its own. Only consulted where nothing is declared, so a table
@@ -222,8 +225,7 @@ def patient_scoped_tables(conn) -> list[str]:
     # Bounded rather than a true fixpoint so an accidental FK cycle terminates.
     for _ in range(8):
         grown = {
-            t for t in columns
-            if (parents.get(t, set()) | implied.get(t, set())) & targets
+            t for t in columns if (parents.get(t, set()) | implied.get(t, set())) & targets
         } - targets
         if not grown:
             break
@@ -260,7 +262,7 @@ def wipe_patient_tables(conn) -> None:
                 print(f"    - Wiped {table} (only{where.lower()}; evidence rows preserved)")
             else:
                 print(f"    - Wiped {table}")
-        except (DBOperationalError, DBIntegrityError) as e:
+        except (*DBOperationalError, *DBIntegrityError) as e:
             # A missing table, or a protective trigger this script did not
             # anticipate. Skipping is REQUIRED, not merely tidy: this used to
             # catch OperationalError only, while the guards raise
@@ -292,6 +294,7 @@ def wipe_patient_tables(conn) -> None:
 # website fixtures were recorded off that database and copied all of it. The
 # seed manifest is the authority for what a seeded box holds, so these three
 # tables are cut back to it.
+
 
 def seeded_user_ids() -> frozenset:
     """Logins a reseed keeps: the seeded staff and portal accounts, plus the
@@ -326,8 +329,10 @@ def sweep_unseeded_masters(conn) -> dict:
 
     profile = getattr(config, "DEPLOYMENT_PROFILE", "prod")
     if profile != "dev":
-        print(f"  Skipped: the deployment profile is {profile!r}, not 'dev', "
-              "and this step deletes staff logins.")
+        print(
+            f"  Skipped: the deployment profile is {profile!r}, not 'dev', "
+            "and this step deletes staff logins."
+        )
         return {}
 
     keep_users = sorted(seeded_user_ids())
@@ -335,9 +340,14 @@ def sweep_unseeded_masters(conn) -> dict:
     users_in = ",".join("?" for _ in keep_users)
     codes_in = ",".join("?" for _ in keep_codes)
     protected = delete_protected_tables(conn)
+    steps: tuple[tuple[str, str, list], ...]
     steps = (
         ("users", f"DELETE FROM users WHERE id NOT IN ({users_in})", keep_users),
-        ("tariff_rates", f"DELETE FROM tariff_rates WHERE service_code NOT IN ({codes_in})", keep_codes),
+        (
+            "tariff_rates",
+            f"DELETE FROM tariff_rates WHERE service_code NOT IN ({codes_in})",
+            keep_codes,
+        ),
         ("service_items", f"DELETE FROM service_items WHERE code NOT IN ({codes_in})", keep_codes),
         ("roster_import_runs", "DELETE FROM roster_import_runs", []),
     )
@@ -352,7 +362,7 @@ def sweep_unseeded_masters(conn) -> dict:
         try:
             removed[table] = cursor.execute(sql, tuple(params)).rowcount
             print(f"    - {table}: removed {removed[table]} row(s) the seed did not write")
-        except (DBOperationalError, DBIntegrityError) as e:
+        except (*DBOperationalError, *DBIntegrityError) as e:
             # A table an older schema does not have yet: nothing to sweep.
             print(f"    - {table} skipped: {e}")
     conn.commit()
@@ -370,12 +380,12 @@ def reset_and_seed():
     sweep_unseeded_masters(conn)
     conn.close()
     print("═══ Wipe Complete! ═══\n")
-    
+
     # 4. Invoke the official clinical seeder
     print("═══ Running Clinical Data Seeder ═══")
     seed()
     print("═══ Seeding Complete! ═══\n")
-    
+
     # 4.5. Seed Helix Pharmacy Catalog & Inventory
     print("═══ Seeding Helix Pharmacy Catalog ═══")
     seed_helix()
@@ -389,6 +399,7 @@ def reset_and_seed():
     #      otherwise, so a reseed without the module writes and prints exactly
     #      what it did before.
     from scripts.seed_pharmacy_store import seed_pharmacy_store, should_seed
+
     if should_seed():
         print("═══ Seeding the pharmacy store ═══")
         try:
@@ -396,7 +407,7 @@ def reset_and_seed():
         except Exception as exc:  # a dev seed; the rest of the reseed still runs
             print(f"  x Pharmacy store not seeded: {exc}")
         print("═══ Pharmacy store seeding complete ═══\n")
-    
+
     # 5. Randomize admission dates across a ROLLING 3-day window ending now.
     #    (The banner used to read "May 21-23, 2026" — a leftover from when the
     #    window was an absolute date. The function itself is relative; the stale
@@ -443,8 +454,13 @@ def reset_and_seed():
     #    the root; a freshly-seeded demo database must verify clean.
     print("═══ Re-sealing audit hash chain ═══")
     import subprocess
+
     subprocess.run(
-        [sys.executable, os.path.join(os.path.dirname(__file__), "reseal_audit_chain.py"), "--force"],
+        [
+            sys.executable,
+            os.path.join(os.path.dirname(__file__), "reseal_audit_chain.py"),
+            "--force",
+        ],
         check=False,
     )
 
@@ -496,7 +512,10 @@ def reset_and_seed():
 # position (random.seed(42) in seed_clinical_history), never on the clock at
 # seed time.
 
-from datetime import datetime as _datetime, time as _time, timedelta as _timedelta, timezone as _timezone
+from datetime import UTC  # noqa: E402 - application imports require the path/environment bootstrap above.
+from datetime import datetime as _datetime  # noqa: E402 - application imports require the path/environment bootstrap above.
+from datetime import time as _time  # noqa: E402 - application imports require the path/environment bootstrap above.
+from datetime import timedelta as _timedelta  # noqa: E402 - application imports require the path/environment bootstrap above.
 
 #: Hospital days that can hold a rounds note inside the 72h seed window. A stay
 #: admitted late on day 1 reaches the morning of day 4 within 72 hours.
@@ -507,7 +526,7 @@ ROUNDS_AT = _time(8, 0)
 
 def ward_timezone():
     """The zone hospital days are counted in: the server's own, as the browsers' is."""
-    return _datetime.now().astimezone().tzinfo or _timezone.utc
+    return _datetime.now().astimezone().tzinfo or UTC
 
 
 def hospital_day(ts, admit, tz):
@@ -527,20 +546,29 @@ def _lab_doc(name, panel, rows):
 
 
 def _cbc(rng):
-    wbc = round(rng.uniform(4, 19), 1); hgb = round(rng.uniform(7.5, 15.5), 1); plt = rng.randint(80, 420)
-    return {"WBC": (wbc, "10³/µL", "HIGH" if wbc > 11 else "", "4.0-11.0"),
-            "Hemoglobin": (hgb, "g/dL", "LOW" if hgb < 12 else "", "12.0-16.0"),
-            "Platelets": (plt, "10³/µL", "LOW" if plt < 150 else "", "150-400")}
+    wbc = round(rng.uniform(4, 19), 1)
+    hgb = round(rng.uniform(7.5, 15.5), 1)
+    plt = rng.randint(80, 420)
+    return {
+        "WBC": (wbc, "10³/µL", "HIGH" if wbc > 11 else "", "4.0-11.0"),
+        "Hemoglobin": (hgb, "g/dL", "LOW" if hgb < 12 else "", "12.0-16.0"),
+        "Platelets": (plt, "10³/µL", "LOW" if plt < 150 else "", "150-400"),
+    }
 
 
 def _bmp(rng):
-    na = rng.randint(130, 146); k = round(rng.uniform(3.1, 5.4), 1); cr = round(rng.uniform(0.6, 2.6), 1)
-    glu = rng.randint(78, 290); lac = round(rng.uniform(0.7, 4.8), 1)
-    return {"Sodium": (na, "mEq/L", "LOW" if na < 135 else ("HIGH" if na > 145 else ""), "135-145"),
-            "Potassium": (k, "mEq/L", "LOW" if k < 3.5 else ("HIGH" if k > 5.1 else ""), "3.5-5.1"),
-            "Creatinine": (cr, "mg/dL", "HIGH" if cr > 1.3 else "", "0.6-1.3"),
-            "Glucose": (glu, "mg/dL", "HIGH" if glu > 140 else "", "70-110"),
-            "Lactate": (lac, "mmol/L", "HIGH" if lac > 2 else "", "0.5-2.0")}
+    na = rng.randint(130, 146)
+    k = round(rng.uniform(3.1, 5.4), 1)
+    cr = round(rng.uniform(0.6, 2.6), 1)
+    glu = rng.randint(78, 290)
+    lac = round(rng.uniform(0.7, 4.8), 1)
+    return {
+        "Sodium": (na, "mEq/L", "LOW" if na < 135 else ("HIGH" if na > 145 else ""), "135-145"),
+        "Potassium": (k, "mEq/L", "LOW" if k < 3.5 else ("HIGH" if k > 5.1 else ""), "3.5-5.1"),
+        "Creatinine": (cr, "mg/dL", "HIGH" if cr > 1.3 else "", "0.6-1.3"),
+        "Glucose": (glu, "mg/dL", "HIGH" if glu > 140 else "", "70-110"),
+        "Lactate": (lac, "mmol/L", "HIGH" if lac > 2 else "", "0.5-2.0"),
+    }
 
 
 def plan_clinical_documents(admit, now, name, dx, rng, tz=None):
@@ -561,35 +589,59 @@ def plan_clinical_documents(admit, now, name, dx, rng, tz=None):
 
     def on_day(n, at):
         """The instant `at` (a wall-clock time) on hospital day `n`, as UTC."""
-        return _datetime.combine(day1 + _timedelta(days=n - 1), at, tzinfo=tz).astimezone(_timezone.utc)
+        return _datetime.combine(day1 + _timedelta(days=n - 1), at, tzinfo=tz).astimezone(UTC)
 
     # Chronological by construction (the admission documents all fall within
     # five hours, before day 2's 06:00 labs), and sorted below regardless. The
     # lab generators are called in this fixed order for every patient, dropped
     # documents included, so the draw sequence is stable.
     schedule = [
-        (admit + _timedelta(hours=1), "note", "Admission Note",
-         f"S: Admitted with {dx}. O: Initial vitals per admission record; examination consistent with {dx}. "
-         f"A: {dx}. P: Admit for monitoring and treatment; admission labs sent; start management per protocol."),
-        (admit + _timedelta(hours=2), "lab_result", "Complete Blood Count",
-         _lab_doc(name, "Complete Blood Count", _cbc(rng))),
-        (admit + _timedelta(hours=5), "lab_result", "Basic Metabolic Panel",
-         _lab_doc(name, "Basic Metabolic Panel", _bmp(rng))),
+        (
+            admit + _timedelta(hours=1),
+            "note",
+            "Admission Note",
+            f"S: Admitted with {dx}. O: Initial vitals per admission record; examination consistent with {dx}. "
+            f"A: {dx}. P: Admit for monitoring and treatment; admission labs sent; start management per protocol.",
+        ),
+        (
+            admit + _timedelta(hours=2),
+            "lab_result",
+            "Complete Blood Count",
+            _lab_doc(name, "Complete Blood Count", _cbc(rng)),
+        ),
+        (
+            admit + _timedelta(hours=5),
+            "lab_result",
+            "Basic Metabolic Panel",
+            _lab_doc(name, "Basic Metabolic Panel", _bmp(rng)),
+        ),
     ]
     for n in ROUNDS_DAYS:
-        schedule.append((on_day(n, MORNING_LABS_AT), "lab_result", "Basic Metabolic Panel",
-                         _lab_doc(name, "Basic Metabolic Panel", _bmp(rng))))
+        schedule.append(
+            (
+                on_day(n, MORNING_LABS_AT),
+                "lab_result",
+                "Basic Metabolic Panel",
+                _lab_doc(name, "Basic Metabolic Panel", _bmp(rng)),
+            )
+        )
         if n == ROUNDS_DAYS[0]:
-            text = (f"S: Reviewed on morning rounds. O: {dx}; vitals per chart, morning labs reviewed. "
-                    f"A: {dx}, responding to current management. P: Continue therapy, monitor labs/vitals, reassess AM.")
+            text = (
+                f"S: Reviewed on morning rounds. O: {dx}; vitals per chart, morning labs reviewed. "
+                f"A: {dx}, responding to current management. P: Continue therapy, monitor labs/vitals, reassess AM."
+            )
         else:
-            text = (f"S: Overnight stable, no acute events. O: Exam unchanged; morning labs reviewed. "
-                    f"A: {dx}. P: Continue plan; consider step-down if trend continues.")
+            text = (
+                f"S: Overnight stable, no acute events. O: Exam unchanged; morning labs reviewed. "
+                f"A: {dx}. P: Continue plan; consider step-down if trend continues."
+            )
         schedule.append((on_day(n, ROUNDS_AT), "note", f"Progress Note: Day {n}", text))
     schedule.sort(key=lambda entry: entry[0])
-    return [(doc_type, title, content, ts.astimezone(_timezone.utc))
-            for ts, doc_type, title, content in schedule
-            if ts < now]
+    return [
+        (doc_type, title, content, ts.astimezone(UTC))
+        for ts, doc_type, title, content in schedule
+        if ts < now
+    ]
 
 
 # ── Surgical cases ───────────────────────────────────────────────────────────
@@ -617,26 +669,29 @@ def plan_surgical_cases(pts):
     patients SURGICAL_CASES names, in its order. A patient with no attending
     doctor on the admission gets no case: an operation with nobody to do it is
     not a case."""
-    by_name = {p['name']: p for p in pts}
+    by_name = {p["name"]: p for p in pts}
     return [
         (by_name[name], proc, minutes, theatre)
         for name, (proc, minutes, theatre) in SURGICAL_CASES.items()
-        if name in by_name and by_name[name]['attending_doctor_id']
+        if name in by_name and by_name[name]["attending_doctor_id"]
     ]
 
 
 def seed_clinical_history():
-    import json, random
-    from datetime import datetime, timedelta, timezone
+    import random
+    from datetime import datetime, timedelta
+
     random.seed(42)
     conn = _build_connection()  # sets row_factory + applies the SQLCipher key
     cur = conn.cursor()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     pts = cur.execute(
         "SELECT p.id, p.name, p.diagnosis, a.attending_doctor_id, a.created_at "
         "FROM patients p JOIN admissions a ON a.patient_id = p.id WHERE p.status='admitted'"
     ).fetchall()
-    docs = [r['id'] for r in cur.execute("SELECT id FROM users WHERE role='doctor'").fetchall()] or ['DOC001']
+    docs = [
+        r["id"] for r in cur.execute("SELECT id FROM users WHERE role='doctor'").fetchall()
+    ] or ["DOC001"]
 
     nlabs = nnotes = 0
     for p in pts:
@@ -646,16 +701,20 @@ def seed_clinical_history():
         # definition). A row without a readable one gets a two-day-old anchor
         # rather than an empty chart.
         try:
-            admit = datetime.fromisoformat((p['created_at'] or '').replace('Z', '+00:00'))
+            admit = datetime.fromisoformat((p["created_at"] or "").replace("Z", "+00:00"))
         except ValueError:
             admit = now - timedelta(days=2)
         if admit.tzinfo is None:
-            admit = admit.replace(tzinfo=timezone.utc)
-        author = p['attending_doctor_id'] if p['attending_doctor_id'] in docs else docs[0]
-        for doc_type, title, content, ts in plan_clinical_documents(admit, now, p['name'], p['diagnosis'], random):
-            cur.execute("INSERT INTO clinical_documents (patient_id, doc_type, title, content, author_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                        (p['id'], doc_type, title, content, author, ts.isoformat()))
-            if doc_type == 'lab_result':
+            admit = admit.replace(tzinfo=UTC)
+        author = p["attending_doctor_id"] if p["attending_doctor_id"] in docs else docs[0]
+        for doc_type, title, content, ts in plan_clinical_documents(
+            admit, now, p["name"], p["diagnosis"], random
+        ):
+            cur.execute(
+                "INSERT INTO clinical_documents (patient_id, doc_type, title, content, author_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (p["id"], doc_type, title, content, author, ts.isoformat()),
+            )
+            if doc_type == "lab_result":
                 nlabs += 1
             else:
                 nnotes += 1
@@ -665,17 +724,33 @@ def seed_clinical_history():
         sched = (now + timedelta(days=i % 5)).date().isoformat()
         sid = f"SURG-{p['id'][-6:]}-{i}"
         profile = cur.execute(
-            "SELECT comorbidities FROM patient_profiles WHERE patient_id = ?", (p['id'],)
+            "SELECT comorbidities FROM patient_profiles WHERE patient_id = ?", (p["id"],)
         ).fetchone()
         cur.execute(
             "INSERT OR IGNORE INTO surgeries (id, patient_id, surgeon_id, procedure_name, diagnosis, scheduled_date, scheduled_time, estimated_duration_min, operating_room, status, co_morbidities, success_probability, notes) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?, ?)",
-            (sid, p['id'], p['attending_doctor_id'], proc, p['diagnosis'], sched, f"{8 + i}:00", dur, orr,
-             (profile[0] if profile and profile[0] else "[]"), round(random.uniform(0.82, 0.97), 2),
-             f"Pre-op workup complete for {proc}.")); nsurg += 1
+            (
+                sid,
+                p["id"],
+                p["attending_doctor_id"],
+                proc,
+                p["diagnosis"],
+                sched,
+                f"{8 + i}:00",
+                dur,
+                orr,
+                (profile[0] if profile and profile[0] else "[]"),
+                round(random.uniform(0.82, 0.97), 2),
+                f"Pre-op workup complete for {proc}.",
+            ),
+        )
+        nsurg += 1
 
-    conn.commit(); conn.close()
-    print(f"  Backfilled {nlabs} labs, {nnotes} notes, {nsurg} surgeries across {len(pts)} patients")
+    conn.commit()
+    conn.close()
+    print(
+        f"  Backfilled {nlabs} labs, {nnotes} notes, {nsurg} surgeries across {len(pts)} patients"
+    )
 
 
 def link_patient_login():
@@ -697,12 +772,12 @@ def link_patient_login():
         # which is the first thing anyone opening Bridge saw. The PATIENT RECORD
         # is the authority (every vital, medication and care-team line comes
         # from it), so the account is renamed to match it, not the reverse.
-        prow = cur.execute(
-            "SELECT name FROM patients WHERE id = ?", (row[0],)
-        ).fetchone()
+        prow = cur.execute("SELECT name FROM patients WHERE id = ?", (row[0],)).fetchone()
         if prow and prow[0]:
             cur.execute("UPDATE users SET name = ? WHERE id = ?", (prow[0], "P001"))
-            print(f"  Linked patient login P001 → patient {row[0]} ({prow[0]}), account renamed to match")
+            print(
+                f"  Linked patient login P001 → patient {row[0]} ({prow[0]}), account renamed to match"
+            )
         else:
             print(f"  Linked patient login P001 → patient {row[0]}")
     conn.commit()
@@ -711,15 +786,15 @@ def link_patient_login():
 
 def randomize_dates():
     import random
-    from datetime import datetime, timedelta, timezone
-    
+    from datetime import datetime, timedelta
+
     conn = _build_connection()
     cursor = conn.cursor()
 
     # Every patient, with the clock its record was stamped at
     cursor.execute("SELECT id, created_at FROM patients")
     patients = cursor.fetchall()
-    
+
     # Admission dates are anchored RELATIVE TO NOW, not to a fixed calendar date.
     #
     # This used to be `datetime(2026, 5, 21, ...)`, an absolute window. Every day
@@ -745,25 +820,31 @@ def randomize_dates():
     # created_at cannot be read falls back to the wall clock as before.
     for row in patients:
         pid = row[0]
-        clock = _parse_aware(row[1]) or datetime.now(timezone.utc)
+        clock = _parse_aware(row[1]) or datetime.now(UTC)
         window_start = clock - timedelta(days=3)
         random_seconds = random.randint(0, 3 * 24 * 3600 - 1)
         random_dt = (window_start + timedelta(seconds=random_seconds)).isoformat()
-        
+
         # Update patients
         cursor.execute("UPDATE patients SET admission_date = ? WHERE id = ?", (random_dt, pid))
-        
+
         # Update admissions
-        cursor.execute("UPDATE admissions SET created_at = ? WHERE patient_id = ?", (random_dt, pid))
-        
+        cursor.execute(
+            "UPDATE admissions SET created_at = ? WHERE patient_id = ?", (random_dt, pid)
+        )
+
         # Update channels
         cursor.execute("UPDATE channels SET created_at = ? WHERE patient_id = ?", (random_dt, pid))
-        
+
         # Update sage_room_memory
-        cursor.execute("UPDATE sage_room_memory SET created_at = ?, updated_at = ? WHERE patient_id = ?", (random_dt, random_dt, pid))
-        
+        cursor.execute(
+            "UPDATE sage_room_memory SET created_at = ?, updated_at = ? WHERE patient_id = ?",
+            (random_dt, random_dt, pid),
+        )
+
     conn.commit()
     conn.close()
+
 
 def _parse_aware(raw):
     """An aware UTC datetime from either timestamp dialect in this database, or None.
@@ -773,14 +854,15 @@ def _parse_aware(raw):
     definition). Comparing the two as strings is wrong: a space sorts before a
     "T", so a bare stamp reads as EARLIER than an ISO one for the same instant.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
+
     if not raw:
         return None
     try:
         dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
     except ValueError:
         return None
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 # ── Vitals window ────────────────────────────────────────────────────────────
@@ -807,6 +889,7 @@ def _parse_aware(raw):
 # survives because randomize_dates() draws the admission strictly before the
 # clock that reading is stamped with.
 
+
 def clip_vitals_at_admission():
     """Drop every reading timestamped before its patient's admission.
 
@@ -826,7 +909,8 @@ def clip_vitals_at_admission():
         if admit is None:
             continue
         doomed = [
-            r["id"] for r in cur.execute(
+            r["id"]
+            for r in cur.execute(
                 "SELECT id, timestamp FROM vitals WHERE patient_id = ?", (p["id"],)
             ).fetchall()
             if (ts := _parse_aware(r["timestamp"])) is not None and ts < admit
@@ -837,7 +921,9 @@ def clip_vitals_at_admission():
             touched += 1
     conn.commit()
     conn.close()
-    print(f"  Dropped {dropped} readings that preceded their admission on {touched} of {len(pts)} charts")
+    print(
+        f"  Dropped {dropped} readings that preceded their admission on {touched} of {len(pts)} charts"
+    )
 
 
 def seed_allergies():
@@ -863,13 +949,21 @@ def seed_allergies():
 
     wanted = [
         # (name fragment, substance, class, reaction, severity)
-        ("Suresh Reddy", "Ceftriaxone", "cephalosporins",
-         "Anaphylaxis: urticaria, angio-oedema and hypotension after IV ceftriaxone in 2023",
-         "severe"),
-        ("Ananya Kapoor", "Penicillin", "penicillins",
-         "Widespread maculopapular rash 48h into a course of amoxicillin", "moderate"),
-        ("Priya Nair", "Ibuprofen", "nsaids",
-         "Bronchospasm and wheeze", "moderate"),
+        (
+            "Suresh Reddy",
+            "Ceftriaxone",
+            "cephalosporins",
+            "Anaphylaxis: urticaria, angio-oedema and hypotension after IV ceftriaxone in 2023",
+            "severe",
+        ),
+        (
+            "Ananya Kapoor",
+            "Penicillin",
+            "penicillins",
+            "Widespread maculopapular rash 48h into a course of amoxicillin",
+            "moderate",
+        ),
+        ("Priya Nair", "Ibuprofen", "nsaids", "Bronchospasm and wheeze", "moderate"),
     ]
 
     added = 0
@@ -882,8 +976,7 @@ def seed_allergies():
             continue
         pid = row[0] if not isinstance(row, dict) else row["id"]
         exists = cur.execute(
-            "SELECT 1 FROM patient_allergies WHERE patient_id = ? "
-            "AND LOWER(substance) = LOWER(?)",
+            "SELECT 1 FROM patient_allergies WHERE patient_id = ? AND LOWER(substance) = LOWER(?)",
             (pid, substance),
         ).fetchone()
         if exists:
@@ -900,7 +993,6 @@ def seed_allergies():
     conn.commit()
     conn.close()
     print(f"  Seeded {added} patient allergy record(s)")
-
 
 
 # ── Pharmacy work ────────────────────────────────────────────────────────────
@@ -921,12 +1013,25 @@ AI_MEDICATIONS = (
 
 #: (patient name, drug, dose, route, frequency, prescriber, steps past pending)
 WARD_HELIX_ORDERS = (
-    ("Kavitha Menon", "Potassium Chloride", "20 mEq", "IV", "Once", "DOC002",
-     ("reviewing",)),
-    ("Ananya Kapoor", "Insulin Aspart", "4 units", "SC", "Before meals", "DOC001",
-     ("reviewing", "verified")),
-    ("Lakshmi Devi", "Monocef", "1 g", "IV", "Q24H", "DOC001",
-     ("reviewing", "verified", "scheduled", "dispensed")),
+    ("Kavitha Menon", "Potassium Chloride", "20 mEq", "IV", "Once", "DOC002", ("reviewing",)),
+    (
+        "Ananya Kapoor",
+        "Insulin Aspart",
+        "4 units",
+        "SC",
+        "Before meals",
+        "DOC001",
+        ("reviewing", "verified"),
+    ),
+    (
+        "Lakshmi Devi",
+        "Monocef",
+        "1 g",
+        "IV",
+        "Q24H",
+        "DOC001",
+        ("reviewing", "verified", "scheduled", "dispensed"),
+    ),
 )
 
 PHARMACIST = "PHA001"
@@ -939,23 +1044,34 @@ def seed_pharmacy_queue():
     drug is skipped, so a second run adds nothing.
     """
     from database import db_session
-    from services import helix_service
     from services.clinical_time import utc_iso_now
-    from services.medication_safety_gate import MedicationSafetyBlocked, enforce_medication_safety
+    from services.medication_safety_gate import (
+        MedicationSafetyBlocked,
+        enforce_medication_safety,
+    )
     from services.sage_handoff_service import HandoffBlocked, _dispatch_to_helix
 
+    from services import helix_service
+
     with db_session() as db:
-        ids = {r["name"]: r["id"] for r in db.execute(
-            "SELECT id, name FROM patients WHERE status = 'admitted'").fetchall()}
+        ids = {
+            r["name"]: r["id"]
+            for r in db.execute(
+                "SELECT id, name FROM patients WHERE status = 'admitted'"
+            ).fetchall()
+        }
 
     def already_ordered(pid, drug):
         with db_session() as db:
-            return db.execute(
-                "SELECT 1 FROM helix_patient_med_orders o JOIN helix_medication_master m "
-                "ON m.id = o.medication_id WHERE o.patient_id = ? "
-                "AND (m.name LIKE ? OR m.generic_name LIKE ?)",
-                (pid, f"%{drug}%", f"%{drug}%"),
-            ).fetchone() is not None
+            return (
+                db.execute(
+                    "SELECT 1 FROM helix_patient_med_orders o JOIN helix_medication_master m "
+                    "ON m.id = o.medication_id WHERE o.patient_id = ? "
+                    "AND (m.name LIKE ? OR m.generic_name LIKE ?)",
+                    (pid, f"%{drug}%", f"%{drug}%"),
+                ).fetchone()
+                is not None
+            )
 
     ai = orders = 0
     for name, drug, why in AI_MEDICATIONS:
@@ -974,13 +1090,18 @@ def seed_pharmacy_queue():
             continue
         try:
             enforce_medication_safety(
-                pid, drug, actor_id=prescriber, entry_point="seed.pharmacy_queue",
+                pid,
+                drug,
+                actor_id=prescriber,
+                entry_point="seed.pharmacy_queue",
                 interactive=False,
             )
             order = helix_service.create_order(pid, drug, dose, route, freq, prescriber)
             for step in steps:
                 helix_service.transition_order_status(
-                    order["id"], step, PHARMACIST,
+                    order["id"],
+                    step,
+                    PHARMACIST,
                     idempotency_key=f"seed-{order['id']}-{step}",
                     scheduled_at=(utc_iso_now() if step == "scheduled" else None),
                 )

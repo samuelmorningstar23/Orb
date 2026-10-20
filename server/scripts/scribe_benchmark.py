@@ -9,25 +9,23 @@ Usage:
   python scripts/scribe_benchmark.py --fixtures scripts/fixtures/scribe/
   python scripts/scribe_benchmark.py --correction-model gemma3:4b --draft-model orb-sage
 """
+
 import argparse
 import asyncio
 import json
-import os
-import re
 import sys
-import time
 from pathlib import Path
 
 # Add server root to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from config import SCRIBE
-from services.scribe_service import (
+from config import SCRIBE  # noqa: E402 - application imports require the path/environment bootstrap above.
+from services.scribe_providers import StageTimer  # noqa: E402 - application imports require the path/environment bootstrap above.
+from services.scribe_service import (  # noqa: E402 - application imports require the path/environment bootstrap above.
     correct_transcript,
     structure_transcript,
     verify_note,
 )
-from services.scribe_providers import StageTimer
 
 
 def load_fixtures(fixtures_dir: str) -> list[dict]:
@@ -56,7 +54,11 @@ def compute_entity_preservation(expected: list[str], text: str) -> dict:
 def compute_section_completeness(expected_sections: list[str], note: str) -> dict:
     """Check which expected sections are present in the note."""
     note_upper = note.upper()
-    found = [s for s in expected_sections if s.upper() + ":" in note_upper or s.upper() + "\n" in note_upper]
+    found = [
+        s
+        for s in expected_sections
+        if s.upper() + ":" in note_upper or s.upper() + "\n" in note_upper
+    ]
     missing = [s for s in expected_sections if s not in found]
     score = len(found) / len(expected_sections) if expected_sections else 1.0
     return {
@@ -76,9 +78,9 @@ async def run_benchmark(fixtures: list[dict], args) -> list[dict]:
         expected_entities = fixture.get("expected_entities", [])
         expected_sections = fixture.get("expected_sections", [])
 
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"  Case: {case_id}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         timer = StageTimer()
         result = {"case_id": case_id}
@@ -95,7 +97,7 @@ async def run_benchmark(fixtures: list[dict], args) -> list[dict]:
                 timer.stop()
                 print(f"  ✗ Correction failed: {e}")
         else:
-            print(f"  — Correction: disabled")
+            print("  — Correction: disabled")
 
         # Stage 3: Drafting
         structured = ""
@@ -117,7 +119,9 @@ async def run_benchmark(fixtures: list[dict], args) -> list[dict]:
                 timer.stop()
                 print(f"  ✓ Verification: {timer.timings.get('verify', 0):.2f}s")
                 if verification:
-                    print(f"    Verified: {verification.get('verified')}, Confidence: {verification.get('confidence')}")
+                    print(
+                        f"    Verified: {verification.get('verified')}, Confidence: {verification.get('confidence')}"
+                    )
                     warnings = verification.get("warnings", [])
                     omissions = verification.get("omissions", [])
                     if warnings:
@@ -128,7 +132,7 @@ async def run_benchmark(fixtures: list[dict], args) -> list[dict]:
                 timer.stop()
                 print(f"  ✗ Verification failed: {e}")
         else:
-            print(f"  — Verification: disabled")
+            print("  — Verification: disabled")
 
         # Metrics
         entity_check = compute_entity_preservation(expected_entities, structured)
@@ -136,20 +140,24 @@ async def run_benchmark(fixtures: list[dict], args) -> list[dict]:
 
         e2e_time = sum(timer.timings.values())
 
-        result.update({
-            "timings": timer.to_dict(),
-            "e2e_seconds": round(e2e_time, 3),
-            "entity_preservation": entity_check,
-            "section_completeness": section_check,
-            "verification": verification,
-            "correction_length": len(corrected),
-            "note_length": len(structured),
-        })
+        result.update(
+            {
+                "timings": timer.to_dict(),
+                "e2e_seconds": round(e2e_time, 3),
+                "entity_preservation": entity_check,
+                "section_completeness": section_check,
+                "verification": verification,
+                "correction_length": len(corrected),
+                "note_length": len(structured),
+            }
+        )
 
-        print(f"\n  Entity preservation: {entity_check['score']*100:.0f}% ({len(entity_check['found'])}/{entity_check['total']})")
+        print(
+            f"\n  Entity preservation: {entity_check['score'] * 100:.0f}% ({len(entity_check['found'])}/{entity_check['total']})"
+        )
         if entity_check["missing"]:
             print(f"    Missing: {', '.join(entity_check['missing'])}")
-        print(f"  Section completeness: {section_check['score']*100:.0f}%")
+        print(f"  Section completeness: {section_check['score'] * 100:.0f}%")
         if section_check["missing"]:
             print(f"    Missing: {', '.join(section_check['missing'])}")
         print(f"  End-to-end: {e2e_time:.2f}s")
@@ -161,9 +169,9 @@ async def run_benchmark(fixtures: list[dict], args) -> list[dict]:
 
 def print_summary(results: list[dict]):
     """Print aggregate benchmark summary."""
-    print(f"\n{'='*60}")
-    print(f"  BENCHMARK SUMMARY")
-    print(f"{'='*60}")
+    print(f"\n{'=' * 60}")
+    print("  BENCHMARK SUMMARY")
+    print(f"{'=' * 60}")
     print(f"  Cases run: {len(results)}")
 
     if not results:
@@ -174,8 +182,8 @@ def print_summary(results: list[dict]):
     avg_section = sum(r["section_completeness"]["score"] for r in results) / len(results)
 
     print(f"  Avg end-to-end: {avg_e2e:.2f}s")
-    print(f"  Avg entity preservation: {avg_entity*100:.0f}%")
-    print(f"  Avg section completeness: {avg_section*100:.0f}%")
+    print(f"  Avg entity preservation: {avg_entity * 100:.0f}%")
+    print(f"  Avg section completeness: {avg_section * 100:.0f}%")
 
     # Per-stage timing averages
     stages = ["correction", "draft", "verify"]
@@ -193,24 +201,31 @@ def print_summary(results: list[dict]):
         print(f"  Total warnings: {total_warnings}")
         print(f"  Total omissions: {total_omissions}")
 
-    print(f"\n  Pipeline config:")
+    print("\n  Pipeline config:")
     print(f"    ASR model: {SCRIBE['asr']['model']}")
-    print(f"    Correction model: {SCRIBE['correction']['model']} ({'enabled' if SCRIBE['correction']['enabled'] else 'disabled'})")
+    print(
+        f"    Correction model: {SCRIBE['correction']['model']} ({'enabled' if SCRIBE['correction']['enabled'] else 'disabled'})"
+    )
     print(f"    Draft model: {SCRIBE['draft']['model']}")
-    print(f"    Verify model: {SCRIBE['verify']['model']} ({'enabled' if SCRIBE['verify']['enabled'] else 'disabled'})")
+    print(
+        f"    Verify model: {SCRIBE['verify']['model']} ({'enabled' if SCRIBE['verify']['enabled'] else 'disabled'})"
+    )
 
 
 def main():
     parser = argparse.ArgumentParser(description="Orb Scribe Benchmark Harness")
     parser.add_argument(
-        "--fixtures", default="scripts/fixtures/scribe/",
+        "--fixtures",
+        default="scripts/fixtures/scribe/",
         help="Path to fixtures directory (default: scripts/fixtures/scribe/)",
     )
     parser.add_argument("--correction-model", help="Override correction model for this run")
     parser.add_argument("--draft-model", help="Override draft model for this run")
     parser.add_argument("--verify-model", help="Override verify model for this run")
     parser.add_argument("--enable-verify", action="store_true", help="Enable verification stage")
-    parser.add_argument("--disable-correction", action="store_true", help="Disable correction stage")
+    parser.add_argument(
+        "--disable-correction", action="store_true", help="Disable correction stage"
+    )
     parser.add_argument("--output", help="Write JSON results to file")
 
     args = parser.parse_args()

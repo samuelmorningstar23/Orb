@@ -34,6 +34,7 @@ Safety rules this script enforces:
 Stdlib only, no server imports: this must run on a bare appliance and on the
 standby Mac with nothing but Python.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -44,6 +45,7 @@ import os
 import socket
 import sys
 from pathlib import Path
+from typing import Never
 
 CHECK_PREFIX = "orb-escrow-check-v1:"
 CHECK_DIGIT_LEN = 8
@@ -84,7 +86,7 @@ def parse_env_file(path: Path) -> dict[str, str]:
         if not line or line.startswith("#"):
             continue
         if line.startswith("export "):
-            line = line[len("export "):].lstrip()
+            line = line[len("export ") :].lstrip()
         if "=" not in line:
             continue
         name, _, value = line.partition("=")
@@ -122,7 +124,7 @@ def load_keys(env_file: str | None) -> dict[str, str]:
     return keys
 
 
-def _die(message: str, code: int = 2) -> "None":
+def _die(message: str, code: int = 2) -> Never:
     print(f"escrow_sheet: {message}", file=sys.stderr)
     raise SystemExit(code)
 
@@ -130,6 +132,7 @@ def _die(message: str, code: int = 2) -> "None":
 # ---------------------------------------------------------------------------
 # generate
 # ---------------------------------------------------------------------------
+
 
 def render_sheet(keys: dict[str, str], date_str: str, hostname: str) -> str:
     """The print-ready HTML sheet. This string is the ONLY place key material
@@ -189,7 +192,7 @@ def render_sheet(keys: dict[str, str], date_str: str, hostname: str) -> str:
     <tr><td>Generated on</td><td>{esc_date}</td></tr>
     <tr><td>Ceremony reference</td><td>__________________________ (from the §12 record sheet)</td></tr>
   </table>
-{''.join(key_blocks)}
+{"".join(key_blocks)}
   <h2>Seal (KEY_CEREMONY.md §5E–§5F)</h2>
   <ol>
     <li>Print <strong>two identical copies</strong> of this sheet. Proof-read
@@ -285,8 +288,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
 
     if args.shred:
         answer = input(
-            f"Type SHRED to overwrite and delete {out} "
-            "(anything else leaves it in place): "
+            f"Type SHRED to overwrite and delete {out} (anything else leaves it in place): "
         )
         if answer.strip().upper() == "SHRED":
             shred(out)
@@ -299,6 +301,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 # verify
 # ---------------------------------------------------------------------------
+
 
 def cmd_verify(args: argparse.Namespace) -> int:
     keys = load_keys(args.env_file)
@@ -313,13 +316,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
             print(f"  {name}: MATCH")
         else:
             ok = False
-            if len(typed) != CHECK_DIGIT_LEN or any(
-                c not in "0123456789abcdef" for c in typed
-            ):
-                print(
-                    f"  {name}: MISMATCH — input was not "
-                    f"{CHECK_DIGIT_LEN} hex characters"
-                )
+            if len(typed) != CHECK_DIGIT_LEN or any(c not in "0123456789abcdef" for c in typed):
+                print(f"  {name}: MISMATCH — input was not {CHECK_DIGIT_LEN} hex characters")
             else:
                 print(f"  {name}: MISMATCH — sheet and live key disagree")
     if ok:
@@ -352,9 +350,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     gen.set_defaults(func=cmd_generate)
 
-    ver = sub.add_parser(
-        "verify", help="retype printed check digits; compare against live keys"
-    )
+    ver = sub.add_parser("verify", help="retype printed check digits; compare against live keys")
     ver.add_argument(
         "--env-file",
         help="read the keys from this dotenv file instead of the environment",

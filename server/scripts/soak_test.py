@@ -23,6 +23,7 @@ SLOs asserted (exit 1 on breach):
 Never points at the live DB: the copy lives in a temp dir and is deleted
 unless --keep-db.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -36,7 +37,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -64,8 +65,11 @@ class Series:
     def pct(self, p: float) -> float:
         if not self.lat_ms:
             return float("nan")
-        return statistics.quantiles(self.lat_ms, n=1000)[max(0, min(998, int(p * 10) - 1))] \
-            if len(self.lat_ms) >= 20 else sorted(self.lat_ms)[-1]
+        return (
+            statistics.quantiles(self.lat_ms, n=1000)[max(0, min(998, int(p * 10) - 1))]
+            if len(self.lat_ms) >= 20
+            else sorted(self.lat_ms)[-1]
+        )
 
     def summary(self) -> dict:
         n = len(self.lat_ms)
@@ -107,13 +111,18 @@ def _run_offset_s() -> float:
 
 def _fire_stall_dump(url: str) -> None:
     now = time.monotonic()
-    if (STALL_PID is None or _dump_state["count"] >= STALL_DUMP_MAX
-            or now - _dump_state["last"] < STALL_DUMP_MIN_GAP_S):
+    if (
+        STALL_PID is None
+        or _dump_state["count"] >= STALL_DUMP_MAX
+        or now - _dump_state["last"] < STALL_DUMP_MIN_GAP_S
+    ):
         return
     _dump_state["last"] = now
     _dump_state["count"] += 1
-    print(f"[soak] STALL: >{STALL_DUMP_AFTER_S:.0f}s in flight at t+{_run_offset_s()}s"
-          f" ({url}) — SIGUSR1 #{_dump_state['count']} → server log")
+    print(
+        f"[soak] STALL: >{STALL_DUMP_AFTER_S:.0f}s in flight at t+{_run_offset_s()}s"
+        f" ({url}) — SIGUSR1 #{_dump_state['count']} → server log"
+    )
     try:
         os.kill(STALL_PID, signal.SIGUSR1)
     except OSError:
@@ -128,19 +137,39 @@ async def timed(client: httpx.AsyncClient, series: Series, method: str, url: str
         ms = (time.perf_counter() - t0) * 1000
         if r.status_code >= 500:
             series.record(None)
-            SLOW_SAMPLES.append({"series": series.name, "t_s": _run_offset_s(),
-                                 "ms": round(ms, 1), "url": url, "status": r.status_code})
+            SLOW_SAMPLES.append(
+                {
+                    "series": series.name,
+                    "t_s": _run_offset_s(),
+                    "ms": round(ms, 1),
+                    "url": url,
+                    "status": r.status_code,
+                }
+            )
             return None
         series.record(ms)
         if ms > SLOW_SAMPLE_MS:
-            SLOW_SAMPLES.append({"series": series.name, "t_s": _run_offset_s(),
-                                 "ms": round(ms, 1), "url": url, "status": r.status_code})
+            SLOW_SAMPLES.append(
+                {
+                    "series": series.name,
+                    "t_s": _run_offset_s(),
+                    "ms": round(ms, 1),
+                    "url": url,
+                    "status": r.status_code,
+                }
+            )
         return r
     except Exception as e:
         series.record(None)
-        SLOW_SAMPLES.append({"series": series.name, "t_s": _run_offset_s(),
-                             "ms": round((time.perf_counter() - t0) * 1000, 1),
-                             "url": url, "status": type(e).__name__})
+        SLOW_SAMPLES.append(
+            {
+                "series": series.name,
+                "t_s": _run_offset_s(),
+                "ms": round((time.perf_counter() - t0) * 1000, 1),
+                "url": url,
+                "status": type(e).__name__,
+            }
+        )
         return None
     finally:
         watchdog.cancel()
@@ -156,7 +185,7 @@ async def worker_loop(stop: asyncio.Event, interval: float, fn):
         elapsed = time.monotonic() - t0
         try:
             await asyncio.wait_for(stop.wait(), timeout=max(0.05, interval - elapsed))
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
 
 
@@ -171,26 +200,28 @@ def boot_server(db_copy: Path, port: int, pool: bool, log_path: Path) -> subproc
             if line and not line.startswith("#") and "=" in line and line.startswith("ORB_"):
                 k, _, v = line.partition("=")
                 env.setdefault(k.strip(), v.strip())
-    env.update({
-        "ORB_DB_PATH": str(db_copy),
-        # config.py reads ORB_DEPLOYMENT_PROFILE — NOT "ORB_PROFILE". The wrong
-        # name here meant every prior soak inherited the operator's dev profile
-        # from .env (reloader parent + dev gates) while claiming a prod
-        # measurement. With reload off, boot_server's pid is also the actual
-        # worker, which is what the stall watchdog must SIGUSR1.
-        "ORB_DEPLOYMENT_PROFILE": "prod",
-        # …but prod profile also turns on bootstrap credential ENFORCEMENT,
-        # which DEACTIVATES every account still holding a shipped default
-        # password — including DOC001, which this harness logs in as. Left on,
-        # the soak deactivates the accounts on its own DB copy and then fails
-        # its own login. The profile is set here for the reloader, not for
-        # credential policy, so the check is disabled for this throwaway
-        # instance. (Learned the hard way on 2026-08-11, when a benchmark run
-        # against the REAL dev DB locked every seeded account out of the app.)
-        "ORB_BOOTSTRAP_CHECK_ENABLED": "0",
-        "PORT": str(port),
-        "ORB_PORT": str(port),
-    })
+    env.update(
+        {
+            "ORB_DB_PATH": str(db_copy),
+            # config.py reads ORB_DEPLOYMENT_PROFILE — NOT "ORB_PROFILE". The wrong
+            # name here meant every prior soak inherited the operator's dev profile
+            # from .env (reloader parent + dev gates) while claiming a prod
+            # measurement. With reload off, boot_server's pid is also the actual
+            # worker, which is what the stall watchdog must SIGUSR1.
+            "ORB_DEPLOYMENT_PROFILE": "prod",
+            # …but prod profile also turns on bootstrap credential ENFORCEMENT,
+            # which DEACTIVATES every account still holding a shipped default
+            # password — including DOC001, which this harness logs in as. Left on,
+            # the soak deactivates the accounts on its own DB copy and then fails
+            # its own login. The profile is set here for the reloader, not for
+            # credential policy, so the check is disabled for this throwaway
+            # instance. (Learned the hard way on 2026-08-11, when a benchmark run
+            # against the REAL dev DB locked every seeded account out of the app.)
+            "ORB_BOOTSTRAP_CHECK_ENABLED": "0",
+            "PORT": str(port),
+            "ORB_PORT": str(port),
+        }
+    )
     # Isolated throwaway instance: an ephemeral JWT secret is correct (prod
     # profile rightly refuses to boot without one).
     env.setdefault("ORB_JWT_SECRET", os.urandom(32).hex())
@@ -203,8 +234,11 @@ def boot_server(db_copy: Path, port: int, pool: bool, log_path: Path) -> subproc
         env.pop("ORB_DB_POOL", None)
     log_f = open(log_path, "w")
     return subprocess.Popen(
-        [PYTHON, "main.py"], cwd=str(SERVER_DIR), env=env,
-        stdout=log_f, stderr=subprocess.STDOUT,
+        [PYTHON, "main.py"],
+        cwd=str(SERVER_DIR),
+        env=env,
+        stdout=log_f,
+        stderr=subprocess.STDOUT,
     )
 
 
@@ -230,8 +264,10 @@ def soak_admission_choice(choices: dict) -> tuple[str | None, str | None]:
     departments = choices.get("departments") or []
     department = choices.get("default_department") or (departments[0] if departments else None)
     doctors = choices.get("doctors") or []
-    attending = next((d["id"] for d in doctors if d.get("department") == department),
-                     doctors[0]["id"] if doctors else None)
+    attending = next(
+        (d["id"] for d in doctors if d.get("department") == department),
+        doctors[0]["id"] if doctors else None,
+    )
     return department, attending
 
 
@@ -239,12 +275,16 @@ def soak_admission_payload(idx: int, department: str, attending: str) -> dict:
     """One synthetic admission, in the shape POST /api/admissions/admit takes."""
     return {
         "name": f"Soak Patient {idx:03d}",
-        "age": 40 + (idx % 40), "sex": "M" if idx % 2 else "F",
-        "admission_source": "ED", "admission_type": "emergency",
-        "department": department, "attending_doctor_id": attending,
+        "age": 40 + (idx % 40),
+        "sex": "M" if idx % 2 else "F",
+        "admission_source": "ED",
+        "admission_type": "emergency",
+        "department": department,
+        "attending_doctor_id": attending,
         "chief_complaint": "Soak load, synthetic admission",
         "initial_diagnosis": "Soak load, synthetic admission",
-        "ward": "W1" if idx % 2 else "W2", "bed": f"SK-{idx:03d}",
+        "ward": "W1" if idx % 2 else "W2",
+        "bed": f"SK-{idx:03d}",
     }
 
 
@@ -252,9 +292,19 @@ async def run_soak(base: str, minutes: float, target_census: int) -> dict:
     global RUN_T0
     RUN_T0 = time.monotonic()
     stop = asyncio.Event()
-    series = {k: Series(k) for k in
-              ("health", "board", "chart", "channels", "messages_read",
-               "message_post", "forecast", "ward_brief")}
+    series = {
+        k: Series(k)
+        for k in (
+            "health",
+            "board",
+            "chart",
+            "channels",
+            "messages_read",
+            "message_post",
+            "forecast",
+            "ward_brief",
+        )
+    }
     rss_samples: list[int] = []
 
     login = httpx.AsyncClient(base_url=base, timeout=30.0, trust_env=False)
@@ -275,22 +325,25 @@ async def run_soak(base: str, minutes: float, target_census: int) -> dict:
     have = len(board.json()) if board.status_code == 200 else 0
     options = await client.get("/api/admissions/options")
     department, attending = soak_admission_choice(
-        options.json() if options.status_code == 200 else {})
+        options.json() if options.status_code == 200 else {}
+    )
     admitted = 0
     idx = 0
-    while (department and attending
-           and have + admitted < target_census and idx < target_census * 2):
+    while department and attending and have + admitted < target_census and idx < target_census * 2:
         idx += 1
-        resp = await client.post("/api/admissions/admit",
-                                 json=soak_admission_payload(idx, department, attending))
+        resp = await client.post(
+            "/api/admissions/admit", json=soak_admission_payload(idx, department, attending)
+        )
         if resp.status_code in (200, 201):
             admitted += 1
         else:
             print(f"[soak] admission {idx} refused ({resp.status_code}): {resp.text[:200]}")
             break
     if not (department and attending):
-        print("[soak] no covered department or attending doctor on the admission form; "
-              "census not topped up")
+        print(
+            "[soak] no covered department or attending doctor on the admission form; "
+            "census not topped up"
+        )
 
     pts = await client.get("/api/vigil/patients?limit=200")
     patient_ids = [p["id"] for p in pts.json()] if pts.status_code == 200 else []
@@ -323,14 +376,21 @@ async def run_soak(base: str, minutes: float, target_census: int) -> dict:
             return
         ch = channel_ids[ch_i % len(channel_ids)]
         ch_i += 1
-        await timed(client, series["messages_read"], "GET", f"/api/relay/channels/{ch}/messages?limit=30")
+        await timed(
+            client, series["messages_read"], "GET", f"/api/relay/channels/{ch}/messages?limit=30"
+        )
 
     async def post_message():
         if not channel_ids:
             return
         ch = channel_ids[int(time.time()) % len(channel_ids)]
-        await timed(client, series["message_post"], "POST", f"/api/relay/channels/{ch}/messages",
-                    json={"content": f"soak check {datetime.now(timezone.utc).isoformat()}"})
+        await timed(
+            client,
+            series["message_post"],
+            "POST",
+            f"/api/relay/channels/{ch}/messages",
+            json={"content": f"soak check {datetime.now(UTC).isoformat()}"},
+        )
 
     async def poll_forecast():
         await timed(client, series["forecast"], "GET", "/api/forecast/hospital?days=3")
@@ -340,8 +400,12 @@ async def run_soak(base: str, minutes: float, target_census: int) -> dict:
 
     async def sample_rss():
         try:
-            out = subprocess.run(["ps", "-o", "rss=", "-p", str(SERVER_PID)],
-                                 capture_output=True, text=True, timeout=5)
+            out = subprocess.run(
+                ["ps", "-o", "rss=", "-p", str(SERVER_PID)],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
             rss_samples.append(int(out.stdout.strip() or 0))
         except Exception:
             pass
@@ -349,7 +413,7 @@ async def run_soak(base: str, minutes: float, target_census: int) -> dict:
     tasks = [
         asyncio.create_task(worker_loop(stop, 0.5, probe_health)),
         asyncio.create_task(worker_loop(stop, 2.0, poll_board)),
-        asyncio.create_task(worker_loop(stop, 2.0, poll_board)),      # 2 station displays
+        asyncio.create_task(worker_loop(stop, 2.0, poll_board)),  # 2 station displays
         asyncio.create_task(worker_loop(stop, 3.0, open_chart)),
         asyncio.create_task(worker_loop(stop, 5.0, poll_channels)),
         asyncio.create_task(worker_loop(stop, 4.0, read_messages)),
@@ -403,7 +467,7 @@ def main():
         if s.exists():
             shutil.copy2(s, Path(str(db_copy) + suffix))
 
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    ts = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     out_dir = SERVER_DIR.parent / "docs" / "perf"
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = tmp / "server.log"
@@ -434,15 +498,24 @@ def main():
         verdicts = []
         h = result["series"]["health"]
         verdicts.append(("health zero failures", h["errors"] == 0))
-        verdicts.append((f"health p99 < {HEALTH_SLO_P99_MS} ms",
-                         h["p99_ms"] is not None and h["p99_ms"] < HEALTH_SLO_P99_MS))
+        verdicts.append(
+            (
+                f"health p99 < {HEALTH_SLO_P99_MS} ms",
+                h["p99_ms"] is not None and h["p99_ms"] < HEALTH_SLO_P99_MS,
+            )
+        )
         for k in ("board", "chart", "channels", "messages_read"):
             s = result["series"][k]
             if s["requests"]:
-                verdicts.append((f"{k} p99 < {READ_SLO_P99_MS} ms",
-                                 s["p99_ms"] is not None and s["p99_ms"] < READ_SLO_P99_MS))
-                verdicts.append((f"{k} err rate < {READ_SLO_ERR_RATE:.1%}",
-                                 s["error_rate"] < READ_SLO_ERR_RATE))
+                verdicts.append(
+                    (
+                        f"{k} p99 < {READ_SLO_P99_MS} ms",
+                        s["p99_ms"] is not None and s["p99_ms"] < READ_SLO_P99_MS,
+                    )
+                )
+                verdicts.append(
+                    (f"{k} err rate < {READ_SLO_ERR_RATE:.1%}", s["error_rate"] < READ_SLO_ERR_RATE)
+                )
         verdicts.append(("server survived window", not result["server_exit_mid_run"]))
         result["verdicts"] = [{"slo": s, "pass": ok} for s, ok in verdicts]
         passed = all(ok for _, ok in verdicts)
@@ -450,25 +523,35 @@ def main():
         json_path = out_dir / f"soak-{ts}-{label}.json"
         json_path.write_text(json.dumps(result, indent=2))
 
-        md = [f"# Soak {ts}: {label} mode, {args.minutes} min, census {result['census_start']}+{result['census_admitted']}\n"]
-        md.append(f"Boot→healthy: {boot_s}s · RSS {result['rss_mb']['min']}–{result['rss_mb']['max']} MB\n")
+        md = [
+            f"# Soak {ts}: {label} mode, {args.minutes} min, census {result['census_start']}+{result['census_admitted']}\n"
+        ]
+        md.append(
+            f"Boot→healthy: {boot_s}s · RSS {result['rss_mb']['min']}–{result['rss_mb']['max']} MB\n"
+        )
         md.append("| series | reqs | errs | p50 | p95 | p99 | max |")
         md.append("|---|---|---|---|---|---|---|")
         for s in result["series"].values():
-            md.append(f"| {s['name']} | {s['requests']} | {s['errors']} | "
-                      f"{s['p50_ms']} | {s['p95_ms']} | {s['p99_ms']} | {s['max_ms']} |")
+            md.append(
+                f"| {s['name']} | {s['requests']} | {s['errors']} | "
+                f"{s['p50_ms']} | {s['p95_ms']} | {s['p99_ms']} | {s['max_ms']} |"
+            )
         md.append("\n## SLO verdicts")
         for v in result["verdicts"]:
             md.append(f"- {'✅' if v['pass'] else '❌'} {v['slo']}")
         md.append(f"\nOverall: {'**PASS**' if passed else '**FAIL**'}\n")
         slow = result.get("slow_samples") or []
         if slow:
-            md.append(f"\n## Slow/errored requests (> {SLOW_SAMPLE_MS:.0f} ms): "
-                      f"{len(slow)} samples, {result.get('stall_dumps_fired', 0)} stack dumps fired")
+            md.append(
+                f"\n## Slow/errored requests (> {SLOW_SAMPLE_MS:.0f} ms): "
+                f"{len(slow)} samples, {result.get('stall_dumps_fired', 0)} stack dumps fired"
+            )
             md.append("| t+ (s) | series | ms | status | url |")
             md.append("|---|---|---|---|---|")
             for s in slow[:40]:
-                md.append(f"| {s['t_s']} | {s['series']} | {s['ms']} | {s['status']} | {s['url']} |")
+                md.append(
+                    f"| {s['t_s']} | {s['series']} | {s['ms']} | {s['status']} | {s['url']} |"
+                )
             if len(slow) > 40:
                 md.append(f"| … | {len(slow) - 40} more | | | |")
         md_path = out_dir / f"soak-{ts}-{label}.md"

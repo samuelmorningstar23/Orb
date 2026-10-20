@@ -33,32 +33,35 @@ missing-JWT-secret error and the Week-6 bench test would need a full Orb install
 to run. Deferring the source/sink/registry imports to first attribute access
 also keeps `ingestion_adapters`' use of the parser free of an import cycle.
 """
+
 from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Awaitable, Callable, Optional, TYPE_CHECKING
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
-if TYPE_CHECKING:
-    from .manual_source import ManualEntrySource
-    from .registry import VitalsSourceRegistry
-
-# Contract only — stdlib dependencies, safe to import anywhere.
 from .base import (
     LABEL_ADMISSION_VITALS,
     LABEL_MANUAL_ENTRY,
     LABEL_MONITOR_HL7,
     LABEL_NURSE_OBSERVATION,
     LABEL_SIMULATED,
+    VITAL_KEYS,
     ReadingHint,
     SourceKind,
     SourceStats,
     VitalsReading,
     VitalsSource,
-    VITAL_KEYS,
     classify_source_label,
     is_machine_measured,
 )
+
+if TYPE_CHECKING:
+    from .manual_source import ManualEntrySource
+    from .registry import VitalsSourceRegistry
+
+# Contract only — stdlib dependencies, safe to import anywhere.
 
 logger = logging.getLogger("orb.vitals_source")
 
@@ -82,6 +85,7 @@ def __getattr__(name: str) -> Any:  # PEP 562
     if target is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     from importlib import import_module
+
     value = getattr(import_module(target[0], __name__), target[1])
     globals()[name] = value  # cache, so this costs one lookup per process
     return value
@@ -103,9 +107,9 @@ def configure_from_env(
     sio=None,
     simulator_enabled: bool = False,
     simulator_interval: float = 5.0,
-    simulator_companion_tick: Optional[Callable[[], Awaitable[None]]] = None,
-    target: Optional["VitalsSourceRegistry"] = None,
-) -> "VitalsSourceRegistry":
+    simulator_companion_tick: Callable[[], Awaitable[None]] | None = None,
+    target: VitalsSourceRegistry | None = None,
+) -> VitalsSourceRegistry:
     """Build the deployment's vitals sources. Does NOT start them.
 
     Manual entry is always registered: it is the redundancy layer and it has no
@@ -127,20 +131,27 @@ def configure_from_env(
     # assumption is stated in the startup log rather than inferred at 03:00 from
     # a reading that is five and a half hours out.
     from . import hl7v2
+
     logger.info(
         "Vitals timestamps with no UTC offset will be read as %s "
         "(set %s to change). This hospital is UTC+05:30; reading an offset-less "
         "device timestamp as UTC would stamp every reading 5.5 h in the future.",
-        hl7v2.appliance_timezone(), hl7v2.TZ_ENV_VAR,
+        hl7v2.appliance_timezone(),
+        hl7v2.TZ_ENV_VAR,
     )
 
     try:
-        tolerance = int(os.getenv("ORB_MONITOR_CLOCK_SKEW_TOLERANCE_SECONDS",
-                                  str(DEFAULT_CLOCK_SKEW_TOLERANCE_SECONDS)))
+        tolerance = int(
+            os.getenv(
+                "ORB_MONITOR_CLOCK_SKEW_TOLERANCE_SECONDS",
+                str(DEFAULT_CLOCK_SKEW_TOLERANCE_SECONDS),
+            )
+        )
     except ValueError:
         logger.error(
             "ORB_MONITOR_CLOCK_SKEW_TOLERANCE_SECONDS is not a number; using %ds.",
-            DEFAULT_CLOCK_SKEW_TOLERANCE_SECONDS)
+            DEFAULT_CLOCK_SKEW_TOLERANCE_SECONDS,
+        )
         tolerance = DEFAULT_CLOCK_SKEW_TOLERANCE_SECONDS
     sink = IngestionSink(sio=sio, skew_tolerance_seconds=tolerance)
 
@@ -159,18 +170,22 @@ def configure_from_env(
             if existing.running:
                 logger.warning(
                     "Vitals source %r was still running when reconfigured — the "
-                    "previous lifespan did not stop it.", source.source_id)
+                    "previous lifespan did not stop it.",
+                    source.source_id,
+                )
             reg.unregister(source.source_id)
         return reg.register(source)
 
     _register(ManualEntrySource(sink))
 
     if simulator_enabled:
-        _register(SimulatorSource(
-            sio=sio,
-            interval_seconds=simulator_interval,
-            companion_tick=simulator_companion_tick,
-        ))
+        _register(
+            SimulatorSource(
+                sio=sio,
+                interval_seconds=simulator_interval,
+                companion_tick=simulator_companion_tick,
+            )
+        )
 
     if _env_flag("ORB_MONITOR_ENABLED"):
         protocol = os.getenv("ORB_MONITOR_PROTOCOL", "hl7v2-mllp").strip().lower()
@@ -179,36 +194,39 @@ def configure_from_env(
             # mistake, and the ward still needs manual entry to come up.
             logger.error(
                 "ORB_MONITOR_PROTOCOL=%r is not supported. Supported: hl7v2-mllp. "
-                "Monitor feed NOT started; manual entry remains available.", protocol,
+                "Monitor feed NOT started; manual entry remains available.",
+                protocol,
             )
         else:
-            _register(HL7MonitorSource(
-                sink,
-                source_id=os.getenv("ORB_MONITOR_SOURCE_ID", "monitor_hl7"),
-                host=os.getenv("ORB_MONITOR_HOST", "127.0.0.1"),
-                port=int(os.getenv("ORB_MONITOR_PORT", str(DEFAULT_MLLP_PORT))),
-                mode=os.getenv("ORB_MONITOR_MODE", "listen").strip().lower(),
-                # Per-device override for the zone this monitor's offset-less
-                # timestamps are in. Unset = the appliance's zone, which is
-                # right when they share a ward. Set it when they do not: two
-                # devices on one ward configured differently is how a timezone
-                # assumption bites a second time.
-                device_timezone=os.getenv("ORB_MONITOR_TZ") or None,
-                # Which vendor's OBX identifier/unit table to translate with:
-                # philips_intellivue | ge_carescape | generic | auto.
-                # "auto" detects per message and SAYS it is guessing; name the
-                # vendor here once the site visit has settled it.
-                profile=os.getenv("ORB_MONITOR_PROFILE", "auto"),
-                # Strict = use only mappings anchored in a published standard,
-                # and let everything else show up as unmapped. Useful on the
-                # bench when the point of the run is to produce the list of
-                # identifiers to take to the vendor.
-                strict_profile=_env_flag("ORB_MONITOR_PROFILE_STRICT"),
-            ))
+            _register(
+                HL7MonitorSource(
+                    sink,
+                    source_id=os.getenv("ORB_MONITOR_SOURCE_ID", "monitor_hl7"),
+                    host=os.getenv("ORB_MONITOR_HOST", "127.0.0.1"),
+                    port=int(os.getenv("ORB_MONITOR_PORT", str(DEFAULT_MLLP_PORT))),
+                    mode=os.getenv("ORB_MONITOR_MODE", "listen").strip().lower(),
+                    # Per-device override for the zone this monitor's offset-less
+                    # timestamps are in. Unset = the appliance's zone, which is
+                    # right when they share a ward. Set it when they do not: two
+                    # devices on one ward configured differently is how a timezone
+                    # assumption bites a second time.
+                    device_timezone=os.getenv("ORB_MONITOR_TZ") or None,
+                    # Which vendor's OBX identifier/unit table to translate with:
+                    # philips_intellivue | ge_carescape | generic | auto.
+                    # "auto" detects per message and SAYS it is guessing; name the
+                    # vendor here once the site visit has settled it.
+                    profile=os.getenv("ORB_MONITOR_PROFILE", "auto"),
+                    # Strict = use only mappings anchored in a published standard,
+                    # and let everything else show up as unmapped. Useful on the
+                    # bench when the point of the run is to produce the list of
+                    # identifiers to take to the vendor.
+                    strict_profile=_env_flag("ORB_MONITOR_PROFILE_STRICT"),
+                )
+            )
     return reg
 
 
-def manual_entry_source(target: Optional["VitalsSourceRegistry"] = None):
+def manual_entry_source(target: VitalsSourceRegistry | None = None):
     """The registered manual-entry source, for paths that record typed vitals.
 
     NOT named `manual_source`: the import system sets the `.manual_source`
@@ -228,10 +246,10 @@ def manual_entry_source(target: Optional["VitalsSourceRegistry"] = None):
 # scripts, a management command). Recording vitals must not fail because the
 # observability plumbing is absent, so an unregistered instance carries the
 # counters instead of nobody carrying them.
-_standin_manual_source: Optional["ManualEntrySource"] = None
+_standin_manual_source: ManualEntrySource | None = None
 
 
-def manual_entry_source_or_standin(target: Optional["VitalsSourceRegistry"] = None):
+def manual_entry_source_or_standin(target: VitalsSourceRegistry | None = None):
     """`manual_entry_source()`, but never None — for callers that MUST write.
 
     `configure_from_env` always registers manual entry, so in a live appliance
@@ -254,15 +272,32 @@ def manual_entry_source_or_standin(target: Optional["VitalsSourceRegistry"] = No
 
 __all__ = [
     # contract
-    "VitalsSource", "VitalsReading", "SourceKind", "SourceStats", "ReadingHint",
-    "VITAL_KEYS", "classify_source_label", "is_machine_measured",
-    "LABEL_MONITOR_HL7", "LABEL_MANUAL_ENTRY", "LABEL_NURSE_OBSERVATION",
-    "LABEL_SIMULATED", "LABEL_ADMISSION_VITALS",
+    "VitalsSource",
+    "VitalsReading",
+    "SourceKind",
+    "SourceStats",
+    "ReadingHint",
+    "VITAL_KEYS",
+    "classify_source_label",
+    "is_machine_measured",
+    "LABEL_MONITOR_HL7",
+    "LABEL_MANUAL_ENTRY",
+    "LABEL_NURSE_OBSERVATION",
+    "LABEL_SIMULATED",
+    "LABEL_ADMISSION_VITALS",
     # sources (lazy)
-    "HL7MonitorSource", "ManualEntrySource", "SimulatorSource",
-    "DEFAULT_MLLP_PORT", "VendorProfileAdapter",
+    "HL7MonitorSource",
+    "ManualEntrySource",
+    "SimulatorSource",
+    "DEFAULT_MLLP_PORT",
+    "VendorProfileAdapter",
     # plumbing (lazy)
-    "VitalsSink", "IngestionSink", "RecordingSink",
-    "VitalsSourceRegistry", "registry", "configure_from_env", "manual_entry_source",
+    "VitalsSink",
+    "IngestionSink",
+    "RecordingSink",
+    "VitalsSourceRegistry",
+    "registry",
+    "configure_from_env",
+    "manual_entry_source",
     "manual_entry_source_or_standin",
 ]

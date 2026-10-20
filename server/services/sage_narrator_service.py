@@ -30,16 +30,16 @@ PHI posture: state is IN-MEMORY ONLY with the narrative regenerated on demand �
 deliberately not a new PHI-at-rest store (the encryption-at-rest gap means every
 new PHI table is cleartext unless ORB_DB_ENCRYPTION_KEY is set).
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
-
 from config import AMBIENT_LLM_MODEL, OLLAMA_KEEP_ALIVE
 from database import db_session, run_db
 
@@ -134,8 +134,10 @@ class WardNarrator:
         # then scores, and the CfC overlay reads on yet another connection.
         scored = scored_admitted_patients(None)
 
+        risk_dist: dict[str, int] | None
         risk_dist = {"critical": 0, "elevated": 0, "moderate": 0, "stable": 0}
-        risk_by_dept: dict[str, dict[str, int]] = {}
+        risk_by_dept: dict[str, dict[str, int]] | None
+        risk_by_dept = {}
         watchlist = []
         for p, vitals, news2 in scored:
             if news2 is None:
@@ -151,29 +153,33 @@ class WardNarrator:
             )
             dept_dist[lvl] = dept_dist.get(lvl, 0) + 1
             if lvl in ("critical", "elevated"):
-                watchlist.append({
-                    "patient_id": p["id"], "name": p["name"],
-                    "bed": p["bed"], "ward": p["ward"],
-                    # The ADMISSION department, carried so get_brief can scope
-                    # a shared snapshot to the caller. Note this is not `ward`:
-                    # permissions.department_scope is matched against
-                    # admissions.department everywhere else in the system
-                    # (vigil_routes list_patients, nurse_routes.py), and scoping
-                    # on the wrong column is how a scope silently stops scoping.
-                    "department": p["admission_department"],
-                    "level": lvl,
-                    # The board row's `risk_score`: the 0-1 index, not a
-                    # probability. No surface may print it as a percentage.
-                    "score": news2["score"],
-                    "news2": news2["raw_news2"],
-                    "news2_at": vitals["timestamp"],
-                    # The rest of news2_text's label, so the brief's prompt
-                    # says what the badge says (single parameter 3, Scale 2,
-                    # and a minimum when ACVPU or O2 was never assessed).
-                    "single_param_3": bool(news2.get("single_param_3")),
-                    "spo2_scale": news2.get("spo2_scale", 1),
-                    "complete": news2.get("complete"),
-                })
+                watchlist.append(
+                    {
+                        "patient_id": p["id"],
+                        "name": p["name"],
+                        "bed": p["bed"],
+                        "ward": p["ward"],
+                        # The ADMISSION department, carried so get_brief can scope
+                        # a shared snapshot to the caller. Note this is not `ward`:
+                        # permissions.department_scope is matched against
+                        # admissions.department everywhere else in the system
+                        # (vigil_routes list_patients, nurse_routes.py), and scoping
+                        # on the wrong column is how a scope silently stops scoping.
+                        "department": p["admission_department"],
+                        "level": lvl,
+                        # The board row's `risk_score`: the 0-1 index, not a
+                        # probability. No surface may print it as a percentage.
+                        "score": news2["score"],
+                        "news2": news2["raw_news2"],
+                        "news2_at": vitals["timestamp"],
+                        # The rest of news2_text's label, so the brief's prompt
+                        # says what the badge says (single parameter 3, Scale 2,
+                        # and a minimum when ACVPU or O2 was never assessed).
+                        "single_param_3": bool(news2.get("single_param_3")),
+                        "spo2_scale": news2.get("spo2_scale", 1),
+                        "complete": news2.get("complete"),
+                    }
+                )
         # No sort here: `scored` is already in board order, so the watchlist is
         # the board's critical and elevated rows in the order the board shows.
 
@@ -205,6 +211,7 @@ class WardNarrator:
         # mix is None rather than four zeros, which would read as "no one is
         # unwell"; `scoring_enabled` tells the screen why.
         from services.vigil_service import scoring_enabled
+
         scoring = scoring_enabled()
         if not scoring:
             risk_dist, risk_by_dept, watchlist = None, None, []
@@ -215,7 +222,7 @@ class WardNarrator:
             "watchlist": watchlist[:WATCHLIST_LIMIT],
             "recent_events": recent_events,
             "active_alerts": active_insights,
-            "as_of": datetime.now(timezone.utc).isoformat(),
+            "as_of": datetime.now(UTC).isoformat(),
             # Server-side only, stripped by get_brief. The display list above is
             # cut to the hospital-wide top 8, so a scoped caller filtering THAT
             # lost a critical patient on their own ward the moment eight sicker
@@ -246,17 +253,21 @@ class WardNarrator:
 
         def _watch_line(w: dict) -> str:
             if w.get("news2") is None:
-                return f"- {w['name']} (bed {w['bed']}, {w['ward']}): {w['level'].upper()} risk band"
-            label = news2_description({
-                "raw_news2": w["news2"], "level": w["level"],
-                "single_param_3": w.get("single_param_3"),
-                "spo2_scale": w.get("spo2_scale"), "complete": w.get("complete"),
-            })
+                return (
+                    f"- {w['name']} (bed {w['bed']}, {w['ward']}): {w['level'].upper()} risk band"
+                )
+            label = news2_description(
+                {
+                    "raw_news2": w["news2"],
+                    "level": w["level"],
+                    "single_param_3": w.get("single_param_3"),
+                    "spo2_scale": w.get("spo2_scale"),
+                    "complete": w.get("complete"),
+                }
+            )
             return f"- {w['name']} (bed {w['bed']}, {w['ward']}): {label}"
 
-        watch_lines = "\n".join(
-            _watch_line(w) for w in snapshot["watchlist"]
-        ) or "- none"
+        watch_lines = "\n".join(_watch_line(w) for w in snapshot["watchlist"]) or "- none"
         prompt = (
             "You are Orb Sage writing a 3-5 sentence hospital-wide situational brief for the "
             "clinician coming on shift. Be factual, name only patients listed below, "
@@ -290,6 +301,7 @@ class WardNarrator:
         # not yet warmed) skip the refresh — the previous narrative and the
         # deterministic snapshot both stand.
         from services.model_router import ambient_tier_evicted, select_chat_model
+
         model_choice = await select_chat_model(
             preferred=AMBIENT_LLM_MODEL, fallback=AMBIENT_LLM_MODEL
         )
@@ -302,9 +314,10 @@ class WardNarrator:
             # LIFESPAN task, so absorbing it here made the shutdown gather wait
             # on a task that had decided not to die. See main.py's bounded wait.
             raise
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return None
         from services import ollama_gateway
+
         try:
             async with httpx.AsyncClient(timeout=45.0, trust_env=False) as client:
                 # The gateway writes this pass's audit row (served or not) and
@@ -411,6 +424,7 @@ class WardNarrator:
             return
         try:
             from ws.realtime import sio
+
             await sio.emit("sage:ward_brief", {"updated_at": snapshot["as_of"]})
         except Exception as e:
             logger.debug("ward_brief emit failed: %s", e)
@@ -458,7 +472,8 @@ class WardNarrator:
         # what dropped a critical patient ranked ninth hospital-wide from their
         # own ward's brief.
         scoped_watchlist = [
-            w for w in snap.get(_WATCHLIST_ALL) or snap.get("watchlist") or []
+            w
+            for w in snap.get(_WATCHLIST_ALL) or snap.get("watchlist") or []
             if (w.get("department") or "") == department
         ][:WATCHLIST_LIMIT]
         scoped = dict(public)
@@ -541,4 +556,6 @@ def register_narrator():
     # bridge.emergency.flag finally gets a subscriber (it was published with
     # nobody listening) — an incoming emergency changes the ward picture.
     event_bus.subscribe("bridge.emergency.flag", ward_narrator.on_event)
-    logger.info("[WardNarrator] subscribed to vigil.alert.*, scribe.note.signed, bridge.emergency.flag")
+    logger.info(
+        "[WardNarrator] subscribed to vigil.alert.*, scribe.note.signed, bridge.emergency.flag"
+    )

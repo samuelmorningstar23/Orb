@@ -44,22 +44,28 @@ of a pharmacist's check, otherwise what the bedside will say
 (services/medorders/emar_check.pharmacist_check). The key is absent while the
 switch is off.
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import re
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from database import db_session
+
 from services import allergy_interlock
 from services.audit_service import log_audit_event
 from services.clinical_time import format_utc
 from services.drug_safety_service import _norm as _norm_drug
-from services.vigil_service import is_latest_vitals_row, news2_reason_line, score_vitals_row
-from services.vital_charting import as_charted, vitals_line
 from services.news2_text import news2_description
+from services.vigil_service import (
+    is_latest_vitals_row,
+    news2_reason_line,
+    score_vitals_row,
+)
+from services.vital_charting import as_charted, vitals_line
 from services.vitals_source.base import (
     LABEL_ADMISSION_VITALS,
     LABEL_CLERK_TRANSCRIBED,
@@ -88,16 +94,28 @@ MANUAL_OBS_SOURCES = (OBS_SOURCE, CLERK_SOURCE)
 # The readings a paper sheet can show but nobody can read. An illegible field
 # is stored NULL (never guessed) and named in vitals.illegible, comma separated,
 # in this order.
-ILLEGIBLE_FIELDS = ("heart_rate", "systolic_bp", "diastolic_bp", "spo2",
-                    "temperature", "respiratory_rate", "consciousness", "on_oxygen")
+ILLEGIBLE_FIELDS = (
+    "heart_rate",
+    "systolic_bp",
+    "diastolic_bp",
+    "spo2",
+    "temperature",
+    "respiratory_rate",
+    "consciousness",
+    "on_oxygen",
+)
 
 # THE READINGS THAT RESET THE OBS-DUE CLOCK: a set a person took (SourceKind
 # MANUAL). The clock used to run off the newest row of any kind, so under
 # simulation a synthetic reading every 5 s re-anchored it and "obs overdue"
 # never fired. A simulated row is not care delivered, and a monitor row carries
 # no ACVPU or supplemental O2, so neither stands in for a NEWS2 set.
-OBS_CLOCK_SOURCES = (LABEL_NURSE_OBSERVATION, LABEL_MANUAL_ENTRY, LABEL_ADMISSION_VITALS,
-                     LABEL_CLERK_TRANSCRIBED)
+OBS_CLOCK_SOURCES = (
+    LABEL_NURSE_OBSERVATION,
+    LABEL_MANUAL_ENTRY,
+    LABEL_ADMISSION_VITALS,
+    LABEL_CLERK_TRANSCRIBED,
+)
 
 # The shadow instrument's lane for everything raised from bedside entry. One of
 # the six in shadow_service.LANES (and in migration 4's CHECK constraint), and
@@ -110,12 +128,12 @@ SHADOW_LANE = "manual"
 # a fat-fingered keypad (a transposed "160" for RR), not clinical judgement —
 # they are deliberately wide enough to accept a genuinely peri-arrest patient.
 OBS_RANGES: dict[str, tuple[float, float, str]] = {
-    "heart_rate":        (10, 300, "bpm"),
-    "systolic_bp":       (40, 300, "mmHg"),
-    "diastolic_bp":      (10, 200, "mmHg"),
-    "respiratory_rate":  (2, 80, "/min"),
-    "temperature":       (25.0, 45.0, "°C"),
-    "spo2":              (30, 100, "%"),
+    "heart_rate": (10, 300, "bpm"),
+    "systolic_bp": (40, 300, "mmHg"),
+    "diastolic_bp": (10, 200, "mmHg"),
+    "respiratory_rate": (2, 80, "/min"),
+    "temperature": (25.0, 45.0, "°C"),
+    "spo2": (30, 100, "%"),
 }
 
 # ACVPU. 'alert' scores 0; every other level is a new-onset 3-pointer in NEWS2.
@@ -128,7 +146,7 @@ ACVPU_LEVELS = ("alert", "confusion", "voice", "pain", "unresponsive")
 # CURRENT_TIMESTAMP defaults, which is UTC. Normalize both to aware UTC.)
 # ─────────────────────────────────────────────────────────────────────────────
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _parse_ts(ts) -> datetime | None:
@@ -137,7 +155,7 @@ def _parse_ts(ts) -> datetime | None:
     try:
         dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         return dt
     except (ValueError, TypeError):
         return None
@@ -157,12 +175,14 @@ def _iso(dt: datetime | None) -> str | None:
 # taking obs earlier, and the escalation ADVICE is what the table mandates.
 _OBS_ESCALATION: tuple[tuple[int, int, str, str], ...] = (
     # (min aggregate, interval minutes, band label, RCP response)
-    (7, 30, "NEWS2 7 or more",
-     "Continuous monitoring. Emergency assessment by a critical-care-competent team."),
-    (5, 60, "NEWS2 5-6",
-     "Urgent review by a clinician competent in acute illness. Escalate now."),
-    (0, 240, "NEWS2 1-4",
-     "Ward-based response: inform the registered nurse in charge."),
+    (
+        7,
+        30,
+        "NEWS2 7 or more",
+        "Continuous monitoring. Emergency assessment by a critical-care-competent team.",
+    ),
+    (5, 60, "NEWS2 5-6", "Urgent review by a clinician competent in acute illness. Escalate now."),
+    (0, 240, "NEWS2 1-4", "Ward-based response: inform the registered nurse in charge."),
 )
 # NEWS2 0 is the only band that relaxes past 4-hourly.
 _OBS_INTERVAL_ZERO = 720
@@ -223,17 +243,35 @@ def obs_schedule(news2: dict | None) -> dict:
 # so the UI lists the med without ever claiming it is late.
 _FREQ_INTERVALS: dict[str, int] = {
     # Latin / ward shorthand
-    "od": 24 * 60, "qd": 24 * 60, "daily": 24 * 60, "nocte": 24 * 60, "nightly": 24 * 60,
-    "bd": 12 * 60, "bid": 12 * 60, "twice daily": 12 * 60,
-    "tds": 8 * 60, "tid": 8 * 60, "thrice daily": 8 * 60,
-    "qds": 6 * 60, "qid": 6 * 60, "four times daily": 6 * 60,
-    "alternate days": 48 * 60, "eod": 48 * 60,
+    "od": 24 * 60,
+    "qd": 24 * 60,
+    "daily": 24 * 60,
+    "nocte": 24 * 60,
+    "nightly": 24 * 60,
+    "bd": 12 * 60,
+    "bid": 12 * 60,
+    "twice daily": 12 * 60,
+    "tds": 8 * 60,
+    "tid": 8 * 60,
+    "thrice daily": 8 * 60,
+    "qds": 6 * 60,
+    "qid": 6 * 60,
+    "four times daily": 6 * 60,
+    "alternate days": 48 * 60,
+    "eod": 48 * 60,
     "weekly": 7 * 24 * 60,
 }
 # Frequencies that describe a running therapy rather than discrete due doses.
 _CONTINUOUS_TOKENS = (
-    "continuous", "infusion", "in fluids", "in situ", "all feeds", "transfusion",
-    "titrate", "tapering", "sliding scale",
+    "continuous",
+    "infusion",
+    "in fluids",
+    "in situ",
+    "all feeds",
+    "transfusion",
+    "titrate",
+    "tapering",
+    "sliding scale",
 )
 _STAT_TOKENS = ("stat", "once only", "immediately")
 
@@ -455,6 +493,7 @@ def _load_board_rows(department: str | None):
 def _set_times_on() -> bool:
     """Set times drive the board only in the lifecycle's authoritative mode."""
     import config
+
     return config.feature_enabled("med_order_lifecycle")
 
 
@@ -464,20 +503,30 @@ def _load_linked_orders(db, meds_by_patient: dict[str, list[dict]]) -> dict[str,
     session. Empty, with no query, while neither the lifecycle (set times) nor
     the pharmacist check before the first dose is on."""
     from services.medorders import emar_check
+
     if not (_set_times_on() or emar_check.verify_before_dose_rule() is not None):
         return {}
-    order_ids = sorted({m["med_order_id"] for rows in meds_by_patient.values()
-                        for m in rows if m.get("med_order_id")})
+    order_ids = sorted(
+        {
+            m["med_order_id"]
+            for rows in meds_by_patient.values()
+            for m in rows
+            if m.get("med_order_id")
+        }
+    )
     if not order_ids:
         return {}
     from services.medorders import schedule as med_schedule
+
     found: dict[str, dict] = {}
     for start in range(0, len(order_ids), 500):
-        chunk = order_ids[start:start + 500]
+        chunk = order_ids[start : start + 500]
         marks = ",".join("?" for _ in chunk)
         for row in db.execute(
             f"SELECT id, status, priority, frequency, is_prn, verified_by FROM med_orders "
-            f"WHERE id IN ({marks})", chunk).fetchall():
+            f"WHERE id IN ({marks})",
+            chunk,
+        ).fetchall():
             found[row["id"]] = dict(row)
     authored = med_schedule.current_schedules_in_txn(db, found.keys())
     for oid, order in found.items():
@@ -531,8 +580,9 @@ def _preview_allergy(
                 screen["override"] = carried
         return allergy_interlock.summarize(screen)
     except Exception as e:  # pragma: no cover — defensive; see docstring
-        logger.error("allergy preview failed for med %s (%s): %s",
-                     med.get("id"), med.get("drug_name"), e)
+        logger.error(
+            "allergy preview failed for med %s (%s): %s", med.get("id"), med.get("drug_name"), e
+        )
         return allergy_interlock.summarize(
             allergy_interlock.failed_screen(med.get("drug_name") or "", str(e))
         )
@@ -542,7 +592,8 @@ def _preview_allergy(
 #: go before the pharmacist's check (ruling MO-R1 (a)).
 FIRST_DOSE_BEFORE_CHECK_WORDS = (
     "The first dose can be given before the pharmacist checks this order. It will be "
-    "marked as given before the pharmacist check, and the next dose waits for the check.")
+    "marked as given before the pharmacist check, and the next dose waits for the check."
+)
 
 
 def _pharmacist_view(check: dict | None) -> dict | None:
@@ -553,11 +604,17 @@ def _pharmacist_view(check: dict | None) -> dict | None:
     if not check or not check.get("required") or check.get("checked"):
         return None
     if not check.get("allowed"):
-        return {"state": "waiting", "message": check.get("message"),
-                "priority": check.get("priority")}
+        return {
+            "state": "waiting",
+            "message": check.get("message"),
+            "priority": check.get("priority"),
+        }
     if check.get("before_check"):
-        return {"state": "first_dose_before_check", "message": FIRST_DOSE_BEFORE_CHECK_WORDS,
-                "priority": check.get("priority")}
+        return {
+            "state": "first_dose_before_check",
+            "message": FIRST_DOSE_BEFORE_CHECK_WORDS,
+            "priority": check.get("priority"),
+        }
     return None
 
 
@@ -594,10 +651,15 @@ def _build_med_task(
         # Set times (medorders-19): the next set time not yet covered by a
         # dose, rolled forward the same way, from services/medorders/schedule.
         from services.medorders import schedule as med_schedule
+
         timed = med_schedule.scheduled_due(
-            set_times["times"], last_given_at=last_given_at, started_at=started_at, now=now)
+            set_times["times"], last_given_at=last_given_at, started_at=started_at, now=now
+        )
         due_at, due_basis, missed_slots = (
-            timed["due_at"], timed["due_basis"], timed["missed_slots"])
+            timed["due_at"],
+            timed["due_basis"],
+            timed["missed_slots"],
+        )
     elif schedule["kind"] == "scheduled" and schedule["interval_minutes"]:
         anchor = last_given_at or started_at
         if anchor:
@@ -629,9 +691,7 @@ def _build_med_task(
     overdue = minutes_until is not None and minutes_until < -15
     due_soon = minutes_until is not None and -15 <= minutes_until <= 30
 
-    unverified = (
-        (med.get("source") in ("llm_extracted", "agentic")) and not med.get("verified_by")
-    )
+    unverified = (med.get("source") in ("llm_extracted", "agentic")) and not med.get("verified_by")
 
     extra: dict = {}
     if set_times and schedule["kind"] == "scheduled":
@@ -702,11 +762,13 @@ def build_board(department: str | None) -> dict:
     # medorders-11 and medorders-19 (W8-I): which linked drugs run on set
     # times, and what the bedside's pharmacist check will say for each.
     from services.medorders import emar_check
+
     verify_rule = emar_check.verify_before_dose_rule()
     set_times_on = _set_times_on()
     site_times = None
     if set_times_on and linked_orders:
         from services.medorders import schedule as med_schedule
+
         site_times = med_schedule.site_dose_times()
 
     def _linked_extras(m: dict) -> dict:
@@ -716,12 +778,17 @@ def build_board(department: str | None) -> dict:
             return out
         if set_times_on:
             from services.medorders import schedule as med_schedule
+
             out["set_times"] = med_schedule.board_schedule_for(
-                order, order.get("schedule"), site_times)
+                order, order.get("schedule"), site_times
+            )
         if verify_rule is not None:
             out["pharmacist"] = emar_check.pharmacist_check(
-                order, m, rule=verify_rule,
-                given_doses=(last_given_by_med.get(m["id"]) or {}).get("given_count", 0))
+                order,
+                m,
+                rule=verify_rule,
+                given_doses=(last_given_by_med.get(m["id"]) or {}).get("given_count", 0),
+            )
         return out
 
     # Scoring switched off (the Orb Ward Record): no NEWS2 and no schedule
@@ -732,9 +799,12 @@ def build_board(department: str | None) -> dict:
     ward_due: dict[str, dict | None] = {}
     if not scoring:
         from services import ward_record_service
+
         for ward in {str(p.get("ward") or "").strip() for p in patients}:
             try:
-                ward_due[ward.upper()] = ward_record_service.due_now(ward, now=now) if ward else None
+                ward_due[ward.upper()] = (
+                    ward_record_service.due_now(ward, now=now) if ward else None
+                )
             except Exception as e:  # noqa: BLE001 - one ward's read must not blank the board
                 logger.warning("ward record due times failed for ward %r: %s", ward, e)
                 ward_due[ward.upper()] = None
@@ -752,7 +822,9 @@ def build_board(department: str | None) -> dict:
             # Anchored on the last set a person took, not on the newest row: see
             # OBS_CLOCK_SOURCES. The NEWS2 above still scores the newest row.
             obs_due_at = (
-                last_obs_at + timedelta(minutes=schedule["interval_minutes"]) if last_obs_at else None
+                last_obs_at + timedelta(minutes=schedule["interval_minutes"])
+                if last_obs_at
+                else None
             )
             obs_minutes_until = (
                 None if obs_due_at is None else round((obs_due_at - now).total_seconds() / 60)
@@ -776,15 +848,18 @@ def build_board(department: str | None) -> dict:
             # Late is the rounds file's late: past the due time plus the ward's
             # grace window. No setting, no due time and nothing is late.
             obs_overdue = bool(due and due["late"])
-            obs_due_soon = (obs_minutes_until is not None and not obs_overdue
-                            and obs_minutes_until <= 30)
+            obs_due_soon = (
+                obs_minutes_until is not None and not obs_overdue and obs_minutes_until <= 30
+            )
             if setting is None:
                 obs_due_note = WARD_INTERVAL_MISSING
 
         patient_allergies = allergies_by_patient.get(pid, [])
         med_tasks = [
             _build_med_task(
-                m, last_given_by_med.get(m["id"]), now,
+                m,
+                last_given_by_med.get(m["id"]),
+                now,
                 allergies=patient_allergies,
                 ingredients=ingredient_map.get(_norm_drug(m["drug_name"]), []),
                 overrides=overrides_by_key,
@@ -796,51 +871,58 @@ def build_board(department: str | None) -> dict:
         meds_due_soon = sum(1 for t in med_tasks if t["due_soon"]) if med_round else None
         # A dose that will need a typed clinical reason at the bedside, with no
         # acceptance already on record for this order.
-        meds_allergy_blocked = sum(
-            1 for t in med_tasks
-            if t["allergy"]["decision"] == allergy_interlock.BLOCK
-            and not t["allergy"].get("override")
-        ) if med_round else None
+        meds_allergy_blocked = (
+            sum(
+                1
+                for t in med_tasks
+                if t["allergy"]["decision"] == allergy_interlock.BLOCK
+                and not t["allergy"].get("override")
+            )
+            if med_round
+            else None
+        )
 
-        cards.append({
-            "patient_id": pid,
-            "name": p["name"],
-            "mrn": p.get("mrn"),
-            "bed": p.get("bed"),
-            "ward": p.get("ward"),
-            "age": p.get("age"),
-            "sex": p.get("sex"),
-            "diagnosis": p.get("diagnosis"),
-            "department": p.get("admission_department"),
-            "attending_doctor_name": p.get("attending_doctor_name"),
-            "on_scale_2": bool(p.get("on_scale_2")),
-            "allergies": allergies_by_patient.get(pid, []),
-            "news2": news2,
-            # Where the row NEWS2 was scored from came from ('simulated' gets
-            # an honesty label on the board), and where the last taken set did.
-            "vitals_source": vitals.get("source") if vitals else None,
-            "last_obs_at": _iso(last_obs_at),
-            "last_obs_source": last_obs.get("source") if last_obs else None,
-            # The vitals row behind last_obs_at, so the shift view can offer
-            # "Entered in error" on that set (POST /api/nurse/observations/{id}/void).
-            "last_obs_vitals_id": last_obs.get("id") if last_obs else None,
-            "obs_interval_minutes": schedule["interval_minutes"],
-            "obs_band": schedule["band"],
-            "obs_response": schedule["response"],
-            "obs_due_at": _iso(obs_due_at),
-            # Where the due time came from: the NEWS2 schedule, or the ward's
-            # fixed interval while scoring is off. obs_due_note says what to
-            # do when the ward has no interval set.
-            "obs_due_source": "news2" if scoring else ("ward_interval" if obs_due_at else None),
-            "obs_due_note": obs_due_note,
-            "obs_minutes_until_due": obs_minutes_until,
-            "obs_overdue": obs_overdue,
-            "obs_due_soon": obs_due_soon,
-            "medications": med_tasks,
-            "meds_overdue": meds_overdue,
-            "meds_due_soon": meds_due_soon,
-            "meds_allergy_blocked": meds_allergy_blocked,
-        })
+        cards.append(
+            {
+                "patient_id": pid,
+                "name": p["name"],
+                "mrn": p.get("mrn"),
+                "bed": p.get("bed"),
+                "ward": p.get("ward"),
+                "age": p.get("age"),
+                "sex": p.get("sex"),
+                "diagnosis": p.get("diagnosis"),
+                "department": p.get("admission_department"),
+                "attending_doctor_name": p.get("attending_doctor_name"),
+                "on_scale_2": bool(p.get("on_scale_2")),
+                "allergies": allergies_by_patient.get(pid, []),
+                "news2": news2,
+                # Where the row NEWS2 was scored from came from ('simulated' gets
+                # an honesty label on the board), and where the last taken set did.
+                "vitals_source": vitals.get("source") if vitals else None,
+                "last_obs_at": _iso(last_obs_at),
+                "last_obs_source": last_obs.get("source") if last_obs else None,
+                # The vitals row behind last_obs_at, so the shift view can offer
+                # "Entered in error" on that set (POST /api/nurse/observations/{id}/void).
+                "last_obs_vitals_id": last_obs.get("id") if last_obs else None,
+                "obs_interval_minutes": schedule["interval_minutes"],
+                "obs_band": schedule["band"],
+                "obs_response": schedule["response"],
+                "obs_due_at": _iso(obs_due_at),
+                # Where the due time came from: the NEWS2 schedule, or the ward's
+                # fixed interval while scoring is off. obs_due_note says what to
+                # do when the ward has no interval set.
+                "obs_due_source": "news2" if scoring else ("ward_interval" if obs_due_at else None),
+                "obs_due_note": obs_due_note,
+                "obs_minutes_until_due": obs_minutes_until,
+                "obs_overdue": obs_overdue,
+                "obs_due_soon": obs_due_soon,
+                "medications": med_tasks,
+                "meds_overdue": meds_overdue,
+                "meds_due_soon": meds_due_soon,
+                "meds_allergy_blocked": meds_allergy_blocked,
+            }
+        )
 
     # adt-10: whether each patient is on the ward, for the 'Not on ward since'
     # chip, and adt-11 (ruling ADT-S4 (a)): a patient recorded on leave or
@@ -883,15 +965,22 @@ def build_board(department: str | None) -> dict:
     totals = {
         "patients": len(cards),
         # Band counts are a score: None, not 0, while scoring is off.
-        "critical": (sum(1 for c in cards if (c["news2"] or {}).get("level") == "critical")
-                     if scoring else None),
-        "elevated": (sum(1 for c in cards if (c["news2"] or {}).get("level") == "elevated")
-                     if scoring else None),
+        "critical": (
+            sum(1 for c in cards if (c["news2"] or {}).get("level") == "critical")
+            if scoring
+            else None
+        ),
+        "elevated": (
+            sum(1 for c in cards if (c["news2"] or {}).get("level") == "elevated")
+            if scoring
+            else None
+        ),
         "obs_overdue": sum(1 for c in cards if c["obs_overdue"]),
         # Dose counts: None, not 0, while there is no medication round.
         "meds_overdue": sum(c["meds_overdue"] for c in cards) if med_round else None,
-        "meds_allergy_blocked": (sum(c["meds_allergy_blocked"] for c in cards)
-                                 if med_round else None),
+        "meds_allergy_blocked": (
+            sum(c["meds_allergy_blocked"] for c in cards) if med_round else None
+        ),
     }
     if away is not None:
         # adt-11: how many patients are off the ward with their clocks paused.
@@ -962,8 +1051,9 @@ def normalise_illegible(illegible) -> tuple[str, ...]:
     names = {str(f).strip() for f in illegible if str(f).strip()}
     unknown = sorted(names - set(ILLEGIBLE_FIELDS))
     if unknown:
-        raise ValueError(f"illegible must name readings from {list(ILLEGIBLE_FIELDS)}, "
-                         f"not {unknown}")
+        raise ValueError(
+            f"illegible must name readings from {list(ILLEGIBLE_FIELDS)}, not {unknown}"
+        )
     return tuple(f for f in ILLEGIBLE_FIELDS if f in names)
 
 
@@ -991,7 +1081,7 @@ def _clean_obs(obs: dict, illegible: tuple[str, ...] = ()) -> dict:
         try:
             value = float(raw)
         except (TypeError, ValueError):
-            raise ValueError(f"{field} must be a number")
+            raise ValueError(f"{field} must be a number") from None
         if not (lo <= value <= hi):
             raise ValueError(f"{field} must be between {lo:g} and {hi:g} {unit}")
         cleaned[field] = value
@@ -1004,19 +1094,25 @@ def _clean_obs(obs: dict, illegible: tuple[str, ...] = ()) -> dict:
     # (require_bedside_choices), not here, because the live preview scores a
     # half typed set.
     raw_cons = obs.get("consciousness")
-    consciousness = (None if raw_cons is None or str(raw_cons).strip() == ""
-                     else str(raw_cons).strip().lower())
+    consciousness = (
+        None if raw_cons is None or str(raw_cons).strip() == "" else str(raw_cons).strip().lower()
+    )
     if consciousness is not None and consciousness not in ACVPU_LEVELS:
         raise ValueError(f"consciousness must be one of {list(ACVPU_LEVELS)}")
     raw_o2 = obs.get("on_oxygen")
     cleaned["consciousness"] = None if "consciousness" in illegible else consciousness
-    cleaned["on_oxygen"] = (None if "on_oxygen" in illegible or raw_o2 is None or raw_o2 == ""
-                            else bool(raw_o2))
+    cleaned["on_oxygen"] = (
+        None if "on_oxygen" in illegible or raw_o2 is None or raw_o2 == "" else bool(raw_o2)
+    )
 
     # A set whose only entries are illegible marks is still a round on the
     # sheet, so it is recorded; a set with nothing at all is refused as before.
-    if not illegible and all(cleaned[f] is None for f in OBS_RANGES) \
-            and cleaned["consciousness"] is None and cleaned["on_oxygen"] is None:
+    if (
+        not illegible
+        and all(cleaned[f] is None for f in OBS_RANGES)
+        and cleaned["consciousness"] is None
+        and cleaned["on_oxygen"] is None
+    ):
         raise ValueError("an observation set must contain at least one reading")
 
     return cleaned
@@ -1038,8 +1134,10 @@ def require_bedside_choices(obs: dict, illegible: tuple[str, ...] = ()) -> None:
     no_cons = cleaned["consciousness"] is None and "consciousness" not in illegible
     no_o2 = cleaned["on_oxygen"] is None and "on_oxygen" not in illegible
     if no_cons and no_o2:
-        raise ValueError("Choose the patient's level of consciousness (ACVPU) and whether "
-                         "they are on air or on oxygen, then save again.")
+        raise ValueError(
+            "Choose the patient's level of consciousness (ACVPU) and whether "
+            "they are on air or on oxygen, then save again."
+        )
     if no_cons:
         raise ValueError("Choose the patient's level of consciousness (ACVPU), then save again.")
     if no_o2:
@@ -1085,6 +1183,7 @@ def _same_reading(row, cleaned: dict) -> bool:
     measurement), so an offline queue resending the same body is recognised while
     a corrected value is not mistaken for one.
     """
+
     def _num_eq(a, b) -> bool:
         if a is None or b is None:
             return a is None and b is None
@@ -1125,18 +1224,28 @@ def _shadow_alert_dropped(episode_id, patient_id: str, level: str, reason: str) 
         return
     try:
         from services import shadow_service
+
         shadow_service.emit(
-            "alert.dropped", episode_id, SHADOW_LANE,
-            patient_id=patient_id, payload={"reason": reason, "level": level},
+            "alert.dropped",
+            episode_id,
+            SHADOW_LANE,
+            patient_id=patient_id,
+            payload={"reason": reason, "level": level},
         )
     except Exception:
-        logger.warning("nurse obs alert: shadow alert.dropped failed for %s",
-                       patient_id, exc_info=True)
+        logger.warning(
+            "nurse obs alert: shadow alert.dropped failed for %s", patient_id, exc_info=True
+        )
 
 
-def _push_vitals_update(patient_id: str, observed_at: datetime, cleaned: dict,
-                        news2: dict, source: str = OBS_SOURCE,
-                        live_hooks: bool = True) -> bool:
+def _push_vitals_update(
+    patient_id: str,
+    observed_at: datetime,
+    cleaned: dict,
+    news2: dict | None,
+    source: str = OBS_SOURCE,
+    live_hooks: bool = True,
+) -> bool:
     """Schedule `vitals:update` for a committed nurse set. Never raises.
 
     The route is a sync `def`, so this runs in an anyio worker thread and the
@@ -1153,6 +1262,7 @@ def _push_vitals_update(patient_id: str, observed_at: datetime, cleaned: dict,
     """
     try:
         from ws.realtime import schedule_patient_vitals, vitals_update_payload
+
         # The stored spelling, so the push matches the charted row byte for byte.
         row = {"patient_id": patient_id, "timestamp": format_utc(observed_at), **cleaned}
         payload = vitals_update_payload(row, news2, source=source)
@@ -1160,14 +1270,21 @@ def _push_vitals_update(patient_id: str, observed_at: datetime, cleaned: dict,
             payload["live_hooks"] = False
         return schedule_patient_vitals("vitals:update", payload)
     except Exception:
-        logger.warning("nurse obs: vitals:update push failed for %s (the set is charted)",
-                       patient_id, exc_info=True)
+        logger.warning(
+            "nurse obs: vitals:update push failed for %s (the set is charted)",
+            patient_id,
+            exc_info=True,
+        )
         return False
 
 
-def dispatch_observation_alert(patient_id, cleaned: dict, news2: dict,
-                               actor_id: str | None = None,
-                               vitals_id: int | None = None) -> bool:
+def dispatch_observation_alert(
+    patient_id,
+    cleaned: dict,
+    news2: dict,
+    actor_id: str | None = None,
+    vitals_id: int | None = None,
+) -> bool:
     """Raise the Vigil alert for a NURSE-TAKEN observation set.
 
     WHY THIS EXISTS (found 2026-08-06 by attack, not by test). Identical
@@ -1224,8 +1341,10 @@ def dispatch_observation_alert(patient_id, cleaned: dict, news2: dict,
     # and prints as not recorded. It used to be defaulted to a normal reading
     # (SpO2 100, Temp 37, RR 16, HR 0) and printed as "Observed at the
     # bedside", beside a NEWS2 that had counted the same vital as missing.
-    hr, sbp, dbp, spo2, rr = (as_charted(cleaned.get(k)) for k in (
-        "heart_rate", "systolic_bp", "diastolic_bp", "spo2", "respiratory_rate"))
+    hr, sbp, dbp, spo2, rr = (
+        as_charted(cleaned.get(k))
+        for k in ("heart_rate", "systolic_bp", "diastolic_bp", "spo2", "respiratory_rate")
+    )
     temp = as_charted(cleaned.get("temperature"), 1)
 
     # Human-readable wording only, NEWS2 is the single source of truth for
@@ -1263,16 +1382,22 @@ def dispatch_observation_alert(patient_id, cleaned: dict, news2: dict,
     episode_id = None
     try:
         episode_id, opened_now = shadow_service.open_episode(
-            patient_id, SHADOW_LANE,
-            occurred_at=fired_at, trigger="news2_threshold",
+            patient_id,
+            SHADOW_LANE,
+            occurred_at=fired_at,
+            trigger="news2_threshold",
             payload={"level": level, "raw_news2": raw},
         )
         if episode_id:
             shadow_service.emit(
-                "alert.fired", episode_id, SHADOW_LANE,
-                occurred_at=fired_at, patient_id=patient_id,
+                "alert.fired",
+                episode_id,
+                SHADOW_LANE,
+                occurred_at=fired_at,
+                patient_id=patient_id,
                 actor_user_id=actor_id,
-                subject_type="vitals", subject_id=vitals_id,
+                subject_type="vitals",
+                subject_id=vitals_id,
                 payload={
                     "level": level,
                     "raw_news2": raw,
@@ -1288,11 +1413,15 @@ def dispatch_observation_alert(patient_id, cleaned: dict, news2: dict,
             )
     except Exception:
         episode_id = None
-        logger.warning("nurse obs alert: shadow instrument failed (fail-open) for %s",
-                       patient_id, exc_info=True)
+        logger.warning(
+            "nurse obs alert: shadow instrument failed (fail-open) for %s",
+            patient_id,
+            exc_info=True,
+        )
 
     try:
         from services.ingestion_service import _persist_relay_alert
+
         logged, msg_id, channel_id, msg_data, _name = _persist_relay_alert(patient_id, content)
     except Exception as e:
         logger.error("nurse obs alert: Relay write FAILED for %s: %s", patient_id, e)
@@ -1304,7 +1433,9 @@ def dispatch_observation_alert(patient_id, cleaned: dict, news2: dict,
         # that reached nobody must not be invisible to whoever debugs it later.
         logger.error(
             "nurse obs alert: patient %s has NO case room — NEWS2 %s (%s) reached nobody",
-            patient_id, raw, level,
+            patient_id,
+            raw,
+            level,
         )
         _shadow_alert_dropped(episode_id, patient_id, level, "no_case_room")
         return False
@@ -1318,12 +1449,15 @@ def dispatch_observation_alert(patient_id, cleaned: dict, news2: dict,
     if msg_data:
         try:
             from ws import realtime
+
             realtime.schedule_on_loop(
                 lambda: realtime.sio.emit("message:new", msg_data, room=channel_id),
-                f"message:new for nurse obs alert {msg_id}")
+                f"message:new for nurse obs alert {msg_id}",
+            )
         except Exception:
-            logger.warning("nurse obs alert: message:new push failed for %s",
-                           patient_id, exc_info=True)
+            logger.warning(
+                "nurse obs alert: message:new push failed for %s", patient_id, exc_info=True
+            )
 
     # SHADOW: the alert is on the disk and addressed to a room. Emitted in its
     # own short transaction rather than inside `_persist_relay_alert`'s: that
@@ -1335,13 +1469,18 @@ def dispatch_observation_alert(patient_id, cleaned: dict, news2: dict,
     if episode_id:
         try:
             shadow_service.emit(
-                "alert.persisted", episode_id, SHADOW_LANE,
-                patient_id=patient_id, subject_type="messages", subject_id=msg_id,
+                "alert.persisted",
+                episode_id,
+                SHADOW_LANE,
+                patient_id=patient_id,
+                subject_type="messages",
+                subject_id=msg_id,
                 payload={"message_id": msg_id, "channel_id": channel_id},
             )
         except Exception:
-            logger.warning("nurse obs alert: shadow alert.persisted failed for %s",
-                           patient_id, exc_info=True)
+            logger.warning(
+                "nurse obs alert: shadow alert.persisted failed for %s", patient_id, exc_info=True
+            )
 
     # ── THE NERVOUS SYSTEM, from the manual lane (2026-08-14) ────────────────
     # `vigil.alert.critical` had exactly one publisher — bot_service's simulator
@@ -1352,6 +1491,7 @@ def dispatch_observation_alert(patient_id, cleaned: dict, news2: dict,
     # the alert is already written, so nothing clinical depends on it.
     try:
         from services.bot_service import publish_vigil_critical
+
         publish_vigil_critical(
             patient_id,
             level=level,
@@ -1378,15 +1518,21 @@ def dispatch_observation_alert(patient_id, cleaned: dict, news2: dict,
             target_type="message",
             target_id=str(msg_id),
             patient_id=patient_id,
-            metadata={"reason": reason_text, "risk_level": level, "raw_news2": raw,
-                      "channel_id": channel_id, "vitals_id": vitals_id,
-                      "source": OBS_SOURCE},
+            metadata={
+                "reason": reason_text,
+                "risk_level": level,
+                "raw_news2": raw,
+                "channel_id": channel_id,
+                "vitals_id": vitals_id,
+                "source": OBS_SOURCE,
+            },
         )
     except Exception as e:
         logger.warning("nurse obs alert audit failed for %s: %s", patient_id, e)
 
-    logger.warning("nurse obs alert: patient %s NEWS2 %s (%s) posted to %s",
-                   patient_id, raw, level, channel_id)
+    logger.warning(
+        "nurse obs alert: patient %s NEWS2 %s (%s) posted to %s", patient_id, raw, level, channel_id
+    )
     return True
 
 
@@ -1440,9 +1586,14 @@ def record_observation(
     below, unchanged in transaction shape, scoring and permissions.
     """
     return _manual_entry_source().record_observation(
-        patient_id, actor_id, obs,
-        idempotency_key=idempotency_key, taken_at=taken_at,
-        source=source, illegible=illegible)
+        patient_id,
+        actor_id,
+        obs,
+        idempotency_key=idempotency_key,
+        taken_at=taken_at,
+        source=source,
+        illegible=illegible,
+    )
 
 
 def medication_round_enabled() -> bool:
@@ -1452,6 +1603,7 @@ def medication_round_enabled() -> bool:
     dose counts or allergy block lines and the eMAR routes answer 404. Read at
     call time. Scoring switched off on its own leaves the round as it is."""
     import config
+
     return not getattr(config, "WARD_RECORD", False)
 
 
@@ -1460,6 +1612,7 @@ def scoring_enabled() -> bool:
     seen without re-importing this module. Through vigil_service, so the Ward
     Record profile (ORB_WARD_RECORD) switches it off here too."""
     from services.vigil_service import scoring_enabled as _vigil_scoring_enabled
+
     return _vigil_scoring_enabled()
 
 
@@ -1529,7 +1682,7 @@ def _record_observation_txn(
     # an API caller's '+05:30' used to be stored as typed beside '+00:00' rows,
     # and text ORDER BY across the two is not time order. `stored_at` is also
     # the replay-dedupe key, so both sides of that equality use one spelling.
-    observed_at = (_parse_ts(taken_at) or _now()).astimezone(timezone.utc)
+    observed_at = (_parse_ts(taken_at) or _now()).astimezone(UTC)
     stored_at = format_utc(observed_at)
     if observed_at > _now() + timedelta(minutes=5):
         raise ValueError("observation time cannot be in the future")
@@ -1553,8 +1706,11 @@ def _record_observation_txn(
                 (patient_id, source, stored_at),
             ).fetchone()
             if existing is not None and _same_reading(existing, cleaned):
-                news2 = (score_vitals_row(cleaned, on_scale_2=scale_2, overlay=False)
-                         if scoring else None)
+                news2 = (
+                    score_vitals_row(cleaned, on_scale_2=scale_2, overlay=False)
+                    if scoring
+                    else None
+                )
                 return {
                     "vitals_id": existing["id"],
                     "recorded_at": existing["timestamp"],
@@ -1572,7 +1728,10 @@ def _record_observation_txn(
                 logger.warning(
                     "nurse obs: patient %s already has a %s reading at %s with different "
                     "values (vitals %s) — charting the new set as a correction",
-                    patient_id, source, stored_at, superseded_id,
+                    patient_id,
+                    source,
+                    stored_at,
+                    superseded_id,
                 )
 
         # ``overlay=False`` — MANDATORY here, not a preference: we are inside an
@@ -1582,8 +1741,7 @@ def _record_observation_txn(
         # on ingestion_service._persist_relay_alert). The recorded, audited score
         # is the deterministic RCP aggregate; the overlay is a display-time
         # escalation applied by score_vitals_row wherever the score is shown.
-        news2 = (score_vitals_row(cleaned, on_scale_2=scale_2, overlay=False)
-                 if scoring else None)
+        news2 = score_vitals_row(cleaned, on_scale_2=scale_2, overlay=False) if scoring else None
 
         # Provenance contract shared with the ingestion sink's vitals write:
         # `source` is a label _LABEL_KIND classifies (here OBS_SOURCE → MANUAL);
@@ -1596,20 +1754,35 @@ def _record_observation_txn(
                     spo2, temperature, respiratory_rate, consciousness, on_oxygen,
                     source, entered_at, illegible)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (patient_id, stored_at, cleaned["heart_rate"],
-             cleaned["systolic_bp"], cleaned["diastolic_bp"], cleaned["spo2"],
-             cleaned["temperature"], cleaned["respiratory_rate"],
-             cleaned["consciousness"],
-             None if cleaned["on_oxygen"] is None else int(cleaned["on_oxygen"]),
-             source, entered_at, illegible_text),
+            (
+                patient_id,
+                stored_at,
+                cleaned["heart_rate"],
+                cleaned["systolic_bp"],
+                cleaned["diastolic_bp"],
+                cleaned["spo2"],
+                cleaned["temperature"],
+                cleaned["respiratory_rate"],
+                cleaned["consciousness"],
+                None if cleaned["on_oxygen"] is None else int(cleaned["on_oxygen"]),
+                source,
+                entered_at,
+                illegible_text,
+            ),
         )
         vitals_id = cur.lastrowid
 
         if scoring:
+            assert news2 is not None
             db.execute(
                 "INSERT INTO risk_scores (patient_id, timestamp, score, level, drivers) VALUES (?, ?, ?, ?, ?)",
-                (patient_id, stored_at, news2["score"], news2["level"],
-                 json.dumps(news2["drivers"])),
+                (
+                    patient_id,
+                    stored_at,
+                    news2["score"],
+                    news2["level"],
+                    json.dumps(news2["drivers"]),
+                ),
             )
 
         # Is this set now the chart's newest? Decided here, where the INSERT
@@ -1626,11 +1799,16 @@ def _record_observation_txn(
             outcome="success",
             db=db,
             summary_message=(
-                (f"Nurse observation set recorded for {patient_id} "
-                 if source == OBS_SOURCE else
-                 f"Observation set copied from the paper sheet for {patient_id} ")
-                + (f"({news2_description(news2)}) by {actor_id}" if scoring
-                   else f"(scoring switched off) by {actor_id}")
+                (
+                    f"Nurse observation set recorded for {patient_id} "
+                    if source == OBS_SOURCE
+                    else f"Observation set copied from the paper sheet for {patient_id} "
+                )
+                + (
+                    f"({news2_description(news2)}) by {actor_id}"
+                    if scoring
+                    else f"(scoring switched off) by {actor_id}"
+                )
             ),
             actor_user_id=actor_id,
             target_type="vitals",
@@ -1643,10 +1821,10 @@ def _record_observation_txn(
                 "illegible": list(illegible_fields),
                 # None, never a stand-in, while scoring is off: "no score
                 # computed, shown or logged" covers the audit row too.
-                "news2": news2["raw_news2"] if scoring else None,
-                "level": news2["level"] if scoring else None,
-                "single_param_3": news2["single_param_3"] if scoring else None,
-                "spo2_scale": news2["spo2_scale"] if scoring else None,
+                "news2": news2["raw_news2"] if news2 is not None else None,
+                "level": news2["level"] if news2 is not None else None,
+                "single_param_3": news2["single_param_3"] if news2 is not None else None,
+                "spo2_scale": news2["spo2_scale"] if news2 is not None else None,
                 "scoring_enabled": scoring,
                 # False for a copied set older than the live hook limit: it
                 # raised no alert, escalation or bundle.
@@ -1669,8 +1847,12 @@ def _record_observation_txn(
     # this set's one page. `news2` IS score_vitals_row on the values just
     # inserted, with the patient's scale.
     if not scoring:
-        logger.info("nurse obs: patient %s set %s recorded by %s (scoring switched off)",
-                    patient_id, vitals_id, actor_id)
+        logger.info(
+            "nurse obs: patient %s set %s recorded by %s (scoring switched off)",
+            patient_id,
+            vitals_id,
+            actor_id,
+        )
         # Scoring switched off (the Orb Ward Record): the open chart still gets
         # the new set, with risk None, as the simulator, monitor and Scribe
         # lanes send it; the chart shows it with no score. Nothing pages.
@@ -1693,8 +1875,9 @@ def _record_observation_txn(
 
     if is_latest:
         # A record only set is marked on the wire, so no browser chimes for it.
-        _push_vitals_update(patient_id, observed_at, cleaned, news2, source=source,
-                            live_hooks=not record_only)
+        _push_vitals_update(
+            patient_id, observed_at, cleaned, news2, source=source, live_hooks=not record_only
+        )
 
     # A set copied from a sheet more than the live hook limit ago
     # (ORB_TRANSCRIBED_LIVE_HOOK_MAX_AGE_MINUTES, default 2 hours): charted and
@@ -1703,8 +1886,13 @@ def _record_observation_txn(
     # Paging the ward about a reading hours old summons people to a patient who
     # may since have been seen and treated.
     if record_only:
-        logger.info("nurse obs: patient %s copied set %s from %s recorded only (older than %s)",
-                    patient_id, vitals_id, stored_at, transcribed_live_hook_max_age())
+        logger.info(
+            "nurse obs: patient %s copied set %s from %s recorded only (older than %s)",
+            patient_id,
+            vitals_id,
+            stored_at,
+            transcribed_live_hook_max_age(),
+        )
         result = {
             "vitals_id": vitals_id,
             "recorded_at": stored_at,
@@ -1721,6 +1909,8 @@ def _record_observation_txn(
             result["supersedes_vitals_id"] = superseded_id
         return result
 
+    assert news2 is not None, "A scored observation needs its computed NEWS2"
+
     # Post-commit, non-raising: opening a sepsis bundle at NEWS2>=7 is documented
     # in sepsis_bundle_service as safe to call from any risk path, and a
     # nurse-taken set is exactly such a path. The observation time goes with
@@ -1728,6 +1918,7 @@ def _record_observation_txn(
     # was taken at the bedside, so it still opens the bundle.
     try:
         from services.sepsis_bundle_service import maybe_autostart
+
         maybe_autostart(patient_id, news2, observed_at=stored_at)
     except Exception as e:  # never let a bundle failure lose a recorded reading
         logger.warning("sepsis bundle autostart after nurse obs failed for %s: %s", patient_id, e)
@@ -1739,8 +1930,12 @@ def _record_observation_txn(
     try:
         dispatch_observation_alert(patient_id, cleaned, news2, actor_id, vitals_id)
     except Exception as e:
-        logger.error("nurse obs alert dispatch failed for %s (reading %s is charted): %s",
-                     patient_id, vitals_id, e)
+        logger.error(
+            "nurse obs alert dispatch failed for %s (reading %s is charted): %s",
+            patient_id,
+            vitals_id,
+            e,
+        )
 
     # ── The ESCALATION CHAIN, raised from the WRITE PATH (2026-08-14) ──────────
     #
@@ -1785,17 +1980,30 @@ def _record_observation_txn(
     # notification that carries information the ward does not already have.
     try:
         from services import escalation_service
+
         escalation_service.evaluate_observation(
-            patient_id, news2, vitals_id=vitals_id, source=source,
-            actor_id=actor_id, observed_at=observed_at, notify=False,
+            patient_id,
+            news2,
+            vitals_id=vitals_id,
+            source=source,
+            actor_id=actor_id,
+            observed_at=observed_at,
+            notify=False,
         )
     except Exception as e:
-        logger.error("nurse obs escalation failed for %s (reading %s is charted): %s",
-                     patient_id, vitals_id, e)
+        logger.error(
+            "nurse obs escalation failed for %s (reading %s is charted): %s",
+            patient_id,
+            vitals_id,
+            e,
+        )
 
     logger.info(
         "nurse obs: patient %s NEWS2 %s (%s) by %s",
-        patient_id, news2["raw_news2"], news2["level"], actor_id,
+        patient_id,
+        news2["raw_news2"],
+        news2["level"],
+        actor_id,
     )
     result = {
         "vitals_id": vitals_id,
@@ -1835,8 +2043,9 @@ def transcribed_live_hook_max_age() -> timedelta:
         return timedelta(minutes=120)
 
 
-def transcribed_record_only(source: str | None, observed_at: datetime,
-                            entered_at: datetime) -> bool:
+def transcribed_record_only(
+    source: str | None, observed_at: datetime, entered_at: datetime
+) -> bool:
     """True for a set the ward clerk copied whose sheet time was more than the
     live hook limit before it was keyed. A bedside set is never record only."""
     if source != CLERK_SOURCE:
@@ -1898,7 +2107,7 @@ def _stay_start_of(row) -> datetime | None:
         if key in keys:
             when = _parse_ts(row[key])
             if when is not None:
-                return when.astimezone(timezone.utc)
+                return when.astimezone(UTC)
     return None
 
 
@@ -1937,14 +2146,16 @@ def transcribe_patients(department: str | None) -> list[dict]:
             continue
         seen.add(row["id"])
         start = _stay_start_of(row)
-        out.append({
-            "patient_id": row["id"],
-            "name": row["name"],
-            "mrn": row["mrn"],
-            "ward": row["ward"],
-            "bed": row["bed"],
-            "admitted_at": format_utc(start) if start else None,
-        })
+        out.append(
+            {
+                "patient_id": row["id"],
+                "name": row["name"],
+                "mrn": row["mrn"],
+                "ward": row["ward"],
+                "bed": row["bed"],
+                "admitted_at": format_utc(start) if start else None,
+            }
+        )
     return out
 
 
@@ -1984,8 +2195,16 @@ def observation_keyed_by(db, vitals_id: int, patient_id: str) -> str | None:
 
 
 #: The readings the ward clerk sees on her own copies, and nothing else.
-_OWN_COPY_READINGS = ("heart_rate", "systolic_bp", "diastolic_bp", "respiratory_rate",
-                      "temperature", "spo2", "consciousness", "on_oxygen")
+_OWN_COPY_READINGS = (
+    "heart_rate",
+    "systolic_bp",
+    "diastolic_bp",
+    "respiratory_rate",
+    "temperature",
+    "spo2",
+    "consciousness",
+    "on_oxygen",
+)
 
 
 def clerk_own_copies(patient_id: str, actor_id: str, *, hours: int = 24) -> list[dict]:
@@ -2017,12 +2236,14 @@ def clerk_own_copies(patient_id: str, actor_id: str, *, hours: int = 24) -> list
         readings = {c: r[c] for c in _OWN_COPY_READINGS}
         if readings["on_oxygen"] is not None:
             readings["on_oxygen"] = bool(readings["on_oxygen"])
-        out.append({
-            "vitals_id": r["id"],
-            "taken_at": r["timestamp"],
-            "readings": readings,
-            "voided": bool(r["voided_at"]),
-        })
+        out.append(
+            {
+                "vitals_id": r["id"],
+                "taken_at": r["timestamp"],
+                "readings": readings,
+                "voided": bool(r["voided_at"]),
+            }
+        )
     return out
 
 
@@ -2033,8 +2254,9 @@ def observation_patient(vitals_id: int) -> str | None:
     return row["patient_id"] if row else None
 
 
-def void_observation(vitals_id: int, actor_id: str, reason: str, *,
-                     own_copy_only: bool = False) -> dict:
+def void_observation(
+    vitals_id: int, actor_id: str, reason: str, *, own_copy_only: bool = False
+) -> dict:
     """Mark a stored observation set as entered in error.
 
     `own_copy_only` is the ward clerk's rule (vitals.transcribe without
@@ -2073,12 +2295,14 @@ def void_observation(vitals_id: int, actor_id: str, reason: str, *,
         if row is None:
             raise ObservationNotFound(f"observation {vitals_id} not found")
         if own_copy_only and (
-                row["source"] != CLERK_SOURCE
-                or observation_keyed_by(db, vitals_id, row["patient_id"]) != actor_id):
+            row["source"] != CLERK_SOURCE
+            or observation_keyed_by(db, vitals_id, row["patient_id"]) != actor_id
+        ):
             raise ObservationNotYours(NOT_YOUR_COPY)
         if row["voided_at"]:
             raise ObservationAlreadyVoided(
-                "This set is already marked entered in error. Reload to see the record.")
+                "This set is already marked entered in error. Reload to see the record."
+            )
         db.execute(
             "UPDATE vitals SET voided_at = ?, voided_by = ?, void_reason = ? "
             "WHERE id = ? AND voided_at IS NULL",
@@ -2106,8 +2330,12 @@ def void_observation(vitals_id: int, actor_id: str, reason: str, *,
                 "reason": reason,
             },
         )
-    logger.info("observation %s for %s marked entered in error by %s",
-                vitals_id, row["patient_id"], actor_id)
+    logger.info(
+        "observation %s for %s marked entered in error by %s",
+        vitals_id,
+        row["patient_id"],
+        actor_id,
+    )
     return {
         "vitals_id": vitals_id,
         "patient_id": row["patient_id"],

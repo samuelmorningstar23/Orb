@@ -12,27 +12,33 @@ Protocol (ZMQ REQ/REP):
     Response: JSON {"text": "transcription...", "duration_ms": 234, "status": "ok"}
     Error:    JSON {"text": "", "error": "message", "status": "error"}
 """
-import os
-import sys
+
 import json
-import time
+import os
 import signal
+import sys
+import time
 from pathlib import Path
+
+import zmq
+
+from services.asr_model_files import (
+    MLX_MODELS_DIR,
+    SpeechModelNotInstalled,
+    force_hub_offline,
+    require_installed,
+)
+from services.audio_conversion import convert_to_wav as _convert_to_wav
 
 # Add parent dirs to path
 SERVER_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SERVER_DIR))
 
-from services.asr_model_files import (
-    MLX_MODELS_DIR, SpeechModelNotInstalled, force_hub_offline, require_installed,
-)
-from services.audio_conversion import convert_to_wav as _convert_to_wav
 
 # Orb is offline: no Hugging Face lookup from this process, ever. Set before
 # anything imports huggingface_hub, which reads it once at import time.
 force_hub_offline()
 
-import zmq
 
 # ── Configuration ──
 DEFAULT_SOCKET = os.getenv("ORB_WHISPER_SOCKET", "ipc:///tmp/orb-whisper.sock")
@@ -56,19 +62,20 @@ def load_model(model_name: str):
     LightningWhisperMLX here, whose constructor downloads the weights from
     Hugging Face; Orb is offline, so it is not called at all."""
     global _whisper_model, _model_name
-    
+
     if _whisper_model is not None and _model_name == model_name:
         return _whisper_model
-    
+
     model_path = require_installed(model_name)
     print(f"[WhisperDaemon] Loading model '{model_name}' into Unified Memory...")
     t0 = time.time()
-    
+
     # Imported here so a missing runtime fails at start, not on the first request.
     import lightning_whisper_mlx.transcribe  # noqa: F401
+
     _whisper_model = model_path
     _model_name = model_name
-    
+
     elapsed = time.time() - t0
     print(f"[WhisperDaemon] Model loaded in {elapsed:.1f}s — warm and ready")
     return _whisper_model
@@ -77,15 +84,15 @@ def load_model(model_name: str):
 def transcribe(audio_path: str, hints: str = "", language: str = "en") -> dict:
     """Run transcription on a warm model. Returns result dict."""
     global _whisper_model, _model_name
-    
+
     if _whisper_model is None or _model_name is None:
         return {"text": "", "error": "Model not loaded", "status": "error"}
-    
+
     t0 = time.time()
-    
+
     # Convert if needed
     converted_path = convert_to_wav(audio_path)
-    
+
     # Build clinical prompt bias
     clinical_prompt = (
         "Medical dictation: Patient admitted to ward, bed, IV. "
@@ -93,10 +100,10 @@ def transcribe(audio_path: str, hints: str = "", language: str = "en") -> dict:
     )
     if hints:
         clinical_prompt += f"Specific context: {hints}"
-    
+
     try:
         from lightning_whisper_mlx.transcribe import transcribe_audio
-        
+
         model_path = str(MLX_MODELS_DIR / _model_name)
         # 'auto' → let Whisper detect the language (pass None) for code-switching,
         # matching the subprocess worker.
@@ -108,10 +115,10 @@ def transcribe(audio_path: str, hints: str = "", language: str = "en") -> dict:
             batch_size=12,
             initial_prompt=clinical_prompt,
         )
-        
+
         elapsed_ms = int((time.time() - t0) * 1000)
         text = result.get("text", "").strip()
-        
+
         return {
             "text": text,
             "duration_ms": elapsed_ms,
@@ -135,65 +142,73 @@ def run_daemon(socket_addr: str, model_name: str):
         sock_path = socket_addr.replace("ipc://", "")
         if os.path.exists(sock_path):
             os.remove(sock_path)
-    
+
     # Load model (one-time warmup)
     load_model(model_name)
-    
+
     # Bind ZMQ socket
     context = zmq.Context()
     socket = context.socket(zmq.REP)
     socket.bind(socket_addr)
-    
+
     print(f"[WhisperDaemon] Listening on {socket_addr}")
     print(f"[WhisperDaemon] Model: {model_name} | PID: {os.getpid()}")
-    print(f"[WhisperDaemon] Ready for transcription requests\n")
-    
+    print("[WhisperDaemon] Ready for transcription requests\n")
+
     # Graceful shutdown
     def shutdown(signum, frame):
         print(f"\n[WhisperDaemon] Received signal {signum}, shutting down...")
         socket.close()
         context.term()
         sys.exit(0)
-    
+
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
-    
+
     request_count = 0
-    
+
     while True:
         try:
             # Wait for request
             raw_msg = socket.recv_string()
             request_count += 1
-            
+
             try:
                 req = json.loads(raw_msg)
             except json.JSONDecodeError:
-                socket.send_string(json.dumps({
-                    "text": "", "error": "Invalid JSON request", "status": "error"
-                }))
+                socket.send_string(
+                    json.dumps({"text": "", "error": "Invalid JSON request", "status": "error"})
+                )
                 continue
-            
+
             audio_path = req.get("audio_path", "")
             hints = req.get("hints", "")
             language = req.get("language", "en")
-            
+
             if not audio_path or not os.path.exists(audio_path):
-                socket.send_string(json.dumps({
-                    "text": "", "error": f"Audio file not found: {audio_path}", "status": "error"
-                }))
+                socket.send_string(
+                    json.dumps(
+                        {
+                            "text": "",
+                            "error": f"Audio file not found: {audio_path}",
+                            "status": "error",
+                        }
+                    )
+                )
                 continue
-            
+
             print(f"[WhisperDaemon] Request #{request_count}: {os.path.basename(audio_path)}")
-            
+
             # Transcribe on warm model
             result = transcribe(audio_path, hints=hints, language=language)
-            
-            print(f"[WhisperDaemon]   → {result.get('duration_ms', '?')}ms | "
-                  f"{len(result.get('text', ''))} chars | {result['status']}")
-            
+
+            print(
+                f"[WhisperDaemon]   → {result.get('duration_ms', '?')}ms | "
+                f"{len(result.get('text', ''))} chars | {result['status']}"
+            )
+
             socket.send_string(json.dumps(result))
-            
+
         except zmq.ZMQError as e:
             if e.errno == zmq.ETERM:
                 break
@@ -201,9 +216,7 @@ def run_daemon(socket_addr: str, model_name: str):
         except Exception as e:
             print(f"[WhisperDaemon] Unexpected error: {e}")
             try:
-                socket.send_string(json.dumps({
-                    "text": "", "error": str(e), "status": "error"
-                }))
+                socket.send_string(json.dumps({"text": "", "error": str(e), "status": "error"}))
             except Exception:
                 pass
 

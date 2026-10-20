@@ -13,19 +13,25 @@ Every DB touch below therefore follows one shape: a PURE SYNC private helper
 Keeping the helpers sync is deliberate — they are also called directly from
 tests, and run_db() rejects coroutine functions outright.
 """
+
 import asyncio
 import logging
-import socketio
-
+import time as _time
 from http.cookies import SimpleCookie
 from urllib.parse import urlsplit
 
 import config
+import socketio
+from auth import SESSION_COOKIE, authenticate_session_token
+from config import CORS_ORIGINS
 from database import db_session, run_db
-from config import CORS_ORIGINS, DEPLOYMENT_PROFILE
-from auth import authenticate_session_token, SESSION_COOKIE
 from permissions import (
-    ADT_READ, department_scope, has_permission, PATIENT_READ_ALL, REGISTRATION_READ, VITALS_READ,
+    ADT_READ,
+    PATIENT_READ_ALL,
+    REGISTRATION_READ,
+    VITALS_READ,
+    department_scope,
+    has_permission,
 )
 from services.relay_service import get_channels_for_user
 
@@ -76,8 +82,14 @@ def _host_port(netloc: str, scheme: str) -> tuple[str, int] | None:
         port = parts.port
     except ValueError:
         return None
-    if (not parts.hostname or parts.username is not None or parts.password is not None
-            or parts.path or parts.query or parts.fragment):
+    if (
+        not parts.hostname
+        or parts.username is not None
+        or parts.password is not None
+        or parts.path
+        or parts.query
+        or parts.fragment
+    ):
         return None
     return parts.hostname, port if port is not None else _DEFAULT_PORTS[scheme]
 
@@ -135,6 +147,7 @@ def _origin_allowed(origin, environ=None) -> bool:
 
 class AuthorizedSocketServer(socketio.AsyncServer):
     """Room membership is a subscription, never a durable authorization grant."""
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.session_principals = {}
@@ -159,8 +172,17 @@ class AuthorizedSocketServer(socketio.AsyncServer):
             return None
         return await super().get_session(sid, namespace=namespace)
 
-    async def emit(self, event, data=None, to=None, room=None, skip_sid=None,
-                   namespace=None, callback=None, ignore_queue=False):
+    async def emit(
+        self,
+        event,
+        data=None,
+        to=None,
+        room=None,
+        skip_sid=None,
+        namespace=None,
+        callback=None,
+        ignore_queue=False,
+    ):
         namespace = namespace or "/"
         # Snapshot recipients before awaits; disconnected peers disappear from
         # the manager before the eventual broadcast. No auth TTL on PHI delivery.
@@ -174,10 +196,15 @@ class AuthorizedSocketServer(socketio.AsyncServer):
         # Send to the validated recipient snapshot, not the room. In particular,
         # a disconnect callback may publish presence while the revoked sid is
         # still in Socket.IO's pending-disconnect room membership.
-        return await super().emit(event, data, to=allowed, skip_sid=skip_sid,
-                                  namespace=namespace, callback=callback,
-                                  ignore_queue=ignore_queue)
-
+        return await super().emit(
+            event,
+            data,
+            to=allowed,
+            skip_sid=skip_sid,
+            namespace=namespace,
+            callback=callback,
+            ignore_queue=ignore_queue,
+        )
 
 
 # Create Socket.IO server
@@ -268,8 +295,7 @@ def queue_nudge_rooms(department: str) -> list[str]:
     and the whole-census room (doctors and other vitals.read holders), and the
     clinic's opd room and the all-clinics opd room (desk accounts). Emitted as
     one list so a socket in two of them hears it once."""
-    return [f"dept:{department}", "dept:__all__",
-            opd_desk_room(department), OPD_ALL_ROOM]
+    return [f"dept:{department}", "dept:__all__", opd_desk_room(department), OPD_ALL_ROOM]
 
 
 def receives_queue_nudges(role: str) -> bool:
@@ -329,7 +355,7 @@ async def emit_adt_changed(ward_ids, departments) -> None:
     """One 'adt:changed' per ward (one {"ward_id": None} when no ward is
     involved), each emitted once to the rooms of adt_change_rooms."""
     rooms = adt_change_rooms(departments)
-    wards = sorted({str(w) for w in (ward_ids or ()) if w}) or [None]
+    wards: list[str | None] = list(sorted({str(w) for w in (ward_ids or ()) if w})) or [None]
     for ward in wards:
         await sio.emit(ADT_CHANGED_EVENT, adt_changed_payload(ward), room=rooms)
 
@@ -341,8 +367,9 @@ def schedule_adt_changed(ward_ids, departments) -> bool:
         return False
     wards = list(ward_ids or ())
     depts = list(departments or ())
-    return schedule_on_loop(lambda: emit_adt_changed(wards, depts),
-                            f"{ADT_CHANGED_EVENT} for {len(wards) or 1} ward(s)")
+    return schedule_on_loop(
+        lambda: emit_adt_changed(wards, depts), f"{ADT_CHANGED_EVENT} for {len(wards) or 1} ward(s)"
+    )
 
 
 def _self_patient_id(user_id: str) -> str | None:
@@ -355,9 +382,7 @@ def _self_patient_id(user_id: str) -> str | None:
     """
     try:
         with db_session() as db:
-            row = db.execute(
-                "SELECT id FROM patients WHERE user_id = ?", (user_id,)
-            ).fetchone()
+            row = db.execute("SELECT id FROM patients WHERE user_id = ?", (user_id,)).fetchone()
     except Exception as e:
         logger.warning("WS self-patient lookup failed for %s: %s", user_id, e)
         return None
@@ -380,12 +405,15 @@ async def connect(sid, environ, auth=None):
         logger.info("WS connection rejected (unauthenticated): %s", sid)
         return False
     sio.session_principals[sid] = user
-    await sio.save_session(sid, {
-        "user_id": user["id"],
-        "name": user["name"],
-        "role": user["role"],
-        "department": user.get("department"),
-    })
+    await sio.save_session(
+        sid,
+        {
+            "user_id": user["id"],
+            "name": user["name"],
+            "role": user["role"],
+            "department": user.get("department"),
+        },
+    )
     # Personal room for targeted, live, per-user delivery (e.g. surgical alerts to
     # only the assigned surgeon / nurse / anesthetist).
     await sio.enter_room(sid, f"user:{user['id']}")
@@ -428,7 +456,6 @@ async def connect(sid, environ, auth=None):
 # __all__ room for no-department users who see the whole census), instead of a
 # global broadcast. A small TTL cache avoids a DB hit per emit (a patient's
 # department changes only on admission/transfer).
-import time as _time
 
 _patient_dept_cache: dict[str, tuple[str | None, float]] = {}
 _PATIENT_DEPT_TTL = 60.0
@@ -549,9 +576,9 @@ async def emit_patient_vitals(event: str, payload: dict) -> None:
 
     A `vitals:update` also gets the patient's `patient_name` (see above), unless
     the lane already set it; an unknown patient gets none rather than a guess."""
-    dept = await _department_for_emit(payload.get("patient_id"))
+    dept = await _department_for_emit(payload["patient_id"])
     if event == "vitals:update" and not payload.get("patient_name"):
-        name = await _name_for_emit(payload.get("patient_id"))
+        name = await _name_for_emit(payload["patient_id"])
         if name:
             payload = {**payload, "patient_name": name}
     # __all__ always: no-department clinicians (whole-census board) must still see it.
@@ -560,7 +587,7 @@ async def emit_patient_vitals(event: str, payload: dict) -> None:
         await sio.emit(event, payload, room=f"dept:{dept}")
 
 
-def vitals_update_payload(row, risk: dict, *, source: str) -> dict:
+def vitals_update_payload(row, risk: dict | None, *, source: str) -> dict:
     """The `vitals:update` body for ONE stored vitals row.
 
     The wire shape bot_service and ingestion_service send (ingestion's keys,
@@ -571,9 +598,10 @@ def vitals_update_payload(row, risk: dict, *, source: str) -> dict:
     `risk.missing_parameters`. tests/test_vitals_emit_lanes.py holds all four
     lanes to the same keys.
 
-    `risk` is required, not optional: the open chart ignores a tick without one
-    and keeps showing the older set.
+    `risk` is absent when scoring is switched off (Orb Ward Record). Scored
+    chart ticks carry the matching computed risk with their observation.
     """
+
     def _get(key):
         try:
             return row[key]
@@ -615,6 +643,7 @@ def schedule_on_loop(make_coro, what: str) -> bool:
     Fire and forget, so the caller's response does not wait on the socket
     layer. Returns True when the emit was scheduled.
     """
+
     def _start() -> bool:
         task = asyncio.get_running_loop().create_task(make_coro())
         _THREAD_EMITS.add(task)
@@ -634,11 +663,11 @@ def schedule_on_loop(make_coro, what: str) -> bool:
 
     try:
         from anyio.from_thread import run_sync as _portal_run_sync
+
         return bool(_portal_run_sync(_start))
     except RuntimeError as e:
         # "not called from an AnyIO worker thread": no portal back to the loop.
-        logger.info("%s not pushed live: no event loop reachable from this thread (%s)",
-                    what, e)
+        logger.info("%s not pushed live: no event loop reachable from this thread (%s)", what, e)
         return False
     except Exception as e:
         logger.warning("%s not pushed live: %s", what, e)
@@ -647,8 +676,9 @@ def schedule_on_loop(make_coro, what: str) -> bool:
 
 def schedule_patient_vitals(event: str, payload: dict) -> bool:
     """`emit_patient_vitals` from sync code. See schedule_on_loop."""
-    return schedule_on_loop(lambda: emit_patient_vitals(event, payload),
-                            f"{event} for {payload.get('patient_id')}")
+    return schedule_on_loop(
+        lambda: emit_patient_vitals(event, payload), f"{event} for {payload.get('patient_id')}"
+    )
 
 
 # ── Presence: who is currently viewing each patient ──────────────────────────
@@ -692,11 +722,10 @@ async def enter_patient(sid, data):
     # gated on the same permission that opens the chart over REST. Without this a
     # patient/pharmacist socket could subscribe to any patient's viewer list.
     if not has_permission(session["role"], PATIENT_READ_ALL):
-        logger.info(
-            "WS presence denied: user=%s patient=%s", session["user_id"], patient_id
-        )
+        logger.info("WS presence denied: user=%s patient=%s", session["user_id"], patient_id)
         return
     from permissions import enforce_patient_scope
+
     try:
         await run_db(enforce_patient_scope, {**session, "id": session["user_id"]}, patient_id)
     except Exception:
@@ -729,6 +758,7 @@ async def leave_patient(sid, data):
 async def disconnect(sid, reason=None):
     sio.session_principals.pop(sid, None)
     from ws.scribe_stream import handle_scribe_disconnect
+
     await handle_scribe_disconnect(sid)
     logger.info("WS disconnected: %s", sid)
     # Drop this sid from any patient it was viewing and refresh those rosters so a
@@ -768,9 +798,7 @@ async def join_channel(sid, data):
     if not channel_id:
         return
     if not await _user_can_access_channel(session["user_id"], session["role"], channel_id):
-        logger.info(
-            "WS join denied: user=%s channel=%s", session["user_id"], channel_id
-        )
+        logger.info("WS join denied: user=%s channel=%s", session["user_id"], channel_id)
         await sio.emit("error", {"error": "not authorized for channel"}, to=sid)
         return
     await sio.enter_room(sid, channel_id)
@@ -831,7 +859,8 @@ async def new_message(sid, data):
     if not await _user_can_access_channel(session["user_id"], session["role"], channel_id):
         logger.info(
             "WS message denied (channel): user=%s channel=%s",
-            session["user_id"], channel_id,
+            session["user_id"],
+            channel_id,
         )
         await sio.emit("error", {"error": "not authorized for channel"}, to=sid)
         return
@@ -872,4 +901,5 @@ async def new_message(sid, data):
 
 
 # Register streaming transcription events on this sio instance
+
 import ws.scribe_stream  # noqa: F401, E402

@@ -1,31 +1,42 @@
 """Orb Hospital OS — Audit Routes"""
-from fastapi import APIRouter, Depends, Query
-from typing import Optional
 
 from database import db_session
+from fastapi import APIRouter, Depends, Query
 from permissions import require_permission
 from services.actor_names import attach_actor_names
 
 router = APIRouter(prefix="/api/audit", tags=["audit"])
 
 
+_GET_AUDIT_LOGS_PATIENT_ID_DEFAULT = Query(None)
+_GET_AUDIT_LOGS_CORRELATION_ID_DEFAULT = Query(None)
+_GET_AUDIT_LOGS_ACTION_TYPE_DEFAULT = Query(None)
+_GET_AUDIT_LOGS_EVENT_CATEGORY_DEFAULT = Query(None)
+_GET_AUDIT_LOGS_OUTCOME_DEFAULT = Query(None)
+_GET_AUDIT_LOGS_START_DATE_DEFAULT = Query(None)
+_GET_AUDIT_LOGS_END_DATE_DEFAULT = Query(None)
+_GET_AUDIT_LOGS_LIMIT_DEFAULT = Query(50, ge=1, le=1000)
+_GET_AUDIT_LOGS_OFFSET_DEFAULT = Query(0, ge=0)
+_GET_AUDIT_LOGS_USER_DEFAULT = Depends(require_permission("audit.read"))
+
+
 @router.get("/logs")
 def get_audit_logs(
-    patient_id: Optional[str] = Query(None),
-    correlation_id: Optional[str] = Query(None),
-    action_type: Optional[str] = Query(None),
-    event_category: Optional[str] = Query(None),
-    outcome: Optional[str] = Query(None),
-    start_date: Optional[str] = Query(None),
-    end_date: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=1000),
-    offset: int = Query(0, ge=0),
-    user: dict = Depends(require_permission("audit.read")),
+    patient_id: str | None = _GET_AUDIT_LOGS_PATIENT_ID_DEFAULT,
+    correlation_id: str | None = _GET_AUDIT_LOGS_CORRELATION_ID_DEFAULT,
+    action_type: str | None = _GET_AUDIT_LOGS_ACTION_TYPE_DEFAULT,
+    event_category: str | None = _GET_AUDIT_LOGS_EVENT_CATEGORY_DEFAULT,
+    outcome: str | None = _GET_AUDIT_LOGS_OUTCOME_DEFAULT,
+    start_date: str | None = _GET_AUDIT_LOGS_START_DATE_DEFAULT,
+    end_date: str | None = _GET_AUDIT_LOGS_END_DATE_DEFAULT,
+    limit: int = _GET_AUDIT_LOGS_LIMIT_DEFAULT,
+    offset: int = _GET_AUDIT_LOGS_OFFSET_DEFAULT,
+    user: dict = _GET_AUDIT_LOGS_USER_DEFAULT,
 ):
     """Retrieve audit logs. Requires audit.read permission."""
 
     query = "SELECT * FROM audit_logs WHERE 1=1"
-    params = []
+    params: list[str | int] = []
 
     if patient_id:
         query += " AND patient_id = ?"
@@ -49,14 +60,14 @@ def get_audit_logs(
             query += " AND event_category = ?"
             params.append(cats[0])
         elif cats:
-            query += " AND event_category IN (%s)" % ",".join("?" * len(cats))
+            query += " AND event_category IN ({})".format(",".join("?" * len(cats)))
             params.extend(cats)
     if outcome:
         # Comma-separated too: the Security tab defaults to "failure,denied" so
         # the handful of refusals are not buried under every successful sign-in.
         outs = [o.strip() for o in outcome.split(",") if o.strip()]
         if outs:
-            query += " AND outcome IN (%s)" % ",".join("?" * len(outs))
+            query += " AND outcome IN ({})".format(",".join("?" * len(outs)))
             params.extend(outs)
     if start_date:
         query += " AND timestamp >= ?"
@@ -70,9 +81,11 @@ def get_audit_logs(
 
     with db_session() as db:
         rows = db.execute(query, params).fetchall()
-        
+
         # Get total count for pagination
-        count_query = query.replace("SELECT *", "SELECT COUNT(id) as total", 1).split(" ORDER BY")[0]
+        count_query = query.replace("SELECT *", "SELECT COUNT(id) as total", 1).split(" ORDER BY")[
+            0
+        ]
         count_params = params[:-2]
         total = db.execute(count_query, count_params).fetchone()["total"]
         # The person, by name, read now: the chained row keeps only the id.
@@ -90,10 +103,14 @@ def get_audit_logs(
 _OUTCOMES = ("success", "failure", "partial_success", "denied")
 
 
+_GET_AUDIT_FACETS_EVENT_CATEGORY_DEFAULT = Query(None)
+_GET_AUDIT_FACETS_USER_DEFAULT = Depends(require_permission("audit.read"))
+
+
 @router.get("/facets")
 def get_audit_facets(
-    event_category: Optional[str] = Query(None),
-    user: dict = Depends(require_permission("audit.read")),
+    event_category: str | None = _GET_AUDIT_FACETS_EVENT_CATEGORY_DEFAULT,
+    user: dict = _GET_AUDIT_FACETS_USER_DEFAULT,
 ):
     """The categories and actions the trail actually holds, for the filter lists.
 
@@ -106,14 +123,26 @@ def get_audit_facets(
     """
     cats = [c.strip() for c in (event_category or "").split(",") if c.strip()]
     with db_session() as db:
-        categories = [r["v"] for r in db.execute(
-            "SELECT DISTINCT event_category AS v FROM audit_logs ORDER BY v").fetchall()]
+        categories = [
+            r["v"]
+            for r in db.execute(
+                "SELECT DISTINCT event_category AS v FROM audit_logs ORDER BY v"
+            ).fetchall()
+        ]
         if cats:
-            actions = [r["v"] for r in db.execute(
-                "SELECT DISTINCT action_type AS v FROM audit_logs "
-                "WHERE event_category IN (%s) ORDER BY v" % ",".join("?" * len(cats)),
-                cats).fetchall()]
+            actions = [
+                r["v"]
+                for r in db.execute(
+                    "SELECT DISTINCT action_type AS v FROM audit_logs "
+                    "WHERE event_category IN ({}) ORDER BY v".format(",".join("?" * len(cats))),
+                    cats,
+                ).fetchall()
+            ]
         else:
-            actions = [r["v"] for r in db.execute(
-                "SELECT DISTINCT action_type AS v FROM audit_logs ORDER BY v").fetchall()]
+            actions = [
+                r["v"]
+                for r in db.execute(
+                    "SELECT DISTINCT action_type AS v FROM audit_logs ORDER BY v"
+                ).fetchall()
+            ]
     return {"categories": categories, "actions": actions, "outcomes": list(_OUTCOMES)}

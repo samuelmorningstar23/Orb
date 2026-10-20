@@ -63,15 +63,14 @@ clinic); writes are refused 409 once the patient has an active admission.
 Saves, signing, addenda and completion are audited INSIDE their transaction
 (clinical_record), so the change and its record land together.
 """
-from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal
 
 import config
 from database import db_session
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from permissions import (
     MEDICATION_PRESCRIBE,
     OPD_CONSULT,
@@ -81,15 +80,13 @@ from permissions import (
     require_patient_access,
     require_permission,
 )
-from routes.opt_in_gates import feature_gate, require_opd_feature
-from services import orders_service, registration_service, terminology_service
-from services.drug_chart import require_drug_chart
-from services.medorders import core as medorder_core
-from services.medorders import outpatient
+from pydantic import BaseModel, ConfigDict, Field
 from services.audit_service import AuditWriteError, log_audit_event
 from services.clinical_time import utc_iso_now
-from services.orders_service import OpdVisitOrderRefused, OrderManagedByLab
+from services.drug_chart import require_drug_chart
 from services.frontdesk_service import FrontDeskError, complete_opd_visit, get_opd_visit
+from services.medorders import core as medorder_core
+from services.medorders import outpatient
 from services.opd_queue_service import (
     COMPLETION_DISPOSITIONS,
     list_my_queue,
@@ -106,6 +103,10 @@ from services.opd_service import (
     save_consultation,
     sign_consultation,
 )
+from services.orders_service import OpdVisitOrderRefused, OrderManagedByLab
+
+from routes.opt_in_gates import feature_gate, require_opd_feature
+from services import orders_service, registration_service, terminology_service
 
 router = APIRouter(
     prefix="/api/opd",
@@ -114,8 +115,11 @@ router = APIRouter(
 )
 
 
+_OPD_META_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
+
+
 @router.get("/meta")
-def opd_meta(user: dict = Depends(require_permission(OPD_CONSULT))):
+def opd_meta(user: dict = _OPD_META_USER_DEFAULT):
     """What this site's outpatient settings are. No patient data."""
     return {
         "feature": "opd",
@@ -129,6 +133,11 @@ def opd_meta(user: dict = Depends(require_permission(OPD_CONSULT))):
     }
 
 
+_OPD_RECORD_USER_DEFAULT = Depends(
+    require_patient_access(OPD_CONSULT, opd_arm=True, audit_action="opd_record_viewed")
+)
+
+
 @router.get("/patients/{patient_id}/record")
 def opd_record(
     patient_id: str,
@@ -138,9 +147,7 @@ def opd_record(
     # clinic within ORB_OPD_SCOPE_DAYS). On the whitelist in
     # tests/test_opd_scope_drift.py. Every read writes a fail-closed phi_access
     # row that names the arm (admission, opd_visit or hospital_wide).
-    user: dict = Depends(
-        require_patient_access(OPD_CONSULT, opd_arm=True, audit_action="opd_record_viewed")
-    ),
+    user: dict = _OPD_RECORD_USER_DEFAULT,
 ):
     """The outpatient record view: identity, allergies, problems, OPD-linked
     results and signed OPD consultations of every clinic (ruling OPD-N2,
@@ -159,10 +166,14 @@ def opd_record(
 #  The doctor's queue (opd-8)
 # ═════════════════════════════════════════════════════════════════════════════
 
+
+_MY_QUEUE_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
+
+
 @router.get("/my-queue")
 def my_queue(
     request: Request,
-    user: dict = Depends(require_permission(OPD_CONSULT)),
+    user: dict = _MY_QUEUE_USER_DEFAULT,
 ):
     """Today's queue for the signed-in doctor: the patient in the room, the
     waiting line in seeing order (priority, then token), the skipped, and the
@@ -181,9 +192,15 @@ def my_queue(
                 f"{dept or '(all clinics, user has no department on record)'} "
                 f"on {result['visit_date']}"
             ),
-            metadata={"result_count": result["total"], "visit_date": result["visit_date"],
-                      "visit_ids": [v["id"] for key in ("current", "waiting", "skipped",
-                                                        "unassigned") for v in result[key]]},
+            metadata={
+                "result_count": result["total"],
+                "visit_date": result["visit_date"],
+                "visit_ids": [
+                    v["id"]
+                    for key in ("current", "waiting", "skipped", "unassigned")
+                    for v in result[key]
+                ],
+            },
         )
     return result
 
@@ -192,9 +209,11 @@ def my_queue(
 #  The consultation record (opd-10)
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class ConsultationIn(BaseModel):
     """PUT body. Only the fields sent change; row_version is the version the
     editor read (None or 0 for a new note)."""
+
     row_version: int | None = None
     chief_complaint: str | None = None
     history: str | None = None
@@ -220,6 +239,7 @@ class AddendumIn(BaseModel):
 class AllergyReviewIn(BaseModel):
     """POST body of an allergy review (opd-10a). A field this route does not
     know is refused (422), so nobody believes it was saved."""
+
     model_config = ConfigDict(extra="forbid")
     # 'allergies_recorded', 'none_known' or 'unable_to_obtain'.
     status: str = Field(..., max_length=40)
@@ -250,16 +270,21 @@ def _visit_in_clinic(visit_id: str, dept: str | None) -> dict:
 
 
 def _consultation_http_error(err: ConsultationError) -> HTTPException:
-    return HTTPException(status_code=err.status,
-                         detail={"error": err.code, "message": str(err), **err.extra})
+    return HTTPException(
+        status_code=err.status, detail={"error": err.code, "message": str(err), **err.extra}
+    )
 
 
 def _audit_unavailable() -> HTTPException:
     return HTTPException(
         status_code=503,
-        detail={"error": "audit_unavailable",
-                "message": ("This could not be recorded because the audit trail is not "
-                            "available. Nothing was saved. Try again in a moment.")},
+        detail={
+            "error": "audit_unavailable",
+            "message": (
+                "This could not be recorded because the audit trail is not "
+                "available. Nothing was saved. Try again in a moment."
+            ),
+        },
     )
 
 
@@ -289,13 +314,15 @@ def _in_txn_audit(request: Request, user: dict, *, action_type: str, summary, me
     return _write
 
 
+_PATIENT_CONSULTATIONS_USER_DEFAULT = Depends(
+    require_patient_access(OPD_CONSULT, opd_arm=True, audit_action="opd_consultations_viewed")
+)
+
+
 @router.get("/patients/{patient_id}/consultations")
 def patient_consultations(
     patient_id: str,
-    user: dict = Depends(
-        require_patient_access(OPD_CONSULT, opd_arm=True,
-                               audit_action="opd_consultations_viewed")
-    ),
+    user: dict = _PATIENT_CONSULTATIONS_USER_DEFAULT,
 ):
     """The patient's OPD notes in full: every clinic's signed notes (ruling
     OPD-N2 extent ii) and the caller's own clinic's drafts, each with its
@@ -303,11 +330,14 @@ def patient_consultations(
     return list_patient_consultations(patient_id, viewer_department=department_scope(user))
 
 
+_READ_CONSULTATION_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
+
+
 @router.get("/visits/{visit_id}/consultation")
 def read_consultation(
     visit_id: str,
     request: Request,
-    user: dict = Depends(require_permission(OPD_CONSULT)),
+    user: dict = _READ_CONSULTATION_USER_DEFAULT,
 ):
     """This visit's note (or null before it is started), its addenda, and
     whether it may be signed yet (the allergy review, ruling OPD-S7). The
@@ -318,13 +348,20 @@ def read_consultation(
     try:
         result = get_consultation(visit_id)
     except ConsultationError as err:
-        raise _consultation_http_error(err)
+        raise _consultation_http_error(err) from err
     log_phi_read(
-        request=request, user=user, action_type="opd_consultation_viewed",
+        request=request,
+        user=user,
+        action_type="opd_consultation_viewed",
         summary_message=f"OPD consultation for visit {visit_id} viewed",
-        patient_id=visit.get("patient_id"), target_type="opd_visit", target_id=visit_id,
+        patient_id=visit.get("patient_id"),
+        target_type="opd_visit",
+        target_id=visit_id,
     )
     return result
+
+
+_WRITE_CONSULTATION_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
 
 
 @router.put("/visits/{visit_id}/consultation")
@@ -332,7 +369,7 @@ def write_consultation(
     visit_id: str,
     data: ConsultationIn,
     request: Request,
-    user: dict = Depends(require_permission(OPD_CONSULT)),
+    user: dict = _WRITE_CONSULTATION_USER_DEFAULT,
 ):
     """Start or update the draft note. Refused once signed (409), when the
     version read is stale (409 with current_version), when the patient is
@@ -342,20 +379,34 @@ def write_consultation(
     fields = {k: getattr(data, k) for k in data.model_fields_set if k != "row_version"}
     try:
         return save_consultation(
-            visit_id, fields, row_version=data.row_version, actor_id=user.get("id") or "",
+            visit_id,
+            fields,
+            row_version=data.row_version,
+            actor_id=user.get("id") or "",
             on_done=_in_txn_audit(
-                request, user, action_type="opd_consultation_saved",
-                summary=lambda n, f: (f"OPD consultation {n['id']} "
-                                      f"{'started' if f.get('created') else 'saved'} "
-                                      f"(version {n['row_version']})"),
-                metadata=lambda n, f: {"visit_id": n["visit_id"], "row_version": n["row_version"],
-                                       "fields": f.get("fields"), "created": f.get("created")},
+                request,
+                user,
+                action_type="opd_consultation_saved",
+                summary=lambda n, f: (
+                    f"OPD consultation {n['id']} "
+                    f"{'started' if f.get('created') else 'saved'} "
+                    f"(version {n['row_version']})"
+                ),
+                metadata=lambda n, f: {
+                    "visit_id": n["visit_id"],
+                    "row_version": n["row_version"],
+                    "fields": f.get("fields"),
+                    "created": f.get("created"),
+                },
             ),
         )
     except ConsultationError as err:
-        raise _consultation_http_error(err)
+        raise _consultation_http_error(err) from err
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
+
+
+_SIGN_VISIT_CONSULTATION_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
 
 
 @router.post("/visits/{visit_id}/consultation/sign")
@@ -363,24 +414,31 @@ def sign_visit_consultation(
     visit_id: str,
     data: SignIn,
     request: Request,
-    user: dict = Depends(require_permission(OPD_CONSULT)),
+    user: dict = _SIGN_VISIT_CONSULTATION_USER_DEFAULT,
 ):
     """Sign the draft; it never changes afterwards. Needs an allergy review
     (ruling OPD-S7): 409 allergy_review_required until one exists."""
     _visit_in_clinic(visit_id, department_scope(user))
     try:
         return sign_consultation(
-            visit_id, row_version=data.row_version, actor_id=user.get("id") or "",
+            visit_id,
+            row_version=data.row_version,
+            actor_id=user.get("id") or "",
             on_done=_in_txn_audit(
-                request, user, action_type="opd_consultation_signed",
+                request,
+                user,
+                action_type="opd_consultation_signed",
                 summary=lambda n, f: f"OPD consultation {n['id']} signed",
                 metadata=lambda n, f: {"visit_id": n["visit_id"], **f},
             ),
         )
     except ConsultationError as err:
-        raise _consultation_http_error(err)
+        raise _consultation_http_error(err) from err
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
+
+
+_ADD_CONSULTATION_ADDENDUM_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
 
 
 @router.post("/visits/{visit_id}/consultation/addenda")
@@ -388,23 +446,30 @@ def add_consultation_addendum(
     visit_id: str,
     data: AddendumIn,
     request: Request,
-    user: dict = Depends(require_permission(OPD_CONSULT)),
+    user: dict = _ADD_CONSULTATION_ADDENDUM_USER_DEFAULT,
 ):
     """Append an addendum to the signed note. Addenda are never edited."""
     _visit_in_clinic(visit_id, department_scope(user))
     try:
         return add_addendum(
-            visit_id, data.body, actor_id=user.get("id") or "",
+            visit_id,
+            data.body,
+            actor_id=user.get("id") or "",
             on_done=_in_txn_audit(
-                request, user, action_type="opd_consultation_addendum_added",
+                request,
+                user,
+                action_type="opd_consultation_addendum_added",
                 summary=lambda n, f: f"Addendum added to OPD consultation {n['id']}",
                 metadata=lambda n, f: {"visit_id": n["visit_id"], **f},
             ),
         )
     except ConsultationError as err:
-        raise _consultation_http_error(err)
+        raise _consultation_http_error(err) from err
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
+
+
+_RECORD_VISIT_ALLERGY_REVIEW_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
 
 
 @router.post("/visits/{visit_id}/allergy-review")
@@ -412,7 +477,7 @@ def record_visit_allergy_review(
     visit_id: str,
     data: AllergyReviewIn,
     request: Request,
-    user: dict = Depends(require_permission(OPD_CONSULT)),
+    user: dict = _RECORD_VISIT_ALLERGY_REVIEW_USER_DEFAULT,
 ):
     """The consulting doctor's allergy review (opd-10a, ruling OPD-S7): the
     allergies the patient has (charted now, the same writer the admission
@@ -437,7 +502,8 @@ def record_visit_allergy_review(
             summary_message=(
                 f"Allergy review on OPD visit {visit_id}: {facts.get('status')}"
                 + (f"; charted {', '.join(charted)}" if charted else "")
-                + (f"; made active again {', '.join(again)}" if again else "")),
+                + (f"; made active again {', '.join(again)}" if again else "")
+            ),
             actor_user_id=user.get("id"),
             actor_role=user.get("role"),
             patient_id=result.get("patient_id"),
@@ -460,9 +526,9 @@ def record_visit_allergy_review(
             on_done=_audit,
         )
     except ConsultationError as err:
-        raise _consultation_http_error(err)
+        raise _consultation_http_error(err) from err
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -473,17 +539,21 @@ def record_visit_allergy_review(
 _INVESTIGATION_REFUSALS = {
     "unknown_code": (422, "That code is not in the code list. Choose a test from the search."),
     "not_an_investigation": (
-        422, "Only laboratory tests and imaging can be ordered for an outpatient here."),
-    "bedside_test": (
-        422, "That is a bedside test, done on a ward, not ordered from a clinic."),
+        422,
+        "Only laboratory tests and imaging can be ordered for an outpatient here.",
+    ),
+    "bedside_test": (422, "That is a bedside test, done on a ward, not ordered from a clinic."),
     "not_in_lab_catalogue": (
-        422, "The laboratory does not offer that test. Choose one from the search."),
+        422,
+        "The laboratory does not offer that test. Choose one from the search.",
+    ),
 }
 
 
 class OpdOrderIn(BaseModel):
     """POST body of an outpatient investigation. The order type and the words
     on the order come from the code list, never from the client."""
+
     model_config = ConfigDict(extra="forbid")
     code_system: str = Field(..., max_length=20)
     code: str = Field(..., max_length=64)
@@ -506,11 +576,17 @@ def _require_current_visit(visit: dict) -> None:
     first_day, last_day = opd_scope_window()
     day = str(visit.get("visit_date") or "").strip()[:10]
     if day and day > last_day:
-        raise _refuse(409, "visit_not_current",
-                      "This visit is booked for a later day. Order on the day of the visit.")
+        raise _refuse(
+            409,
+            "visit_not_current",
+            "This visit is booked for a later day. Order on the day of the visit.",
+        )
     if not day or day < first_day:
-        raise _refuse(409, "visit_not_current",
-                      "This visit is too old to order on. Order from the patient's current visit.")
+        raise _refuse(
+            409,
+            "visit_not_current",
+            "This visit is too old to order on. Order from the patient's current visit.",
+        )
 
 
 def _lab_catalogue_in_use() -> bool:
@@ -530,8 +606,9 @@ def _clinicians(ids) -> dict:
         rows = db.execute(
             f"SELECT id, name, registration_number FROM users WHERE id IN ({marks})", wanted
         ).fetchall()
-    return {r["id"]: {"name": r["name"], "registration_number": r["registration_number"]}
-            for r in rows}
+    return {
+        r["id"]: {"name": r["name"], "registration_number": r["registration_number"]} for r in rows
+    }
 
 
 def _order_view(order: dict, names: dict | None = None) -> dict:
@@ -558,14 +635,19 @@ def _phi_read(request: Request, user: dict, **kwargs) -> None:
     try:
         log_phi_read(request=request, user=user, **kwargs)
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
+
+
+_TERMINOLOGY_SEARCH_Q_DEFAULT = Query("", max_length=120)
+_TERMINOLOGY_SEARCH_KIND_DEFAULT = Query("diagnosis")
+_TERMINOLOGY_SEARCH_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
 
 
 @router.get("/terminology/search")
 def terminology_search(
-    q: str = Query("", max_length=120),
-    kind: Literal["diagnosis", "investigation"] = Query("diagnosis"),
-    user: dict = Depends(require_permission(OPD_CONSULT)),
+    q: str = _TERMINOLOGY_SEARCH_Q_DEFAULT,
+    kind: Literal["diagnosis", "investigation"] = _TERMINOLOGY_SEARCH_KIND_DEFAULT,
+    user: dict = _TERMINOLOGY_SEARCH_USER_DEFAULT,
 ):
     """The code lists behind the diagnosis and investigation pickers. No
     patient data is read, so nothing is audited. A diagnosis stays free text
@@ -574,22 +656,34 @@ def terminology_search(
     return terminology_service.search_terms(q, kind=kind, lab_catalogue=_lab_catalogue_in_use())
 
 
+_VISIT_ORDERS_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
+
+
 @router.get("/visits/{visit_id}/orders")
 def visit_orders(
     visit_id: str,
     request: Request,
-    user: dict = Depends(require_permission(OPD_CONSULT)),
+    user: dict = _VISIT_ORDERS_USER_DEFAULT,
 ):
     """The investigations ordered on this visit, with their results when
     back. Bounded by the visit's clinic, like the visit's note. Audited."""
     visit = _visit_in_clinic(visit_id, department_scope(user))
     orders = orders_service.list_visit_orders(visit_id)
-    _phi_read(request, user, action_type="opd_visit_orders_viewed",
-              summary_message=f"Investigations on OPD visit {visit_id} viewed ({len(orders)})",
-              patient_id=visit.get("patient_id"), target_type="opd_visit", target_id=visit_id,
-              metadata={"order_ids": [o["id"] for o in orders]})
+    _phi_read(
+        request,
+        user,
+        action_type="opd_visit_orders_viewed",
+        summary_message=f"Investigations on OPD visit {visit_id} viewed ({len(orders)})",
+        patient_id=visit.get("patient_id"),
+        target_type="opd_visit",
+        target_id=visit_id,
+        metadata={"order_ids": [o["id"] for o in orders]},
+    )
     names = _clinicians(o.get("ordered_by") for o in orders)
     return {"visit_id": visit_id, "orders": [_order_view(o, names) for o in orders]}
+
+
+_ORDER_INVESTIGATION_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
 
 
 @router.post("/visits/{visit_id}/orders", status_code=201)
@@ -597,7 +691,7 @@ def order_investigation(
     visit_id: str,
     data: OpdOrderIn,
     request: Request,
-    user: dict = Depends(require_permission(OPD_CONSULT)),
+    user: dict = _ORDER_INVESTIGATION_USER_DEFAULT,
 ):
     """Order a laboratory test or imaging for this outpatient visit, active at
     once (the patient goes to the laboratory from the clinic).
@@ -610,13 +704,19 @@ def order_investigation(
     outpatients. Written with its audit row in one transaction."""
     visit = _visit_in_clinic(visit_id, department_scope(user))
     if visit.get("status") == "cancelled":
-        raise _refuse(409, "visit_cancelled", "This visit was cancelled; nothing can be ordered on it.")
+        raise _refuse(
+            409, "visit_cancelled", "This visit was cancelled; nothing can be ordered on it."
+        )
     if visit.get("status") == "completed":
-        raise _refuse(409, "visit_completed",
-                      "This visit is finished. Order from the patient's current visit.")
+        raise _refuse(
+            409,
+            "visit_completed",
+            "This visit is finished. Order from the patient's current visit.",
+        )
     _require_current_visit(visit)
     found = terminology_service.describe_investigation(
-        data.code_system, data.code, lab_catalogue=_lab_catalogue_in_use())
+        data.code_system, data.code, lab_catalogue=_lab_catalogue_in_use()
+    )
     if found["refusal"]:
         status, message = _INVESTIGATION_REFUSALS[found["refusal"]]
         raise _refuse(status, found["refusal"], message)
@@ -630,8 +730,10 @@ def order_investigation(
             action_type="opd_investigation_ordered",
             outcome="success",
             db=db,
-            summary_message=(f"{order['order_type'].capitalize()} order {order['id']} on OPD "
-                             f"visit {visit_id}: {order['description']} ({order['priority']})"),
+            summary_message=(
+                f"{order['order_type'].capitalize()} order {order['id']} on OPD "
+                f"visit {visit_id}: {order['description']} ({order['priority']})"
+            ),
             actor_user_id=user.get("id"),
             actor_role=user.get("role"),
             patient_id=order["patient_id"],
@@ -640,9 +742,14 @@ def order_investigation(
             request_path=request.url.path,
             http_method=request.method,
             ip_address=request.client.host if request.client else None,
-            metadata={"visit_id": visit_id, "order_type": order["order_type"],
-                      "code_system": order["code_system"], "code": order["code"],
-                      "priority": order["priority"], "written": "in_transaction"},
+            metadata={
+                "visit_id": visit_id,
+                "order_type": order["order_type"],
+                "code_system": order["code_system"],
+                "code": order["code"],
+                "priority": order["priority"],
+                "written": "in_transaction",
+            },
         )
 
     try:
@@ -660,12 +767,15 @@ def order_investigation(
             in_transaction=_audit,
         )
     except OpdVisitOrderRefused as err:
-        raise _refuse(err.status, err.code, str(err))
+        raise _refuse(err.status, err.code, str(err)) from err
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
     except ValueError as err:
-        raise _refuse(422, "order_invalid", str(err))
+        raise _refuse(422, "order_invalid", str(err)) from err
     return _order_view(order, _clinicians([order.get("ordered_by")]))
+
+
+_CANCEL_INVESTIGATION_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
 
 
 @router.post("/visits/{visit_id}/orders/{order_id}/cancel")
@@ -674,7 +784,7 @@ def cancel_investigation(
     order_id: str,
     data: OpdOrderCancelIn,
     request: Request,
-    user: dict = Depends(require_permission(OPD_CONSULT)),
+    user: dict = _CANCEL_INVESTIGATION_USER_DEFAULT,
 ):
     """Cancel an investigation ordered on this visit, with a reason. An order
     the laboratory has taken in is cancelled from the laboratory request
@@ -689,11 +799,17 @@ def cancel_investigation(
     def _belongs(db, order: dict) -> None:
         if order.get("opd_visit_id") != visit_id:
             raise OpdVisitOrderRefused("order_not_found", "Order not found", status=404)
-        if db.execute("SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' "
-                      "LIMIT 1", (order["patient_id"],)).fetchone() is not None:
+        if (
+            db.execute(
+                "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' LIMIT 1",
+                (order["patient_id"],),
+            ).fetchone()
+            is not None
+        ):
             raise OpdVisitOrderRefused(
                 "patient_admitted",
-                "This patient is now admitted. Manage the order from the inpatient chart.")
+                "This patient is now admitted. Manage the order from the inpatient chart.",
+            )
 
     def _audit(db, prior: dict, moved: dict) -> None:
         log_audit_event(
@@ -711,34 +827,49 @@ def cancel_investigation(
             request_path=request.url.path,
             http_method=request.method,
             ip_address=request.client.host if request.client else None,
-            metadata={"visit_id": visit_id, "prior_status": prior.get("status"),
-                      "reason": reason, "written": "in_transaction"},
+            metadata={
+                "visit_id": visit_id,
+                "prior_status": prior.get("status"),
+                "reason": reason,
+                "written": "in_transaction",
+            },
         )
 
     try:
         moved = orders_service.transition_order(
-            order_id, "cancelled", actor_id=user.get("id"), detail=reason,
-            before_move=_belongs, in_transaction=_audit)
+            order_id,
+            "cancelled",
+            actor_id=user.get("id"),
+            detail=reason,
+            before_move=_belongs,
+            in_transaction=_audit,
+        )
     except OpdVisitOrderRefused as err:
-        raise _refuse(err.status, err.code, str(err))
+        raise _refuse(err.status, err.code, str(err)) from err
     except OrderManagedByLab as err:
-        raise _refuse(409, "order_managed_by_lab", str(err))
+        raise _refuse(409, "order_managed_by_lab", str(err)) from err
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
     except ValueError as err:
         message = str(err)
         if "not found" in message:
-            raise _refuse(404, "order_not_found", "Order not found")
-        raise _refuse(409, "order_not_cancellable", "This order can no longer be cancelled.")
+            raise _refuse(404, "order_not_found", "Order not found") from err
+        raise _refuse(
+            409, "order_not_cancellable", "This order can no longer be cancelled."
+        ) from err
     return _order_view(moved, _clinicians([moved.get("ordered_by")]))
+
+
+_VISIT_PRINT_KIND_DEFAULT = Query("consultation")
+_VISIT_PRINT_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
 
 
 @router.get("/visits/{visit_id}/print")
 def visit_print(
     visit_id: str,
     request: Request,
-    kind: Literal["consultation", "investigations"] = Query("consultation"),
-    user: dict = Depends(require_permission(OPD_CONSULT)),
+    kind: Literal["consultation", "investigations"] = _VISIT_PRINT_KIND_DEFAULT,
+    user: dict = _VISIT_PRINT_USER_DEFAULT,
 ):
     """What the consultation print or the investigation slip carries, read as
     it is printed (audited as a print, fail-closed).
@@ -750,14 +881,15 @@ def visit_print(
     address or allergy list (a visit-addressed answer never names allergens),
     and no text written for the print."""
     visit = _visit_in_clinic(visit_id, department_scope(user))
-    orders = [o for o in orders_service.list_visit_orders(visit_id)
-              if o.get("status") != "cancelled"]
+    orders = [
+        o for o in orders_service.list_visit_orders(visit_id) if o.get("status") != "cancelled"
+    ]
     note = None
     if kind == "consultation":
         try:
             note = get_consultation(visit_id).get("consultation")
         except ConsultationError as err:
-            raise _consultation_http_error(err)
+            raise _consultation_http_error(err) from err
         if not note or note.get("status") != "signed":
             raise _refuse(409, "not_signed", "Only a signed note can be printed. Sign it first.")
         doctor_ids = [note.get("signed_by")]
@@ -769,14 +901,27 @@ def visit_print(
     doctors = []
     for uid in dict.fromkeys(i for i in doctor_ids if i):
         who = names.get(uid) or {}
-        doctors.append({"name": who.get("name"), "registration_number": who.get("registration_number")})
-    _phi_read(request, user,
-              action_type=("opd_consultation_printed" if kind == "consultation"
-                           else "opd_investigation_slip_printed"),
-              summary_message=f"OPD {kind} print for visit {visit_id}",
-              patient_id=visit.get("patient_id"), target_type="opd_visit", target_id=visit_id,
-              metadata={"kind": kind, "order_ids": [o["id"] for o in orders],
-                        "consultation_id": (note or {}).get("id")})
+        doctors.append(
+            {"name": who.get("name"), "registration_number": who.get("registration_number")}
+        )
+    _phi_read(
+        request,
+        user,
+        action_type=(
+            "opd_consultation_printed"
+            if kind == "consultation"
+            else "opd_investigation_slip_printed"
+        ),
+        summary_message=f"OPD {kind} print for visit {visit_id}",
+        patient_id=visit.get("patient_id"),
+        target_type="opd_visit",
+        target_id=visit_id,
+        metadata={
+            "kind": kind,
+            "order_ids": [o["id"] for o in orders],
+            "consultation_id": (note or {}).get("id"),
+        },
+    )
     consultation = None
     if note:
         consultation = {
@@ -784,42 +929,81 @@ def visit_print(
             "chief_complaint": note.get("chief_complaint"),
             "history": note.get("history"),
             "examination": note.get("examination"),
-            "vitals": ({"values": note["vitals"].get("values") or {},
-                        "measured_at": note["vitals"].get("measured_at")}
-                       if note.get("vitals") else None),
-            "diagnoses": [{"text": d.get("text"), "code_system": d.get("code_system"),
-                           "code": d.get("code")} for d in note.get("diagnoses") or []],
+            "vitals": (
+                {
+                    "values": note["vitals"].get("values") or {},
+                    "measured_at": note["vitals"].get("measured_at"),
+                }
+                if note.get("vitals")
+                else None
+            ),
+            "diagnoses": [
+                {"text": d.get("text"), "code_system": d.get("code_system"), "code": d.get("code")}
+                for d in note.get("diagnoses") or []
+            ],
             "plan": note.get("plan"),
             "advice": note.get("advice"),
             "follow_up_date": note.get("follow_up_date"),
             "follow_up_note": note.get("follow_up_note"),
             "referral_department": note.get("referral_department"),
             "signed_at": note.get("signed_at"),
-            "addenda": [{"body": a.get("body"), "created_at": a.get("created_at"),
-                         "author_name": a.get("author_name")} for a in note.get("addenda") or []],
+            "addenda": [
+                {
+                    "body": a.get("body"),
+                    "created_at": a.get("created_at"),
+                    "author_name": a.get("author_name"),
+                }
+                for a in note.get("addenda") or []
+            ],
         }
     try:
         # The age as of today, the way the UHID card prints it (a stated age
         # is aged from the day it was stated), never a date of birth.
         card = registration_service.uhid_card(visit["patient_id"])
     except registration_service.RegistrationError:
-        card = {"name": visit.get("patient_name"), "uhid": visit.get("patient_mrn"),
-                "age": visit.get("patient_age"), "sex": visit.get("patient_sex")}
+        card = {
+            "name": visit.get("patient_name"),
+            "uhid": visit.get("patient_mrn"),
+            "age": visit.get("patient_age"),
+            "sex": visit.get("patient_sex"),
+        }
     return {
         "kind": kind,
         "printed_at": utc_iso_now(),
-        "visit": {"id": visit["id"], "visit_date": visit.get("visit_date"),
-                  "department": visit.get("department"),
-                  "token_number": visit.get("token_number")},
-        "patient": {"name": card.get("name"), "uhid": card.get("uhid"),
-                    "age": card.get("age"), "sex": card.get("sex")},
+        "visit": {
+            "id": visit["id"],
+            "visit_date": visit.get("visit_date"),
+            "department": visit.get("department"),
+            "token_number": visit.get("token_number"),
+        },
+        "patient": {
+            "name": card.get("name"),
+            "uhid": card.get("uhid"),
+            "age": card.get("age"),
+            "sex": card.get("sex"),
+        },
         "consultation": consultation,
-        "investigations": [{k: v for k, v in _order_view(o, names).items()
-                            if k in ("description", "order_type", "priority", "status",
-                                     "created_at", "ordered_by_name")}
-                           for o in orders],
+        "investigations": [
+            {
+                k: v
+                for k, v in _order_view(o, names).items()
+                if k
+                in (
+                    "description",
+                    "order_type",
+                    "priority",
+                    "status",
+                    "created_at",
+                    "ordered_by_name",
+                )
+            }
+            for o in orders
+        ],
         "doctors": doctors,
     }
+
+
+_COMPLETE_WITH_DISPOSITION_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
 
 
 @router.post("/visits/{visit_id}/complete")
@@ -827,7 +1011,7 @@ def complete_with_disposition(
     visit_id: str,
     data: OpdCompleteIn,
     request: Request,
-    user: dict = Depends(require_permission(OPD_CONSULT)),
+    user: dict = _COMPLETE_WITH_DISPOSITION_USER_DEFAULT,
 ):
     """Finish the visit with a disposition and raise the consultation charge
     (the front desk's charge logic, unchanged: one charge per visit, unpriced
@@ -840,27 +1024,38 @@ def complete_with_disposition(
     _visit_in_clinic(visit_id, department_scope(user))
     disposition = (data.disposition or "").strip().lower()
     if disposition not in dict(COMPLETION_DISPOSITIONS):
-        raise HTTPException(status_code=422, detail={
-            "error": "bad_disposition",
-            "message": "Choose how the visit ended: "
-                       + ", ".join(lab.lower() for _, lab in COMPLETION_DISPOSITIONS),
-        })
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "bad_disposition",
+                "message": "Choose how the visit ended: "
+                + ", ".join(lab.lower() for _, lab in COMPLETION_DISPOSITIONS),
+            },
+        )
     reason = (data.no_signed_note_reason or "").strip()[:500] or None
     facts: dict = {}
 
     def _precheck(db, row) -> None:
-        if db.execute("SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' "
-                      "LIMIT 1", (row["patient_id"],)).fetchone() is not None:
+        if (
+            db.execute(
+                "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' LIMIT 1",
+                (row["patient_id"],),
+            ).fetchone()
+            is not None
+        ):
             raise ConsultationError(
                 "patient_admitted",
                 "This patient is now admitted. Finish the visit from the inpatient chart.",
-                status=409)
+                status=409,
+            )
         signed = consultation_signed(db, visit_id)
         if not signed and not reason:
             raise ConsultationError(
                 "signed_note_required",
                 "Sign the consultation note first, or say why there is none "
-                "(for example, the note is on paper).", status=409)
+                "(for example, the note is on paper).",
+                status=409,
+            )
         facts.update(signed_note=signed, no_signed_note_reason=None if signed else reason)
 
     def _audit(db, visit: dict, svc_facts: dict) -> None:
@@ -871,8 +1066,10 @@ def complete_with_disposition(
             action_type="opd_visit_completed",
             outcome="success",
             db=db,
-            summary_message=(f"OPD visit {visit['id']} completed ({visit.get('disposition')}); "
-                             f"consultation charge {charge.get('charge_id') or 'not raised'}"),
+            summary_message=(
+                f"OPD visit {visit['id']} completed ({visit.get('disposition')}); "
+                f"consultation charge {charge.get('charge_id') or 'not raised'}"
+            ),
             actor_user_id=user.get("id"),
             actor_role=user.get("role"),
             patient_id=visit.get("patient_id"),
@@ -903,11 +1100,11 @@ def complete_with_disposition(
             on_done=_audit,
         )
     except ConsultationError as err:
-        raise _consultation_http_error(err)
+        raise _consultation_http_error(err) from err
     except FrontDeskError as err:
-        raise HTTPException(status_code=422, detail=str(err))
+        raise HTTPException(status_code=422, detail=str(err)) from err
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
     nudge_queue_changed(visit.get("department"))
     return visit
 
@@ -937,6 +1134,7 @@ class PrescriptionLineIn(BaseModel):
     """POST body of one prescription line. A field this route does not know
     is refused (422), so nobody believes it was prescribed. The route is
     never defaulted: the prescriber names it."""
+
     model_config = ConfigDict(extra="forbid")
     drug_name: str = Field(..., max_length=200)
     dose: str = Field(..., max_length=60)
@@ -970,8 +1168,9 @@ def _request_meta(request: Request) -> dict:
 
 
 def _prescription_refusal(err: "outpatient.PrescriptionRefused") -> HTTPException:
-    return HTTPException(status_code=err.status,
-                         detail={"error": err.code, "message": str(err), **err.extra})
+    return HTTPException(
+        status_code=err.status, detail={"error": err.code, "message": str(err), **err.extra}
+    )
 
 
 def _medorder_refusal(err: medorder_core.MedOrderError) -> HTTPException:
@@ -985,16 +1184,22 @@ def _line_key(request: Request, user: dict) -> str | None:
     if not raw:
         return None
     if len(raw) > _MAX_KEY_LENGTH or not raw.isprintable():
-        raise _refuse(422, "bad_idempotency_key",
-                      f"The request key must be at most {_MAX_KEY_LENGTH} plain characters.")
+        raise _refuse(
+            422,
+            "bad_idempotency_key",
+            f"The request key must be at most {_MAX_KEY_LENGTH} plain characters.",
+        )
     return f"opd-rx:{user.get('id')}:{raw}"
+
+
+_VISIT_PRESCRIPTIONS_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
 
 
 @router.get("/visits/{visit_id}/prescriptions", dependencies=_PRESCRIPTION_GATES)
 def visit_prescriptions(
     visit_id: str,
     request: Request,
-    user: dict = Depends(require_permission(OPD_CONSULT)),
+    user: dict = _VISIT_PRESCRIPTIONS_USER_DEFAULT,
 ):
     """The medicines prescribed on this visit, in every state (a cancelled
     line says why). Bounded by the visit's clinic, like the visit's note and
@@ -1005,22 +1210,33 @@ def visit_prescriptions(
     try:
         result = outpatient.list_visit_prescriptions(visit_id)
     except outpatient.PrescriptionRefused as err:
-        raise _prescription_refusal(err)
-    _phi_read(request, user, action_type=outpatient.LIST_AUDIT_ACTION,
-              summary_message=(f"Prescription on OPD visit {visit_id} viewed "
-                               f"({len(result['prescriptions'])} lines)"),
-              patient_id=visit.get("patient_id"), target_type="opd_visit", target_id=visit_id,
-              metadata={"order_ids": [p["id"] for p in result["prescriptions"]]})
+        raise _prescription_refusal(err) from err
+    _phi_read(
+        request,
+        user,
+        action_type=outpatient.LIST_AUDIT_ACTION,
+        summary_message=(
+            f"Prescription on OPD visit {visit_id} viewed ({len(result['prescriptions'])} lines)"
+        ),
+        patient_id=visit.get("patient_id"),
+        target_type="opd_visit",
+        target_id=visit_id,
+        metadata={"order_ids": [p["id"] for p in result["prescriptions"]]},
+    )
     return result
 
 
-@router.post("/visits/{visit_id}/prescriptions", status_code=201,
-             dependencies=_PRESCRIPTION_GATES)
+_WRITE_VISIT_PRESCRIPTION_USER_DEFAULT = Depends(
+    require_permission(OPD_CONSULT, MEDICATION_PRESCRIBE)
+)
+
+
+@router.post("/visits/{visit_id}/prescriptions", status_code=201, dependencies=_PRESCRIPTION_GATES)
 def write_visit_prescription(
     visit_id: str,
     data: PrescriptionLineIn,
     request: Request,
-    user: dict = Depends(require_permission(OPD_CONSULT, MEDICATION_PRESCRIBE)),
+    user: dict = _WRITE_VISIT_PRESCRIPTION_USER_DEFAULT,
 ):
     """Prescribe one medicine on this outpatient visit, signed by the caller
     as its prescriber (opd-12).
@@ -1041,27 +1257,37 @@ def write_visit_prescription(
     fields = data.model_dump(exclude={"safety_ack"})
     try:
         result = outpatient.write_prescription(
-            visit_id, fields, actor_id=user.get("id") or "", actor_role=user.get("role"),
-            safety_ack=data.safety_ack, idempotency_key=key, request_meta=_request_meta(request))
+            visit_id,
+            fields,
+            actor_id=user.get("id") or "",
+            actor_role=user.get("role"),
+            safety_ack=data.safety_ack,
+            idempotency_key=key,
+            request_meta=_request_meta(request),
+        )
     except outpatient.PrescriptionRefused as err:
-        raise _prescription_refusal(err)
+        raise _prescription_refusal(err) from err
     except medorder_core.MedOrderError as err:
-        raise _medorder_refusal(err)
+        raise _medorder_refusal(err) from err
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
     if result["replayed"]:
         return JSONResponse(status_code=200, content=jsonable_encoder(result))
     return result
 
 
-@router.post("/visits/{visit_id}/prescriptions/{order_id}/cancel",
-             dependencies=_PRESCRIPTION_GATES)
+_CANCEL_VISIT_PRESCRIPTION_USER_DEFAULT = Depends(
+    require_permission(OPD_CONSULT, MEDICATION_PRESCRIBE)
+)
+
+
+@router.post("/visits/{visit_id}/prescriptions/{order_id}/cancel", dependencies=_PRESCRIPTION_GATES)
 def cancel_visit_prescription(
     visit_id: str,
     order_id: str,
     data: PrescriptionCancelIn,
     request: Request,
-    user: dict = Depends(require_permission(OPD_CONSULT, MEDICATION_PRESCRIBE)),
+    user: dict = _CANCEL_VISIT_PRESCRIPTION_USER_DEFAULT,
 ):
     """Cancel one prescribed medicine on this open visit, with a reason (at
     least 3 characters). Refused once the visit is finished or cancelled, on
@@ -1071,22 +1297,30 @@ def cancel_visit_prescription(
     _visit_in_clinic(visit_id, department_scope(user))
     try:
         return outpatient.cancel_prescription(
-            visit_id, order_id, reason=data.reason, expected_version=data.expected_version,
-            actor_id=user.get("id") or "", actor_role=user.get("role"),
-            request_meta=_request_meta(request))
+            visit_id,
+            order_id,
+            reason=data.reason,
+            expected_version=data.expected_version,
+            actor_id=user.get("id") or "",
+            actor_role=user.get("role"),
+            request_meta=_request_meta(request),
+        )
     except outpatient.PrescriptionRefused as err:
-        raise _prescription_refusal(err)
+        raise _prescription_refusal(err) from err
     except medorder_core.MedOrderError as err:
-        raise _medorder_refusal(err)
+        raise _medorder_refusal(err) from err
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
+
+
+_VISIT_PRESCRIPTION_PRINT_USER_DEFAULT = Depends(require_permission(OPD_CONSULT))
 
 
 @router.get("/visits/{visit_id}/prescriptions/print", dependencies=_PRESCRIPTION_GATES)
 def visit_prescription_print(
     visit_id: str,
     request: Request,
-    user: dict = Depends(require_permission(OPD_CONSULT)),
+    user: dict = _VISIT_PRESCRIPTION_PRINT_USER_DEFAULT,
 ):
     """What the printed prescription carries, read as it is printed (audited
     as a print, fail-closed, naming the lines printed).
@@ -1101,35 +1335,68 @@ def visit_prescription_print(
     try:
         data = outpatient.print_lines(visit_id)
     except outpatient.PrescriptionRefused as err:
-        raise _prescription_refusal(err)
+        raise _prescription_refusal(err) from err
     names = _clinicians(data["prescriber_ids"])
-    _phi_read(request, user, action_type=outpatient.PRINT_AUDIT_ACTION,
-              summary_message=f"OPD prescription print for visit {visit_id}",
-              patient_id=visit.get("patient_id"), target_type="opd_visit", target_id=visit_id,
-              metadata={"kind": "prescription",
-                        "order_ids": [line["id"] for line in data["lines"]]})
+    _phi_read(
+        request,
+        user,
+        action_type=outpatient.PRINT_AUDIT_ACTION,
+        summary_message=f"OPD prescription print for visit {visit_id}",
+        patient_id=visit.get("patient_id"),
+        target_type="opd_visit",
+        target_id=visit_id,
+        metadata={"kind": "prescription", "order_ids": [line["id"] for line in data["lines"]]},
+    )
     try:
         card = registration_service.uhid_card(visit["patient_id"])
     except registration_service.RegistrationError:
-        card = {"name": visit.get("patient_name"), "uhid": visit.get("patient_mrn"),
-                "age": visit.get("patient_age"), "sex": visit.get("patient_sex")}
+        card = {
+            "name": visit.get("patient_name"),
+            "uhid": visit.get("patient_mrn"),
+            "age": visit.get("patient_age"),
+            "sex": visit.get("patient_sex"),
+        }
     return {
         "kind": "prescription",
         "printed_at": utc_iso_now(),
-        "visit": {"id": visit["id"], "visit_date": visit.get("visit_date"),
-                  "department": visit.get("department"),
-                  "token_number": visit.get("token_number")},
-        "patient": {"name": card.get("name"), "uhid": card.get("uhid"),
-                    "age": card.get("age"), "sex": card.get("sex")},
+        "visit": {
+            "id": visit["id"],
+            "visit_date": visit.get("visit_date"),
+            "department": visit.get("department"),
+            "token_number": visit.get("token_number"),
+        },
+        "patient": {
+            "name": card.get("name"),
+            "uhid": card.get("uhid"),
+            "age": card.get("age"),
+            "sex": card.get("sex"),
+        },
         "allergy_review": data["allergy_review"],
         "diagnoses": data["diagnoses"],
         "prescriptions": [
-            {k: line[k] for k in ("drug_name", "dose", "route", "frequency", "is_prn",
-                                  "prn_indication", "duration_days", "quantity",
-                                  "instructions", "prescribed_at", "prescriber_name")}
+            {
+                k: line[k]
+                for k in (
+                    "drug_name",
+                    "dose",
+                    "route",
+                    "frequency",
+                    "is_prn",
+                    "prn_indication",
+                    "duration_days",
+                    "quantity",
+                    "instructions",
+                    "prescribed_at",
+                    "prescriber_name",
+                )
+            }
             for line in data["lines"]
         ],
-        "doctors": [{"name": (names.get(uid) or {}).get("name"),
-                     "registration_number": (names.get(uid) or {}).get("registration_number")}
-                    for uid in data["prescriber_ids"]],
+        "doctors": [
+            {
+                "name": (names.get(uid) or {}).get("name"),
+                "registration_number": (names.get(uid) or {}).get("registration_number"),
+            }
+            for uid in data["prescriber_ids"]
+        ],
     }

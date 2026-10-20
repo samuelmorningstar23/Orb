@@ -91,15 +91,18 @@ with the same explicit typed reason a real alert needs. A total unoverridable
 block would be its own hazard (you must still be able to give adrenaline during
 a partial outage) — but nothing proceeds *silently*.
 """
+
 from __future__ import annotations
 
 import hashlib
 import json
 import logging
 import re
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from typing import Any
 
 from permissions import MEDICATION_PRESCRIBE, has_permission
+
 from services.drug_safety_service import _norm, effective_severity, match_allergies
 
 logger = logging.getLogger("orb.allergy_interlock")
@@ -117,9 +120,9 @@ logger = logging.getLogger("orb.allergy_interlock")
 OVERRIDE_PERMISSION = MEDICATION_PRESCRIBE
 
 # ── Decisions ────────────────────────────────────────────────────────────────
-ALLOW = "allow"    # nothing matched — proceed, recorded
-WARN = "warn"      # matched, but not at a grade that should stop the dose
-BLOCK = "block"    # hard stop; proceeds only with an explicit typed reason
+ALLOW = "allow"  # nothing matched — proceed, recorded
+WARN = "warn"  # matched, but not at a grade that should stop the dose
+BLOCK = "block"  # hard stop; proceeds only with an explicit typed reason
 
 _DECISION_RANK = {ALLOW: 0, WARN: 1, BLOCK: 2}
 
@@ -128,9 +131,29 @@ _DECISION_RANK = {ALLOW: 0, WARN: 1, BLOCK: 2}
 # barrier against a reflex clear-through.
 MIN_OVERRIDE_REASON_CHARS = 10
 _JUNK_REASONS = {
-    "ok", "okay", "yes", "y", "n/a", "na", "none", "fine", "done", "test",
-    "asdf", "aaaa", "override", "no reason", "as discussed", "per doctor",
-    "as per doctor", "doctor said", "verbal order", "-", ".", "..", "...",
+    "ok",
+    "okay",
+    "yes",
+    "y",
+    "n/a",
+    "na",
+    "none",
+    "fine",
+    "done",
+    "test",
+    "asdf",
+    "aaaa",
+    "override",
+    "no reason",
+    "as discussed",
+    "per doctor",
+    "as per doctor",
+    "doctor said",
+    "verbal order",
+    "-",
+    ".",
+    "..",
+    "...",
 }
 
 # ── Reaction-text policy ─────────────────────────────────────────────────────
@@ -171,7 +194,7 @@ class AllergyOverrideNotPermitted(AllergyInterlockBlocked):
         super().__init__(screen, message)
 
 
-def override_authority(db, actor_id: Optional[str]) -> dict:
+def override_authority(db, actor_id: str | None) -> dict:
     """May ``actor_id`` clear a charted allergy? Read from the USER ROW.
 
     The authority is derived from the actor's persisted role and the central
@@ -192,8 +215,9 @@ def override_authority(db, actor_id: Optional[str]) -> dict:
             if row is not None:
                 role = (row["role"] if not isinstance(row, tuple) else row[0]) or None
         except Exception as e:
-            logger.error("[AllergyInterlock] could not read actor %s for override "
-                         "authority: %s", actor_id, e)
+            logger.error(
+                "[AllergyInterlock] could not read actor %s for override authority: %s", actor_id, e
+            )
             role = None
     permitted = bool(role) and has_permission(str(role).strip().lower(), OVERRIDE_PERMISSION)
     return {
@@ -226,9 +250,7 @@ def resolve_ingredients_bulk(db, drug_names: Iterable[str]) -> dict[str, list[st
     if not wanted:
         return out
     try:
-        rows = db.execute(
-            "SELECT name, generic_name FROM helix_medication_master"
-        ).fetchall()
+        rows = db.execute("SELECT name, generic_name FROM helix_medication_master").fetchall()
     except Exception as e:
         # The formulary is an ENRICHMENT, not the allergy source. Losing it
         # degrades brand-name resolution; it does not blind the screen, and it
@@ -300,13 +322,15 @@ def _fingerprint(drug_key: str, alerts: list[dict]) -> str:
     stale acknowledgement cover a new hazard.
     """
     parts = sorted(
-        "|".join([
-            str(a.get("allergy_id")),
-            str(a.get("substance")),
-            str(a.get("match")),
-            str(a.get("effective_severity")),
-            str(a.get("decision")),
-        ])
+        "|".join(
+            [
+                str(a.get("allergy_id")),
+                str(a.get("substance")),
+                str(a.get("match")),
+                str(a.get("effective_severity")),
+                str(a.get("decision")),
+            ]
+        )
         for a in alerts
     )
     raw = "\x1f".join([drug_key, *parts])
@@ -344,8 +368,11 @@ def evaluate(
     # could not interpret" instead of a clean screen it did not earn.
     matched_ids = {a.get("allergy_id") for a in alerts}
     uninterpreted = [
-        {"allergy_id": a.get("id"), "substance": a.get("substance"),
-         "reason": "allergen record too short to match safely"}
+        {
+            "allergy_id": a.get("id"),
+            "substance": a.get("substance"),
+            "reason": "allergen record too short to match safely",
+        }
         for a in allergies
         if a.get("id") not in matched_ids and len(_norm(a.get("substance") or "")) < 4
     ]
@@ -386,8 +413,8 @@ def failed_screen(drug_name: str, error: str) -> dict:
         "allergies_on_file": None,
         "screen_failed": True,
         "screen_error": error,
-        "fingerprint": None,   # never carried forward: an unreadable screen is
-                               # not a decision anyone made about a known risk
+        "fingerprint": None,  # never carried forward: an unreadable screen is
+        # not a decision anyone made about a known risk
         "override": None,
         "message": (
             "Allergy data could not be read. This dose has NOT been screened. "
@@ -420,8 +447,9 @@ def screen(db, patient_id: str, drug_name: str) -> dict:
     try:
         allergies = read_active_allergies(db, patient_id)
     except Exception as e:
-        logger.error("[AllergyInterlock] allergy read FAILED for %s / %s: %s",
-                     patient_id, drug_name, e)
+        logger.error(
+            "[AllergyInterlock] allergy read FAILED for %s / %s: %s", patient_id, drug_name, e
+        )
         return failed_screen(drug_name, f"{type(e).__name__}: {e}")
 
     ingredients = resolve_ingredients(db, drug_name)
@@ -430,7 +458,7 @@ def screen(db, patient_id: str, drug_name: str) -> dict:
     return result
 
 
-def find_carried_override(db, med_id: int, fingerprint: Optional[str]) -> Optional[dict]:
+def find_carried_override(db, med_id: int, fingerprint: str | None) -> dict | None:
     """The most recent PRESCRIBER-AUTHORED override for THIS order against THIS
     allergy picture.
 
@@ -485,7 +513,10 @@ def find_carried_override(db, med_id: int, fingerprint: Optional[str]) -> Option
         logger.warning(
             "[AllergyInterlock] override %s on med %s is not carried: authorised by "
             "%s (role=%r), which does not hold %s. The interlock stays armed.",
-            d["id"], med_id, d["overridden_by"], d.get("overridden_by_role"),
+            d["id"],
+            med_id,
+            d["overridden_by"],
+            d.get("overridden_by_role"),
             OVERRIDE_PERMISSION,
         )
         return None
@@ -499,7 +530,7 @@ def find_carried_override(db, med_id: int, fingerprint: Optional[str]) -> Option
     }
 
 
-def validate_override_reason(reason: Optional[str]) -> str:
+def validate_override_reason(reason: str | None) -> str:
     """Return a cleaned typed reason, or raise ValueError.
 
     Guards against the reflex clear-through: a reason must be at least
@@ -528,10 +559,10 @@ def screen_for_administration(
     db,
     patient_id: str,
     drug_name: str,
-    med_id: Optional[int],
+    med_id: int | None,
     *,
-    override_reason: Optional[str] = None,
-    actor_id: Optional[str] = None,
+    override_reason: str | None = None,
+    actor_id: str | None = None,
 ) -> dict:
     """Full bedside screen for one dose, including the override decision.
 
@@ -602,6 +633,7 @@ def screen_for_administration(
         return result
 
     # Otherwise: has this exact hazard already been accepted for this order?
+    assert med_id is not None
     carried = find_carried_override(db, med_id, result.get("fingerprint"))
     if carried:
         result["override"] = carried
@@ -626,11 +658,11 @@ def record_override(
     db,
     *,
     screen_result: dict,
-    med_id: Optional[int],
+    med_id: int | None,
     patient_id: str,
     actor_id: str,
-    administration_id: Optional[int],
-) -> Optional[int]:
+    administration_id: int | None,
+) -> int | None:
     """Persist a NEW override row on the caller's connection/transaction.
 
     Called only when ``requires_override_write`` is set, and deliberately inside
@@ -676,11 +708,13 @@ def blocking_allergens(screen_result: dict) -> list[str]:
     "which allergy was overridden" cannot be answered two different ways in two
     different places.
     """
-    return sorted({
-        str(a.get("substance"))
-        for a in (screen_result.get("blocking_alerts") or screen_result.get("alerts") or [])
-        if a.get("substance") and a.get("decision") == BLOCK
-    })
+    return sorted(
+        {
+            str(a.get("substance"))
+            for a in (screen_result.get("blocking_alerts") or screen_result.get("alerts") or [])
+            if a.get("substance") and a.get("decision") == BLOCK
+        }
+    )
 
 
 def summarize(screen_result: dict) -> dict[str, Any]:
@@ -718,8 +752,7 @@ def summarize(screen_result: dict) -> dict[str, Any]:
         # separate decision, so it cannot disagree with the gate.
         "override_requires_permission": (
             OVERRIDE_PERMISSION
-            if (screen_result.get("decision") == BLOCK
-                and not screen_result.get("screen_failed"))
+            if (screen_result.get("decision") == BLOCK and not screen_result.get("screen_failed"))
             else None
         ),
         "message": screen_result.get("message"),

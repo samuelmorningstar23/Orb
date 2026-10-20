@@ -22,6 +22,7 @@ Run it with the same ORB_DB_ENCRYPTION_KEY as the server: the DB is opened throu
 database._open_raw_connection(), so an encrypted-at-rest orb.db is unreadable
 without the key (SQLCipher reports "file is not a database").
 """
+
 import argparse
 import os
 import sys
@@ -32,8 +33,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--force", action="store_true", help="actually rewrite (else dry-run)")
-    ap.add_argument("--i-understand", action="store_true",
-                    help="bypass the dev-profile guard (you are re-sealing real audit data)")
+    ap.add_argument(
+        "--i-understand",
+        action="store_true",
+        help="bypass the dev-profile guard (you are re-sealing real audit data)",
+    )
     args = ap.parse_args()
 
     from config import DEPLOYMENT_PROFILE
@@ -42,8 +46,10 @@ def main() -> int:
     from services.flight_recorder_service import _AUDIT_SELECT
 
     if args.force and DEPLOYMENT_PROFILE != "dev" and not args.i_understand:
-        print("REFUSING: not in dev profile. Re-sealing a production audit log erases "
-              "tamper evidence. Pass --i-understand only if you truly intend this.")
+        print(
+            "REFUSING: not in dev profile. Re-sealing a production audit log erases "
+            "tamper evidence. Pass --i-understand only if you truly intend this."
+        )
         return 2
 
     # Codec-aware open: with ORB_DB_ENCRYPTION_KEY set, orb.db is a SQLCipher file
@@ -86,8 +92,10 @@ def main() -> int:
     for r in rows:
         d = dict(r)
         row_hash = compute_audit_row_hash(d, prev_hash)
-        conn.execute("UPDATE audit_logs SET prev_hash = ?, row_hash = ? WHERE id = ?",
-                     (prev_hash, row_hash, d["id"]))
+        conn.execute(
+            "UPDATE audit_logs SET prev_hash = ?, row_hash = ? WHERE id = ?",
+            (prev_hash, row_hash, d["id"]),
+        )
         prev_hash = row_hash
         resealed += 1
 

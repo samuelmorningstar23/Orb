@@ -27,6 +27,7 @@ Usage
 A tiny sample lives at ``scripts/fixtures/ddinter_sample.csv`` to prove the
 loader end-to-end without downloading the full dataset.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -37,9 +38,11 @@ from pathlib import Path
 SERVER_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SERVER_DIR))
 
+
 from database import db_session  # noqa: E402
 from services.drug_safety_service import (  # noqa: E402
-    formulary_interaction_coverage, ingredient_key,
+    formulary_interaction_coverage,
+    ingredient_key,
 )
 
 _LEVEL_TO_SEVERITY = {
@@ -80,8 +83,7 @@ def load_file(path: Path, source: str = "ddinter") -> tuple[int, int]:
                        severity=excluded.severity,
                        mechanism=excluded.mechanism,
                        source=excluded.source""",
-                (drug_a, drug_b, severity,
-                 f"DDInter {level or 'unknown'} interaction.", source),
+                (drug_a, drug_b, severity, f"DDInter {level or 'unknown'} interaction.", source),
             )
             upserted += 1
     return read, upserted
@@ -90,8 +92,9 @@ def load_file(path: Path, source: str = "ddinter") -> tuple[int, int]:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Load DDInter-format interaction CSV.")
     ap.add_argument("--file", required=True, help="Path to the DDInter CSV file.")
-    ap.add_argument("--source", default="ddinter",
-                    help="Source tag stored on each row (default: ddinter).")
+    ap.add_argument(
+        "--source", default="ddinter", help="Source tag stored on each row (default: ddinter)."
+    )
     args = ap.parse_args()
 
     path = Path(args.file)
@@ -101,8 +104,10 @@ def main() -> None:
         ap.error(f"file not found: {path}")
 
     read, upserted = load_file(path, source=args.source)
-    print(f"Read {read} interaction rows; upserted {upserted} into drug_interactions "
-          f"(source={args.source}).")
+    print(
+        f"Read {read} interaction rows; upserted {upserted} into drug_interactions "
+        f"(source={args.source})."
+    )
     print_coverage()
 
 

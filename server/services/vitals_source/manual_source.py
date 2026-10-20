@@ -48,10 +48,11 @@ All three stamp a label `classify_source_label` maps to MANUAL, leave
 `source_event_id` NULL (a typed set has no wire event), and are counted in this
 source's stats — so "is manual entry alive?" is one question with one answer.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Optional, Sequence
+from collections.abc import Sequence
 
 from services.clinical_time import to_utc_iso, utc_iso_now
 from services.ingestion_service import IngestionResult
@@ -91,13 +92,13 @@ class ManualEntrySource(VitalsSource):
         patient_identifier: str,
         values: dict,
         *,
-        entered_by: Optional[str] = None,
-        observed_at: Optional[str] = None,
-        device_id: Optional[str] = None,
-        encounter_identifier: Optional[str] = None,
-        consciousness: Optional[str] = None,
-        on_oxygen: Optional[bool] = None,
-        correlation_id: Optional[str] = None,
+        entered_by: str | None = None,
+        observed_at: str | None = None,
+        device_id: str | None = None,
+        encounter_identifier: str | None = None,
+        consciousness: str | None = None,
+        on_oxygen: bool | None = None,
+        correlation_id: str | None = None,
     ) -> IngestionResult:
         """Record one set of typed vitals.
 
@@ -119,13 +120,15 @@ class ManualEntrySource(VitalsSource):
         )
         return await self.submit([reading], correlation_id=correlation_id)
 
-    async def submit(self, readings: Sequence[VitalsReading], *,
-                     correlation_id: Optional[str] = None) -> IngestionResult:
+    async def submit(
+        self, readings: Sequence[VitalsReading], *, correlation_id: str | None = None
+    ) -> IngestionResult:
         """Submit prepared readings. Counts, never raises into the caller's route."""
         self.stats.messages_received += len(readings)
         try:
             result = await self.sink.submit_readings(
-                readings, source=self, correlation_id=correlation_id)
+                readings, source=self, correlation_id=correlation_id
+            )
         except Exception as e:
             self.stats.messages_rejected += len(readings)
             self.stats.note_error(str(e))
@@ -152,10 +155,10 @@ class ManualEntrySource(VitalsSource):
         actor_id: str,
         obs: dict,
         *,
-        idempotency_key: Optional[str] = None,
-        taken_at: Optional[str] = None,
-        source: Optional[str] = None,
-        illegible: Optional[list] = None,
+        idempotency_key: str | None = None,
+        taken_at: str | None = None,
+        source: str | None = None,
+        illegible: list | None = None,
     ) -> dict:
         """Chart a nurse-entered observation set. Synchronous and FAIL-LOUD.
 
@@ -179,9 +182,14 @@ class ManualEntrySource(VitalsSource):
         self.stats.messages_received += 1
         try:
             result = nurse_shift_service._record_observation_txn(
-                patient_id, actor_id, obs,
-                idempotency_key=idempotency_key, taken_at=taken_at,
-                source=source, illegible=illegible)
+                patient_id,
+                actor_id,
+                obs,
+                idempotency_key=idempotency_key,
+                taken_at=taken_at,
+                source=source,
+                illegible=illegible,
+            )
         except Exception as e:
             self.stats.messages_rejected += 1
             self.stats.note_error(str(e))
@@ -205,8 +213,8 @@ class ManualEntrySource(VitalsSource):
         values: dict,
         *,
         observed_at: str,
-        consciousness: Optional[str] = None,
-        on_oxygen: Optional[bool] = None,
+        consciousness: str | None = None,
+        on_oxygen: bool | None = None,
     ) -> int:
         """Write the admission form's initial vitals set. Returns the row id.
 
@@ -236,8 +244,7 @@ class ManualEntrySource(VitalsSource):
         try:
             unknown = sorted(k for k in values if k not in VITAL_KEYS)
             if unknown:
-                raise ValueError(
-                    f"unknown vital key(s) {unknown}; expected {list(VITAL_KEYS)}")
+                raise ValueError(f"unknown vital key(s) {unknown}; expected {list(VITAL_KEYS)}")
             # Provenance contract shared with the nurse charting path and the
             # ingestion sink: `source` is a label _LABEL_KIND classifies (here
             # `admission_label` → MANUAL) and `source_event_id` stays NULL
@@ -250,14 +257,21 @@ class ManualEntrySource(VitalsSource):
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 # The one stored spelling (services/clinical_time.py). The
                 # caller is Orb itself, so a naive value is UTC.
-                (patient_id, to_utc_iso(observed_at), values.get("HR"), values.get("SBP"),
-                 values.get("DBP"), values.get("SpO2"), values.get("Temp"),
-                 values.get("RR"),
-                 (str(consciousness).strip() or None) if consciousness is not None else None,
-                 None if on_oxygen is None else (1 if on_oxygen else 0),
-                 self.admission_label,
-                 # Migration 77: every keyed set records when it was keyed.
-                 utc_iso_now()),
+                (
+                    patient_id,
+                    to_utc_iso(observed_at),
+                    values.get("HR"),
+                    values.get("SBP"),
+                    values.get("DBP"),
+                    values.get("SpO2"),
+                    values.get("Temp"),
+                    values.get("RR"),
+                    (str(consciousness).strip() or None) if consciousness is not None else None,
+                    None if on_oxygen is None else (1 if on_oxygen else 0),
+                    self.admission_label,
+                    # Migration 77: every keyed set records when it was keyed.
+                    utc_iso_now(),
+                ),
             )
         except Exception as e:
             self.stats.messages_rejected += 1

@@ -187,7 +187,7 @@ describe('the HIS mirror matches the server source', () => {
     const permissions = serverSource('permissions.py')
     for (const perm of HIS_PERMISSIONS) {
       expect(permissions, `server/permissions.py has no constant for '${perm}'`).toMatch(
-        new RegExp(`^[A-Z_]+ = "${perm.replace('.', '\\.')}"`, 'm'),
+        new RegExp(`^[A-Z_0-9]+\\s*=\\s*(?:\\(\\s*)?"${perm.replace('.', '\\.')}"`, 'm'),
       )
     }
   })

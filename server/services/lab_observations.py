@@ -42,18 +42,27 @@ are module constants spliced into the SQL as literals, never request text, so
 a fragment can be used where no bound parameters are allowed (the timeline's
 count union counts its own placeholders).
 """
+
 from __future__ import annotations
 
 import re
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from typing import Any
 
 #: Statuses that mean "not a result to act on". HL7 OBX-11 X (cannot be
 #: obtained), D (deleted) and W (wrong patient or withdrawn), the FHIR and
 #: free-text spellings the importers and adapters write, and 'superseded'
 #: for a result a later correction replaced.
 VOID_OBSERVATION_STATUSES: tuple[str, ...] = (
-    "x", "d", "w", "cancelled", "deleted", "entered-in-error",
-    "entered_in_error", "wrong", "superseded",
+    "x",
+    "d",
+    "w",
+    "cancelled",
+    "deleted",
+    "entered-in-error",
+    "entered_in_error",
+    "wrong",
+    "superseded",
 )
 
 #: The provenance label a simulator writes on its rows (vitals_source.base).
@@ -134,6 +143,7 @@ def display_value(row: Any) -> Any:
 
 # ── The readers ──────────────────────────────────────────────────────────────
 
+
 def chart_lab_rows(db, patient_id: str, *, per_analyte: int, max_rows: int) -> list:
     """The chart's lab card: numeric results, the newest ``per_analyte`` of
     each analyte, cut to ``max_rows`` by recency rank so every analyte keeps
@@ -204,8 +214,9 @@ def latest_per_analyte(db, patient_id: str, *, limit: int) -> list:
     ).fetchall()
 
 
-def recent_observations(db, patient_id: str, *, limit: int,
-                        exclude_simulated: bool = False) -> list:
+def recent_observations(
+    db, patient_id: str, *, limit: int, exclude_simulated: bool = False
+) -> list:
     """This patient's most recent live results, newest first, every analyte.
 
     observed_at and recorded_at come back as stored; the caller decides which
@@ -224,8 +235,9 @@ def recent_observations(db, patient_id: str, *, limit: int,
     ).fetchall()
 
 
-def previous_result(db, patient_id: str, code: str, before_iso: str, *,
-                    exclude_simulated: bool = False) -> Optional[Any]:
+def previous_result(
+    db, patient_id: str, code: str, before_iso: str, *, exclude_simulated: bool = False
+) -> Any | None:
     """The newest live result for ``code`` observed strictly before
     ``before_iso``, or None when there is none.
 
@@ -235,8 +247,10 @@ def previous_result(db, patient_id: str, code: str, before_iso: str, *,
     """
     if not patient_id or not code:
         return None
-    if before_iso is None or db.execute(
-            "SELECT julianday(?)", (str(before_iso),)).fetchone()[0] is None:
+    if (
+        before_iso is None
+        or db.execute("SELECT julianday(?)", (str(before_iso),)).fetchone()[0] is None
+    ):
         raise ValueError(f"unparseable time for a previous result: {before_iso!r}")
     return db.execute(
         f"""SELECT id, observation_code, observation_name, value_numeric,
@@ -265,9 +279,16 @@ for _word in CORRECTABLE_STATUSES:
         raise ValueError(f"lab_observations constant is not a plain word: {_word!r}")
 
 
-def correction_candidates(db, *, patient_id: str, code: str, sub_id: Optional[str],
-                          sender: Optional[str], source: Optional[str],
-                          exclude_id: int) -> list:
+def correction_candidates(
+    db,
+    *,
+    patient_id: str,
+    code: str,
+    sub_id: str | None,
+    sender: str | None,
+    source: str | None,
+    exclude_id: int,
+) -> list:
     """Live final results an external correction could replace: the same
     patient, test code, OBX-4 sub-id, sender (MSH-3 and MSH-4) and lane, not
     released by the laboratory module, and carrying an order number (OBR-3 or
@@ -286,14 +307,27 @@ def correction_candidates(db, *, patient_id: str, code: str, sub_id: Optional[st
               AND LOWER(TRIM(COALESCE(status, 'final'))) IN ({statuses})
               AND (obr_filler IS NOT NULL OR obr_placer IS NOT NULL)
             ORDER BY id""",
-        (patient_id, code, int(exclude_id), (sub_id or "").strip(),
-         (sender or "").strip(), source or ""),
+        (
+            patient_id,
+            code,
+            int(exclude_id),
+            (sub_id or "").strip(),
+            (sender or "").strip(),
+            source or "",
+        ),
     ).fetchall()
 
 
-def same_message_results(db, *, event_id: Optional[int], code: str,
-                         sub_id: Optional[str], sender: Optional[str],
-                         source: Optional[str], exclude_id: int) -> list:
+def same_message_results(
+    db,
+    *,
+    event_id: int | None,
+    code: str,
+    sub_id: str | None,
+    sender: str | None,
+    source: str | None,
+    exclude_id: int,
+) -> list:
     """Every other result the same raw message (source_event_id) carried for
     the same test code, OBX-4 sub-id, sender and lane, whatever its status or
     patient, superseded and voided rows included. A correction whose own
@@ -309,12 +343,18 @@ def same_message_results(db, *, event_id: Optional[int], code: str,
              AND COALESCE(obx_sub_id, '') = ? AND COALESCE(hl7_sender, '') = ?
              AND COALESCE(source, '') = ?
            ORDER BY id""",
-        (int(event_id), code, int(exclude_id), (sub_id or "").strip(),
-         (sender or "").strip(), source or ""),
+        (
+            int(event_id),
+            code,
+            int(exclude_id),
+            (sub_id or "").strip(),
+            (sender or "").strip(),
+            source or "",
+        ),
     ).fetchall()
 
 
-def unlinked_result(db, observation_id: int) -> Optional[Any]:
+def unlinked_result(db, observation_id: int) -> Any | None:
     """One result stored with no patient, with what a correction needs, or
     None when the id names no such row (it may have a patient already)."""
     return db.execute(
@@ -325,8 +365,9 @@ def unlinked_result(db, observation_id: int) -> Optional[Any]:
     ).fetchone()
 
 
-def unlinked_results_not_queued(db, *, limit: int, exclude_sources: Iterable[str] = (),
-                                exclude_code_systems: Iterable[str] = ()) -> list:
+def unlinked_results_not_queued(
+    db, *, limit: int, exclude_sources: Iterable[str] = (), exclude_code_systems: Iterable[str] = ()
+) -> list:
     """Results stored with no patient that the unmatched results queue does
     not hold yet, oldest first, for the queue's one-time sweep.
 
@@ -340,11 +381,17 @@ def unlinked_results_not_queued(db, *, limit: int, exclude_sources: Iterable[str
     systems = sorted({str(s).strip().upper() for s in exclude_code_systems if str(s).strip()})
     where = ""
     if sources:
-        where += (" AND LOWER(TRIM(COALESCE(ob.source, ''))) NOT IN ("
-                  + ", ".join("?" for _ in sources) + ")")
+        where += (
+            " AND LOWER(TRIM(COALESCE(ob.source, ''))) NOT IN ("
+            + ", ".join("?" for _ in sources)
+            + ")"
+        )
     if systems:
-        where += (" AND UPPER(TRIM(COALESCE(ob.observation_code_system, ''))) NOT IN ("
-                  + ", ".join("?" for _ in systems) + ")")
+        where += (
+            " AND UPPER(TRIM(COALESCE(ob.observation_code_system, ''))) NOT IN ("
+            + ", ".join("?" for _ in systems)
+            + ")"
+        )
     return db.execute(
         f"""SELECT ob.id, ob.source, ob.source_event_id, ob.observation_code,
                   ob.observation_code_system, ob.observation_name, ob.value_text,
@@ -367,9 +414,16 @@ for _word in CORRECTION_STATUSES:
         raise ValueError(f"lab_observations constant is not a plain word: {_word!r}")
 
 
-def live_results_for_test(db, *, patient_id: str, code: str, sub_id: Optional[str],
-                          sender: Optional[str], source: Optional[str],
-                          exclude_id: Optional[int] = None) -> list:
+def live_results_for_test(
+    db,
+    *,
+    patient_id: str,
+    code: str,
+    sub_id: str | None,
+    sender: str | None,
+    source: str | None,
+    exclude_id: int | None = None,
+) -> list:
     """Every live result on a patient's chart for the same test code, OBX-4
     sub-id, sender (MSH-3 and MSH-4) and lane that carries an order number,
     whatever its status, oldest first. Each row says whether it is an external
@@ -393,15 +447,22 @@ def live_results_for_test(db, *, patient_id: str, code: str, sub_id: Optional[st
             WHERE ob.patient_id = ? AND ob.observation_code = ? AND ob.id != ?
               AND COALESCE(ob.obx_sub_id, '') = ? AND COALESCE(ob.hl7_sender, '') = ?
               AND COALESCE(ob.source, '') = ?
-              AND {live_observations_sql('ob')}
+              AND {live_observations_sql("ob")}
               AND (ob.obr_filler IS NOT NULL OR ob.obr_placer IS NOT NULL)
             ORDER BY ob.id""",
-        (patient_id, code, -1 if exclude_id is None else int(exclude_id),
-         (sub_id or "").strip(), (sender or "").strip(), source or ""),
+        (
+            patient_id,
+            code,
+            -1 if exclude_id is None else int(exclude_id),
+            (sub_id or "").strip(),
+            (sender or "").strip(),
+            source or "",
+        ),
     ).fetchall()
 
 
 # ── The opt-in lab module seam ───────────────────────────────────────────────
+
 
 def lab_module_on() -> bool:
     """True when the opt-in lab module (ORB_LAB) is switched on.

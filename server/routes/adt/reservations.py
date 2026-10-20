@@ -34,15 +34,13 @@ Every handler is a plain def (FastAPI threadpools it); the work runs in one
 immediate session in services/adt/reservations.py, with its fail-closed
 patient_movement audit (503 audit_unavailable rolls it back).
 """
+
 from __future__ import annotations
 
 import uuid
-from typing import Optional
-
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel, ConfigDict
 
 from database import db_session
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from permissions import (
     ADT_BED,
     ADT_READ,
@@ -52,10 +50,12 @@ from permissions import (
     require_any_permission,
     require_permission,
 )
-from routes.adt.end_stay import _meta, _scoped_admission
+from pydantic import BaseModel, ConfigDict
 from services.adt import core as adt_core
 from services.adt import reservations as adt_res
 from services.audit_service import AuditWriteError, log_audit_event
+
+from routes.adt.end_stay import _meta, _scoped_admission
 
 router = APIRouter()
 
@@ -68,12 +68,12 @@ class ReserveIn(BaseModel):
     #: admission, transfer, post_op, elective or other.
     purpose: str
     #: Required for a transfer and for a patient coming back from surgery.
-    admission_id: Optional[str] = None
+    admission_id: str | None = None
     #: The patient the bed is held for, when there is no admission yet.
-    patient_id: Optional[str] = None
-    note: Optional[str] = None
+    patient_id: str | None = None
+    note: str | None = None
     #: A shorter hold than the purpose's default; never a longer one.
-    expires_in_minutes: Optional[int] = None
+    expires_in_minutes: int | None = None
 
 
 class ReleaseIn(BaseModel):
@@ -84,28 +84,38 @@ class ReleaseIn(BaseModel):
 
 
 def _audit_unavailable(what: str) -> HTTPException:
-    return HTTPException(status_code=503, detail={
-        "error": "audit_unavailable",
-        "message": f"The record of this {what} could not be written, so nothing was changed. "
-                   "Try again in a moment.",
-    })
+    return HTTPException(
+        status_code=503,
+        detail={
+            "error": "audit_unavailable",
+            "message": f"The record of this {what} could not be written, so nothing was changed. "
+            "Try again in a moment.",
+        },
+    )
 
 
 def _not_found() -> HTTPException:
-    return HTTPException(status_code=404, detail={
-        "error": "not_found", "message": adt_res.OUT_OF_SCOPE_WORDS})
+    return HTTPException(
+        status_code=404, detail={"error": "not_found", "message": adt_res.OUT_OF_SCOPE_WORDS}
+    )
 
 
-def _denied(user: dict, request: Request, *, patient_id: Optional[str], target_type: str,
-            target_id: str, dept: Optional[str]) -> None:
+def _denied(
+    user: dict,
+    request: Request,
+    *,
+    patient_id: str | None,
+    target_type: str,
+    target_id: str,
+    dept: str | None,
+) -> None:
     """Audit an out-of-scope attempt before the 404, as _scoped_admission does."""
     log_audit_event(
         correlation_id=str(uuid.uuid4()),
         event_category="authorization",
         action_type="patient_scope_denied",
         outcome="denied",
-        summary_message=(f"{target_type} {target_id} is outside the caller's department "
-                         f"({dept})"),
+        summary_message=(f"{target_type} {target_id} is outside the caller's department ({dept})"),
         actor_user_id=user.get("id"),
         actor_role=user.get("role"),
         patient_id=patient_id,
@@ -119,8 +129,7 @@ def _denied(user: dict, request: Request, *, patient_id: Optional[str], target_t
     )
 
 
-def _scoped_patient(patient_id: str, user: dict, request: Request, *,
-                    dept: Optional[str]) -> None:
+def _scoped_patient(patient_id: str, user: dict, request: Request, *, dept: str | None) -> None:
     """404 when the patient does not exist or is outside `dept`, the caller's
     department as the handler derived it from the authenticated user
     (department_scope), the out-of-scope attempt audited first."""
@@ -130,16 +139,25 @@ def _scoped_patient(patient_id: str, user: dict, request: Request, *,
     if exists is None:
         raise _not_found()
     if not in_scope:
-        _denied(user, request, patient_id=patient_id, target_type="patient",
-                target_id=patient_id, dept=dept)
+        _denied(
+            user,
+            request,
+            patient_id=patient_id,
+            target_type="patient",
+            target_id=patient_id,
+            dept=dept,
+        )
         raise _not_found()
+
+
+_LIST_RESERVATIONS_USER_DEFAULT = Depends(require_permission(ADT_READ))
 
 
 @router.get("/reservations")
 def list_reservations(
     request: Request,
-    ward_id: Optional[str] = None,
-    user: dict = Depends(require_permission(ADT_READ)),
+    ward_id: str | None = None,
+    user: dict = _LIST_RESERVATIONS_USER_DEFAULT,
 ):
     """Beds held now. The patient a bed is held for is named only inside the
     caller's department, and a read that names anybody is audited
@@ -147,20 +165,27 @@ def list_reservations(
     try:
         return adt_res.list_reservations(actor=user, ward_id=ward_id, request_meta=_meta(request))
     except adt_core.AdtError as err:
-        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err))
+        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err)) from err
     except AuditWriteError:
-        raise HTTPException(status_code=503, detail={
-            "error": "audit_unavailable",
-            "message": "This read could not be recorded, so nothing is shown. Try again in a moment.",
-        })
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "audit_unavailable",
+                "message": "This read could not be recorded, so nothing is shown. Try again in a moment.",
+            },
+        ) from None
+
+
+_RESERVE_BED_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempotency-Key")
+_RESERVE_BED_USER_DEFAULT = Depends(require_any_permission(ADT_BED, PATIENT_WRITE))
 
 
 @router.post("/reservations", status_code=201)
 def reserve_bed(
     body: ReserveIn,
     request: Request,
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    user: dict = Depends(require_any_permission(ADT_BED, PATIENT_WRITE)),
+    idempotency_key: str | None = _RESERVE_BED_IDEMPOTENCY_KEY_DEFAULT,
+    user: dict = _RESERVE_BED_USER_DEFAULT,
 ):
     """Hold a free master bed for a patient on the way. 409 bed_reserved when
     it is held already, bed_occupied when a patient lies in it,
@@ -180,18 +205,30 @@ def reserve_bed(
     if body.patient_id:
         _scoped_patient(body.patient_id, user, request, dept=dept)
     try:
-        return adt_res.reserve_bed(body.model_dump(), actor=user,
-                                   idempotency_key=idempotency_key,
-                                   request_meta=_meta(request))
+        return adt_res.reserve_bed(
+            body.model_dump(),
+            actor=user,
+            idempotency_key=idempotency_key,
+            request_meta=_meta(request),
+        )
     except adt_res.ReservationOutOfScope as err:
         # The write rolled back; the attempt is recorded on its own connection.
-        _denied(user, request, patient_id=err.patient_id, target_type="patient",
-                target_id=err.patient_id, dept=dept)
-        raise _not_found()
+        _denied(
+            user,
+            request,
+            patient_id=err.patient_id,
+            target_type="patient",
+            target_id=err.patient_id,
+            dept=dept,
+        )
+        raise _not_found() from err
     except adt_core.AdtError as err:
-        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err))
+        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err)) from err
     except AuditWriteError:
-        raise _audit_unavailable("reservation")
+        raise _audit_unavailable("reservation") from None
+
+
+_RELEASE_RESERVATION_USER_DEFAULT = Depends(require_any_permission(ADT_BED, PATIENT_WRITE))
 
 
 @router.post("/reservations/{reservation_id}/release")
@@ -199,7 +236,7 @@ def release_reservation(
     reservation_id: str,
     body: ReleaseIn,
     request: Request,
-    user: dict = Depends(require_any_permission(ADT_BED, PATIENT_WRITE)),
+    user: dict = _RELEASE_RESERVATION_USER_DEFAULT,
 ):
     """Let a held bed go, with the reason. 409 reservation_not_active once it
     is fulfilled, released or expired."""
@@ -212,16 +249,26 @@ def release_reservation(
             with db_session() as db:
                 in_scope = patient_in_scope(db, facts["patient_id"], dept)
             if not in_scope:
-                _denied(user, request, patient_id=facts["patient_id"],
-                        target_type="bed_reservation", target_id=reservation_id, dept=dept)
+                _denied(
+                    user,
+                    request,
+                    patient_id=facts["patient_id"],
+                    target_type="bed_reservation",
+                    target_id=reservation_id,
+                    dept=dept,
+                )
                 raise _not_found()
-    elif not (dept is None or facts.get("reserved_by") == user.get("id")
-              or (facts.get("ward_department") or "").casefold() == dept.casefold()):
+    elif not (
+        dept is None
+        or facts.get("reserved_by") == user.get("id")
+        or (facts.get("ward_department") or "").casefold() == dept.casefold()
+    ):
         raise _not_found()
     try:
-        return adt_res.release_reservation(reservation_id, actor=user, reason=body.reason,
-                                           request_meta=_meta(request))
+        return adt_res.release_reservation(
+            reservation_id, actor=user, reason=body.reason, request_meta=_meta(request)
+        )
     except adt_core.AdtError as err:
-        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err))
+        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err)) from err
     except AuditWriteError:
-        raise _audit_unavailable("release")
+        raise _audit_unavailable("release") from None

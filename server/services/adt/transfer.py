@@ -68,14 +68,16 @@ A MOVE RECORDED IN ERROR (adt-6b) is undone by correct_movement: a new
 the place, and for a transfer the treating department, through the single
 location writer. Nothing is updated in place; both rows stay in the ledger.
 """
+
 from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 from database import SERVICE_ACCOUNT_IDS, db_session
 from db_backend import DBIntegrityError
+
 from services.adt.core import (
     _UNSET,
     TERMINAL_CLEAN_AUTHORISER_ROLES,
@@ -109,13 +111,27 @@ from services.clinical_time import to_utc_iso, utc_iso_now
 logger = logging.getLogger("orb.adt.transfer")
 
 __all__ = [
-    "transfer", "transfer_on", "change_bed", "change_bed_on", "roster_move_on",
-    "resolve_cover", "move_choices", "sync_housekeeping_after_commit", "replayed_answer",
+    "transfer",
+    "transfer_on",
+    "change_bed",
+    "change_bed_on",
+    "roster_move_on",
+    "resolve_cover",
+    "move_choices",
+    "sync_housekeeping_after_commit",
+    "replayed_answer",
     "admission_location",
     # adt-6b (W7-C): swap and a move recorded in error.
-    "AdtForbidden", "swap_beds", "swap_beds_on", "SWAP_SECOND_KEY_SUFFIX",
-    "CORRECTABLE_MOVEMENT_TYPES", "correct_movement", "correct_movement_on",
-    "movement_admission", "replayed_correction", "last_move_on",
+    "AdtForbidden",
+    "swap_beds",
+    "swap_beds_on",
+    "SWAP_SECOND_KEY_SUFFIX",
+    "CORRECTABLE_MOVEMENT_TYPES",
+    "correct_movement",
+    "correct_movement_on",
+    "movement_admission",
+    "replayed_correction",
+    "last_move_on",
 ]
 
 
@@ -124,6 +140,7 @@ class AdtForbidden(AdtError):
 
     http_status = 403
 
+
 _MAX_REASON = 2000
 
 
@@ -131,14 +148,18 @@ _MAX_REASON = 2000
 #  Rule C, resolved before any immediate session
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _uncovered(to_department: Any) -> AdtError:
     from services import frontdesk_service as fd
 
-    return AdtError(fd.uncovered_department_words(to_department),
-                    code="department_not_covered", department=_text(to_department))
+    return AdtError(
+        fd.uncovered_department_words(to_department),
+        code="department_not_covered",
+        department=_text(to_department),
+    )
 
 
-def resolve_cover(to_department: Any, *, covering: Optional[list] = None) -> str:
+def resolve_cover(to_department: Any, *, covering: list | None = None) -> str:
     """The canonical covered spelling of `to_department`, or AdtError with
     rule C's words. Opens a session of its own unless `covering` (the list
     frontdesk_service.list_covering_departments returned, read by the caller
@@ -162,23 +183,29 @@ def resolve_cover(to_department: Any, *, covering: Optional[list] = None) -> str
 #  Small helpers
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _require_key(idempotency_key: Any) -> str:
     key = _text(idempotency_key)
     if not key:
-        raise AdtError("This move needs an Idempotency-Key header, so a retried request is "
-                       "never recorded twice.", code="idempotency_key_required")
+        raise AdtError(
+            "This move needs an Idempotency-Key header, so a retried request is "
+            "never recorded twice.",
+            code="idempotency_key_required",
+        )
     return key
 
 
 def _require_reason(reason: Any, what: str) -> str:
     why = _text(reason, _MAX_REASON)
     if not why:
-        raise AdtError(f"A {what} needs a reason. A move with no reason is not a record.",
-                       code="reason_required")
+        raise AdtError(
+            f"A {what} needs a reason. A move with no reason is not a record.",
+            code="reason_required",
+        )
     return why
 
 
-def _active_admission_on(db, *, admission_id: Optional[str], patient_id: Optional[str]) -> dict:
+def _active_admission_on(db, *, admission_id: str | None, patient_id: str | None) -> dict:
     """The admission to move: by its id, or the patient's active one."""
     if admission_id:
         adm = _row(db.execute("SELECT * FROM admissions WHERE id = ?", (admission_id,)).fetchone())
@@ -187,29 +214,41 @@ def _active_admission_on(db, *, admission_id: Optional[str], patient_id: Optiona
     else:
         adm = current_admission_on(db, patient_id or "")
         if adm is None:
-            exists = db.execute("SELECT 1 FROM patients WHERE id = ?", (patient_id or "",)).fetchone()
+            exists = db.execute(
+                "SELECT 1 FROM patients WHERE id = ?", (patient_id or "",)
+            ).fetchone()
             if exists is None:
                 raise AdtNotFound(f"No such patient: {patient_id}", code="patient_not_found")
-            raise AdtError(f"{patient_id} has no active admission: an outpatient cannot be "
-                           "transferred between wards", code="admission_not_active")
+            raise AdtError(
+                f"{patient_id} has no active admission: an outpatient cannot be "
+                "transferred between wards",
+                code="admission_not_active",
+            )
     if adm.get("status") != "active":
         # Rule B: an ended stay is never moved, and its status is never written.
-        raise AdtConflict("That admission has ended, so the patient cannot be moved",
-                          code="admission_not_active", status=adm.get("status"))
+        raise AdtConflict(
+            "That admission has ended, so the patient cannot be moved",
+            code="admission_not_active",
+            status=adm.get("status"),
+        )
     return adm
 
 
-def _replayed_on(db, key: str, *, adm: dict, actor: Optional[dict], movement_type: str):
+def _replayed_on(db, key: str, *, adm: dict, actor: dict | None, movement_type: str):
     """The first result for a replayed key, or None when the key is new.
     A key is bound to one admission, one person and one kind of move."""
     prior = movement_for_key(db, key)
     if prior is None:
         return None
-    if (prior.get("admission_id") != adm["id"]
-            or (prior.get("moved_by") or None) != (_actor_id(actor) or None)
-            or prior.get("movement_type") != movement_type):
-        raise AdtConflict("That Idempotency-Key was already used for another change",
-                          code="idempotency_key_reused")
+    if (
+        prior.get("admission_id") != adm["id"]
+        or (prior.get("moved_by") or None) != (_actor_id(actor) or None)
+        or prior.get("movement_type") != movement_type
+    ):
+        raise AdtConflict(
+            "That Idempotency-Key was already used for another change",
+            code="idempotency_key_reused",
+        )
     return _result_on(db, adm["id"], prior, replayed=True)
 
 
@@ -217,13 +256,18 @@ def _check_expected(adm: dict, expected_bed_id: Any) -> None:
     if expected_bed_id is not _UNSET and (expected_bed_id or None) != (adm.get("bed_id") or None):
         raise AdtConflict(
             "Where this patient lies changed since the screen was loaded. Reload and try again.",
-            code="state_changed", expected_bed_id=expected_bed_id,
-            current_bed_id=adm.get("bed_id"))
+            code="state_changed",
+            expected_bed_id=expected_bed_id,
+            current_bed_id=adm.get("bed_id"),
+        )
 
 
 def _event_time(adm: dict, moved_at: Any, what: str) -> str:
-    when = check_event_time(moved_at, what=what,
-                            not_before=parse_instant(adm.get("admitted_at") or adm.get("created_at")))
+    when = check_event_time(
+        moved_at,
+        what=what,
+        not_before=parse_instant(adm.get("admitted_at") or adm.get("created_at")),
+    )
     return to_utc_iso(when)
 
 
@@ -232,11 +276,25 @@ def _result_on(db, admission_id: str, movement: dict, *, replayed: bool) -> dict
     The keys of the front desk's transfer answer are all here (patient_name,
     admission_status, patient_status, current_department, current_ward,
     current_bed), so a delegated front-desk call answers a superset."""
-    adm = _row(db.execute(
-        "SELECT id, patient_id, department, ward, bed, ward_id, bed_id, status "
-        "FROM admissions WHERE id = ?", (admission_id,)).fetchone()) or {}
-    patient = _row(db.execute("SELECT name, status FROM patients WHERE id = ?",
-                              (adm.get("patient_id") or movement.get("patient_id"),)).fetchone()) or {}
+    adm = (
+        _row(
+            db.execute(
+                "SELECT id, patient_id, department, ward, bed, ward_id, bed_id, status "
+                "FROM admissions WHERE id = ?",
+                (admission_id,),
+            ).fetchone()
+        )
+        or {}
+    )
+    patient = (
+        _row(
+            db.execute(
+                "SELECT name, status FROM patients WHERE id = ?",
+                (adm.get("patient_id") or movement.get("patient_id"),),
+            ).fetchone()
+        )
+        or {}
+    )
     loc = current_location(adm.get("patient_id") or "", db=db) or {}
     return {
         "replayed": replayed,
@@ -260,18 +318,26 @@ def _result_on(db, admission_id: str, movement: dict, *, replayed: bool) -> dict
     }
 
 
-def _transfer_audit_on(db, *, adm: dict, movement: dict, actor: Optional[dict], reason: str,
-                       request_meta: Optional[dict]) -> None:
+def _transfer_audit_on(
+    db, *, adm: dict, movement: dict, actor: dict | None, reason: str, request_meta: dict | None
+) -> None:
     """clinical_access 'patient_transferred' (fail-closed), in the move's own
     transaction: the treating department changed, so who can read the chart
     changed. Written for a department change only; a move inside one
     department is recorded by the writer's patient_movement row."""
     audit_on(
-        db, category="clinical_access", action="patient_transferred",
-        summary=(f"{adm['patient_id']} transferred from {movement.get('from_department') or 'unknown'} "
-                 f"to {movement.get('to_department')}: {reason}"),
-        actor=actor, patient_id=adm["patient_id"], target_type="patient_movement",
-        target_id=movement["id"], request_meta=request_meta,
+        db,
+        category="clinical_access",
+        action="patient_transferred",
+        summary=(
+            f"{adm['patient_id']} transferred from {movement.get('from_department') or 'unknown'} "
+            f"to {movement.get('to_department')}: {reason}"
+        ),
+        actor=actor,
+        patient_id=adm["patient_id"],
+        target_type="patient_movement",
+        target_id=movement["id"],
+        request_meta=request_meta,
         correlation_id=f"transfer-{movement['id']}",
         metadata={
             "from_department": movement.get("from_department"),
@@ -298,12 +364,12 @@ def sync_housekeeping_after_commit() -> None:
 
         hk.sync_adt_movements()
     except Exception:  # noqa: BLE001 - housekeeping can never fail an ADT write
-        logger.warning("housekeeping sync after an ADT move failed; the move stands",
-                       exc_info=True)
+        logger.warning("housekeeping sync after an ADT move failed; the move stands", exc_info=True)
 
 
-def replayed_answer(idempotency_key: Any, *, admission_id: str, actor: Optional[dict],
-                    movement_type: str) -> Optional[dict]:
+def replayed_answer(
+    idempotency_key: Any, *, admission_id: str, actor: dict | None, movement_type: str
+) -> dict | None:
     """A retried move's answer, read BEFORE the route's scope check, or None.
 
     A transfer hands the chart over (strict handover), so the sender's own
@@ -320,29 +386,55 @@ def replayed_answer(idempotency_key: Any, *, admission_id: str, actor: Optional[
         return None
     with db_session() as db:
         prior = movement_for_key(db, key)
-    if (prior is None or prior.get("admission_id") != admission_id
-            or (prior.get("moved_by") or None) != (_actor_id(actor) or None)
-            or prior.get("movement_type") != movement_type):
+    if (
+        prior is None
+        or prior.get("admission_id") != admission_id
+        or (prior.get("moved_by") or None) != (_actor_id(actor) or None)
+        or prior.get("movement_type") != movement_type
+    ):
         return None
-    return {"replayed": True, "admission_id": admission_id,
-            "movement": {"id": prior["id"], "movement_type": prior["movement_type"],
-                         "moved_at": prior.get("moved_at")}}
+    return {
+        "replayed": True,
+        "admission_id": admission_id,
+        "movement": {
+            "id": prior["id"],
+            "movement_type": prior["movement_type"],
+            "moved_at": prior.get("moved_at"),
+        },
+    }
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  Transfer
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def transfer_on(
-    db, *, actor: Optional[dict], to_department: str, reason: str,
-    admission_id: Optional[str] = None, patient_id: Optional[str] = None,
-    ward_id: Any = None, bed_id: Any = None, ward_text: Any = None, bed_text: Any = None,
-    awaiting_bed: bool = False, keep_location: bool = False, extra_bed: bool = False,
-    expected_bed_id: Any = _UNSET, moved_at: Any = None,
-    out_of_service_reason: Optional[str] = None, boarder_acknowledged: bool = False,
-    not_clean_reason: Any = None, terminal_clean_authorised_by: Any = None,
-    terminal_clean_reason: Any = None, terminal_clean_confirmed: Optional[dict] = None,
-    notes: Optional[str] = None, idempotency_key: str, request_meta: Optional[dict] = None,
+    db,
+    *,
+    actor: dict | None,
+    to_department: str,
+    reason: str,
+    admission_id: str | None = None,
+    patient_id: str | None = None,
+    ward_id: Any = None,
+    bed_id: Any = None,
+    ward_text: Any = None,
+    bed_text: Any = None,
+    awaiting_bed: bool = False,
+    keep_location: bool = False,
+    extra_bed: bool = False,
+    expected_bed_id: Any = _UNSET,
+    moved_at: Any = None,
+    out_of_service_reason: str | None = None,
+    boarder_acknowledged: bool = False,
+    not_clean_reason: Any = None,
+    terminal_clean_authorised_by: Any = None,
+    terminal_clean_reason: Any = None,
+    terminal_clean_confirmed: dict | None = None,
+    notes: str | None = None,
+    idempotency_key: str,
+    request_meta: dict | None = None,
 ) -> dict:
     """Move an active admission to `to_department` (ALREADY resolved by
     resolve_cover before the caller's immediate session) and to a place, on
@@ -362,26 +454,49 @@ def transfer_on(
 
     if keep_location:
         if has_bed or _text(ward_id) or _text(ward_text) or awaiting_bed or extra_bed:
-            raise AdtError("Keeping the current bed names no other place. Choose either the "
-                           "current bed or a new place.", code="keep_location_with_place")
+            raise AdtError(
+                "Keeping the current bed names no other place. Choose either the "
+                "current bed or a new place.",
+                code="keep_location_with_place",
+            )
         if to_department == adm.get("department"):
-            raise AdtConflict(f"This patient is already treated by {to_department} and stays "
-                              "where they are, so there is nothing to record.", code="no_change")
+            raise AdtConflict(
+                f"This patient is already treated by {to_department} and stays "
+                "where they are, so there is nothing to record.",
+                code="no_change",
+            )
         located = locate_admission_on(
-            db, admission_id=adm["id"], actor=actor, movement_type="transfer", reason=why,
-            ward_id=adm.get("ward_id"), bed_id=adm.get("bed_id"), ward_text=adm.get("ward"),
-            bed_text=adm.get("bed"), expected_bed_id=expected_bed_id,
+            db,
+            admission_id=adm["id"],
+            actor=actor,
+            movement_type="transfer",
+            reason=why,
+            ward_id=adm.get("ward_id"),
+            bed_id=adm.get("bed_id"),
+            ward_text=adm.get("ward"),
+            bed_text=adm.get("bed"),
+            expected_bed_id=expected_bed_id,
             out_of_service_reason=out_of_service_reason,
-            boarder_acknowledged=boarder_acknowledged, moved_at=when,
-            idempotency_key=idempotency_key, notes=notes, request_meta=request_meta,
-            extra_detail={"kept_place": True}, to_department=to_department)
+            boarder_acknowledged=boarder_acknowledged,
+            moved_at=when,
+            idempotency_key=idempotency_key,
+            notes=notes,
+            request_meta=request_meta,
+            extra_detail={"kept_place": True},
+            to_department=to_department,
+        )
     else:
         if awaiting_bed and (has_bed or extra_bed):
-            raise AdtError("A patient waiting for a bed has no bed to name. Choose a bed or "
-                           "No bed yet, not both.", code="awaiting_bed_with_bed")
+            raise AdtError(
+                "A patient waiting for a bed has no bed to name. Choose a bed or "
+                "No bed yet, not both.",
+                code="awaiting_bed_with_bed",
+            )
         if not awaiting_bed and not has_bed:
-            raise AdtError("Choose the bed on the receiving ward, No bed yet, or keep the "
-                           "current bed.", code="bed_required")
+            raise AdtError(
+                "Choose the bed on the receiving ward, No bed yet, or keep the current bed.",
+                code="bed_required",
+            )
         if _text(bed_text) and not (_text(bed_id) or _text(ward_id) or _text(ward_text)):
             # Bed text alone names a bed on the ward the patient is on, as a
             # bed change and an assignment read it.
@@ -390,40 +505,78 @@ def transfer_on(
             elif _text(adm.get("ward")):
                 ward_text = adm["ward"]
             else:
-                raise AdtError("Choose the receiving ward as well. A bed label on its own "
-                               "names no place.", code="ward_required")
+                raise AdtError(
+                    "Choose the receiving ward as well. A bed label on its own names no place.",
+                    code="ward_required",
+                )
         prepared = prepare_place_on(
-            db, admission_id=adm["id"], actor=actor, movement_type="transfer",
-            ward_id=ward_id, bed_id=None if awaiting_bed else bed_id, ward_text=ward_text,
-            bed_text=None if awaiting_bed else bed_text, extra_bed=extra_bed,
-            out_of_service_reason=out_of_service_reason, not_clean_reason=not_clean_reason,
+            db,
+            admission_id=adm["id"],
+            actor=actor,
+            movement_type="transfer",
+            ward_id=ward_id,
+            bed_id=None if awaiting_bed else bed_id,
+            ward_text=ward_text,
+            bed_text=None if awaiting_bed else bed_text,
+            extra_bed=extra_bed,
+            out_of_service_reason=out_of_service_reason,
+            not_clean_reason=not_clean_reason,
             terminal_clean_authorised_by=terminal_clean_authorised_by,
-            terminal_clean_reason=terminal_clean_reason, request_meta=request_meta,
-            treating_department=to_department, terminal_clean_confirmed=terminal_clean_confirmed)
+            terminal_clean_reason=terminal_clean_reason,
+            request_meta=request_meta,
+            treating_department=to_department,
+            terminal_clean_confirmed=terminal_clean_confirmed,
+        )
         located = place_admission_on(
-            db, admission_id=adm["id"], actor=actor, movement_type="transfer", reason=why,
-            prepared=prepared, boarder_acknowledged=boarder_acknowledged,
-            expected_bed_id=expected_bed_id, moved_at=when, idempotency_key=idempotency_key,
-            notes=notes, request_meta=request_meta, to_department=to_department)
+            db,
+            admission_id=adm["id"],
+            actor=actor,
+            movement_type="transfer",
+            reason=why,
+            prepared=prepared,
+            boarder_acknowledged=boarder_acknowledged,
+            expected_bed_id=expected_bed_id,
+            moved_at=when,
+            idempotency_key=idempotency_key,
+            notes=notes,
+            request_meta=request_meta,
+            to_department=to_department,
+        )
 
     movement = located["movement"]
     if (movement.get("from_department") or None) != (movement.get("to_department") or None):
-        _transfer_audit_on(db, adm=adm, movement=movement, actor=actor, reason=why,
-                           request_meta=request_meta)
+        _transfer_audit_on(
+            db, adm=adm, movement=movement, actor=actor, reason=why, request_meta=request_meta
+        )
     return _result_on(db, adm["id"], movement, replayed=False)
 
 
 def transfer(
-    admission_id: Optional[str] = None, *, actor: dict, to_department: Any, reason: Any,
-    patient_id: Optional[str] = None, ward_id: Any = None, bed_id: Any = None,
-    ward_text: Any = None, bed_text: Any = None, awaiting_bed: bool = False,
-    keep_location: bool = False, extra_bed: bool = False, expected_bed_id: Any = _UNSET,
-    require_expected_bed: bool = True, moved_at: Any = None,
-    out_of_service_reason: Optional[str] = None, boarder_acknowledged: bool = False,
-    not_clean_reason: Any = None, terminal_clean_authorised_by: Any = None,
-    terminal_clean_reason: Any = None, terminal_clean_authoriser_pin: Any = None,
-    notes: Optional[str] = None, idempotency_key: Any = None,
-    request_meta: Optional[dict] = None,
+    admission_id: str | None = None,
+    *,
+    actor: dict,
+    to_department: Any,
+    reason: Any,
+    patient_id: str | None = None,
+    ward_id: Any = None,
+    bed_id: Any = None,
+    ward_text: Any = None,
+    bed_text: Any = None,
+    awaiting_bed: bool = False,
+    keep_location: bool = False,
+    extra_bed: bool = False,
+    expected_bed_id: Any = _UNSET,
+    require_expected_bed: bool = True,
+    moved_at: Any = None,
+    out_of_service_reason: str | None = None,
+    boarder_acknowledged: bool = False,
+    not_clean_reason: Any = None,
+    terminal_clean_authorised_by: Any = None,
+    terminal_clean_reason: Any = None,
+    terminal_clean_authoriser_pin: Any = None,
+    notes: str | None = None,
+    idempotency_key: Any = None,
+    request_meta: dict | None = None,
 ) -> dict:
     """Transfer an admitted patient, in ONE immediate session (POST
     /api/adt/transfers, and POST /api/frontdesk/transfers while the module is
@@ -439,25 +592,48 @@ def transfer(
     key = _require_key(idempotency_key)
     _require_reason(reason, "transfer")
     if require_expected_bed and expected_bed_id is _UNSET:
-        raise AdtError("A move must say which bed the screen showed (expected_bed_id), so it "
-                       "never overwrites a change made since.", code="expected_bed_required")
+        raise AdtError(
+            "A move must say which bed the screen showed (expected_bed_id), so it "
+            "never overwrites a change made since.",
+            code="expected_bed_required",
+        )
     canonical = resolve_cover(to_department)
     hk.ensure_housekeeping_schema()
     confirmed = confirm_terminal_authoriser(
-        actor=actor, authorised_by=terminal_clean_authorised_by,
-        pin=terminal_clean_authoriser_pin, admission_id=admission_id, bed_id=bed_id,
-        request_meta=request_meta)
+        actor=actor,
+        authorised_by=terminal_clean_authorised_by,
+        pin=terminal_clean_authoriser_pin,
+        admission_id=admission_id,
+        bed_id=bed_id,
+        request_meta=request_meta,
+    )
     with db_session(immediate=True) as db:
         result = transfer_on(
-            db, actor=actor, to_department=canonical, reason=reason, admission_id=admission_id,
-            patient_id=patient_id, ward_id=ward_id, bed_id=bed_id, ward_text=ward_text,
-            bed_text=bed_text, awaiting_bed=awaiting_bed, keep_location=keep_location,
-            extra_bed=extra_bed, expected_bed_id=expected_bed_id, moved_at=moved_at,
+            db,
+            actor=actor,
+            to_department=canonical,
+            reason=reason,
+            admission_id=admission_id,
+            patient_id=patient_id,
+            ward_id=ward_id,
+            bed_id=bed_id,
+            ward_text=ward_text,
+            bed_text=bed_text,
+            awaiting_bed=awaiting_bed,
+            keep_location=keep_location,
+            extra_bed=extra_bed,
+            expected_bed_id=expected_bed_id,
+            moved_at=moved_at,
             out_of_service_reason=out_of_service_reason,
-            boarder_acknowledged=boarder_acknowledged, not_clean_reason=not_clean_reason,
+            boarder_acknowledged=boarder_acknowledged,
+            not_clean_reason=not_clean_reason,
             terminal_clean_authorised_by=terminal_clean_authorised_by,
-            terminal_clean_reason=terminal_clean_reason, terminal_clean_confirmed=confirmed,
-            notes=notes, idempotency_key=key, request_meta=request_meta)
+            terminal_clean_reason=terminal_clean_reason,
+            terminal_clean_confirmed=confirmed,
+            notes=notes,
+            idempotency_key=key,
+            request_meta=request_meta,
+        )
     if not result.get("replayed"):
         sync_housekeeping_after_commit()
     return result
@@ -467,14 +643,29 @@ def transfer(
 #  Bed change (same treating department)
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def change_bed_on(
-    db, *, admission_id: str, actor: Optional[dict], reason: str, ward_id: Any = None,
-    bed_id: Any = None, ward_text: Any = None, bed_text: Any = None, extra_bed: bool = False,
-    expected_bed_id: Any = _UNSET, moved_at: Any = None,
-    out_of_service_reason: Optional[str] = None, boarder_acknowledged: bool = False,
-    not_clean_reason: Any = None, terminal_clean_authorised_by: Any = None,
-    terminal_clean_reason: Any = None, terminal_clean_confirmed: Optional[dict] = None,
-    notes: Optional[str] = None, idempotency_key: str, request_meta: Optional[dict] = None,
+    db,
+    *,
+    admission_id: str,
+    actor: dict | None,
+    reason: str,
+    ward_id: Any = None,
+    bed_id: Any = None,
+    ward_text: Any = None,
+    bed_text: Any = None,
+    extra_bed: bool = False,
+    expected_bed_id: Any = _UNSET,
+    moved_at: Any = None,
+    out_of_service_reason: str | None = None,
+    boarder_acknowledged: bool = False,
+    not_clean_reason: Any = None,
+    terminal_clean_authorised_by: Any = None,
+    terminal_clean_reason: Any = None,
+    terminal_clean_confirmed: dict | None = None,
+    notes: str | None = None,
+    idempotency_key: str,
+    request_meta: dict | None = None,
 ) -> dict:
     """Move an active admission to another bed, keeping its treating
     department, on the caller's immediate connection."""
@@ -486,8 +677,11 @@ def change_bed_on(
     when = _event_time(adm, moved_at, "bed change")
     why = _require_reason(reason, "bed change")
     if not (adm.get("bed_id") or _text(adm.get("bed"))):
-        raise AdtConflict("This patient has no bed recorded, so there is no bed to change. "
-                          "Assign the bed instead.", code="no_bed_to_change")
+        raise AdtConflict(
+            "This patient has no bed recorded, so there is no bed to change. "
+            "Assign the bed instead.",
+            code="no_bed_to_change",
+        )
     if not (_text(bed_id) or _text(bed_text)):
         raise AdtError("Choose the bed.", code="bed_required")
     if not (_text(bed_id) or _text(ward_id) or _text(ward_text)):
@@ -498,32 +692,67 @@ def change_bed_on(
         elif _text(adm.get("ward")):
             ward_text = adm["ward"]
         else:
-            raise AdtError("Choose the ward as well. This patient has no ward recorded, so a "
-                           "bed label on its own names no place.", code="ward_required")
+            raise AdtError(
+                "Choose the ward as well. This patient has no ward recorded, so a "
+                "bed label on its own names no place.",
+                code="ward_required",
+            )
     prepared = prepare_place_on(
-        db, admission_id=adm["id"], actor=actor, movement_type="bed_change", ward_id=ward_id,
-        bed_id=bed_id, ward_text=ward_text, bed_text=bed_text, extra_bed=extra_bed,
-        out_of_service_reason=out_of_service_reason, not_clean_reason=not_clean_reason,
+        db,
+        admission_id=adm["id"],
+        actor=actor,
+        movement_type="bed_change",
+        ward_id=ward_id,
+        bed_id=bed_id,
+        ward_text=ward_text,
+        bed_text=bed_text,
+        extra_bed=extra_bed,
+        out_of_service_reason=out_of_service_reason,
+        not_clean_reason=not_clean_reason,
         terminal_clean_authorised_by=terminal_clean_authorised_by,
-        terminal_clean_reason=terminal_clean_reason, request_meta=request_meta,
-        treating_department=adm.get("department"), terminal_clean_confirmed=terminal_clean_confirmed)
+        terminal_clean_reason=terminal_clean_reason,
+        request_meta=request_meta,
+        treating_department=adm.get("department"),
+        terminal_clean_confirmed=terminal_clean_confirmed,
+    )
     located = place_admission_on(
-        db, admission_id=adm["id"], actor=actor, movement_type="bed_change", reason=why,
-        prepared=prepared, boarder_acknowledged=boarder_acknowledged,
-        expected_bed_id=expected_bed_id, moved_at=when, idempotency_key=idempotency_key,
-        notes=notes, request_meta=request_meta)
+        db,
+        admission_id=adm["id"],
+        actor=actor,
+        movement_type="bed_change",
+        reason=why,
+        prepared=prepared,
+        boarder_acknowledged=boarder_acknowledged,
+        expected_bed_id=expected_bed_id,
+        moved_at=when,
+        idempotency_key=idempotency_key,
+        notes=notes,
+        request_meta=request_meta,
+    )
     return _result_on(db, adm["id"], located["movement"], replayed=False)
 
 
 def change_bed(
-    admission_id: str, *, actor: dict, reason: Any, ward_id: Any = None, bed_id: Any = None,
-    ward_text: Any = None, bed_text: Any = None, extra_bed: bool = False,
-    expected_bed_id: Any = _UNSET, moved_at: Any = None,
-    out_of_service_reason: Optional[str] = None, boarder_acknowledged: bool = False,
-    not_clean_reason: Any = None, terminal_clean_authorised_by: Any = None,
-    terminal_clean_reason: Any = None, terminal_clean_authoriser_pin: Any = None,
-    notes: Optional[str] = None, idempotency_key: Any = None,
-    request_meta: Optional[dict] = None,
+    admission_id: str,
+    *,
+    actor: dict,
+    reason: Any,
+    ward_id: Any = None,
+    bed_id: Any = None,
+    ward_text: Any = None,
+    bed_text: Any = None,
+    extra_bed: bool = False,
+    expected_bed_id: Any = _UNSET,
+    moved_at: Any = None,
+    out_of_service_reason: str | None = None,
+    boarder_acknowledged: bool = False,
+    not_clean_reason: Any = None,
+    terminal_clean_authorised_by: Any = None,
+    terminal_clean_reason: Any = None,
+    terminal_clean_authoriser_pin: Any = None,
+    notes: str | None = None,
+    idempotency_key: Any = None,
+    request_meta: dict | None = None,
 ) -> dict:
     """Change an admitted patient's bed in ONE immediate session (POST
     /api/adt/admissions/{id}/bed-change). The Idempotency-Key, the reason and
@@ -533,23 +762,43 @@ def change_bed(
     key = _require_key(idempotency_key)
     _require_reason(reason, "bed change")
     if expected_bed_id is _UNSET:
-        raise AdtError("A move must say which bed the screen showed (expected_bed_id), so it "
-                       "never overwrites a change made since.", code="expected_bed_required")
+        raise AdtError(
+            "A move must say which bed the screen showed (expected_bed_id), so it "
+            "never overwrites a change made since.",
+            code="expected_bed_required",
+        )
     hk.ensure_housekeeping_schema()
     confirmed = confirm_terminal_authoriser(
-        actor=actor, authorised_by=terminal_clean_authorised_by,
-        pin=terminal_clean_authoriser_pin, admission_id=admission_id, bed_id=bed_id,
-        request_meta=request_meta)
+        actor=actor,
+        authorised_by=terminal_clean_authorised_by,
+        pin=terminal_clean_authoriser_pin,
+        admission_id=admission_id,
+        bed_id=bed_id,
+        request_meta=request_meta,
+    )
     with db_session(immediate=True) as db:
         result = change_bed_on(
-            db, admission_id=admission_id, actor=actor, reason=reason, ward_id=ward_id,
-            bed_id=bed_id, ward_text=ward_text, bed_text=bed_text, extra_bed=extra_bed,
-            expected_bed_id=expected_bed_id, moved_at=moved_at,
+            db,
+            admission_id=admission_id,
+            actor=actor,
+            reason=reason,
+            ward_id=ward_id,
+            bed_id=bed_id,
+            ward_text=ward_text,
+            bed_text=bed_text,
+            extra_bed=extra_bed,
+            expected_bed_id=expected_bed_id,
+            moved_at=moved_at,
             out_of_service_reason=out_of_service_reason,
-            boarder_acknowledged=boarder_acknowledged, not_clean_reason=not_clean_reason,
+            boarder_acknowledged=boarder_acknowledged,
+            not_clean_reason=not_clean_reason,
             terminal_clean_authorised_by=terminal_clean_authorised_by,
-            terminal_clean_reason=terminal_clean_reason, terminal_clean_confirmed=confirmed,
-            notes=notes, idempotency_key=key, request_meta=request_meta)
+            terminal_clean_reason=terminal_clean_reason,
+            terminal_clean_confirmed=confirmed,
+            notes=notes,
+            idempotency_key=key,
+            request_meta=request_meta,
+        )
     if not result.get("replayed"):
         sync_housekeeping_after_commit()
     return result
@@ -559,9 +808,16 @@ def change_bed(
 #  Roster import updates
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def roster_move_on(
-    db, *, admission_id: str, actor: Optional[dict], changes: dict, covering: list,
-    reason: str, expected_bed_id: Any = _UNSET,
+    db,
+    *,
+    admission_id: str,
+    actor: dict | None,
+    changes: dict,
+    covering: list,
+    reason: str,
+    expected_bed_id: Any = _UNSET,
 ) -> dict:
     """A roster file's ward, bed or department change for an open admission,
     on the import's own immediate connection (services/roster_import.
@@ -578,7 +834,11 @@ def roster_move_on(
     _check_expected(adm, expected_bed_id)
     dept_change = (changes.get("department") or {}).get("to")
     to_department = None
-    if dept_change is not None and str(dept_change).strip() and dept_change != adm.get("department"):
+    if (
+        dept_change is not None
+        and str(dept_change).strip()
+        and dept_change != adm.get("department")
+    ):
         to_department = resolve_cover(dept_change, covering=covering)
         if to_department == adm.get("department"):
             to_department = None
@@ -591,37 +851,61 @@ def roster_move_on(
     movement_type = "transfer" if to_department is not None else "bed_change"
     if not place_changes:
         if to_department is None:
-            raise AdtConflict("The file names the place and department already recorded.",
-                              code="no_change")
+            raise AdtConflict(
+                "The file names the place and department already recorded.", code="no_change"
+            )
         located = locate_admission_on(
-            db, admission_id=adm["id"], actor=actor, movement_type="transfer", reason=reason,
-            ward_id=adm.get("ward_id"), bed_id=adm.get("bed_id"), ward_text=adm.get("ward"),
-            bed_text=adm.get("bed"), expected_bed_id=expected_bed_id, idempotency_key=key,
+            db,
+            admission_id=adm["id"],
+            actor=actor,
+            movement_type="transfer",
+            reason=reason,
+            ward_id=adm.get("ward_id"),
+            bed_id=adm.get("bed_id"),
+            ward_text=adm.get("ward"),
+            bed_text=adm.get("bed"),
+            expected_bed_id=expected_bed_id,
+            idempotency_key=key,
             extra_detail={"kept_place": True, "door": "roster_import"},
-            to_department=to_department)
+            to_department=to_department,
+        )
     else:
         # A new ward with the bed label unchanged in the file names that label
         # on the NEW ward (the file says ward X, bed 3): bed_text above is the
         # recorded label then.
         prepared = prepare_place_on(
-            db, admission_id=adm["id"], actor=actor, movement_type=movement_type,
-            ward_text=ward_text, bed_text=bed_text,
-            treating_department=to_department or adm.get("department"))
+            db,
+            admission_id=adm["id"],
+            actor=actor,
+            movement_type=movement_type,
+            ward_text=ward_text,
+            bed_text=bed_text,
+            treating_department=to_department or adm.get("department"),
+        )
         prepared["detail"] = {**(prepared.get("detail") or {}), "door": "roster_import"}
         located = place_admission_on(
-            db, admission_id=adm["id"], actor=actor, movement_type=movement_type, reason=reason,
-            prepared=prepared, expected_bed_id=expected_bed_id, idempotency_key=key,
-            to_department=to_department)
+            db,
+            admission_id=adm["id"],
+            actor=actor,
+            movement_type=movement_type,
+            reason=reason,
+            prepared=prepared,
+            expected_bed_id=expected_bed_id,
+            idempotency_key=key,
+            to_department=to_department,
+        )
     movement = located["movement"]
     if to_department is not None:
-        _transfer_audit_on(db, adm=adm, movement=movement, actor=actor, reason=reason,
-                           request_meta=None)
+        _transfer_audit_on(
+            db, adm=adm, movement=movement, actor=actor, reason=reason, request_meta=None
+        )
     return {"movement_id": movement["id"], "movement_type": movement["movement_type"]}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  Where an admission is now, for the Move screen
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def _kept_place_on(db, loc: dict) -> dict:
     """What 'stays where they lie' resolves to in bed setup, read the way the
@@ -634,16 +918,19 @@ def _kept_place_on(db, loc: dict) -> dict:
     unlinked ward that matches a ward of bed setup included, which the linked
     ward_department cannot show), and a reason when that bed is recorded out
     of service. The writer checks all of it again."""
-    ward: Optional[dict] = None
-    bed: Optional[dict] = None
+    ward: dict | None = None
+    bed: dict | None = None
     bed_id, ward_id = _text(loc.get("bed_id")), _text(loc.get("ward_id"))
     if bed_id:
-        bed = _row(db.execute(
-            "SELECT * FROM housekeeping_units WHERE id = ? AND ward_id IS NOT NULL",
-            (bed_id,)).fetchone())
+        bed = _row(
+            db.execute(
+                "SELECT * FROM housekeeping_units WHERE id = ? AND ward_id IS NOT NULL", (bed_id,)
+            ).fetchone()
+        )
         if bed is not None:
-            ward = _row(db.execute("SELECT * FROM wards WHERE id = ?",
-                                   (bed["ward_id"],)).fetchone())
+            ward = _row(
+                db.execute("SELECT * FROM wards WHERE id = ?", (bed["ward_id"],)).fetchone()
+            )
     elif ward_id:
         ward = _row(db.execute("SELECT * FROM wards WHERE id = ?", (ward_id,)).fetchone())
         bed = _bed_by_label(db, ward["id"], _text(loc.get("bed"))) if ward else None
@@ -658,8 +945,9 @@ def _kept_place_on(db, loc: dict) -> dict:
     }
 
 
-def admission_location(admission_id: str, *, actor: Optional[dict],
-                       request_meta: Optional[dict] = None) -> dict:
+def admission_location(
+    admission_id: str, *, actor: dict | None, request_meta: dict | None = None
+) -> dict:
     """Where an active admission lies now, for the Move screen to send back
     as expected_bed_id: its treating department, ward and bed (ids and the
     master's spelling), and whether it is linked, awaiting a bed or a boarder.
@@ -669,32 +957,49 @@ def admission_location(admission_id: str, *, actor: Optional[dict],
     patient is in scope. The read is audited phi_access (fail-closed) in its
     own session: an unwritable row means no answer."""
     with db_session() as db:
-        adm = _row(db.execute("SELECT patient_id, status FROM admissions WHERE id = ?",
-                              (admission_id,)).fetchone())
+        adm = _row(
+            db.execute(
+                "SELECT patient_id, status FROM admissions WHERE id = ?", (admission_id,)
+            ).fetchone()
+        )
         if adm is None:
             raise AdtNotFound("No admission with that id", code="admission_not_found")
         if adm.get("status") != "active":
-            raise AdtConflict("That admission has ended, so the patient cannot be moved",
-                              code="admission_not_active", status=adm.get("status"))
+            raise AdtConflict(
+                "That admission has ended, so the patient cannot be moved",
+                code="admission_not_active",
+                status=adm.get("status"),
+            )
         loc = current_location(adm["patient_id"], db=db) or {}
         if loc.get("admission_id") != admission_id:
-            raise AdtConflict("That admission is not the patient's current stay",
-                              code="admission_not_active")
+            raise AdtConflict(
+                "That admission is not the patient's current stay", code="admission_not_active"
+            )
         kept = _kept_place_on(db, loc)
         # adt-6b: the latest move of this stay and whether it can be undone
         # as recorded in error, for the Move screen.
         last_move = last_move_on(db, admission_id)
-        audit_on(db, category="phi_access", action="admission_location_viewed",
-                 summary=f"Where admission {admission_id} lies, read for a move",
-                 actor=actor, patient_id=adm["patient_id"], target_type="admission",
-                 target_id=admission_id, request_meta=request_meta)
+        audit_on(
+            db,
+            category="phi_access",
+            action="admission_location_viewed",
+            summary=f"Where admission {admission_id} lies, read for a move",
+            actor=actor,
+            patient_id=adm["patient_id"],
+            target_type="admission",
+            target_id=admission_id,
+            request_meta=request_meta,
+        )
     return {
         "admission_id": admission_id,
         "department": loc.get("department"),
-        "ward": loc.get("ward"), "bed": loc.get("bed"),
-        "ward_id": loc.get("ward_id"), "bed_id": loc.get("bed_id"),
+        "ward": loc.get("ward"),
+        "bed": loc.get("bed"),
+        "ward_id": loc.get("ward_id"),
+        "bed_id": loc.get("bed_id"),
         "ward_department": loc.get("ward_department"),
-        "linked": bool(loc.get("linked")), "awaiting_bed": bool(loc.get("awaiting_bed")),
+        "linked": bool(loc.get("linked")),
+        "awaiting_bed": bool(loc.get("awaiting_bed")),
         "boarder": bool(loc.get("boarder")),
         "kept_place": kept,
         "last_move": last_move,
@@ -705,7 +1010,8 @@ def admission_location(admission_id: str, *, actor: Optional[dict],
 #  What the Move screen offers
 # ═════════════════════════════════════════════════════════════════════════════
 
-def move_choices(user: Optional[dict]) -> dict:
+
+def move_choices(user: dict | None) -> dict:
     """The Move screen's lists, with NO patient data: every active ward and
     its beds with what placing a patient there needs (core.bed_choices_on,
     the same lists the admission form's bed picker reads), who may authorise
@@ -713,6 +1019,7 @@ def move_choices(user: Optional[dict]) -> dict:
     others only with a signing PIN set), the back-time window, and the
     departments a transfer may go to (those with clinical cover, rule C)."""
     import config
+
     from services import frontdesk_service as fd
     from services import housekeeping_service as hk
 
@@ -726,8 +1033,12 @@ def move_choices(user: Optional[dict]) -> dict:
     with db_session() as db:
         wards = bed_choices_on(db)
         authorisers = [
-            {"id": r["id"], "name": r["name"], "role": r["role"],
-             "department": r["department"] or None}
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "role": r["role"],
+                "department": r["department"] or None,
+            }
             for r in db.execute(
                 f"""SELECT id, name, role, TRIM(COALESCE(department, '')) AS department
                       FROM users
@@ -743,10 +1054,16 @@ def move_choices(user: Optional[dict]) -> dict:
         if me and terminal_authoriser_eligible_on(db, me):
             row = db.execute(
                 "SELECT id, name, role, TRIM(COALESCE(department, '')) AS department "
-                "FROM users WHERE id = ?", (me,)).fetchone()
+                "FROM users WHERE id = ?",
+                (me,),
+            ).fetchone()
             if row is not None:
-                self_authoriser = {"id": row["id"], "name": row["name"], "role": row["role"],
-                                   "department": row["department"] or None}
+                self_authoriser = {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "role": row["role"],
+                    "department": row["department"] or None,
+                }
     return {
         "master": {
             "wards": wards,
@@ -809,7 +1126,7 @@ def move_choices(user: Optional[dict]) -> dict:
 SWAP_SECOND_KEY_SUFFIX = "#2"
 
 
-def _in_scope_on(db, patient_id: str, actor: Optional[dict]) -> bool:
+def _in_scope_on(db, patient_id: str, actor: dict | None) -> bool:
     """The caller may see this patient (permissions.department_scope, the one
     derivation), read on the caller's connection so the check and the write
     see the same state."""
@@ -823,8 +1140,13 @@ def _bed_reserved_on(db, bed_id: Any) -> bool:
     """A live reservation holds the bed (bed_reservations, migration 69): an
     active row whose expiry has not passed. False while the table does not
     exist."""
-    if not bed_id or db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' "
-                                "AND name = 'bed_reservations'").fetchone() is None:
+    if (
+        not bed_id
+        or db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'bed_reservations'"
+        ).fetchone()
+        is None
+    ):
         return False
     cols = {r[1] for r in db.execute("PRAGMA table_info(bed_reservations)").fetchall()}
     if not {"bed_id", "status"} <= cols:
@@ -846,10 +1168,18 @@ def _bed_label_words(target: dict) -> str:
     return f"Bed {target.get('bed_text')} on {ward.get('code') or target.get('ward_text')}"
 
 
-def _swap_cleaning_on(db, *, target: dict, leaving: dict, actor: Optional[dict],
-                      treating_department: Optional[str], not_clean_reason: Any,
-                      terminal_clean_authorised_by: Any, terminal_clean_reason: Any,
-                      terminal_clean_confirmed: Optional[dict]) -> dict:
+def _swap_cleaning_on(
+    db,
+    *,
+    target: dict,
+    leaving: dict,
+    actor: dict | None,
+    treating_department: str | None,
+    not_clean_reason: Any,
+    terminal_clean_authorised_by: Any,
+    terminal_clean_reason: Any,
+    terminal_clean_confirmed: dict | None,
+) -> dict:
     """ADT-S2 (c) for one side of a swap: the patient goes into `target`, the
     bed `leaving` lay in until this moment, with no clean between. Returns
     what is recorded on the movement; raises with words otherwise. Nothing
@@ -868,12 +1198,15 @@ def _swap_cleaning_on(db, *, target: dict, leaving: dict, actor: Optional[dict],
     board_wards = board.get("wards") or []
     if not board_wards or not board_wards[0].get("cleaning_tracked"):
         return {}
-    tile = next((t for t in board_wards[0].get("tiles") or [] if t.get("bed_id") == bed["id"]), None)
-    terminal = (carried_isolation(leaving.get("isolation_precautions"))
-                or bool(tile and tile.get("isolation"))
-                or bed["id"] in _terminal_clean_beds_on(db, [bed["id"]])
-                or bed["id"] in _vacated_with_isolation_on(db, wards=board_wards,
-                                                          bed_ids=[bed["id"]]))
+    tile = next(
+        (t for t in board_wards[0].get("tiles") or [] if t.get("bed_id") == bed["id"]), None
+    )
+    terminal = (
+        carried_isolation(leaving.get("isolation_precautions"))
+        or bool(tile and tile.get("isolation"))
+        or bed["id"] in _terminal_clean_beds_on(db, [bed["id"]])
+        or bed["id"] in _vacated_with_isolation_on(db, wards=board_wards, bed_ids=[bed["id"]])
+    )
     where = _bed_label_words(target)
     if terminal:
         authoriser = _text(terminal_clean_authorised_by)
@@ -885,10 +1218,11 @@ def _swap_cleaning_on(db, *, target: dict, leaving: dict, actor: Optional[dict],
                 "it). Swapping now needs a doctor, nurse or administrator to authorise it, with "
                 "the reason: you, if your role allows, or someone who confirms it here with "
                 "their own signing PIN. Both are recorded.",
-                code="terminal_clean_authorisation_required", bed_id=bed["id"],
-                bed_status="swap")
-        person = _authoriser_on(db, authoriser, ward=ward,
-                                treating_department=treating_department)
+                code="terminal_clean_authorisation_required",
+                bed_id=bed["id"],
+                bed_status="swap",
+            )
+        person = _authoriser_on(db, authoriser, ward=ward, treating_department=treating_department)
         if person["id"] == _actor_id(actor):
             confirmed_by = "own_session"
         elif (terminal_clean_confirmed or {}).get("id") == person["id"]:
@@ -898,24 +1232,36 @@ def _swap_cleaning_on(db, *, target: dict, leaving: dict, actor: Optional[dict],
                 f"{person.get('name') or person['id']} must confirm this here with their own "
                 "signing PIN, or authorise it yourself if your role allows. Naming someone is "
                 "not enough, because the record would say they authorised it.",
-                code="terminal_clean_pin_required", bed_id=bed["id"],
-                authoriser_id=person["id"])
-        return {"bed_status": "swap", "terminal_clean_override": {
-            "authorised_by": person["id"], "authorised_by_name": person.get("name"),
-            "authoriser_role": person.get("role"),
-            "authoriser_department": person.get("department") or None,
-            "confirmed_by": confirmed_by, "reason": why}}
+                code="terminal_clean_pin_required",
+                bed_id=bed["id"],
+                authoriser_id=person["id"],
+            )
+        return {
+            "bed_status": "swap",
+            "terminal_clean_override": {
+                "authorised_by": person["id"],
+                "authorised_by_name": person.get("name"),
+                "authoriser_role": person.get("role"),
+                "authoriser_department": person.get("department") or None,
+                "confirmed_by": confirmed_by,
+                "reason": why,
+            },
+        }
     why = _text(not_clean_reason, _MAX_REASON)
     if not why:
         raise AdtConflict(
             f"Neither bed is cleaned between the two patients. Type the reason they swap "
             f"before {where} is cleaned; it is recorded.",
-            code="bed_not_clean_reason_required", bed_id=bed["id"], bed_status="swap")
+            code="bed_not_clean_reason_required",
+            bed_id=bed["id"],
+            bed_status="swap",
+        )
     return {"bed_status": "swap", "not_clean_reason": why}
 
 
-def _swap_replayed_on(db, key: str, second_key: str, *, first_id: str, second_id: str,
-                      actor: Optional[dict]) -> Optional[dict]:
+def _swap_replayed_on(
+    db, key: str, second_key: str, *, first_id: str, second_id: str, actor: dict | None
+) -> dict | None:
     """The first answer for a retried swap, or None when the key is new. The
     key is bound to one person and the same two admissions in the same order;
     any other use is 409 idempotency_key_reused."""
@@ -924,36 +1270,56 @@ def _swap_replayed_on(db, key: str, second_key: str, *, first_id: str, second_id
     if prior_first is None and prior_second is None:
         return None
     me = _actor_id(actor) or None
-    if (prior_first is None or prior_second is None
-            or prior_first.get("movement_type") != "bed_swap"
-            or prior_second.get("movement_type") != "bed_swap"
-            or prior_first.get("admission_id") != first_id
-            or prior_second.get("admission_id") != second_id
-            or (prior_first.get("moved_by") or None) != me
-            or (prior_second.get("moved_by") or None) != me):
-        raise AdtConflict("That Idempotency-Key was already used for another change",
-                          code="idempotency_key_reused")
-    return {"replayed": True, "swap_key": key,
-            "first": _result_on(db, first_id, prior_first, replayed=True),
-            "second": _result_on(db, second_id, prior_second, replayed=True)}
+    if (
+        prior_first is None
+        or prior_second is None
+        or prior_first.get("movement_type") != "bed_swap"
+        or prior_second.get("movement_type") != "bed_swap"
+        or prior_first.get("admission_id") != first_id
+        or prior_second.get("admission_id") != second_id
+        or (prior_first.get("moved_by") or None) != me
+        or (prior_second.get("moved_by") or None) != me
+    ):
+        raise AdtConflict(
+            "That Idempotency-Key was already used for another change",
+            code="idempotency_key_reused",
+        )
+    return {
+        "replayed": True,
+        "swap_key": key,
+        "first": _result_on(db, first_id, prior_first, replayed=True),
+        "second": _result_on(db, second_id, prior_second, replayed=True),
+    }
 
 
 def swap_beds_on(
-    db, *, first_admission_id: str, second_admission_id: str, actor: Optional[dict],
-    reason: Any, expected_first_bed_id: Any = _UNSET, expected_second_bed_id: Any = _UNSET,
-    moved_at: Any = None, out_of_service_reason: Optional[str] = None,
-    boarder_acknowledged: bool = False, not_clean_reason: Any = None,
-    terminal_clean_authorised_by: Any = None, terminal_clean_reason: Any = None,
-    terminal_clean_confirmed: Optional[dict] = None, notes: Optional[str] = None,
-    idempotency_key: str, request_meta: Optional[dict] = None,
+    db,
+    *,
+    first_admission_id: str,
+    second_admission_id: str,
+    actor: dict | None,
+    reason: Any,
+    expected_first_bed_id: Any = _UNSET,
+    expected_second_bed_id: Any = _UNSET,
+    moved_at: Any = None,
+    out_of_service_reason: str | None = None,
+    boarder_acknowledged: bool = False,
+    not_clean_reason: Any = None,
+    terminal_clean_authorised_by: Any = None,
+    terminal_clean_reason: Any = None,
+    terminal_clean_confirmed: dict | None = None,
+    notes: str | None = None,
+    idempotency_key: str,
+    request_meta: dict | None = None,
 ) -> dict:
     """Swap the beds of two active admissions on the caller's immediate
     connection (see the section comment above). Every check runs before the
     first write; a replayed key returns the first answer and writes nothing."""
     key = idempotency_key
     second_key = f"{key}{SWAP_SECOND_KEY_SUFFIX}"
-    replay = _swap_replayed_on(db, key, second_key, first_id=first_admission_id,
-                               second_id=second_admission_id, actor=actor)
+    replay = _swap_replayed_on(
+        db, key, second_key, first_id=first_admission_id, second_id=second_admission_id, actor=actor
+    )
     if replay is not None:
         return replay
     if (_text(first_admission_id) or "") == (_text(second_admission_id) or ""):
@@ -972,7 +1338,10 @@ def swap_beds_on(
         raise AdtConflict(
             "Both patients must lie in beds set up in Bed setup to swap beds. A bed that is "
             "typed or not yet chosen is linked or assigned first; a single patient is moved "
-            "with a bed change.", code="swap_needs_beds", admission_ids=missing)
+            "with a bed change.",
+            code="swap_needs_beds",
+            admission_ids=missing,
+        )
     starts = [parse_instant(a.get("admitted_at") or a.get("created_at")) for a in (first, second)]
     not_before = max((s for s in starts if s is not None), default=None)
     when = to_utc_iso(check_event_time(moved_at, what="bed swap", not_before=not_before))
@@ -980,75 +1349,115 @@ def swap_beds_on(
 
     # Where each one goes: the other's bed, checked against the master as any
     # move is (retired, switched off, out of service without its reason).
-    to_first = resolve_place_on(db, bed_id=second["bed_id"],
-                                out_of_service_reason=out_of_service_reason)
-    to_second = resolve_place_on(db, bed_id=first["bed_id"],
-                                 out_of_service_reason=out_of_service_reason)
+    to_first = resolve_place_on(
+        db, bed_id=second["bed_id"], out_of_service_reason=out_of_service_reason
+    )
+    to_second = resolve_place_on(
+        db, bed_id=first["bed_id"], out_of_service_reason=out_of_service_reason
+    )
     legs = ((first, to_first, second), (second, to_second, first))
     for _adm, target, _leaving in legs:
         if _bed_reserved_on(db, target["bed_id"]):
-            raise AdtConflict(f"{_bed_label_words(target)} is held by a reservation. Release the "
-                              "reservation before swapping.", code="bed_reserved",
-                              bed_id=target["bed_id"])
+            raise AdtConflict(
+                f"{_bed_label_words(target)} is held by a reservation. Release the "
+                "reservation before swapping.",
+                code="bed_reserved",
+                bed_id=target["bed_id"],
+            )
 
     boarders: dict[str, dict] = {}
     for adm, target, _leaving in legs:
         ward = target.get("ward")
-        if (ward is not None and _text(ward.get("department"))
-                and not _same_text(ward.get("department"), adm.get("department"))
-                and ward["id"] != adm.get("ward_id")):
+        if (
+            ward is not None
+            and _text(ward.get("department"))
+            and not _same_text(ward.get("department"), adm.get("department"))
+            and ward["id"] != adm.get("ward_id")
+        ):
             boarders[adm["id"]] = ward
     if boarders and not boarder_acknowledged:
         words = " ".join(
             f"{_bed_label_words(target)}: {boarder_words(target['ward'], adm.get('department'))}"
-            for adm, target, _leaving in legs if adm["id"] in boarders)
+            for adm, target, _leaving in legs
+            if adm["id"] in boarders
+        )
         first_boarder = next(adm for adm, _t, _l in legs if adm["id"] in boarders)
-        raise AdtConflict(words, code="boarder_acknowledgement_required",
-                          ward_department=boarders[first_boarder["id"]].get("department"),
-                          treating_department=first_boarder.get("department"),
-                          admission_ids=list(boarders))
+        raise AdtConflict(
+            words,
+            code="boarder_acknowledgement_required",
+            ward_department=boarders[first_boarder["id"]].get("department"),
+            treating_department=first_boarder.get("department"),
+            admission_ids=list(boarders),
+        )
 
     cleaning: dict[str, dict] = {}
     for adm, target, leaving in legs:
         cleaning[adm["id"]] = _swap_cleaning_on(
-            db, target=target, leaving=leaving, actor=actor,
-            treating_department=adm.get("department"), not_clean_reason=not_clean_reason,
+            db,
+            target=target,
+            leaving=leaving,
+            actor=actor,
+            treating_department=adm.get("department"),
+            not_clean_reason=not_clean_reason,
             terminal_clean_authorised_by=terminal_clean_authorised_by,
             terminal_clean_reason=terminal_clean_reason,
-            terminal_clean_confirmed=terminal_clean_confirmed)
+            terminal_clean_confirmed=terminal_clean_confirmed,
+        )
 
-    before = {a["id"]: {"department": a.get("department"), "ward": a.get("ward"),
-                        "bed": a.get("bed"), "ward_id": a.get("ward_id"),
-                        "bed_id": a.get("bed_id")} for a in (first, second)}
-    after = {adm["id"]: {"department": adm.get("department"), "ward": target["ward_text"],
-                         "bed": target["bed_text"], "ward_id": target["ward_id"],
-                         "bed_id": target["bed_id"]} for adm, target, _l in legs}
+    before = {
+        a["id"]: {
+            "department": a.get("department"),
+            "ward": a.get("ward"),
+            "bed": a.get("bed"),
+            "ward_id": a.get("ward_id"),
+            "bed_id": a.get("bed_id"),
+        }
+        for a in (first, second)
+    }
+    after = {
+        adm["id"]: {
+            "department": adm.get("department"),
+            "ward": target["ward_text"],
+            "bed": target["bed_text"],
+            "ward_id": target["ward_id"],
+            "bed_id": target["bed_id"],
+        }
+        for adm, target, _l in legs
+    }
 
     try:
         # 1. The NULL step: for one statement nobody holds the first bed.
-        db.execute("UPDATE admissions SET bed_id = NULL WHERE id = ? AND status = 'active'",
-                   (first["id"],))
+        db.execute(
+            "UPDATE admissions SET bed_id = NULL WHERE id = ? AND status = 'active'", (first["id"],)
+        )
         # 2 and 3. Each takes the other's bed, in the master's spelling.
         for adm in (second, first):
             place = after[adm["id"]]
             done = db.execute(
                 "UPDATE admissions SET ward_id = ?, bed_id = ?, ward = ?, bed = ? "
                 "WHERE id = ? AND status = 'active'",
-                (place["ward_id"], place["bed_id"], place["ward"], place["bed"], adm["id"]))
+                (place["ward_id"], place["bed_id"], place["ward"], place["bed"], adm["id"]),
+            )
             if done.rowcount != 1:
-                raise AdtConflict("One of the two stays changed while the swap was being "
-                                  "recorded. Nothing was changed. Reload and try again.",
-                                  code="state_changed")
+                raise AdtConflict(
+                    "One of the two stays changed while the swap was being "
+                    "recorded. Nothing was changed. Reload and try again.",
+                    code="state_changed",
+                )
     except DBIntegrityError as exc:
         raise AdtConflict(
             "One of the two beds was just taken by another admission. Nothing was changed. "
-            "Reload and try again.", code="bed_occupied") from exc
+            "Reload and try again.",
+            code="bed_occupied",
+        ) from exc
     # The patients mirror holds the CURRENT admission's place only.
     for adm in (first, second):
         current = current_admission_on(db, adm["patient_id"])
         if current is not None and current["id"] == adm["id"]:
-            db.execute("UPDATE patients SET ward = ?, bed = ? WHERE id = ?",
-                       (after[adm["id"]]["ward"], after[adm["id"]]["bed"], adm["patient_id"]))
+            db.execute(
+                "UPDATE patients SET ward = ?, bed = ? WHERE id = ?",
+                (after[adm["id"]]["ward"], after[adm["id"]]["bed"], adm["patient_id"]),
+            )
 
     actor_name = None
     if _actor_id(actor):
@@ -1056,71 +1465,122 @@ def swap_beds_on(
         actor_name = name_row["name"] if name_row else None
     movements: dict[str, dict] = {}
     for index, (adm, target, leaving) in enumerate(legs, start=1):
-        detail: dict[str, Any] = {"swap": {"leg": index, "with_admission_id": leaving["id"],
-                                           "pair_key": key}}
+        detail: dict[str, Any] = {
+            "swap": {"leg": index, "with_admission_id": leaving["id"], "pair_key": key}
+        }
         if index == 2:
             detail["swap"]["with_movement_id"] = movements[first["id"]]["id"]
         detail.update(cleaning[adm["id"]])
         if target.get("out_of_service_reason"):
             detail["out_of_service_reason"] = target["out_of_service_reason"]
         if adm["id"] in boarders:
-            detail["boarder"] = {"ward_department": boarders[adm["id"]].get("department"),
-                                 "treating_department": adm.get("department")}
+            detail["boarder"] = {
+                "ward_department": boarders[adm["id"]].get("department"),
+                "treating_department": adm.get("department"),
+            }
         movements[adm["id"]] = record_movement_on(
-            db, patient_id=adm["patient_id"], admission_id=adm["id"], movement_type="bed_swap",
-            reason=why, moved_at=when, moved_by=_actor_id(actor), moved_by_name=actor_name,
-            from_location=before[adm["id"]], to_location=after[adm["id"]], notes=notes,
-            idempotency_key=key if index == 1 else second_key, detail=detail)
+            db,
+            patient_id=adm["patient_id"],
+            admission_id=adm["id"],
+            movement_type="bed_swap",
+            reason=why,
+            moved_at=when,
+            moved_by=_actor_id(actor),
+            moved_by_name=actor_name,
+            from_location=before[adm["id"]],
+            to_location=after[adm["id"]],
+            notes=notes,
+            idempotency_key=key if index == 1 else second_key,
+            detail=detail,
+        )
 
     from services.adt.core import _case_room_line_on
 
     correlation = f"swap-{movements[first['id']]['id']}"
-    for adm, target, leaving in legs:
+    for adm, _target, leaving in legs:
         mov = movements[adm["id"]]
         place = after[adm["id"]]
         audit_on(
-            db, category="patient_movement", action="beds_swapped",
-            summary=(f"Admission {adm['id']} swapped beds with admission {leaving['id']}: now at "
-                     f"{place['ward'] or 'no ward'}/{place['bed'] or 'no bed'}"),
-            actor=actor, patient_id=adm["patient_id"], target_type="admission",
-            target_id=adm["id"], request_meta=request_meta, correlation_id=correlation,
-            metadata={"movement_id": mov["id"], "movement_type": "bed_swap",
-                      "from": before[adm["id"]], "to": place,
-                      "with_admission_id": leaving["id"],
-                      "with_movement_id": movements[leaving["id"]]["id"],
-                      **({"detail": mov["detail"]} if mov.get("detail") else {})},
+            db,
+            category="patient_movement",
+            action="beds_swapped",
+            summary=(
+                f"Admission {adm['id']} swapped beds with admission {leaving['id']}: now at "
+                f"{place['ward'] or 'no ward'}/{place['bed'] or 'no bed'}"
+            ),
+            actor=actor,
+            patient_id=adm["patient_id"],
+            target_type="admission",
+            target_id=adm["id"],
+            request_meta=request_meta,
+            correlation_id=correlation,
+            metadata={
+                "movement_id": mov["id"],
+                "movement_type": "bed_swap",
+                "from": before[adm["id"]],
+                "to": place,
+                "with_admission_id": leaving["id"],
+                "with_movement_id": movements[leaving["id"]]["id"],
+                **({"detail": mov["detail"]} if mov.get("detail") else {}),
+            },
         )
         if adm["id"] in boarders:
             ward = boarders[adm["id"]]
             audit_on(
-                db, category="clinical_access", action="boarder_placed",
-                summary=(f"Admission {adm['id']} placed on {ward['code']} "
-                         f"({ward.get('department')}) in a bed swap while treated by "
-                         f"{adm.get('department')}"),
-                actor=actor, patient_id=adm["patient_id"], target_type="admission",
-                target_id=adm["id"], request_meta=request_meta,
-                metadata={"movement_id": mov["id"], "ward_id": ward["id"],
-                          "ward_department": ward.get("department"),
-                          "treating_department": adm.get("department"), "acknowledged": True},
+                db,
+                category="clinical_access",
+                action="boarder_placed",
+                summary=(
+                    f"Admission {adm['id']} placed on {ward['code']} "
+                    f"({ward.get('department')}) in a bed swap while treated by "
+                    f"{adm.get('department')}"
+                ),
+                actor=actor,
+                patient_id=adm["patient_id"],
+                target_type="admission",
+                target_id=adm["id"],
+                request_meta=request_meta,
+                metadata={
+                    "movement_id": mov["id"],
+                    "ward_id": ward["id"],
+                    "ward_department": ward.get("department"),
+                    "treating_department": adm.get("department"),
+                    "acknowledged": True,
+                },
             )
             _case_room_line_on(
-                db, adm["patient_id"],
+                db,
+                adm["patient_id"],
                 f"Placed as a boarder on {ward['code']} ({ward.get('department')}), bed "
-                f"{place['bed']}, in a bed swap. {boarder_words(ward, adm.get('department'))}")
+                f"{place['bed']}, in a bed swap. {boarder_words(ward, adm.get('department'))}",
+            )
 
-    return {"replayed": False, "swap_key": key,
-            "first": _result_on(db, first["id"], movements[first["id"]], replayed=False),
-            "second": _result_on(db, second["id"], movements[second["id"]], replayed=False)}
+    return {
+        "replayed": False,
+        "swap_key": key,
+        "first": _result_on(db, first["id"], movements[first["id"]], replayed=False),
+        "second": _result_on(db, second["id"], movements[second["id"]], replayed=False),
+    }
 
 
 def swap_beds(
-    first_admission_id: str, second_admission_id: str, *, actor: dict, reason: Any,
-    expected_first_bed_id: Any = _UNSET, expected_second_bed_id: Any = _UNSET,
-    moved_at: Any = None, out_of_service_reason: Optional[str] = None,
-    boarder_acknowledged: bool = False, not_clean_reason: Any = None,
-    terminal_clean_authorised_by: Any = None, terminal_clean_reason: Any = None,
-    terminal_clean_authoriser_pin: Any = None, notes: Optional[str] = None,
-    idempotency_key: Any = None, request_meta: Optional[dict] = None,
+    first_admission_id: str,
+    second_admission_id: str,
+    *,
+    actor: dict,
+    reason: Any,
+    expected_first_bed_id: Any = _UNSET,
+    expected_second_bed_id: Any = _UNSET,
+    moved_at: Any = None,
+    out_of_service_reason: str | None = None,
+    boarder_acknowledged: bool = False,
+    not_clean_reason: Any = None,
+    terminal_clean_authorised_by: Any = None,
+    terminal_clean_reason: Any = None,
+    terminal_clean_authoriser_pin: Any = None,
+    notes: str | None = None,
+    idempotency_key: Any = None,
+    request_meta: dict | None = None,
 ) -> dict:
     """Swap two admitted patients' beds in ONE immediate session (POST
     /api/adt/bed-swaps). The Idempotency-Key, the reason and both beds the
@@ -1131,24 +1591,40 @@ def swap_beds(
     key = _require_key(idempotency_key)
     _require_reason(reason, "bed swap")
     if expected_first_bed_id is _UNSET or expected_second_bed_id is _UNSET:
-        raise AdtError("A swap must say which bed the screen showed for each patient "
-                       "(expected_first_bed_id and expected_second_bed_id), so it never "
-                       "overwrites a change made since.", code="expected_bed_required")
+        raise AdtError(
+            "A swap must say which bed the screen showed for each patient "
+            "(expected_first_bed_id and expected_second_bed_id), so it never "
+            "overwrites a change made since.",
+            code="expected_bed_required",
+        )
     hk.ensure_housekeeping_schema()
     confirmed = confirm_terminal_authoriser(
-        actor=actor, authorised_by=terminal_clean_authorised_by,
-        pin=terminal_clean_authoriser_pin, admission_id=first_admission_id,
-        request_meta=request_meta)
+        actor=actor,
+        authorised_by=terminal_clean_authorised_by,
+        pin=terminal_clean_authoriser_pin,
+        admission_id=first_admission_id,
+        request_meta=request_meta,
+    )
     with db_session(immediate=True) as db:
         result = swap_beds_on(
-            db, first_admission_id=first_admission_id, second_admission_id=second_admission_id,
-            actor=actor, reason=reason, expected_first_bed_id=expected_first_bed_id,
-            expected_second_bed_id=expected_second_bed_id, moved_at=moved_at,
+            db,
+            first_admission_id=first_admission_id,
+            second_admission_id=second_admission_id,
+            actor=actor,
+            reason=reason,
+            expected_first_bed_id=expected_first_bed_id,
+            expected_second_bed_id=expected_second_bed_id,
+            moved_at=moved_at,
             out_of_service_reason=out_of_service_reason,
-            boarder_acknowledged=boarder_acknowledged, not_clean_reason=not_clean_reason,
+            boarder_acknowledged=boarder_acknowledged,
+            not_clean_reason=not_clean_reason,
             terminal_clean_authorised_by=terminal_clean_authorised_by,
-            terminal_clean_reason=terminal_clean_reason, terminal_clean_confirmed=confirmed,
-            notes=notes, idempotency_key=key, request_meta=request_meta)
+            terminal_clean_reason=terminal_clean_reason,
+            terminal_clean_confirmed=confirmed,
+            notes=notes,
+            idempotency_key=key,
+            request_meta=request_meta,
+        )
     if not result.get("replayed"):
         sync_housekeeping_after_commit()
     return result
@@ -1195,23 +1671,34 @@ CORRECTABLE_MOVEMENT_TYPES: tuple[str, ...] = ("bed_assigned", "bed_change", "tr
 #: Movements that change where a stay lies or end it: a later one of these
 #: means the movement asked about is no longer the latest.
 _PLACE_MOVEMENT_TYPES: tuple[str, ...] = (
-    "admission", "bed_assigned", "bed_change", "transfer", "bed_swap", "location_linked",
-    "correction", "discharge",
+    "admission",
+    "bed_assigned",
+    "bed_change",
+    "transfer",
+    "bed_swap",
+    "location_linked",
+    "correction",
+    "discharge",
 )
 
 _NOT_CORRECTABLE_WORDS = {
     "bed_swap": "A swap is undone by swapping the two patients back.",
     "correction": "A correction cannot itself be undone. Move the patient instead.",
-    "admission": ("The bed recorded at admission is put right by correcting the bed, not by "
-                  "undoing the admission."),
+    "admission": (
+        "The bed recorded at admission is put right by correcting the bed, not by "
+        "undoing the admission."
+    ),
     "location_linked": "A link to bed setup is put right in bed setup, not undone here.",
     "discharge": "An end of stay recorded in error is reopened from the end of stay screen.",
 }
 
 
 def _changes_department(mov: dict) -> bool:
-    return (mov.get("movement_type") == "transfer" and bool(_text(mov.get("from_department")))
-            and not _same_text(mov.get("from_department"), mov.get("to_department")))
+    return (
+        mov.get("movement_type") == "transfer"
+        and bool(_text(mov.get("from_department")))
+        and not _same_text(mov.get("from_department"), mov.get("to_department"))
+    )
 
 
 def _at_movement_place(adm: dict, mov: dict) -> bool:
@@ -1224,43 +1711,54 @@ def _at_movement_place(adm: dict, mov: dict) -> bool:
         return False
     if not mov.get("to_ward_id") and not _same_text(adm.get("ward"), mov.get("to_ward")):
         return False
-    if _text(mov.get("to_department")) and not _same_text(adm.get("department"),
-                                                          mov.get("to_department")):
+    if _text(mov.get("to_department")) and not _same_text(
+        adm.get("department"), mov.get("to_department")
+    ):
         return False
     return True
 
 
-def _undo_refusal_on(db, mov: dict, adm: Optional[dict]) -> Optional[tuple[str, str]]:
+def _undo_refusal_on(db, mov: dict, adm: dict | None) -> tuple[str, str] | None:
     """Why `mov` cannot be undone as recorded in error, as (code, words), or
     None when it can."""
     kind = mov.get("movement_type")
     if kind not in CORRECTABLE_MOVEMENT_TYPES:
-        return ("not_correctable",
-                _NOT_CORRECTABLE_WORDS.get(kind, "This kind of record cannot be undone here."))
+        return (
+            "not_correctable",
+            _NOT_CORRECTABLE_WORDS.get((kind or ""), "This kind of record cannot be undone here."),
+        )
     if adm is None or adm.get("status") != "active":
-        return ("admission_not_active",
-                "That stay has ended, so its moves cannot be undone here.")
-    if db.execute("SELECT 1 FROM patient_movements WHERE corrects_movement_id = ? LIMIT 1",
-                  (mov["id"],)).fetchone() is not None:
+        return ("admission_not_active", "That stay has ended, so its moves cannot be undone here.")
+    if (
+        db.execute(
+            "SELECT 1 FROM patient_movements WHERE corrects_movement_id = ? LIMIT 1", (mov["id"],)
+        ).fetchone()
+        is not None
+    ):
         return ("already_corrected", "This move has already been undone as recorded in error.")
     marks = ",".join("?" for _ in _PLACE_MOVEMENT_TYPES)
     later = db.execute(
         f"""SELECT 1 FROM patient_movements
              WHERE admission_id = ? AND movement_type IN ({marks})
                AND rowid > (SELECT rowid FROM patient_movements WHERE id = ?) LIMIT 1""",
-        (mov.get("admission_id"), *_PLACE_MOVEMENT_TYPES, mov["id"])).fetchone()
+        (mov.get("admission_id"), *_PLACE_MOVEMENT_TYPES, mov["id"]),
+    ).fetchone()
     if later is not None:
-        return ("not_latest_movement",
-                "Only the latest move of this stay can be undone. Something was recorded after "
-                "it, so move the patient instead.")
+        return (
+            "not_latest_movement",
+            "Only the latest move of this stay can be undone. Something was recorded after "
+            "it, so move the patient instead.",
+        )
     if not _at_movement_place(adm, mov):
-        return ("state_changed",
-                "Where this patient lies changed since this move was recorded, so move the "
-                "patient instead.")
+        return (
+            "state_changed",
+            "Where this patient lies changed since this move was recorded, so move the "
+            "patient instead.",
+        )
     return None
 
 
-def last_move_on(db, admission_id: str) -> Optional[dict]:
+def last_move_on(db, admission_id: str) -> dict | None:
     """The stay's latest place-changing movement (latest WRITTEN, by rowid,
     never by its back-timeable moved_at) and whether it can be undone as
     recorded in error, for the Move screen. None when the stay has none."""
@@ -1269,7 +1767,8 @@ def last_move_on(db, admission_id: str) -> Optional[dict]:
         f"""SELECT * FROM patient_movements
              WHERE admission_id = ? AND movement_type IN ({marks})
              ORDER BY rowid DESC LIMIT 1""",
-        (admission_id, *_PLACE_MOVEMENT_TYPES)).fetchone()
+        (admission_id, *_PLACE_MOVEMENT_TYPES),
+    ).fetchone()
     if row is None:
         return None
     mov = dict(row)
@@ -1282,42 +1781,55 @@ def last_move_on(db, admission_id: str) -> Optional[dict]:
         "recorded_at": mov.get("recorded_at"),
         "moved_by_name": mov.get("moved_by_name"),
         "reason": mov.get("reason"),
-        "from": {"department": mov.get("from_department"), "ward": mov.get("from_ward"),
-                 "bed": mov.get("from_bed")},
-        "to": {"department": mov.get("to_department"), "ward": mov.get("to_ward"),
-               "bed": mov.get("to_bed")},
+        "from": {
+            "department": mov.get("from_department"),
+            "ward": mov.get("from_ward"),
+            "bed": mov.get("from_bed"),
+        },
+        "to": {
+            "department": mov.get("to_department"),
+            "ward": mov.get("to_ward"),
+            "bed": mov.get("to_bed"),
+        },
         "changes_department": _changes_department(mov),
         "correctable": refusal is None,
         "not_correctable": ({"code": refusal[0], "message": refusal[1]} if refusal else None),
     }
 
 
-def movement_admission(movement_id: str) -> Optional[dict]:
+def movement_admission(movement_id: str) -> dict | None:
     """The admission and patient a movement belongs to, for the route's scope
     check before the write, or None for an unknown movement."""
     with db_session() as db:
-        row = db.execute("SELECT id, admission_id, patient_id, movement_type FROM "
-                         "patient_movements WHERE id = ?", (movement_id,)).fetchone()
+        row = db.execute(
+            "SELECT id, admission_id, patient_id, movement_type FROM "
+            "patient_movements WHERE id = ?",
+            (movement_id,),
+        ).fetchone()
     return dict(row) if row is not None else None
 
 
-def _correction_replay_on(db, key: str, *, movement_id: str,
-                          actor: Optional[dict]) -> Optional[dict]:
+def _correction_replay_on(db, key: str, *, movement_id: str, actor: dict | None) -> dict | None:
     """The movement this person wrote under `key` to undo `movement_id`, or
     None when the key is new; any other use of the key is 409."""
     prior = movement_for_key(db, key)
     if prior is None:
         return None
-    if (prior.get("movement_type") != "correction"
-            or prior.get("corrects_movement_id") != movement_id
-            or (prior.get("moved_by") or None) != (_actor_id(actor) or None)):
-        raise AdtConflict("That Idempotency-Key was already used for another change",
-                          code="idempotency_key_reused")
+    if (
+        prior.get("movement_type") != "correction"
+        or prior.get("corrects_movement_id") != movement_id
+        or (prior.get("moved_by") or None) != (_actor_id(actor) or None)
+    ):
+        raise AdtConflict(
+            "That Idempotency-Key was already used for another change",
+            code="idempotency_key_reused",
+        )
     return prior
 
 
-def replayed_correction(idempotency_key: Any, *, movement_id: str,
-                        actor: Optional[dict]) -> Optional[dict]:
+def replayed_correction(
+    idempotency_key: Any, *, movement_id: str, actor: dict | None
+) -> dict | None:
     """A retried correction's answer, read BEFORE the route's scope check, or
     None. Undoing a transfer hands the chart back, so the sender's own retry
     would otherwise meet the scope check and answer 404. Nothing about the
@@ -1329,23 +1841,42 @@ def replayed_correction(idempotency_key: Any, *, movement_id: str,
         return None
     with db_session() as db:
         prior = movement_for_key(db, key)
-    if (prior is None or prior.get("movement_type") != "correction"
-            or prior.get("corrects_movement_id") != movement_id
-            or (prior.get("moved_by") or None) != (_actor_id(actor) or None)):
+    if (
+        prior is None
+        or prior.get("movement_type") != "correction"
+        or prior.get("corrects_movement_id") != movement_id
+        or (prior.get("moved_by") or None) != (_actor_id(actor) or None)
+    ):
         return None
-    return {"replayed": True, "admission_id": prior.get("admission_id"),
-            "corrects_movement_id": movement_id,
-            "movement": {"id": prior["id"], "movement_type": prior["movement_type"],
-                         "moved_at": prior.get("moved_at")}}
+    return {
+        "replayed": True,
+        "admission_id": prior.get("admission_id"),
+        "corrects_movement_id": movement_id,
+        "movement": {
+            "id": prior["id"],
+            "movement_type": prior["movement_type"],
+            "moved_at": prior.get("moved_at"),
+        },
+    }
 
 
 def correct_movement_on(
-    db, *, movement_id: str, actor: Optional[dict], reason: Any,
-    restore_department: Optional[str] = None, expected_bed_id: Any = _UNSET,
-    out_of_service_reason: Optional[str] = None, boarder_acknowledged: bool = False,
-    not_clean_reason: Any = None, terminal_clean_authorised_by: Any = None,
-    terminal_clean_reason: Any = None, terminal_clean_confirmed: Optional[dict] = None,
-    notes: Optional[str] = None, idempotency_key: str, request_meta: Optional[dict] = None,
+    db,
+    *,
+    movement_id: str,
+    actor: dict | None,
+    reason: Any,
+    restore_department: str | None = None,
+    expected_bed_id: Any = _UNSET,
+    out_of_service_reason: str | None = None,
+    boarder_acknowledged: bool = False,
+    not_clean_reason: Any = None,
+    terminal_clean_authorised_by: Any = None,
+    terminal_clean_reason: Any = None,
+    terminal_clean_confirmed: dict | None = None,
+    notes: str | None = None,
+    idempotency_key: str,
+    request_meta: dict | None = None,
 ) -> dict:
     """Undo one movement recorded in error, on the caller's immediate
     connection. `restore_department` is the department a transfer goes back
@@ -1353,10 +1884,13 @@ def correct_movement_on(
     opened; it is required for a transfer that changed the department."""
     prior = _correction_replay_on(db, idempotency_key, movement_id=movement_id, actor=actor)
     if prior is not None:
-        return {**_result_on(db, prior["admission_id"], prior, replayed=True),
-                "corrects_movement_id": movement_id}
-    mov = _row(db.execute("SELECT * FROM patient_movements WHERE id = ?",
-                          (movement_id,)).fetchone())
+        return {
+            **_result_on(db, prior["admission_id"], prior, replayed=True),
+            "corrects_movement_id": movement_id,
+        }
+    mov = _row(
+        db.execute("SELECT * FROM patient_movements WHERE id = ?", (movement_id,)).fetchone()
+    )
     if mov is None:
         raise AdtNotFound("No movement with that id", code="movement_not_found")
     adm = _active_admission_on(db, admission_id=mov.get("admission_id"), patient_id=None)
@@ -1370,65 +1904,115 @@ def correct_movement_on(
         raise AdtForbidden(
             f"Undoing this transfer gives the patient back to {mov.get('from_department')}, "
             "which changes who can open the chart. Your role cannot change the treating "
-            "department.", code="transfer_permission_required")
+            "department.",
+            code="transfer_permission_required",
+        )
     _check_expected(adm, expected_bed_id)
     why = _require_reason(reason, "correction")
     treating = restore_department if changes_dept else adm.get("department")
     try:
         prepared = prepare_place_on(
-            db, admission_id=adm["id"], actor=actor, movement_type="correction",
-            ward_id=mov.get("from_ward_id"), bed_id=mov.get("from_bed_id"),
-            ward_text=mov.get("from_ward"), bed_text=mov.get("from_bed"),
-            out_of_service_reason=out_of_service_reason, not_clean_reason=not_clean_reason,
+            db,
+            admission_id=adm["id"],
+            actor=actor,
+            movement_type="correction",
+            ward_id=mov.get("from_ward_id"),
+            bed_id=mov.get("from_bed_id"),
+            ward_text=mov.get("from_ward"),
+            bed_text=mov.get("from_bed"),
+            out_of_service_reason=out_of_service_reason,
+            not_clean_reason=not_clean_reason,
             terminal_clean_authorised_by=terminal_clean_authorised_by,
-            terminal_clean_reason=terminal_clean_reason, request_meta=request_meta,
-            treating_department=treating, terminal_clean_confirmed=terminal_clean_confirmed)
+            terminal_clean_reason=terminal_clean_reason,
+            request_meta=request_meta,
+            treating_department=treating,
+            terminal_clean_confirmed=terminal_clean_confirmed,
+        )
     except AdtConflict as err:
         if err.code == "bed_occupied":
             raise AdtConflict(
                 "Another patient now lies in the bed this patient was moved from, so the move "
-                "cannot be undone. Move the patient instead.", code="bed_occupied",
-                extra_bed_offered=False, movement_id=movement_id) from err
+                "cannot be undone. Move the patient instead.",
+                code="bed_occupied",
+                extra_bed_offered=False,
+                movement_id=movement_id,
+            ) from err
         raise
-    prepared["detail"] = {**(prepared.get("detail") or {}), "recorded_in_error": True,
-                          "corrects_movement_id": mov["id"],
-                          "corrected_movement_type": mov.get("movement_type")}
+    prepared["detail"] = {
+        **(prepared.get("detail") or {}),
+        "recorded_in_error": True,
+        "corrects_movement_id": mov["id"],
+        "corrected_movement_type": mov.get("movement_type"),
+    }
     located = place_admission_on(
-        db, admission_id=adm["id"], actor=actor, movement_type="correction",
-        reason=f"Recorded in error: {why}", prepared=prepared,
-        boarder_acknowledged=boarder_acknowledged, expected_bed_id=expected_bed_id,
-        idempotency_key=idempotency_key, notes=notes, request_meta=request_meta,
-        to_department=treating if changes_dept else None)
+        db,
+        admission_id=adm["id"],
+        actor=actor,
+        movement_type="correction",
+        reason=f"Recorded in error: {why}",
+        prepared=prepared,
+        boarder_acknowledged=boarder_acknowledged,
+        expected_bed_id=expected_bed_id,
+        idempotency_key=idempotency_key,
+        notes=notes,
+        request_meta=request_meta,
+        to_department=treating if changes_dept else None,
+    )
     written = located["movement"]
     # The pointer, on the row just written, before anything commits (see the
     # section comment).
-    db.execute("UPDATE patient_movements SET corrects_movement_id = ? "
-               "WHERE id = ? AND corrects_movement_id IS NULL", (mov["id"], written["id"]))
+    db.execute(
+        "UPDATE patient_movements SET corrects_movement_id = ? "
+        "WHERE id = ? AND corrects_movement_id IS NULL",
+        (mov["id"], written["id"]),
+    )
     correction = movement_for_key(db, idempotency_key) or written
     if changes_dept:
         audit_on(
-            db, category="clinical_access", action="patient_transfer_corrected",
-            summary=(f"{adm['patient_id']} transfer to {mov.get('to_department')} recorded in "
-                     f"error; treated by {treating} again: {why}"),
-            actor=actor, patient_id=adm["patient_id"], target_type="patient_movement",
-            target_id=correction["id"], request_meta=request_meta,
+            db,
+            category="clinical_access",
+            action="patient_transfer_corrected",
+            summary=(
+                f"{adm['patient_id']} transfer to {mov.get('to_department')} recorded in "
+                f"error; treated by {treating} again: {why}"
+            ),
+            actor=actor,
+            patient_id=adm["patient_id"],
+            target_type="patient_movement",
+            target_id=correction["id"],
+            request_meta=request_meta,
             correlation_id=f"transfer-correction-{correction['id']}",
-            metadata={"corrects_movement_id": mov["id"],
-                      "from_department": mov.get("to_department"),
-                      "to_department": treating, "admission_id": adm["id"],
-                      "admission_status": "active", "movement_id": correction["id"]},
+            metadata={
+                "corrects_movement_id": mov["id"],
+                "from_department": mov.get("to_department"),
+                "to_department": treating,
+                "admission_id": adm["id"],
+                "admission_status": "active",
+                "movement_id": correction["id"],
+            },
         )
-    return {**_result_on(db, adm["id"], correction, replayed=False),
-            "corrects_movement_id": mov["id"]}
+    return {
+        **_result_on(db, adm["id"], correction, replayed=False),
+        "corrects_movement_id": mov["id"],
+    }
 
 
 def correct_movement(
-    movement_id: str, *, actor: dict, reason: Any, expected_bed_id: Any = _UNSET,
-    may_change_department: bool = False, out_of_service_reason: Optional[str] = None,
-    boarder_acknowledged: bool = False, not_clean_reason: Any = None,
-    terminal_clean_authorised_by: Any = None, terminal_clean_reason: Any = None,
-    terminal_clean_authoriser_pin: Any = None, notes: Optional[str] = None,
-    idempotency_key: Any = None, request_meta: Optional[dict] = None,
+    movement_id: str,
+    *,
+    actor: dict,
+    reason: Any,
+    expected_bed_id: Any = _UNSET,
+    may_change_department: bool = False,
+    out_of_service_reason: str | None = None,
+    boarder_acknowledged: bool = False,
+    not_clean_reason: Any = None,
+    terminal_clean_authorised_by: Any = None,
+    terminal_clean_reason: Any = None,
+    terminal_clean_authoriser_pin: Any = None,
+    notes: str | None = None,
+    idempotency_key: Any = None,
+    request_meta: dict | None = None,
 ) -> dict:
     """Undo a move recorded in error in ONE immediate session (POST
     /api/adt/movements/{id}/correct). The Idempotency-Key, the reason and the
@@ -1441,16 +2025,21 @@ def correct_movement(
     key = _require_key(idempotency_key)
     _require_reason(reason, "correction")
     if expected_bed_id is _UNSET:
-        raise AdtError("A correction must say which bed the screen showed (expected_bed_id), "
-                       "so it never overwrites a change made since.",
-                       code="expected_bed_required")
+        raise AdtError(
+            "A correction must say which bed the screen showed (expected_bed_id), "
+            "so it never overwrites a change made since.",
+            code="expected_bed_required",
+        )
     with db_session() as db:
         prior = _correction_replay_on(db, key, movement_id=movement_id, actor=actor)
         if prior is not None:
-            return {**_result_on(db, prior["admission_id"], prior, replayed=True),
-                    "corrects_movement_id": movement_id}
-        mov = _row(db.execute("SELECT * FROM patient_movements WHERE id = ?",
-                              (movement_id,)).fetchone())
+            return {
+                **_result_on(db, prior["admission_id"], prior, replayed=True),
+                "corrects_movement_id": movement_id,
+            }
+        mov = _row(
+            db.execute("SELECT * FROM patient_movements WHERE id = ?", (movement_id,)).fetchone()
+        )
     if mov is None:
         raise AdtNotFound("No movement with that id", code="movement_not_found")
     restore = None
@@ -1459,22 +2048,37 @@ def correct_movement(
             raise AdtForbidden(
                 f"Undoing this transfer gives the patient back to {mov.get('from_department')}, "
                 "which changes who can open the chart. Your role cannot change the treating "
-                "department.", code="transfer_permission_required")
+                "department.",
+                code="transfer_permission_required",
+            )
         restore = resolve_cover(mov.get("from_department"))
     hk.ensure_housekeeping_schema()
     confirmed = confirm_terminal_authoriser(
-        actor=actor, authorised_by=terminal_clean_authorised_by,
-        pin=terminal_clean_authoriser_pin, admission_id=mov.get("admission_id"),
-        bed_id=mov.get("from_bed_id"), request_meta=request_meta)
+        actor=actor,
+        authorised_by=terminal_clean_authorised_by,
+        pin=terminal_clean_authoriser_pin,
+        admission_id=mov.get("admission_id"),
+        bed_id=mov.get("from_bed_id"),
+        request_meta=request_meta,
+    )
     with db_session(immediate=True) as db:
         result = correct_movement_on(
-            db, movement_id=movement_id, actor=actor, reason=reason,
-            restore_department=restore, expected_bed_id=expected_bed_id,
+            db,
+            movement_id=movement_id,
+            actor=actor,
+            reason=reason,
+            restore_department=restore,
+            expected_bed_id=expected_bed_id,
             out_of_service_reason=out_of_service_reason,
-            boarder_acknowledged=boarder_acknowledged, not_clean_reason=not_clean_reason,
+            boarder_acknowledged=boarder_acknowledged,
+            not_clean_reason=not_clean_reason,
             terminal_clean_authorised_by=terminal_clean_authorised_by,
-            terminal_clean_reason=terminal_clean_reason, terminal_clean_confirmed=confirmed,
-            notes=notes, idempotency_key=key, request_meta=request_meta)
+            terminal_clean_reason=terminal_clean_reason,
+            terminal_clean_confirmed=confirmed,
+            notes=notes,
+            idempotency_key=key,
+            request_meta=request_meta,
+        )
     if not result.get("replayed"):
         sync_housekeeping_after_commit()
     return result

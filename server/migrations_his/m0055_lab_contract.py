@@ -40,6 +40,7 @@ earlier attempt got part of the way, changes nothing the second time. Each
 index is created only when its table has every column it names, so an
 unusual table of the same name cannot stop boot here.
 """
+
 from migrations import Migration
 
 _TABLES = (
@@ -345,23 +346,52 @@ _TABLES = (
 )
 
 TABLE_NAMES = (
-    "lab_sections", "lab_specimen_types", "lab_tests", "lab_panel_components",
-    "lab_reference_ranges", "lab_critical_limits", "lab_rejection_reasons",
-    "lab_accession_counters", "lab_specimens", "lab_specimen_events",
-    "lab_order_items", "lab_results", "lab_result_events",
-    "lab_critical_notifications", "lab_critical_events", "lab_exceptions",
+    "lab_sections",
+    "lab_specimen_types",
+    "lab_tests",
+    "lab_panel_components",
+    "lab_reference_ranges",
+    "lab_critical_limits",
+    "lab_rejection_reasons",
+    "lab_accession_counters",
+    "lab_specimens",
+    "lab_specimen_events",
+    "lab_order_items",
+    "lab_results",
+    "lab_result_events",
+    "lab_critical_notifications",
+    "lab_critical_events",
+    "lab_exceptions",
     "lab_module_events",
 )
 
 # (index name, table, columns, WHERE clause or "", unique)
 _INDEXES = (
     ("idx_lab_tests_section", "lab_tests", ("section_id",), "", False),
-    ("idx_lab_panel_components_component", "lab_panel_components", ("component_test_id",), "", False),
-    ("idx_lab_reference_ranges_test", "lab_reference_ranges", ("test_id", "effective_to"), "", False),
+    (
+        "idx_lab_panel_components_component",
+        "lab_panel_components",
+        ("component_test_id",),
+        "",
+        False,
+    ),
+    (
+        "idx_lab_reference_ranges_test",
+        "lab_reference_ranges",
+        ("test_id", "effective_to"),
+        "",
+        False,
+    ),
     ("idx_lab_critical_limits_test", "lab_critical_limits", ("test_id", "effective_to"), "", False),
     ("idx_lab_specimens_status", "lab_specimens", ("status", "priority", "received_at"), "", False),
     ("idx_lab_specimens_patient", "lab_specimens", ("patient_id", "created_at"), "", False),
-    ("idx_lab_specimen_events_patient", "lab_specimen_events", ("patient_id", "occurred_at"), "", False),
+    (
+        "idx_lab_specimen_events_patient",
+        "lab_specimen_events",
+        ("patient_id", "occurred_at"),
+        "",
+        False,
+    ),
     ("idx_lab_order_items_order", "lab_order_items", ("order_id",), "", False),
     ("idx_lab_order_items_patient", "lab_order_items", ("patient_id", "created_at"), "", False),
     ("idx_lab_order_items_specimen", "lab_order_items", ("specimen_id",), "", False),
@@ -370,27 +400,74 @@ _INDEXES = (
     ("idx_lab_results_specimen", "lab_results", ("specimen_id",), "", False),
     ("idx_lab_results_status", "lab_results", ("status",), "", False),
     # One live result per order item: a correction supersedes, never doubles.
-    ("uq_lab_results_live_item", "lab_results", ("order_item_id",),
-     "status NOT IN ('superseded', 'withdrawn')", True),
+    (
+        "uq_lab_results_live_item",
+        "lab_results",
+        ("order_item_id",),
+        "status NOT IN ('superseded', 'withdrawn')",
+        True,
+    ),
     ("idx_lab_result_events_result", "lab_result_events", ("result_id",), "", False),
-    ("idx_lab_result_events_patient", "lab_result_events", ("patient_id", "occurred_at"), "", False),
-    ("idx_lab_critical_notifications_patient", "lab_critical_notifications",
-     ("patient_id", "raised_at"), "", False),
-    ("idx_lab_critical_notifications_due", "lab_critical_notifications",
-     ("status", "tier_due_at"), "", False),
+    (
+        "idx_lab_result_events_patient",
+        "lab_result_events",
+        ("patient_id", "occurred_at"),
+        "",
+        False,
+    ),
+    (
+        "idx_lab_critical_notifications_patient",
+        "lab_critical_notifications",
+        ("patient_id", "raised_at"),
+        "",
+        False,
+    ),
+    (
+        "idx_lab_critical_notifications_due",
+        "lab_critical_notifications",
+        ("status", "tier_due_at"),
+        "",
+        False,
+    ),
     # One open notification per result and per interfaced observation.
-    ("uq_lab_critical_open_result", "lab_critical_notifications", ("result_id",),
-     "status = 'open' AND result_id IS NOT NULL", True),
-    ("uq_lab_critical_open_observation", "lab_critical_notifications", ("observation_id",),
-     "status = 'open' AND observation_id IS NOT NULL", True),
-    ("idx_lab_critical_events_notification", "lab_critical_events", ("notification_id",), "", False),
-    ("idx_lab_critical_events_patient", "lab_critical_events", ("patient_id", "occurred_at"), "", False),
+    (
+        "uq_lab_critical_open_result",
+        "lab_critical_notifications",
+        ("result_id",),
+        "status = 'open' AND result_id IS NOT NULL",
+        True,
+    ),
+    (
+        "uq_lab_critical_open_observation",
+        "lab_critical_notifications",
+        ("observation_id",),
+        "status = 'open' AND observation_id IS NOT NULL",
+        True,
+    ),
+    (
+        "idx_lab_critical_events_notification",
+        "lab_critical_events",
+        ("notification_id",),
+        "",
+        False,
+    ),
+    (
+        "idx_lab_critical_events_patient",
+        "lab_critical_events",
+        ("patient_id", "occurred_at"),
+        "",
+        False,
+    ),
     ("idx_lab_exceptions_open", "lab_exceptions", ("created_at",), "resolved_at IS NULL", False),
 )
 
 # The append-only event tables: history is added to, never rewritten.
-_APPEND_ONLY = ("lab_specimen_events", "lab_result_events", "lab_critical_events",
-                "lab_module_events")
+_APPEND_ONLY = (
+    "lab_specimen_events",
+    "lab_result_events",
+    "lab_critical_events",
+    "lab_module_events",
+)
 
 
 def _columns(conn, table: str) -> set:
@@ -405,9 +482,7 @@ def apply(conn) -> None:
             continue
         kind = "UNIQUE INDEX" if unique else "INDEX"
         clause = f" WHERE {where}" if where else ""
-        conn.execute(
-            f"CREATE {kind} IF NOT EXISTS {name} ON {table}({', '.join(columns)}){clause}"
-        )
+        conn.execute(f"CREATE {kind} IF NOT EXISTS {name} ON {table}({', '.join(columns)}){clause}")
     for table in _APPEND_ONLY:
         conn.execute(
             f"CREATE TRIGGER IF NOT EXISTS trg_{table}_no_update "

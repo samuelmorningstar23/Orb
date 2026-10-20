@@ -43,14 +43,16 @@ relevance scorer:
 Each run derives the floor for the scorer it exercised and carries the other
 forward untouched.
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import math
 import os
-from datetime import datetime, timezone
-from typing import Callable, Optional
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any, TypedDict
 
 logger = logging.getLogger("orb.retrieval_calibration")
 
@@ -58,10 +60,23 @@ _EVAL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 CALIBRATION_SET_PATH = os.path.join(_EVAL_DIR, "retrieval_calibration.json")
 THRESHOLDS_PATH = os.path.join(_EVAL_DIR, "retrieval_thresholds.json")
 
+
 # The documented fallback (the historical magic numbers). Used verbatim when no
 # calibration file has been committed, so runtime behaviour is unchanged until a
 # calibration exists.
-DEFAULT_THRESHOLDS = {
+class _Thresholds(TypedDict):
+    no_relevance_score_floor: float
+    no_relevance_lexical_floor: float
+    high_score: float
+    high_lexical: float
+    medium_score: float
+    medium_lexical: float
+    min_relevance_cross_encoder: float
+    min_relevance_lexical: float
+    source: str
+
+
+DEFAULT_THRESHOLDS: _Thresholds = {
     "no_relevance_score_floor": 0.02,
     "no_relevance_lexical_floor": 0.15,
     "high_score": 0.04,
@@ -103,7 +118,11 @@ def retrieval_signals(query: str, results: list) -> dict:
     query_words = set(w.lower() for w in query.split() if len(w) > 3)
     top = results[0] if results else {}
     top_content = ((top.get("content", "") or "") + " " + (top.get("title", "") or "")).lower()
-    lexical_overlap = (sum(1 for w in query_words if w in top_content) / max(len(query_words), 1)) if query_words else 0.0
+    lexical_overlap = (
+        (sum(1 for w in query_words if w in top_content) / max(len(query_words), 1))
+        if query_words
+        else 0.0
+    )
     return {"top_score": top_score, "avg_score": avg_score, "lexical_overlap": lexical_overlap}
 
 
@@ -111,7 +130,10 @@ def classify_confidence(signals: dict, thresholds: dict) -> str:
     """Map signals → 'none' | 'low' | 'medium' | 'high' using thresholds.
     'none' means the no-relevance floor tripped (treat as irrelevant)."""
     ts, lex = signals["top_score"], signals["lexical_overlap"]
-    if ts < thresholds["no_relevance_score_floor"] and lex < thresholds["no_relevance_lexical_floor"]:
+    if (
+        ts < thresholds["no_relevance_score_floor"]
+        and lex < thresholds["no_relevance_lexical_floor"]
+    ):
         return "none"
     if ts > thresholds["high_score"] or lex > thresholds["high_lexical"]:
         return "high"
@@ -120,7 +142,7 @@ def classify_confidence(signals: dict, thresholds: dict) -> str:
     return "low"
 
 
-_cached: Optional[dict] = None
+_cached: dict | None = None
 
 
 def load_thresholds(force_reload: bool = False) -> dict:
@@ -130,7 +152,7 @@ def load_thresholds(force_reload: bool = False) -> dict:
         return _cached
     try:
         if os.path.exists(THRESHOLDS_PATH):
-            with open(THRESHOLDS_PATH, "r", encoding="utf-8") as fh:
+            with open(THRESHOLDS_PATH, encoding="utf-8") as fh:
                 data = json.load(fh)
             merged = {**DEFAULT_THRESHOLDS, **{k: data[k] for k in DEFAULT_THRESHOLDS if k in data}}
             merged["source"] = data.get("source", "calibrated")
@@ -146,7 +168,7 @@ def _read_thresholds_file() -> dict:
     """Raw contents of the committed thresholds file, or {} if there is none."""
     try:
         if os.path.exists(THRESHOLDS_PATH):
-            with open(THRESHOLDS_PATH, "r", encoding="utf-8") as fh:
+            with open(THRESHOLDS_PATH, encoding="utf-8") as fh:
                 return json.load(fh) or {}
     except Exception as e:
         logger.warning("Could not read %s (%s)", THRESHOLDS_PATH, e)
@@ -157,11 +179,13 @@ def _corpus_shape() -> dict:
     """Chunk/document counts of the store the calibration ran against."""
     try:
         from database import db_session
+
         with db_session() as db:
             return {
                 "chunks": db.execute("SELECT COUNT(*) FROM clinical_knowledge").fetchone()[0],
                 "documents": db.execute(
-                    "SELECT COUNT(DISTINCT document_id) FROM clinical_knowledge").fetchone()[0],
+                    "SELECT COUNT(DISTINCT document_id) FROM clinical_knowledge"
+                ).fetchone()[0],
             }
     except Exception:
         return {}
@@ -183,26 +207,28 @@ def _search_unfiltered(search_fn: Callable, query: str, limit: int = 5) -> list:
         return search_fn(query, limit=limit)
 
 
-def load_calibration_set(path: Optional[str] = None) -> list:
+def load_calibration_set(path: str | None = None) -> list:
     p = path or CALIBRATION_SET_PATH
-    with open(p, "r", encoding="utf-8") as fh:
+    with open(p, encoding="utf-8") as fh:
         data = json.load(fh)
     items = data["cases"] if isinstance(data, dict) else data
     out = []
     for it in items:
-        out.append({
-            "query": it["query"],
-            # relevant = the corpus SHOULD answer this (in-corpus positive).
-            "relevant": bool(it.get("relevant", True)),
-            # The document_ids that legitimately answer this query — OPTIONAL,
-            # and only meaningful on a positive. It is what lets the calibrator
-            # score every hit rather than only the top one: without it, a
-            # relevant guideline at rank 2 is indistinguishable from an
-            # off-topic one and cannot be counted either way. Negatives need no
-            # labels — by definition NO document answers them, so every
-            # candidate they return is a false positive.
-            "expected": [str(d) for d in (it.get("expected") or [])],
-        })
+        out.append(
+            {
+                "query": it["query"],
+                # relevant = the corpus SHOULD answer this (in-corpus positive).
+                "relevant": bool(it.get("relevant", True)),
+                # The document_ids that legitimately answer this query — OPTIONAL,
+                # and only meaningful on a positive. It is what lets the calibrator
+                # score every hit rather than only the top one: without it, a
+                # relevant guideline at rank 2 is indistinguishable from an
+                # off-topic one and cannot be counted either way. Negatives need no
+                # labels — by definition NO document answers them, so every
+                # candidate they return is a false positive.
+                "expected": [str(d) for d in (it.get("expected") or [])],
+            }
+        )
     return out
 
 
@@ -216,8 +242,8 @@ def _best_floor(pos_vals: list, neg_vals: list) -> float:
     best_j, best_t = -1.0, candidates[0]
     for t in candidates:
         # A query is classified "irrelevant" if its value < t.
-        tn = sum(1 for v in neg_vals if v < t)     # correctly below
-        tp = sum(1 for v in pos_vals if v >= t)    # correctly above
+        tn = sum(1 for v in neg_vals if v < t)  # correctly below
+        tp = sum(1 for v in pos_vals if v >= t)  # correctly above
         tnr = tn / len(neg_vals) if neg_vals else 0.0
         tpr = tp / len(pos_vals) if pos_vals else 0.0
         j = tnr + tpr - 1.0
@@ -267,8 +293,7 @@ def _min_achievable_negatives(pos_vals: list, neg_vals: list) -> int:
     return min(sum(1 for v in neg_vals if v >= cut) for cut in set(pos_vals))
 
 
-def _budgeted_cut(pos_vals: list, neg_vals: list,
-                  max_negatives: int) -> Optional[float]:
+def _budgeted_cut(pos_vals: list, neg_vals: list, max_negatives: int) -> float | None:
     """The most permissive cut that still keeps at most `max_negatives`.
 
     Candidates are the observed POSITIVE values — a floor placed anywhere else
@@ -285,8 +310,9 @@ def _budgeted_cut(pos_vals: list, neg_vals: list,
     return None
 
 
-def _max_margin_floor(pos_vals: list, neg_vals: list,
-                      max_negatives: Optional[int] = None) -> Optional[float]:
+def _max_margin_floor(
+    pos_vals: list, neg_vals: list, max_negatives: int | None = None
+) -> float | None:
     """A cut point between the negatives and the positives, placed for MARGIN.
 
     Two steps, and they answer two different questions:
@@ -329,8 +355,10 @@ def _max_margin_floor(pos_vals: list, neg_vals: list,
     if max_negatives is None:
         # The ceiling, and then the better of it and what this scorer can
         # actually achieve. On a scorer that separates, the second term is 0.
-        max_negatives = min(int(len(neg_vals) * _MAX_NEGATIVES_KEPT_FRACTION),
-                            _min_achievable_negatives(pos_vals, neg_vals))
+        max_negatives = min(
+            int(len(neg_vals) * _MAX_NEGATIVES_KEPT_FRACTION),
+            _min_achievable_negatives(pos_vals, neg_vals),
+        )
     cut = _budgeted_cut(pos_vals, neg_vals, max_negatives)
     if cut is None:
         cut = float(_best_floor(pos_vals, neg_vals))
@@ -353,7 +381,7 @@ def _round_down(value: float, places: int = 5) -> float:
     0.04 while the fusion's arithmetic maximum is 0.032787, a band that could
     never fire. Rounding down can only ever be permissive by <1e-5.
     """
-    scale = 10 ** places
+    scale = 10**places
     return math.floor(float(value) * scale) / scale
 
 
@@ -366,8 +394,14 @@ def _percentile(vals: list, p: float) -> float:
 
 
 def _new_bucket() -> dict:
-    return {"relevant": [], "irrelevant": [], "irrelevant_all": [],
-            "positive_case_top": [], "labelled_cases": 0, "unlabelled_cases": 0}
+    return {
+        "relevant": [],
+        "irrelevant": [],
+        "irrelevant_all": [],
+        "positive_case_top": [],
+        "labelled_cases": 0,
+        "unlabelled_cases": 0,
+    }
 
 
 def _collect_relevance(case: dict, results: list, rel: dict) -> None:
@@ -455,13 +489,15 @@ def _collect_relevance(case: dict, results: list, rel: dict) -> None:
             bucket["relevant"].append(best)
 
 
-def calibrate(search_fn: Optional[Callable] = None, write: bool = True,
-              calibration_path: Optional[str] = None) -> dict:
+def calibrate(
+    search_fn: Callable | None = None, write: bool = True, calibration_path: str | None = None
+) -> dict:
     """Run the labelled calibration set through retrieval, derive data-driven
     thresholds, and (optionally) write them to THRESHOLDS_PATH. Returns the
     threshold dict plus a `metrics` block describing the separation achieved."""
     if search_fn is None:
         from services.clinical_knowledge import search_guidelines
+
         search_fn = search_guidelines
 
     cases = load_calibration_set(calibration_path)
@@ -475,14 +511,24 @@ def calibrate(search_fn: Optional[Callable] = None, write: bool = True,
         per_case.append(results)
         sig = retrieval_signals(c["query"], results)
         if c["relevant"]:
-            pos_top.append(sig["top_score"]); pos_lex.append(sig["lexical_overlap"])
+            pos_top.append(sig["top_score"])
+            pos_lex.append(sig["lexical_overlap"])
         else:
-            neg_top.append(sig["top_score"]); neg_lex.append(sig["lexical_overlap"])
+            neg_top.append(sig["top_score"])
+            neg_lex.append(sig["lexical_overlap"])
         _collect_relevance(c, results, rel)
 
     # No-relevance floors: the separating cut between negatives and positives.
-    floor_score = _best_floor(pos_top, neg_top) if (pos_top and neg_top) else DEFAULT_THRESHOLDS["no_relevance_score_floor"]
-    floor_lex = _best_floor(pos_lex, neg_lex) if (pos_lex and neg_lex) else DEFAULT_THRESHOLDS["no_relevance_lexical_floor"]
+    floor_score = (
+        _best_floor(pos_top, neg_top)
+        if (pos_top and neg_top)
+        else DEFAULT_THRESHOLDS["no_relevance_score_floor"]
+    )
+    floor_lex = (
+        _best_floor(pos_lex, neg_lex)
+        if (pos_lex and neg_lex)
+        else DEFAULT_THRESHOLDS["no_relevance_lexical_floor"]
+    )
 
     # High/medium cutoffs from the positive distribution (upper third = high,
     # lower third boundary = medium). Falls back to defaults if too few positives.
@@ -492,14 +538,20 @@ def calibrate(search_fn: Optional[Callable] = None, write: bool = True,
         high_lex = _percentile(pos_lex, 66)
         medium_lex = _percentile(pos_lex, 33)
     else:
-        high_score, medium_score = DEFAULT_THRESHOLDS["high_score"], DEFAULT_THRESHOLDS["medium_score"]
-        high_lex, medium_lex = DEFAULT_THRESHOLDS["high_lexical"], DEFAULT_THRESHOLDS["medium_lexical"]
+        high_score, medium_score = (
+            DEFAULT_THRESHOLDS["high_score"],
+            DEFAULT_THRESHOLDS["medium_score"],
+        )
+        high_lex, medium_lex = (
+            DEFAULT_THRESHOLDS["high_lexical"],
+            DEFAULT_THRESHOLDS["medium_lexical"],
+        )
 
     # Carry forward any previously-calibrated values so a run that only exercises
     # ONE relevance scorer (e.g. this appliance has the cross-encoder installed)
     # does not clobber the floor derived for the other on an earlier run.
     previous = _read_thresholds_file()
-    thresholds = {
+    thresholds: dict[str, Any] = {
         "no_relevance_score_floor": _round_down(floor_score),
         "no_relevance_lexical_floor": _round_down(floor_lex),
         "high_score": _round_down(max(high_score, medium_score)),
@@ -508,8 +560,10 @@ def calibrate(search_fn: Optional[Callable] = None, write: bool = True,
         "medium_lexical": _round_down(medium_lex),
         "source": "calibrated",
     }
-    for key, method in (("min_relevance_cross_encoder", "cross_encoder"),
-                        ("min_relevance_lexical", "lexical")):
+    for key, method in (
+        ("min_relevance_cross_encoder", "cross_encoder"),
+        ("min_relevance_lexical", "lexical"),
+    ):
         bucket = rel.get(method)
         # Relevant DOCUMENTS against irrelevant CASES, deliberately mixed
         # granularity: the cut may land on any relevant document's score (so a
@@ -517,8 +571,7 @@ def calibrate(search_fn: Optional[Callable] = None, write: bool = True,
         # counts out-of-corpus QUERIES that get cited at all. Read as one
         # sentence: "keep as many relevant documents as possible without more
         # than N out-of-corpus queries citing anything."
-        derived = (_max_margin_floor(bucket["relevant"], bucket["irrelevant"])
-                   if bucket else None)
+        derived = _max_margin_floor(bucket["relevant"], bucket["irrelevant"]) if bucket else None
         if derived is not None:
             thresholds[key] = _round_down(derived)
         elif key in previous:
@@ -527,7 +580,7 @@ def calibrate(search_fn: Optional[Callable] = None, write: bool = True,
     # Report the no-relevance separation quality on the labelled set.
     merged = {**DEFAULT_THRESHOLDS, **thresholds}
     tp = fp = tn = fn = 0
-    for c, results in zip(cases, per_case):
+    for c, results in zip(cases, per_case, strict=False):
         conf = classify_confidence(retrieval_signals(c["query"], results), merged)
         predicted_relevant = conf != "none"
         if c["relevant"] and predicted_relevant:
@@ -541,10 +594,12 @@ def calibrate(search_fn: Optional[Callable] = None, write: bool = True,
     precision = tp / (tp + fp) if (tp + fp) else 0.0
     recall = tp / (tp + fn) if (tp + fn) else 0.0
     thresholds["metrics"] = {
-        "positives": len(pos_top), "negatives": len(neg_top),
+        "positives": len(pos_top),
+        "negatives": len(neg_top),
         "relevance_precision": round(precision, 4),
         "relevance_recall": round(recall, 4),
-        "true_negatives": tn, "false_positives": fp,
+        "true_negatives": tn,
+        "false_positives": fp,
     }
 
     # The metric that actually decides whether a clinician sees a bogus
@@ -552,16 +607,19 @@ def calibrate(search_fn: Optional[Callable] = None, write: bool = True,
     # queries and withhold it for out-of-corpus ones? Measured on the same
     # labelled set, per scorer, with the floors this run produced.
     floor_metrics = {}
-    for key, method in (("min_relevance_cross_encoder", "cross_encoder"),
-                        ("min_relevance_lexical", "lexical")):
+    for key, method in (
+        ("min_relevance_cross_encoder", "cross_encoder"),
+        ("min_relevance_lexical", "lexical"),
+    ):
         bucket = rel.get(method)
         if not bucket:
             continue
-        floor = merged.get(key, DEFAULT_THRESHOLDS[key])
+        floor = merged.get(key, dict(DEFAULT_THRESHOLDS)[key])
         pos_cases = bucket["positive_case_top"]
         floor_metrics[method] = {
             "floor": floor,
-            "positives": len(pos_cases), "negatives": len(bucket["irrelevant"]),
+            "positives": len(pos_cases),
+            "negatives": len(bucket["irrelevant"]),
             # ── CASE level: is this clinician shown evidence at all? ──
             # Same meaning these two keys have always had, so a floor's history
             # in an older thresholds file still reads against these.
@@ -579,14 +637,16 @@ def calibrate(search_fn: Optional[Callable] = None, write: bool = True,
             # — the pre-2026-08-15 behaviour — so this is how much of the run
             # is still blind to rank 2.
             "unlabelled_cases": bucket["unlabelled_cases"],
-            "max_negative_score": (round(max(bucket["irrelevant"]), 6)
-                                   if bucket["irrelevant"] else None),
-            "min_positive_score": (round(min(bucket["relevant"]), 6)
-                                   if bucket["relevant"] else None),
+            "max_negative_score": (
+                round(max(bucket["irrelevant"]), 6) if bucket["irrelevant"] else None
+            ),
+            "min_positive_score": (
+                round(min(bucket["relevant"]), 6) if bucket["relevant"] else None
+            ),
         }
     # Keep the other scorer's evidence from the run that derived it, so the
     # committed file documents BOTH floors rather than only the last one run.
-    prior_floor_metrics = ((previous.get("metrics") or {}).get("relevance_floor") or {})
+    prior_floor_metrics = (previous.get("metrics") or {}).get("relevance_floor") or {}
     for method, fm in prior_floor_metrics.items():
         floor_metrics.setdefault(method, fm)
     if floor_metrics:
@@ -596,15 +656,16 @@ def calibrate(search_fn: Optional[Callable] = None, write: bool = True,
     # set of magic numbers with extra steps — the reader has to be able to tell
     # which corpus and which scorer these were derived against, and when.
     provenance = dict(previous.get("_provenance") or {})
-    provenance.update({
-        "calibrated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "calibration_set": os.path.basename(calibration_path or CALIBRATION_SET_PATH),
-        "cases": len(cases),
-        "corpus": _corpus_shape(),
-    })
+    provenance.update(
+        {
+            "calibrated_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "calibration_set": os.path.basename(calibration_path or CALIBRATION_SET_PATH),
+            "cases": len(cases),
+            "corpus": _corpus_shape(),
+        }
+    )
     for method in rel:
-        provenance.setdefault("scorers", {})[method] = provenance.get(
-            "calibrated_at")
+        provenance.setdefault("scorers", {})[method] = provenance.get("calibrated_at")
     thresholds["_provenance"] = provenance
 
     if write:

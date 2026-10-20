@@ -26,10 +26,12 @@ reservations, bed setup, the doctor's discharge (vigil_routes), the front
 desk's transfer, the Relay transfer lane, roster import and housekeeping's
 cleaning states.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from typing import Any
 
 from database import db_session
 
@@ -45,7 +47,7 @@ _DEPARTMENT_KEYS = frozenset({"from_department", "to_department", "current_depar
 _MAX_DEPTH = 6
 
 
-def _clean(value: Any) -> Optional[str]:
+def _clean(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
     text = value.strip()
@@ -72,9 +74,13 @@ def _walk(value: Any, wards: set, departments: set, depth: int = 0) -> None:
             _walk(item, wards, departments, depth + 1)
 
 
-def wards_and_departments(answer: Any = None, *, admission_ids: Iterable[Any] = (),
-                          ward_ids: Iterable[Any] = (),
-                          departments: Iterable[Any] = ()) -> tuple[set, set]:
+def wards_and_departments(
+    answer: Any = None,
+    *,
+    admission_ids: Iterable[Any] = (),
+    ward_ids: Iterable[Any] = (),
+    departments: Iterable[Any] = (),
+) -> tuple[set, set]:
     """The ward ids a write touched and the departments whose boards may show
     them: from the answer's ward and department keys, the admissions named
     (where each lies now and who treats it) and each ward's own department.
@@ -89,23 +95,29 @@ def wards_and_departments(answer: Any = None, *, admission_ids: Iterable[Any] = 
         if ids:
             marks = ",".join("?" for _ in ids)
             for row in db.execute(
-                    f"SELECT ward_id, department FROM admissions WHERE id IN ({marks})",
-                    ids).fetchall():
+                f"SELECT ward_id, department FROM admissions WHERE id IN ({marks})", ids
+            ).fetchall():
                 if _clean(row["ward_id"]):
                     wards.add(row["ward_id"].strip())
                 if _clean(row["department"]):
                     depts.add(row["department"].strip())
         if wards:
             marks = ",".join("?" for _ in wards)
-            for row in db.execute(f"SELECT department FROM wards WHERE id IN ({marks})",
-                                  sorted(wards)).fetchall():
+            for row in db.execute(
+                f"SELECT department FROM wards WHERE id IN ({marks})", sorted(wards)
+            ).fetchall():
                 if _clean(row["department"]):
                     depts.add(row["department"].strip())
     return wards, depts
 
 
-def notify_adt_changed(*, answer: Any = None, admission_ids: Iterable[Any] = (),
-                       ward_ids: Iterable[Any] = (), departments: Iterable[Any] = ()) -> bool:
+def notify_adt_changed(
+    *,
+    answer: Any = None,
+    admission_ids: Iterable[Any] = (),
+    ward_ids: Iterable[Any] = (),
+    departments: Iterable[Any] = (),
+) -> bool:
     """Tell the bed boards an ADT write committed. Call it AFTER the commit,
     never for a refusal or a replay. Does nothing while ORB_ADT is not 'on'.
     Never raises. True when a push was scheduled."""
@@ -114,8 +126,9 @@ def notify_adt_changed(*, answer: Any = None, admission_ids: Iterable[Any] = (),
 
         if not adt_on():
             return False
-        wards, depts = wards_and_departments(answer, admission_ids=admission_ids,
-                                             ward_ids=ward_ids, departments=departments)
+        wards, depts = wards_and_departments(
+            answer, admission_ids=admission_ids, ward_ids=ward_ids, departments=departments
+        )
         from ws import realtime
 
         return realtime.schedule_adt_changed(sorted(wards), sorted(depts))

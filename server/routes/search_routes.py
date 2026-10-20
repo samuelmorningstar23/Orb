@@ -15,12 +15,15 @@ and diagnosis — hospital-wide. The ids it returned were then the input to the
 per-patient chart reads, making it the discovery half of a complete cross-ward
 PHI read.
 """
-from fastapi import APIRouter, Depends, Request
 
-from permissions import department_scope, log_phi_read, require_permission
 from database import db_session
+from fastapi import APIRouter, Depends, Request
+from permissions import department_scope, log_phi_read, require_permission
 
 router = APIRouter(prefix="/api/search", tags=["search"])
+
+
+_SEARCH_PATIENTS_USER_DEFAULT = Depends(require_permission("patient.read_all"))
 
 
 @router.get("/patients")
@@ -29,7 +32,7 @@ router = APIRouter(prefix="/api/search", tags=["search"])
 def search_patients(
     request: Request,
     q: str = "",
-    user: dict = Depends(require_permission("patient.read_all")),
+    user: dict = _SEARCH_PATIENTS_USER_DEFAULT,
 ):
     """Search ADMITTED patients by name / MRN / bed / diagnosis (or exact id).
 
@@ -57,6 +60,7 @@ def search_patients(
     dept_param = (dept,) if dept else ()
 
     from services.vigil_service import scoring_enabled
+
     _scoring = scoring_enabled()
     with db_session() as db:
         rows = db.execute(

@@ -71,15 +71,17 @@ CONVENTIONS
   * A price nobody configured is NOT ₹0: the charge row carries
     `rate_is_configured = 0` and zero totals, and the UI must say so.
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import threading
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Callable, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 import config
 import migrations  # noqa: F401  (loads migrations_his in version order first)
@@ -92,6 +94,7 @@ from migrations_his.m0051_adt_movement_ledger import (
     ADDED_COLUMNS as _LEDGER_ADDED_COLUMNS,
 )
 from migrations_his.m0051_adt_movement_ledger import ensure_ledger_on
+
 from services.billing_masters import resolve_patient_payer
 from services.hospital_time import hospital_timezone, hospital_today
 
@@ -141,9 +144,7 @@ class OpdReplayConflict(FrontDeskError):
     """
 
     def __init__(self, visit_id: str):
-        super().__init__(
-            "This registration key already belongs to a different registration."
-        )
+        super().__init__("This registration key already belongs to a different registration.")
         self.visit_id = visit_id
 
 
@@ -190,9 +191,7 @@ _COVERING_ROLES = ("doctor", "clinician", "nurse")
 #: of every visit and movement it returns, so those migrations change no
 #: existing screen; the increments that write them extend the API under their
 #: own feature switches.
-_VISIT_COLUMNS_NOT_IN_API: frozenset[str] = frozenset(
-    name for name, _ in OPD_VISITS_ADDED_COLUMNS
-)
+_VISIT_COLUMNS_NOT_IN_API: frozenset[str] = frozenset(name for name, _ in OPD_VISITS_ADDED_COLUMNS)
 _MOVEMENT_COLUMNS_NOT_IN_API: frozenset[str] = frozenset(_LEDGER_ADDED_COLUMNS)
 
 _schema_ready = False
@@ -249,9 +248,10 @@ def ensure_frontdesk_schema(force: bool = False) -> None:
 #  Small helpers
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _now() -> str:
     """An INSTANT, stored UTC. Never a day key — see `_hospital_day`."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _hospital_day(value: object = None) -> str:
@@ -287,7 +287,7 @@ def _hospital_day(value: object = None) -> str:
     return parsed.astimezone(hospital_timezone()).date().isoformat()
 
 
-def _clean(value: object, limit: int) -> Optional[str]:
+def _clean(value: object, limit: int) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
@@ -303,23 +303,23 @@ def _row_to_dict(row) -> dict:
 def _visit_api_dict(row) -> dict:
     """A visit row as the API has always returned it: the migration 50 columns
     left out, every other key in its original order."""
-    return {k: v for k, v in _row_to_dict(row).items()
-            if k not in _VISIT_COLUMNS_NOT_IN_API}
+    return {k: v for k, v in _row_to_dict(row).items() if k not in _VISIT_COLUMNS_NOT_IN_API}
 
 
 def _movement_api_dict(row) -> dict:
     """A movement row as the API has always returned it: the migration 51
     columns left out, every other key in its original order."""
-    return {k: v for k, v in _row_to_dict(row).items()
-            if k not in _MOVEMENT_COLUMNS_NOT_IN_API}
+    return {k: v for k, v in _row_to_dict(row).items() if k not in _MOVEMENT_COLUMNS_NOT_IN_API}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  Ward cover — the anti-orphaning list
 # ═════════════════════════════════════════════════════════════════════════════
 
-def list_covering_departments(facility_id: Optional[int] = None, *,
-                              facilities: Optional[frozenset] = None) -> list[str]:
+
+def list_covering_departments(
+    facility_id: int | None = None, *, facilities: frozenset | None = None
+) -> list[str]:
     """Every department at least one ACTIVE clinical account covers.
 
     THIS IS THE ANTI-ORPHANING LIST, and it is derived from exactly the column
@@ -361,8 +361,9 @@ def list_covering_departments(facility_id: Optional[int] = None, *,
         names = [r["department"] for r in rows]
         if not facility_service.multi_facility_data(db=db):
             main = facility_service.MAIN_FACILITY_ID
-            if ((facility_id is not None and facility_id != main)
-                    or (facilities is not None and main not in facilities)):
+            if (facility_id is not None and facility_id != main) or (
+                facilities is not None and main not in facilities
+            ):
                 return []
             return names
         master = _department_master_on(db)
@@ -382,15 +383,22 @@ def list_covering_departments(facility_id: Optional[int] = None, *,
 def _department_master_on(db) -> dict:
     """{name ignoring case and outer spaces: (facility id, active)} from the
     departments master (migration 70); {} when the table is absent."""
-    if db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'departments'"
-                  ).fetchone() is None:
+    if (
+        db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'departments'"
+        ).fetchone()
+        is None
+    ):
         return {}
-    return {r["name"].strip().casefold(): (int(r["facility_id"]), bool(r["is_active"]))
-            for r in db.execute("SELECT name, facility_id, is_active FROM departments").fetchall()}
+    return {
+        r["name"].strip().casefold(): (int(r["facility_id"]), bool(r["is_active"]))
+        for r in db.execute("SELECT name, facility_id, is_active FROM departments").fetchall()
+    }
 
 
-def _resolve_covering_department(name: str, *, facility_id: Optional[int] = None,
-                                 facilities: Optional[frozenset] = None) -> Optional[str]:
+def _resolve_covering_department(
+    name: str, *, facility_id: int | None = None, facilities: frozenset | None = None
+) -> str | None:
     """Map a typed department onto its CANONICAL covered spelling, or None.
 
     Case- and whitespace-insensitive, because a clerk typing "cardiology" must
@@ -449,16 +457,29 @@ CROSS_FACILITY_TRANSFER_WORDS = (
 
 def patient_facility_ids_on(db, patient_id: str) -> set:
     """The facilities this patient's admissions, active or not, are at."""
-    return {int(r[0]) for r in db.execute(
-        "SELECT DISTINCT facility_id FROM admissions WHERE patient_id = ? "
-        "AND facility_id IS NOT NULL", (patient_id,)).fetchall()}
+    return {
+        int(r[0])
+        for r in db.execute(
+            "SELECT DISTINCT facility_id FROM admissions WHERE patient_id = ? "
+            "AND facility_id IS NOT NULL",
+            (patient_id,),
+        ).fetchall()
+    }
 
 
-def audit_cross_facility_refusal(*, lane: str, cause: str, patient_id: Optional[str],
-                                 actor_id: Optional[str], actor_role: Optional[str],
-                                 to_department: Optional[str], to_facility_id: Optional[int],
-                                 from_facility_ids, admission_id: Optional[str] = None,
-                                 request_meta: Optional[dict] = None) -> None:
+def audit_cross_facility_refusal(
+    *,
+    lane: str,
+    cause: str,
+    patient_id: str | None,
+    actor_id: str | None,
+    actor_role: str | None,
+    to_department: str | None,
+    to_facility_id: int | None,
+    from_facility_ids,
+    admission_id: str | None = None,
+    request_meta: dict | None = None,
+) -> None:
     """The authorization row for a refused cross-facility move or admission.
     Written on a connection of its own after nothing was written (fail-soft,
     like every authorization row). BLOCKING."""
@@ -470,8 +491,10 @@ def audit_cross_facility_refusal(*, lane: str, cause: str, patient_id: Optional[
         event_category="authorization",
         action_type="cross_facility_move_refused",
         outcome="denied",
-        summary_message=(f"Refused {lane.replace('_', ' ')} of {patient_id or 'a new patient'} "
-                         f"into {to_department!r}: {cause.replace('_', ' ')}"),
+        summary_message=(
+            f"Refused {lane.replace('_', ' ')} of {patient_id or 'a new patient'} "
+            f"into {to_department!r}: {cause.replace('_', ' ')}"
+        ),
         actor_user_id=actor_id,
         actor_role=actor_role,
         patient_id=patient_id,
@@ -491,8 +514,7 @@ def audit_cross_facility_refusal(*, lane: str, cause: str, patient_id: Optional[
     )
 
 
-def _refuse_cross_facility_transfer(patient_id: str, department: str,
-                                    actor_id: Optional[str]) -> None:
+def _refuse_cross_facility_transfer(patient_id: str, department: str, actor_id: str | None) -> None:
     """transfer_patient's facility check, before its immediate session:
     CrossFacilityMoveRefused (after the audit row) when the destination's
     facility is not the one the patient's admissions are at. The facility of
@@ -507,21 +529,30 @@ def _refuse_cross_facility_transfer(patient_id: str, department: str,
     with db_session() as db:
         admission = db.execute(
             """SELECT id FROM admissions WHERE patient_id = ? AND status = 'active'
-                ORDER BY created_at DESC, rowid DESC LIMIT 1""", (patient_id,)).fetchone()
+                ORDER BY created_at DESC, rowid DESC LIMIT 1""",
+            (patient_id,),
+        ).fetchone()
         if admission is None:
-            return      # transfer_patient refuses it in its own words
+            return  # transfer_patient refuses it in its own words
         held = patient_facility_ids_on(db, patient_id)
-        role_row = (db.execute("SELECT role FROM users WHERE id = ?", (actor_id,)).fetchone()
-                    if actor_id else None)
+        role_row = (
+            db.execute("SELECT role FROM users WHERE id = ?", (actor_id,)).fetchone()
+            if actor_id
+            else None
+        )
     if to_facility is not None and held <= {to_facility}:
         return
     audit_cross_facility_refusal(
         lane="frontdesk_transfer",
         cause="department_not_listed" if to_facility is None else "patient_at_another_facility",
-        patient_id=patient_id, actor_id=actor_id,
+        patient_id=patient_id,
+        actor_id=actor_id,
         actor_role=role_row["role"] if role_row else None,
-        to_department=department, to_facility_id=to_facility, from_facility_ids=held,
-        admission_id=admission["id"])
+        to_department=department,
+        to_facility_id=to_facility,
+        from_facility_ids=held,
+        admission_id=admission["id"],
+    )
     raise CrossFacilityMoveRefused(CROSS_FACILITY_TRANSFER_WORDS)
 
 
@@ -580,7 +611,7 @@ def list_transfer_destinations() -> list[dict]:
 _CONSULTING_ROLES = ("doctor", "clinician")
 
 
-def list_consulting_doctors(department: Optional[str] = None) -> list[dict]:
+def list_consulting_doctors(department: str | None = None) -> list[dict]:
     """The doctors a front desk may book an OPD visit with.
 
     WHY THIS EXISTS. The panel used to derive its doctor list from
@@ -615,23 +646,22 @@ def list_consulting_doctors(department: Optional[str] = None) -> list[dict]:
     sql += " ORDER BY name"
     with db_session() as db:
         rows = db.execute(sql, params).fetchall()
-    return [
-        {"id": r["id"], "name": r["name"], "department": r["department"]}
-        for r in rows
-    ]
+    return [{"id": r["id"], "name": r["name"], "department": r["department"]} for r in rows]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  OPD — registration, queue, lifecycle
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass(frozen=True)
 class ConsultationCharge:
     """The consultation charge that was (or was not) raised for a visit."""
-    charge_id: Optional[int]
+
+    charge_id: int | None
     service_code: str
     description: str
-    rate_paise: Optional[int]
+    rate_paise: int | None
     configured: bool
     total_paise: int
     gst_treatment: str
@@ -643,6 +673,7 @@ class ConsultationCharge:
 
     def as_dict(self) -> dict:
         from services.money import format_inr_or_unset
+
         return {
             "charge_id": self.charge_id,
             "service_code": self.service_code,
@@ -651,9 +682,7 @@ class ConsultationCharge:
             "rate_display": format_inr_or_unset(self.rate_paise),
             "rate_is_configured": self.configured,
             "total_paise": self.total_paise,
-            "total_display": format_inr_or_unset(
-                self.total_paise if self.configured else None
-            ),
+            "total_display": format_inr_or_unset(self.total_paise if self.configured else None),
             "gst_treatment": self.gst_treatment,
             "rate_source": self.source,
         }
@@ -667,16 +696,22 @@ def _patient_row(db, patient_id: str):
 
 
 def _patient_has_admission(db, patient_id: str) -> bool:
-    return db.execute(
-        "SELECT 1 FROM admissions WHERE patient_id = ? LIMIT 1", (patient_id,)
-    ).fetchone() is not None
+    return (
+        db.execute(
+            "SELECT 1 FROM admissions WHERE patient_id = ? LIMIT 1", (patient_id,)
+        ).fetchone()
+        is not None
+    )
 
 
 def _patient_has_active_admission(db, patient_id: str) -> bool:
-    return db.execute(
-        "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' LIMIT 1",
-        (patient_id,),
-    ).fetchone() is not None
+    return (
+        db.execute(
+            "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' LIMIT 1",
+            (patient_id,),
+        ).fetchone()
+        is not None
+    )
 
 
 def opd_mode() -> bool:
@@ -689,7 +724,7 @@ def opd_mode() -> bool:
     return config.feature_enabled("opd")
 
 
-def opd_registration_allowed(db, patient_id: str, dept: Optional[str]) -> bool:
+def opd_registration_allowed(db, patient_id: str, dept: str | None) -> bool:
     """May a caller scoped to `dept` register THIS patient into an OPD clinic?
 
     Not the same question as `permissions.patient_in_scope`, and the difference
@@ -724,10 +759,11 @@ def opd_registration_allowed(db, patient_id: str, dept: Optional[str]) -> bool:
     elif not _patient_has_admission(db, patient_id):
         return True
     from permissions import patient_in_scope
+
     return patient_in_scope(db, patient_id, dept)
 
 
-def _next_token(db, *, visit_date: str, department: str, doctor_id: Optional[str]) -> int:
+def _next_token(db, *, visit_date: str, department: str, doctor_id: str | None) -> int:
     """The next token for this doctor's clinic today.
 
     Tokens are per (date, department, doctor) and start at 1 each day. Cancelled
@@ -750,6 +786,7 @@ def _next_token(db, *, visit_date: str, department: str, doctor_id: Optional[str
     top = int((row["top"] if row else None) or 0)
     if not doctor_id:
         from services.opd_queue_service import taken_unassigned_top
+
         top = max(top, taken_unassigned_top(db, visit_date=visit_date, department=department))
     return top + 1
 
@@ -761,8 +798,8 @@ def _raise_consultation_charge(
     patient_id: str,
     department: str,
     service_code: str,
-    tariff_plan_id: Optional[int],
-    charged_by: Optional[str],
+    tariff_plan_id: int | None,
+    charged_by: str | None,
     service_day: str,
     charged_at: str,
     interstate: bool = False,
@@ -809,8 +846,8 @@ def _raise_consultation_charge(
         patient_id=patient_id,
         service_code=service_code,
         tariff_plan_id=tariff_plan_id,
-        service_day=service_day,      # service_date: the ward's calendar day
-        charged_at=charged_at,        # charged_at: the UTC instant
+        service_day=service_day,  # service_date: the ward's calendar day
+        charged_at=charged_at,  # charged_at: the UTC instant
         charged_by=charged_by,
         idempotency_key=f"opd_visit:{visit_id}:consultation",
         source_ref=visit_id,
@@ -835,18 +872,18 @@ def register_opd_visit(
     *,
     patient_id: str,
     department: str,
-    doctor_id: Optional[str] = None,
+    doctor_id: str | None = None,
     visit_type: str = "new",
-    chief_complaint: Optional[str] = None,
-    appointment_id: Optional[str] = None,
-    notes: Optional[str] = None,
-    registered_by: Optional[str] = None,
-    idempotency_key: Optional[str] = None,
-    visit_date: Optional[str] = None,
+    chief_complaint: str | None = None,
+    appointment_id: str | None = None,
+    notes: str | None = None,
+    registered_by: str | None = None,
+    idempotency_key: str | None = None,
+    visit_date: str | None = None,
     self_registered: bool = False,
-    on_registered: Optional[Callable[[Any, dict], None]] = None,
-    on_replay: Optional[Callable[[Any, dict, dict], None]] = None,
-    identity_check: Optional[dict] = None,
+    on_registered: Callable[[Any, dict], None] | None = None,
+    on_replay: Callable[[Any, dict, dict], None] | None = None,
+    identity_check: dict | None = None,
 ) -> dict:
     """Register an outpatient visit and put it in the queue.
 
@@ -918,9 +955,8 @@ def register_opd_visit(
                     return _serialize_visit(db, prior)
                 same_patient = (prior["patient_id"] or "").strip() == patient_id
                 same_clinic = (
-                    (prior["department"] or "").strip().casefold()
-                    == canonical_dept.casefold()
-                )
+                    prior["department"] or ""
+                ).strip().casefold() == canonical_dept.casefold()
                 if not (same_patient and same_clinic):
                     raise OpdReplayConflict(str(prior["id"]))
                 visit = _serialize_visit(db, prior)
@@ -955,9 +991,7 @@ def register_opd_visit(
             doctor_name = drow["name"]
 
         visit_id = f"OPD-{uuid.uuid4().hex[:8].upper()}"
-        token = _next_token(
-            db, visit_date=day, department=canonical_dept, doctor_id=doctor
-        )
+        token = _next_token(db, visit_date=day, department=canonical_dept, doctor_id=doctor)
         now = _now()
         db.execute(
             """INSERT INTO opd_visits (
@@ -966,9 +1000,20 @@ def register_opd_visit(
                     registered_by, registered_at, notes, idempotency_key
                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting', ?, ?, ?, ?, ?)""",
             (
-                visit_id, patient_id, canonical_dept, doctor, doctor_name, day,
-                token, visit_type, complaint, _clean(appointment_id, _MAX_LABEL_LEN),
-                registered_by, now, note, idem,
+                visit_id,
+                patient_id,
+                canonical_dept,
+                doctor,
+                doctor_name,
+                day,
+                token,
+                visit_type,
+                complaint,
+                _clean(appointment_id, _MAX_LABEL_LEN),
+                registered_by,
+                now,
+                note,
+                idem,
             ),
         )
         if self_registered:
@@ -997,8 +1042,7 @@ def register_opd_visit(
         return visit
 
 
-def _opd_charges_at_registration(db, visit_id: str,
-                                 registered_by: Optional[str]) -> Optional[dict]:
+def _opd_charges_at_registration(db, visit_id: str, registered_by: str | None) -> dict | None:
     """OPD mode (opd-13), inside the visit's transaction: keep the payer and
     tariff the visit is registered under (migration 50's payer_id and
     tariff_plan_id), and with ORB_OPD_CHARGE_AT=registration raise the
@@ -1017,11 +1061,12 @@ def _opd_charges_at_registration(db, visit_id: str,
     visit = {k: row[k] for k in row.keys()}
     visit["tariff_plan_id"] = payer.tariff_plan_id
     line, choice = charges.raise_consultation_at_registration_on(
-        db, visit=visit, charged_by=registered_by)
+        db, visit=visit, charged_by=registered_by
+    )
     return {**line.as_dict(), **choice.as_facts(), "charged_at": "registration"}
 
 
-def _serialize_visit(db, row, *, now: Optional[datetime] = None) -> dict:
+def _serialize_visit(db, row, *, now: datetime | None = None) -> dict:
     """API shape for one visit, including its live waiting time.
 
     In OPD mode (opd-8) the visit also carries its queue fields (priority,
@@ -1040,16 +1085,18 @@ def _serialize_visit(db, row, *, now: Optional[datetime] = None) -> dict:
     data["consultation_minutes"] = _consultation_minutes(data, now=now)
     if opd_mode():
         from services.opd_queue_service import queue_fields, reissued_tokens
+
         data.update(queue_fields(row))
         # The token on the patient's slip when a doctor's take changed it
         # (opd_queue_service.assign_visit); None when it never changed.
         visit_id = str(data.get("id") or "")
         data["previous_token_number"] = (
-            reissued_tokens(db, [visit_id]).get(visit_id) if data.get("doctor_id") else None)
+            reissued_tokens(db, [visit_id]).get(visit_id) if data.get("doctor_id") else None
+        )
     return data
 
 
-def _parse_ts(value: object) -> Optional[datetime]:
+def _parse_ts(value: object) -> datetime | None:
     if not value:
         return None
     text = str(value).replace("Z", "+00:00")
@@ -1058,11 +1105,11 @@ def _parse_ts(value: object) -> Optional[datetime]:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
     return parsed
 
 
-def _waiting_minutes(visit: dict, *, now: Optional[datetime] = None) -> Optional[int]:
+def _waiting_minutes(visit: dict, *, now: datetime | None = None) -> int | None:
     """Minutes between registration and being called — or, while still waiting,
     minutes elapsed so far. None when the timestamp is unreadable, NEVER 0: a
     waiting time that cannot be computed must not display as "seen instantly"."""
@@ -1077,24 +1124,24 @@ def _waiting_minutes(visit: dict, *, now: Optional[datetime] = None) -> Optional
         if visit.get("status") in ("completed", "cancelled"):
             end = _parse_ts(visit.get("completed_at")) or _parse_ts(visit.get("cancelled_at"))
         if end is None:
-            end = now or datetime.now(timezone.utc)
+            end = now or datetime.now(UTC)
     return max(0, int((end - start).total_seconds() // 60))
 
 
-def _consultation_minutes(visit: dict, *, now: Optional[datetime] = None) -> Optional[int]:
+def _consultation_minutes(visit: dict, *, now: datetime | None = None) -> int | None:
     called = _parse_ts(visit.get("called_at"))
     if called is None:
         return None
-    end = _parse_ts(visit.get("completed_at")) or (now or datetime.now(timezone.utc))
+    end = _parse_ts(visit.get("completed_at")) or (now or datetime.now(UTC))
     return max(0, int((end - called).total_seconds() // 60))
 
 
 def list_opd_queue(
     *,
-    department: Optional[str] = None,
-    visit_date: Optional[str] = None,
-    doctor_id: Optional[str] = None,
-    statuses: Optional[tuple[str, ...]] = None,
+    department: str | None = None,
+    visit_date: str | None = None,
+    doctor_id: str | None = None,
+    statuses: tuple[str, ...] | None = None,
 ) -> dict:
     """The queue, grouped by consulting doctor, ordered by token.
 
@@ -1121,14 +1168,14 @@ def list_opd_queue(
     clauses.append(f"v.status IN ({','.join('?' for _ in wanted)})")
     params.extend(wanted)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with db_session() as db:
         rows = db.execute(
             f"""SELECT v.*, p.name AS patient_name, p.mrn AS patient_mrn,
                        p.age AS patient_age, p.sex AS patient_sex
                   FROM opd_visits v
                   LEFT JOIN patients p ON p.id = v.patient_id
-                 WHERE {' AND '.join(clauses)}
+                 WHERE {" AND ".join(clauses)}
                  ORDER BY v.department, COALESCE(v.doctor_name, ''), v.token_number""",
             params,
         ).fetchall()
@@ -1140,6 +1187,7 @@ def list_opd_queue(
         reissued: dict = {}
         if queue_mode:
             from services import opd_queue_service as oq
+
             # The visits a doctor took under a new token: the desk must see the
             # number on the patient's slip is no longer theirs.
             reissued = oq.reissued_tokens(db, [r["id"] for r in rows if r["doctor_id"]])
@@ -1154,8 +1202,9 @@ def list_opd_queue(
             data["previous_token_number"] = reissued.get(str(r["id"]))
         visits.append(data)
     if queue_mode:
-        visits.sort(key=lambda v: (v["department"], v.get("doctor_name") or "",
-                                   *oq.queue_sort_key(v)))
+        visits.sort(
+            key=lambda v: (v["department"], v.get("doctor_name") or "", *oq.queue_sort_key(v))
+        )
 
     queues: list[dict] = []
     index: dict[tuple, int] = {}
@@ -1163,20 +1212,24 @@ def list_opd_queue(
         key = (v["department"], v.get("doctor_id") or "")
         if key not in index:
             index[key] = len(queues)
-            queues.append({
-                "department": v["department"],
-                "doctor_id": v.get("doctor_id"),
-                "doctor_name": v.get("doctor_name") or "Unassigned",
-                "visits": [],
-            })
+            queues.append(
+                {
+                    "department": v["department"],
+                    "doctor_id": v.get("doctor_id"),
+                    "doctor_name": v.get("doctor_name") or "Unassigned",
+                    "visits": [],
+                }
+            )
         queues[index[key]]["visits"].append(v)
 
     for q in queues:
-        waits = [v["waiting_minutes"] for v in q["visits"]
-                 if v["status"] == "waiting" and v["waiting_minutes"] is not None]
+        waits = [
+            v["waiting_minutes"]
+            for v in q["visits"]
+            if v["status"] == "waiting" and v["waiting_minutes"] is not None
+        ]
         q["waiting_count"] = sum(1 for v in q["visits"] if v["status"] == "waiting")
-        q["in_consultation_count"] = sum(
-            1 for v in q["visits"] if v["status"] == "in_consultation")
+        q["in_consultation_count"] = sum(1 for v in q["visits"] if v["status"] == "in_consultation")
         # None, not 0, when nothing is waiting — "no queue" and "no wait" are
         # different facts and a 0 would read as the second.
         q["longest_wait_minutes"] = max(waits) if waits else None
@@ -1190,16 +1243,18 @@ def list_opd_queue(
     if queue_mode:
         # What the desk's queue screen needs to offer the OPD-mode actions,
         # and how often it re-reads until live desk nudges land (opd-9b).
-        result.update({
-            "opd_mode": True,
-            "poll_seconds": int(getattr(config, "OPD_QUEUE_POLL_SECONDS", 30) or 30),
-            "priorities": [{"code": c, "label": lab} for c, lab in oq.priority_categories()],
-            "cancel_reasons": [{"code": c, "label": lab} for c, lab in oq.CANCEL_REASON_CODES],
-        })
+        result.update(
+            {
+                "opd_mode": True,
+                "poll_seconds": int(getattr(config, "OPD_QUEUE_POLL_SECONDS", 30) or 30),
+                "priorities": [{"code": c, "label": lab} for c, lab in oq.priority_categories()],
+                "cancel_reasons": [{"code": c, "label": lab} for c, lab in oq.CANCEL_REASON_CODES],
+            }
+        )
     return result
 
 
-def get_opd_visit(visit_id: str) -> Optional[dict]:
+def get_opd_visit(visit_id: str) -> dict | None:
     ensure_frontdesk_schema()
     with db_session() as db:
         row = db.execute("SELECT * FROM opd_visits WHERE id = ?", (visit_id,)).fetchone()
@@ -1211,8 +1266,8 @@ def get_opd_visit(visit_id: str) -> Optional[dict]:
 def start_opd_consultation(
     visit_id: str,
     *,
-    called_by: Optional[str] = None,
-    on_done: Optional[Callable[[Any, dict, dict], None]] = None,
+    called_by: str | None = None,
+    on_done: Callable[[Any, dict, dict], None] | None = None,
 ) -> dict:
     """Call the next patient in: 'waiting' to 'in_consultation'. Idempotent.
 
@@ -1232,9 +1287,7 @@ def start_opd_consultation(
                 on_done(db, visit, {"replay": True})
             return visit
         if row["status"] != "waiting":
-            raise FrontDeskError(
-                f"Visit {visit_id} is {row['status']} and cannot be called in"
-            )
+            raise FrontDeskError(f"Visit {visit_id} is {row['status']} and cannot be called in")
         db.execute(
             "UPDATE opd_visits SET status = 'in_consultation', called_at = ? WHERE id = ?",
             (_now(), visit_id),
@@ -1247,9 +1300,7 @@ def start_opd_consultation(
                 "skipped_at = NULL WHERE id = ?",
                 (visit_id,),
             )
-        updated = db.execute(
-            "SELECT * FROM opd_visits WHERE id = ?", (visit_id,)
-        ).fetchone()
+        updated = db.execute("SELECT * FROM opd_visits WHERE id = ?", (visit_id,)).fetchone()
         logger.info("OPD visit %s called in by %s", visit_id, called_by)
         visit = _serialize_visit(db, updated)
         if on_done is not None:
@@ -1260,13 +1311,13 @@ def start_opd_consultation(
 def complete_opd_visit(
     visit_id: str,
     *,
-    completed_by: Optional[str] = None,
-    service_code: Optional[str] = None,
+    completed_by: str | None = None,
+    service_code: str | None = None,
     raise_charge: bool = True,
-    notes: Optional[str] = None,
-    on_done: Optional[Callable[[Any, dict, dict], None]] = None,
-    disposition: Optional[str] = None,
-    before_complete: Optional[Callable[[Any, Any], None]] = None,
+    notes: str | None = None,
+    on_done: Callable[[Any, dict, dict], None] | None = None,
+    disposition: str | None = None,
+    before_complete: Callable[[Any, Any], None] | None = None,
 ) -> dict:
     """Finish the consultation and raise the consultation charge.
 
@@ -1306,9 +1357,7 @@ def complete_opd_visit(
         if row is None:
             raise FrontDeskError(f"No such OPD visit: {visit_id}")
         if row["status"] == "cancelled":
-            raise FrontDeskError(
-                f"Visit {visit_id} was cancelled and cannot be completed"
-            )
+            raise FrontDeskError(f"Visit {visit_id} was cancelled and cannot be completed")
 
         now = _now()
         already_complete = row["status"] == "completed"
@@ -1330,7 +1379,7 @@ def complete_opd_visit(
                     (disposition, now, visit_id),
                 )
 
-        charge: Optional[ConsultationCharge] = None
+        charge: ConsultationCharge | None = None
         charge_facts: dict = {}
         queue_mode = opd_mode()
         if raise_charge and queue_mode:
@@ -1340,8 +1389,10 @@ def complete_opd_visit(
             # line already exists under this visit's key and is returned as
             # stored, so nothing is charged twice.
             from services import opd_charges_service as charges
+
             choice = charges.resolve_consultation_code_on(
-                db, {k: row[k] for k in row.keys()}, requested_code=service_code)
+                db, {k: row[k] for k in row.keys()}, requested_code=service_code
+            )
             plan_id = row["tariff_plan_id"]
             if plan_id is None:
                 plan_id = charges.payer_snapshot_on(db, row["patient_id"]).tariff_plan_id
@@ -1393,17 +1444,19 @@ def complete_opd_visit(
                 (now, completed_by, row["appointment_id"], visit_id),
             )
 
-        updated = db.execute(
-            "SELECT * FROM opd_visits WHERE id = ?", (visit_id,)
-        ).fetchone()
+        updated = db.execute("SELECT * FROM opd_visits WHERE id = ?", (visit_id,)).fetchone()
         result = _serialize_visit(db, updated)
         if on_done is not None:
             result["consultation_charge"] = charge.as_dict() if charge else None
-            on_done(db, result, {
-                "replay": already_complete,
-                "charge_raised_now": bool(charge and charge.newly_raised),
-                **charge_facts,
-            })
+            on_done(
+                db,
+                result,
+                {
+                    "replay": already_complete,
+                    "charge_raised_now": bool(charge and charge.newly_raised),
+                    **charge_facts,
+                },
+            )
 
     result["consultation_charge"] = charge.as_dict() if charge else None
     return result
@@ -1413,9 +1466,9 @@ def cancel_opd_visit(
     visit_id: str,
     *,
     reason: str,
-    cancelled_by: Optional[str] = None,
-    on_done: Optional[Callable[[Any, dict, dict], None]] = None,
-    reason_code: Optional[str] = None,
+    cancelled_by: str | None = None,
+    on_done: Callable[[Any, dict, dict], None] | None = None,
+    reason_code: str | None = None,
 ) -> dict:
     """Cancel a visit (no-show, left without being seen). Soft: the row stays.
 
@@ -1441,6 +1494,7 @@ def cancel_opd_visit(
     code = (reason_code or "").strip().lower() or None
     if code is not None:
         from services.opd_queue_service import CANCEL_REASON_CODES
+
         if code not in dict(CANCEL_REASON_CODES):
             raise FrontDeskError(f"{reason_code!r} is not a cancellation reason code")
     with db_session(immediate=True) as db:
@@ -1455,9 +1509,7 @@ def cancel_opd_visit(
         if row["status"] == "completed":
             # The consultation happened. Cancelling it would erase a clinical
             # event and orphan its charge.
-            raise FrontDeskError(
-                f"Visit {visit_id} is completed and cannot be cancelled"
-            )
+            raise FrontDeskError(f"Visit {visit_id} is completed and cannot be cancelled")
         db.execute(
             "UPDATE opd_visits SET status = 'cancelled', cancelled_at = ?, "
             "cancel_reason = ? WHERE id = ?",
@@ -1475,8 +1527,12 @@ def cancel_opd_visit(
             # being seen' included; one already on an invoice is left for a
             # refund at the payments desk, and the facts say which.
             from services.opd_charges_service import void_prepaid_consultation_on
-            facts.update(void_prepaid_consultation_on(
-                db, visit_row=row, actor=cancelled_by, reason=clean_reason))
+
+            facts.update(
+                void_prepaid_consultation_on(
+                    db, visit_row=row, actor=cancelled_by, reason=clean_reason
+                )
+            )
             if row["appointment_id"]:
                 # opd-16: the appointment checked in to this visit is closed
                 # with it, saying why.
@@ -1484,12 +1540,15 @@ def cancel_opd_visit(
                     "UPDATE appointments SET status = 'cancelled', cancel_reason = ?, "
                     "cancelled_at = ?, cancelled_by = ? WHERE id = ? "
                     "AND status = 'checked_in' AND opd_visit_id = ?",
-                    (f"The outpatient visit was cancelled: {clean_reason}"[:_MAX_REASON_LEN],
-                     _now(), cancelled_by, row["appointment_id"], visit_id),
+                    (
+                        f"The outpatient visit was cancelled: {clean_reason}"[:_MAX_REASON_LEN],
+                        _now(),
+                        cancelled_by,
+                        row["appointment_id"],
+                        visit_id,
+                    ),
                 )
-        updated = db.execute(
-            "SELECT * FROM opd_visits WHERE id = ?", (visit_id,)
-        ).fetchone()
+        updated = db.execute("SELECT * FROM opd_visits WHERE id = ?", (visit_id,)).fetchone()
         logger.info("OPD visit %s cancelled by %s: %s", visit_id, cancelled_by, clean_reason)
         visit = _serialize_visit(db, updated)
         if "prepaid_charge" in facts:
@@ -1507,17 +1566,18 @@ def cancel_opd_visit(
 #  Transfers
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def transfer_patient(
     *,
     patient_id: str,
     to_department: str,
-    to_ward: Optional[str] = None,
-    to_bed: Optional[str] = None,
+    to_ward: str | None = None,
+    to_bed: str | None = None,
     reason: str,
-    moved_by: Optional[str] = None,
-    moved_by_name: Optional[str] = None,
-    notes: Optional[str] = None,
-    idempotency_key: Optional[str] = None,
+    moved_by: str | None = None,
+    moved_by_name: str | None = None,
+    notes: str | None = None,
+    idempotency_key: str | None = None,
 ) -> dict:
     """Move an admitted patient to another ward. ONE transaction, ONE admission.
 
@@ -1555,6 +1615,7 @@ def transfer_patient(
     # delegates to services/adt/transfer.py (adt-6a). This lane writes those
     # columns directly, so it refuses rather than become a second writer.
     from services.adt.core import adt_on
+
     if adt_on():
         raise FrontDeskError(
             "Beds and admissions is switched on, so a transfer is recorded through it: "
@@ -1565,9 +1626,7 @@ def transfer_patient(
         raise FrontDeskError("patient_id is required")
     clean_reason = _clean(reason, _MAX_REASON_LEN)
     if not clean_reason:
-        raise FrontDeskError(
-            "A transfer reason is required. A move with no reason is not a record"
-        )
+        raise FrontDeskError("A transfer reason is required. A move with no reason is not a record")
 
     canonical_dept = _resolve_covering_department(to_department)
     if canonical_dept is None:
@@ -1616,9 +1675,7 @@ def transfer_patient(
             and (ward is None or (from_ward or "") == ward)
             and (bed is None or (from_bed or "") == bed)
         ):
-            raise FrontDeskError(
-                f"{patient_id} is already in {canonical_dept} at that location"
-            )
+            raise FrontDeskError(f"{patient_id} is already in {canonical_dept} at that location")
 
         now = _now()
         movement_id = f"MOV-{uuid.uuid4().hex[:8].upper()}"
@@ -1630,11 +1687,21 @@ def transfer_patient(
                     reason, moved_at, moved_by, moved_by_name, notes, idempotency_key
                ) VALUES (?, ?, ?, 'transfer', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                movement_id, patient_id, admission["id"],
-                from_department, from_ward, from_bed,
-                canonical_dept, ward if ward is not None else from_ward,
+                movement_id,
+                patient_id,
+                admission["id"],
+                from_department,
+                from_ward,
+                from_bed,
+                canonical_dept,
+                ward if ward is not None else from_ward,
                 bed if bed is not None else from_bed,
-                clean_reason, now, moved_by, moved_by_name, note, idem,
+                clean_reason,
+                now,
+                moved_by,
+                moved_by_name,
+                note,
+                idem,
             ),
         )
 
@@ -1652,8 +1719,7 @@ def transfer_patient(
         # `patients`; `patients.status` is deliberately NOT written — a
         # 'transferred' status here removes the patient from every board.
         db.execute(
-            "UPDATE patients SET ward = COALESCE(?, ward), bed = COALESCE(?, bed) "
-            "WHERE id = ?",
+            "UPDATE patients SET ward = COALESCE(?, ward), bed = COALESCE(?, bed) WHERE id = ?",
             (ward, bed, patient_id),
         )
 

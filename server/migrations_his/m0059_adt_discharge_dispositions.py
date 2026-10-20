@@ -31,6 +31,7 @@ statement per execute. Every existing row becomes source 'admin', not void,
 not flagged, which is exactly what it was. With ORB_ADT off nothing writes the
 new columns.
 """
+
 from migrations import Migration
 
 DISPOSITION_TABLE = "nabh_discharge_dispositions"
@@ -67,8 +68,7 @@ DISPOSITION_INDEXES: tuple = (
 def add_disposition_columns(conn) -> None:
     """Idempotent and guarded. A database with no dispositions table (a
     migration 26 that has not run) is left alone."""
-    present = {r[1] for r in conn.execute(
-        f"PRAGMA table_info({DISPOSITION_TABLE})").fetchall()}
+    present = {r[1] for r in conn.execute(f"PRAGMA table_info({DISPOSITION_TABLE})").fetchall()}
     if not present:
         return
     for name, decl in DISPOSITION_COLUMNS:

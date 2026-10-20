@@ -10,18 +10,17 @@ This script downloads them concurrently using a thread pool.
 Source: https://physionet.org/files/challenge-2019/1.0.0/training/training_setA/
 """
 
-import os
 import sys
 import urllib.request
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
 # Add server to path
 SERVER_DIR = Path(__file__).resolve().parent.parent
 DATASET_DIR = SERVER_DIR / "datasets" / "physionet_2019"
 BASE_URL = "https://physionet.org/files/challenge-2019/1.0.0/training/training_setA"
 MAX_PATIENTS = 2000  # Cap number of patient files to download
-MAX_WORKERS = 16     # Concurrent download threads
+MAX_WORKERS = 16  # Concurrent download threads
 
 
 def download_single_file(patient_num: int) -> tuple[int, bool, str]:
@@ -64,10 +63,7 @@ def download_dataset():
     patient_nums = list(range(1, MAX_PATIENTS + 1))
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = {
-            executor.submit(download_single_file, n): n
-            for n in patient_nums
-        }
+        futures = {executor.submit(download_single_file, n): n for n in patient_nums}
 
         for i, future in enumerate(as_completed(futures), 1):
             num, success, msg = future.result()
@@ -81,14 +77,14 @@ def download_dataset():
 
             # Progress reporting every 100 files
             if i % 100 == 0 or i == len(futures):
-                total_done = downloaded + skipped
+                downloaded + skipped
                 sys.stdout.write(
                     f"\r  Progress: {i}/{MAX_PATIENTS} "
                     f"(downloaded: {downloaded}, cached: {skipped}, failed: {failed})"
                 )
                 sys.stdout.flush()
 
-    print(f"\n✓ Dataset acquisition complete.")
+    print("\n✓ Dataset acquisition complete.")
     print(f"  Downloaded: {downloaded} new files")
     print(f"  Cached:     {skipped} existing files")
     print(f"  Failed:     {failed} files")

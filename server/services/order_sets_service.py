@@ -56,6 +56,7 @@ WHAT THIS DOES NOT DO
   * It is not a formulary. `LOCAL` codes in the shipped file are placeholders a
     site replaces with its own catalogue codes.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -63,18 +64,20 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Iterable, Optional
-
-from fastapi import HTTPException
+from typing import Any
 
 from database import db_session
+from fastapi import HTTPException
+
 from services import drug_safety_service, orders_service
-from services.medorders import cpoe
 from services.audit_service import log_audit_event
-from services.medication_safety_gate import (MedicationSafetyBlocked,
-                                             enforce_medication_safety)
+from services.medication_safety_gate import (
+    MedicationSafetyBlocked,
+    enforce_medication_safety,
+)
+from services.medorders import cpoe
 
 logger = logging.getLogger("orb.order_sets")
 
@@ -97,6 +100,7 @@ def config_path() -> Path:
 # ══════════════════════════════════════════════════════════════════════════
 #  ERRORS
 # ══════════════════════════════════════════════════════════════════════════
+
 
 class OrderSetConfigError(Exception):
     """The site's order-set file is unusable. Raised at import — i.e. at server
@@ -144,8 +148,18 @@ _VALID_PRIORITIES = {"stat", "urgent", "routine"}
 _SET_KEYS = {"id", "name", "indication", "guideline", "items"}
 _SET_REQUIRED = ("id", "name", "guideline", "items")
 _GUIDELINE_KEYS = {"name", "citation", "reviewed_by", "reviewed_on", "url"}
-_ITEM_KEYS = {"order_type", "description", "code", "code_system", "priority",
-              "drug_name", "dose", "route", "frequency", "note"}
+_ITEM_KEYS = {
+    "order_type",
+    "description",
+    "code",
+    "code_system",
+    "priority",
+    "drug_name",
+    "dose",
+    "route",
+    "frequency",
+    "note",
+}
 _MEDICATION_REQUIRED = ("drug_name", "dose", "route", "frequency")
 
 # Mirrors orders_service.CODELESS_ORDER_TYPES rather than redefining it: if that
@@ -154,7 +168,7 @@ _MEDICATION_REQUIRED = ("drug_name", "dose", "route", "frequency")
 _CODELESS = orders_service.CODELESS_ORDER_TYPES
 
 
-def _line_of(lines: list[str], needle: str, start: int = 1) -> Optional[int]:
+def _line_of(lines: list[str], needle: str, start: int = 1) -> int | None:
     """1-based line number of the first line at or after `start` containing
     `needle`, or None."""
     for i in range(max(1, start), len(lines) + 1):
@@ -182,7 +196,9 @@ class _Ctx:
         self.lines = raw.splitlines()
         self.errors: list[str] = []
 
-    def fail(self, where: str, message: str, *needles: str, after: Optional[str] = None) -> None:
+    def fail(
+        self, where: str, message: str, *needles: str | None, after: str | None = None
+    ) -> None:
         start = 1
         if after:
             anchor = _line_of(self.lines, after)
@@ -207,21 +223,23 @@ class _Ctx:
             f"{len(self.errors)} problem(s) in the site order-set file {self.path}:\n  "
             + "\n  ".join(self.errors)
             + "\n\nOrb will not start with an unusable protocol file. A protocol "
-              "that silently vanished would be worse than one that never existed."
+            "that silently vanished would be worse than one that never existed."
         )
 
 
-def _require_str(ctx: _Ctx, obj: dict, key: str, where: str, *needles: str,
-                 after: Optional[str] = None) -> str:
+def _require_str(
+    ctx: _Ctx, obj: dict, key: str, where: str, *needles: str | None, after: str | None = None
+) -> str:
     value = obj.get(key)
     if not isinstance(value, str) or not value.strip():
-        ctx.fail(f"{where}.{key}", f"must be a non-empty string (got {value!r})",
-                 *needles, after=after)
+        ctx.fail(
+            f"{where}.{key}", f"must be a non-empty string (got {value!r})", *needles, after=after
+        )
         return ""
     return value.strip()
 
 
-def _validate_item(ctx: _Ctx, item: Any, where: str, set_anchor: Optional[str]) -> Optional[dict]:
+def _validate_item(ctx: _Ctx, item: Any, where: str, set_anchor: str | None) -> dict | None:
     if not isinstance(item, dict):
         ctx.fail(where, f"must be an object, got {type(item).__name__}", after=set_anchor)
         return None
@@ -233,40 +251,63 @@ def _validate_item(ctx: _Ctx, item: Any, where: str, set_anchor: Optional[str]) 
         # A typo'd key is the quietest failure there is: "dosage" instead of
         # "dose" leaves the dose guard nothing to check and the order text
         # unchanged, so nothing looks wrong anywhere.
-        ctx.fail(where, f"unknown field(s) {unknown}, expected only {sorted(_ITEM_KEYS)}",
-                 f'"{unknown[0]}"', anchor, after=set_anchor)
+        ctx.fail(
+            where,
+            f"unknown field(s) {unknown}, expected only {sorted(_ITEM_KEYS)}",
+            f'"{unknown[0]}"',
+            anchor,
+            after=set_anchor,
+        )
 
     order_type = item.get("order_type")
     if order_type not in _VALID_ORDER_TYPES:
-        ctx.fail(f"{where}.order_type",
-                 f"{order_type!r} is not a valid order type "
-                 f"(expected one of {sorted(_VALID_ORDER_TYPES)})",
-                 f'"{order_type}"', anchor, '"order_type"', after=set_anchor)
+        ctx.fail(
+            f"{where}.order_type",
+            f"{order_type!r} is not a valid order type "
+            f"(expected one of {sorted(_VALID_ORDER_TYPES)})",
+            f'"{order_type}"',
+            anchor,
+            '"order_type"',
+            after=set_anchor,
+        )
         return None
 
-    description = _require_str(ctx, item, "description", where, anchor,
-                               after=set_anchor)
+    description = _require_str(ctx, item, "description", where, anchor, after=set_anchor)
 
     priority = item.get("priority", "routine")
     if priority not in _VALID_PRIORITIES:
-        ctx.fail(f"{where}.priority",
-                 f"{priority!r} is not a valid priority (expected one of {sorted(_VALID_PRIORITIES)})",
-                 f'"{priority}"', anchor, after=set_anchor)
+        ctx.fail(
+            f"{where}.priority",
+            f"{priority!r} is not a valid priority (expected one of {sorted(_VALID_PRIORITIES)})",
+            f'"{priority}"',
+            anchor,
+            after=set_anchor,
+        )
 
     code = item.get("code")
     code_system = item.get("code_system")
     if code is not None and not (isinstance(code, str) and code.strip()):
-        ctx.fail(f"{where}.code", "must be a non-empty string when present",
-                 anchor, after=set_anchor)
+        ctx.fail(
+            f"{where}.code", "must be a non-empty string when present", anchor, after=set_anchor
+        )
         code = None
     if code:
         if not (isinstance(code_system, str) and code_system.strip()):
-            ctx.fail(f"{where}.code_system", "is required whenever a code is given",
-                     code, anchor, after=set_anchor)
+            ctx.fail(
+                f"{where}.code_system",
+                "is required whenever a code is given",
+                code,
+                anchor,
+                after=set_anchor,
+            )
     elif order_type not in _CODELESS:
-        ctx.fail(f"{where}", f"order_type '{order_type}' needs a code + code_system; "
-                             f"only {sorted(_CODELESS)} may be free-text",
-                 anchor, after=set_anchor)
+        ctx.fail(
+            f"{where}",
+            f"order_type '{order_type}' needs a code + code_system; "
+            f"only {sorted(_CODELESS)} may be free-text",
+            anchor,
+            after=set_anchor,
+        )
 
     resolved = {
         "order_type": order_type,
@@ -275,13 +316,17 @@ def _validate_item(ctx: _Ctx, item: Any, where: str, set_anchor: Optional[str]) 
         "code_system": code_system.strip().upper() if isinstance(code_system, str) else None,
         "priority": priority if priority in _VALID_PRIORITIES else "routine",
         "note": item.get("note"),
-        "drug_name": None, "dose": None, "route": None, "frequency": None,
+        "drug_name": None,
+        "dose": None,
+        "route": None,
+        "frequency": None,
     }
 
     if order_type == "medication":
         for key in _MEDICATION_REQUIRED:
-            resolved[key] = _require_str(ctx, item, key, where, f'"{key}"', anchor,
-                                         after=anchor or set_anchor)
+            resolved[key] = _require_str(
+                ctx, item, key, where, f'"{key}"', anchor, after=anchor or set_anchor
+            )
         # ── The dose guard, applied to the PROTOCOL ITSELF ────────────────
         # Running it here as well as per-patient is not belt-and-braces for its
         # own sake. A dose-guard BLOCK inside a site's protocol file is not a
@@ -296,42 +341,57 @@ def _validate_item(ctx: _Ctx, item: Any, where: str, set_anchor: Optional[str]) 
         if resolved["drug_name"] and resolved["dose"]:
             try:
                 verdict = drug_safety_service.evaluate_dose(
-                    resolved["drug_name"], resolved["dose"], resolved["route"])
+                    resolved["drug_name"], resolved["dose"], resolved["route"]
+                )
             except Exception as e:  # pragma: no cover — defensive
-                ctx.fail(where, f"dose guard could not evaluate this item: {e}",
-                         anchor, after=set_anchor)
+                ctx.fail(
+                    where, f"dose guard could not evaluate this item: {e}", anchor, after=set_anchor
+                )
             else:
                 if verdict["decision"] == drug_safety_service.DOSE_BLOCK:
                     reasons = " ".join(
-                        f["message"] for f in verdict["findings"]
-                        if f.get("decision") == drug_safety_service.DOSE_BLOCK)
-                    ctx.fail(where,
-                             "THE DOSE GUARD STOPS THIS ITEM. It must not ship in a "
-                             f"protocol. {reasons}", anchor, after=set_anchor)
+                        f["message"]
+                        for f in verdict["findings"]
+                        if f.get("decision") == drug_safety_service.DOSE_BLOCK
+                    )
+                    ctx.fail(
+                        where,
+                        "THE DOSE GUARD STOPS THIS ITEM. It must not ship in a "
+                        f"protocol. {reasons}",
+                        anchor,
+                        after=set_anchor,
+                    )
     else:
         for key in _MEDICATION_REQUIRED:
             if item.get(key) is not None:
-                ctx.fail(f"{where}.{key}",
-                         f"only applies to a medication item, but order_type is "
-                         f"'{order_type}'", f'"{key}"', anchor, after=set_anchor)
+                ctx.fail(
+                    f"{where}.{key}",
+                    f"only applies to a medication item, but order_type is '{order_type}'",
+                    f'"{key}"',
+                    anchor,
+                    after=set_anchor,
+                )
 
     return resolved
 
 
-def _validate_set(ctx: _Ctx, raw_set: Any, index: int, seen_ids: set[str]) -> Optional[dict]:
+def _validate_set(ctx: _Ctx, raw_set: Any, index: int, seen_ids: set[str]) -> dict | None:
     where = f"sets[{index}]"
     if not isinstance(raw_set, dict):
         ctx.fail(where, f"must be an object, got {type(raw_set).__name__}")
         return None
 
     set_id_raw = raw_set.get("id")
-    anchor = (f'"id": "{set_id_raw}"'
-              if isinstance(set_id_raw, str) and set_id_raw.strip() else None)
+    anchor = f'"id": "{set_id_raw}"' if isinstance(set_id_raw, str) and set_id_raw.strip() else None
 
     unknown = sorted(set(raw_set) - _SET_KEYS - {"_comment"})
     if unknown:
-        ctx.fail(where, f"unknown field(s) {unknown}, expected only {sorted(_SET_KEYS)}",
-                 f'"{unknown[0]}"', after=anchor)
+        ctx.fail(
+            where,
+            f"unknown field(s) {unknown}, expected only {sorted(_SET_KEYS)}",
+            f'"{unknown[0]}"',
+            after=anchor,
+        )
 
     missing = [k for k in _SET_REQUIRED if k not in raw_set]
     if missing:
@@ -342,8 +402,12 @@ def _validate_set(ctx: _Ctx, raw_set: Any, index: int, seen_ids: set[str]) -> Op
     where = f"sets[{index}]({set_id or '?'})"
     if set_id:
         if set_id in seen_ids:
-            ctx.fail(where, f"duplicate set id '{set_id}': ids must be unique, they are "
-                            f"what the API and the audit trail name", anchor)
+            ctx.fail(
+                where,
+                f"duplicate set id '{set_id}': ids must be unique, they are "
+                f"what the API and the audit trail name",
+                anchor,
+            )
         seen_ids.add(set_id)
 
     name = _require_str(ctx, raw_set, "name", where, '"name"', after=anchor)
@@ -356,20 +420,29 @@ def _validate_set(ctx: _Ctx, raw_set: Any, index: int, seen_ids: set[str]) -> Op
     guideline = raw_set.get("guideline")
     resolved_guideline: dict = {}
     if not isinstance(guideline, dict):
-        ctx.fail(f"{where}.guideline",
-                 "must be an object with at least 'name' and 'citation', every set "
-                 "must cite the guideline it encodes", '"guideline"', after=anchor)
+        ctx.fail(
+            f"{where}.guideline",
+            "must be an object with at least 'name' and 'citation', every set "
+            "must cite the guideline it encodes",
+            '"guideline"',
+            after=anchor,
+        )
     else:
         g_unknown = sorted(set(guideline) - _GUIDELINE_KEYS)
         if g_unknown:
-            ctx.fail(f"{where}.guideline",
-                     f"unknown field(s) {g_unknown}, expected only {sorted(_GUIDELINE_KEYS)}",
-                     f'"{g_unknown[0]}"', after=anchor)
+            ctx.fail(
+                f"{where}.guideline",
+                f"unknown field(s) {g_unknown}, expected only {sorted(_GUIDELINE_KEYS)}",
+                f'"{g_unknown[0]}"',
+                after=anchor,
+            )
         resolved_guideline = {
-            "name": _require_str(ctx, guideline, "name", f"{where}.guideline",
-                                 '"name"', after='"guideline"'),
-            "citation": _require_str(ctx, guideline, "citation", f"{where}.guideline",
-                                     '"citation"', after=anchor),
+            "name": _require_str(
+                ctx, guideline, "name", f"{where}.guideline", '"name"', after='"guideline"'
+            ),
+            "citation": _require_str(
+                ctx, guideline, "citation", f"{where}.guideline", '"citation"', after=anchor
+            ),
             "reviewed_by": guideline.get("reviewed_by"),
             "reviewed_on": guideline.get("reviewed_on"),
             "url": guideline.get("url"),
@@ -377,8 +450,7 @@ def _validate_set(ctx: _Ctx, raw_set: Any, index: int, seen_ids: set[str]) -> Op
 
     items_raw = raw_set.get("items")
     if not isinstance(items_raw, list) or not items_raw:
-        ctx.fail(f"{where}.items", "must be a non-empty list of orders",
-                 '"items"', after=anchor)
+        ctx.fail(f"{where}.items", "must be a non-empty list of orders", '"items"', after=anchor)
         return None
 
     items: list[dict] = []
@@ -404,7 +476,7 @@ def _fingerprint(payload: Any) -> str:
     ).hexdigest()[:16]
 
 
-def load_config(path: Optional[Path] = None) -> dict:
+def load_config(path: Path | None = None) -> dict:
     """Read and fully validate the site's order-set file. PURE — no database.
 
     Raises :class:`OrderSetConfigError` naming the file, the line and the field
@@ -443,9 +515,11 @@ def load_config(path: Optional[Path] = None) -> dict:
 
     version = parsed.get("config_version")
     if version != 1:
-        ctx.fail("config_version",
-                 f"must be 1 (this build understands version 1); got {version!r}",
-                 '"config_version"')
+        ctx.fail(
+            "config_version",
+            f"must be 1 (this build understands version 1); got {version!r}",
+            '"config_version"',
+        )
 
     unknown_root = sorted(set(parsed) - {"config_version", "sets", "_comment"})
     if unknown_root:
@@ -480,21 +554,25 @@ def load_config(path: Optional[Path] = None) -> dict:
 # ══════════════════════════════════════════════════════════════════════════
 #  THE LOADED CONFIG
 # ══════════════════════════════════════════════════════════════════════════
-_CONFIG: Optional[dict] = None
+_CONFIG: dict | None = None
 
 
-def reload_config(path: Optional[Path] = None) -> dict:
+def reload_config(path: Path | None = None) -> dict:
     """Re-read the file and replace the process-wide config. Used at import, by
     tests, and by an operator restarting after an edit."""
     global _CONFIG
     _CONFIG = load_config(path)
-    logger.info("Order sets: loaded %d set(s) from %s (fingerprint %s)",
-                len(_CONFIG["sets"]), _CONFIG["path"], _CONFIG["fingerprint"])
+    logger.info(
+        "Order sets: loaded %d set(s) from %s (fingerprint %s)",
+        len(_CONFIG["sets"]),
+        _CONFIG["path"],
+        _CONFIG["fingerprint"],
+    )
     return _CONFIG
 
 
 def get_config() -> dict:
-    if _CONFIG is None:                       # pragma: no cover — import loads it
+    if _CONFIG is None:  # pragma: no cover — import loads it
         return reload_config()
     return _CONFIG
 
@@ -519,8 +597,7 @@ def get_set(set_id: str) -> dict:
     s = get_config()["sets_by_id"].get(set_id)
     if s is None:
         raise OrderSetError(
-            f"Unknown order set '{set_id}'. Configured sets: "
-            f"{sorted(get_config()['sets_by_id'])}"
+            f"Unknown order set '{set_id}'. Configured sets: {sorted(get_config()['sets_by_id'])}"
         )
     return s
 
@@ -544,7 +621,8 @@ def unknown_codes(set_id: str) -> list[dict]:
         for code_system, code in wanted:
             hit = db.execute(
                 "SELECT 1 FROM terminology WHERE code_system = ? AND code = ? "
-                "AND is_active = 1 LIMIT 1", (code_system, code),
+                "AND is_active = 1 LIMIT 1",
+                (code_system, code),
             ).fetchone()
             if hit is None:
                 missing.append({"code_system": code_system, "code": code})
@@ -555,7 +633,8 @@ def unknown_codes(set_id: str) -> list[dict]:
 #  APPLYING A SET TO A PATIENT
 # ══════════════════════════════════════════════════════════════════════════
 
-def resolve_items(set_id: str, selections: Optional[list[dict]] = None) -> list[dict]:
+
+def resolve_items(set_id: str, selections: list[dict] | None = None) -> list[dict]:
     """The items that will actually be ordered, after the clinician's edits.
 
     `selections` is a list of ``{"index": n, "include": bool, ...}``. Any field
@@ -569,7 +648,7 @@ def resolve_items(set_id: str, selections: Optional[list[dict]] = None) -> list[
     """
     s = get_set(set_id)
     by_index: dict[int, dict] = {}
-    for sel in (selections or []):
+    for sel in selections or []:
         idx = sel.get("index")
         if not isinstance(idx, int) or not (0 <= idx < len(s["items"])):
             raise OrderSetError(
@@ -596,10 +675,12 @@ def resolve_items(set_id: str, selections: Optional[list[dict]] = None) -> list[
             if field == "priority" and value not in _VALID_PRIORITIES:
                 raise OrderSetError(
                     f"item {item['index']}: priority '{value}' is not one of "
-                    f"{sorted(_VALID_PRIORITIES)}")
+                    f"{sorted(_VALID_PRIORITIES)}"
+                )
             if field in ("dose", "route", "frequency") and item["order_type"] != "medication":
                 raise OrderSetError(
-                    f"item {item['index']}: '{field}' only applies to a medication order")
+                    f"item {item['index']}: '{field}' only applies to a medication order"
+                )
             if resolved.get(field) != value.strip():
                 edited.append(field)
             resolved[field] = value.strip()
@@ -610,7 +691,8 @@ def resolve_items(set_id: str, selections: Optional[list[dict]] = None) -> list[
     if not out:
         raise OrderSetError(
             f"every item in '{set_id}' was excluded, nothing to order. Applying an "
-            f"empty set would write an audit row claiming a protocol was applied.")
+            f"empty set would write an audit row claiming a protocol was applied."
+        )
     return out
 
 
@@ -668,28 +750,33 @@ def _dose_screen(patient_id: str, item: dict) -> dict:
     try:
         with db_session() as db:
             from services import allergy_interlock
+
             ingredients = allergy_interlock.resolve_ingredients(db, item["drug_name"])
-    except Exception as e:                    # pragma: no cover — defensive
-        logger.warning("[OrderSets] formulary resolution failed for %s: %s",
-                       item["drug_name"], e)
+    except Exception as e:  # pragma: no cover — defensive
+        logger.warning("[OrderSets] formulary resolution failed for %s: %s", item["drug_name"], e)
     try:
         verdict = drug_safety_service.evaluate_dose(
-            item["drug_name"], item["dose"], item["route"], ingredients)
+            item["drug_name"], item["dose"], item["route"], ingredients
+        )
     except Exception as e:
-        logger.error("[OrderSets] dose evaluation FAILED for %s (%s): %s",
-                     item["drug_name"], item["dose"], e)
+        logger.error(
+            "[OrderSets] dose evaluation FAILED for %s (%s): %s", item["drug_name"], item["dose"], e
+        )
         check["unavailable"] = True
         check["unavailable_reason"] = (
-            "the dose guard could not run for this item. It has NOT been checked")
+            "the dose guard could not run for this item. It has NOT been checked"
+        )
         check["decision"] = drug_safety_service.DOSE_WARN
         return check
-    check.update({
-        "decision": verdict["decision"],
-        "rule": verdict["rule"],
-        "parsed_dose": verdict["parsed_dose"],
-        "route_tags": verdict["route_tags"],
-        "findings": verdict["findings"],
-    })
+    check.update(
+        {
+            "decision": verdict["decision"],
+            "rule": verdict["rule"],
+            "parsed_dose": verdict["parsed_dose"],
+            "route_tags": verdict["route_tags"],
+            "findings": verdict["findings"],
+        }
+    )
     return check
 
 
@@ -697,10 +784,10 @@ def screen_items(
     patient_id: str,
     items: list[dict],
     *,
-    actor_id: Optional[str],
+    actor_id: str | None,
     entry_point: str,
     honour_acks: bool,
-    actor_role: Optional[str] = None,
+    actor_role: str | None = None,
 ) -> list[dict]:
     """Run EVERY gate on EVERY item and return one verdict per item.
 
@@ -743,8 +830,11 @@ def screen_items(
         ack = item.get("safety_ack") if honour_acks else None
         try:
             verdict["medication_safety"] = enforce_medication_safety(
-                patient_id, item["drug_name"],
-                actor_id=actor_id, entry_point=entry_point, safety_ack=ack,
+                patient_id,
+                item["drug_name"],
+                actor_id=actor_id,
+                entry_point=entry_point,
+                safety_ack=ack,
                 # Who may clear a severe allergy: a prescriber only.
                 actor_role=actor_role,
             )
@@ -754,8 +844,10 @@ def screen_items(
             verdict["medication_safety"] = detail.get("safety")
             verdict["blocked"] = True
             verdict["block_kind"] = (
-                "drug_safety_acknowledgement_required" if e.status_code == 428
-                else "drug_safety_screen_unavailable")
+                "drug_safety_acknowledgement_required"
+                if e.status_code == 428
+                else "drug_safety_screen_unavailable"
+            )
             # Say WHICH alert stopped this item, not just that one did.
             #
             # This used to take the HTTP envelope's message — "Severe drug-safety
@@ -770,19 +862,19 @@ def screen_items(
             # and the two paths simply disagreed.
             specifics = [
                 a["message"]
-                for a in (safety.get("allergy_alerts") or []) + (safety.get("interaction_alerts") or [])
+                for a in (safety.get("allergy_alerts") or [])
+                + (safety.get("interaction_alerts") or [])
                 if a.get("message")
             ]
             verdict["block_reason"] = (
-                " ".join(specifics) if specifics
-                else (detail.get("message") or str(e.detail))
+                " ".join(specifics) if specifics else (detail.get("message") or str(e.detail))
             )
             # An acknowledgement the gate refused says why, first.
             if safety.get("ack_refused"):
                 verdict["block_reason"] = f"{safety['ack_refused']} {verdict['block_reason']}"
             verdicts.append(verdict)
             continue
-        except MedicationSafetyBlocked as e:   # pragma: no cover — interactive here
+        except MedicationSafetyBlocked as e:  # pragma: no cover — interactive here
             verdict["medication_safety"] = e.safety
             verdict["blocked"] = True
             verdict["block_kind"] = "drug_safety_screen_unavailable"
@@ -796,10 +888,14 @@ def screen_items(
         if dose_check["decision"] == drug_safety_service.DOSE_BLOCK:
             verdict["blocked"] = True
             verdict["block_kind"] = "dose_guard_block"
-            verdict["block_reason"] = " ".join(
-                f["message"] for f in dose_check["findings"]
-                if f.get("decision") == drug_safety_service.DOSE_BLOCK
-            ) or "the dose guard stopped this order"
+            verdict["block_reason"] = (
+                " ".join(
+                    f["message"]
+                    for f in dose_check["findings"]
+                    if f.get("decision") == drug_safety_service.DOSE_BLOCK
+                )
+                or "the dose guard stopped this order"
+            )
         verdicts.append(verdict)
 
     return verdicts
@@ -814,14 +910,12 @@ _DEFAULT_RECENT_MINUTES = 120
 
 def _recent_minutes() -> int:
     try:
-        return max(1, int(os.environ.get(RECENT_APPLICATION_MINUTES_ENV,
-                                         _DEFAULT_RECENT_MINUTES)))
+        return max(1, int(os.environ.get(RECENT_APPLICATION_MINUTES_ENV, _DEFAULT_RECENT_MINUTES)))
     except (TypeError, ValueError):
         return _DEFAULT_RECENT_MINUTES
 
 
-def recent_application(patient_id: str, set_id: str, *,
-                       now: Optional[datetime] = None) -> Optional[dict]:
+def recent_application(patient_id: str, set_id: str, *, now: datetime | None = None) -> dict | None:
     """The latest application of this set to this patient inside the recent
     window, or None.
 
@@ -830,7 +924,7 @@ def recent_application(patient_id: str, set_id: str, *,
     two minutes is two sets of STAT drafts, and the second clinician needs to
     know the first one exists before pressing Apply. A WARNING, never a block.
     """
-    ts = now or datetime.now(timezone.utc)
+    ts = now or datetime.now(UTC)
     cutoff = ts - timedelta(minutes=_recent_minutes())
     with db_session() as db:
         row = db.execute(
@@ -852,12 +946,11 @@ def recent_application(patient_id: str, set_id: str, *,
         "applied_by": row["applied_by"],
         "applied_by_name": row["applied_by_name"],
         "order_count": row["order_count"],
-        "minutes_ago": (max(0, int((ts - applied).total_seconds() // 60))
-                        if applied else None),
+        "minutes_ago": (max(0, int((ts - applied).total_seconds() // 60)) if applied else None),
     }
 
 
-def _parse_utc(raw: Any) -> Optional[datetime]:
+def _parse_utc(raw: Any) -> datetime | None:
     """applied_at is SQLite CURRENT_TIMESTAMP: bare 'YYYY-MM-DD HH:MM:SS', UTC."""
     if not raw:
         return None
@@ -865,7 +958,7 @@ def _parse_utc(raw: Any) -> Optional[datetime]:
         dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
     except ValueError:
         return None
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 def patient_banner(patient_id: str) -> dict:
@@ -884,16 +977,23 @@ def patient_banner(patient_id: str) -> dict:
         ).fetchone()
         try:
             from services import allergy_interlock
+
             allergies = [
-                {"substance": a["substance"], "reaction": a.get("reaction"),
-                 "severity": a.get("severity")}
+                {
+                    "substance": a["substance"],
+                    "reaction": a.get("reaction"),
+                    "severity": a.get("severity"),
+                }
                 for a in allergy_interlock.read_active_allergies(db, patient_id)
             ]
         except Exception as e:
             logger.warning("[OrderSets] allergy list unreadable for %s: %s", patient_id, e)
             allergies = None
-    banner = dict(row) if row else {"id": patient_id, "name": None, "mrn": None,
-                                    "bed": None, "ward": None}
+    banner = (
+        dict(row)
+        if row
+        else {"id": patient_id, "name": None, "mrn": None, "bed": None, "ward": None}
+    )
     banner["allergies"] = allergies
     return banner
 
@@ -902,8 +1002,8 @@ def preview_set(
     patient_id: str,
     set_id: str,
     *,
-    actor_id: Optional[str],
-    selections: Optional[list[dict]] = None,
+    actor_id: str | None,
+    selections: list[dict] | None = None,
 ) -> dict:
     """What applying this set to this patient would do, and what would stop it.
 
@@ -913,13 +1013,18 @@ def preview_set(
     s = get_set(set_id)
     patient = require_orderable_patient(patient_id)
     items = resolve_items(set_id, selections)
-    verdicts = screen_items(patient_id, items, actor_id=actor_id,
-                            entry_point="order_set.preview", honour_acks=False)
+    verdicts = screen_items(
+        patient_id, items, actor_id=actor_id, entry_point="order_set.preview", honour_acks=False
+    )
     blocked = [v for v in verdicts if v["blocked"]]
     return {
         "patient_id": patient["id"],
-        "set": {"id": s["id"], "name": s["name"], "guideline": s["guideline"],
-                "fingerprint": s["fingerprint"]},
+        "set": {
+            "id": s["id"],
+            "name": s["name"],
+            "guideline": s["guideline"],
+            "fingerprint": s["fingerprint"],
+        },
         "items": verdicts,
         "blocked": blocked,
         "would_apply": not blocked,
@@ -929,20 +1034,30 @@ def preview_set(
     }
 
 
-def _linked_draft_writer(item: dict, application_id: int, actor_id: str,
-                         actor_role: Optional[str]):
+def _linked_draft_writer(item: dict, application_id: int, actor_id: str, actor_role: str | None):
     """The in-transaction hook that writes a medication item's draft
     medication order beside its orders row (medorders-7, lifecycle on): the
     drug, dose, route and frequency the gates just screened, linked to the
     order and to this application. A draft reaches no ward until a
     prescriber signs it, and the signature screens it again."""
+
     def _write(conn, order: dict) -> None:
         cpoe.create_linked_draft_in_txn(
-            conn, order, source="order_set", drug_name=item["drug_name"],
-            dose=item["dose"], route=item["route"], frequency=item["frequency"],
-            notes=item.get("note"), actor_id=actor_id, actor_role=actor_role,
-            entry_point=cpoe.ENTRY_ORDER_SET_APPLY, lane=cpoe.LANE_ORDER_SET,
-            order_set_application_id=application_id)
+            conn,
+            order,
+            source="order_set",
+            drug_name=item["drug_name"],
+            dose=item["dose"],
+            route=item["route"],
+            frequency=item["frequency"],
+            notes=item.get("note"),
+            actor_id=actor_id,
+            actor_role=actor_role,
+            entry_point=cpoe.ENTRY_ORDER_SET_APPLY,
+            lane=cpoe.LANE_ORDER_SET,
+            order_set_application_id=application_id,
+        )
+
     return _write
 
 
@@ -951,8 +1066,8 @@ def apply_set(
     set_id: str,
     *,
     actor_id: str,
-    actor_role: Optional[str] = None,
-    selections: Optional[list[dict]] = None,
+    actor_role: str | None = None,
+    selections: list[dict] | None = None,
 ) -> dict:
     """Create the real, individual, DRAFT orders for a set. ALL OR NOTHING.
 
@@ -986,7 +1101,7 @@ def apply_set(
     exactly as before.
     """
     s = get_set(set_id)
-    patient = require_orderable_patient(patient_id)
+    require_orderable_patient(patient_id)
     items = resolve_items(set_id, selections)
     # Read once, so one application never half-links its drafts.
     lifecycle = cpoe.lifecycle_on()
@@ -1001,18 +1116,30 @@ def apply_set(
             f"cannot resolve: "
             + ", ".join(f"{c['code_system']} {c['code']}" for c in missing_codes)
             + ". Load them into the terminology table, or correct the protocol file. "
-              "No orders were created."
+            "No orders were created."
         )
 
-    verdicts = screen_items(patient_id, items, actor_id=actor_id,
-                            entry_point="order_set.apply", honour_acks=True,
-                            actor_role=actor_role)
+    verdicts = screen_items(
+        patient_id,
+        items,
+        actor_id=actor_id,
+        entry_point="order_set.apply",
+        honour_acks=True,
+        actor_role=actor_role,
+    )
     blocked = [v for v in verdicts if v["blocked"]]
     if blocked:
-        _audit_set(outcome="denied", action_type="order_set_blocked",
-                   patient_id=patient_id, set_def=s, actor_id=actor_id,
-                   actor_role=actor_role, verdicts=verdicts, order_ids=[],
-                   application_id=None)
+        _audit_set(
+            outcome="denied",
+            action_type="order_set_blocked",
+            patient_id=patient_id,
+            set_def=s,
+            actor_id=actor_id,
+            actor_role=actor_role,
+            verdicts=verdicts,
+            order_ids=[],
+            application_id=None,
+        )
         raise OrderSetBlocked(verdicts, blocked)
 
     by_index = {v["index"]: v for v in verdicts}
@@ -1024,9 +1151,15 @@ def apply_set(
                (patient_id, set_id, set_name, guideline, config_fingerprint,
                 applied_by, order_count, order_ids_json, safety_json)
                VALUES (?, ?, ?, ?, ?, ?, 0, NULL, ?)""",
-            (patient_id, s["id"], s["name"],
-             (s["guideline"] or {}).get("citation") or (s["guideline"] or {}).get("name"),
-             s["fingerprint"], actor_id, json.dumps(verdicts, default=str)),
+            (
+                patient_id,
+                s["id"],
+                s["name"],
+                (s["guideline"] or {}).get("citation") or (s["guideline"] or {}).get("name"),
+                s["fingerprint"],
+                actor_id,
+                json.dumps(verdicts, default=str),
+            ),
         )
         application_id = cur.lastrowid
 
@@ -1068,8 +1201,11 @@ def apply_set(
                 source="order_set",
                 detail=detail,
                 status="draft",
-                in_transaction=(_linked_draft_writer(item, application_id, actor_id, actor_role)
-                                if lifecycle and item["order_type"] == "medication" else None),
+                in_transaction=(
+                    _linked_draft_writer(item, application_id, actor_id, actor_role)
+                    if lifecycle and item["order_type"] == "medication"
+                    else None
+                ),
             )
             created.append(order)
             by_index[item["index"]]["order_id"] = order["id"]
@@ -1083,9 +1219,14 @@ def apply_set(
                 "UPDATE order_set_applications SET order_count = ?, order_ids_json = ? WHERE id = ?",
                 (len(created), json.dumps([o["id"] for o in created]), application_id),
             )
-        logger.error("[OrderSets] apply of '%s' for %s failed after %d order(s); "
-                     "application %s left for review", set_id, patient_id,
-                     len(created), application_id)
+        logger.error(
+            "[OrderSets] apply of '%s' for %s failed after %d order(s); "
+            "application %s left for review",
+            set_id,
+            patient_id,
+            len(created),
+            application_id,
+        )
         raise
 
     order_ids = [o["id"] for o in created]
@@ -1093,37 +1234,61 @@ def apply_set(
         db.execute(
             "UPDATE order_set_applications SET order_count = ?, order_ids_json = ?, "
             "safety_json = ? WHERE id = ?",
-            (len(order_ids), json.dumps(order_ids), json.dumps(verdicts, default=str),
-             application_id),
+            (
+                len(order_ids),
+                json.dumps(order_ids),
+                json.dumps(verdicts, default=str),
+                application_id,
+            ),
         )
         for oid in order_ids:
-            db.execute("UPDATE orders SET order_set_application_id = ? WHERE id = ?",
-                       (application_id, oid))
+            db.execute(
+                "UPDATE orders SET order_set_application_id = ? WHERE id = ?", (application_id, oid)
+            )
         if lifecycle:
             # Which drafts the order store now manages, so the route records
             # no create-time shadow action for them (the signature does).
             cpoe.annotate_orders(db, created)
 
     # ── (5) ONE audited event naming the set, plus its individual orders ─────
-    _audit_set(outcome="success", action_type="order_set_applied",
-               patient_id=patient_id, set_def=s, actor_id=actor_id,
-               actor_role=actor_role, verdicts=verdicts, order_ids=order_ids,
-               application_id=application_id)
+    _audit_set(
+        outcome="success",
+        action_type="order_set_applied",
+        patient_id=patient_id,
+        set_def=s,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        verdicts=verdicts,
+        order_ids=order_ids,
+        application_id=application_id,
+    )
 
     return {
         "application_id": application_id,
         "patient_id": patient_id,
-        "set": {"id": s["id"], "name": s["name"], "guideline": s["guideline"],
-                "fingerprint": s["fingerprint"]},
+        "set": {
+            "id": s["id"],
+            "name": s["name"],
+            "guideline": s["guideline"],
+            "fingerprint": s["fingerprint"],
+        },
         "orders": created,
         "items": verdicts,
     }
 
 
-def _audit_set(*, outcome: str, action_type: str, patient_id: str, set_def: dict,
-               actor_id: Optional[str], actor_role: Optional[str],
-               verdicts: list[dict], order_ids: list[str],
-               application_id: Optional[int]) -> None:
+def _audit_set(
+    *,
+    outcome: str,
+    action_type: str,
+    patient_id: str,
+    set_def: dict,
+    actor_id: str | None,
+    actor_role: str | None,
+    verdicts: list[dict],
+    order_ids: list[str],
+    application_id: int | None,
+) -> None:
     """The one event that says a PROTOCOL was applied, naming its orders.
 
     Deliberately in addition to — never instead of — the per-order `order_events`
@@ -1187,16 +1352,16 @@ def _audit_set(*, outcome: str, action_type: str, patient_id: str, set_def: dict
             },
         )
     except Exception as e:  # pragma: no cover — audit must not un-write orders
-        logger.error("[OrderSets] audit write failed for set %s / %s: %s",
-                     set_def.get("id"), patient_id, e)
+        logger.error(
+            "[OrderSets] audit write failed for set %s / %s: %s", set_def.get("id"), patient_id, e
+        )
 
 
 def list_applications(patient_id: str, limit: int = 50) -> list[dict]:
     """Protocols applied to this patient, newest first. PHI — callers scope."""
     with db_session() as db:
         rows = db.execute(
-            "SELECT * FROM order_set_applications WHERE patient_id = ? "
-            "ORDER BY id DESC LIMIT ?",
+            "SELECT * FROM order_set_applications WHERE patient_id = ? ORDER BY id DESC LIMIT ?",
             (patient_id, max(1, min(int(limit), 200))),
         ).fetchall()
     out = []
@@ -1204,7 +1369,7 @@ def list_applications(patient_id: str, limit: int = 50) -> list[dict]:
         d = dict(r)
         try:
             d["order_ids"] = json.loads(d.get("order_ids_json") or "[]")
-        except (TypeError, ValueError):       # pragma: no cover — defensive
+        except (TypeError, ValueError):  # pragma: no cover — defensive
             d["order_ids"] = []
         d.pop("order_ids_json", None)
         d.pop("safety_json", None)

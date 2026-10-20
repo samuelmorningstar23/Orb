@@ -36,13 +36,13 @@ in the Socket.IO app for /socket.io/ (fenced_socketio_app), which answers
 before any FastAPI middleware. A socket that connected before the second row
 appeared keeps its rooms until multisite-10 gives sockets facility rooms.
 """
+
 from __future__ import annotations
 
 import logging
 import posixpath
 import time
 import uuid
-from typing import Optional
 
 logger = logging.getLogger("orb.facility_fence")
 
@@ -85,9 +85,13 @@ def _odd(path: str) -> bool:
     never step past the fence."""
     if path == "/":
         return False
-    return ("//" in path or "/./" in path or "/../" in path
-            or path.endswith(("/.", "/.."))
-            or posixpath.normpath(path) != path.rstrip("/"))
+    return (
+        "//" in path
+        or "/./" in path
+        or "/../" in path
+        or path.endswith(("/.", "/.."))
+        or posixpath.normpath(path) != path.rstrip("/")
+    )
 
 
 def surface_of(path: str) -> str:
@@ -97,8 +101,7 @@ def surface_of(path: str) -> str:
     return "/" + "/".join(parts[:2]) if parts else "/"
 
 
-def is_fenced(path: str, roots: tuple = FENCED_ROOTS,
-              blind=None) -> bool:
+def is_fenced(path: str, roots: tuple = FENCED_ROOTS, blind=None) -> bool:
     """Would this path be refused while more than one facility is on record?"""
     path = path or "/"
     if not any(_under(path, root) for root in roots):
@@ -121,12 +124,13 @@ def describe() -> dict:
     }
 
 
-def _actor(scope) -> tuple[Optional[str], Optional[str]]:
+def _actor(scope) -> tuple[str | None, str | None]:
     """(user id, role) from the request's own session token when it verifies,
     else (None, None). CPU only: no database read on the way to a 503."""
     try:
-        from starlette.requests import HTTPConnection
         from auth import _extract_token, decode_token
+        from starlette.requests import HTTPConnection
+
         token, _ = _extract_token(HTTPConnection(scope))
         if not token:
             return None, None
@@ -136,7 +140,7 @@ def _actor(scope) -> tuple[Optional[str], Optional[str]]:
         return None, None
 
 
-def _audit_due(key: tuple) -> Optional[int]:
+def _audit_due(key: tuple) -> int | None:
     """None when this refusal is only counted; else the refusals counted since
     the last row (0 for the first)."""
     now = _clock()
@@ -152,18 +156,29 @@ def _audit_due(key: tuple) -> Optional[int]:
     return suppressed
 
 
-def _write_audit(*, path: str, method: str, ip: Optional[str], surface: str,
-                 actor: Optional[str], role: Optional[str], suppressed: int) -> None:
+def _write_audit(
+    *,
+    path: str,
+    method: str,
+    ip: str | None,
+    surface: str,
+    actor: str | None,
+    role: str | None,
+    suppressed: int,
+) -> None:
     """The authorization row (fail-soft category, so a failed write is logged
     and the 503 still goes out: nothing was disclosed either way)."""
     from services.audit_service import log_audit_event
+
     log_audit_event(
         correlation_id=f"facility-fence-{uuid.uuid4()}",
         event_category="authorization",
         action_type="facility_fence_blocked",
         outcome="denied",
-        summary_message=("Refused while more than one facility is on record: this "
-                         "screen does not yet keep each facility's patients apart."),
+        summary_message=(
+            "Refused while more than one facility is on record: this "
+            "screen does not yet keep each facility's patients apart."
+        ),
         actor_user_id=actor,
         actor_role=role,
         target_type="route_group",
@@ -171,8 +186,11 @@ def _write_audit(*, path: str, method: str, ip: Optional[str], surface: str,
         request_path=path,
         http_method=method,
         ip_address=ip,
-        metadata={"surface": surface, "refusals_since_last_row": suppressed,
-                  "blind_surfaces": describe()["blind_surfaces"]},
+        metadata={
+            "surface": surface,
+            "refusals_since_last_row": suppressed,
+            "blind_surfaces": describe()["blind_surfaces"],
+        },
     )
 
 
@@ -185,9 +203,17 @@ async def _audit_refusal(scope, surface: str) -> None:
     actor, role = _actor(scope)
     try:
         from database import run_db
-        await run_db(_write_audit, path=scope.get("path") or "",
-                     method=scope.get("method") or "WEBSOCKET", ip=ip, surface=surface,
-                     actor=actor, role=role, suppressed=suppressed)
+
+        await run_db(
+            _write_audit,
+            path=scope.get("path") or "",
+            method=scope.get("method") or "WEBSOCKET",
+            ip=ip,
+            surface=surface,
+            actor=actor,
+            role=role,
+            suppressed=suppressed,
+        )
     except Exception as e:  # never let the audit write turn a 503 into a 500
         logger.warning("Could not write the facility fence audit row: %s", e)
 
@@ -208,6 +234,7 @@ async def refused(scope, roots: tuple) -> bool:
     if not is_fenced(scope.get("path") or "/", roots):
         return False
     from services import facility_service
+
     return await facility_service.multi_facility_data_async()
 
 
@@ -220,10 +247,15 @@ async def refuse(scope, send) -> None:
         await send({"type": "websocket.close", "code": 1013})
         return
     import json
-    body = json.dumps({"detail": FENCE_MESSAGE, "error": FENCE_ERROR,
-                       "surface": surface}).encode()
-    await send({"type": "http.response.start", "status": 503,
-                "headers": _BODY_HEADERS + [(b"content-length", str(len(body)).encode())]})
+
+    body = json.dumps({"detail": FENCE_MESSAGE, "error": FENCE_ERROR, "surface": surface}).encode()
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 503,
+            "headers": _BODY_HEADERS + [(b"content-length", str(len(body)).encode())],
+        }
+    )
     await send({"type": "http.response.body", "body": body})
 
 

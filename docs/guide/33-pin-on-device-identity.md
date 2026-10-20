@@ -132,7 +132,7 @@ sequenceDiagram
 **On screen:** `DEVICE_PIN_SESSION_MINUTES` is returned to the login screen as `session_minutes` (`auth_routes.py:1245`) and lands in `DeviceStatus.session_minutes` (`src/api/deviceAuth.ts:27`). Nothing renders it today.
 **Breaks if you change it:** raising `DEVICE_PIN_SESSION_MINUTES` widens the window in which a stolen token works, and that window is the *only* thing bounding a leaked PIN token, because the request path deliberately does not re-present the device credential (see `get_current_user`). Renaming `DEVICE_COOKIE` invalidates every already-bound tablet at once; every one needs re-enrolling by hand.
 
-#### `verify_device_pin_ct`: `auth.py:255`
+#### `verify_device_pin_ct`: `auth.py:268`
 **Signature:** `(pin: str | None, hashed: str | None) -> bool`
 **Does:** Verifies a tablet PIN while always doing exactly the same amount of work.
 **On screen:** nothing directly, the *absence* of a signal is the feature. A wrong PIN and an unknown staff ID produce identical bodies and identical latency in the login card's red error strip (`src/pages/Login.tsx:274`).
@@ -140,34 +140,34 @@ sequenceDiagram
 **Why it exists:** A 4–6 digit PIN is trivially guessable, so the online path is rate-limited, but rate limiting is worthless if latency answers "does this staff id exist, and does it have a tablet PIN?" for free. That is not hypothetical: the plain login path shipped exactly that oracle (unknown user skipped bcrypt, ~2.5 ms vs ~223 ms, 90x, fully separable).
 **Breaks if you change it:** the docstring's last line is the rule, **callers must run this before branching on lockout or device state**. Add an early `if not hashed: return False` and you have restored the oracle in one line. Note also there is no legacy SHA-256 tier here (unlike `pin_security.verify_pin`): `device_pin_hash` is a new column that only ever receives bcrypt, so a non-bcrypt value is corruption and must fail, in bcrypt time.
 
-#### `generate_device_secret`: `auth.py:292`
+#### `generate_device_secret`: `auth.py:306`
 **Signature:** `() -> str`
 **Does:** `secrets.token_urlsafe(32)`, 256 bits of randomness.
 **On screen:** the string an administrator copies out of the enrol response and pastes into the tablet's setup textarea (`src/pages/Login.tsx:283`).
 **Breaks if you change it:** shortening it below ~128 bits makes brute-forcing the unauthenticated `/device/bind` endpoint theoretically reachable; that endpoint's whole safety argument is "guessing it is not an attack that finishes".
 
-#### `hash_device_secret`: `auth.py:297`
+#### `hash_device_secret`: `auth.py:311`
 **Signature:** `(secret: str) -> str`, SHA-256 hex digest
 **Does:** Hashes the device secret for storage. **Not bcrypt, on purpose.**
 **On screen:** nothing.
 **Why it exists:** bcrypt exists to make *low-entropy* secrets expensive to guess. This secret is 256 random bits; no work factor makes it more unguessable. Paying ~200 ms of bcrypt would buy nothing, would land on the hot path of the one interaction this feature exists to make fast, and would do so on **top** of the bcrypt the PIN itself already costs. A plain digest also lets the lookup be a single UNIQUE-index probe instead of a scan comparing every enrolled tablet.
 **Breaks if you change it:** switching to bcrypt breaks the `secret_hash TEXT NOT NULL UNIQUE` index lookup entirely (bcrypt salts differ per call, so you could never look a device up by digest), `load_active_device` would have to scan and compare every row.
 
-#### `extract_device_token`: `auth.py:311`
+#### `extract_device_token`: `auth.py:325`
 **Signature:** `(request: Request) -> str | None`
 **Does:** Pulls the device credential from the HttpOnly cookie, falling back to the `x-orb-device-token` header.
 **On screen:** nothing.
 **Why it exists:** the cookie is the steady state; the header is for the bind call itself, the one moment the raw secret is in the client's hands, and for machine clients with no cookie jar.
 **Breaks if you change it:** dropping the header fallback breaks any non-browser client and makes the bind flow cookie-only.
 
-#### `set_device_cookie` / `clear_device_cookie`: `server/auth.py:329` / `:336`
+#### `set_device_cookie` / `clear_device_cookie`: `server/auth.py:343` / `:336`
 **Signature:** `(response, request, secret) -> None` / `(response) -> None`
 **Does:** Sets/deletes `orb_device`, `httponly=True`, `samesite="lax"`, `secure=cookie_secure(request)`, one-year max age.
 **On screen:** nothing visible; the effect is that the PIN pad appears on this browser and only this browser.
 **Why it exists:** A long-lived credential in `localStorage` is readable by any script on the origin, the exact hole the session JWT was moved out of. HttpOnly puts it beyond JavaScript.
 **Breaks if you change it:** drop `httponly` and a single XSS lifts the ward tablet's permanent credential. Change `samesite` to `none` without `secure` and browsers reject the cookie outright, so the PIN pad silently never appears.
 
-#### `load_active_device`: `auth.py:340`
+#### `load_active_device`: `auth.py:359`
 **Signature:** `(secret: str) -> Row | None`
 **Does:** Returns the **active** `enrolled_devices` row for a secret, or `None`.
 **On screen:** decides whether the login card shows the PIN pad or the password form.
@@ -175,20 +175,20 @@ sequenceDiagram
 **Why it exists:** fail-closed on every ambiguity. An unknown digest, a revoked tablet, **or a database that has not yet run migration 12** all return `None`. A missing table must not 500 the login path: during a partial upgrade the correct answer is "this device is not enrolled", not a stack trace on the ward's only tablet.
 **Breaks if you change it:** it is **blocking**. Call it from an `async def` and it runs SQLCipher on the event loop, the shape that froze the API on 2026-07-30. Every caller here is a plain `def` route, which FastAPI runs in a threadpool.
 
-#### `create_token`: `server/auth.py:364` (device claims at `:401-408`)
+#### `create_token`: `server/auth.py:383` (device claims at `:401-408`)
 **Signature:** `(user_id, role, *, token_version=0, device_id=None, auth_method=None, expires_in_minutes=None, …) -> str`
 **Does:** Mints the session JWT. When `device_id` is given it adds `did` (device id) and `amr` (auth method) claims.
 **On screen:** nothing, but `did` is what makes revocation work and what makes the 2-minute idle rule apply.
 **Breaks if you change it:** drop the `did` claim and `get_current_user` can no longer tell a PIN session from a password session, so revoking a stolen tablet stops severing its live sessions.
 
-#### `_load_session_context`: `auth.py:421`
+#### `_load_session_context`: `auth.py:442`
 **Signature:** `(user_id, device_id) -> tuple[Row | None, Row | None]`
 **Does:** One blocking read that fetches the authoritative `users` row **and**, when the session is device-bound, the `enrolled_devices` row.
 **On screen:** nothing.
 **Why it exists:** two reasons, both load-bearing. (1) It is module level rather than a closure inside `get_current_user`, because this runs on every authenticated request and rebuilding the function object per call is pure waste on the hottest path in the process. (2) **One session, deliberately**, `get_current_user` makes four decisions off this snapshot (exists / is_active / token_version / device-still-enrolled) and they must all be judged against the same one. Splitting the reads would put an `await` between them, letting an admin deactivation, a logout-driven `token_version` bump, or a device revocation land in the gap.
 **Breaks if you change it:** splitting into two `run_db()` hops validates a request against a half-old, half-new picture. A missing `enrolled_devices` table is caught and returns `device = None`, which fails **closed**, because a token claiming a device we cannot verify is not honoured.
 
-#### `get_current_user` device branch: `server/auth.py:536` (branch at `:505-514`)
+#### `get_current_user` device branch: `server/auth.py:553` (branch at `:505-514`)
 **Signature:** inside `async def get_current_user(request) -> dict`
 **Does:** If the token carries `did`, requires the device to still exist and be un-revoked; 401 otherwise. Carries `user["device_id"]` and `user["auth_method"]` for audit metadata.
 **On screen:** a revoked tablet's next request 401s, which the SPA's global interceptor turns into the session-expired modal (`src/components/SessionExpiredModal.tsx`, wired at `src/App.tsx`).
@@ -208,32 +208,32 @@ The section header at `server/routes/auth_routes.py:1015-1035` states the safety
 **Why two:** a per-account limit cannot see the **sweep**, five guesses each across forty staff is two hundred guesses on one tablet with no single account tripping.
 **Breaks if you change it:** both locks are separate from `login_locked_until` on purpose. Share the counter and a PIN brute-force also locks the password path, i.e. a clinician stranded out of the EHR mid-shift.
 
-#### `_PIN_FORMAT` / `_BANNED_PINS` / `validate_pin_format`: `server/routes/auth_routes.py:192` / `:193` / `:200`
+#### `_PIN_FORMAT` / `_BANNED_PINS` / `validate_pin_format`: `server/routes/auth_routes.py:225` / `:193` / `:200`
 **Signature:** `validate_pin_format(pin: str) -> None`, raising `HTTPException(400)`
 **Does:** 4–8 ASCII digits, and rejects a short list of catastrophically weak sequences (`1234`, `0000`, `4321`, all-same-digit, …).
 **On screen:** "PIN must be 4-8 digits." or "That PIN is too easy to guess. Choose a different one." shown inline wherever the PIN is being set.
 **Why it exists:** `1234` on a shared ward tablet is not a credential. This is a floor, not a policy engine.
 **Breaks if you change it:** `re.ASCII` on the pattern is not decorative, plain `\d` also matches Unicode digits like `١٢٣٤`, which would store a PIN nobody can type on the tablet's numeric keypad.
 
-#### `_locked_until`: `auth_routes.py:212`
+#### `_locked_until`: `auth_routes.py:261`
 **Signature:** `(row, column: str) -> bool`
 **Does:** "Is this lock expiry still in the future?" Tolerates a missing column, a `None`, and a non-numeric value, all as *not locked*.
 **Breaks if you change it:** making a malformed value mean *locked* would strand users on data corruption.
 
-#### `_record_pin_failure`: `auth_routes.py:231`
+#### `_record_pin_failure`: `auth_routes.py:280`
 **Signature:** `(user_id: str, device_id: str | None) -> None`
 **Does:** Bumps **both** counters for one failed attempt and sets a lock on whichever crosses its threshold.
 **On screen:** invisible until a threshold trips, then the lock messages above.
 **Why it exists:** never raises, a throttling bookkeeping error must not turn a failed sign-in into a 500 on the ward's only tablet.
 **Breaks if you change it:** letting it raise converts a bad-PIN typo into a 500. Bumping only one counter re-opens the sweep.
 
-#### `_clear_pin_failures`: `auth_routes.py:280`
+#### `_clear_pin_failures`: `auth_routes.py:329`
 **Signature:** `(user_id, device_id) -> None`
 **Does:** A single correct PIN resets both counters.
 **Why it exists:** so an ordinary fat-finger never creeps toward a lock across a twelve-hour shift.
 **Breaks if you change it:** remove it and failures accumulate across a whole shift until a nurse who typed four wrong PINs over ten hours is locked out on her fifth typo.
 
-#### `_device_public`: `auth_routes.py:1059`
+#### `_device_public`: `auth_routes.py:1180`
 **Signature:** `(row) -> dict` → `{device_id, label, department, enrolled_by, enrolled_at, last_seen_at, revoked_at, active, pin_locked}`
 **Does:** The admin-visible view of an enrolled device.
 **On screen:** would be one row of a device inventory table. **No such screen exists**, see *Discrepancies*.
@@ -301,7 +301,7 @@ The section header at `server/routes/auth_routes.py:1015-1035` states the safety
 **Why the MFA gate:** a PIN must not become the back door around a TOTP mandate. Device + PIN is genuinely two factors, but it is not the factor the hospital mandated for that role, and silently accepting a weaker one is how a policy stops being a policy. Patients never use ward tablets, so they are excluded outright.
 **Breaks if you change it:** move step 4 after step 5 and you have restored the timing oracle. Make step 2's error message identical to step 6's and a tablet that lost its cookie looks exactly like a mistyped PIN, so nobody ever re-enrols it. Set `actor_user_id` to the device and the audit trail becomes the shared-login trail this feature exists to replace.
 
-#### `_write_device_pin`: `auth_routes.py:1537`
+#### `_write_device_pin`: `auth_routes.py:1698`
 **Signature:** `(user_id: str, pin: str) -> None`
 **Does:** Writes `device_pin_hash` (bcrypt via `pin_security.hash_pin`), stamps `device_pin_set_at`, and **clears the lockout**.
 **On screen:** nothing.
@@ -355,7 +355,7 @@ This file predates the tablet feature and is used by it only for hashing. Everyt
 
 ### File: `server/migrations.py`: migration 12
 
-#### `_m12_device_pin_identity`: `migrations.py:719`
+#### `_m12_device_pin_identity`: `migrations.py:742`
 **Signature:** `(conn) -> None`; registered as `Migration(12, "device_pin_identity", …)` at `:1621`
 **Does:** Adds four columns to `users` and creates `enrolled_devices` plus one index.
 **On screen:** nothing. Without it, `load_active_device` returns `None` for everything and the PIN pad never appears, which is the intended graceful degradation, not a crash.

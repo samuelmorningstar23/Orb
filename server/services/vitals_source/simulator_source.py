@@ -21,12 +21,13 @@ Two behaviours are preserved deliberately and must stay preserved:
     is that same literal, so `classify_source_label` reports SIMULATOR for
     every row this source has ever produced, including historical ones.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
-from typing import Awaitable, Callable, Optional
+from collections.abc import Awaitable, Callable
 
 from .base import (
     LABEL_SIMULATED,
@@ -52,8 +53,8 @@ class SimulatorSource(VitalsSource):
         sio=None,
         interval_seconds: float = 5.0,
         source_id: str = "simulator",
-        tick: Optional[Callable[[], Awaitable[None]]] = None,
-        companion_tick: Optional[Callable[[], Awaitable[None]]] = None,
+        tick: Callable[[], Awaitable[None]] | None = None,
+        companion_tick: Callable[[], Awaitable[None]] | None = None,
         stop_timeout: float = STOP_TIMEOUT_SECONDS,
     ):
         super().__init__(source_id)
@@ -63,7 +64,7 @@ class SimulatorSource(VitalsSource):
         self.stop_timeout = float(stop_timeout)
         self._tick = tick
         self._companion_tick = companion_tick
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         # Loops that `stop()` had to abandon (see below). Kept only so a
         # restart can say out loud that a second writer is still alive.
         self._abandoned: set[asyncio.Task] = set()
@@ -73,6 +74,7 @@ class SimulatorSource(VitalsSource):
         # forecast_service → torch, and this package is imported by the
         # ingestion layer, which must stay light.
         from services.bot_service import run_vitals_bot
+
         await run_vitals_bot(self._sio)
 
     async def start(self) -> None:
@@ -87,7 +89,8 @@ class SimulatorSource(VitalsSource):
                 "[%s] starting a new tick loop while %d abandoned loop(s) are "
                 "still alive — synthetic vitals will be written twice until "
                 "this process restarts",
-                self.source_id, len(self._abandoned),
+                self.source_id,
+                len(self._abandoned),
             )
         self.stats.started_at = time.monotonic()
         # Set BEFORE the task exists: `_loop` uses this flag as its non-
@@ -110,8 +113,9 @@ class SimulatorSource(VitalsSource):
             # swallowed cancellation aimed at US as well — so a tick that had
             # itself swallowed a CancelledError anywhere downstream left this
             # await hanging forever, and the whole appliance with it.
-            if not await stop_task(task, label=self.source_id,
-                                   timeout=self.stop_timeout, log=logger):
+            if not await stop_task(
+                task, label=self.source_id, timeout=self.stop_timeout, log=logger
+            ):
                 # Visible on the admin surface, not just in a log line nobody
                 # greps at 03:00: an abandoned loop is still writing rows.
                 self.stats.note_error(

@@ -88,13 +88,15 @@ CONVENTIONS
   * No money. There is no `_paise` column in this module and there must not be
     one; services/money.py is the single money implementation.
 """
+
 from __future__ import annotations
 
 import logging
 import threading
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import config
 from database import db_session
@@ -228,9 +230,7 @@ REQUEST_TYPES: tuple[str, ...] = (
 #: occupied unit vacates it in the same breath, because the two facts are the
 #: same event and asking a ward clerk to record them separately guarantees they
 #: will diverge.
-_VACATING_REQUEST_TYPES: frozenset[str] = frozenset(
-    {"discharge_turnaround", "transfer_turnaround"}
-)
+_VACATING_REQUEST_TYPES: frozenset[str] = frozenset({"discharge_turnaround", "transfer_turnaround"})
 
 PRIORITIES: tuple[str, ...] = ("routine", "urgent", "immediate")
 
@@ -292,11 +292,12 @@ def ensure_housekeeping_schema(force: bool = False) -> None:
 #  Small helpers
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
-def _parse_ts(value: Any) -> Optional[datetime]:
+def _parse_ts(value: Any) -> datetime | None:
     """Tolerant timestamp parse, always tz-aware UTC.
 
     Three shapes arrive here and all three are real: this module's own
@@ -310,7 +311,7 @@ def _parse_ts(value: Any) -> Optional[datetime]:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
     text = str(value).strip()
     if not text:
         return None
@@ -318,10 +319,10 @@ def _parse_ts(value: Any) -> Optional[datetime]:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00").replace(" ", "T", 1))
     except (ValueError, TypeError):
         return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
-def _clean(value: object, limit: int = _MAX_TEXT) -> Optional[str]:
+def _clean(value: object, limit: int = _MAX_TEXT) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
@@ -355,9 +356,7 @@ def _one_of(value: object, allowed: Iterable[str], field: str) -> str:
     text = (str(value or "")).strip().lower()
     allowed = tuple(allowed)
     if text not in allowed:
-        raise HousekeepingError(
-            f"{field} must be one of {', '.join(allowed)} (got {value!r})"
-        )
+        raise HousekeepingError(f"{field} must be one of {', '.join(allowed)} (got {value!r})")
     return text
 
 
@@ -380,12 +379,18 @@ def _canonical_ward(db, ward: str) -> str:
     """
     key = _norm_key(ward)
     known: list[str] = list(_ward_capacity_map())
-    known += [r["ward"] for r in db.execute(
-        "SELECT DISTINCT ward FROM patients WHERE ward IS NOT NULL AND ward <> ''"
-    ).fetchall()]
-    known += [r["ward"] for r in db.execute(
-        "SELECT DISTINCT ward FROM housekeeping_units WHERE is_active = 1"
-    ).fetchall()]
+    known += [
+        r["ward"]
+        for r in db.execute(
+            "SELECT DISTINCT ward FROM patients WHERE ward IS NOT NULL AND ward <> ''"
+        ).fetchall()
+    ]
+    known += [
+        r["ward"]
+        for r in db.execute(
+            "SELECT DISTINCT ward FROM housekeeping_units WHERE is_active = 1"
+        ).fetchall()
+    ]
     for name in known:
         if name and _norm_key(name) == key:
             return str(name).strip()
@@ -410,7 +415,7 @@ def _row(row) -> dict:
     return dict(row) if row is not None else {}
 
 
-def _minutes_between(start: Any, end: Any) -> Optional[float]:
+def _minutes_between(start: Any, end: Any) -> float | None:
     a, b = _parse_ts(start), _parse_ts(end)
     if a is None or b is None:
         return None
@@ -421,7 +426,7 @@ def _minutes_between(start: Any, end: Any) -> Optional[float]:
     return round(delta, 1) if delta >= 0 else None
 
 
-def _percentile(values: list[float], pct: float) -> Optional[float]:
+def _percentile(values: list[float], pct: float) -> float | None:
     """Nearest-rank percentile. No numpy: this runs on a request thread and the
     samples are tens, not millions."""
     if not values:
@@ -433,7 +438,7 @@ def _percentile(values: list[float], pct: float) -> Optional[float]:
     return round(ordered[rank - 1], 1)
 
 
-def _median(values: list[float]) -> Optional[float]:
+def _median(values: list[float]) -> float | None:
     if not values:
         return None
     ordered = sorted(values)
@@ -446,6 +451,7 @@ def _median(values: list[float]) -> Optional[float]:
 # ═════════════════════════════════════════════════════════════════════════════
 #  The unit register
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def register_unit(
     *,
@@ -488,10 +494,18 @@ def register_unit(
     ensure_housekeeping_schema()
     with db_session() as db:
         return register_unit_on(
-            db, unit_code=unit_code, ward=ward, room=room, bed_label=bed_label,
-            unit_type=unit_type, is_isolation_room=is_isolation_room,
-            initial_state=initial_state, notes=notes, actor_user_id=actor_user_id,
-            actor_role=actor_role, create_only=create_only,
+            db,
+            unit_code=unit_code,
+            ward=ward,
+            room=room,
+            bed_label=bed_label,
+            unit_type=unit_type,
+            is_isolation_room=is_isolation_room,
+            initial_state=initial_state,
+            notes=notes,
+            actor_user_id=actor_user_id,
+            actor_role=actor_role,
+            create_only=create_only,
         )
 
 
@@ -504,7 +518,7 @@ def master_unit_code(ward_code: str, bed_label: str) -> str:
     return f"{ward_code}/{bed_label}"
 
 
-def _has_ward_id(row) -> Optional[str]:
+def _has_ward_id(row) -> str | None:
     """The unit's ward_id, or None. Tolerates a row read before the bed master
     columns existed."""
     if row is None:
@@ -596,18 +610,21 @@ def register_unit_on(
         "SELECT * FROM housekeeping_units WHERE unit_code = ?", (code,)
     ).fetchone()
     if existing and (create_only or ward_id is not None):
-        where = ", ".join(x for x in (
-            existing["ward"],
-            f"bed {existing['bed_label']}" if existing["bed_label"] else None,
-        ) if x)
+        where = ", ".join(
+            x
+            for x in (
+                existing["ward"],
+                f"bed {existing['bed_label']}" if existing["bed_label"] else None,
+            )
+            if x
+        )
         raise UnitAlreadyRegistered(
             f"{code} is already registered ({where}). Nothing was changed. "
             "Use a different unit code, or change that unit from its card."
         )
     if existing and _has_ward_id(existing):
         raise UnitManagedByBedSetup(
-            f"{code} is a bed set up in Bed setup, so it is changed there. "
-            "Nothing was changed."
+            f"{code} is a bed set up in Bed setup, so it is changed there. Nothing was changed."
         )
     if existing:
         db.execute(
@@ -618,8 +635,13 @@ def register_unit_on(
                       is_active = 1, updated_at = ?
                 WHERE id = ?""",
             (
-                ward_name, room_text, label,
-                kind, 1 if is_isolation_room else 0, _clean(notes), now,
+                ward_name,
+                room_text,
+                label,
+                kind,
+                1 if is_isolation_room else 0,
+                _clean(notes),
+                now,
                 existing["id"],
             ),
         )
@@ -637,9 +659,18 @@ def register_unit_on(
                     state, state_since, is_active, notes, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)""",
             (
-                unit_id, code, ward_name, room_text,
-                label, kind, 1 if is_isolation_room else 0,
-                state, now, _clean(notes), now, now,
+                unit_id,
+                code,
+                ward_name,
+                room_text,
+                label,
+                kind,
+                1 if is_isolation_room else 0,
+                state,
+                now,
+                _clean(notes),
+                now,
+                now,
             ),
         )
     else:
@@ -650,10 +681,22 @@ def register_unit_on(
                     ward_id, room_id, bed_class, is_temporary)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                unit_id, code, ward_name, room_text,
-                label, kind, 1 if is_isolation_room else 0,
-                state, now, _clean(notes), now, now,
-                ward_id, room_id, _clean(bed_class, _MAX_LABEL), 1 if is_temporary else 0,
+                unit_id,
+                code,
+                ward_name,
+                room_text,
+                label,
+                kind,
+                1 if is_isolation_room else 0,
+                state,
+                now,
+                _clean(notes),
+                now,
+                now,
+                ward_id,
+                room_id,
+                _clean(bed_class, _MAX_LABEL),
+                1 if is_temporary else 0,
             ),
         )
     # The register's first event. Without it a unit created directly as
@@ -664,9 +707,7 @@ def register_unit_on(
            VALUES (?, NULL, ?, ?, ?, ?, ?)""",
         (unit_id, state, "unit registered", actor_user_id, actor_role, now),
     )
-    return _row(
-        db.execute("SELECT * FROM housekeeping_units WHERE id = ?", (unit_id,)).fetchone()
-    )
+    return _row(db.execute("SELECT * FROM housekeeping_units WHERE id = ?", (unit_id,)).fetchone())
 
 
 #: "Leave this field as it is" for update_master_bed_on, distinct from None
@@ -760,7 +801,9 @@ def adopt_unit_on(
     if _has_ward_id(unit):
         raise UnitManagedByBedSetup(f"{unit['unit_code']} is already a bed in Bed setup")
     if unit["unit_type"] != "bed":
-        raise HousekeepingError(f"{unit['unit_code']} is registered as a {unit['unit_type']}, not a bed")
+        raise HousekeepingError(
+            f"{unit['unit_code']} is registered as a {unit['unit_type']}, not a bed"
+        )
     label = _require(bed_label, "bed_label")
     ward_row = db.execute("SELECT id, code FROM wards WHERE id = ?", (ward_id,)).fetchone()
     if ward_row is None:
@@ -773,7 +816,9 @@ def adopt_unit_on(
         if room_row is None or room_row["ward_id"] != ward_id:
             raise HousekeepingError(f"That room is not on {ward_row['code']}")
         room_text = room_row["code"]
-    isolation = unit["is_isolation_room"] if is_isolation_room is None else (1 if is_isolation_room else 0)
+    isolation = (
+        unit["is_isolation_room"] if is_isolation_room is None else (1 if is_isolation_room else 0)
+    )
     db.execute(
         """UPDATE housekeeping_units
               SET unit_code = ?, ward = ?, room = COALESCE(?, room), bed_label = ?,
@@ -781,8 +826,16 @@ def adopt_unit_on(
                   is_active = 1, updated_at = ?
             WHERE id = ?""",
         (
-            master_unit_code(ward_row["code"], label), ward_row["code"], room_text, label,
-            ward_id, room_id, _clean(bed_class, _MAX_LABEL), isolation, _now(), unit_id,
+            master_unit_code(ward_row["code"], label),
+            ward_row["code"],
+            room_text,
+            label,
+            ward_id,
+            room_id,
+            _clean(bed_class, _MAX_LABEL),
+            isolation,
+            _now(),
+            unit_id,
         ),
     )
     return _row(db.execute("SELECT * FROM housekeeping_units WHERE id = ?", (unit_id,)).fetchone())
@@ -795,9 +848,7 @@ def find_unit_by_code(unit_code: str) -> dict | None:
     if not code:
         return None
     with db_session() as db:
-        row = db.execute(
-            "SELECT * FROM housekeeping_units WHERE unit_code = ?", (code,)
-        ).fetchone()
+        row = db.execute("SELECT * FROM housekeeping_units WHERE unit_code = ?", (code,)).fetchone()
     return _row(row) if row is not None else None
 
 
@@ -813,14 +864,12 @@ def list_units(ward: str | None = None, *, include_inactive: bool = False) -> li
     sql += " ORDER BY ward, unit_code"
     with db_session() as db:
         rows = db.execute(sql, tuple(params)).fetchall()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     out = []
     for r in rows:
         unit = _row(r)
         since = _parse_ts(unit.get("state_since"))
-        unit["minutes_in_state"] = (
-            round((now - since).total_seconds() / 60.0, 1) if since else None
-        )
+        unit["minutes_in_state"] = round((now - since).total_seconds() / 60.0, 1) if since else None
         unit["is_isolation_room"] = bool(unit.get("is_isolation_room"))
         unit["is_active"] = bool(unit.get("is_active"))
         out.append(unit)
@@ -845,6 +894,7 @@ def get_unit(unit_id: str) -> dict:
 # ═════════════════════════════════════════════════════════════════════════════
 #  The one state writer
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def _apply_transition(
     db,
@@ -873,13 +923,23 @@ def _apply_transition(
                    (unit_id, from_state, to_state, task_id, reason, actor_user_id,
                     actor_role, occurred_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (unit["id"], from_state, to_state, task_id,
-             _clean(reason) or "restated", actor_user_id, actor_role, occurred_at),
+            (
+                unit["id"],
+                from_state,
+                to_state,
+                task_id,
+                _clean(reason) or "restated",
+                actor_user_id,
+                actor_role,
+                occurred_at,
+            ),
         )
         return unit
 
     if not allow_illegal and to_state not in LEGAL_TRANSITIONS.get(from_state, frozenset()):
-        legal = ", ".join(_state_words(s) for s in sorted(LEGAL_TRANSITIONS.get(from_state, frozenset())))
+        legal = ", ".join(
+            _state_words(s) for s in sorted(LEGAL_TRANSITIONS.get(from_state, frozenset()))
+        )
         raise HousekeepingError(
             f"{unit['unit_code']} is {_state_words(from_state)}, so it cannot be marked "
             f"{_state_words(to_state)}. From here it can be marked: {legal or 'nothing'}."
@@ -894,8 +954,16 @@ def _apply_transition(
                (unit_id, from_state, to_state, task_id, reason, actor_user_id,
                 actor_role, occurred_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (unit["id"], from_state, to_state, task_id, _clean(reason),
-         actor_user_id, actor_role, occurred_at),
+        (
+            unit["id"],
+            from_state,
+            to_state,
+            task_id,
+            _clean(reason),
+            actor_user_id,
+            actor_role,
+            occurred_at,
+        ),
     )
     updated = dict(unit)
     updated["state"] = to_state
@@ -925,9 +993,14 @@ def transition_unit(
             raise HousekeepingError(f"No such housekeeping unit: {unit_id}")
         unit = _row(row)
         updated = _apply_transition(
-            db, unit, target,
-            actor_user_id=actor_user_id, actor_role=actor_role,
-            reason=reason, task_id=task_id, occurred_at=now,
+            db,
+            unit,
+            target,
+            actor_user_id=actor_user_id,
+            actor_role=actor_role,
+            reason=reason,
+            task_id=task_id,
+            occurred_at=now,
         )
         # Moving a unit back to dirty while a clean was running reopens its task:
         # the work is not done and the queue must still show it.
@@ -980,16 +1053,29 @@ def force_occupied(
             unit["clean_was_skipped"] = False
             return unit
         updated, skipped = _force_occupied_on(
-            db, unit, why=why, actor_user_id=actor_user_id, actor_role=actor_role,
-            occurred_at=now, cancelled_at=now)
+            db,
+            unit,
+            why=why,
+            actor_user_id=actor_user_id,
+            actor_role=actor_role,
+            occurred_at=now,
+            cancelled_at=now,
+        )
     updated["is_isolation_room"] = bool(updated.get("is_isolation_room"))
     updated["clean_was_skipped"] = skipped
     return updated
 
 
-def _force_occupied_on(db, unit: dict, *, why: str, actor_user_id: str | None,
-                       actor_role: str | None, occurred_at: str,
-                       cancelled_at: str) -> tuple[dict, bool]:
+def _force_occupied_on(
+    db,
+    unit: dict,
+    *,
+    why: str,
+    actor_user_id: str | None,
+    actor_role: str | None,
+    occurred_at: str,
+    cancelled_at: str,
+) -> tuple[dict, bool]:
     """The record force_occupied writes, on the caller's connection: the unit
     moved to occupied with the skipped clean named on its ledger, and any open
     or running clean on it cancelled with the same reason. The ONE place that
@@ -998,11 +1084,17 @@ def _force_occupied_on(db, unit: dict, *, why: str, actor_user_id: str | None,
     clean; adt-7). Returns (unit, clean_was_skipped)."""
     skipped = unit["state"] != "vacant_ready"
     updated = _apply_transition(
-        db, unit, "occupied",
-        actor_user_id=actor_user_id, actor_role=actor_role,
-        reason=(f"OCCUPIED WITHOUT COMPLETED CLEAN (was {unit['state']}): {why}"
-                if skipped else why),
-        task_id=None, occurred_at=occurred_at, allow_illegal=True,
+        db,
+        unit,
+        "occupied",
+        actor_user_id=actor_user_id,
+        actor_role=actor_role,
+        reason=(
+            f"OCCUPIED WITHOUT COMPLETED CLEAN (was {unit['state']}): {why}" if skipped else why
+        ),
+        task_id=None,
+        occurred_at=occurred_at,
+        allow_illegal=True,
     )
     if skipped:
         db.execute(
@@ -1010,8 +1102,12 @@ def _force_occupied_on(db, unit: dict, *, why: str, actor_user_id: str | None,
                   SET status = 'cancelled', cancelled_at = ?, cancelled_by_user_id = ?,
                       cancel_reason = ?
                 WHERE unit_id = ? AND status IN ('open', 'in_progress')""",
-            (cancelled_at, actor_user_id,
-             f"Unit occupied before the clean finished: {why}", unit["id"]),
+            (
+                cancelled_at,
+                actor_user_id,
+                f"Unit occupied before the clean finished: {why}",
+                unit["id"],
+            ),
         )
     return updated, skipped
 
@@ -1019,6 +1115,7 @@ def _force_occupied_on(db, unit: dict, *, why: str, actor_user_id: str | None,
 # ═════════════════════════════════════════════════════════════════════════════
 #  Cleaning requests
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def _insert_task(
     db,
@@ -1043,10 +1140,21 @@ def _insert_task(
                 vacated_at, requested_at, requested_by_user_id, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
-            task_id, unit["id"], unit["ward"], request_type, priority, clean_type,
-            expected_minutes_for(clean_type), source_type, source_ref,
-            _clean(description), _clean(precaution_note), vacated_at,
-            requested_at, requested_by_user_id, requested_at,
+            task_id,
+            unit["id"],
+            unit["ward"],
+            request_type,
+            priority,
+            clean_type,
+            expected_minutes_for(clean_type),
+            source_type,
+            source_ref,
+            _clean(description),
+            _clean(precaution_note),
+            vacated_at,
+            requested_at,
+            requested_by_user_id,
+            requested_at,
         ),
     )
     return task_id
@@ -1108,23 +1216,38 @@ def raise_cleaning_request(
                     f"turnaround can be raised on an occupied bed."
                 )
             unit = _apply_transition(
-                db, unit, "vacant_dirty",
-                actor_user_id=actor_user_id, actor_role=actor_role,
-                reason=f"{kind} raised", task_id=None, occurred_at=now,
+                db,
+                unit,
+                "vacant_dirty",
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
+                reason=f"{kind} raised",
+                task_id=None,
+                occurred_at=now,
             )
             vacated_at = now
         elif unit["state"] == "vacant_ready":
             unit = _apply_transition(
-                db, unit, "vacant_dirty",
-                actor_user_id=actor_user_id, actor_role=actor_role,
-                reason=f"{kind} raised on a ready unit", task_id=None, occurred_at=now,
+                db,
+                unit,
+                "vacant_dirty",
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
+                reason=f"{kind} raised on a ready unit",
+                task_id=None,
+                occurred_at=now,
             )
             vacated_at = now
         elif unit["state"] == "out_of_service":
             unit = _apply_transition(
-                db, unit, "vacant_dirty",
-                actor_user_id=actor_user_id, actor_role=actor_role,
-                reason="returned from maintenance", task_id=None, occurred_at=now,
+                db,
+                unit,
+                "vacant_dirty",
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
+                reason="returned from maintenance",
+                task_id=None,
+                occurred_at=now,
             )
             vacated_at = now
         else:
@@ -1134,12 +1257,22 @@ def raise_cleaning_request(
             vacated_at = unit.get("state_since") or now
 
         task_id = _insert_task(
-            db, unit=unit, request_type=kind, priority=prio, clean_type=clean,
-            description=description, precaution_note=precaution_note,
-            source_type="manual", source_ref=None,
-            requested_by_user_id=actor_user_id, requested_at=now, vacated_at=vacated_at,
+            db,
+            unit=unit,
+            request_type=kind,
+            priority=prio,
+            clean_type=clean,
+            description=description,
+            precaution_note=precaution_note,
+            source_type="manual",
+            source_ref=None,
+            requested_by_user_id=actor_user_id,
+            requested_at=now,
+            vacated_at=vacated_at,
         )
-        task = _row(db.execute("SELECT * FROM housekeeping_tasks WHERE id = ?", (task_id,)).fetchone())
+        task = _row(
+            db.execute("SELECT * FROM housekeeping_tasks WHERE id = ?", (task_id,)).fetchone()
+        )
     return _decorate_task(task)
 
 
@@ -1152,31 +1285,44 @@ def start_cleaning(
     ensure_housekeeping_schema()
     now = _now()
     with db_session() as db:
-        task = _row(db.execute("SELECT * FROM housekeeping_tasks WHERE id = ?", (task_id,)).fetchone())
+        task = _row(
+            db.execute("SELECT * FROM housekeeping_tasks WHERE id = ?", (task_id,)).fetchone()
+        )
         if not task:
             raise HousekeepingError(f"No such cleaning task: {task_id}")
         if task["status"] != "open":
             raise HousekeepingError(
                 f"Cleaning task {task_id} is {task['status']}; only an open task can be started."
             )
-        unit = _row(db.execute(
-            "SELECT * FROM housekeeping_units WHERE id = ?", (task["unit_id"],)
-        ).fetchone())
+        unit = _row(
+            db.execute(
+                "SELECT * FROM housekeeping_units WHERE id = ?", (task["unit_id"],)
+            ).fetchone()
+        )
         if not unit:
             raise HousekeepingError(f"Task {task_id} points at a unit that no longer exists")
         _apply_transition(
-            db, unit, "cleaning_in_progress",
-            actor_user_id=actor_user_id, actor_role=actor_role,
-            reason="cleaning started", task_id=task["id"], occurred_at=now,
+            db,
+            unit,
+            "cleaning_in_progress",
+            actor_user_id=actor_user_id,
+            actor_role=actor_role,
+            reason="cleaning started",
+            task_id=task["id"],
+            occurred_at=now,
         )
         db.execute(
             "UPDATE housekeeping_tasks SET status = 'in_progress', started_at = ?, "
             "started_by_user_id = ? WHERE id = ?",
             (now, actor_user_id, task["id"]),
         )
-        return _decorate_task(_row(
-            db.execute("SELECT * FROM housekeeping_tasks WHERE id = ?", (task["id"],)).fetchone()
-        ))
+        return _decorate_task(
+            _row(
+                db.execute(
+                    "SELECT * FROM housekeeping_tasks WHERE id = ?", (task["id"],)
+                ).fetchone()
+            )
+        )
 
 
 def complete_cleaning(
@@ -1195,7 +1341,9 @@ def complete_cleaning(
     ensure_housekeeping_schema()
     now = _now()
     with db_session() as db:
-        task = _row(db.execute("SELECT * FROM housekeeping_tasks WHERE id = ?", (task_id,)).fetchone())
+        task = _row(
+            db.execute("SELECT * FROM housekeeping_tasks WHERE id = ?", (task_id,)).fetchone()
+        )
         if not task:
             raise HousekeepingError(f"No such cleaning task: {task_id}")
         if task["status"] != "in_progress":
@@ -1204,15 +1352,22 @@ def complete_cleaning(
                 f"before it can be completed. That is what makes 'ready' mean somebody "
                 f"cleaned this bed."
             )
-        unit = _row(db.execute(
-            "SELECT * FROM housekeeping_units WHERE id = ?", (task["unit_id"],)
-        ).fetchone())
+        unit = _row(
+            db.execute(
+                "SELECT * FROM housekeeping_units WHERE id = ?", (task["unit_id"],)
+            ).fetchone()
+        )
         if not unit:
             raise HousekeepingError(f"Task {task_id} points at a unit that no longer exists")
         _apply_transition(
-            db, unit, "vacant_ready",
-            actor_user_id=actor_user_id, actor_role=actor_role,
-            reason=_clean(note) or "cleaning complete", task_id=task["id"], occurred_at=now,
+            db,
+            unit,
+            "vacant_ready",
+            actor_user_id=actor_user_id,
+            actor_role=actor_role,
+            reason=_clean(note) or "cleaning complete",
+            task_id=task["id"],
+            occurred_at=now,
         )
         db.execute(
             "UPDATE housekeeping_tasks SET status = 'done', completed_at = ?, "
@@ -1220,9 +1375,13 @@ def complete_cleaning(
             "WHERE id = ?",
             (now, actor_user_id, now, _clean(note), task["id"]),
         )
-        return _decorate_task(_row(
-            db.execute("SELECT * FROM housekeeping_tasks WHERE id = ?", (task["id"],)).fetchone()
-        ))
+        return _decorate_task(
+            _row(
+                db.execute(
+                    "SELECT * FROM housekeeping_tasks WHERE id = ?", (task["id"],)
+                ).fetchone()
+            )
+        )
 
 
 def cancel_cleaning(
@@ -1238,7 +1397,9 @@ def cancel_cleaning(
     why = _require(reason, "reason", _MAX_TEXT)
     now = _now()
     with db_session() as db:
-        task = _row(db.execute("SELECT * FROM housekeeping_tasks WHERE id = ?", (task_id,)).fetchone())
+        task = _row(
+            db.execute("SELECT * FROM housekeeping_tasks WHERE id = ?", (task_id,)).fetchone()
+        )
         if not task:
             raise HousekeepingError(f"No such cleaning task: {task_id}")
         if task["status"] in ("done", "cancelled"):
@@ -1248,9 +1409,13 @@ def cancel_cleaning(
             "cancelled_by_user_id = ?, cancel_reason = ? WHERE id = ?",
             (now, actor_user_id, why, task["id"]),
         )
-        return _decorate_task(_row(
-            db.execute("SELECT * FROM housekeeping_tasks WHERE id = ?", (task["id"],)).fetchone()
-        ))
+        return _decorate_task(
+            _row(
+                db.execute(
+                    "SELECT * FROM housekeeping_tasks WHERE id = ?", (task["id"],)
+                ).fetchone()
+            )
+        )
 
 
 def _decorate_task(task: dict, *, now: datetime | None = None) -> dict:
@@ -1264,7 +1429,7 @@ def _decorate_task(task: dict, *, now: datetime | None = None) -> dict:
     """
     if not task:
         return {}
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     out = dict(task)
     out["turnaround_minutes"] = _minutes_between(task.get("vacated_at"), task.get("ready_at"))
     out["cleaning_minutes"] = _minutes_between(task.get("started_at"), task.get("completed_at"))
@@ -1284,11 +1449,10 @@ def _decorate_task(task: dict, *, now: datetime | None = None) -> dict:
         turn = out["turnaround_minutes"]
         out["minutes_over_expected"] = (
             round(max(0.0, turn - float(task.get("expected_minutes") or 0)), 1)
-            if turn is not None else None
+            if turn is not None
+            else None
         )
-        out["is_overdue"] = (
-            turn is not None and turn > float(task.get("expected_minutes") or 0)
-        )
+        out["is_overdue"] = turn is not None and turn > float(task.get("expected_minutes") or 0)
     return out
 
 
@@ -1328,7 +1492,7 @@ def list_tasks(
             r["id"]: r["unit_code"]
             for r in db.execute("SELECT id, unit_code FROM housekeeping_units").fetchall()
         }
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     out = []
     for r in rows:
         task = _decorate_task(_row(r), now=now)
@@ -1364,6 +1528,7 @@ def get_task(task_id: str) -> dict:
 # ═════════════════════════════════════════════════════════════════════════════
 #  THE DISCHARGE SWEEP — exactly one turnaround task per discharge
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def sync_discharge_turnarounds(
     *,
@@ -1418,10 +1583,13 @@ def sync_discharge_turnarounds(
     scanned, lookback_hours}.
     """
     ensure_housekeeping_schema()
-    hours = int(lookback_hours if lookback_hours is not None
-                else config.HOUSEKEEPING_DISCHARGE_LOOKBACK_HOURS)
+    hours = int(
+        lookback_hours
+        if lookback_hours is not None
+        else config.HOUSEKEEPING_DISCHARGE_LOOKBACK_HOURS
+    )
     hours = max(1, min(24 * 30, hours))
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     cutoff = now - timedelta(hours=hours)
 
     created = 0
@@ -1445,7 +1613,8 @@ def sync_discharge_turnarounds(
         by_code: dict[str, dict] = {}
         by_id: dict[str, dict] = {}
         admission_bed_ids = "bed_id" in {
-            r[1] for r in db.execute("PRAGMA table_info(admissions)").fetchall()}
+            r[1] for r in db.execute("PRAGMA table_info(admissions)").fetchall()
+        }
         for u in units:
             unit = _row(u)
             by_id[unit["id"]] = unit
@@ -1490,22 +1659,38 @@ def sync_discharge_turnarounds(
         events: list[dict] = []
         for d in discharges:
             row = _row(d)
-            ended = stay_times.admission_for_summary(db, {
-                "id": row["discharge_id"], "patient_id": row["patient_id"],
-                "discharged_at": row["discharged_at"]})
-            events.append({"source_ref": str(row["discharge_id"]),
-                           "ended_at": row.get("discharged_at"), "admission": ended,
-                           "patient_ward": row.get("patient_ward"),
-                           "patient_bed": row.get("patient_bed")})
+            ended = stay_times.admission_for_summary(
+                db,
+                {
+                    "id": row["discharge_id"],
+                    "patient_id": row["patient_id"],
+                    "discharged_at": row["discharged_at"],
+                },
+            )
+            events.append(
+                {
+                    "source_ref": str(row["discharge_id"]),
+                    "ended_at": row.get("discharged_at"),
+                    "admission": ended,
+                    "patient_ward": row.get("patient_ward"),
+                    "patient_bed": row.get("patient_bed"),
+                }
+            )
         # Ends the beds and admissions module recorded with no discharge
         # summary (a death, a LAMA, an absconded closure) vacate a bed too.
         # Keyed on the end's own movement id, so each end is one task and a
         # summary-backed end (keyed on its summary id above) is never two.
         # None exist with ORB_ADT off.
-        for end in stay_times.summary_less_ends(
-                db, since=(cutoff - timedelta(days=1)).isoformat()):
-            events.append({"source_ref": str(end["movement_id"]), "ended_at": end["ended_at"],
-                           "admission": end, "patient_ward": None, "patient_bed": None})
+        for end in stay_times.summary_less_ends(db, since=(cutoff - timedelta(days=1)).isoformat()):
+            events.append(
+                {
+                    "source_ref": str(end["movement_id"]),
+                    "ended_at": end["ended_at"],
+                    "admission": end,
+                    "patient_ward": None,
+                    "patient_bed": None,
+                }
+            )
 
         for event in events:
             discharged_at = _parse_ts(event.get("ended_at"))
@@ -1524,9 +1709,10 @@ def sync_discharge_turnarounds(
                 bed = ended.get("bed") or ""
                 bed_id = ended.get("bed_id")
             elif ended is None or (
-                    event.get("patient_bed")
-                    and (stay_times.latest_admission(db, ended["patient_id"]) or {}).get("id")
-                    == ended.get("id")):
+                event.get("patient_bed")
+                and (stay_times.latest_admission(db, ended["patient_id"]) or {}).get("id")
+                == ended.get("id")
+            ):
                 # No admission row, or an ended stay that recorded no bed and
                 # is still the patient's latest: the patient's own labels, as
                 # this sweep always read them (they cannot name a later bed).
@@ -1537,13 +1723,13 @@ def sync_discharge_turnarounds(
                 # nothing of the ended one to clean.
                 ward, bed = ended.get("ward") or "", ""
 
-            unit = (
+            matched_unit = (
                 (by_id.get(bed_id) if bed_id else None)
                 or (by_ward_bed.get((_norm_key(ward), _norm_key(bed))) if bed else None)
                 or (by_code.get(_norm_key(bed)) if bed else None)
                 or (by_code.get(_norm_key(f"{ward}/{bed}")) if bed else None)
             )
-            if unit is None:
+            if matched_unit is None:
                 unmatched += 1
                 key = str(ward or "(no ward recorded)")
                 unmatched_wards[key] = unmatched_wards.get(key, 0) + 1
@@ -1570,24 +1756,30 @@ def sync_discharge_turnarounds(
                     (source_ref,),
                 ).fetchone()
                 iso_text = (iso["isolation_precautions"] if iso else None) or ""
-            terminal = carried_isolation(iso_text) or bool(unit.get("is_isolation_room"))
+            terminal = carried_isolation(iso_text) or bool(matched_unit.get("is_isolation_room"))
             clean_type = "terminal" if terminal else "standard"
 
             vacated_iso = (discharged_at or now).isoformat()
 
             try:
                 task_id = _insert_task(
-                    db, unit=unit, request_type="discharge_turnaround",
-                    priority="routine", clean_type=clean_type,
+                    db,
+                    unit=matched_unit,
+                    request_type="discharge_turnaround",
+                    priority="routine",
+                    clean_type=clean_type,
                     description="Discharge turnaround (raised automatically from the discharge record)",
                     precaution_note=(
                         "Terminal clean: this bed's last occupant was nursed with isolation "
                         "precautions, or this is a designated isolation room. Follow the "
                         "hospital's terminal-clean protocol and PPE."
-                        if terminal else None
+                        if terminal
+                        else None
                     ),
-                    source_type="discharge", source_ref=source_ref,
-                    requested_by_user_id=None, requested_at=_now(),
+                    source_type="discharge",
+                    source_ref=source_ref,
+                    requested_by_user_id=None,
+                    requested_at=_now(),
                     # The clock starts when the PATIENT LEFT, not when the sweep
                     # noticed. A sweep that stamped its own run time would report
                     # a five-hour turnaround as five minutes.
@@ -1604,22 +1796,33 @@ def sync_discharge_turnarounds(
             # Nor is a bed a later admission already holds by its master bed id
             # (beds and admissions module): its occupant is real, and the record
             # of the earlier departure is the task alone.
-            held_now = admission_bed_ids and db.execute(
-                "SELECT 1 FROM admissions WHERE bed_id = ? AND status = 'active' "
-                "AND id <> ? LIMIT 1",
-                (unit["id"], (ended or {}).get("admission_id") or (ended or {}).get("id") or ""),
-            ).fetchone() is not None
-            if unit["state"] == "occupied" and not held_now:
+            held_now = (
+                admission_bed_ids
+                and db.execute(
+                    "SELECT 1 FROM admissions WHERE bed_id = ? AND status = 'active' "
+                    "AND id <> ? LIMIT 1",
+                    (
+                        matched_unit["id"],
+                        (ended or {}).get("admission_id") or (ended or {}).get("id") or "",
+                    ),
+                ).fetchone()
+                is not None
+            )
+            if matched_unit["state"] == "occupied" and not held_now:
                 try:
                     _apply_transition(
-                        db, unit, "vacant_dirty",
-                        actor_user_id=None, actor_role=None,
-                        reason="patient discharged", task_id=task_id,
+                        db,
+                        matched_unit,
+                        "vacant_dirty",
+                        actor_user_id=None,
+                        actor_role=None,
+                        reason="patient discharged",
+                        task_id=task_id,
                         occurred_at=vacated_iso,
                     )
-                    unit["state"] = "vacant_dirty"
+                    matched_unit["state"] = "vacant_dirty"
                 except HousekeepingError:  # pragma: no cover - occupied→dirty is legal
-                    logger.debug("discharge sweep could not vacate %s", unit["unit_code"])
+                    logger.debug("discharge sweep could not vacate %s", matched_unit["unit_code"])
 
     return {
         "created": created,
@@ -1638,12 +1841,21 @@ def sync_discharge_turnarounds(
 #: Movement types that can take a patient OUT of a bed (the bed board's list,
 #: services/bed_master_service.VACATING_MOVEMENT_TYPES).
 _ADT_VACATING_TYPES: frozenset[str] = frozenset(
-    {"discharge", "transfer", "bed_change", "bed_swap", "correction", "location_linked"})
+    {"discharge", "transfer", "bed_change", "bed_swap", "correction", "location_linked"}
+)
 
 #: Movement types that can put a patient INTO a bed.
 _ADT_OCCUPYING_TYPES: frozenset[str] = frozenset(
-    {"admission", "bed_assigned", "bed_change", "transfer", "bed_swap", "correction",
-     "location_linked"})
+    {
+        "admission",
+        "bed_assigned",
+        "bed_change",
+        "transfer",
+        "bed_swap",
+        "correction",
+        "location_linked",
+    }
+)
 
 
 def sync_adt_movements(
@@ -1717,11 +1929,21 @@ def sync_adt_movements(
     occupied_unclean, skipped, lookback_hours}."""
     from services.adt.core import _vacated_with_isolation_on, adt_on, carried_isolation
 
-    hours = int(lookback_hours if lookback_hours is not None
-                else config.HOUSEKEEPING_DISCHARGE_LOOKBACK_HOURS)
+    hours = int(
+        lookback_hours
+        if lookback_hours is not None
+        else config.HOUSEKEEPING_DISCHARGE_LOOKBACK_HOURS
+    )
     hours = max(1, min(24 * 30, hours))
-    out: dict[str, Any] = {"processed": 0, "vacated": 0, "tasks_raised": 0, "occupied": 0,
-                           "occupied_unclean": 0, "skipped": 0, "lookback_hours": hours}
+    out: dict[str, Any] = {
+        "processed": 0,
+        "vacated": 0,
+        "tasks_raised": 0,
+        "occupied": 0,
+        "occupied_unclean": 0,
+        "skipped": 0,
+        "lookback_hours": hours,
+    }
     if not adt_on():
         out["off"] = "adt"
         return out
@@ -1731,7 +1953,7 @@ def sync_adt_movements(
     ensure_housekeeping_schema()
     from migrations_his.m0066_housekeeping_movement_links import ensure_links_on
 
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     cutoff = (now - timedelta(hours=hours)).isoformat()
 
     types = tuple(sorted(_ADT_VACATING_TYPES | _ADT_OCCUPYING_TYPES))
@@ -1753,13 +1975,20 @@ def sync_adt_movements(
     # A plain read first: the board runs this on every load, and taking the
     # write lock to find nothing to do would hold up every writer in turn.
     with db_session() as db:
-        present = {r[0] for r in db.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN "
-            "('patient_movements', 'housekeeping_movement_links')").fetchall()}
+        present = {
+            r[0]
+            for r in db.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN "
+                "('patient_movements', 'housekeeping_movement_links')"
+            ).fetchall()
+        }
         if "patient_movements" not in present:
             return out
-        if "housekeeping_movement_links" in present and db.execute(
-                f"SELECT 1 FROM ({pending_sql}) LIMIT 1", types + (cutoff,)).fetchone() is None:
+        if (
+            "housekeeping_movement_links" in present
+            and db.execute(f"SELECT 1 FROM ({pending_sql}) LIMIT 1", types + (cutoff,)).fetchone()
+            is None
+        ):
             return out
 
     with db_session(immediate=True) as db:
@@ -1769,15 +1998,33 @@ def sync_adt_movements(
         if not movements:
             return out
 
-        units = {r["id"]: _row(r) for r in db.execute(
-            "SELECT id, unit_code, ward, ward_id, room_id, bed_label, state, state_since, "
-            "is_isolation_room FROM housekeeping_units WHERE is_active = 1").fetchall()}
-        wards = {r["id"]: _row(r) for r in db.execute(
-            "SELECT id, code, cleaning_tracked FROM wards").fetchall()} if db.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'wards'").fetchone() else {}
-        isolation_rooms = {r[0] for r in db.execute(
-            "SELECT id FROM ward_rooms WHERE is_isolation = 1").fetchall()} if db.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ward_rooms'").fetchone() else set()
+        units = {
+            r["id"]: _row(r)
+            for r in db.execute(
+                "SELECT id, unit_code, ward, ward_id, room_id, bed_label, state, state_since, "
+                "is_isolation_room FROM housekeeping_units WHERE is_active = 1"
+            ).fetchall()
+        }
+        wards = (
+            {
+                r["id"]: _row(r)
+                for r in db.execute("SELECT id, code, cleaning_tracked FROM wards").fetchall()
+            }
+            if db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'wards'"
+            ).fetchone()
+            else {}
+        )
+        isolation_rooms = (
+            {
+                r[0]
+                for r in db.execute("SELECT id FROM ward_rooms WHERE is_isolation = 1").fetchall()
+            }
+            if db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ward_rooms'"
+            ).fetchone()
+            else set()
+        )
         ward_by_code = {_norm_key(w["code"]): w for w in wards.values() if w.get("code")}
         master_by_label: dict[tuple[str, str], dict] = {}
         legacy_by_ward_bed: dict[tuple[str, str], dict] = {}
@@ -1790,7 +2037,7 @@ def sync_adt_movements(
                 label = unit.get("bed_label") or unit.get("unit_code")
                 legacy_by_ward_bed[(_norm_key(unit["ward"]), _norm_key(label))] = unit
 
-        def _unit_for(bed_id: Any, ward_text: Any, bed_text: Any) -> Optional[dict]:
+        def _unit_for(bed_id: Any, ward_text: Any, bed_text: Any) -> dict | None:
             if bed_id:
                 return units.get(bed_id)
             if not str(bed_text or "").strip():
@@ -1800,16 +2047,19 @@ def sync_adt_movements(
                 found = master_by_label.get((ward["id"], _norm_key(bed_text)))
                 if found is not None:
                     return found
-            return (legacy_by_ward_bed.get((_norm_key(ward_text), _norm_key(bed_text)))
-                    or by_code.get(_norm_key(bed_text))
-                    or by_code.get(_norm_key(f"{ward_text}/{bed_text}")))
+            return (
+                legacy_by_ward_bed.get((_norm_key(ward_text), _norm_key(bed_text)))
+                or by_code.get(_norm_key(bed_text))
+                or by_code.get(_norm_key(f"{ward_text}/{bed_text}"))
+            )
 
-        def _lies_in_now(admission_id: Optional[str], unit: dict) -> bool:
+        def _lies_in_now(admission_id: str | None, unit: dict) -> bool:
             """The movement's admission is active and recorded in `unit` now."""
             if not admission_id:
                 return False
-            adm = db.execute("SELECT status, ward, bed, bed_id FROM admissions WHERE id = ?",
-                             (admission_id,)).fetchone()
+            adm = db.execute(
+                "SELECT status, ward, bed, bed_id FROM admissions WHERE id = ?", (admission_id,)
+            ).fetchone()
             if adm is None or adm["status"] != "active":
                 return False
             here = _unit_for(adm["bed_id"], adm["ward"], adm["bed"])
@@ -1819,25 +2069,47 @@ def sync_adt_movements(
             ward = wards.get(unit.get("ward_id") or "")
             return ward is None or bool(ward.get("cleaning_tracked"))
 
-        def _link(movement_id: str, side: str, unit: Optional[dict], effect: str,
-                  task_id: Optional[str] = None, note: Optional[str] = None) -> None:
+        def _link(
+            movement_id: str,
+            side: str,
+            unit: dict | None,
+            effect: str,
+            task_id: str | None = None,
+            note: str | None = None,
+        ) -> None:
             db.execute(
                 """INSERT OR IGNORE INTO housekeeping_movement_links
                        (movement_id, side, unit_id, effect, task_id, note, applied_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (movement_id, side, (unit or {}).get("id"), effect, task_id, note, _now()))
-            out["skipped" if effect == "skipped" else {
-                "vacated": "vacated", "task_raised": "tasks_raised", "occupied": "occupied",
-                "occupied_unclean": "occupied_unclean"}[effect]] += 1
+                (movement_id, side, (unit or {}).get("id"), effect, task_id, note, _now()),
+            )
+            out[
+                "skipped"
+                if effect == "skipped"
+                else {
+                    "vacated": "vacated",
+                    "task_raised": "tasks_raised",
+                    "occupied": "occupied",
+                    "occupied_unclean": "occupied_unclean",
+                }[effect]
+            ] += 1
 
-        linked = {(r[0], r[1]) for r in db.execute(
-            f"""SELECT movement_id, side FROM housekeeping_movement_links
+        linked = {
+            (r[0], r[1])
+            for r in db.execute(
+                f"""SELECT movement_id, side FROM housekeeping_movement_links
                  WHERE movement_id IN ({",".join("?" for _ in movements)})""",
-            tuple(m["id"] for m in movements)).fetchall()}
-        voided = {r[0] for r in db.execute(
-            f"""SELECT corrects_movement_id FROM patient_movements
+                tuple(m["id"] for m in movements),
+            ).fetchall()
+        }
+        voided = {
+            r[0]
+            for r in db.execute(
+                f"""SELECT corrects_movement_id FROM patient_movements
                  WHERE corrects_movement_id IN ({",".join("?" for _ in movements)})""",
-            tuple(m["id"] for m in movements)).fetchall()}
+                tuple(m["id"] for m in movements),
+            ).fetchall()
+        }
 
         # The arrivals this run has still to record, by (admission, bed), at
         # their latest place in the run. A discharge and the next admission
@@ -1847,8 +2119,11 @@ def sync_adt_movements(
         # further down the run, is what records that placement.
         arrivals_ahead: dict[tuple[str, str], int] = {}
         for pos, m in enumerate(movements):
-            if (m["id"], "to") in linked or m["movement_type"] not in _ADT_OCCUPYING_TYPES \
-                    or not m.get("admission_id"):
+            if (
+                (m["id"], "to") in linked
+                or m["movement_type"] not in _ADT_OCCUPYING_TYPES
+                or not m.get("admission_id")
+            ):
                 continue
             into = _unit_for(m.get("to_bed_id"), m.get("to_ward"), m.get("to_bed"))
             left = _unit_for(m.get("from_bed_id"), m.get("from_ward"), m.get("from_bed"))
@@ -1864,15 +2139,21 @@ def sync_adt_movements(
             mid = m["id"]
             from_unit = _unit_for(m.get("from_bed_id"), m.get("from_ward"), m.get("from_bed"))
             to_unit = _unit_for(m.get("to_bed_id"), m.get("to_ward"), m.get("to_bed"))
-            same_bed = (from_unit is not None and to_unit is not None
-                        and from_unit["id"] == to_unit["id"])
+            same_bed = (
+                from_unit is not None and to_unit is not None and from_unit["id"] == to_unit["id"]
+            )
 
             # ── the bed the patient left ──
             if (mid, "from") not in linked:
                 if m["movement_type"] not in _ADT_VACATING_TYPES or from_unit is None or same_bed:
-                    note = ("same_bed" if same_bed else
-                            "not_on_register" if (m.get("from_bed_id") or m.get("from_bed"))
-                            and m["movement_type"] in _ADT_VACATING_TYPES else "no_bed")
+                    note = (
+                        "same_bed"
+                        if same_bed
+                        else "not_on_register"
+                        if (m.get("from_bed_id") or m.get("from_bed"))
+                        and m["movement_type"] in _ADT_VACATING_TYPES
+                        else "no_bed"
+                    )
                     _link(mid, "from", from_unit, "skipped", note=note)
                 elif m["movement_type"] == "discharge" and mid in voided:
                     _link(mid, "from", from_unit, "skipped", note="end_reopened")
@@ -1881,8 +2162,11 @@ def sync_adt_movements(
                 else:
                     if m["movement_type"] == "discharge":
                         source_type = "discharge"
-                        source_ref = (str(m["discharge_summary_id"])
-                                      if m.get("discharge_summary_id") is not None else mid)
+                        source_ref = (
+                            str(m["discharge_summary_id"])
+                            if m.get("discharge_summary_id") is not None
+                            else mid
+                        )
                         request_type = "discharge_turnaround"
                         words = "Discharge turnaround (raised automatically from the bed movement record)"
                     else:
@@ -1892,9 +2176,11 @@ def sync_adt_movements(
                     # One clinical fact crosses, as a boolean (see the
                     # discharge sweep): did the stay that left carry isolation
                     # precautions? The text is never copied.
-                    terminal = (carried_isolation(m.get("isolation_precautions"))
-                                or bool(from_unit.get("is_isolation_room"))
-                                or (from_unit.get("room_id") in isolation_rooms))
+                    terminal = (
+                        carried_isolation(m.get("isolation_precautions"))
+                        or bool(from_unit.get("is_isolation_room"))
+                        or (from_unit.get("room_id") in isolation_rooms)
+                    )
                     if not terminal and wards.get(from_unit.get("ward_id") or ""):
                         # A terminal clean skipped once is still owed: a stay
                         # with isolation precautions left this bed since it
@@ -1902,38 +2188,55 @@ def sync_adt_movements(
                         # before that clean, cancelling it). The placement
                         # rule reads the ledger the same way (adt core).
                         terminal = from_unit["id"] in _vacated_with_isolation_on(
-                            db, wards=[wards[from_unit["ward_id"]]], bed_ids=[from_unit["id"]])
+                            db, wards=[wards[from_unit["ward_id"]]], bed_ids=[from_unit["id"]]
+                        )
                     vacated_at = m.get("moved_at") or _now()
                     created = True
                     try:
+                        task_id: str | None
                         task_id = _insert_task(
-                            db, unit=from_unit, request_type=request_type, priority="routine",
+                            db,
+                            unit=from_unit,
+                            request_type=request_type,
+                            priority="routine",
                             clean_type="terminal" if terminal else "standard",
                             description=words,
                             precaution_note=(
                                 "Terminal clean: this bed's last occupant was nursed with "
                                 "isolation precautions, or this is a designated isolation room. "
                                 "Follow the hospital's terminal-clean protocol and PPE."
-                                if terminal else None),
-                            source_type=source_type, source_ref=source_ref,
-                            requested_by_user_id=None, requested_at=_now(),
-                            vacated_at=vacated_at)
+                                if terminal
+                                else None
+                            ),
+                            source_type=source_type,
+                            source_ref=source_ref,
+                            requested_by_user_id=None,
+                            requested_at=_now(),
+                            vacated_at=vacated_at,
+                        )
                     except DBIntegrityError:
                         # The discharge sweep (or an earlier run) raised it:
                         # one end of stay is one task.
                         created = False
                         existing = db.execute(
                             "SELECT id FROM housekeeping_tasks WHERE source_type = ? AND source_ref = ?",
-                            (source_type, source_ref)).fetchone()
+                            (source_type, source_ref),
+                        ).fetchone()
                         task_id = existing["id"] if existing else None
                     # The bed's own state: a bed housekeeping holds as occupied,
                     # or as ready but not cleaned since the patient left (the
                     # bed board's rule: a tie reads as not cleaned), becomes
                     # needs cleaning.
-                    cleaned_since = from_unit["state"] == "vacant_ready" and db.execute(
-                        "SELECT 1 FROM housekeeping_unit_events WHERE unit_id = ? "
-                        "AND to_state = 'vacant_ready' AND julianday(occurred_at) > julianday(?) "
-                        "LIMIT 1", (from_unit["id"], vacated_at)).fetchone() is not None
+                    cleaned_since = (
+                        from_unit["state"] == "vacant_ready"
+                        and db.execute(
+                            "SELECT 1 FROM housekeeping_unit_events WHERE unit_id = ? "
+                            "AND to_state = 'vacant_ready' AND julianday(occurred_at) > julianday(?) "
+                            "LIMIT 1",
+                            (from_unit["id"], vacated_at),
+                        ).fetchone()
+                        is not None
+                    )
                     # Another active admission holding the bed by its master bed
                     # id was put there before this departure's clean. When its
                     # own arrival is still to be recorded in this run (a
@@ -1945,11 +2248,15 @@ def sync_adt_movements(
                     # occupied), the skipped clean is recorded here, naming it.
                     # Either way no turnaround is left open on a bed a patient
                     # lies in, where it could never be started.
-                    settled = [r[0] for r in db.execute(
-                        "SELECT id FROM admissions WHERE bed_id = ? AND status = 'active' "
-                        "AND id <> ? ORDER BY id",
-                        (from_unit["id"], m.get("admission_id") or "")).fetchall()
-                        if arrivals_ahead.get((r[0], from_unit["id"]), -1) <= pos]
+                    settled = [
+                        r[0]
+                        for r in db.execute(
+                            "SELECT id FROM admissions WHERE bed_id = ? AND status = 'active' "
+                            "AND id <> ? ORDER BY id",
+                            (from_unit["id"], m.get("admission_id") or ""),
+                        ).fetchall()
+                        if arrivals_ahead.get((r[0], from_unit["id"]), -1) <= pos
+                    ]
                     if cleaned_since:
                         # The clean this departure owed is already recorded. Its
                         # task is still raised (it holds the key, so the
@@ -1962,19 +2269,37 @@ def sync_adt_movements(
                                       SET status = 'cancelled', cancelled_at = ?,
                                           cancelled_by_user_id = NULL, cancel_reason = ?
                                     WHERE id = ? AND status = 'open'""",
-                                (_now(), "Bed recorded clean after the patient left "
-                                 f"(movement {mid}): no clean owed for this departure", task_id))
-                        _link(mid, "from", from_unit, "task_raised" if created else "skipped",
-                              task_id=task_id, note="cleaned_since")
+                                (
+                                    _now(),
+                                    "Bed recorded clean after the patient left "
+                                    f"(movement {mid}): no clean owed for this departure",
+                                    task_id,
+                                ),
+                            )
+                        _link(
+                            mid,
+                            "from",
+                            from_unit,
+                            "task_raised" if created else "skipped",
+                            task_id=task_id,
+                            note="cleaned_since",
+                        )
                     elif from_unit["state"] in ("occupied", "vacant_ready"):
                         updated = _apply_transition(
-                            db, from_unit, "vacant_dirty", actor_user_id=None,
+                            db,
+                            from_unit,
+                            "vacant_dirty",
+                            actor_user_id=None,
                             actor_role=None,
-                            reason=("patient discharged" if source_type == "discharge"
-                                    else "patient moved to another bed"),
-                            task_id=task_id, occurred_at=vacated_at)
-                        from_unit.update(state=updated["state"],
-                                         state_since=updated["state_since"])
+                            reason=(
+                                "patient discharged"
+                                if source_type == "discharge"
+                                else "patient moved to another bed"
+                            ),
+                            task_id=task_id,
+                            occurred_at=vacated_at,
+                        )
+                        from_unit.update(state=updated["state"], state_since=updated["state_since"])
                         if settled:
                             arrival = db.execute(
                                 f"""SELECT id, moved_at,
@@ -1984,34 +2309,57 @@ def sync_adt_movements(
                                        AND movement_type IN ({occupying_marks})
                                        AND (from_bed_id IS NULL OR from_bed_id <> to_bed_id)
                                      ORDER BY julianday(moved_at) DESC, rowid DESC LIMIT 1""",
-                                (vacated_at, settled[0], from_unit["id"]) + occupying).fetchone()
+                                (vacated_at, settled[0], from_unit["id"]) + occupying,
+                            ).fetchone()
                             updated, _skipped = _force_occupied_on(
-                                db, from_unit,
-                                why=(f"movement {arrival['id']}" if arrival
-                                     else "another stay already holds this bed"),
-                                actor_user_id=None, actor_role=None,
-                                occurred_at=(arrival["moved_at"] if arrival and arrival["later"]
-                                             else vacated_at),
-                                cancelled_at=_now())
-                            from_unit.update(state=updated["state"],
-                                             state_since=updated["state_since"])
+                                db,
+                                from_unit,
+                                why=(
+                                    f"movement {arrival['id']}"
+                                    if arrival
+                                    else "another stay already holds this bed"
+                                ),
+                                actor_user_id=None,
+                                actor_role=None,
+                                occurred_at=(
+                                    arrival["moved_at"]
+                                    if arrival and arrival["later"]
+                                    else vacated_at
+                                ),
+                                cancelled_at=_now(),
+                            )
+                            from_unit.update(
+                                state=updated["state"], state_since=updated["state_since"]
+                            )
                             out["occupied_unclean"] += 1
-                            _link(mid, "from", from_unit, "vacated", task_id=task_id,
-                                  note="occupied_without_clean")
+                            _link(
+                                mid,
+                                "from",
+                                from_unit,
+                                "vacated",
+                                task_id=task_id,
+                                note="occupied_without_clean",
+                            )
                         else:
                             _link(mid, "from", from_unit, "vacated", task_id=task_id)
                     elif created:
                         _link(mid, "from", from_unit, "task_raised", task_id=task_id)
                     else:
-                        _link(mid, "from", from_unit, "skipped", task_id=task_id,
-                              note="task_exists")
+                        _link(
+                            mid, "from", from_unit, "skipped", task_id=task_id, note="task_exists"
+                        )
 
             # ── the bed the patient went into ──
             if (mid, "to") not in linked:
                 if m["movement_type"] not in _ADT_OCCUPYING_TYPES or to_unit is None or same_bed:
-                    note = ("same_bed" if same_bed else
-                            "not_on_register" if (m.get("to_bed_id") or m.get("to_bed"))
-                            and m["movement_type"] in _ADT_OCCUPYING_TYPES else "no_bed")
+                    note = (
+                        "same_bed"
+                        if same_bed
+                        else "not_on_register"
+                        if (m.get("to_bed_id") or m.get("to_bed"))
+                        and m["movement_type"] in _ADT_OCCUPYING_TYPES
+                        else "no_bed"
+                    )
                     _link(mid, "to", to_unit, "skipped", note=note)
                 elif not _tracked(to_unit):
                     _link(mid, "to", to_unit, "skipped", note="cleaning_not_tracked")
@@ -2027,16 +2375,28 @@ def sync_adt_movements(
                     when = m.get("moved_at") or _now()
                     if to_unit["state"] == "vacant_ready":
                         updated = _apply_transition(
-                            db, to_unit, "occupied", actor_user_id=None, actor_role=None,
+                            db,
+                            to_unit,
+                            "occupied",
+                            actor_user_id=None,
+                            actor_role=None,
                             reason=f"Patient placed in this bed (movement {mid})",
-                            task_id=None, occurred_at=when)
+                            task_id=None,
+                            occurred_at=when,
+                        )
                         effect = "occupied"
                     else:
                         # A bed not recorded clean: housekeeping's honest
                         # record of a skipped clean, naming the movement.
                         updated, _skipped = _force_occupied_on(
-                            db, to_unit, why=f"movement {mid}", actor_user_id=None,
-                            actor_role=None, occurred_at=when, cancelled_at=_now())
+                            db,
+                            to_unit,
+                            why=f"movement {mid}",
+                            actor_user_id=None,
+                            actor_role=None,
+                            occurred_at=when,
+                            cancelled_at=_now(),
+                        )
                         effect = "occupied_unclean"
                     to_unit.update(state=updated["state"], state_since=updated["state_since"])
                     _link(mid, "to", to_unit, effect)
@@ -2046,6 +2406,7 @@ def sync_adt_movements(
 # ═════════════════════════════════════════════════════════════════════════════
 #  Turnaround reporting
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def ward_turnaround_report(*, ward: str | None = None, days: int = 30) -> dict:
     """Turnaround time per ward, measured vacated_at → ready_at.
@@ -2063,7 +2424,7 @@ def ward_turnaround_report(*, ward: str | None = None, days: int = 30) -> dict:
     """
     ensure_housekeeping_schema()
     days = max(1, min(365, int(days)))
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
 
     sql = (
         "SELECT ward, clean_type, expected_minutes, vacated_at, ready_at, "
@@ -2108,27 +2469,29 @@ def ward_turnaround_report(*, ward: str | None = None, days: int = 30) -> dict:
         std = buckets[w]["standard"]
         term = buckets[w]["terminal"]
         allv = std + term
-        wards.append({
-            "ward": w,
-            "completed": counted.get(w, 0),
-            "measured": len(allv),
-            "unmeasurable": unmeasurable.get(w, 0),
-            "median_turnaround_minutes": _median(allv),
-            "p90_turnaround_minutes": _percentile(allv, 90),
-            "longest_turnaround_minutes": round(max(allv), 1) if allv else None,
-            "median_cleaning_minutes": _median(cleaning.get(w, [])),
-            "standard": {
-                "count": len(std),
-                "median_minutes": _median(std),
-                "expected_minutes": expected_minutes_for("standard"),
-            },
-            "terminal": {
-                "count": len(term),
-                "median_minutes": _median(term),
-                "expected_minutes": expected_minutes_for("terminal"),
-            },
-            "over_expected": breaches.get(w, 0),
-        })
+        wards.append(
+            {
+                "ward": w,
+                "completed": counted.get(w, 0),
+                "measured": len(allv),
+                "unmeasurable": unmeasurable.get(w, 0),
+                "median_turnaround_minutes": _median(allv),
+                "p90_turnaround_minutes": _percentile(allv, 90),
+                "longest_turnaround_minutes": round(max(allv), 1) if allv else None,
+                "median_cleaning_minutes": _median(cleaning.get(w, [])),
+                "standard": {
+                    "count": len(std),
+                    "median_minutes": _median(std),
+                    "expected_minutes": expected_minutes_for("standard"),
+                },
+                "terminal": {
+                    "count": len(term),
+                    "median_minutes": _median(term),
+                    "expected_minutes": expected_minutes_for("terminal"),
+                },
+                "over_expected": breaches.get(w, 0),
+            }
+        )
 
     return {
         "window_days": days,
@@ -2146,6 +2509,7 @@ def ward_turnaround_report(*, ward: str | None = None, days: int = 30) -> dict:
 #  READINESS — housekeeping's own numbers, next to the capacity screen's
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _ward_capacity_map() -> dict[str, int]:
     """The capacity screen's per-ward bed count, READ ONLY.
 
@@ -2156,6 +2520,7 @@ def _ward_capacity_map() -> dict[str, int]:
     """
     try:
         from services.forecast_service import WARD_CAPACITY
+
         return dict(WARD_CAPACITY)
     except Exception as exc:  # noqa: BLE001
         logger.debug("ward capacity unavailable for the readiness view: %s", exc)
@@ -2168,6 +2533,7 @@ def _ward_capacity_sources() -> dict | None:
     imported inside the function for the same reason as _ward_capacity_map."""
     try:
         from services.forecast_service import capacity_source_summary
+
         return capacity_source_summary()
     except Exception as exc:  # noqa: BLE001
         logger.debug("capacity source unavailable for the readiness view: %s", exc)
@@ -2197,8 +2563,7 @@ def ward_readiness(*, ward: str | None = None) -> dict:
     ensure_housekeeping_schema()
     capacity = _ward_capacity_map()
 
-    sql = ("SELECT ward, state, COUNT(*) AS n FROM housekeeping_units "
-           "WHERE is_active = 1")
+    sql = "SELECT ward, state, COUNT(*) AS n FROM housekeeping_units WHERE is_active = 1"
     params: list[Any] = []
     if ward:
         sql += " AND ward = ?"
@@ -2208,7 +2573,8 @@ def ward_readiness(*, ward: str | None = None) -> dict:
     with db_session() as db:
         rows = db.execute(sql, tuple(params)).fetchall()
         occupied_counts = {
-            r["ward"]: r["n"] for r in db.execute(
+            r["ward"]: r["n"]
+            for r in db.execute(
                 "SELECT ward, COUNT(*) AS n FROM patients "
                 "WHERE status = 'admitted' AND ward IS NOT NULL AND ward <> '' "
                 "GROUP BY ward"
@@ -2233,33 +2599,39 @@ def ward_readiness(*, ward: str | None = None) -> dict:
         registered = sum(counts.values())
         cap = capacity.get(w)
         admitted = occupied_counts.get(w, 0)
-        not_ready = counts["vacant_dirty"] + counts["cleaning_in_progress"] + counts["out_of_service"]
+        not_ready = (
+            counts["vacant_dirty"] + counts["cleaning_in_progress"] + counts["out_of_service"]
+        )
         # More beds registered than the capacity setting holds is a stale
         # setting (or a duplicate registration), not 125% coverage: capped at
         # 100 and said in words instead.
-        over_capacity = bool(cap) and registered > cap
-        wards.append({
-            "ward": w,
-            "registered_units": registered,
-            "ward_capacity": cap,
-            "coverage_pct": min(100.0, round(registered / cap * 100, 1)) if cap else None,
-            "over_capacity": over_capacity,
-            "coverage_note": (
-                f"{registered} beds are registered here but the ward's bed count is "
-                f"{cap}. Check the bed count setting, or look for a bed registered twice."
-            ) if over_capacity else None,
-            "occupied": counts["occupied"],
-            "vacant_dirty": counts["vacant_dirty"],
-            "cleaning_in_progress": counts["cleaning_in_progress"],
-            "vacant_ready": counts["vacant_ready"],
-            "out_of_service": counts["out_of_service"],
-            "not_ready_registered": not_ready,
-            # What the OTHER screen says. Repeated verbatim, computed the same
-            # way forecast_service computes it, so the two can be compared
-            # without anyone having to open two tabs and do arithmetic.
-            "capacity_view_available": max(0, cap - admitted) if cap is not None else None,
-            "capacity_view_admitted": admitted,
-        })
+        over_capacity = cap is not None and bool(cap) and registered > cap
+        wards.append(
+            {
+                "ward": w,
+                "registered_units": registered,
+                "ward_capacity": cap,
+                "coverage_pct": min(100.0, round(registered / cap * 100, 1)) if cap else None,
+                "over_capacity": over_capacity,
+                "coverage_note": (
+                    f"{registered} beds are registered here but the ward's bed count is "
+                    f"{cap}. Check the bed count setting, or look for a bed registered twice."
+                )
+                if over_capacity
+                else None,
+                "occupied": counts["occupied"],
+                "vacant_dirty": counts["vacant_dirty"],
+                "cleaning_in_progress": counts["cleaning_in_progress"],
+                "vacant_ready": counts["vacant_ready"],
+                "out_of_service": counts["out_of_service"],
+                "not_ready_registered": not_ready,
+                # What the OTHER screen says. Repeated verbatim, computed the same
+                # way forecast_service computes it, so the two can be compared
+                # without anyone having to open two tabs and do arithmetic.
+                "capacity_view_available": max(0, cap - admitted) if cap is not None else None,
+                "capacity_view_admitted": admitted,
+            }
+        )
 
     # Where each ward's bed count came from (adt-14): 'from bed register' or
     # 'site setting', the words the capacity screens print, only while Beds
@@ -2269,18 +2641,22 @@ def ward_readiness(*, ward: str | None = None) -> dict:
         for row in wards:
             if row["ward_capacity"] is not None:
                 row["capacity_source"] = sources["by_ward"].get(
-                    row["ward"], {"source": "site_setting", "words": "site setting"})
+                    row["ward"], {"source": "site_setting", "words": "site setting"}
+                )
 
     return {
         "wards": wards,
-        **({"capacity_source": {k: sources[k] for k in ("source", "words")}}
-           if sources is not None else {}),
+        **(
+            {"capacity_source": {k: sources[k] for k in ("source", "words")}}
+            if sources is not None
+            else {}
+        ),
         "capacity_basis": (
             "The capacity and forecast screens compute available beds as the ward's "
             "bed count (a site setting) minus admitted patients. They do NOT subtract "
             "beds awaiting cleaning, and this module does not change them."
-            if sources is None else
-            "The capacity and forecast screens compute available beds as the ward's "
+            if sources is None
+            else "The capacity and forecast screens compute available beds as the ward's "
             "bed count minus admitted patients. The bed count comes from the bed register "
             "for wards whose register is complete, else from the site setting. They do "
             "NOT subtract beds awaiting cleaning, and this module does not change them."
@@ -2300,6 +2676,7 @@ def ward_readiness(*, ward: str | None = None) -> dict:
 #  Linen
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def list_linen_items(*, include_inactive: bool = False) -> list[dict]:
     ensure_housekeeping_schema()
     sql = "SELECT code, name, is_active FROM housekeeping_linen_items"
@@ -2307,10 +2684,7 @@ def list_linen_items(*, include_inactive: bool = False) -> list[dict]:
         sql += " WHERE is_active = 1"
     sql += " ORDER BY name"
     with db_session() as db:
-        return [
-            {**_row(r), "is_active": bool(r["is_active"])}
-            for r in db.execute(sql).fetchall()
-        ]
+        return [{**_row(r), "is_active": bool(r["is_active"])} for r in db.execute(sql).fetchall()]
 
 
 def record_linen_movement(
@@ -2343,7 +2717,7 @@ def record_linen_movement(
     try:
         qty = int(quantity)
     except (TypeError, ValueError):
-        raise HousekeepingError("The quantity must be a whole number of pieces.")
+        raise HousekeepingError("The quantity must be a whole number of pieces.") from None
     if qty <= 0:
         raise HousekeepingError("The quantity must be more than zero.")
     now = _now()
@@ -2364,8 +2738,17 @@ def record_linen_movement(
                        (ward, item_code, direction, quantity, task_id, note,
                         actor_user_id, moved_at, idempotency_key)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (ward_name, code, dirn, qty, task_id, _clean(note),
-                 actor_user_id, now, _clean(idempotency_key, 120)),
+                (
+                    ward_name,
+                    code,
+                    dirn,
+                    qty,
+                    task_id,
+                    _clean(note),
+                    actor_user_id,
+                    now,
+                    _clean(idempotency_key, 120),
+                ),
             )
         except DBIntegrityError:
             existing = db.execute(
@@ -2388,9 +2771,11 @@ def record_linen_movement(
 def linen_summary(*, ward: str | None = None, days: int = 30) -> dict:
     ensure_housekeeping_schema()
     days = max(1, min(365, int(days)))
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    sql = ("SELECT ward, item_code, direction, SUM(quantity) AS qty "
-           "FROM housekeeping_linen_movements WHERE moved_at >= ?")
+    cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+    sql = (
+        "SELECT ward, item_code, direction, SUM(quantity) AS qty "
+        "FROM housekeeping_linen_movements WHERE moved_at >= ?"
+    )
     params: list[Any] = [cutoff]
     if ward:
         sql += " AND ward = ?"
@@ -2410,23 +2795,25 @@ def linen_summary(*, ward: str | None = None, days: int = 30) -> dict:
         agg.setdefault(key, {d: 0 for d in LINEN_DIRECTIONS})[r["direction"]] = int(r["qty"] or 0)
 
     lines = []
-    for (w, code) in sorted(agg):
+    for w, code in sorted(agg):
         d = agg[(w, code)]
         outstanding = d["issue"] - d["return_soiled"] - d["return_clean"] - d["condemned"]
-        lines.append({
-            "ward": w,
-            "item_code": code,
-            "item_name": names.get(code, code),
-            "issued": d["issue"],
-            "returned_soiled": d["return_soiled"],
-            "returned_clean": d["return_clean"],
-            "condemned": d["condemned"],
-            # Can legitimately go NEGATIVE — a ward returning stock it was issued
-            # before this window opened. Reported as-is rather than clamped to 0,
-            # because a clamp turns "your window is too short" into "your linen
-            # reconciles", which is a lie a store manager would act on.
-            "outstanding": outstanding,
-        })
+        lines.append(
+            {
+                "ward": w,
+                "item_code": code,
+                "item_name": names.get(code, code),
+                "issued": d["issue"],
+                "returned_soiled": d["return_soiled"],
+                "returned_clean": d["return_clean"],
+                "condemned": d["condemned"],
+                # Can legitimately go NEGATIVE — a ward returning stock it was issued
+                # before this window opened. Reported as-is rather than clamped to 0,
+                # because a clamp turns "your window is too short" into "your linen
+                # reconciles", which is a lie a store manager would act on.
+                "outstanding": outstanding,
+            }
+        )
 
     return {
         "window_days": days,
@@ -2438,6 +2825,7 @@ def linen_summary(*, ward: str | None = None, days: int = 30) -> dict:
 # ═════════════════════════════════════════════════════════════════════════════
 #  Overview
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def overview(*, sync: bool = True) -> dict:
     """Everything the housekeeping board opens on.
@@ -2474,12 +2862,14 @@ def overview(*, sync: bool = True) -> dict:
     # a request cancelled), and then it was on no queue at all. Counted, not
     # auto-raised: whether to raise a request for it is the site's call.
     with db_session() as db:
-        dirty_without_request = int(db.execute(
-            "SELECT COUNT(*) FROM housekeeping_units u "
-            "WHERE u.is_active = 1 AND u.state = 'vacant_dirty' AND NOT EXISTS ("
-            "  SELECT 1 FROM housekeeping_tasks t "
-            "  WHERE t.unit_id = u.id AND t.status IN ('open', 'in_progress'))"
-        ).fetchone()[0])
+        dirty_without_request = int(
+            db.execute(
+                "SELECT COUNT(*) FROM housekeeping_units u "
+                "WHERE u.is_active = 1 AND u.state = 'vacant_dirty' AND NOT EXISTS ("
+                "  SELECT 1 FROM housekeeping_tasks t "
+                "  WHERE t.unit_id = u.id AND t.status IN ('open', 'in_progress'))"
+            ).fetchone()[0]
+        )
 
     return {
         "counts": {

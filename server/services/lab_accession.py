@@ -38,13 +38,13 @@ failed work, and no number escapes a rolled-back transaction).
 This module never commits, never opens a session and never decides what a
 number is for.
 """
+
 from __future__ import annotations
 
 import logging
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Optional
 
 logger = logging.getLogger("orb.lab.accession")
 
@@ -79,7 +79,8 @@ class AccessionOverflow(RuntimeError):
         super().__init__(
             f"Accession numbers for {hospital_day} are used up ({SEQUENCE_MAX} specimens "
             "planned that day). No new specimen can be planned until the next day. "
-            "Contact Orb support.")
+            "Contact Orb support."
+        )
 
 
 class AccessionInvalid(ValueError):
@@ -100,6 +101,7 @@ class AccessionParts:
 # ════════════════════════════════════════════════════════════════════════════
 #  The check digit
 # ════════════════════════════════════════════════════════════════════════════
+
 
 def _digits(text: str) -> list[int]:
     if not isinstance(text, str) or not text or not text.isascii() or not text.isdigit():
@@ -131,6 +133,7 @@ def damm_valid(digits: str) -> bool:
 #  Days, formatting and parsing
 # ════════════════════════════════════════════════════════════════════════════
 
+
 def hospital_day_for(at=None) -> date:
     """The hospital-local calendar day of an instant (now when not given).
     Midnight local is the rollover, never the UTC date change."""
@@ -144,7 +147,7 @@ def hospital_day_for(at=None) -> date:
     return local.date()
 
 
-def _clean_prefix(prefix: Optional[str]) -> str:
+def _clean_prefix(prefix: str | None) -> str:
     if prefix is None:
         return ""
     text = str(prefix).strip().upper()
@@ -153,9 +156,13 @@ def _clean_prefix(prefix: Optional[str]) -> str:
     return text
 
 
-def format_accession(day: date, sequence: int, *, prefix: Optional[str] = None) -> str:
+def format_accession(day: date, sequence: int, *, prefix: str | None = None) -> str:
     """'261004' + '00042' + check digit, with the site prefix in front if any."""
-    if isinstance(sequence, bool) or not isinstance(sequence, int) or not 1 <= sequence <= SEQUENCE_MAX:
+    if (
+        isinstance(sequence, bool)
+        or not isinstance(sequence, int)
+        or not 1 <= sequence <= SEQUENCE_MAX
+    ):
         raise ValueError(f"sequence must be 1 to {SEQUENCE_MAX}")
     if not isinstance(day, date) or isinstance(day, datetime):
         raise ValueError("day must be a date")
@@ -163,7 +170,7 @@ def format_accession(day: date, sequence: int, *, prefix: Optional[str] = None) 
     return f"{_clean_prefix(prefix)}{body}{damm_check_digit(body)}"
 
 
-def parse_accession(text: str, *, prefix: Optional[str] = None) -> AccessionParts:
+def parse_accession(text: str, *, prefix: str | None = None) -> AccessionParts:
     """Check a scanned or typed accession number and take it apart.
 
     `prefix` is the site's own prefix (None for a site without one): a number
@@ -177,30 +184,34 @@ def parse_accession(text: str, *, prefix: Optional[str] = None) -> AccessionPart
     if expected:
         if not raw.startswith(expected):
             raise AccessionInvalid(f"This accession number does not start with {expected}.")
-        body = raw[len(expected):]
+        body = raw[len(expected) :]
     else:
         body = raw
     if not body.isascii() or not body.isdigit():
-        raise AccessionInvalid("An accession number is digits only"
-                               + (f" after {expected}." if expected else "."))
+        raise AccessionInvalid(
+            "An accession number is digits only" + (f" after {expected}." if expected else ".")
+        )
     if len(body) != ACCESSION_DIGITS:
-        raise AccessionInvalid(f"An accession number has {ACCESSION_DIGITS} digits; "
-                               f"this one has {len(body)}.")
+        raise AccessionInvalid(
+            f"An accession number has {ACCESSION_DIGITS} digits; this one has {len(body)}."
+        )
     if not damm_valid(body):
-        raise AccessionInvalid("The check digit does not match. Scan the label again, "
-                               "or check each digit you typed.")
+        raise AccessionInvalid(
+            "The check digit does not match. Scan the label again, or check each digit you typed."
+        )
     try:
         day = datetime.strptime(body[:6], "%y%m%d").date()
     except ValueError:
-        raise AccessionInvalid("The date in this accession number is not a real date.")
+        raise AccessionInvalid("The date in this accession number is not a real date.") from None
     sequence = int(body[6:11])
     if sequence < 1:
         raise AccessionInvalid("The sequence in this accession number is zero.")
-    return AccessionParts(text=raw, prefix=expected, hospital_day=day,
-                          sequence=sequence, check_digit=int(body[11]))
+    return AccessionParts(
+        text=raw, prefix=expected, hospital_day=day, sequence=sequence, check_digit=int(body[11])
+    )
 
 
-def is_valid_accession(text: str, *, prefix: Optional[str] = None) -> bool:
+def is_valid_accession(text: str, *, prefix: str | None = None) -> bool:
     try:
         parse_accession(text, prefix=prefix)
     except AccessionInvalid:
@@ -212,7 +223,8 @@ def is_valid_accession(text: str, *, prefix: Optional[str] = None) -> bool:
 #  Allocation
 # ════════════════════════════════════════════════════════════════════════════
 
-def allocate(conn, *, at=None, prefix: Optional[str] = None) -> str:
+
+def allocate(conn, *, at=None, prefix: str | None = None) -> str:
     """The next accession number for the hospital day of `at` (now when not
     given), on the caller's write transaction.
 
@@ -222,23 +234,31 @@ def allocate(conn, *, at=None, prefix: Optional[str] = None) -> str:
     if not getattr(conn, "in_transaction", False):
         raise RuntimeError(
             "allocate() needs the caller's write transaction: open it with "
-            "db_session(immediate=True) and pass that connection.")
+            "db_session(immediate=True) and pass that connection."
+        )
     clean_prefix = _clean_prefix(prefix)
     day = hospital_day_for(at)
     key = day.isoformat()
     conn.execute(
         "INSERT OR IGNORE INTO lab_accession_counters (hospital_day, last_seq) VALUES (?, 0)",
-        (key,))
+        (key,),
+    )
     cur = conn.execute(
         "UPDATE lab_accession_counters SET last_seq = last_seq + 1 "
         "WHERE hospital_day = ? AND last_seq < ?",
-        (key, SEQUENCE_MAX))
+        (key, SEQUENCE_MAX),
+    )
     if cur.rowcount != 1:
         logger.error(
             "Laboratory accession numbers for %s are used up (sequence %d reached); "
-            "refusing to plan another specimen that day. Nothing wraps.", key, SEQUENCE_MAX)
+            "refusing to plan another specimen that day. Nothing wraps.",
+            key,
+            SEQUENCE_MAX,
+        )
         raise AccessionOverflow(key)
-    sequence = int(conn.execute(
-        "SELECT last_seq FROM lab_accession_counters WHERE hospital_day = ?",
-        (key,)).fetchone()[0])
+    sequence = int(
+        conn.execute(
+            "SELECT last_seq FROM lab_accession_counters WHERE hospital_day = ?", (key,)
+        ).fetchone()[0]
+    )
     return format_accession(day, sequence, prefix=clean_prefix or None)

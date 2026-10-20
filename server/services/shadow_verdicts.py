@@ -46,9 +46,8 @@ distinct verdicts: `artefact` says the signal was wrong (a disconnected lead),
 "false positive" blames the model for a monitoring failure; dropping either
 silently flatters the rate.
 """
-from __future__ import annotations
 
-from typing import Optional
+from __future__ import annotations
 
 #: The closed set. This is what the API accepts, what is written to
 #: `shadow_events.payload_json.verdict`, and what the adjudication UI offers.
@@ -58,7 +57,10 @@ from typing import Optional
 #: collides with the NAME of the metric — which is exactly the ambiguity that
 #: let the headline count episodes while calling them alerts.
 CANONICAL_VERDICTS: tuple[str, ...] = (
-    "true_positive", "false_positive", "artefact", "indeterminate",
+    "true_positive",
+    "false_positive",
+    "artefact",
+    "indeterminate",
 )
 
 #: The arithmetic class each canonical verdict belongs to. `excluded` verdicts
@@ -97,7 +99,7 @@ VERDICT_SYNONYMS: dict[str, str] = {
     "no_deterioration": "false_positive",
     "nuisance": "false_positive",
     # ── were VERDICT_EXCLUDED; split back onto the two distinct verdicts ──
-    "artifact": "artefact",          # US spelling
+    "artifact": "artefact",  # US spelling
     "unknown": "indeterminate",
     "cannot_assess": "indeterminate",
     "uncertain": "indeterminate",
@@ -105,20 +107,16 @@ VERDICT_SYNONYMS: dict[str, str] = {
 
 #: Everything `normalise()` will accept, canonical first. Used verbatim in the
 #: route's 422 so an operator is told what to type, not merely what was wrong.
-ACCEPTED_VERDICTS: tuple[str, ...] = CANONICAL_VERDICTS + tuple(
-    sorted(VERDICT_SYNONYMS)
-)
+ACCEPTED_VERDICTS: tuple[str, ...] = CANONICAL_VERDICTS + tuple(sorted(VERDICT_SYNONYMS))
 
 
 def _key(raw: object) -> str:
     """Free-text tolerance on INPUT only: case, surrounding space, and the
     hyphen/space spellings of the same word. Nothing semantic happens here."""
-    return (
-        str(raw or "").strip().lower().replace("-", "_").replace(" ", "_")
-    )
+    return str(raw or "").strip().lower().replace("-", "_").replace(" ", "_")
 
 
-def normalise(raw: object) -> Optional[str]:
+def normalise(raw: object) -> str | None:
     """Any accepted spelling → its canonical verdict. `None` if unrecognised.
 
     `None` is deliberate and must not be softened into a default: a verdict
@@ -142,7 +140,7 @@ def classify(raw: object) -> str:
     return VERDICT_CLASS[canonical]
 
 
-def label(raw: object) -> Optional[str]:
+def label(raw: object) -> str | None:
     """Human-readable form of a verdict, or `None` if it is not one of ours."""
     canonical = normalise(raw)
     return VERDICT_LABEL.get(canonical) if canonical else None

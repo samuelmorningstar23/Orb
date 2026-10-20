@@ -4,16 +4,24 @@ Modified Early Warning Score + continuous-time neural network for hybrid
 patient deterioration risk scoring. Outputs a normalized 0.0-1.0 risk
 score with driver explanations and LNN trajectory overlay.
 """
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from models.vigil_cfc import OrbVigilCfC
+import asyncio
+import logging
 import re
 import time
-import logging
-import httpx
-import asyncio
+from datetime import UTC
 from pathlib import Path
-from config import LLM_MODEL, OLLAMA_KEEP_ALIVE
-from database import get_db, db_session
-from services.vital_charting import as_charted
+from typing import Any
+
+import httpx
+from database import db_session
+
 from services.inference_cache import InferenceCache
+from services.vital_charting import as_charted
 
 logger = logging.getLogger("orb.vigil")
 
@@ -28,8 +36,8 @@ logger = logging.getLogger("orb.vigil")
 # Phase 1: NEWS2 is the displayed risk; these are a learned overlay that may
 # escalate (never de-escalate) the baseline. See models/vigil_cfc.py.
 _MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
-_cfc_models: dict = {}     # outcome -> loaded OrbVigilCfC
-_cfc_meta: dict = {}       # outcome -> {input_dim, feature_order, mean, std, horizons}
+_cfc_models: dict = {}  # outcome -> loaded OrbVigilCfC
+_cfc_meta: dict = {}  # outcome -> {input_dim, feature_order, mean, std, horizons}
 _cfc_device = None
 _cfc_loaded = False
 _cfc_prediction_cache = InferenceCache[dict](max_entries=128)
@@ -43,18 +51,44 @@ _CFC_CHECKPOINTS = {
 
 # Canonical PRODUCTION feature vector assembled from the live vitals table:
 #   7 vitals + AVPU + age. Case-specific labs are appended once available.
-_CFC_FEATURE_ORDER = ["heart_rate", "spo2", "temperature", "systolic_bp",
-                      "map", "diastolic_bp", "respiratory_rate", "avpu", "age"]
+_CFC_FEATURE_ORDER = [
+    "heart_rate",
+    "spo2",
+    "temperature",
+    "systolic_bp",
+    "map",
+    "diastolic_bp",
+    "respiratory_rate",
+    "avpu",
+    "age",
+]
 _CFC_FEATURE_MEAN = [83.0, 96.5, 36.9, 122.0, 82.0, 63.0, 19.0, 0.2, 62.0]
-_CFC_FEATURE_STD  = [18.0, 3.0,  0.7,  23.0,  17.0, 13.0, 5.0,  0.6, 18.0]
+_CFC_FEATURE_STD = [18.0, 3.0, 0.7, 23.0, 17.0, 13.0, 5.0, 0.6, 18.0]
 _CFC_VITALS_DEFAULTS = {
-    "heart_rate": 80.0, "spo2": 97.0, "temperature": 36.8,
-    "systolic_bp": 120.0, "map": 80.0, "diastolic_bp": 70.0,
-    "respiratory_rate": 18.0, "avpu": 0.0, "age": 62.0,
+    "heart_rate": 80.0,
+    "spo2": 97.0,
+    "temperature": 36.8,
+    "systolic_bp": 120.0,
+    "map": 80.0,
+    "diastolic_bp": 70.0,
+    "respiratory_rate": 18.0,
+    "avpu": 0.0,
+    "age": 62.0,
 }
 # AVPU/ACVPU as a graded model input (alert=0 ... unresponsive=3).
-_AVPU_MAP = {"alert": 0.0, "a": 0.0, "verbal": 1.0, "v": 1.0, "pain": 2.0, "p": 2.0,
-             "confusion": 3.0, "c": 3.0, "new_confusion": 3.0, "unresponsive": 3.0, "u": 3.0}
+_AVPU_MAP = {
+    "alert": 0.0,
+    "a": 0.0,
+    "verbal": 1.0,
+    "v": 1.0,
+    "pain": 2.0,
+    "p": 2.0,
+    "confusion": 3.0,
+    "c": 3.0,
+    "new_confusion": 3.0,
+    "unresponsive": 3.0,
+    "u": 3.0,
+}
 
 
 def _load_cfc_models() -> bool:
@@ -67,7 +101,7 @@ def _load_cfc_models() -> bool:
 
     try:
         import torch
-        from models.vigil_cfc import OrbVigilCfC, HORIZONS_HOURS
+        from models.vigil_cfc import HORIZONS_HOURS, OrbVigilCfC
     except Exception as e:
         logger.info("[Vigil-CfC] torch/model import failed (NEWS2-only): %s", e)
         return False
@@ -99,8 +133,9 @@ def _load_cfc_models() -> bool:
             input_dim = ckpt.get("input_dim", len(_CFC_FEATURE_ORDER))
             hidden_dim = ckpt.get("hidden_dim", 64)
             horizons = tuple(ckpt.get("horizons", HORIZONS_HOURS))
-            model = OrbVigilCfC(input_dim=input_dim, hidden_dim=hidden_dim,
-                                horizons=horizons, outcome=outcome)
+            model = OrbVigilCfC(
+                input_dim=input_dim, hidden_dim=hidden_dim, horizons=horizons, outcome=outcome
+            )
             model.load_state_dict(ckpt["model_state_dict"])
             model.to(_cfc_device)
             model.eval()
@@ -113,7 +148,9 @@ def _load_cfc_models() -> bool:
                 "horizons": horizons,
             }
             params = sum(p.numel() for p in model.parameters())
-            logger.info("[Vigil-CfC] Loaded '%s' (%s params) on %s", outcome, f"{params:,}", _cfc_device)
+            logger.info(
+                "[Vigil-CfC] Loaded '%s' (%s params) on %s", outcome, f"{params:,}", _cfc_device
+            )
         except Exception as e:
             logger.error("[Vigil-CfC] Failed to load '%s' from %s: %s", outcome, path.name, e)
 
@@ -125,8 +162,9 @@ def _load_cfc_models() -> bool:
 def _assemble_feature_sequence(patient_id: str, feature_order, mean, std):
     """Build a normalized (1, seq, F) feature tensor + (1, seq, 1) Δt tensor
     from the patient's recent live vitals. Returns (None, None) if too sparse."""
-    import torch
     from datetime import datetime
+
+    import torch
 
     with db_session() as db:
         rows = db.execute(
@@ -150,8 +188,14 @@ def _assemble_feature_sequence(patient_id: str, feature_order, mean, std):
     for row in rows:
         keys = row.keys()
         raw = {}
-        for col in ("heart_rate", "spo2", "temperature", "systolic_bp",
-                    "diastolic_bp", "respiratory_rate"):
+        for col in (
+            "heart_rate",
+            "spo2",
+            "temperature",
+            "systolic_bp",
+            "diastolic_bp",
+            "respiratory_rate",
+        ):
             val = row[col] if col in keys and row[col] is not None else None
             raw[col] = float(val) if val is not None else _CFC_VITALS_DEFAULTS[col]
         raw["map"] = raw["diastolic_bp"] + (raw["systolic_bp"] - raw["diastolic_bp"]) / 3.0
@@ -159,8 +203,10 @@ def _assemble_feature_sequence(patient_id: str, feature_order, mean, std):
         raw["avpu"] = _AVPU_MAP.get(str(cons).lower(), 0.0)
         raw["age"] = age
 
-        vec = [(float(raw.get(col, _CFC_VITALS_DEFAULTS.get(col, 0.0))) - mean[j]) / std[j]
-               for j, col in enumerate(feature_order)]
+        vec = [
+            (float(raw.get(col, _CFC_VITALS_DEFAULTS.get(col, 0.0))) - mean[j]) / std[j]
+            for j, col in enumerate(feature_order)
+        ]
         feats.append(vec)
 
         ts = row["timestamp"]
@@ -175,8 +221,10 @@ def _assemble_feature_sequence(patient_id: str, feature_order, mean, std):
     while len(dt_seq) < len(feats):
         dt_seq.append(1.0)
 
-    vitals_t = torch.tensor([feats], dtype=torch.float32, device=_cfc_device)        # (1,seq,F)
-    dt_t = torch.tensor([[[d] for d in dt_seq]], dtype=torch.float32, device=_cfc_device)  # (1,seq,1)
+    vitals_t = torch.tensor([feats], dtype=torch.float32, device=_cfc_device)  # (1,seq,F)
+    dt_t = torch.tensor(
+        [[[d] for d in dt_seq]], dtype=torch.float32, device=_cfc_device
+    )  # (1,seq,1)
     return vitals_t, dt_t
 
 
@@ -193,12 +241,14 @@ def compute_cfc_risk(patient_id: str) -> dict | None:
     model, and the NEWS2 baseline stands alone.
     """
     from services.model_switch import models_enabled
+
     if not models_enabled():
         return None
     if not _load_cfc_models():
         return None
 
     import torch
+
     from services.gpu_coordinator import vram_guard
 
     outcomes_out, seq_len = {}, 0
@@ -207,14 +257,16 @@ def compute_cfc_risk(patient_id: str) -> dict | None:
         if meta["input_dim"] != len(_CFC_FEATURE_ORDER):
             continue  # schema mismatch — not runnable on live vitals yet
         vitals_t, dt_t = _assemble_feature_sequence(
-            patient_id, meta["feature_order"], meta["mean"], meta["std"])
+            patient_id, meta["feature_order"], meta["mean"], meta["std"]
+        )
         if vitals_t is None:
             # Data-sufficiency is PER-MODEL: one sparse outcome must not suppress
             # the whole overlay (previously `return None` here disabled every
             # outcome for the patient the moment any single one lacked data).
             logger.debug(
                 "[Vigil-CfC] Skipping outcome '%s' for %s — insufficient vitals history.",
-                outcome, patient_id,
+                outcome,
+                patient_id,
             )
             continue
         seq_len = vitals_t.shape[1]
@@ -222,16 +274,26 @@ def compute_cfc_risk(patient_id: str) -> dict | None:
         # A latest-vitals ID or a TTL misses age/history corrections/readmissions.
         # Tensor versions also invalidate after load_state_dict/in-place updates.
         cache_key = (
-            patient_id, outcome, model,
+            patient_id,
+            outcome,
+            model,
             tuple(p._version for p in model.parameters()),
-            tuple(b._version for b in model.buffers()), repr(meta),
-            str(vitals_t.dtype), tuple(vitals_t.shape),
+            tuple(b._version for b in model.buffers()),
+            repr(meta),
+            str(vitals_t.dtype),
+            tuple(vitals_t.shape),
             vitals_t.detach().cpu().contiguous().numpy().tobytes(),
-            str(dt_t.dtype), tuple(dt_t.shape),
+            str(dt_t.dtype),
+            tuple(dt_t.shape),
             dt_t.detach().cpu().contiguous().numpy().tobytes(),
         )
 
-        def predict():
+        def predict(
+            outcome: str = outcome,
+            model: "OrbVigilCfC" = model,
+            vitals_t: torch.Tensor = vitals_t,
+            dt_t: torch.Tensor = dt_t,
+        ) -> dict:
             with vram_guard(f"Vigil CfC:{outcome}"):
                 with torch.no_grad():
                     return model.predict_trajectory(vitals_t, dt_t)
@@ -250,8 +312,13 @@ def compute_cfc_risk(patient_id: str) -> dict | None:
     else:
         primary = max(o["peak_risk"] for o in outcomes_out.values())
 
-    return {"outcomes": outcomes_out, "primary_risk": primary,
-            "seq_len": seq_len, "model": "CfC-LNN"}
+    return {
+        "outcomes": outcomes_out,
+        "primary_risk": primary,
+        "seq_len": seq_len,
+        "model": "CfC-LNN",
+    }
+
 
 # Realistic maximum NEWS2 aggregate (RR 3 + SpO2 3 + O2 2 + SBP 3 + HR 3 +
 # Temp 2 + ACVPU 3 = 19). Used to normalize the ordinal aggregate into a 0-1
@@ -307,15 +374,15 @@ _NEWS2_MAX_AGGREGATE = 20.0
 # "Hypotension", "Tachycardia") and below "Severe" — so the four-rung ladder
 # reads Mild -> (unqualified) -> Moderate -> Severe while the points stay put.
 _SEVERE_THRESHOLDS = {
-    "spo2_low": 88.0,          # severe if SpO2  <  88 % (Scale 1)
+    "spo2_low": 88.0,  # severe if SpO2  <  88 % (Scale 1)
     "spo2_low_scale_2": 84.0,  # severe if SpO2  <  84 % (Scale 2 — see above)
-    "rr_high": 30.0,     # severe if RR    >= 30
-    "rr_low": 8.0,       # severe if RR    <=  8
-    "sbp_low": 80.0,     # severe if SBP   <  80
-    "sbp_high": 220.0,   # severe if SBP   >= 220
-    "hr_high": 140.0,    # severe if HR    >= 140
-    "hr_low": 40.0,      # severe if HR    <=  40
-    "temp_low": 32.0,    # severe if Temp  <  32.0 C
+    "rr_high": 30.0,  # severe if RR    >= 30
+    "rr_low": 8.0,  # severe if RR    <=  8
+    "sbp_low": 80.0,  # severe if SBP   <  80
+    "sbp_high": 220.0,  # severe if SBP   >= 220
+    "hr_high": 140.0,  # severe if HR    >= 140
+    "hr_low": 40.0,  # severe if HR    <=  40
+    "temp_low": 32.0,  # severe if Temp  <  32.0 C
 }
 
 
@@ -398,19 +465,23 @@ def _refuse_when_switched_off(entry: str) -> None:
     if scoring_enabled():
         return
     import traceback
+
     where = "".join(traceback.format_stack(limit=8)[:-2])
     if len(SWITCHED_OFF_CALLS) < _SWITCHED_OFF_CALLS_CAP:
         SWITCHED_OFF_CALLS.append(f"{entry}\n{where}")
-    logger.error("%s was called with scoring switched off; no score was computed. "
-                 "Caller:\n%s", entry, where)
+    logger.error(
+        "%s was called with scoring switched off; no score was computed. Caller:\n%s", entry, where
+    )
     raise ScoringSwitchedOff(
         f"{entry} was called with scoring switched off "
-        "(ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)")
+        "(ORB_SCORING_ENABLED is off or ORB_WARD_RECORD is on)"
+    )
 
 
 # Load shedding logic will now rely on llm_queue size
-def compute_news2(hr, sbp, rr, temp, spo2, consciousness=None, on_oxygen=None,
-                  on_scale_2=False) -> dict:
+def compute_news2(
+    hr, sbp, rr, temp, spo2, consciousness=None, on_oxygen=None, on_scale_2=False
+) -> dict:
     """UK National Early Warning Score 2 (NEWS2).
 
     Supports both SpO2 scoring scales:
@@ -462,34 +533,49 @@ def compute_news2(hr, sbp, rr, temp, spo2, consciousness=None, on_oxygen=None,
         if points == 3:
             any_param_3 = True
         if points > 0 and msg:
-            drivers.append((points, severe,
-                            _RCP_CHART_ORDER.get(parameter, len(_RCP_CHART_ORDER)),
-                            msg))
+            drivers.append(
+                (points, severe, _RCP_CHART_ORDER.get(parameter, len(_RCP_CHART_ORDER)), msg)
+            )
         if parameter is not None:
-            breakdown.append({
-                "parameter": parameter,
-                "value": value,
-                "points": points,
-                "note": msg or None,
-                # Outranks other entries with the same points (ruled
-                # 2026-10-03): set where the word "Severe" is chosen, and on an
-                # ACVPU change, which sorts with Severe. Never parsed from `note`.
-                "severe": severe,
-            })
+            breakdown.append(
+                {
+                    "parameter": parameter,
+                    "value": value,
+                    "points": points,
+                    "note": msg or None,
+                    # Outranks other entries with the same points (ruled
+                    # 2026-10-03): set where the word "Severe" is chosen, and on an
+                    # ACVPU change, which sorts with Severe. Never parsed from `note`.
+                    "severe": severe,
+                }
+            )
 
     # Respiration rate
     if rr is not None:
         if rr <= 8:
             _w = "Severe" if rr <= _SEVERE_THRESHOLDS["rr_low"] else "Moderate"
-            add(3, f"{_w} bradypnea (RR {rr:.0f})", parameter="Respiratory rate", value=rr,
-                severe=_w == "Severe")
-        elif rr <= 11: add(1, f"Low RR ({rr:.0f})", parameter="Respiratory rate", value=rr)
-        elif rr <= 20: add(0, "", parameter="Respiratory rate", value=rr)
-        elif rr <= 24: add(2, f"Tachypnea (RR {rr:.0f})", parameter="Respiratory rate", value=rr)
+            add(
+                3,
+                f"{_w} bradypnea (RR {rr:.0f})",
+                parameter="Respiratory rate",
+                value=rr,
+                severe=_w == "Severe",
+            )
+        elif rr <= 11:
+            add(1, f"Low RR ({rr:.0f})", parameter="Respiratory rate", value=rr)
+        elif rr <= 20:
+            add(0, "", parameter="Respiratory rate", value=rr)
+        elif rr <= 24:
+            add(2, f"Tachypnea (RR {rr:.0f})", parameter="Respiratory rate", value=rr)
         else:
             _w = "Severe" if rr >= _SEVERE_THRESHOLDS["rr_high"] else "Moderate"
-            add(3, f"{_w} tachypnea (RR {rr:.0f})", parameter="Respiratory rate", value=rr,
-                severe=_w == "Severe")
+            add(
+                3,
+                f"{_w} tachypnea (RR {rr:.0f})",
+                parameter="Respiratory rate",
+                value=rr,
+                severe=_w == "Severe",
+            )
 
     # SpO2 — Scale 1 (default) or Scale 2 (COPD / chronic type-2 resp failure).
     # Per RCP NEWS2. Scale 2's upper band depends on whether the patient is on
@@ -498,23 +584,61 @@ def compute_news2(hr, sbp, rr, temp, spo2, consciousness=None, on_oxygen=None,
         _spo2_label = "SpO2 (Scale 2)" if on_scale_2 else "SpO2"
         # One rule, two thresholds: the word comes from the saturation measured
         # against THIS patient's target range, because that is what Scale 2 is.
-        _spo2_severe_at = _SEVERE_THRESHOLDS[
-            "spo2_low_scale_2" if on_scale_2 else "spo2_low"]
+        _spo2_severe_at = _SEVERE_THRESHOLDS["spo2_low_scale_2" if on_scale_2 else "spo2_low"]
         _spo2_w = "Severe" if spo2 < _spo2_severe_at else "Moderate"
         if on_scale_2:
-            if spo2 <= 83: add(3, f"{_spo2_w} hypoxia (SpO2 {spo2:.0f}%, Scale 2)", parameter=_spo2_label, value=spo2, severe=_spo2_w == "Severe")
-            elif spo2 <= 85: add(2, f"Hypoxia (SpO2 {spo2:.0f}%, Scale 2)", parameter=_spo2_label, value=spo2)
-            elif spo2 <= 87: add(1, f"Low SpO2 ({spo2:.0f}%, Scale 2)", parameter=_spo2_label, value=spo2)
-            elif spo2 <= 92: add(0, "", parameter=_spo2_label, value=spo2)       # target range
-            elif not on_oxygen: add(0, "", parameter=_spo2_label, value=spo2)    # >=93 on air is fine
-            elif spo2 <= 94: add(1, f"Over-target SpO2 on O2 ({spo2:.0f}%, Scale 2)", parameter=_spo2_label, value=spo2)
-            elif spo2 <= 96: add(2, f"Over-target SpO2 on O2 ({spo2:.0f}%, Scale 2)", parameter=_spo2_label, value=spo2)
-            else: add(3, f"Over-oxygenation on O2 ({spo2:.0f}%, Scale 2)", parameter=_spo2_label, value=spo2)
+            if spo2 <= 83:
+                add(
+                    3,
+                    f"{_spo2_w} hypoxia (SpO2 {spo2:.0f}%, Scale 2)",
+                    parameter=_spo2_label,
+                    value=spo2,
+                    severe=_spo2_w == "Severe",
+                )
+            elif spo2 <= 85:
+                add(2, f"Hypoxia (SpO2 {spo2:.0f}%, Scale 2)", parameter=_spo2_label, value=spo2)
+            elif spo2 <= 87:
+                add(1, f"Low SpO2 ({spo2:.0f}%, Scale 2)", parameter=_spo2_label, value=spo2)
+            elif spo2 <= 92:
+                add(0, "", parameter=_spo2_label, value=spo2)  # target range
+            elif not on_oxygen:
+                add(0, "", parameter=_spo2_label, value=spo2)  # >=93 on air is fine
+            elif spo2 <= 94:
+                add(
+                    1,
+                    f"Over-target SpO2 on O2 ({spo2:.0f}%, Scale 2)",
+                    parameter=_spo2_label,
+                    value=spo2,
+                )
+            elif spo2 <= 96:
+                add(
+                    2,
+                    f"Over-target SpO2 on O2 ({spo2:.0f}%, Scale 2)",
+                    parameter=_spo2_label,
+                    value=spo2,
+                )
+            else:
+                add(
+                    3,
+                    f"Over-oxygenation on O2 ({spo2:.0f}%, Scale 2)",
+                    parameter=_spo2_label,
+                    value=spo2,
+                )
         else:
-            if spo2 >= 96: add(0, "", parameter=_spo2_label, value=spo2)
-            elif spo2 >= 94: add(1, f"Mild hypoxia (SpO2 {spo2:.0f}%)", parameter=_spo2_label, value=spo2)
-            elif spo2 >= 92: add(2, f"Hypoxia (SpO2 {spo2:.0f}%)", parameter=_spo2_label, value=spo2)
-            else: add(3, f"{_spo2_w} hypoxia (SpO2 {spo2:.0f}%)", parameter=_spo2_label, value=spo2, severe=_spo2_w == "Severe")
+            if spo2 >= 96:
+                add(0, "", parameter=_spo2_label, value=spo2)
+            elif spo2 >= 94:
+                add(1, f"Mild hypoxia (SpO2 {spo2:.0f}%)", parameter=_spo2_label, value=spo2)
+            elif spo2 >= 92:
+                add(2, f"Hypoxia (SpO2 {spo2:.0f}%)", parameter=_spo2_label, value=spo2)
+            else:
+                add(
+                    3,
+                    f"{_spo2_w} hypoxia (SpO2 {spo2:.0f}%)",
+                    parameter=_spo2_label,
+                    value=spo2,
+                    severe=_spo2_w == "Severe",
+                )
 
     # Supplemental oxygen parameter (+2, applies in both scales)
     if on_oxygen:
@@ -524,11 +648,19 @@ def compute_news2(hr, sbp, rr, temp, spo2, consciousness=None, on_oxygen=None,
     if sbp is not None:
         if sbp <= 90:
             _w = "Severe" if sbp < _SEVERE_THRESHOLDS["sbp_low"] else "Moderate"
-            add(3, f"{_w} hypotension (SBP {sbp:.0f})", parameter="Systolic BP", value=sbp,
-                severe=_w == "Severe")
-        elif sbp <= 100: add(2, f"Hypotension (SBP {sbp:.0f})", parameter="Systolic BP", value=sbp)
-        elif sbp <= 110: add(1, f"Low BP (SBP {sbp:.0f})", parameter="Systolic BP", value=sbp)
-        elif sbp <= 219: add(0, "", parameter="Systolic BP", value=sbp)
+            add(
+                3,
+                f"{_w} hypotension (SBP {sbp:.0f})",
+                parameter="Systolic BP",
+                value=sbp,
+                severe=_w == "Severe",
+            )
+        elif sbp <= 100:
+            add(2, f"Hypotension (SBP {sbp:.0f})", parameter="Systolic BP", value=sbp)
+        elif sbp <= 110:
+            add(1, f"Low BP (SBP {sbp:.0f})", parameter="Systolic BP", value=sbp)
+        elif sbp <= 219:
+            add(0, "", parameter="Systolic BP", value=sbp)
         else:
             # Reads the threshold rather than hardcoding "Severe" even though
             # today's band floor (220) is already above it. Every severity word
@@ -536,37 +668,64 @@ def compute_news2(hr, sbp, rr, temp, spo2, consciousness=None, on_oxygen=None,
             # to assert "this band is always severe" by hand, because that is
             # precisely the assumption that produced D5.
             _w = "Severe" if sbp >= _SEVERE_THRESHOLDS["sbp_high"] else "Moderate"
-            add(3, f"{_w} hypertension (SBP {sbp:.0f})", parameter="Systolic BP", value=sbp,
-                severe=_w == "Severe")
+            add(
+                3,
+                f"{_w} hypertension (SBP {sbp:.0f})",
+                parameter="Systolic BP",
+                value=sbp,
+                severe=_w == "Severe",
+            )
 
     # Pulse
     if hr is not None:
         if hr <= 40:
             _w = "Severe" if hr <= _SEVERE_THRESHOLDS["hr_low"] else "Moderate"
-            add(3, f"{_w} bradycardia (HR {hr:.0f})", parameter="Heart rate", value=hr,
-                severe=_w == "Severe")
-        elif hr <= 50: add(1, f"Bradycardia (HR {hr:.0f})", parameter="Heart rate", value=hr)
-        elif hr <= 90: add(0, "", parameter="Heart rate", value=hr)
-        elif hr <= 110: add(1, f"Mild tachycardia (HR {hr:.0f})", parameter="Heart rate", value=hr)
-        elif hr <= 130: add(2, f"Tachycardia (HR {hr:.0f})", parameter="Heart rate", value=hr)
+            add(
+                3,
+                f"{_w} bradycardia (HR {hr:.0f})",
+                parameter="Heart rate",
+                value=hr,
+                severe=_w == "Severe",
+            )
+        elif hr <= 50:
+            add(1, f"Bradycardia (HR {hr:.0f})", parameter="Heart rate", value=hr)
+        elif hr <= 90:
+            add(0, "", parameter="Heart rate", value=hr)
+        elif hr <= 110:
+            add(1, f"Mild tachycardia (HR {hr:.0f})", parameter="Heart rate", value=hr)
+        elif hr <= 130:
+            add(2, f"Tachycardia (HR {hr:.0f})", parameter="Heart rate", value=hr)
         else:
             _w = "Severe" if hr >= _SEVERE_THRESHOLDS["hr_high"] else "Moderate"
-            add(3, f"{_w} tachycardia (HR {hr:.0f})", parameter="Heart rate", value=hr,
-                severe=_w == "Severe")
+            add(
+                3,
+                f"{_w} tachycardia (HR {hr:.0f})",
+                parameter="Heart rate",
+                value=hr,
+                severe=_w == "Severe",
+            )
 
     # Temperature
     if temp is not None:
         if temp <= 35.0:
             # 32-35 C is MILD hypothermia. The RCP 3-point band starts at 35.0,
             # so the band alone cannot carry the word.
-            _w = ("Severe hypothermia"
-                  if temp < _SEVERE_THRESHOLDS["temp_low"] else "Hypothermia")
-            add(3, f"{_w} ({temp:.1f}°C)", parameter="Temperature", value=temp,
-                severe=_w == "Severe hypothermia")
-        elif temp <= 36.0: add(1, f"Low temp ({temp:.1f}°C)", parameter="Temperature", value=temp)
-        elif temp <= 38.0: add(0, "", parameter="Temperature", value=temp)
-        elif temp <= 39.0: add(1, f"Fever ({temp:.1f}°C)", parameter="Temperature", value=temp)
-        else: add(2, f"High fever ({temp:.1f}°C)", parameter="Temperature", value=temp)
+            _w = "Severe hypothermia" if temp < _SEVERE_THRESHOLDS["temp_low"] else "Hypothermia"
+            add(
+                3,
+                f"{_w} ({temp:.1f}°C)",
+                parameter="Temperature",
+                value=temp,
+                severe=_w == "Severe hypothermia",
+            )
+        elif temp <= 36.0:
+            add(1, f"Low temp ({temp:.1f}°C)", parameter="Temperature", value=temp)
+        elif temp <= 38.0:
+            add(0, "", parameter="Temperature", value=temp)
+        elif temp <= 39.0:
+            add(1, f"Fever ({temp:.1f}°C)", parameter="Temperature", value=temp)
+        else:
+            add(2, f"High fever ({temp:.1f}°C)", parameter="Temperature", value=temp)
 
     # Consciousness (ACVPU): Alert=0; new Confusion/Voice/Pain/Unresponsive=3
     #
@@ -580,8 +739,13 @@ def compute_news2(hr, sbp, rr, temp, spo2, consciousness=None, on_oxygen=None,
     if cons not in ("alert", "a", ""):
         # A new ACVPU change has no Severe/Moderate word; it sorts with Severe
         # (ruled 2026-10-03): new confusion or worse is a red flag.
-        add(3, "Altered consciousness (ACVPU)", parameter="Consciousness (ACVPU)",
-            value=cons, severe=True)
+        add(
+            3,
+            "Altered consciousness (ACVPU)",
+            parameter="Consciousness (ACVPU)",
+            value=cons,
+            severe=True,
+        )
 
     # Level from NEWS2 clinical bands, honouring the single-parameter-3 rule.
     if score >= 7:
@@ -637,32 +801,37 @@ def compute_news2(hr, sbp, rr, temp, spo2, consciousness=None, on_oxygen=None,
     # in it: the alert card strip, Sage's prompt, the guideline query and the
     # handoff never said the patient was confused. Same order as the Relay
     # reason line (`news2_reason_line`), so the two cannot disagree.
-    drivers = [text for *_, text in sorted(drivers, key=lambda d: (-d[0], not d[1], d[2]))]
+    driver_texts = [text for *_, text in sorted(drivers, key=lambda d: (-d[0], not d[1], d[2]))]
 
-    if not drivers:
-        drivers = (
-            ["All vitals within normal range"] if not missing
-            else [f"Within range on what was measured ({len(_measured) - len(missing)}/"
-                  f"{len(_measured)} parameters)"]
+    if not driver_texts:
+        driver_texts = (
+            ["All vitals within normal range"]
+            if not missing
+            else [
+                f"Within range on what was measured ({len(_measured) - len(missing)}/"
+                f"{len(_measured)} parameters)"
+            ]
         )
 
     return {
         "score": round(normalized, 2),
         "level": level,
         "raw_news2": score,
-        "raw_mews": score,            # legacy key alias
+        "raw_mews": score,  # legacy key alias
         "single_param_3": any_param_3,
-        "drivers": drivers[:3],
+        "drivers": driver_texts[:3],
         # True only when every scored vital was actually measured. False means
         # this aggregate is a FLOOR, not a NEWS2 — callers and the UI must say so
         # rather than presenting it as a complete score.
         "complete": not missing,
         "missing_parameters": missing,
-        "coverage_note": None if not missing else (
+        "coverage_note": None
+        if not missing
+        else (
             "INCOMPLETE observation set: "
             + ", ".join(missing)
             + " not measured. An unmeasured parameter scores 0, so this NEWS2 is a "
-              "MINIMUM and the true score can only be higher."
+            "MINIMUM and the true score can only be higher."
         ),
         # Full per-parameter attribution, worst-contributor first, so the UI can
         # render a transparent "why this NEWS2" panel. Deterministic from the RCP
@@ -720,15 +889,19 @@ def news2_reason_line(news2: dict, limit: int = 3) -> str:
     `_apply_cfc_overlay` puts in `drivers`, not `breakdown`, and must add it.
     """
     news2 = news2 or {}
-    scored = [b for b in (news2.get("breakdown") or [])
-              if (b.get("points") or 0) > 0 and b.get("note")]
+    scored = [
+        b for b in (news2.get("breakdown") or []) if (b.get("points") or 0) > 0 and b.get("note")
+    ]
     if not scored:
         drivers = news2.get("drivers") or []
-        return ("; ".join(drivers[:limit]) if drivers
-                else f"NEWS2 {news2.get('level', 'stable')}")
-    scored.sort(key=lambda b: (-b["points"], not b.get("severe"),
-                               _RCP_CHART_ORDER.get(b.get("parameter"),
-                                                    len(_RCP_CHART_ORDER))))
+        return "; ".join(drivers[:limit]) if drivers else f"NEWS2 {news2.get('level', 'stable')}"
+    scored.sort(
+        key=lambda b: (
+            -b["points"],
+            not b.get("severe"),
+            _RCP_CHART_ORDER.get(b.get("parameter"), len(_RCP_CHART_ORDER)),
+        )
+    )
     named = "; ".join(b["note"] for b in scored[:limit])
     more = len(scored) - limit
     return f"{named} (+{more} more)" if more > 0 else named
@@ -753,13 +926,14 @@ def compute_mews(hr, sbp, rr, temp, spo2, consciousness="alert") -> dict:
 # now go through `score_vitals_row`, which is the only place the baseline and the
 # overlay are combined.
 
+
 def _row_value(row, key, default=None):
     """Read `key` from a sqlite3.Row OR a plain dict, absent column → default."""
     if row is None:
         return default
     try:
         return row[key] if key in row.keys() else default
-    except Exception:      # pragma: no cover — defensive on exotic row types
+    except Exception:  # pragma: no cover — defensive on exotic row types
         return default
 
 
@@ -788,23 +962,24 @@ def _apply_cfc_overlay(result: dict, patient_id: str) -> dict:
         if result["level"] != "critical":
             logger.info(
                 "[Vigil-CfC] Overlay escalated %s %s→critical (primary_risk=%.2f).",
-                patient_id, result["level"], primary,
+                patient_id,
+                result["level"],
+                primary,
             )
         result["level"] = "critical"
-        result["drivers"] = (["CfC: high near-term deterioration risk"]
-                             + result["drivers"])[:3]
+        result["drivers"] = (["CfC: high near-term deterioration risk"] + result["drivers"])[:3]
     elif primary >= 0.85 and result["level"] == "elevated":
         result["level"] = "critical"
     elif primary >= 0.7 and result["level"] == "stable":
         result["level"] = "elevated"
-        result["drivers"] = (["CfC: rising near-term deterioration risk"]
-                             + result["drivers"])[:3]
+        result["drivers"] = (["CfC: rising near-term deterioration risk"] + result["drivers"])[:3]
 
     return result
 
 
-def score_vitals_row(vitals, *, patient_id: str | None = None,
-                     on_scale_2: bool = False, overlay: bool = True) -> dict | None:
+def score_vitals_row(
+    vitals, *, patient_id: str | None = None, on_scale_2: bool = False, overlay: bool = True
+) -> dict | None:
     """NEWS2 + CfC overlay for ONE stored vitals row. The shared entry point.
 
     `vitals` is a sqlite3.Row or a dict with the vitals-table column names; None
@@ -843,7 +1018,7 @@ def score_vitals_row(vitals, *, patient_id: str | None = None,
     return result
 
 
-def risk_for_row(row, *, patient_id: str, on_scale_2: bool) -> dict:
+def risk_for_row(row, *, patient_id: str, on_scale_2: bool) -> dict | None:
     """The displayed risk for a vitals row the caller ALREADY HOLDS.
 
     The chart route prints vitals[0] in the command bar, so it must score that
@@ -862,8 +1037,12 @@ def risk_for_row(row, *, patient_id: str, on_scale_2: bool) -> dict:
     _refuse_when_switched_off("risk_for_row")
     # `not row`, not `is None`: the falsy test get_patient_risk always made.
     if not row:
-        return {"score": 0, "level": "stable", "drivers": ["No vitals recorded"],
-                "scoring_model": "NEWS2"}
+        return {
+            "score": 0,
+            "level": "stable",
+            "drivers": ["No vitals recorded"],
+            "scoring_model": "NEWS2",
+        }
     return score_vitals_row(row, patient_id=patient_id, on_scale_2=on_scale_2)
 
 
@@ -906,7 +1085,7 @@ def _earlier_stay_ends_on(db, patient_ids) -> dict:
     leaves them out, and so is any end after now: a time not yet reached ended
     nothing, and counting it would hide this stay's own sets. Absent for a
     patient with no such end. Never writes."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from services.clinical_time import parse_to_utc
 
@@ -916,28 +1095,31 @@ def _earlier_stay_ends_on(db, patient_ids) -> dict:
     acols = {r[1] for r in db.execute("PRAGMA table_info(admissions)").fetchall()}
     scols = {r[1] for r in db.execute("PRAGMA table_info(discharge_summaries)").fetchall()}
     native = " AND e.import_run_id IS NULL" if "import_run_id" in acols else ""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     out: dict = {}
     for i in range(0, len(ids), 400):
-        chunk = ids[i:i + 400]
+        chunk = ids[i : i + 400]
         marks = ",".join("?" for _ in chunk)
-        sql = ("SELECT e.patient_id, e.discharged_at AS ended_at FROM admissions e "
-               f"WHERE e.status <> 'active' AND e.discharged_at IS NOT NULL{native} "
-               f"AND e.patient_id IN ({marks})")
+        sql = (
+            "SELECT e.patient_id, e.discharged_at AS ended_at FROM admissions e "
+            f"WHERE e.status <> 'active' AND e.discharged_at IS NOT NULL{native} "
+            f"AND e.patient_id IN ({marks})"
+        )
         args = list(chunk)
         if "admission_id" in scols:
-            sql += (" UNION ALL SELECT e.patient_id, ds.discharged_at AS ended_at "
-                    "FROM discharge_summaries ds JOIN admissions e ON e.id = ds.admission_id "
-                    f"WHERE e.status <> 'active' AND ds.discharged_at IS NOT NULL{native} "
-                    f"AND e.patient_id IN ({marks})")
+            sql += (
+                " UNION ALL SELECT e.patient_id, ds.discharged_at AS ended_at "
+                "FROM discharge_summaries ds JOIN admissions e ON e.id = ds.admission_id "
+                f"WHERE e.status <> 'active' AND ds.discharged_at IS NOT NULL{native} "
+                f"AND e.patient_id IN ({marks})"
+            )
             args += chunk
         for row in db.execute(sql, tuple(args)).fetchall():
             try:
                 ended = parse_to_utc(row["ended_at"])
             except (TypeError, ValueError):
                 continue
-            if ended <= now and (row["patient_id"] not in out
-                                 or ended > out[row["patient_id"]]):
+            if ended <= now and (row["patient_id"] not in out or ended > out[row["patient_id"]]):
                 out[row["patient_id"]] = ended
     return out
 
@@ -953,10 +1135,12 @@ def readmission_stay_starts_on(db, patient_ids=None) -> dict:
     longer be given, still never show the earlier stay's sets as current."""
     from services.clinical_time import parse_to_utc
 
-    sql = ("SELECT a.patient_id, COALESCE(a.admitted_at, a.created_at) AS stay_start "
-           "FROM admissions a WHERE a.status = 'active' "
-           "AND EXISTS (SELECT 1 FROM admissions e WHERE e.patient_id = a.patient_id "
-           "AND e.rowid <> a.rowid AND e.status <> 'active')")
+    sql = (
+        "SELECT a.patient_id, COALESCE(a.admitted_at, a.created_at) AS stay_start "
+        "FROM admissions a WHERE a.status = 'active' "
+        "AND EXISTS (SELECT 1 FROM admissions e WHERE e.patient_id = a.patient_id "
+        "AND e.rowid <> a.rowid AND e.status <> 'active')"
+    )
     args: tuple = ()
     if patient_ids is not None:
         wanted = sorted({str(p) for p in patient_ids if p})
@@ -971,15 +1155,22 @@ def readmission_stay_starts_on(db, patient_ids=None) -> dict:
         except (TypeError, ValueError):
             # An unreadable stay start: nothing before now can be shown as
             # this stay's, so the boundary is the latest possible one.
-            from datetime import datetime, timezone
-            logger.warning("Readmission boundary: unreadable stay start %r for %s",
-                           row["stay_start"], row["patient_id"])
-            out[row["patient_id"]] = datetime.now(timezone.utc)
+            from datetime import datetime
+
+            logger.warning(
+                "Readmission boundary: unreadable stay start %r for %s",
+                row["stay_start"],
+                row["patient_id"],
+            )
+            out[row["patient_id"]] = datetime.now(UTC)
     if out:
         for pid, ended in _earlier_stay_ends_on(db, list(out)).items():
             if ended > out[pid]:
-                logger.debug("Readmission boundary: the stay of %s starts before an "
-                             "earlier stay ended; bounded at that end", pid)
+                logger.debug(
+                    "Readmission boundary: the stay of %s starts before an "
+                    "earlier stay ended; bounded at that end",
+                    pid,
+                )
                 out[pid] = ended
     return out
 
@@ -1029,20 +1220,24 @@ def previous_stay_on(db, patient_id: str, stay_start, *, risk: bool = False) -> 
         "ORDER BY timestamp DESC, id DESC LIMIT 1",
         (patient_id, bound),
     ).fetchone()
-    out = {
+    out: dict[str, Any] = {
         "label": PREVIOUS_STAY_LABEL,
         "this_stay_started_at": bound,
         "last_observed_at": last["timestamp"] if last else None,
-        "last_vitals": ({
-            "timestamp": last["timestamp"],
-            "heart_rate": last["heart_rate"],
-            "systolic_bp": last["systolic_bp"],
-            "diastolic_bp": last["diastolic_bp"],
-            "spo2": last["spo2"],
-            "temperature": last["temperature"],
-            "respiratory_rate": last["respiratory_rate"],
-            "previous_stay": True,
-        } if last else None),
+        "last_vitals": (
+            {
+                "timestamp": last["timestamp"],
+                "heart_rate": last["heart_rate"],
+                "systolic_bp": last["systolic_bp"],
+                "diastolic_bp": last["diastolic_bp"],
+                "spo2": last["spo2"],
+                "temperature": last["temperature"],
+                "respiratory_rate": last["respiratory_rate"],
+                "previous_stay": True,
+            }
+            if last
+            else None
+        ),
     }
     if risk:
         row = db.execute(
@@ -1050,9 +1245,15 @@ def previous_stay_on(db, patient_id: str, stay_start, *, risk: bool = False) -> 
             "WHERE patient_id = ? AND timestamp < ? ORDER BY timestamp DESC, id DESC LIMIT 1",
             (patient_id, bound),
         ).fetchone()
-        out["last_risk"] = ({
-            "level": row["level"], "timestamp": row["timestamp"], "previous_stay": True,
-        } if row else None)
+        out["last_risk"] = (
+            {
+                "level": row["level"],
+                "timestamp": row["timestamp"],
+                "previous_stay": True,
+            }
+            if row
+            else None
+        )
     return out
 
 
@@ -1079,8 +1280,13 @@ def board_order(patient_id: str, news2: dict | None) -> tuple:
     if news2 is None:
         return (1, 0, 0, 0, patient_id)
     level = news2.get("level")
-    return (0, 0 if level == "critical" else 1,
-            -(news2.get("raw_news2") or 0), -_BAND_RANK.get(level, 0), patient_id)
+    return (
+        0,
+        0 if level == "critical" else 1,
+        -(news2.get("raw_news2") or 0),
+        -_BAND_RANK.get((level or ""), 0),
+        patient_id,
+    )
 
 
 def scored_admitted_patients(department: str | None) -> list[tuple]:
@@ -1136,8 +1342,9 @@ def scored_admitted_patients(department: str | None) -> list[tuple]:
         # latest (ADT-S9 (a)): newest first, so no row means none this stay.
         # The patient row carries the dated, labelled previous stay instead.
         stay_starts = readmission_stay_starts_on(db, [p["id"] for p in patients])
-        previous_stays = {pid: previous_stay_on(db, pid, start)
-                          for pid, start in stay_starts.items()}
+        previous_stays = {
+            pid: previous_stay_on(db, pid, start) for pid, start in stay_starts.items()
+        }
         for pid, start in stay_starts.items():
             held = latest_vitals.get(pid)
             if held is not None and from_previous_stay(held.get("timestamp"), start):
@@ -1154,9 +1361,15 @@ def scored_admitted_patients(department: str | None) -> list[tuple]:
         if patient["id"] in previous_stays:
             patient["previous_stay"] = previous_stays[patient["id"]]
         vitals = latest_vitals.get(patient["id"])
-        news2 = score_vitals_row(
-            vitals, patient_id=patient["id"], on_scale_2=bool(patient["on_scale_2"]),
-        ) if scoring else None
+        news2 = (
+            score_vitals_row(
+                vitals,
+                patient_id=patient["id"],
+                on_scale_2=bool(patient["on_scale_2"]),
+            )
+            if scoring
+            else None
+        )
         scored.append((patient, vitals, news2))
     if scoring:
         scored.sort(key=lambda s: board_order(s[0]["id"], s[2]))
@@ -1168,8 +1381,9 @@ def scored_admitted_patients(department: str | None) -> list[tuple]:
 def _natural_key(text) -> tuple:
     """'B-10' after 'B-2': digit runs compare as numbers, the rest as text."""
     parts = re.split(r"(\d+)", str(text or "").strip().lower())
-    return tuple((0, int(part), "") if part.isdigit() else (1, 0, part)
-                 for part in parts if part != "")
+    return tuple(
+        (0, int(part), "") if part.isdigit() else (1, 0, part) for part in parts if part != ""
+    )
 
 
 def scoring_enabled() -> bool:
@@ -1179,8 +1393,10 @@ def scoring_enabled() -> bool:
     list and the Command Center use it beside scored_admitted_patients.
     ORB_WARD_RECORD forces it off at boot (config.py)."""
     import config
-    return (bool(getattr(config, "SCORING_ENABLED", True))
-            and not bool(getattr(config, "WARD_RECORD", False)))
+
+    return bool(getattr(config, "SCORING_ENABLED", True)) and not bool(
+        getattr(config, "WARD_RECORD", False)
+    )
 
 
 def ward_bed_order(patient: dict) -> tuple:
@@ -1188,11 +1404,16 @@ def ward_bed_order(patient: dict) -> tuple:
     A patient with no ward or bed sorts after those that have one."""
     ward = patient.get("ward") or ""
     bed = patient.get("bed") or ""
-    return (ward == "", _natural_key(ward), bed == "", _natural_key(bed),
-            str(patient.get("id") or ""))
+    return (
+        ward == "",
+        _natural_key(ward),
+        bed == "",
+        _natural_key(bed),
+        str(patient.get("id") or ""),
+    )
 
 
-def get_patient_risk(patient_id: str) -> dict:
+def get_patient_risk(patient_id: str) -> dict | None:
     """Latest risk for a patient — NEWS2 baseline + CfC multi-horizon overlay.
 
     Phase 1 the displayed score/level is NEWS2 (rule-based, auditable). The CfC
@@ -1215,11 +1436,10 @@ def get_patient_risk(patient_id: str) -> dict:
         ).fetchone()
         # An earlier stay's last set is not this stay's latest (ADT-S9 (a)).
         if row is not None and from_previous_stay(
-                row["timestamp"], current_stay_start_on(db, patient_id)):
+            row["timestamp"], current_stay_start_on(db, patient_id)
+        ):
             row = None
-        prow = db.execute(
-            "SELECT on_scale_2 FROM patients WHERE id = ?", (patient_id,)
-        ).fetchone()
+        prow = db.execute("SELECT on_scale_2 FROM patients WHERE id = ?", (patient_id,)).fetchone()
 
     on_scale_2 = bool(prow["on_scale_2"]) if prow and prow["on_scale_2"] is not None else False
 
@@ -1250,7 +1470,6 @@ def is_latest_vitals_row(db, patient_id: str, vitals_id: int) -> bool:
     return not from_previous_stay(row["timestamp"], current_stay_start_on(db, patient_id))
 
 
-
 def get_vitals_trend(patient_id: str, hours: int = 6) -> dict:
     """Compare recent vitals against the previous period for trend detection.
 
@@ -1270,10 +1489,11 @@ def get_vitals_trend(patient_id: str, hours: int = 6) -> dict:
     every caller already handles (it was the documented return for "no recent
     vitals" and ipass_service renders it as such).
     """
-    from datetime import datetime, timedelta, timezone
-    now = datetime.now(timezone.utc)
+    from datetime import datetime, timedelta
+
+    now = datetime.now(UTC)
     recent_cutoff = (now - timedelta(hours=hours)).isoformat()
-    prev_cutoff = (now - timedelta(hours=hours*2)).isoformat()
+    prev_cutoff = (now - timedelta(hours=hours * 2)).isoformat()
 
     with db_session() as db:
         # A readmitted patient's trend never reaches back into the earlier
@@ -1282,6 +1502,7 @@ def get_vitals_trend(patient_id: str, hours: int = 6) -> dict:
         stay_start = current_stay_start_on(db, patient_id)
         if stay_start is not None:
             from services.clinical_time import format_utc
+
             # A microsecond before the start, so a set taken at the very
             # start of the stay is in the recent window ('>').
             floor = stay_start - timedelta(microseconds=1)
@@ -1308,8 +1529,7 @@ def get_vitals_trend(patient_id: str, hours: int = 6) -> dict:
     # BOTH windows must be populated. An empty previous window is not a baseline
     # of zero — it is no baseline.
     if not previous or previous["avg_hr"] is None:
-        return {"trend": "insufficient_data",
-                "reason": "no earlier vitals to compare against"}
+        return {"trend": "insufficient_data", "reason": "no earlier vitals to compare against"}
 
     # Determine trend based on key indicators. Each delta needs BOTH sides
     # present; a vital measured in only one window contributes nothing rather
@@ -1324,13 +1544,15 @@ def get_vitals_trend(patient_id: str, hours: int = 6) -> dict:
 
     # Worsening: HR up, BP down, SpO2 down
     concern_score = 0
-    if hr_delta is not None and hr_delta > 10: concern_score += 1
-    if sbp_delta is not None and sbp_delta < -10: concern_score += 1
-    if spo2_delta is not None and spo2_delta < -2: concern_score += 1
+    if hr_delta is not None and hr_delta > 10:
+        concern_score += 1
+    if sbp_delta is not None and sbp_delta < -10:
+        concern_score += 1
+    if spo2_delta is not None and spo2_delta < -2:
+        concern_score += 1
 
-    improving = (
-        (spo2_delta is not None and spo2_delta > 1)
-        or (sbp_delta is not None and sbp_delta > 5)
+    improving = (spo2_delta is not None and spo2_delta > 1) or (
+        sbp_delta is not None and sbp_delta > 5
     )
 
     if concern_score >= 2:
@@ -1344,9 +1566,8 @@ def get_vitals_trend(patient_id: str, hours: int = 6) -> dict:
     else:
         trend = "improving" if improving else "stable"
 
-    out = {"trend": trend}
-    for key, val in (("hr_delta", hr_delta), ("sbp_delta", sbp_delta),
-                     ("spo2_delta", spo2_delta)):
+    out: dict[str, Any] = {"trend": trend}
+    for key, val in (("hr_delta", hr_delta), ("sbp_delta", sbp_delta), ("spo2_delta", spo2_delta)):
         out[key] = None if val is None else round(val, 1)
     return out
 
@@ -1394,10 +1615,10 @@ async def generate_ai_recommendation(vitals_summary: str, risk_level: str, drive
     """Generate a single concise sentence recommendation based on vital sign deviations using MedGemma."""
     prompt = f"Vitals: {vitals_summary}\nRisk Level: {risk_level}\nKey Drivers: {', '.join(drivers)}\n\nProvide a single concise sentence recommending the next clinical step or monitoring action."
 
-    from services.llm_queue_service import llm_queue
-    from services import ollama_gateway
     from config import AMBIENT_LLM_MODEL
-    import json
+
+    from services import ollama_gateway
+    from services.llm_queue_service import llm_queue
 
     if time.monotonic() < _LLM_BREAKER["open_until"]:
         return _FALLBACK_RECOMMENDATION
@@ -1406,6 +1627,7 @@ async def generate_ai_recommendation(vitals_summary: str, risk_level: str, drive
     # static sentence, without taking a queue slot or asking the gateway, which
     # would only refuse. The critical alert still goes out with scoring on.
     from services.model_switch import models_enabled
+
     if not models_enabled():
         return _FALLBACK_RECOMMENDATION
 
@@ -1420,6 +1642,7 @@ async def generate_ai_recommendation(vitals_summary: str, risk_level: str, drive
     # header's unload button appeared not to work. The static sentence is this
     # feature's documented degraded mode; use it while the tier is out.
     from services.model_router import ambient_tier_evicted
+
     if await ambient_tier_evicted(AMBIENT_LLM_MODEL):
         return _FALLBACK_RECOMMENDATION
 
@@ -1441,7 +1664,7 @@ async def generate_ai_recommendation(vitals_summary: str, risk_level: str, drive
         # 2026-08-14). Degrading to a static sentence is right for a busy GPU and
         # wrong for a process that has been told to stop.
         raise
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return _FALLBACK_RECOMMENDATION
     try:
         async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
@@ -1454,8 +1677,11 @@ async def generate_ai_recommendation(vitals_summary: str, risk_level: str, drive
                 {
                     "model": AMBIENT_LLM_MODEL,
                     "messages": [
-                        {"role": "system", "content": "You are a clinical AI assistant. Provide exactly one short, actionable sentence. No preamble."},
-                        {"role": "user", "content": prompt}
+                        {
+                            "role": "system",
+                            "content": "You are a clinical AI assistant. Provide exactly one short, actionable sentence. No preamble.",
+                        },
+                        {"role": "user", "content": prompt},
                     ],
                     "stream": False,
                     "options": {
@@ -1473,7 +1699,11 @@ async def generate_ai_recommendation(vitals_summary: str, risk_level: str, drive
             resp.raise_for_status()
             data = resp.json()
             _LLM_BREAKER["failures"] = 0
-            return data.get("message", {}).get("content", "Continue monitoring vitals closely.").strip()
+            return (
+                data.get("message", {})
+                .get("content", "Continue monitoring vitals closely.")
+                .strip()
+            )
     except (httpx.ConnectError, httpx.ConnectTimeout) as e:
         _LLM_BREAKER["failures"] += 1
         if _LLM_BREAKER["failures"] >= _LLM_BREAKER_THRESHOLD:
@@ -1481,7 +1711,9 @@ async def generate_ai_recommendation(vitals_summary: str, risk_level: str, drive
             _LLM_BREAKER["failures"] = 0
             logger.warning(
                 "[Vigil] LLM unreachable %d times (%s) — pausing recommendation calls for %.0fs",
-                _LLM_BREAKER_THRESHOLD, e, _LLM_BREAKER_COOLDOWN_S,
+                _LLM_BREAKER_THRESHOLD,
+                e,
+                _LLM_BREAKER_COOLDOWN_S,
             )
         else:
             logger.error("[Vigil] Error generating recommendation: %s", e)
@@ -1495,5 +1727,3 @@ async def generate_ai_recommendation(vitals_summary: str, risk_level: str, drive
         return _FALLBACK_RECOMMENDATION
     finally:
         llm_queue.release()
-
-

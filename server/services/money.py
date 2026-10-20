@@ -65,12 +65,13 @@ by a paise from a single 18% computation). Inter-state supply → IGST at the fu
 rate. ``place_of_supply`` is the caller's decision; this module only takes the
 resulting boolean.
 """
+
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from typing import Iterable, Sequence
 
 __all__ = [
     "PAISE_PER_RUPEE",
@@ -140,14 +141,13 @@ GST_NIL_RATED: GstTreatment = "nil_rated"
 #: Zero-rated: exports / SEZ supplies. Same arithmetic, different return box.
 GST_ZERO_RATED: GstTreatment = "zero_rated"
 
-GST_TREATMENTS: frozenset[str] = frozenset(
-    {GST_EXEMPT, GST_TAXABLE, GST_NIL_RATED, GST_ZERO_RATED}
-)
+GST_TREATMENTS: frozenset[str] = frozenset({GST_EXEMPT, GST_TAXABLE, GST_NIL_RATED, GST_ZERO_RATED})
 #: The only treatment that can ever produce a non-zero tax figure.
 TAXABLE_TREATMENTS: frozenset[str] = frozenset({GST_TAXABLE})
 
 
 # ── The one rounding rule ────────────────────────────────────────────────────
+
 
 def _div_round_half_up(numerator: int, denominator: int) -> int:
     """Integer division rounding halves AWAY FROM ZERO. The only division here.
@@ -175,7 +175,9 @@ def apply_basis_points(paise: int, basis_points: int) -> int:
     """``paise * basis_points / 10000``, rounded by rule 2. Used for tax, for
     percentage discounts and for co-pay shares — one implementation, so a 7.5%
     co-pay and a 7.5% discount can never disagree by a paise."""
-    return _div_round_half_up(assert_paise(paise) * _as_int(basis_points, "basis_points"), BASIS_POINTS)
+    return _div_round_half_up(
+        assert_paise(paise) * _as_int(basis_points, "basis_points"), BASIS_POINTS
+    )
 
 
 def percent_of(paise: int, percent: int | Decimal | str) -> int:
@@ -210,6 +212,7 @@ def _to_basis_points(percent: int | Decimal | str) -> int:
 
 
 # ── Type gates ───────────────────────────────────────────────────────────────
+
 
 def _as_int(value: object, name: str) -> int:
     if isinstance(value, bool):
@@ -321,6 +324,7 @@ def _group_indian(digits: str) -> str:
     if len(digits) <= 3:
         return digits
     head, tail = digits[:-3], digits[-3:]
+    parts: list[str]
     parts = []
     while len(head) > 2:
         parts.insert(0, head[-2:])
@@ -372,8 +376,8 @@ def format_indian_compact(paise: int, *, symbol: bool = True) -> str:
     p = assert_paise(paise)
     negative = p < 0
     p = abs(p)
-    crore = 100 * 100_000 * PAISE_PER_RUPEE      # ₹1,00,00,000
-    lakh = 100_000 * PAISE_PER_RUPEE             # ₹1,00,000
+    crore = 100 * 100_000 * PAISE_PER_RUPEE  # ₹1,00,00,000
+    lakh = 100_000 * PAISE_PER_RUPEE  # ₹1,00,000
     if p >= crore:
         hundredths = _div_round_half_up(p * 100, crore)
         body = f"{hundredths // 100}.{hundredths % 100:02d} Cr"
@@ -389,9 +393,11 @@ def format_indian_compact(paise: int, *, symbol: bool = True) -> str:
 
 # ── GST ──────────────────────────────────────────────────────────────────────
 
+
 @dataclass(frozen=True)
 class GstBreakup:
     """What tax a taxable value attracts, split the way the invoice prints it."""
+
     taxable_value_paise: int
     cgst_paise: int
     sgst_paise: int
@@ -443,8 +449,7 @@ def compute_gst(
         raise MoneyError(f"gst_rate_bp must not be negative (got {rate})")
     if treatment not in GST_TREATMENTS:
         raise MoneyError(
-            f"unknown GST treatment {treatment!r}; expected one of "
-            f"{sorted(GST_TREATMENTS)}"
+            f"unknown GST treatment {treatment!r}; expected one of {sorted(GST_TREATMENTS)}"
         )
     if treatment not in TAXABLE_TREATMENTS or rate == 0:
         return GstBreakup(value, 0, 0, 0, 0, rate, treatment, interstate)
@@ -464,10 +469,12 @@ def compute_gst(
 
 # ── Lines ────────────────────────────────────────────────────────────────────
 
+
 @dataclass(frozen=True)
 class LineTotals:
     """One priced line — a charge, an invoice line, a PO line. Every field is
     already rounded; nothing downstream rounds again."""
+
     gross_paise: int
     discount_paise: int
     taxable_value_paise: int
@@ -544,9 +551,7 @@ def compute_line(
     signed_discount = -discount if gross < 0 else discount
     taxable = gross - signed_discount
 
-    gst = compute_gst(
-        taxable, rate_bp=gst_rate_bp, treatment=gst_treatment, interstate=interstate
-    )
+    gst = compute_gst(taxable, rate_bp=gst_rate_bp, treatment=gst_treatment, interstate=interstate)
     return LineTotals(
         gross_paise=gross,
         discount_paise=signed_discount,
@@ -563,18 +568,19 @@ def compute_line(
 
 # ── Invoices ─────────────────────────────────────────────────────────────────
 
+
 @dataclass(frozen=True)
 class InvoiceTotals:
-    subtotal_paise: int          # sum of line gross, before discount
+    subtotal_paise: int  # sum of line gross, before discount
     discount_paise: int
     taxable_value_paise: int
     cgst_paise: int
     sgst_paise: int
     igst_paise: int
     tax_paise: int
-    total_paise: int             # taxable + tax, exact sum of the lines
+    total_paise: int  # taxable + tax, exact sum of the lines
     rounding_adjustment_paise: int
-    payable_paise: int           # total + rounding adjustment
+    payable_paise: int  # total + rounding adjustment
 
     def as_dict(self) -> dict:
         return {
@@ -644,6 +650,7 @@ def compute_invoice(
 
 
 # ── Allocation ───────────────────────────────────────────────────────────────
+
 
 def split_shares(total_paise: int, weights: Sequence[int]) -> list[int]:
     """Split a total across parties so the parts sum EXACTLY to the total.

@@ -73,6 +73,7 @@ THE RULE (ruled by Samuel 2026-10-04):
 Beds are NOT read here: bed matching is ruling R026's work
 (docs/SAGE_BED_LOCATOR_PLAN_2026-10-03.md).
 """
+
 from __future__ import annotations
 
 import functools
@@ -84,28 +85,133 @@ _TOKEN_RE = re.compile(r"[A-Za-z]+|[0-9]+")
 #: Short English words (and spoken hesitations: "er", "um" in a voice
 #: transcript). As a ward code they need capitals, a mid-sentence capital or
 #: "ward" BEFORE them; never "ward" after, see the module docstring.
-_FUNCTION_WORDS = frozenset({
-    "a", "am", "an", "as", "at", "be", "by", "do", "er", "go", "he", "hi", "if",
-    "in", "is", "it", "me", "my", "no", "of", "oh", "ok", "on", "or", "so", "to",
-    "um", "up", "us", "we",
-    "all", "and", "any", "are", "but", "can", "day", "did", "few", "for", "had",
-    "has", "her", "him", "his", "how", "its", "new", "not", "now", "off", "old",
-    "one", "our", "out", "own", "per", "see", "she", "the", "too", "two", "use",
-    "was", "way", "who", "why", "yes", "yet", "you",
-})
+_FUNCTION_WORDS = frozenset(
+    {
+        "a",
+        "am",
+        "an",
+        "as",
+        "at",
+        "be",
+        "by",
+        "do",
+        "er",
+        "go",
+        "he",
+        "hi",
+        "if",
+        "in",
+        "is",
+        "it",
+        "me",
+        "my",
+        "no",
+        "of",
+        "oh",
+        "ok",
+        "on",
+        "or",
+        "so",
+        "to",
+        "um",
+        "up",
+        "us",
+        "we",
+        "all",
+        "and",
+        "any",
+        "are",
+        "but",
+        "can",
+        "day",
+        "did",
+        "few",
+        "for",
+        "had",
+        "has",
+        "her",
+        "him",
+        "his",
+        "how",
+        "its",
+        "new",
+        "not",
+        "now",
+        "off",
+        "old",
+        "one",
+        "our",
+        "out",
+        "own",
+        "per",
+        "see",
+        "she",
+        "the",
+        "too",
+        "two",
+        "use",
+        "was",
+        "way",
+        "who",
+        "why",
+        "yes",
+        "yet",
+        "you",
+    }
+)
 
 #: Clinical and everyday words of four letters or fewer that hospitals use as
 #: ward codes and clinicians write in ordinary sentences ("repeat obs", "male,
 #: 45", "PRN med"). Longer all-letter codes are words by length alone.
-_WARD_WORDS = frozenset({
-    "obs", "male", "med", "meds", "surg", "gen", "peds", "paed", "gyn", "gyne",
-    "onc", "onco", "uro", "endo", "cath", "burn", "eye", "skin", "bone", "lung",
-    "post", "step", "main", "side", "east", "west", "red", "blue", "pink",
-    "gold", "grey", "gray", "rose", "lily",
-    # short words that sit inside many-word ward names ("Care of the Elderly",
-    # "High Dependency", "Step Down", "Baby Care")
-    "care", "high", "down", "baby", "kids", "home", "rest", "pain", "sick",
-})
+_WARD_WORDS = frozenset(
+    {
+        "obs",
+        "male",
+        "med",
+        "meds",
+        "surg",
+        "gen",
+        "peds",
+        "paed",
+        "gyn",
+        "gyne",
+        "onc",
+        "onco",
+        "uro",
+        "endo",
+        "cath",
+        "burn",
+        "eye",
+        "skin",
+        "bone",
+        "lung",
+        "post",
+        "step",
+        "main",
+        "side",
+        "east",
+        "west",
+        "red",
+        "blue",
+        "pink",
+        "gold",
+        "grey",
+        "gray",
+        "rose",
+        "lily",
+        # short words that sit inside many-word ward names ("Care of the Elderly",
+        # "High Dependency", "Step Down", "Baby Care")
+        "care",
+        "high",
+        "down",
+        "baby",
+        "kids",
+        "home",
+        "rest",
+        "pain",
+        "sick",
+    }
+)
 
 #: Place words. A code that contains one ("Burns Unit", "Labour Room",
 #: "Private Ward") names a place by itself and needs no further sign.
@@ -119,17 +225,60 @@ _SENTENCE_END = ".!?\n"
 
 #: A noun right after a ward code that the code only describes: the question
 #: is about criteria, a condition, a team or a policy, not the ward's patients.
-_GENERIC_AFTER = frozenset({
-    "criteria", "criterion", "delirium", "psychosis", "acquired", "level",
-    "levels", "team", "teams", "consult", "consults", "consultation",
-    "consultant", "consultants", "registrar", "registrars", "resident",
-    "residents", "fellow", "fellows", "intensivist", "intensivists", "nurse",
-    "nurses", "doctor", "doctors", "staff", "referral", "referrals", "outreach",
-    "protocol", "protocols", "guideline", "guidelines", "policy", "policies",
-    "bundle", "bundles", "mortality", "survival", "outcome", "outcomes", "trial",
-    "trials", "training", "rotation", "rotations", "course", "courses",
-    "availability",
-})
+_GENERIC_AFTER = frozenset(
+    {
+        "criteria",
+        "criterion",
+        "delirium",
+        "psychosis",
+        "acquired",
+        "level",
+        "levels",
+        "team",
+        "teams",
+        "consult",
+        "consults",
+        "consultation",
+        "consultant",
+        "consultants",
+        "registrar",
+        "registrars",
+        "resident",
+        "residents",
+        "fellow",
+        "fellows",
+        "intensivist",
+        "intensivists",
+        "nurse",
+        "nurses",
+        "doctor",
+        "doctors",
+        "staff",
+        "referral",
+        "referrals",
+        "outreach",
+        "protocol",
+        "protocols",
+        "guideline",
+        "guidelines",
+        "policy",
+        "policies",
+        "bundle",
+        "bundles",
+        "mortality",
+        "survival",
+        "outcome",
+        "outcomes",
+        "trial",
+        "trials",
+        "training",
+        "rotation",
+        "rotations",
+        "course",
+        "courses",
+        "availability",
+    }
+)
 
 #: Nouns that may sit between the code and a generic noun: "ICU admission
 #: criteria", "ICU bed availability". On their own they describe nothing.
@@ -138,18 +287,48 @@ _LINKING = frozenset({"admission", "transfer", "discharge", "escalation", "triag
 #: A word right before a ward code that makes it a need or a destination for
 #: the patient being discussed ("needs ICU", "call ICU", "go to ICU", "for
 #: ICU", "an ICU bed"), not a question about who is on the ward.
-_GENERIC_BEFORE = frozenset({
-    "need", "needs", "needed", "needing", "require", "requires", "required",
-    "requiring", "call", "page", "bleep", "consult", "for", "to", "into", "an",
-})
+_GENERIC_BEFORE = frozenset(
+    {
+        "need",
+        "needs",
+        "needed",
+        "needing",
+        "require",
+        "requires",
+        "required",
+        "requiring",
+        "call",
+        "page",
+        "bleep",
+        "consult",
+        "for",
+        "to",
+        "into",
+        "an",
+    }
+)
 
 #: Before "to" or "into", a word saying someone already got there: "admitted
 #: to ICU", "transfers to CCU", "came back to ICU" ask about who is there now.
-_ARRIVED = frozenset({
-    "admitted", "transferred", "moved", "shifted", "sent", "went", "brought",
-    "returned", "taken", "came", "gone", "back", "admissions", "transfers",
-    "arrivals",
-})
+_ARRIVED = frozenset(
+    {
+        "admitted",
+        "transferred",
+        "moved",
+        "shifted",
+        "sent",
+        "went",
+        "brought",
+        "returned",
+        "taken",
+        "came",
+        "gone",
+        "back",
+        "admissions",
+        "transfers",
+        "arrivals",
+    }
+)
 
 
 def _norm(token: str) -> str:
@@ -166,8 +345,12 @@ def _label_tokens(label: str) -> tuple:
 
 def _needs_a_sign(token: str) -> bool:
     """Is this one-token code an ordinary word (or bare digits)?"""
-    return (token.isdigit() or token in _FUNCTION_WORDS or token in _WARD_WORDS
-            or len(token) >= _WORD_MIN_LETTERS)
+    return (
+        token.isdigit()
+        or token in _FUNCTION_WORDS
+        or token in _WARD_WORDS
+        or len(token) >= _WORD_MIN_LETTERS
+    )
 
 
 def _phrase_needs_a_sign(want: tuple) -> bool:
@@ -191,7 +374,7 @@ class _TextIndex:
         self.verdicts: dict = {}
 
     def opens_a_sentence(self, i: int) -> bool:
-        before = self.text[:self.begin[i]].rstrip(" \t\"'([{")
+        before = self.text[: self.begin[i]].rstrip(" \t\"'([{")
         return not before or before[-1] in _SENTENCE_END
 
     def signed(self, i: int, word: str) -> bool:
@@ -203,19 +386,24 @@ class _TextIndex:
             return True
         if i > 0 and self.tokens[i - 1] == "ward":
             return True
-        if (word not in _FUNCTION_WORDS and i + 1 < len(self.tokens)
-                and self.tokens[i + 1] == "ward"):
+        if (
+            word not in _FUNCTION_WORDS
+            and i + 1 < len(self.tokens)
+            and self.tokens[i + 1] == "ward"
+        ):
             return True
         return False
 
     def phrase_signed(self, i: int, n: int) -> bool:
         """Is the many-word code at tokens i..i+n-1 written as a ward?"""
-        raws = self.raw[i:i + n]
+        raws = self.raw[i : i + n]
         if all(r.isupper() for r in raws):
             return True
-        if (all(r[0].isupper() for r, t in zip(raws, self.tokens[i:i + n])
-                if t not in _FUNCTION_WORDS)
-                and not self.opens_a_sentence(i)):
+        if all(
+            r[0].isupper()
+            for r, t in zip(raws, self.tokens[i : i + n], strict=False)
+            if t not in _FUNCTION_WORDS
+        ) and not self.opens_a_sentence(i):
             return True
         if i > 0 and self.tokens[i - 1] == "ward":
             return True
@@ -226,7 +414,7 @@ class _TextIndex:
 
     def _together(self, a: int, b: int) -> bool:
         """Are neighbouring tokens a < b in one sentence?"""
-        gap = self.text[self.begin[a] + len(self.raw[a]):self.begin[b]]
+        gap = self.text[self.begin[a] + len(self.raw[a]) : self.begin[b]]
         return not any(c in _SENTENCE_END for c in gap)
 
     def generic(self, i: int, n: int) -> bool:
@@ -237,13 +425,21 @@ class _TextIndex:
         if j < len(toks) and self._together(j - 1, j):
             if toks[j] in _GENERIC_AFTER:
                 return True
-            if (toks[j] in _LINKING and j + 1 < len(toks) and self._together(j, j + 1)
-                    and toks[j + 1] in _GENERIC_AFTER):
+            if (
+                toks[j] in _LINKING
+                and j + 1 < len(toks)
+                and self._together(j, j + 1)
+                and toks[j + 1] in _GENERIC_AFTER
+            ):
                 return True
         k = i - 1
         if k >= 0 and self._together(k, i) and toks[k] in _GENERIC_BEFORE:
-            arrived = (toks[k] in ("to", "into") and k > 0 and self._together(k - 1, k)
-                       and toks[k - 1] in _ARRIVED)
+            arrived = (
+                toks[k] in ("to", "into")
+                and k > 0
+                and self._together(k - 1, k)
+                and toks[k - 1] in _ARRIVED
+            )
             return not arrived
         return False
 
@@ -274,6 +470,7 @@ def ward_named_in(label, text: str) -> bool:
     if hit is None:
         n = len(want)
         if n == 1:
+
             def sign_ok(i):
                 return not _needs_a_sign(want[0]) or idx.signed(i, want[0])
         else:
@@ -281,10 +478,13 @@ def ward_named_in(label, text: str) -> bool:
 
             def sign_ok(i):
                 return not phrase or idx.phrase_signed(i, n)
-        hit = any(tuple(idx.tokens[i:i + n]) == want
-                  and idx.in_one_sentence(i, n)
-                  and sign_ok(i)
-                  and not idx.generic(i, n)
-                  for i in idx.starts.get(want[0], ()))
+
+        hit = any(
+            tuple(idx.tokens[i : i + n]) == want
+            and idx.in_one_sentence(i, n)
+            and sign_ok(i)
+            and not idx.generic(i, n)
+            for i in idx.starts.get(want[0], ())
+        )
         idx.verdicts[want] = hit
     return hit

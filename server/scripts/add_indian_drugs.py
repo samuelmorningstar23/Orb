@@ -1,14 +1,13 @@
-import os
 import csv
 import sqlite3
-from pathlib import Path
 import sys
+from pathlib import Path
 
 # Add server dir to path
 SERVER_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SERVER_DIR))
 
-from services.rxnorm_corrector import metaphone_key
+from services.rxnorm_corrector import metaphone_key  # noqa: E402 - application imports require the path/environment bootstrap above.
 
 INDIAN_DRUGS = [
     {"rxcui": "IND_0001", "name": "Dolo", "tty": "BN"},
@@ -33,35 +32,36 @@ INDIAN_DRUGS = [
     {"rxcui": "IND_0020", "name": "Dolo-650", "tty": "BN"},
 ]
 
+
 def add_indian_drugs():
     csv_path = SERVER_DIR / "datasets" / "rxnorm" / "rxnorm_drugs.csv"
     db_path = SERVER_DIR / "datasets" / "rxnorm" / "rxnorm_drugs.db"
-    
+
     print(f"Reading current CSV from {csv_path}...")
     existing_cuis = set()
     rows = []
-    
+
     if csv_path.exists():
-        with open(csv_path, "r", encoding="utf-8") as f:
+        with open(csv_path, encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for r in reader:
                 existing_cuis.add(r["rxcui"])
                 rows.append(r)
-                
+
     # Add new Indian drugs
     added_count = 0
     for d in INDIAN_DRUGS:
         if d["rxcui"] not in existing_cuis:
             rows.append(d)
             added_count += 1
-            
+
     if added_count > 0:
         print(f"Adding {added_count} new Indian drugs to CSV...")
         with open(csv_path, "w", encoding="utf-8", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=["rxcui", "name", "tty"])
             writer.writeheader()
             writer.writerows(rows)
-            
+
     # Now rebuild the SQLite DB.
     # Stdlib sqlite3 on purpose: this is the RxNorm reference dictionary
     # (datasets/rxnorm/rxnorm_drugs.db), a rebuildable lookup table with no PHI in
@@ -77,29 +77,24 @@ def add_indian_drugs():
             metaphone TEXT
         )
     """)
-    
+
     # Insert new drugs into SQLite DB
     batch = []
     for d in INDIAN_DRUGS:
         name = d["name"]
-        batch.append((
-            d["rxcui"],
-            name,
-            name.lower(),
-            d["tty"],
-            metaphone_key(name)
-        ))
-        
+        batch.append((d["rxcui"], name, name.lower(), d["tty"], metaphone_key(name)))
+
     conn.executemany(
         "INSERT OR IGNORE INTO drugs (rxcui, name, name_lower, tty, metaphone) VALUES (?, ?, ?, ?, ?)",
-        batch
+        batch,
     )
     conn.commit()
-    
+
     count = conn.execute("SELECT COUNT(*) FROM drugs").fetchone()[0]
     print(f"Database contains {count} drugs after update.")
     conn.close()
     print("Indian drugs database expansion complete!")
+
 
 if __name__ == "__main__":
     add_indian_drugs()

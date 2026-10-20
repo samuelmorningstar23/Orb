@@ -26,9 +26,10 @@ Nothing here formats or parses stored data: every timestamp Orb persists stays
 UTC. This module only answers "which calendar day is it HERE, now", and converts
 such a day back into the UTC window it occupies.
 """
+
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta, timezone, tzinfo
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 
 
 def hospital_timezone() -> tzinfo:
@@ -47,7 +48,7 @@ def _utc_now() -> datetime:
     the suite has no freezegun, and the 00:00–05:30 IST window this module
     exists for cannot be exercised by waiting for it.
     """
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def hospital_now() -> datetime:
@@ -77,7 +78,7 @@ def to_hospital(value) -> datetime | None:
         except ValueError:
             return None
     if stamp.tzinfo is None:
-        stamp = stamp.replace(tzinfo=timezone.utc)
+        stamp = stamp.replace(tzinfo=UTC)
     return stamp.astimezone(hospital_timezone())
 
 
@@ -109,4 +110,4 @@ def local_day_bounds_utc(day: date | None = None) -> tuple[datetime, datetime]:
     # (India does not, but this module is not India-only) that is a 23- or
     # 25-hour UTC window — which is the correct length of that calendar day.
     end_local = start_local + timedelta(days=1)
-    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
+    return start_local.astimezone(UTC), end_local.astimezone(UTC)

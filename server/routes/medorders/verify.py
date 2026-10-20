@@ -16,6 +16,7 @@ Planned endpoints (docs/his_design/medorders.json, sections 5 and 8):
                              ruling R002)
   POST /{id}/reject          medication.verify, with a reason
 """
+
 from fastapi import APIRouter, Depends
 
 from routes.medorders import require_med_order_lifecycle

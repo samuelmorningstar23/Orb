@@ -10,11 +10,12 @@ Clinical note: element targets below encode the widely-taught Sepsis Six /
 Surviving Sepsis 1-hour bundle. They are configurable and must be confirmed
 against the deploying hospital's own protocol.
 """
+
 from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from database import db_session
 
@@ -22,12 +23,12 @@ logger = logging.getLogger("orb.sepsis_bundle")
 
 # Bundle element → human label + target minutes from trigger.
 _ELEMENTS: dict[str, dict] = {
-    "oxygen":       {"label": "Give high-flow oxygen",       "target_min": 60},
-    "cultures":     {"label": "Take blood cultures",          "target_min": 60},
-    "antibiotics":  {"label": "Give IV antibiotics",          "target_min": 60},
-    "fluids":       {"label": "Give IV fluids",               "target_min": 60},
-    "lactate":      {"label": "Measure serum lactate",        "target_min": 60},
-    "urine_output": {"label": "Monitor urine output",         "target_min": 60},
+    "oxygen": {"label": "Give high-flow oxygen", "target_min": 60},
+    "cultures": {"label": "Take blood cultures", "target_min": 60},
+    "antibiotics": {"label": "Give IV antibiotics", "target_min": 60},
+    "fluids": {"label": "Give IV fluids", "target_min": 60},
+    "lactate": {"label": "Measure serum lactate", "target_min": 60},
+    "urine_output": {"label": "Monitor urine output", "target_min": 60},
 }
 _ELEMENT_COLS = {k: f"{k}_at" for k in _ELEMENTS}
 
@@ -60,16 +61,22 @@ def trigger_reason_text(reason: str | None) -> str | None:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _now_iso() -> str:
     return _now().isoformat()
 
 
-def start_bundle(patient_id: str, *, bundle_type: str = "sepsis6",
-                 triggered_by: str | None = None, trigger_reason: str | None = None,
-                 source: str = "clinician", observed_at=None) -> dict | None:
+def start_bundle(
+    patient_id: str,
+    *,
+    bundle_type: str = "sepsis6",
+    triggered_by: str | None = None,
+    trigger_reason: str | None = None,
+    source: str = "clinician",
+    observed_at=None,
+) -> dict | None:
     """Open a bundle for a patient. If an active bundle already exists, return it
     (idempotent: we don't stack concurrent bundles of the same type).
 
@@ -139,12 +146,15 @@ def complete_element(bundle_id: int, element: str, *, actor_id: str | None = Non
                 "UPDATE care_bundles SET status = 'completed', completed_at = ? WHERE id = ?",
                 (_now_iso(), bundle_id),
             )
-            row = dict(db.execute("SELECT * FROM care_bundles WHERE id = ?", (bundle_id,)).fetchone())
+            row = dict(
+                db.execute("SELECT * FROM care_bundles WHERE id = ?", (bundle_id,)).fetchone()
+            )
     return _decorate(row)
 
 
-def cancel_bundle(bundle_id: int, *, actor_id: str | None = None,
-                  reason: str | None = None) -> bool:
+def cancel_bundle(
+    bundle_id: int, *, actor_id: str | None = None, reason: str | None = None
+) -> bool:
     """Cancel an active bundle. The route requires the reason and writes the
     audit row (who, why); the table has no column for either."""
     with db_session() as db:
@@ -215,12 +225,12 @@ def _scoring_enabled() -> bool:
     """ORB_SCORING_ENABLED through vigil_service, so the Ward Record profile
     (ORB_WARD_RECORD) switches it off here too. Read at call time."""
     from services.vigil_service import scoring_enabled
+
     return scoring_enabled()
 
 
 def _is_auto_start(row: dict) -> bool:
-    return (row.get("source") in _AUTO_STARTERS
-            or row.get("triggered_by") in _AUTO_STARTERS)
+    return row.get("source") in _AUTO_STARTERS or row.get("triggered_by") in _AUTO_STARTERS
 
 
 def _starter_names(user_ids) -> dict[str, str]:
@@ -232,7 +242,8 @@ def _starter_names(user_ids) -> dict[str, str]:
     marks = ",".join("?" for _ in ids)
     with db_session() as db:
         rows = db.execute(
-            f"SELECT id, name FROM users WHERE id IN ({marks})", ids,
+            f"SELECT id, name FROM users WHERE id IN ({marks})",
+            ids,
         ).fetchall()
     return {r["id"]: r["name"] for r in rows if r["name"]}
 
@@ -279,10 +290,15 @@ def _decorate(row: dict, names: dict[str, str] | None = None) -> dict:
             state = "overdue" if elapsed_min > target else "pending"
             if state == "overdue":
                 breached += 1
-        elements.append({
-            "key": key, "label": meta["label"], "target_min": target,
-            "completed_at": row.get(_ELEMENT_COLS[key]), "state": state,
-        })
+        elements.append(
+            {
+                "key": key,
+                "label": meta["label"],
+                "target_min": target,
+                "completed_at": row.get(_ELEMENT_COLS[key]),
+                "state": state,
+            }
+        )
 
     total = len(_ELEMENTS)
     on_time = sum(1 for e in elements if e["state"] == "done_on_time")
@@ -315,6 +331,7 @@ def autostart_enabled() -> bool:
     seen without re-importing. Off, no lane opens a bundle by itself; a
     clinician's own start_bundle call is unaffected."""
     import config
+
     return bool(getattr(config, "SEPSIS_AUTOSTART", True))
 
 
@@ -336,8 +353,10 @@ def maybe_autostart(patient_id: str, news2: dict, *, observed_at=None) -> dict |
         raw = news2.get("raw_news2", 0) if isinstance(news2, dict) else 0
         if raw is not None and raw >= 7:
             return start_bundle(
-                patient_id, triggered_by="vigil_auto",
-                trigger_reason=f"NEWS2 {raw} (>=7)", source="vigil_auto",
+                patient_id,
+                triggered_by="vigil_auto",
+                trigger_reason=f"NEWS2 {raw} (>=7)",
+                source="vigil_auto",
                 observed_at=observed_at,
             )
     except Exception as e:
@@ -355,13 +374,18 @@ def _auto_start_paused(patient_id: str, observed_at=None) -> bool:
     strict direction, and a clinician can cancel it with a reason."""
     try:
         from services.adt.clinical_pause import away_for, observed_after_leaving
+
         away = away_for(patient_id)
     except Exception as e:
-        logger.warning("sepsis auto-start: presence unreadable for %s (%s); starting as before",
-                       patient_id, e)
+        logger.warning(
+            "sepsis auto-start: presence unreadable for %s (%s); starting as before", patient_id, e
+        )
         return False
     if not away or observed_after_leaving(away, observed_at):
         return False
-    logger.info("sepsis auto-start: %s is recorded %s, no bundle opened (ruling ADT-S4)",
-                patient_id, away.get("presence_status"))
+    logger.info(
+        "sepsis auto-start: %s is recorded %s, no bundle opened (ruling ADT-S4)",
+        patient_id,
+        away.get("presence_status"),
+    )
     return True

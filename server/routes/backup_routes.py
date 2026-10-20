@@ -21,17 +21,17 @@ directory beside the live DB. The repo ``.gitignore`` already excludes these via
 the ``*.db`` (and ``*.db-wal`` / ``*.db-shm``) rules, so backup snapshots — which
 contain PHI — can never be accidentally committed. No .gitignore change is needed.
 """
+
 from __future__ import annotations
 
 import logging
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-
 from config import BACKUP_DIR, DB_PATH
+from fastapi import APIRouter, Depends, HTTPException, Request
 from permissions import require_permission
 from services.audit_service import log_audit_event
 
@@ -52,9 +52,9 @@ logger = logging.getLogger("orb.backup_routes")
 # app. Fall back to an inline replica if the script is not importable.
 try:
     from scripts.backup_db import (  # type: ignore
-        prune_old_backups,
         BACKUP_PREFIX,
         BACKUP_SUFFIX,
+        prune_old_backups,
     )
 except Exception:  # pragma: no cover - defensive fallback
     logger.warning("scripts.backup_db not importable; using inline prune replica")
@@ -62,13 +62,15 @@ except Exception:  # pragma: no cover - defensive fallback
     BACKUP_PREFIX = "orb-backup-"
     BACKUP_SUFFIX = ".db"
 
-    def prune_old_backups(out_dir: Path, retain_days: int) -> int:
+    def prune_old_backups(out_dir: Path, retain_days: int, *, new_backup: Path) -> int:
         """Inline replica: delete backups older than retain_days."""
         if retain_days <= 0 or not out_dir.is_dir():
             return 0
         cutoff = (datetime.now() - timedelta(days=retain_days)).timestamp()
         deleted = 0
         for candidate in out_dir.glob(f"{BACKUP_PREFIX}*{BACKUP_SUFFIX}"):
+            if candidate == new_backup:
+                continue
             try:
                 if candidate.stat().st_mtime < cutoff:
                     candidate.unlink()
@@ -76,6 +78,7 @@ except Exception:  # pragma: no cover - defensive fallback
             except OSError:
                 pass
         return deleted
+
 
 _TIMESTAMP_FMT = "%Y%m%d-%H%M%S"
 
@@ -103,7 +106,7 @@ def _out_dir() -> Path:
 def _describe(path: Path) -> dict:
     """Serialize one backup file's filename / size / mtime for the listing."""
     stat = path.stat()
-    when = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
+    when = datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat()
     return {
         "filename": path.name,
         "size_bytes": stat.st_size,
@@ -118,19 +121,31 @@ def _describe(path: Path) -> dict:
 _MAX_BACKUPS_SHOWN = 50
 
 
+_LIST_BACKUPS_USER_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.get("")
-def list_backups(user: dict = Depends(require_permission("admin.overview"))):
+def list_backups(user: dict = _LIST_BACKUPS_USER_DEFAULT):
     """Database posture (size, journal mode, encryption, row counts) and the
     list of existing backup snapshots (newest first)."""
     from database import db_session, encryption_at_rest_status
+
     from services import crypto_service
 
     db_path = Path(DB_PATH)
     with db_session() as db:
         journal_mode = db.execute("PRAGMA journal_mode").fetchone()[0]
         tables: dict = {}
-        for t in ("users", "patients", "admissions", "vitals", "audit_logs",
-                  "medications", "orders", "scribe_notes"):
+        for t in (
+            "users",
+            "patients",
+            "admissions",
+            "vitals",
+            "audit_logs",
+            "medications",
+            "orders",
+            "scribe_notes",
+        ):
             try:
                 tables[t] = db.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
             except Exception:
@@ -150,11 +165,15 @@ def list_backups(user: dict = Depends(require_permission("admin.overview"))):
     }
 
     out_dir = _out_dir()
-    files = sorted(
-        out_dir.glob(f"{BACKUP_PREFIX}*{BACKUP_SUFFIX}"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    ) if out_dir.is_dir() else []
+    files = (
+        sorted(
+            out_dir.glob(f"{BACKUP_PREFIX}*{BACKUP_SUFFIX}"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if out_dir.is_dir()
+        else []
+    )
     backups = [_describe(p) for p in files[:_MAX_BACKUPS_SHOWN]]
 
     return {
@@ -167,8 +186,11 @@ def list_backups(user: dict = Depends(require_permission("admin.overview"))):
     }
 
 
+_CREATE_BACKUP_USER_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.post("")
-def create_backup(request: Request, user: dict = Depends(require_permission("admin.overview"))):
+def create_backup(request: Request, user: dict = _CREATE_BACKUP_USER_DEFAULT):
     """Create a consistent online backup of the live SQLite database NOW.
 
     Uses sqlite3's online backup API through database.consistent_backup (codec-
@@ -194,14 +216,16 @@ def create_backup(request: Request, user: dict = Depends(require_permission("adm
     except RuntimeError as exc:
         # Integrity check failed on the fresh copy — surface as a server error.
         backup_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=500, detail=f"Backup integrity check failed: {exc}")
+        raise HTTPException(
+            status_code=500, detail=f"Backup integrity check failed: {exc}"
+        ) from exc
     except Exception as exc:  # pragma: no cover - defensive
         backup_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=500, detail=f"Backup failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Backup failed: {exc}") from exc
 
     # Best-effort pruning; never fail the request if pruning hits a stray file.
     try:
-        prune_old_backups(out_dir, _RETAIN_DAYS)
+        prune_old_backups(out_dir, _RETAIN_DAYS, new_backup=backup_path)
     except Exception:
         pass
 

@@ -19,13 +19,15 @@ Design principles (this is an investor / CFO diligence artifact):
 
 The service is pure DB reads (no writes, no side effects).
 """
+
 from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from database import db_session
+
 from services.stay_times import summary_less_ends_sql
 
 logger = logging.getLogger("orb.impact")
@@ -50,71 +52,71 @@ DEFAULT_ASSUMPTIONS: dict[str, dict] = {
         "value": 30,
         "unit": "days",
         "citation": "Reporting window. Money totals are reported per-month; a "
-                    "30-day window means totals are already monthly.",
+        "30-day window means totals are already monthly.",
     },
     "doc_minutes_saved_per_note": {
         "value": 7.0,
         "unit": "minutes/note",
         "citation": "Ambient AI-scribe time saving per encounter note. Conservative "
-                    "vs. published ambient-documentation studies (e.g. The Permanente "
-                    "Medical Group / Nuance DAX 2024 reporting ~1 hour/clinician/day).",
+        "vs. published ambient-documentation studies (e.g. The Permanente "
+        "Medical Group / Nuance DAX 2024 reporting ~1 hour/clinician/day).",
     },
     "clinician_hourly_cost_inr": {
         "value": 1500.0,
         "unit": "₹/hour",
         "citation": "SITE PLACEHOLDER: Indian private-hospital blended clinician cost. "
-                    "Derived, not measured: a consultant at ₹25-40 lakh/year fully loaded "
-                    "over ~2,000 clinical hours is ₹1,250-2,000/hour; blending in residents "
-                    "and RMOs pulls the average down. Replace with this hospital's payroll.",
+        "Derived, not measured: a consultant at ₹25-40 lakh/year fully loaded "
+        "over ~2,000 clinical hours is ₹1,250-2,000/hour; blending in residents "
+        "and RMOs pulls the average down. Replace with this hospital's payroll.",
     },
     "icu_day_cost_inr": {
         "value": 15000.0,
         "unit": "₹/ICU-day",
         "citation": "SITE PLACEHOLDER: incremental cost of one private-hospital ICU day in "
-                    "India. Deliberately at the conservative end of the private range. For a "
-                    "published floor, PM-JAY (Ayushman Bharat) HBP critical-care packages are "
-                    "several times lower; public-scheme tariffs are not private cost. Replace "
-                    "with this hospital's own ICU costing.",
+        "India. Deliberately at the conservative end of the private range. For a "
+        "published floor, PM-JAY (Ayushman Bharat) HBP critical-care packages are "
+        "several times lower; public-scheme tariffs are not private cost. Replace "
+        "with this hospital's own ICU costing.",
     },
     "deterioration_icu_avoidance_rate": {
         "value": 0.15,
         "unit": "fraction",
         "citation": "Fraction of NEWS2 escalations / Sepsis Six bundles "
-                    "that avert an ICU day. Conservative estimate from rapid-response-team "
-                    "and Surviving-Sepsis 1-hour-bundle outcome literature.",
+        "that avert an ICU day. Conservative estimate from rapid-response-team "
+        "and Surviving-Sepsis 1-hour-bundle outcome literature.",
     },
     "ade_cost_inr": {
         "value": 40000.0,
         "unit": "₹/ADE",
         "citation": "SITE PLACEHOLDER: incremental cost of one preventable adverse drug "
-                    "event in an Indian private hospital (extra bed-days plus treatment). "
-                    "The underlying effect is well established (Bates et al. JAMA 1997 and "
-                    "the AHRQ literature); the RUPEE figure is our estimate, not a published "
-                    "Indian cost study. Replace with this hospital's own incident costing.",
+        "event in an Indian private hospital (extra bed-days plus treatment). "
+        "The underlying effect is well established (Bates et al. JAMA 1997 and "
+        "the AHRQ literature); the RUPEE figure is our estimate, not a published "
+        "Indian cost study. Replace with this hospital's own incident costing.",
     },
     "ade_avoidance_rate_per_alert": {
         "value": 0.03,
         "unit": "fraction",
         "citation": "Fraction of interaction/allergy alerts + pharmacist AI-med verifications "
-                    "that represent a genuinely averted ADE. Alert-fatigue-adjusted "
-                    "(~1 in 33 alerts clinically actionable).",
+        "that represent a genuinely averted ADE. Alert-fatigue-adjusted "
+        "(~1 in 33 alerts clinically actionable).",
     },
     "ward_bed_day_cost_inr": {
         "value": 5000.0,
         "unit": "₹/bed-day",
         "citation": "SITE PLACEHOLDER: cost (not tariff) of one general-ward bed-day in an "
-                    "Indian private hospital, used for length-of-stay / throughput savings. "
-                    "Note this is deliberately BELOW the ₹10,000-15,000 ARPOB band Orb "
-                    "qualifies hospitals on: ARPOB is revenue per occupied bed-day, and using "
-                    "revenue here would overstate savings. Replace with this hospital's own "
-                    "cost-per-bed-day.",
+        "Indian private hospital, used for length-of-stay / throughput savings. "
+        "Note this is deliberately BELOW the ₹10,000-15,000 ARPOB band Orb "
+        "qualifies hospitals on: ARPOB is revenue per occupied bed-day, and using "
+        "revenue here would overstate savings. Replace with this hospital's own "
+        "cost-per-bed-day.",
     },
     "los_reduction_days_per_discharge": {
         "value": 0.25,
         "unit": "days/discharge",
         "citation": "Length-of-stay reduction per structured discharge + medication "
-                    "reconciliation, from faster and more complete discharge documentation. "
-                    "Deliberately conservative (quarter-day).",
+        "reconciliation, from faster and more complete discharge documentation. "
+        "Deliberately conservative (quarter-day).",
     },
 }
 
@@ -188,6 +190,7 @@ def _group_digits(n: int) -> str:
     digits = str(abs(n))
     if len(digits) > 3:
         head, tail = digits[:-3], digits[-3:]
+        groups: list[str]
         groups = []
         while len(head) > 2:
             groups.insert(0, head[-2:])
@@ -222,8 +225,9 @@ _READING_SOURCE_SQL = (
 )
 
 
-def _count_by_reading_source(db, alias: str, col: str, from_where: str,
-                             params: tuple) -> tuple[int, int, int]:
+def _count_by_reading_source(
+    db, alias: str, col: str, from_where: str, params: tuple
+) -> tuple[int, int, int]:
     """(real, simulated, unattributed) rows of ``from_where`` in ONE pass.
 
     One query rather than three because the source lookup is a correlated
@@ -231,10 +235,12 @@ def _count_by_reading_source(db, alias: str, col: str, from_where: str,
     Degrades to zeros like ``_count``.
     """
     src = _READING_SOURCE_SQL.format(alias=alias, col=col)
-    sql = ("SELECT SUM(CASE WHEN src <> 'simulated' THEN 1 ELSE 0 END), "
-           "       SUM(CASE WHEN src = 'simulated' THEN 1 ELSE 0 END), "
-           "       SUM(CASE WHEN src IS NULL THEN 1 ELSE 0 END) "
-           f"FROM (SELECT {src} AS src {from_where})")
+    sql = (
+        "SELECT SUM(CASE WHEN src <> 'simulated' THEN 1 ELSE 0 END), "
+        "       SUM(CASE WHEN src = 'simulated' THEN 1 ELSE 0 END), "
+        "       SUM(CASE WHEN src IS NULL THEN 1 ELSE 0 END) "
+        f"FROM (SELECT {src} AS src {from_where})"
+    )
     try:
         row = db.execute(sql, params).fetchone()
     except Exception as e:  # noqa: BLE001 - graceful degradation is the point
@@ -258,7 +264,7 @@ def compute_impact(assumptions: dict | None = None) -> dict:
     """
     a = _resolve_assumptions(assumptions)
     period_days = int(a["period_days"])
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cutoff = (now - timedelta(days=period_days)).isoformat()
 
     # We filter on julianday(col) so both 'YYYY-MM-DD HH:MM:SS' (CURRENT_TIMESTAMP)
@@ -277,19 +283,21 @@ def compute_impact(assumptions: dict | None = None) -> dict:
         minutes_saved = notes * a["doc_minutes_saved_per_note"]
         doc_amount = _money((minutes_saved / 60.0) * a["clinician_hourly_cost_inr"])
         total_evidence += notes
-        metrics.append({
-            "key": "documentation_time_saved",
-            "label": "Documentation time saved",
-            "value": round(minutes_saved, 0),
-            "unit": "clinician-minutes",
-            "amount": doc_amount,
-            "evidence_count": notes,
-            "assumption": (
-                f"{notes} Scribe {_plural(notes, 'note')} × "
-                f"{a['doc_minutes_saved_per_note']:g} min saved per note × "
-                f"{_fmt_money(a['clinician_hourly_cost_inr'])} per clinician-hour"
-            ),
-        })
+        metrics.append(
+            {
+                "key": "documentation_time_saved",
+                "label": "Documentation time saved",
+                "value": round(minutes_saved, 0),
+                "unit": "clinician-minutes",
+                "amount": doc_amount,
+                "evidence_count": notes,
+                "assumption": (
+                    f"{notes} Scribe {_plural(notes, 'note')} × "
+                    f"{a['doc_minutes_saved_per_note']:g} min saved per note × "
+                    f"{_fmt_money(a['clinician_hourly_cost_inr'])} per clinician-hour"
+                ),
+            }
+        )
 
         # ── 2. Deterioration caught early (Vigil + Sepsis-Six) ───────────────
         # Only escalations behind a REAL reading count. The vitals simulator and
@@ -299,14 +307,20 @@ def compute_impact(assumptions: dict | None = None) -> dict:
         # at all cannot be attributed either way and is left out too: this
         # model under-claims rather than invents.
         news2_escalations, news2_simulated, news2_unattributed = _count_by_reading_source(
-            db, "rs", "timestamp",
+            db,
+            "rs",
+            "timestamp",
             "FROM risk_scores rs WHERE rs.level = 'critical' "
             "AND julianday(rs.timestamp) >= julianday(?)",
-            (cutoff,))
+            (cutoff,),
+        )
         bundles_started, bundles_simulated, bundles_unattributed = _count_by_reading_source(
-            db, "cb", "triggered_at",
+            db,
+            "cb",
+            "triggered_at",
             "FROM care_bundles cb WHERE julianday(cb.triggered_at) >= julianday(?)",
-            (cutoff,))
+            (cutoff,),
+        )
 
         escalations = news2_escalations + bundles_started
         simulated_excluded = news2_simulated + bundles_simulated
@@ -318,29 +332,33 @@ def compute_impact(assumptions: dict | None = None) -> dict:
         if simulated_excluded:
             exclusions.append(
                 f"{simulated_excluded} driven by simulated vitals "
-                f"{_plural(simulated_excluded, 'is', 'are')} left out")
+                f"{_plural(simulated_excluded, 'is', 'are')} left out"
+            )
         if unattributed_excluded:
             exclusions.append(
                 f"{unattributed_excluded} with no recorded reading "
-                f"{_plural(unattributed_excluded, 'is', 'are')} left out")
-        metrics.append({
-            "key": "deterioration_caught_early",
-            "label": "Deterioration caught early",
-            "value": round(icu_days_avoided, 1),
-            "unit": "ICU days avoided (est.)",
-            "amount": deter_amount,
-            "evidence_count": escalations,
-            "excluded_simulated": simulated_excluded,
-            "excluded_unattributed": unattributed_excluded,
-            "assumption": (
-                f"{news2_escalations} NEWS2 critical "
-                f"{_plural(news2_escalations, 'escalation')} + {bundles_started} sepsis "
-                f"{_plural(bundles_started, 'bundle')} × "
-                f"{a['deterioration_icu_avoidance_rate']:g} ICU-day avoidance rate × "
-                f"{_fmt_money(a['icu_day_cost_inr'])} per ICU day"
-                + ("; " + "; ".join(exclusions) if exclusions else "")
-            ),
-        })
+                f"{_plural(unattributed_excluded, 'is', 'are')} left out"
+            )
+        metrics.append(
+            {
+                "key": "deterioration_caught_early",
+                "label": "Deterioration caught early",
+                "value": round(icu_days_avoided, 1),
+                "unit": "ICU days avoided (est.)",
+                "amount": deter_amount,
+                "evidence_count": escalations,
+                "excluded_simulated": simulated_excluded,
+                "excluded_unattributed": unattributed_excluded,
+                "assumption": (
+                    f"{news2_escalations} NEWS2 critical "
+                    f"{_plural(news2_escalations, 'escalation')} + {bundles_started} sepsis "
+                    f"{_plural(bundles_started, 'bundle')} × "
+                    f"{a['deterioration_icu_avoidance_rate']:g} ICU-day avoidance rate × "
+                    f"{_fmt_money(a['icu_day_cost_inr'])} per ICU day"
+                    + ("; " + "; ".join(exclusions) if exclusions else "")
+                ),
+            }
+        )
 
         # ── 3. Medication safety (Helix + Pharmacy) ─────────────────────────
         # AI/agentic-extracted meds that a pharmacist actually verified — a real
@@ -364,21 +382,23 @@ def compute_impact(assumptions: dict | None = None) -> dict:
         ades_avoided = med_events * a["ade_avoidance_rate_per_alert"]
         med_amount = _money(ades_avoided * a["ade_cost_inr"])
         total_evidence += med_events
-        metrics.append({
-            "key": "medication_safety",
-            "label": "Medication safety",
-            "value": round(ades_avoided, 1),
-            "unit": "ADEs avoided (est.)",
-            "amount": med_amount,
-            "evidence_count": med_events,
-            "assumption": (
-                f"{ai_med_verifications} pharmacist "
-                f"{_plural(ai_med_verifications, 'verification')} of AI-extracted medicines + "
-                f"{safety_reviews} drug-safety {_plural(safety_reviews, 'review')} × "
-                f"{a['ade_avoidance_rate_per_alert']:g} avoidance rate × "
-                f"{_fmt_money(a['ade_cost_inr'])} per adverse drug event"
-            ),
-        })
+        metrics.append(
+            {
+                "key": "medication_safety",
+                "label": "Medication safety",
+                "value": round(ades_avoided, 1),
+                "unit": "ADEs avoided (est.)",
+                "amount": med_amount,
+                "evidence_count": med_events,
+                "assumption": (
+                    f"{ai_med_verifications} pharmacist "
+                    f"{_plural(ai_med_verifications, 'verification')} of AI-extracted medicines + "
+                    f"{safety_reviews} drug-safety {_plural(safety_reviews, 'review')} × "
+                    f"{a['ade_avoidance_rate_per_alert']:g} avoidance rate × "
+                    f"{_fmt_money(a['ade_cost_inr'])} per adverse drug event"
+                ),
+            }
+        )
 
         # ── 4. Throughput (LOS + discharge reconciliation) ──────────────────
         # Every discharge event in the period: the summaries, plus the ends
@@ -405,24 +425,28 @@ def compute_impact(assumptions: dict | None = None) -> dict:
         los_days_saved = discharge_recons * a["los_reduction_days_per_discharge"]
         throughput_amount = _money(los_days_saved * a["ward_bed_day_cost_inr"])
         total_evidence += discharge_recons
-        metrics.append({
-            "key": "throughput",
-            "label": "Throughput & length of stay",
-            # None, not 0: "0 days average stay" is a measurement nobody made.
-            "value": round(avg_los, 2) if avg_los is not None else None,
-            "unit": "days average length of stay",
-            "amount": throughput_amount,
-            "evidence_count": discharge_recons,
-            "assumption": (
-                f"{discharge_recons} discharge "
-                f"{_plural(discharge_recons, 'reconciliation')} × "
-                f"{a['los_reduction_days_per_discharge']:g} day shorter stay × "
-                f"{_fmt_money(a['ward_bed_day_cost_inr'])} per bed-day; "
-                + (f"measured average length of stay {avg_los:.2f} days"
-                   if avg_los is not None
-                   else "average length of stay not yet measured")
-            ),
-        })
+        metrics.append(
+            {
+                "key": "throughput",
+                "label": "Throughput & length of stay",
+                # None, not 0: "0 days average stay" is a measurement nobody made.
+                "value": round(avg_los, 2) if avg_los is not None else None,
+                "unit": "days average length of stay",
+                "amount": throughput_amount,
+                "evidence_count": discharge_recons,
+                "assumption": (
+                    f"{discharge_recons} discharge "
+                    f"{_plural(discharge_recons, 'reconciliation')} × "
+                    f"{a['los_reduction_days_per_discharge']:g} day shorter stay × "
+                    f"{_fmt_money(a['ward_bed_day_cost_inr'])} per bed-day; "
+                    + (
+                        f"measured average length of stay {avg_los:.2f} days"
+                        if avg_los is not None
+                        else "average length of stay not yet measured"
+                    )
+                ),
+            }
+        )
 
     # ── Totals ──────────────────────────────────────────────────────────────
     monthly = _money(sum(m["amount"] for m in metrics) * (30.0 / period_days))

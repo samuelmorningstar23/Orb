@@ -9,6 +9,7 @@ Core orchestration layer for data ingestion. Handles:
   6. Socket.IO emission for live frontend updates
   7. Alert checking via shared Vigil logic
 """
+
 from __future__ import annotations
 
 import json
@@ -17,12 +18,13 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Optional
-
-logger = logging.getLogger("orb.ingestion")
+from datetime import UTC, datetime
 
 from database import db_session, run_db
+
+from services.audit_service import log_audit_event
+from services.bot_service import VIGIL_BOT_ID
+from services.clinical_time import device_naive_tz, to_utc_iso, utc_iso_now
 from services.ingestion_adapters import (
     CanonicalEvent,
     IngestionAdapter,
@@ -30,34 +32,33 @@ from services.ingestion_adapters import (
     ParseError,
     compute_fingerprint,
     select_adapter,
-    HL7Adapter,
-    JSONAdapter,
 )
+from services.news2_text import news2_description
 from services.vigil_service import news2_reason_line, score_vitals_row, scoring_enabled
-from services.bot_service import VIGIL_BOT_ID
 from services.vital_charting import as_charted, vitals_line
 from services.vitals_carry import carry_forward, dump_carried
-from services.news2_text import news2_description
-from services.audit_service import log_audit_event
-from services.clinical_time import device_naive_tz, to_utc_iso, utc_iso_now
+
+logger = logging.getLogger("orb.ingestion")
 
 
 # ════════════════════════════════════════════
 #  Ingestion Result
 # ════════════════════════════════════════════
 
+
 @dataclass
 class IngestionResult:
     """Summary returned to the caller after processing a payload."""
-    event_id: int = 0                    # ingestion_events.id
-    correlation_id: Optional[str] = None
+
+    event_id: int = 0  # ingestion_events.id
+    correlation_id: str | None = None
     parse_status: str = "received"
-    received: int = 0                    # canonical events parsed
+    received: int = 0  # canonical events parsed
     inserted_vitals: int = 0
     inserted_observations: int = 0
     duplicates: int = 0
-    errors: list[str] = None             # type: ignore
-    backfill: bool = False               # stored, but not treated as current state
+    errors: list[str] = None  # type: ignore
+    backfill: bool = False  # stored, but not treated as current state
     # Results that matched no patient and went to the unmatched results queue
     # (ORB_RESULT_QUARANTINE, lis-19). Stored, so a success for the sender.
     quarantined: int = 0
@@ -113,7 +114,7 @@ _SOURCE_LABELS = {
 ANY_FACILITY = object()
 
 
-def _resolve_patient_id(db, raw_identifier: str, facility_id=ANY_FACILITY) -> Optional[str]:
+def _resolve_patient_id(db, raw_identifier: str, facility_id=ANY_FACILITY) -> str | None:
     """Try to match a raw patient identifier to an existing patient.
 
     Checks, in order:
@@ -187,10 +188,11 @@ def _resolve_patient_id(db, raw_identifier: str, facility_id=ANY_FACILITY) -> Op
 class SourceBinding:
     """How a caller bound its source: a facility by id or code, or nothing
     (`cause` says why). bound_by: 'ingestion_key' or 'site_config'."""
-    facility_id: Optional[int] = None
-    facility_code: Optional[str] = None
+
+    facility_id: int | None = None
+    facility_code: str | None = None
     bound_by: str = "site_config"
-    cause: Optional[str] = None
+    cause: str | None = None
 
 
 @dataclass(frozen=True)
@@ -198,12 +200,13 @@ class SourceFacility:
     """The facility one payload files to. `limited` False: no facility limit
     (one facility on record, or a chart lane). Limited with facility_id None:
     bound to no facility, so it files to nobody."""
+
     limited: bool
-    facility_id: Optional[int] = None
-    source_name: Optional[str] = None
+    facility_id: int | None = None
+    source_name: str | None = None
     bound_by: str = "one_facility"
-    facility_code: Optional[str] = None
-    cause: Optional[str] = None
+    facility_code: str | None = None
+    cause: str | None = None
 
 
 NO_FACILITY_LIMIT = SourceFacility(limited=False)
@@ -215,8 +218,7 @@ SOURCE_REFUSAL_WORDS = {
     "facility_inactive": "the source is bound to a facility that is closed",
     "key_shared": "the key it signed in with belongs to more than one facility",
     "source_unbound": "the source is bound to no facility",
-    "identifier_at_another_facility":
-        "the patient identifier names a patient record at another facility",
+    "identifier_at_another_facility": "the patient identifier names a patient record at another facility",
 }
 
 #: At most one audit row per (source, cause, patient) in this many seconds;
@@ -231,63 +233,89 @@ _refusal_seen: dict[tuple, dict] = {}
 _refusal_clock = time.monotonic
 
 
-def _chart_lane(source_label: Optional[str]) -> bool:
+def _chart_lane(source_label: str | None) -> bool:
     """A lane whose patient its route already scoped: the label is MANUAL."""
     from services.vitals_source.base import SourceKind, classify_source_label
+
     return classify_source_label(source_label) is SourceKind.MANUAL
 
 
-def resolve_source_facility(binding: Optional[SourceBinding], source_name: Optional[str],
-                            source_label: Optional[str], *, db=None) -> SourceFacility:
+def resolve_source_facility(
+    binding: SourceBinding | None, source_name: str | None, source_label: str | None, *, db=None
+) -> SourceFacility:
     """The facility a payload from this source files to. BLOCKING (one
     facilities read); call it through run_db from async code."""
     from services import facility_service
+
     if not facility_service.multi_facility_data(db=db):
         return NO_FACILITY_LIMIT
     if binding is None:
         if _chart_lane(source_label):
             return SourceFacility(limited=False, source_name=source_name, bound_by="chart")
         from services.site_config_service import facility_for_ingestion_source
+
         code = facility_for_ingestion_source(source_name)
-        binding = SourceBinding(facility_code=code, bound_by="site_config",
-                                cause=None if code else "source_not_listed")
+        binding = SourceBinding(
+            facility_code=code, bound_by="site_config", cause=None if code else "source_not_listed"
+        )
     if binding.facility_id is None and not binding.facility_code:
-        return SourceFacility(limited=True, facility_id=None, source_name=source_name,
-                              bound_by=binding.bound_by, cause=binding.cause or "source_unbound")
+        return SourceFacility(
+            limited=True,
+            facility_id=None,
+            source_name=source_name,
+            bound_by=binding.bound_by,
+            cause=binding.cause or "source_unbound",
+        )
     if db is None:
         with db_session() as own:
             return _bound_facility_on(own, binding, source_name)
     return _bound_facility_on(db, binding, source_name)
 
 
-def _bound_facility_on(db, binding: SourceBinding, source_name: Optional[str]) -> SourceFacility:
+def _bound_facility_on(db, binding: SourceBinding, source_name: str | None) -> SourceFacility:
     if binding.facility_id is not None:
-        row = db.execute("SELECT id, code, is_active FROM facilities WHERE id = ?",
-                         (binding.facility_id,)).fetchone()
+        row = db.execute(
+            "SELECT id, code, is_active FROM facilities WHERE id = ?", (binding.facility_id,)
+        ).fetchone()
     else:
-        row = db.execute("SELECT id, code, is_active FROM facilities WHERE code = ? COLLATE NOCASE",
-                         (binding.facility_code,)).fetchone()
+        row = db.execute(
+            "SELECT id, code, is_active FROM facilities WHERE code = ? COLLATE NOCASE",
+            (binding.facility_code,),
+        ).fetchone()
     code = row["code"] if row is not None else binding.facility_code
     if row is None or not row["is_active"]:
-        return SourceFacility(limited=True, facility_id=None, source_name=source_name,
-                              bound_by=binding.bound_by, facility_code=code,
-                              cause="unknown_facility_code" if row is None else "facility_inactive")
-    return SourceFacility(limited=True, facility_id=int(row["id"]), source_name=source_name,
-                          bound_by=binding.bound_by, facility_code=code)
+        return SourceFacility(
+            limited=True,
+            facility_id=None,
+            source_name=source_name,
+            bound_by=binding.bound_by,
+            facility_code=code,
+            cause="unknown_facility_code" if row is None else "facility_inactive",
+        )
+    return SourceFacility(
+        limited=True,
+        facility_id=int(row["id"]),
+        source_name=source_name,
+        bound_by=binding.bound_by,
+        facility_code=code,
+    )
 
 
-async def _source_facility(binding: Optional[SourceBinding], source_name: Optional[str],
-                           source_label: Optional[str]) -> SourceFacility:
+async def _source_facility(
+    binding: SourceBinding | None, source_name: str | None, source_label: str | None
+) -> SourceFacility:
     """resolve_source_facility for ingest_payload: with one facility on record
     and a warm cache, no executor hop and no statement."""
     from services import facility_service
+
     if not await facility_service.multi_facility_data_async():
         return NO_FACILITY_LIMIT
     return await run_db(resolve_source_facility, binding, source_name, source_label)
 
 
-def _facility_match(db, raw_identifier: str,
-                    source: SourceFacility) -> tuple[Optional[str], Optional[dict]]:
+def _facility_match(
+    db, raw_identifier: str, source: SourceFacility
+) -> tuple[str | None, dict | None]:
     """(patient id, refusal) for one identifier from one source.
 
     No facility limit: today's match and no refusal. A source bound to no
@@ -300,27 +328,44 @@ def _facility_match(db, raw_identifier: str,
     if not source.limited:
         return today, None
     if source.facility_id is None:
-        return None, _source_refusal(source, cause=source.cause or "source_unbound",
-                                     patient_id=today)
+        return None, _source_refusal(
+            source, cause=source.cause or "source_unbound", patient_id=today
+        )
     if today is None:
         return None, None
     from permissions import FACILITY_PATIENT_SQL
+
     rows = db.execute(
         f"SELECT p.id AS id, {FACILITY_PATIENT_SQL} AS fid FROM patients p "
         "WHERE p.id = ? OR p.mrn = ? OR LOWER(p.mrn) = LOWER(?)",
-        (raw_identifier, raw_identifier, raw_identifier)).fetchall()
-    elsewhere = sorted({int(r["fid"]) for r in rows
-                        if r["fid"] is not None and int(r["fid"]) != source.facility_id})
+        (raw_identifier, raw_identifier, raw_identifier),
+    ).fetchall()
+    elsewhere = sorted(
+        {
+            int(r["fid"])
+            for r in rows
+            if r["fid"] is not None and int(r["fid"]) != source.facility_id
+        }
+    )
     # A record whose facility cannot be read counts as another facility's.
     unreadable = any(r["fid"] is None for r in rows)
     if not elsewhere and not unreadable:
         return today, None
-    return None, _source_refusal(source, cause="identifier_at_another_facility",
-                                 patient_id=today, other_facility_ids=elsewhere)
+    return None, _source_refusal(
+        source,
+        cause="identifier_at_another_facility",
+        patient_id=today,
+        other_facility_ids=elsewhere,
+    )
 
 
-def _source_refusal(source: SourceFacility, *, cause: str, patient_id: Optional[str],
-                    other_facility_ids: Optional[list] = None) -> dict:
+def _source_refusal(
+    source: SourceFacility,
+    *,
+    cause: str,
+    patient_id: str | None,
+    other_facility_ids: list | None = None,
+) -> dict:
     return {
         "source_name": source.source_name,
         "bound_by": source.bound_by,
@@ -342,9 +387,13 @@ class SourceFacilityRefused(ValueError):
         self.refusal = refusal
 
 
-def record_source_refusal(refusal: dict, *, source_label: Optional[str] = None,
-                          event_id: Optional[int] = None,
-                          correlation_id: Optional[str] = None) -> bool:
+def record_source_refusal(
+    refusal: dict,
+    *,
+    source_label: str | None = None,
+    event_id: int | None = None,
+    correlation_id: str | None = None,
+) -> bool:
     """Count one refusal for the operations status page and, when due, write
     the authorization 'ingestion_source_unbound' row. BLOCKING (the audit
     write), never raises. True when a row was written."""
@@ -376,8 +425,10 @@ def record_source_refusal(refusal: dict, *, source_label: Optional[str] = None,
             source_event_id=event_id,
             target_type="ingestion_source",
             target_id=source or None,
-            summary_message=(f"Readings from ingestion source {source or '(unnamed)'} were "
-                             f"filed to no patient: {SOURCE_REFUSAL_WORDS.get(cause, cause)}."),
+            summary_message=(
+                f"Readings from ingestion source {source or '(unnamed)'} were "
+                f"filed to no patient: {SOURCE_REFUSAL_WORDS.get(cause, cause)}."
+            ),
             metadata={
                 "source_name": source or None,
                 "bound_by": refusal.get("bound_by"),
@@ -400,10 +451,16 @@ def source_refusals() -> list[dict]:
     counts only, never a patient."""
     with _refusal_lock:
         items = [(k, dict(v)) for k, v in _refusal_seen.items()]
-    return [{"source_name": source or None, "cause": cause,
-             "words": SOURCE_REFUSAL_WORDS.get(cause, cause),
-             "refusals": v["refusals"], "last_at": v.get("last_at")}
-            for (source, cause), v in sorted(items, key=lambda kv: kv[0])]
+    return [
+        {
+            "source_name": source or None,
+            "cause": cause,
+            "words": SOURCE_REFUSAL_WORDS.get(cause, cause),
+            "refusals": v["refusals"],
+            "last_at": v.get("last_at"),
+        }
+        for (source, cause), v in sorted(items, key=lambda kv: kv[0])
+    ]
 
 
 def reset_source_refusals() -> None:
@@ -413,13 +470,17 @@ def reset_source_refusals() -> None:
         _refusal_audit_last.clear()
 
 
-def _facility_on_record(db, code: Optional[str]) -> Optional[dict]:
+def _facility_on_record(db, code: str | None) -> dict | None:
     if not code:
         return None
-    row = db.execute("SELECT id, code, is_active FROM facilities WHERE code = ? COLLATE NOCASE",
-                     (code,)).fetchone()
-    return None if row is None else {"id": int(row["id"]), "code": row["code"],
-                                     "active": bool(row["is_active"])}
+    row = db.execute(
+        "SELECT id, code, is_active FROM facilities WHERE code = ? COLLATE NOCASE", (code,)
+    ).fetchone()
+    return (
+        None
+        if row is None
+        else {"id": int(row["id"]), "code": row["code"], "active": bool(row["is_active"])}
+    )
 
 
 def source_binding_report(db) -> dict:
@@ -436,6 +497,7 @@ def source_binding_report(db) -> dict:
     import os
 
     import config
+
     from services.site_config_service import current_site_config
 
     cfg = current_site_config()
@@ -453,8 +515,7 @@ def source_binding_report(db) -> dict:
     elif not monitor_fac["active"]:
         cause = "facility_inactive"
     if enabled and cause:
-        unbound.append(f"the bedside monitor feed '{monitor_name}' "
-                       f"({SOURCE_REFUSAL_WORDS[cause]})")
+        unbound.append(f"the bedside monitor feed '{monitor_name}' ({SOURCE_REFUSAL_WORDS[cause]})")
 
     keys = config.ingestion_facility_keys()
     main_key = str(config.INGESTION_API_KEY or "")
@@ -462,31 +523,58 @@ def source_binding_report(db) -> dict:
     for code in sorted(keys):
         fac = _facility_on_record(db, code)
         shared = any(other != code and keys[other] == keys[code] for other in keys) or (
-            code != "MAIN" and keys[code] == main_key)
-        facility_keys.append({"code": code, "on_record": fac is not None,
-                              "active": bool(fac and fac["active"]), "shared": shared})
+            code != "MAIN" and keys[code] == main_key
+        )
+        facility_keys.append(
+            {
+                "code": code,
+                "on_record": fac is not None,
+                "active": bool(fac and fac["active"]),
+                "shared": shared,
+            }
+        )
         if shared:
-            unbound.append(f"the ingestion key for facility {code} "
-                           f"({SOURCE_REFUSAL_WORDS['key_shared']})")
+            unbound.append(
+                f"the ingestion key for facility {code} ({SOURCE_REFUSAL_WORDS['key_shared']})"
+            )
         elif fac is None or not fac["active"]:
-            unbound.append(f"the ingestion key for facility {code} ("
-                           + SOURCE_REFUSAL_WORDS["unknown_facility_code" if fac is None
-                                                  else "facility_inactive"] + ")")
+            unbound.append(
+                f"the ingestion key for facility {code} ("
+                + SOURCE_REFUSAL_WORDS[
+                    "unknown_facility_code" if fac is None else "facility_inactive"
+                ]
+                + ")"
+            )
 
     site_config = []
     for f in cfg.facilities:
         fac = _facility_on_record(db, f["code"])
-        site_config.append({"code": f["code"], "ingestion_sources": list(f["ingestion_sources"]),
-                            "on_record": fac is not None, "active": bool(fac and fac["active"])})
+        site_config.append(
+            {
+                "code": f["code"],
+                "ingestion_sources": list(f["ingestion_sources"]),
+                "on_record": fac is not None,
+                "active": bool(fac and fac["active"]),
+            }
+        )
         if f["ingestion_sources"] and (fac is None or not fac["active"]):
-            unbound.append(f"the sources listed under facility {f['code']} in the site settings "
-                           "file (" + SOURCE_REFUSAL_WORDS["unknown_facility_code" if fac is None
-                                                          else "facility_inactive"] + ")")
+            unbound.append(
+                f"the sources listed under facility {f['code']} in the site settings "
+                "file ("
+                + SOURCE_REFUSAL_WORDS[
+                    "unknown_facility_code" if fac is None else "facility_inactive"
+                ]
+                + ")"
+            )
 
     return {
-        "monitor_feed": {"enabled": enabled, "source_name": monitor_name,
-                         "facility_code": monitor_code, "bound": cause is None,
-                         "cause": cause},
+        "monitor_feed": {
+            "enabled": enabled,
+            "source_name": monitor_name,
+            "facility_code": monitor_code,
+            "bound": cause is None,
+            "cause": cause,
+        },
         "facility_keys": facility_keys,
         "keys_ignored": config.ingestion_facility_keys_ignored(),
         "site_config": site_config,
@@ -514,6 +602,7 @@ def source_binding_report(db) -> dict:
 # the gap. Keeping the pair inside one executor call keeps it atomic AND leaves
 # the loop free — do not "simplify" one of these into separate awaits.
 
+
 def _find_duplicate_event(fingerprint):
     with db_session() as db:
         existing = db.execute(
@@ -523,8 +612,9 @@ def _find_duplicate_event(fingerprint):
         return existing
 
 
-def _persist_vitals_row(patient_raw_id, vital_events, event_id, source_label,
-                        source_facility=NO_FACILITY_LIMIT):
+def _persist_vitals_row(
+    patient_raw_id, vital_events, event_id, source_label, source_facility=NO_FACILITY_LIMIT
+):
     # `source_facility` (multisite-16) limits which patient the identifier may
     # name; a refusal raises SourceFacilityRefused with the unknown-patient
     # words before anything is written. The default is no limit.
@@ -545,8 +635,13 @@ def _persist_vitals_row(patient_raw_id, vital_events, event_id, source_label,
             raise ValueError(f"Patient not found for identifier: {patient_raw_id}")
 
         # Collect vital values
-        vitals_map: dict[str, Optional[float]] = {
-            "HR": None, "SBP": None, "DBP": None, "SpO2": None, "Temp": None, "RR": None,
+        vitals_map: dict[str, float | None] = {
+            "HR": None,
+            "SBP": None,
+            "DBP": None,
+            "SpO2": None,
+            "Temp": None,
+            "RR": None,
         }
         observed_at = None
 
@@ -568,8 +663,11 @@ def _persist_vitals_row(patient_raw_id, vital_events, event_id, source_label,
             try:
                 observed_at = to_utc_iso(observed_at, naive_tz=device_naive_tz())
             except ValueError:
-                logger.warning("Undateable observed_at %r for %s: stored at receipt time",
-                               observed_at, patient_raw_id)
+                logger.warning(
+                    "Undateable observed_at %r for %s: stored at receipt time",
+                    observed_at,
+                    patient_raw_id,
+                )
                 observed_at = None
         if not observed_at:
             observed_at = utc_iso_now()
@@ -614,11 +712,18 @@ def _persist_vitals_row(patient_raw_id, vital_events, event_id, source_label,
         on_oxygen = None
         carried: dict[str, str] = {}
         if latest:
-            columns = {"HR": "heart_rate", "SBP": "systolic_bp", "DBP": "diastolic_bp",
-                       "SpO2": "spo2", "Temp": "temperature", "RR": "respiratory_rate"}
+            columns = {
+                "HR": "heart_rate",
+                "SBP": "systolic_bp",
+                "DBP": "diastolic_bp",
+                "SpO2": "spo2",
+                "Temp": "temperature",
+                "RR": "respiratory_rate",
+            }
             wanted = [col for key, col in columns.items() if vitals_map[key] is None]
             fill, carried = carry_forward(
-                latest, observed_at, wanted + ["consciousness", "on_oxygen"])
+                latest, observed_at, wanted + ["consciousness", "on_oxygen"]
+            )
             for key, col in columns.items():
                 if vitals_map[key] is None:
                     vitals_map[key] = fill.get(col)
@@ -631,9 +736,7 @@ def _persist_vitals_row(patient_raw_id, vital_events, event_id, source_label,
         # that is already open, because the ingestion lane scored EVERY patient
         # on Scale 1 — so a COPD patient sitting at their normal 90% collected a
         # 3-point single-parameter escalation on every ingested row.
-        prow = db.execute(
-            "SELECT on_scale_2 FROM patients WHERE id = ?", (patient_id,)
-        ).fetchone()
+        prow = db.execute("SELECT on_scale_2 FROM patients WHERE id = ?", (patient_id,)).fetchone()
         on_scale_2 = bool(prow["on_scale_2"]) if prow and prow["on_scale_2"] is not None else False
 
         # Insert.
@@ -679,8 +782,14 @@ def _persist_vitals_row(patient_raw_id, vital_events, event_id, source_label,
         return patient_id, vitals_map, observed_at, consciousness, on_oxygen, on_scale_2
 
 
-def _insert_observations_batch(events, event_id, source_label, correlation_id, backfill=False,
-                               source_facility=NO_FACILITY_LIMIT):
+def _insert_observations_batch(
+    events,
+    event_id,
+    source_label,
+    correlation_id,
+    backfill=False,
+    source_facility=NO_FACILITY_LIMIT,
+):
     """Insert a batch of non-vital observations in one trip to the DB pool.
 
     Deliberately NOT one shared transaction. Each observation keeps its own
@@ -706,12 +815,23 @@ def _insert_observations_batch(events, event_id, source_label, correlation_id, b
     correcting = _corrections_on()
     for evt in events:
         try:
-            sibling = (correcting and is_external_correction(evt)
-                       and message_has_sibling_result(evt, events))
-            if _insert_observation(evt, event_id, source_label, correlation_id,
-                                   sibling_in_message=sibling,
-                                   backfill=backfill,
-                                   source_facility=source_facility) == "quarantined":
+            sibling = (
+                correcting
+                and is_external_correction(evt)
+                and message_has_sibling_result(evt, events)
+            )
+            if (
+                _insert_observation(
+                    evt,
+                    event_id,
+                    source_label,
+                    correlation_id,
+                    sibling_in_message=sibling,
+                    backfill=backfill,
+                    source_facility=source_facility,
+                )
+                == "quarantined"
+            ):
                 quarantined += 1
             else:
                 inserted += 1
@@ -730,15 +850,15 @@ def _persist_risk_score(patient_id, risk):
         cursor = db.execute(
             """INSERT INTO risk_scores (patient_id, timestamp, score, level, drivers)
                VALUES (?, ?, ?, ?, ?)""",
-            (patient_id, utc_iso_now(), risk["score"], risk["level"],
-             json.dumps(risk["drivers"])),
+            (patient_id, utc_iso_now(), risk["score"], risk["level"], json.dumps(risk["drivers"])),
         )
         risk_score_id = cursor.lastrowid
         return risk_score_id
 
 
-def _persist_relay_alert(patient_id, alert_content, episode_id=None, level=None,
-                         correlation_id=None):
+def _persist_relay_alert(
+    patient_id, alert_content, episode_id=None, level=None, correlation_id=None
+):
     # Phase 1 of the alert write — all DB work in a short transaction, NO awaits
     # inside. The INSERTs open sqlite's implicit write transaction; awaiting a
     # socket emit before commit parks the WAL write lock across a suspension
@@ -760,12 +880,19 @@ def _persist_relay_alert(patient_id, alert_content, episode_id=None, level=None,
     with db_session() as db:
         db.execute(
             "INSERT OR IGNORE INTO users (id, name, role, password_hash) VALUES (?, ?, ?, ?)",
-            (VIGIL_BOT_ID, 'Orb Vigil', 'doctor', 'system'),
+            (VIGIL_BOT_ID, "Orb Vigil", "doctor", "system"),
         )
         relay_alert_logged, relay_msg_id, relay_channel_id, msg_data = persist_case_room_alert(
-            patient_id, alert_content, sender_id=VIGIL_BOT_ID, sender_name='Orb Vigil',
-            sender_role='intelligence', is_bot=True, source='bot', db=db,
-            message_type='alert')
+            patient_id,
+            alert_content,
+            sender_id=VIGIL_BOT_ID,
+            sender_name="Orb Vigil",
+            sender_role="intelligence",
+            is_bot=True,
+            source="bot",
+            db=db,
+            message_type="alert",
+        )
 
         if relay_alert_logged:
             patient = db.execute(
@@ -778,20 +905,29 @@ def _persist_relay_alert(patient_id, alert_content, episode_id=None, level=None,
         # — the same self-deadlock documented on _insert_observation's audit call.
         if episode_id:
             from services import shadow_service
+
             if relay_alert_logged:
                 shadow_service.emit(
-                    "alert.persisted", episode_id, "ingestion",
-                    patient_id=patient_id, subject_type="messages", subject_id=relay_msg_id,
+                    "alert.persisted",
+                    episode_id,
+                    "ingestion",
+                    patient_id=patient_id,
+                    subject_type="messages",
+                    subject_id=relay_msg_id,
                     payload={"message_id": relay_msg_id, "channel_id": relay_channel_id},
-                    source_correlation_id=correlation_id, db=db,
+                    source_correlation_id=correlation_id,
+                    db=db,
                 )
             else:
                 # NEGATIVE: NEWS2 fired, nobody was reachable. Invisible today.
                 shadow_service.emit(
-                    "alert.dropped", episode_id, "ingestion",
+                    "alert.dropped",
+                    episode_id,
+                    "ingestion",
                     patient_id=patient_id,
                     payload={"reason": "no_case_room", "level": level},
-                    source_correlation_id=correlation_id, db=db,
+                    source_correlation_id=correlation_id,
+                    db=db,
                 )
         return relay_alert_logged, relay_msg_id, relay_channel_id, msg_data, patient_name
 
@@ -800,17 +936,18 @@ def _persist_relay_alert(patient_id, alert_content, episode_id=None, level=None,
 #  Core Ingestion Pipeline
 # ════════════════════════════════════════════
 
+
 async def ingest_payload(
     raw_payload: str,
-    adapter: Optional[IngestionAdapter] = None,
-    source_name: Optional[str] = None,
-    content_type: Optional[str] = None,
-    correlation_id: Optional[str] = None,
-    external_message_id: Optional[str] = None,
+    adapter: IngestionAdapter | None = None,
+    source_name: str | None = None,
+    content_type: str | None = None,
+    correlation_id: str | None = None,
+    external_message_id: str | None = None,
     sio=None,
-    source_label: Optional[str] = None,
+    source_label: str | None = None,
     backfill: bool = False,
-    source_binding: Optional[SourceBinding] = None,
+    source_binding: SourceBinding | None = None,
 ) -> IngestionResult:
     """Full ingestion pipeline: capture → parse → deduplicate → route → emit.
 
@@ -863,7 +1000,7 @@ async def ingest_payload(
         action_type="ingestion_request_received",
         outcome="success",
         source_type=adapter.source_type if adapter else "unknown",
-        metadata={"source_name": source_name, "external_message_id": external_message_id}
+        metadata={"source_name": source_name, "external_message_id": external_message_id},
     )
 
     if adapter is None:
@@ -892,7 +1029,7 @@ async def ingest_payload(
     if existing:
         result.parse_status = "duplicate"
         result.duplicates = 1
-        
+
         await run_db(
             log_audit_event,
             correlation_id=correlation_id,
@@ -901,9 +1038,9 @@ async def ingest_payload(
             outcome="success",
             source_type=adapter.source_type,
             summary_message=f"Duplicate of event {existing['id']}",
-            metadata={"existing_event_id": existing["id"]}
+            metadata={"existing_event_id": existing["id"]},
         )
-        
+
         # Record the duplicate event
         result.event_id = await run_db(
             _record_raw_event,
@@ -952,7 +1089,7 @@ async def ingest_payload(
             outcome="failure",
             source_type=adapter.source_type,
             source_event_id=event_id,
-            summary_message=f"ParseError: {e}"
+            summary_message=f"ParseError: {e}",
         )
         return result
     except Exception as e:
@@ -967,7 +1104,7 @@ async def ingest_payload(
             outcome="failure",
             source_type=adapter.source_type,
             source_event_id=event_id,
-            summary_message=f"Unexpected error: {e}"
+            summary_message=f"Unexpected error: {e}",
         )
         return result
 
@@ -981,8 +1118,14 @@ async def ingest_payload(
     # ── Step 7: Route into tables, within the source's facility ──
     source_facility = await _source_facility(source_binding, source_name, source_label)
     vitals_count, obs_count, route_errors, quarantined_count = await _route_events(
-        canonical_events, event_id, adapter.source_type, sio, correlation_id,
-        source_label=source_label, backfill=backfill, source_facility=source_facility,
+        canonical_events,
+        event_id,
+        adapter.source_type,
+        sio,
+        correlation_id,
+        source_label=source_label,
+        backfill=backfill,
+        source_facility=source_facility,
     )
 
     result.inserted_vitals = vitals_count
@@ -1010,7 +1153,8 @@ async def ingest_payload(
     result.parse_status = final_status
     await run_db(
         _update_event_status,
-        event_id, final_status,
+        event_id,
+        final_status,
         vitals_inserted=vitals_count,
         observations_inserted=obs_count,
         parse_error="; ".join(route_errors) if route_errors else None,
@@ -1026,9 +1170,13 @@ async def ingest_payload(
         source_event_id=event_id,
         summary_message=(
             f"Parsed {result.received} events. Inserted {vitals_count} vitals, {obs_count} observations."
-            + (f" Held {quarantined_count} unmatched result(s) for review." if quarantined_count else "")
+            + (
+                f" Held {quarantined_count} unmatched result(s) for review."
+                if quarantined_count
+                else ""
+            )
         ),
-        metadata={"route_errors": route_errors} if route_errors else None
+        metadata={"route_errors": route_errors} if route_errors else None,
     )
 
     return result
@@ -1038,18 +1186,19 @@ async def ingest_payload(
 #  Raw Event Recording
 # ════════════════════════════════════════════
 
+
 def _record_raw_event(
     *,
     raw_payload: str,
     source_type: str,
-    source_name: Optional[str] = None,
-    correlation_id: Optional[str] = None,
-    external_message_id: Optional[str] = None,
-    fingerprint: Optional[str] = None,
+    source_name: str | None = None,
+    correlation_id: str | None = None,
+    external_message_id: str | None = None,
+    fingerprint: str | None = None,
     parse_status: str = "received",
-    parse_error: Optional[str] = None,
-    adapter_name: Optional[str] = None,
-    patient_identifier_raw: Optional[str] = None,
+    parse_error: str | None = None,
+    adapter_name: str | None = None,
+    patient_identifier_raw: str | None = None,
 ) -> int:
     """Insert a row into ingestion_events and return its ID.
 
@@ -1090,7 +1239,7 @@ def _update_event_status(
     event_id: int,
     status: str,
     *,
-    parse_error: Optional[str] = None,
+    parse_error: str | None = None,
     vitals_inserted: int = 0,
     observations_inserted: int = 0,
 ):
@@ -1112,13 +1261,14 @@ def _update_event_status(
 #  Event Routing
 # ════════════════════════════════════════════
 
+
 async def _route_events(
     events: list[CanonicalEvent],
     event_id: int,
     source_type: str,
     sio=None,
-    correlation_id: str = None,
-    source_label: Optional[str] = None,
+    correlation_id: str | None = None,
+    source_label: str | None = None,
     backfill: bool = False,
     source_facility: SourceFacility = NO_FACILITY_LIMIT,
 ) -> tuple[int, int, list[str], int]:
@@ -1148,8 +1298,14 @@ async def _route_events(
     for patient_raw_id, vital_events in vitals_by_patient.items():
         try:
             count = await _insert_vitals(
-                patient_raw_id, vital_events, event_id, source_label, sio, correlation_id,
-                backfill=backfill, source_facility=source_facility,
+                patient_raw_id,
+                vital_events,
+                event_id,
+                source_label,
+                sio,
+                correlation_id,
+                backfill=backfill,
+                source_facility=source_facility,
             )
             vitals_inserted += count
         except Exception as e:
@@ -1167,7 +1323,11 @@ async def _route_events(
     if non_vital_events:
         batch_inserted, batch_errors, quarantined = await run_db(
             _insert_observations_batch,
-            non_vital_events, event_id, source_label, correlation_id, backfill,
+            non_vital_events,
+            event_id,
+            source_label,
+            correlation_id,
+            backfill,
             source_facility,
         )
         obs_inserted += batch_inserted
@@ -1182,7 +1342,7 @@ async def _insert_vitals(
     event_id: int,
     source_label: str,
     sio=None,
-    correlation_id: str = None,
+    correlation_id: str | None = None,
     backfill: bool = False,
     source_facility: SourceFacility = NO_FACILITY_LIMIT,
 ) -> int:
@@ -1198,19 +1358,27 @@ async def _insert_vitals(
     """
     try:
         db_result = await run_db(
-            _persist_vitals_row, patient_raw_id, vital_events, event_id, source_label,
+            _persist_vitals_row,
+            patient_raw_id,
+            vital_events,
+            event_id,
+            source_label,
             source_facility,
         )
     except SourceFacilityRefused as refused:
         # multisite-16: today's unknown-patient path (the same error, so the
         # caller and the sender see nothing new), plus the audit row.
-        await run_db(record_source_refusal, refused.refusal, source_label=source_label,
-                     event_id=event_id, correlation_id=correlation_id)
+        await run_db(
+            record_source_refusal,
+            refused.refusal,
+            source_label=source_label,
+            event_id=event_id,
+            correlation_id=correlation_id,
+        )
         raise
     if db_result is None:
         return 0
-    (patient_id, vitals_map, observed_at, consciousness, on_oxygen,
-     on_scale_2) = db_result
+    (patient_id, vitals_map, observed_at, consciousness, on_oxygen, on_scale_2) = db_result
 
     await run_db(
         log_audit_event,
@@ -1222,7 +1390,7 @@ async def _insert_vitals(
         source_type=source_label,
         source_event_id=event_id,
         target_type="vitals",
-        summary_message=f"Inserted vital signs row for patient {patient_id}"
+        summary_message=f"Inserted vital signs row for patient {patient_id}",
     )
 
     # ── Downstream: NEWS2 + Socket.IO + Alerts ──
@@ -1248,7 +1416,9 @@ async def _insert_vitals(
         logger.info(
             "Backfilled vitals row for patient %s (observed_at=%s, source=%s): "
             "persisted, but live risk/alert/emit skipped.",
-            patient_id, observed_at, source_label,
+            patient_id,
+            observed_at,
+            source_label,
         )
         await run_db(
             log_audit_event,
@@ -1285,15 +1455,23 @@ async def _insert_vitals(
     # reading stored above is pushed to open charts with risk None, and nothing
     # is scored, written to risk_scores, alerted or escalated.
     scoring = scoring_enabled()
-    risk = score_vitals_row(
-        {
-            "heart_rate": hr, "systolic_bp": sbp, "respiratory_rate": rr,
-            "temperature": temp, "spo2": spo2,
-            "consciousness": consciousness, "on_oxygen": on_oxygen,
-        },
-        on_scale_2=on_scale_2,
-        overlay=False,
-    ) if scoring else None
+    risk = (
+        score_vitals_row(
+            {
+                "heart_rate": hr,
+                "systolic_bp": sbp,
+                "respiratory_rate": rr,
+                "temperature": temp,
+                "spo2": spo2,
+                "consciousness": consciousness,
+                "on_oxygen": on_oxygen,
+            },
+            on_scale_2=on_scale_2,
+            overlay=False,
+        )
+        if scoring
+        else None
+    )
 
     if scoring:
         # Store risk score
@@ -1310,7 +1488,7 @@ async def _insert_vitals(
             target_id=str(risk_score_id),
             source_type=source_label,
             source_event_id=event_id,
-            summary_message=f"NEWS2 recomputed: {news2_description(risk)}"
+            summary_message=f"NEWS2 recomputed: {news2_description(risk)}",
         )
 
     # Emit Socket.IO update (identical shape to bot_service)
@@ -1338,6 +1516,7 @@ async def _insert_vitals(
         try:
             # Scoped to the patient's department room, not a global broadcast.
             from ws.realtime import emit_patient_vitals
+
             await emit_patient_vitals("vitals:update", payload)
         except Exception as e:
             logger.warning("Socket.IO emit error: %s", e)
@@ -1350,8 +1529,8 @@ async def _insert_vitals(
     vitals_id = await run_db(_vitals_row_id, patient_id, event_id)
 
     # ── Vigil Alert Check ──
-    await _check_ingested_alert(patient_id, payload, risk, sio, correlation_id,
-                                vitals_id=vitals_id)
+    assert risk is not None
+    await _check_ingested_alert(patient_id, payload, risk, sio, correlation_id, vitals_id=vitals_id)
 
     # ── The ESCALATION CHAIN, from the feed (2026-10-03) ──
     # The nurse lane has called this post-commit since 2026-08-14; the feed did
@@ -1362,14 +1541,23 @@ async def _insert_vitals(
     # above is this reading's message. Never raises; the reading is stored.
     try:
         from services import escalation_service
+
         await run_db(
             escalation_service.evaluate_observation,
-            patient_id, risk, vitals_id=vitals_id, source=source_label,
-            observed_at=observed_at, notify=False,
+            patient_id,
+            risk,
+            vitals_id=vitals_id,
+            source=source_label,
+            observed_at=observed_at,
+            notify=False,
         )
     except Exception as e:
-        logger.error("ingestion escalation failed for %s (reading %s is stored): %s",
-                     patient_id, vitals_id, e)
+        logger.error(
+            "ingestion escalation failed for %s (reading %s is stored): %s",
+            patient_id,
+            vitals_id,
+            e,
+        )
 
     return 1
 
@@ -1390,7 +1578,7 @@ async def _check_ingested_alert(
     vitals_payload: dict,
     risk: dict,
     sio=None,
-    correlation_id: str = None,
+    correlation_id: str | None = None,
     vitals_id: int | None = None,
 ):
     """Check if ingested vitals should trigger a Relay alert.
@@ -1416,6 +1604,7 @@ async def _check_ingested_alert(
     #    episode_id supersedes it as the join key, but recording it lets the
     #    shadow log be tied back to the ingestion audit trail.
     from services import bot_service, shadow_service
+
     fired_at = shadow_service.utc_now()
     raw_news2_shadow = risk.get("raw_news2", risk.get("raw_mews"))
 
@@ -1427,14 +1616,17 @@ async def _check_ingested_alert(
     # readings arriving together cannot both page.
     await bot_service.ensure_cooldowns_reconciled()
     suppressed, seconds_since_last = bot_service.alert_cooldown_check(
-        patient_id, risk_level, raw_news2_shadow)
+        patient_id, risk_level, raw_news2_shadow
+    )
     repeat = False
     if not suppressed:
         repeat = bot_service.record_alert_dispatched(patient_id, risk_level, raw_news2_shadow)
 
     episode_id, _ = await shadow_service.aopen_episode(
-        patient_id, "ingestion",
-        occurred_at=fired_at, source_correlation_id=correlation_id,
+        patient_id,
+        "ingestion",
+        occurred_at=fired_at,
+        source_correlation_id=correlation_id,
         trigger="news2_threshold",
         payload={"level": risk_level, "raw_news2": raw_news2_shadow},
     )
@@ -1443,8 +1635,11 @@ async def _check_ingested_alert(
         # rate of a real feed is a query and not a guess.
         if episode_id:
             await shadow_service.aemit(
-                "alert.suppressed", episode_id, "ingestion",
-                occurred_at=fired_at, patient_id=patient_id,
+                "alert.suppressed",
+                episode_id,
+                "ingestion",
+                occurred_at=fired_at,
+                patient_id=patient_id,
                 source_correlation_id=correlation_id,
                 payload={
                     "level": risk_level,
@@ -1469,10 +1664,14 @@ async def _check_ingested_alert(
 
     if episode_id:
         await shadow_service.aemit(
-            "alert.fired", episode_id, "ingestion",
-            occurred_at=fired_at, patient_id=patient_id,
+            "alert.fired",
+            episode_id,
+            "ingestion",
+            occurred_at=fired_at,
+            patient_id=patient_id,
             source_correlation_id=correlation_id,
-            subject_type="vitals" if vitals_id else None, subject_id=vitals_id,
+            subject_type="vitals" if vitals_id else None,
+            subject_id=vitals_id,
             payload={
                 "level": risk_level,
                 "raw_news2": raw_news2_shadow,
@@ -1490,8 +1689,10 @@ async def _check_ingested_alert(
     # as not recorded. It used to be defaulted to a stand-in (SpO2 100, Temp
     # 37, RR 16, HR 0), which both printed a reading nobody took and, for HR
     # and SBP, read as "Bradycardia: HR 0 bpm" / "Hypotension: BP 0/0 mmHg".
-    hr, sbp, dbp, spo2, rr = (as_charted(vitals_payload.get(k)) for k in (
-        "heart_rate", "systolic_bp", "diastolic_bp", "spo2", "respiratory_rate"))
+    hr, sbp, dbp, spo2, rr = (
+        as_charted(vitals_payload.get(k))
+        for k in ("heart_rate", "systolic_bp", "diastolic_bp", "spo2", "respiratory_rate")
+    )
     temp = as_charted(vitals_payload.get("temperature"), 1)
 
     # The reason line IS the NEWS2 breakdown (ruled 2026-10-02, see
@@ -1535,10 +1736,9 @@ async def _check_ingested_alert(
         # (see _persist_relay_alert). Phase 2 emits only after it has committed.
         # The episode rides along, so `alert.persisted` / `alert.dropped` land
         # on it (it was opened above and then never passed in).
-        (relay_alert_logged, relay_msg_id, relay_channel_id,
-         msg_data, patient_name) = await run_db(
-            _persist_relay_alert, patient_id, alert_content,
-            episode_id, risk_level, correlation_id)
+        (relay_alert_logged, relay_msg_id, relay_channel_id, msg_data, patient_name) = await run_db(
+            _persist_relay_alert, patient_id, alert_content, episode_id, risk_level, correlation_id
+        )
 
         # Phase 2 — socket emits AFTER the transaction committed.
         if relay_alert_logged and sio:
@@ -1547,12 +1747,16 @@ async def _check_ingested_alert(
             # Patient status update — scoped to the patient's department room
             # (nurses' station for that ward), not a global broadcast.
             from ws.realtime import emit_patient_vitals
-            await emit_patient_vitals("patient_status_update", {
-                "patient_id": patient_id,
-                "name": patient_name,
-                "status": "critical_alert",
-                "timestamp": datetime.now(timezone.utc).isoformat()
-            })
+
+            await emit_patient_vitals(
+                "patient_status_update",
+                {
+                    "patient_id": patient_id,
+                    "name": patient_name,
+                    "status": "critical_alert",
+                    "timestamp": datetime.now(UTC).isoformat(),
+                },
+            )
 
     except Exception as e:
         logger.error("Failed to generate alert message: %s", e)
@@ -1589,7 +1793,11 @@ async def _check_ingested_alert(
             # broke the audit chain on every feed alert that reached a room.
             target_id=str(relay_msg_id) if relay_msg_id is not None else None,
             summary_message=f"Ingestion triggered Relay alert for patient {patient_id}",
-            metadata={"reason": reason_text, "risk_level": risk_level, "channel_id": relay_channel_id}
+            metadata={
+                "reason": reason_text,
+                "risk_level": risk_level,
+                "channel_id": relay_channel_id,
+            },
         )
 
     await run_db(
@@ -1599,7 +1807,7 @@ async def _check_ingested_alert(
         action_type="vigil_alert_generated",
         outcome="success",
         patient_id=patient_id,
-        summary_message=f"Vigil alert checked and triggered: {risk_level.upper()}"
+        summary_message=f"Vigil alert checked and triggered: {risk_level.upper()}",
     )
 
 
@@ -1607,7 +1815,7 @@ def _insert_observation(
     evt: CanonicalEvent,
     event_id: int,
     source_label: str,
-    correlation_id: str = None,
+    correlation_id: str | None = None,
     *,
     sibling_in_message: bool = False,
     backfill: bool = False,
@@ -1639,8 +1847,11 @@ def _insert_observation(
     refusal = None
     with db_session(immediate=correcting) as db:
         # Try to resolve patient, within the source's facility (multisite-16)
-        patient_id, refusal = (_facility_match(db, evt.patient_identifier, source_facility)
-                               if evt.patient_identifier else (None, None))
+        patient_id, refusal = (
+            _facility_match(db, evt.patient_identifier, source_facility)
+            if evt.patient_identifier
+            else (None, None)
+        )
 
         if patient_id is None and _quarantine_on() and _queue_takes(evt, source_label):
             # Held for laboratory staff to attach to the right patient or
@@ -1649,8 +1860,10 @@ def _insert_observation(
             # Only results from a result feed: a bedside monitor's MAP, ST or
             # PVC count is a device metric and keeps the branch below.
             from services import result_quarantine_service
+
             quarantine_id = result_quarantine_service.enqueue_in_txn(
-                db, evt, event_id=event_id, source_label=source_label)
+                db, evt, event_id=event_id, source_label=source_label
+            )
         else:
             if patient_id is None:
                 # PHI-bearing observation that couldn't be linked to a known patient.
@@ -1663,16 +1876,25 @@ def _insert_observation(
                     "Observation '%s' could not be resolved to a patient (raw id=%r); "
                     "inserting unlinked (no review queue: ORB_RESULT_QUARANTINE is off, "
                     "or this is a device lane's metric, lane %r).",
-                    evt.observation_name, evt.patient_identifier, source_label,
+                    evt.observation_name,
+                    evt.patient_identifier,
+                    source_label,
                 )
             obs_id, _superseded = write_observation_in_txn(
-                db, evt, patient_id, event_id, source_label, correlation_id=correlation_id,
-                sibling_in_message=sibling_in_message)
+                db,
+                evt,
+                patient_id,
+                event_id,
+                source_label,
+                correlation_id=correlation_id,
+                sibling_in_message=sibling_in_message,
+            )
 
     if refusal is not None:
         # multisite-16, after the commit like every audit row here.
-        record_source_refusal(refusal, source_label=source_label, event_id=event_id,
-                              correlation_id=correlation_id)
+        record_source_refusal(
+            refusal, source_label=source_label, event_id=event_id, correlation_id=correlation_id
+        )
 
     if quarantine_id is not None:
         # Fail-soft 'ingestion' category after commit, as below.
@@ -1686,7 +1908,7 @@ def _insert_observation(
             source_event_id=event_id,
             target_type="result_quarantine",
             target_id=str(quarantine_id),
-            summary_message=f"Held unmatched result for review: {evt.observation_name}"
+            summary_message=f"Held unmatched result for review: {evt.observation_name}",
         )
         return "quarantined"
 
@@ -1707,7 +1929,7 @@ def _insert_observation(
         source_event_id=event_id,
         target_type="observations",
         target_id=str(obs_id),
-        summary_message=f"Inserted observation: {evt.observation_name}"
+        summary_message=f"Inserted observation: {evt.observation_name}",
     )
     if patient_id and obs_id is not None:
         _raise_interfaced_critical(evt, obs_id, backfill=backfill)
@@ -1726,17 +1948,23 @@ def _raise_interfaced_critical(evt: CanonicalEvent, obs_id: int, *, backfill: bo
     A backfill never raises. Never raises out: the result is already stored,
     and a failure is logged as an error by the service."""
     import config
+
     if backfill or not config.feature_enabled("lab_critical_interfaced"):
         return
     try:
         from services import lab_critical_service
+
         if lab_critical_service.interfaced_flag(evt.abnormal_flag, evt.raw_segment_ref) is None:
             return
         lab_critical_service.raise_interfaced_and_deliver(
-            obs_id, backfill=backfill, value_as_sent=evt.value)
+            obs_id, backfill=backfill, value_as_sent=evt.value
+        )
     except Exception:
-        logger.error("Interfaced laboratory critical for observation %s could not be raised",
-                     obs_id, exc_info=True)
+        logger.error(
+            "Interfaced laboratory critical for observation %s could not be raised",
+            obs_id,
+            exc_info=True,
+        )
 
 
 # ════════════════════════════════════════════
@@ -1747,13 +1975,16 @@ def _raise_interfaced_critical(evt: CanonicalEvent, obs_id: int, *, backfill: bo
 # included. Every function here takes the caller's open transaction and never
 # commits.
 
+
 def _quarantine_on() -> bool:
     import config
+
     return bool(config.feature_enabled("result_quarantine"))
 
 
 def _corrections_on() -> bool:
     import config
+
     return bool(config.feature_enabled("result_corrections"))
 
 
@@ -1761,6 +1992,7 @@ def _queue_takes(evt: CanonicalEvent, source_label: str) -> bool:
     """Whether the unmatched results queue takes this unmatched observation:
     a result from a result feed, not a device lane's metric (lis-19)."""
     from services import result_quarantine_service
+
     return result_quarantine_service.takes_result(source_label, evt.observation_code_system)
 
 
@@ -1769,8 +2001,9 @@ def is_external_correction(evt: CanonicalEvent) -> bool:
     return str(evt.status or "").strip().upper() == "C"
 
 
-def correction_order(placer: Optional[str], filler: Optional[str],
-                     other_placer: Optional[str], other_filler: Optional[str]) -> Optional[str]:
+def correction_order(
+    placer: str | None, filler: str | None, other_placer: str | None, other_filler: str | None
+) -> str | None:
     """'filler' or 'placer' when two results belong to the same order, else None.
 
     The same OBR-3 filler number; or, when either side has no filler number,
@@ -1791,8 +2024,13 @@ def _result_identity(evt: CanonicalEvent) -> tuple:
     """(code, OBX-4 sub-id, sender, placer, filler) of one parsed result. The
     placer is None when the adapter invented the group id."""
     placer = None if evt.group_id_generated else evt.obr_placer
-    return ((evt.observation_code or "").strip(), (evt.obx_sub_id or "").strip(),
-            (evt.hl7_sender or "").strip(), placer, evt.obr_filler)
+    return (
+        (evt.observation_code or "").strip(),
+        (evt.obx_sub_id or "").strip(),
+        (evt.hl7_sender or "").strip(),
+        placer,
+        evt.obr_filler,
+    )
 
 
 def message_has_sibling_result(evt: CanonicalEvent, message_events) -> bool:
@@ -1820,14 +2058,14 @@ def message_has_sibling_result(evt: CanonicalEvent, message_events) -> bool:
 def write_observation_in_txn(
     db,
     evt: CanonicalEvent,
-    patient_id: Optional[str],
-    event_id: Optional[int],
+    patient_id: str | None,
+    event_id: int | None,
     source_label: str,
     *,
-    correlation_id: Optional[str] = None,
-    actor: Optional[dict] = None,
+    correlation_id: str | None = None,
+    actor: dict | None = None,
     sibling_in_message: bool = False,
-    later_correction: Optional[dict] = None,
+    later_correction: dict | None = None,
 ) -> tuple[int, list[int]]:
     """INSERT one observations row on the caller's transaction.
 
@@ -1881,17 +2119,33 @@ def write_observation_in_txn(
     superseded: list[int] = []
     if patient_id and later_correction and later_correction.get("outcome") == "supersede":
         _store_superseded_on_attach_in_txn(
-            db, observation_id=obs_id, decision=later_correction, patient_id=patient_id,
-            source=source_label, previous_status=evt.status, code=evt.observation_code,
-            correlation_id=correlation_id, actor=actor)
+            db,
+            observation_id=obs_id,
+            decision=later_correction,
+            patient_id=patient_id,
+            source=source_label,
+            previous_status=evt.status,
+            code=evt.observation_code,
+            correlation_id=correlation_id,
+            actor=actor,
+        )
         return obs_id, superseded
     if patient_id and _corrections_on() and is_external_correction(evt):
         superseded = supersede_corrected_in_txn(
-            db, new_id=obs_id, patient_id=patient_id, code=evt.observation_code,
-            sub_id=evt.obx_sub_id, placer=placer, filler=evt.obr_filler,
-            sender=evt.hl7_sender, source=source_label, event_id=event_id,
+            db,
+            new_id=obs_id,
+            patient_id=patient_id,
+            code=evt.observation_code,
+            sub_id=evt.obx_sub_id,
+            placer=placer,
+            filler=evt.obr_filler,
+            sender=evt.hl7_sender,
+            source=source_label,
+            event_id=event_id,
             sibling_in_message=sibling_in_message,
-            correlation_id=correlation_id, actor=actor)
+            correlation_id=correlation_id,
+            actor=actor,
+        )
     return obs_id, superseded
 
 
@@ -1900,16 +2154,16 @@ def supersede_corrected_in_txn(
     *,
     new_id: int,
     patient_id: str,
-    code: Optional[str],
-    sub_id: Optional[str],
-    placer: Optional[str],
-    filler: Optional[str],
-    sender: Optional[str],
-    source: Optional[str],
-    event_id: Optional[int] = None,
+    code: str | None,
+    sub_id: str | None,
+    placer: str | None,
+    filler: str | None,
+    sender: str | None,
+    source: str | None,
+    event_id: int | None = None,
     sibling_in_message: bool = False,
-    correlation_id: Optional[str] = None,
-    actor: Optional[dict] = None,
+    correlation_id: str | None = None,
+    actor: dict | None = None,
 ) -> list[int]:
     """Mark the ONE live final result a correction replaces as superseded (lis-20).
 
@@ -1942,18 +2196,28 @@ def supersede_corrected_in_txn(
     If an audit row cannot be written, the correction is rolled back with it.
     """
     from services import lab_observations
+
     code = (code or "").strip()
     placer = (placer or "").strip()
     filler = (filler or "").strip()
     if not patient_id or not code or not (placer or filler):
         return []
     rows = lab_observations.correction_candidates(
-        db, patient_id=patient_id, code=code, sub_id=sub_id, sender=sender,
-        source=source, exclude_id=int(new_id))
+        db,
+        patient_id=patient_id,
+        code=code,
+        sub_id=sub_id,
+        sender=sender,
+        source=source,
+        exclude_id=int(new_id),
+    )
     matched: list[tuple] = []
     for row in rows:
-        if (event_id is not None and row["source_event_id"] is not None
-                and int(row["source_event_id"]) == int(event_id)):
+        if (
+            event_id is not None
+            and row["source_event_id"] is not None
+            and int(row["source_event_id"]) == int(event_id)
+        ):
             continue  # never a result from the correction's own message
         matched_on = correction_order(placer, filler, row["obr_placer"], row["obr_filler"])
         if matched_on:
@@ -1961,19 +2225,30 @@ def supersede_corrected_in_txn(
     if not matched:
         return []
     siblings = [
-        r["id"] for r in lab_observations.same_message_results(
-            db, event_id=event_id, code=code, sub_id=sub_id, sender=sender,
-            source=source, exclude_id=int(new_id))
+        r["id"]
+        for r in lab_observations.same_message_results(
+            db,
+            event_id=event_id,
+            code=code,
+            sub_id=sub_id,
+            sender=sender,
+            source=source,
+            exclude_id=int(new_id),
+        )
         if correction_order(placer, filler, r["obr_placer"], r["obr_filler"])
     ]
     actor = actor or {}
     if len(matched) > 1 or siblings or sibling_in_message:
-        why = ("several_earlier_results" if len(matched) > 1
-               else "several_results_in_message")
+        why = "several_earlier_results" if len(matched) > 1 else "several_results_in_message"
         logger.warning(
             "Corrected result %s supersedes nothing: %s for test %s on this order (%d "
             "earlier, %d more in its message); stored beside them.",
-            new_id, why, code, len(matched), len(siblings) + int(bool(sibling_in_message)))
+            new_id,
+            why,
+            code,
+            len(matched),
+            len(siblings) + int(bool(sibling_in_message)),
+        )
         log_audit_event(
             correlation_id=correlation_id or str(uuid.uuid4()),
             event_category="clinical_access",
@@ -1987,12 +2262,17 @@ def supersede_corrected_in_txn(
             source_event_id=event_id,
             target_type="observations",
             target_id=str(new_id),
-            summary_message=(f"Corrected result {new_id} stored beside the earlier results: "
-                             "the test and order do not name exactly one result"),
-            metadata={"reason": why, "candidates": [row["id"] for row, _ in matched],
-                      "same_message": siblings,
-                      "sibling_in_message": bool(sibling_in_message),
-                      "observation_code": code},
+            summary_message=(
+                f"Corrected result {new_id} stored beside the earlier results: "
+                "the test and order do not name exactly one result"
+            ),
+            metadata={
+                "reason": why,
+                "candidates": [row["id"] for row, _ in matched],
+                "same_message": siblings,
+                "sibling_in_message": bool(sibling_in_message),
+                "observation_code": code,
+            },
         )
         return []
     row, matched_on = matched[0]
@@ -2016,8 +2296,12 @@ def supersede_corrected_in_txn(
         target_type="observations",
         target_id=str(row["id"]),
         summary_message=f"Result {row['id']} superseded by corrected result {new_id}",
-        metadata={"superseded_by": int(new_id), "matched_on": matched_on,
-                  "previous_status": row["status"], "observation_code": code},
+        metadata={
+            "superseded_by": int(new_id),
+            "matched_on": matched_on,
+            "previous_status": row["status"],
+            "observation_code": code,
+        },
     )
     return [row["id"]]
 
@@ -2027,10 +2311,10 @@ def attach_unlinked_observation_in_txn(
     observation_id: int,
     patient_id: str,
     *,
-    correlation_id: Optional[str] = None,
-    actor: Optional[dict] = None,
+    correlation_id: str | None = None,
+    actor: dict | None = None,
     sibling_in_message: bool = False,
-    later_correction: Optional[dict] = None,
+    later_correction: dict | None = None,
 ) -> tuple[int, list[int]]:
     """Give a result stored with no patient its patient (an attach from the
     unmatched results queue of a row the sweep copied). The row keeps its id
@@ -2039,6 +2323,7 @@ def attach_unlinked_observation_in_txn(
     its own message being the raw message the row came from.
     `later_correction` as for write_observation_in_txn."""
     from services import lab_observations
+
     row = lab_observations.unlinked_result(db, int(observation_id))
     if row is None:
         raise LookupError(f"observation {observation_id} is not a result with no patient")
@@ -2051,17 +2336,33 @@ def attach_unlinked_observation_in_txn(
     superseded: list[int] = []
     if later_correction and later_correction.get("outcome") == "supersede":
         _store_superseded_on_attach_in_txn(
-            db, observation_id=int(observation_id), decision=later_correction,
-            patient_id=patient_id, source=row["source"], previous_status=row["status"],
-            code=row["observation_code"], correlation_id=correlation_id, actor=actor)
+            db,
+            observation_id=int(observation_id),
+            decision=later_correction,
+            patient_id=patient_id,
+            source=row["source"],
+            previous_status=row["status"],
+            code=row["observation_code"],
+            correlation_id=correlation_id,
+            actor=actor,
+        )
         return int(observation_id), superseded
     if _corrections_on() and str(row["status"] or "").strip().upper() == "C":
         superseded = supersede_corrected_in_txn(
-            db, new_id=int(observation_id), patient_id=patient_id,
-            code=row["observation_code"], sub_id=row["obx_sub_id"], placer=row["obr_placer"],
-            filler=row["obr_filler"], sender=row["hl7_sender"], source=row["source"],
-            event_id=row["source_event_id"], sibling_in_message=sibling_in_message,
-            correlation_id=correlation_id, actor=actor)
+            db,
+            new_id=int(observation_id),
+            patient_id=patient_id,
+            code=row["observation_code"],
+            sub_id=row["obx_sub_id"],
+            placer=row["obr_placer"],
+            filler=row["obr_filler"],
+            sender=row["hl7_sender"],
+            source=row["source"],
+            event_id=row["source_event_id"],
+            sibling_in_message=sibling_in_message,
+            correlation_id=correlation_id,
+            actor=actor,
+        )
     return int(observation_id), superseded
 
 
@@ -2088,15 +2389,15 @@ def later_correction_for_attach(
     db,
     *,
     patient_id: str,
-    code: Optional[str],
-    sub_id: Optional[str],
-    placer: Optional[str],
-    filler: Optional[str],
-    sender: Optional[str],
-    source: Optional[str],
-    status: Optional[str],
-    event_id: Optional[int],
-    own_id: Optional[int] = None,
+    code: str | None,
+    sub_id: str | None,
+    placer: str | None,
+    filler: str | None,
+    sender: str | None,
+    source: str | None,
+    status: str | None,
+    event_id: int | None,
+    own_id: int | None = None,
     sibling_in_message: bool = False,
 ) -> dict:
     """Whether a correction sent AFTER this result already stands on the
@@ -2122,19 +2423,27 @@ def later_correction_for_attach(
         and laboratory staff discard it or ask the laboratory.
     """
     from services import lab_observations
+
     code = (code or "").strip()
     if not patient_id or not code or not ((placer or "").strip() or (filler or "").strip()):
         return {"outcome": "none"}
     rows = lab_observations.live_results_for_test(
-        db, patient_id=patient_id, code=code, sub_id=sub_id, sender=sender, source=source,
-        exclude_id=own_id)
+        db,
+        patient_id=patient_id,
+        code=code,
+        sub_id=sub_id,
+        sender=sender,
+        source=source,
+        exclude_id=own_id,
+    )
     same_order = []
     for row in rows:
         matched_on = correction_order(placer, filler, row["obr_placer"], row["obr_filler"])
         if matched_on:
             same_order.append((row, matched_on))
-    corrections = [(r, m) for r, m in same_order
-                   if r["is_correction"] and r["lab_result_id"] is None]
+    corrections = [
+        (r, m) for r, m in same_order if r["is_correction"] and r["lab_result_id"] is None
+    ]
     if not corrections:
         return {"outcome": "none"}
     ids = [int(r["id"]) for r, _ in corrections]
@@ -2157,48 +2466,87 @@ def later_correction_for_attach(
     correction, matched_on = later[0]
     if correction["replaced_another"]:
         return refuse(LATE_CORRECTION_REPLACED_ANOTHER)
-    others = [r for r, _ in same_order if int(r["id"]) != int(correction["id"])
-              and str(r["status"] or "final").strip().lower()
-              in lab_observations.CORRECTABLE_STATUSES]
+    others = [
+        r
+        for r, _ in same_order
+        if int(r["id"]) != int(correction["id"])
+        and str(r["status"] or "final").strip().lower() in lab_observations.CORRECTABLE_STATUSES
+    ]
     if others:
         return refuse(LATE_OTHER_RESULTS)
     siblings = [
-        r for r in lab_observations.same_message_results(
-            db, event_id=event_id, code=code, sub_id=sub_id, sender=sender, source=source,
-            exclude_id=-1 if own_id is None else int(own_id))
+        r
+        for r in lab_observations.same_message_results(
+            db,
+            event_id=event_id,
+            code=code,
+            sub_id=sub_id,
+            sender=sender,
+            source=source,
+            exclude_id=-1 if own_id is None else int(own_id),
+        )
         if correction_order(placer, filler, r["obr_placer"], r["obr_filler"])
     ]
     if sibling_in_message or siblings:
         return refuse(LATE_SIBLINGS)
-    return {"outcome": "supersede", "correction_id": int(correction["id"]),
-            "matched_on": matched_on}
+    return {
+        "outcome": "supersede",
+        "correction_id": int(correction["id"]),
+        "matched_on": matched_on,
+    }
 
 
-def later_correction_for_event(db, evt: CanonicalEvent, patient_id: str, *,
-                               event_id: Optional[int], source_label: str,
-                               sibling_in_message: bool = False) -> dict:
+def later_correction_for_event(
+    db,
+    evt: CanonicalEvent,
+    patient_id: str,
+    *,
+    event_id: int | None,
+    source_label: str,
+    sibling_in_message: bool = False,
+) -> dict:
     """later_correction_for_attach for a parsed result not written yet."""
     placer = None if evt.group_id_generated else evt.obr_placer
     return later_correction_for_attach(
-        db, patient_id=patient_id, code=evt.observation_code, sub_id=evt.obx_sub_id,
-        placer=placer, filler=evt.obr_filler, sender=evt.hl7_sender, source=source_label,
-        status=evt.status, event_id=event_id, sibling_in_message=sibling_in_message)
+        db,
+        patient_id=patient_id,
+        code=evt.observation_code,
+        sub_id=evt.obx_sub_id,
+        placer=placer,
+        filler=evt.obr_filler,
+        sender=evt.hl7_sender,
+        source=source_label,
+        status=evt.status,
+        event_id=event_id,
+        sibling_in_message=sibling_in_message,
+    )
 
 
-def later_correction_for_unlinked(db, observation_id: int, patient_id: str, *,
-                                  sibling_in_message: bool = False) -> dict:
+def later_correction_for_unlinked(
+    db, observation_id: int, patient_id: str, *, sibling_in_message: bool = False
+) -> dict:
     """later_correction_for_attach for a result stored with no patient (a row
     the sweep copied). {"outcome": "none"} when the id names no such row;
     the attach itself then refuses it."""
     from services import lab_observations
+
     row = lab_observations.unlinked_result(db, int(observation_id))
     if row is None:
         return {"outcome": "none"}
     return later_correction_for_attach(
-        db, patient_id=patient_id, code=row["observation_code"], sub_id=row["obx_sub_id"],
-        placer=row["obr_placer"], filler=row["obr_filler"], sender=row["hl7_sender"],
-        source=row["source"], status=row["status"], event_id=row["source_event_id"],
-        own_id=int(row["id"]), sibling_in_message=sibling_in_message)
+        db,
+        patient_id=patient_id,
+        code=row["observation_code"],
+        sub_id=row["obx_sub_id"],
+        placer=row["obr_placer"],
+        filler=row["obr_filler"],
+        sender=row["hl7_sender"],
+        source=row["source"],
+        status=row["status"],
+        event_id=row["source_event_id"],
+        own_id=int(row["id"]),
+        sibling_in_message=sibling_in_message,
+    )
 
 
 def _store_superseded_on_attach_in_txn(
@@ -2207,11 +2555,11 @@ def _store_superseded_on_attach_in_txn(
     observation_id: int,
     decision: dict,
     patient_id: str,
-    source: Optional[str],
-    previous_status: Optional[str],
-    code: Optional[str],
-    correlation_id: Optional[str],
-    actor: Optional[dict],
+    source: str | None,
+    previous_status: str | None,
+    code: str | None,
+    correlation_id: str | None,
+    actor: dict | None,
 ) -> None:
     """Mark a result just attached from the unmatched results queue as
     superseded by the correction that was sent after it, with a fail-closed
@@ -2238,22 +2586,30 @@ def _store_superseded_on_attach_in_txn(
         source_type=source,
         target_type="observations",
         target_id=str(observation_id),
-        summary_message=(f"Result {observation_id} attached from the unmatched results queue "
-                         f"already superseded by corrected result {correction_id}, which the "
-                         "laboratory sent after it"),
-        metadata={"superseded_by": correction_id, "matched_on": decision.get("matched_on"),
-                  "previous_status": previous_status, "observation_code": code,
-                  "attached_after_correction": True},
+        summary_message=(
+            f"Result {observation_id} attached from the unmatched results queue "
+            f"already superseded by corrected result {correction_id}, which the "
+            "laboratory sent after it"
+        ),
+        metadata={
+            "superseded_by": correction_id,
+            "matched_on": decision.get("matched_on"),
+            "previous_status": previous_status,
+            "observation_code": code,
+            "attached_after_correction": True,
+        },
     )
 
 
-def unlinked_observations_not_queued(db, *, limit: int = 500, exclude_sources=(),
-                                     exclude_code_systems=()) -> list:
+def unlinked_observations_not_queued(
+    db, *, limit: int = 500, exclude_sources=(), exclude_code_systems=()
+) -> list:
     """Results stored with no patient that the unmatched results queue does
     not hold yet, oldest first: the queue's one-time sweep (lis-19). Read
     through services/lab_observations.py like every other read. The two
     exclusions leave out device lanes' metrics, which the queue never takes."""
     from services import lab_observations
+
     return lab_observations.unlinked_results_not_queued(
-        db, limit=limit, exclude_sources=exclude_sources,
-        exclude_code_systems=exclude_code_systems)
+        db, limit=limit, exclude_sources=exclude_sources, exclude_code_systems=exclude_code_systems
+    )

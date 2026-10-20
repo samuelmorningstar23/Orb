@@ -63,6 +63,7 @@ and PRAGMA guards so a second run changes nothing, ALTER TABLE ADD COLUMN with
 no default, no FOREIGN KEY, and no CURRENT_TIMESTAMP default (the writer
 stamps every instant in the canonical spelling from services/clinical_time).
 """
+
 from migrations import Migration
 
 QUARANTINE_DDL = """CREATE TABLE IF NOT EXISTS result_quarantine (
@@ -109,14 +110,22 @@ OBSERVATION_COLUMNS = (
 # (index name, table, columns, WHERE clause or "", unique)
 _INDEXES = (
     ("idx_result_quarantine_status", "result_quarantine", ("status", "created_at"), "", False),
-    ("idx_result_quarantine_event", "result_quarantine", ("ingestion_event_id",),
-     "ingestion_event_id IS NOT NULL", False),
-    ("ux_result_quarantine_source_observation", "result_quarantine",
-     ("source_observation_id",), "source_observation_id IS NOT NULL", True),
-    ("idx_observations_filler", "observations", ("obr_filler",),
-     "obr_filler IS NOT NULL", False),
-    ("idx_observations_placer", "observations", ("obr_placer",),
-     "obr_placer IS NOT NULL", False),
+    (
+        "idx_result_quarantine_event",
+        "result_quarantine",
+        ("ingestion_event_id",),
+        "ingestion_event_id IS NOT NULL",
+        False,
+    ),
+    (
+        "ux_result_quarantine_source_observation",
+        "result_quarantine",
+        ("source_observation_id",),
+        "source_observation_id IS NOT NULL",
+        True,
+    ),
+    ("idx_observations_filler", "observations", ("obr_filler",), "obr_filler IS NOT NULL", False),
+    ("idx_observations_placer", "observations", ("obr_placer",), "obr_placer IS NOT NULL", False),
 )
 
 
@@ -138,9 +147,7 @@ def apply(conn) -> None:
             continue
         kind = "UNIQUE INDEX" if unique else "INDEX"
         clause = f" WHERE {where}" if where else ""
-        conn.execute(
-            f"CREATE {kind} IF NOT EXISTS {name} ON {table}({', '.join(columns)}){clause}"
-        )
+        conn.execute(f"CREATE {kind} IF NOT EXISTS {name} ON {table}({', '.join(columns)}){clause}")
     # Once attached or discarded, a decision is final: a second decision on
     # the same result would be a second, unreviewed wrong-patient decision.
     if {"status"} <= _columns(conn, "result_quarantine"):

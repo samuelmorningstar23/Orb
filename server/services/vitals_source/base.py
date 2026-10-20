@@ -22,6 +22,7 @@ not an architecture: everything downstream (provenance labelling, persistence,
 NEWS2, alerting, shadow logging, health reporting) is already wired to the
 contract rather than to HL7.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -30,9 +31,8 @@ import math
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from enum import Enum
-from typing import Optional
+from datetime import UTC, datetime
+from enum import Enum, StrEnum
 
 logger = logging.getLogger("orb.vitals_source")
 
@@ -41,18 +41,24 @@ logger = logging.getLogger("orb.vitals_source")
 #  Source kinds and provenance labels
 # ════════════════════════════════════════════
 
-class SourceKind(str, Enum):
+
+class SourceKind(StrEnum):
     """How a reading physically came to exist.
 
     MONITOR / MANUAL / SIMULATOR are the three peers named in the roadmap.
     DERIVED and UNKNOWN exist because the database already contains rows that
     honestly are neither — pretending otherwise would make the classifier lie.
     """
-    MONITOR = "monitor"        # a machine measured it
-    MANUAL = "manual"          # a human read a device and typed it
-    SIMULATOR = "simulator"    # synthetic; must never be mistaken for either
-    DERIVED = "derived"        # extracted from a document by software (e.g. Scribe)
-    UNKNOWN = "unknown"        # arrived over a generic feed that asserted no kind
+
+    # Retain legacy diagnostic/display strings while using the standard string enum.
+    __str__ = Enum.__str__
+    __format__ = Enum.__format__
+
+    MONITOR = "monitor"  # a machine measured it
+    MANUAL = "manual"  # a human read a device and typed it
+    SIMULATOR = "simulator"  # synthetic; must never be mistaken for either
+    DERIVED = "derived"  # extracted from a document by software (e.g. Scribe)
+    UNKNOWN = "unknown"  # arrived over a generic feed that asserted no kind
 
 
 # The string written into `vitals.source` for each source in this package.
@@ -94,7 +100,7 @@ _LABEL_KIND: dict[str, SourceKind] = {
     LABEL_CLERK_TRANSCRIBED: SourceKind.MANUAL,
     LABEL_SIMULATED: SourceKind.SIMULATOR,
     # ── pre-existing writers ──
-    "llm_extracted": SourceKind.DERIVED,     # nervous_system_triggers: parsed from a signed note
+    "llm_extracted": SourceKind.DERIVED,  # nervous_system_triggers: parsed from a signed note
     # Generic inbound feeds. These are deliberately UNKNOWN rather than MONITOR:
     # /api/ingest/hl7 carries both monitor vitals AND lab panels from whatever
     # gateway holds the API key, and asserting "machine-measured at the bedside"
@@ -107,7 +113,7 @@ _LABEL_KIND: dict[str, SourceKind] = {
 }
 
 
-def classify_source_label(label: Optional[str]) -> SourceKind:
+def classify_source_label(label: str | None) -> SourceKind:
     """Map a `vitals.source` value to its `SourceKind`.
 
     Unrecognised labels return UNKNOWN — never a guess. A reading whose origin
@@ -118,7 +124,7 @@ def classify_source_label(label: Optional[str]) -> SourceKind:
     return _LABEL_KIND.get(label.strip().lower(), SourceKind.UNKNOWN)
 
 
-def is_machine_measured(label: Optional[str]) -> bool:
+def is_machine_measured(label: str | None) -> bool:
     """True only for readings a device produced. The scorecard's honesty test."""
     return classify_source_label(label) is SourceKind.MONITOR
 
@@ -144,7 +150,7 @@ _VITAL_JSON_NAME = {
 
 
 def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 @dataclass
@@ -156,18 +162,19 @@ class VitalsReading:
     patient's last known value for anything absent, so inventing a 0 here would
     fabricate a clinical observation.
     """
+
     patient_identifier: str
-    observed_at: str                                   # ISO 8601
+    observed_at: str  # ISO 8601
     values: dict[str, float] = field(default_factory=dict)
-    source_id: str = ""                                # which VitalsSource instance
+    source_id: str = ""  # which VitalsSource instance
     kind: SourceKind = SourceKind.UNKNOWN
-    device_id: Optional[str] = None                    # bed / monitor identity
-    encounter_identifier: Optional[str] = None
-    consciousness: Optional[str] = None                # ACVPU, when the source knows it
-    on_oxygen: Optional[bool] = None
-    entered_by: Optional[str] = None                   # user id, for MANUAL
-    external_message_id: Optional[str] = None          # sender's own dedup key
-    notes: Optional[str] = None
+    device_id: str | None = None  # bed / monitor identity
+    encounter_identifier: str | None = None
+    consciousness: str | None = None  # ACVPU, when the source knows it
+    on_oxygen: bool | None = None
+    entered_by: str | None = None  # user id, for MANUAL
+    external_message_id: str | None = None  # sender's own dedup key
+    notes: str | None = None
 
     def __post_init__(self):
         # Drop anything that is not a real, finite number for a known vital, at
@@ -205,14 +212,16 @@ class VitalsReading:
         observations = []
         for key, value in self.values.items():
             code, name, unit = _VITAL_JSON_NAME[key]
-            observations.append({
-                "code": code,
-                "name": name,
-                "value": value,
-                "unit": unit,
-                "status": "final",
-                "observed_at": self.observed_at,
-            })
+            observations.append(
+                {
+                    "code": code,
+                    "name": name,
+                    "value": value,
+                    "unit": unit,
+                    "status": "final",
+                    "observed_at": self.observed_at,
+                }
+            )
         payload = {
             "patient_id": self.patient_identifier,
             "observed_at": self.observed_at,
@@ -244,21 +253,24 @@ class ReadingHint:
     than one computed against a stated offset, and an operator reading the fault
     needs to be able to tell "your clock is wrong" from "your timezone is".
     """
+
     patient_identifier: str
-    observed_at: Optional[str]
-    device_id: Optional[str] = None
-    device_time_had_offset: Optional[bool] = None
+    observed_at: str | None
+    device_id: str | None = None
+    device_time_had_offset: bool | None = None
 
 
 # ════════════════════════════════════════════
 #  Source health
 # ════════════════════════════════════════════
 
+
 @dataclass
 class SourceStats:
     """Counters every source reports. A feed that has gone quiet is a clinical
     event, so `last_reading_at` matters as much as the totals."""
-    started_at: Optional[float] = None
+
+    started_at: float | None = None
     connected: bool = False
     connections_opened: int = 0
     connections_closed: int = 0
@@ -267,12 +279,12 @@ class SourceStats:
     messages_rejected: int = 0
     readings_ingested: int = 0
     duplicates: int = 0
-    backfilled: int = 0            # accepted, but too old to drive a live alert
+    backfilled: int = 0  # accepted, but too old to drive a live alert
     parse_failures: int = 0
-    overflow_rejections: int = 0   # sender out-ran us; NACKed so it can retry
-    last_reading_at: Optional[str] = None
-    last_error: Optional[str] = None
-    last_error_at: Optional[str] = None
+    overflow_rejections: int = 0  # sender out-ran us; NACKed so it can retry
+    last_reading_at: str | None = None
+    last_error: str | None = None
+    last_error_at: str | None = None
 
     # ── clock skew ──
     # A device whose clock disagrees with the appliance's is an OPERATIONAL
@@ -285,11 +297,11 @@ class SourceStats:
     # reading's device and will move between devices. The authoritative
     # per-device view — which device, how far out, since when — is the sink's
     # `clock_skew_report()`, surfaced as `status()["clock_skew"]`.
-    clock_skew_readings: int = 0        # readings arriving outside the tolerance
-    clock_skew_faults: int = 0          # times a device CROSSED into fault state
-    last_clock_skew_seconds: Optional[float] = None   # + = device ahead of us
+    clock_skew_readings: int = 0  # readings arriving outside the tolerance
+    clock_skew_faults: int = 0  # times a device CROSSED into fault state
+    last_clock_skew_seconds: float | None = None  # + = device ahead of us
     max_abs_clock_skew_seconds: float = 0.0
-    clock_skew_state: str = "ok"        # ok | skewed (most recent reading)
+    clock_skew_state: str = "ok"  # ok | skewed (most recent reading)
 
     def note_error(self, message: str) -> None:
         self.last_error = str(message)[:300]
@@ -304,7 +316,8 @@ class SourceStats:
         """
         self.last_clock_skew_seconds = round(float(skew_seconds), 3)
         self.max_abs_clock_skew_seconds = max(
-            self.max_abs_clock_skew_seconds, round(abs(float(skew_seconds)), 3))
+            self.max_abs_clock_skew_seconds, round(abs(float(skew_seconds)), 3)
+        )
         if in_tolerance:
             self.clock_skew_state = "ok"
             return
@@ -341,11 +354,11 @@ STOP_TIMEOUT_SECONDS = 5.0
 
 
 async def stop_task(
-    task: Optional[asyncio.Task],
+    task: asyncio.Task | None,
     *,
     label: str,
     timeout: float = STOP_TIMEOUT_SECONDS,
-    log: Optional[logging.Logger] = None,
+    log: logging.Logger | None = None,
 ) -> bool:
     """Cancel `task` and wait for it to finish, BOUNDED. True if it really died.
 
@@ -396,7 +409,7 @@ async def stop_task(
             if rounds == 1:
                 slice_seconds = remaining * 0.6
             else:
-                task.cancel()          # second landing site for the cancel
+                task.cancel()  # second landing site for the cancel
                 slice_seconds = remaining
             try:
                 await asyncio.wait({task}, timeout=slice_seconds)
@@ -409,7 +422,9 @@ async def stop_task(
             "[%s] task %r did NOT stop within %.1fs and is being ABANDONED so "
             "shutdown can finish. It may keep running (and writing) until the "
             "process exits — that is a cancellation bug in the task, not here.",
-            label, task.get_name(), timeout,
+            label,
+            task.get_name(),
+            timeout,
         )
         return False
 
@@ -419,14 +434,16 @@ async def stop_task(
         # retrieved" — but a failing task must never block or break shutdown.
         exc = task.exception()
         if exc is not None:
-            log.warning("[%s] task %r ended with %s: %s",
-                        label, task.get_name(), type(exc).__name__, exc)
+            log.warning(
+                "[%s] task %r ended with %s: %s", label, task.get_name(), type(exc).__name__, exc
+            )
     return True
 
 
 # ════════════════════════════════════════════
 #  The interface
 # ════════════════════════════════════════════
+
 
 class VitalsSource(ABC):
     """A named, supervised producer of vital signs.

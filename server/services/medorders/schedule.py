@@ -73,6 +73,7 @@ exactly as the derived schedule does: the latest slot not yet covered is the
 one shown (late after 15 minutes, the board's rule), and the slots before it
 are counted as not charted.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -80,11 +81,13 @@ import json
 import logging
 import os
 import re
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import date, datetime, time as dt_time, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
+from datetime import time as dt_time
 from difflib import get_close_matches
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from typing import Any
 
 from services.clinical_time import utc_iso_now
 from services.medorders import core
@@ -92,14 +95,32 @@ from services.medorders import core
 logger = logging.getLogger("orb.medorders.schedule")
 
 __all__ = [
-    "CONFIG_PATH_ENV", "EARLY_WINDOW_MINUTES", "MIN_GAP_MINUTES", "MAX_LOOKBACK_DAYS",
-    "ENTRY_SCHEDULE", "LANE_SCHEDULE", "BASIS_PRESCRIBER", "BASIS_SITE_TIMES",
-    "DoseTimesConfigError", "SiteDoseTimes",
-    "config_path", "load_dose_times", "site_dose_times", "site_times_for",
-    "normalise_frequency", "doses_per_day", "clean_times",
-    "current_schedule_in_txn", "current_schedules_in_txn", "set_schedule_in_txn",
-    "set_schedule", "supersede_for_frequency_change_in_txn", "FREQUENCY_CHANGED",
-    "board_schedule_for", "scheduled_due", "site_times_view",
+    "CONFIG_PATH_ENV",
+    "EARLY_WINDOW_MINUTES",
+    "MIN_GAP_MINUTES",
+    "MAX_LOOKBACK_DAYS",
+    "ENTRY_SCHEDULE",
+    "LANE_SCHEDULE",
+    "BASIS_PRESCRIBER",
+    "BASIS_SITE_TIMES",
+    "DoseTimesConfigError",
+    "SiteDoseTimes",
+    "config_path",
+    "load_dose_times",
+    "site_dose_times",
+    "site_times_for",
+    "normalise_frequency",
+    "doses_per_day",
+    "clean_times",
+    "current_schedule_in_txn",
+    "current_schedules_in_txn",
+    "set_schedule_in_txn",
+    "set_schedule",
+    "supersede_for_frequency_change_in_txn",
+    "FREQUENCY_CHANGED",
+    "board_schedule_for",
+    "scheduled_due",
+    "site_times_view",
 ]
 
 # ── Where the signed file lives ───────────────────────────────────────────────
@@ -121,7 +142,8 @@ MIN_GAP_MINUTES = 120
 if MIN_GAP_MINUTES < 2 * EARLY_WINDOW_MINUTES:  # a guard on the two numbers above
     raise RuntimeError(
         "MIN_GAP_MINUTES must be at least twice EARLY_WINDOW_MINUTES, or one dose could "
-        "count for two set times and hide the next dose from the drug round.")
+        "count for two set times and hide the next dose from the drug round."
+    )
 #: How far back the board looks for set times not charted. Beyond this the
 #: count is only a lower bound (the screen shows anything over 12 as "12+").
 MAX_LOOKBACK_DAYS = 31
@@ -149,22 +171,32 @@ class DoseTimesConfigError(Exception):
     """The hospital's dose-times file is unusable. Raised at import, so at
     server start: a broken file never reads as 'no site times'."""
 
-    def __init__(self, path: Any, problem: str, *, hint: Optional[str] = None):
+    def __init__(self, path: Any, problem: str, *, hint: str | None = None):
         self.path = str(path)
         self.problem = problem
         self.hint = hint
-        lines = ["", "Orb will not start: the hospital's dose times file is not valid.", "",
-                 f"  File:    {self.path}", f"  Problem: {problem}"]
+        lines = [
+            "",
+            "Orb will not start: the hospital's dose times file is not valid.",
+            "",
+            f"  File:    {self.path}",
+            f"  Problem: {problem}",
+        ]
         if hint:
             lines.append(f"  Hint:    {hint}")
-        lines += ["", "Fix the file and restart Orb, or remove it to use the times worked out "
-                  "from each frequency (ruling MO-R8).", ""]
+        lines += [
+            "",
+            "Fix the file and restart Orb, or remove it to use the times worked out "
+            "from each frequency (ruling MO-R8).",
+            "",
+        ]
         super().__init__("\n".join(lines))
 
 
 @dataclass(frozen=True)
 class SiteDoseTimes:
     """The hospital's signed dose times, as read from the file."""
+
     path: str
     version: str
     fingerprint: str
@@ -177,13 +209,14 @@ class SiteDoseTimes:
 
 # ── Pure helpers ──────────────────────────────────────────────────────────────
 
+
 def normalise_frequency(text: Any) -> str:
     """A frequency as the file and the order are matched: lower case, single
     spaces, trimmed."""
     return " ".join(str(text or "").split()).lower()
 
 
-def doses_per_day(frequency: Any) -> Optional[int]:
+def doses_per_day(frequency: Any) -> int | None:
     """How many doses a day the frequency means, when it can have set times:
     given a fixed number of times every day, no more often than every
     MIN_GAP_MINUTES. None otherwise (as required, continuous, stat, every other
@@ -193,6 +226,7 @@ def doses_per_day(frequency: Any) -> Optional[int]:
     # Imported here: nurse_shift_service reads this module inside its own
     # functions, never at its import.
     from services.nurse_shift_service import parse_frequency
+
     parsed = parse_frequency(str(frequency or ""))
     interval = parsed.get("interval_minutes")
     if parsed.get("kind") != "scheduled" or not interval:
@@ -232,39 +266,48 @@ def clean_times(times: Any, *, expected: int) -> tuple[str, ...]:
         if not _TIME_RE.match(text):
             raise _TimesInvalid(
                 f"{value!r} is not a time. Write each time as HH:MM on the 24-hour clock, "
-                "from 00:00 to 23:59.")
+                "from 00:00 to 23:59."
+            )
         cleaned.append(text)
     if len(set(cleaned)) != len(cleaned):
         raise _TimesInvalid("The same time is given twice.")
     if len(cleaned) != expected:
         raise _TimesInvalid(
             f"This frequency means {expected} dose{'s' if expected != 1 else ''} a day, so give "
-            f"{expected} time{'s' if expected != 1 else ''} ({len(cleaned)} given).")
+            f"{expected} time{'s' if expected != 1 else ''} ({len(cleaned)} given)."
+        )
     ordered = sorted(cleaned, key=_minutes)
     if len(ordered) > 1:
         marks = [_minutes(t) for t in ordered]
-        gaps = [b - a for a, b in zip(marks, marks[1:])] + [marks[0] + 24 * 60 - marks[-1]]
+        gaps = [b - a for a, b in zip(marks, marks[1:], strict=False)] + [
+            marks[0] + 24 * 60 - marks[-1]
+        ]
         if min(gaps) < MIN_GAP_MINUTES:
             raise _TimesInvalid(
                 f"Two times are less than {_gap_words()} apart. Set times for one order must "
-                f"be at least {_gap_words()} apart, across midnight too.")
+                f"be at least {_gap_words()} apart, across midnight too."
+            )
     return tuple(ordered)
 
 
 # ── The signed file ───────────────────────────────────────────────────────────
 
-def _suggest(name: str, options: Iterable[str]) -> Optional[str]:
+
+def _suggest(name: str, options: Iterable[str]) -> str | None:
     near = get_close_matches(name, list(options), n=1)
     return f"Did you mean '{near[0]}'?" if near else None
 
 
-def _check_keys(path: Path, where: str, data: Mapping, allowed: Sequence[str],
-                required: Sequence[str]) -> None:
+def _check_keys(
+    path: Path, where: str, data: Mapping, allowed: Sequence[str], required: Sequence[str]
+) -> None:
     for key in data:
         if key not in allowed:
             raise DoseTimesConfigError(
-                path, f"Unknown key '{key}' in {where}. Allowed: {', '.join(allowed)}.",
-                hint=_suggest(str(key), allowed))
+                path,
+                f"Unknown key '{key}' in {where}. Allowed: {', '.join(allowed)}.",
+                hint=_suggest(str(key), allowed),
+            )
     for key in required:
         if key not in data:
             raise DoseTimesConfigError(path, f"'{key}' is missing from {where}.")
@@ -286,8 +329,8 @@ def _validate(path: Path, raw: bytes) -> SiteDoseTimes:
         raise DoseTimesConfigError(path, "The file is not UTF-8 text.") from None
     except json.JSONDecodeError as e:
         raise DoseTimesConfigError(
-            path, f"The file is not valid JSON (line {e.lineno}, column {e.colno}: {e.msg}).") \
-            from None
+            path, f"The file is not valid JSON (line {e.lineno}, column {e.colno}: {e.msg})."
+        ) from None
     if not isinstance(data, dict):
         raise DoseTimesConfigError(path, "The file must hold one JSON object.")
     _check_keys(path, "the file", data, _TOP_KEYS, _REQUIRED_TOP)
@@ -297,8 +340,10 @@ def _validate(path: Path, raw: bytes) -> SiteDoseTimes:
 
     signed = data["signed"]
     if not isinstance(signed, dict):
-        raise DoseTimesConfigError(path, "'signed' must name the pharmacy and the physician "
-                                         "champion who approved these times.")
+        raise DoseTimesConfigError(
+            path,
+            "'signed' must name the pharmacy and the physician champion who approved these times.",
+        )
     _check_keys(path, "'signed'", signed, _SIGNERS, _SIGNERS)
     signatures = {}
     for signer in _SIGNERS:
@@ -312,8 +357,8 @@ def _validate(path: Path, raw: bytes) -> SiteDoseTimes:
             signed_on = date.fromisoformat(when)
         except ValueError:
             raise DoseTimesConfigError(
-                path, f"'signed.{signer}.date' is {when!r}, not a date written YYYY-MM-DD.") \
-                from None
+                path, f"'signed.{signer}.date' is {when!r}, not a date written YYYY-MM-DD."
+            ) from None
         if signed_on > _today():
             raise DoseTimesConfigError(path, f"'signed.{signer}.date' is in the future.")
         signatures[signer] = {"name": name, "date": signed_on.isoformat()}
@@ -321,8 +366,10 @@ def _validate(path: Path, raw: bytes) -> SiteDoseTimes:
     times = data["times"]
     if not isinstance(times, dict) or not times:
         raise DoseTimesConfigError(
-            path, "'times' must list at least one frequency with its times, for example "
-                  "\"TDS\": [\"08:00\", \"14:00\", \"20:00\"].")
+            path,
+            "'times' must list at least one frequency with its times, for example "
+            '"TDS": ["08:00", "14:00", "20:00"].',
+        )
     by_frequency: dict[str, tuple[str, ...]] = {}
     labels: dict[str, str] = {}
     for label, values in times.items():
@@ -331,30 +378,38 @@ def _validate(path: Path, raw: bytes) -> SiteDoseTimes:
             raise DoseTimesConfigError(path, f"Frequency {label!r} is blank or too long.")
         if key in by_frequency:
             raise DoseTimesConfigError(
-                path, f"Frequency '{label}' is listed twice ('{labels[key]}' already).")
+                path, f"Frequency '{label}' is listed twice ('{labels[key]}' already)."
+            )
         expected = doses_per_day(label)
         if expected is None:
             raise DoseTimesConfigError(
-                path, f"Times cannot be set for '{label}': set times are only for a "
-                      "frequency given a fixed number of times every day, no more often than "
-                      f"every {_gap_words()} (for example OD, BD, TDS, QDS or Q6H).")
+                path,
+                f"Times cannot be set for '{label}': set times are only for a "
+                "frequency given a fixed number of times every day, no more often than "
+                f"every {_gap_words()} (for example OD, BD, TDS, QDS or Q6H).",
+            )
         try:
             by_frequency[key] = clean_times(values, expected=expected)
         except ValueError as e:
             raise DoseTimesConfigError(path, f"'times.{label}': {e}") from None
         labels[key] = str(label).strip()
     return SiteDoseTimes(
-        path=str(path), version=version,
+        path=str(path),
+        version=version,
         fingerprint="sha256:" + hashlib.sha256(raw).hexdigest(),
-        signed=signatures, times=by_frequency, labels=labels)
+        signed=signatures,
+        times=by_frequency,
+        labels=labels,
+    )
 
 
 def _today() -> date:
     from services.hospital_time import hospital_today
+
     return hospital_today()
 
 
-def load_dose_times(path: Optional[Path] = None) -> Optional[SiteDoseTimes]:
+def load_dose_times(path: Path | None = None) -> SiteDoseTimes | None:
     """The signed file, validated; None when there is no file (no site
     times). Raises DoseTimesConfigError for a file Orb will not use."""
     path = Path(path) if path is not None else config_path()
@@ -368,19 +423,23 @@ def load_dose_times(path: Optional[Path] = None) -> Optional[SiteDoseTimes]:
 
 
 #: Read once, at import (README rules 1 and 2).
-_SITE: Optional[SiteDoseTimes] = load_dose_times()
+_SITE: SiteDoseTimes | None = load_dose_times()
 if _SITE is not None:
-    logger.info("Dose times: %d frequencies from %s (version %s, %s)",
-                len(_SITE.times), _SITE.path, _SITE.version, _SITE.fingerprint)
+    logger.info(
+        "Dose times: %d frequencies from %s (version %s, %s)",
+        len(_SITE.times),
+        _SITE.path,
+        _SITE.version,
+        _SITE.fingerprint,
+    )
 
 
-def site_dose_times() -> Optional[SiteDoseTimes]:
+def site_dose_times() -> SiteDoseTimes | None:
     """The hospital's signed dose times, or None (no file)."""
     return _SITE
 
 
-def site_times_for(frequency: Any, site: Optional[SiteDoseTimes] = None
-                   ) -> Optional[tuple[str, ...]]:
+def site_times_for(frequency: Any, site: SiteDoseTimes | None = None) -> tuple[str, ...] | None:
     """The signed times for this exact frequency, or None."""
     site = site if site is not None else site_dose_times()
     if site is None:
@@ -388,23 +447,32 @@ def site_times_for(frequency: Any, site: Optional[SiteDoseTimes] = None
     return site.times.get(normalise_frequency(frequency))
 
 
-def site_times_view(site: Optional[SiteDoseTimes] = None) -> dict:
+def site_times_view(site: SiteDoseTimes | None = None) -> dict:
     """The signed file as a screen shows it: no patient data."""
     site = site if site is not None else site_dose_times()
     if site is None:
-        return {"available": False, "version": None, "fingerprint": None, "signed": None,
-                "times": []}
+        return {
+            "available": False,
+            "version": None,
+            "fingerprint": None,
+            "signed": None,
+            "times": [],
+        }
     return {
-        "available": True, "version": site.version, "fingerprint": site.fingerprint,
+        "available": True,
+        "version": site.version,
+        "fingerprint": site.fingerprint,
         "signed": site.signed,
-        "times": [{"frequency": site.labels.get(k, k), "times": list(v)}
-                  for k, v in site.times.items()],
+        "times": [
+            {"frequency": site.labels.get(k, k), "times": list(v)} for k, v in site.times.items()
+        ],
     }
 
 
 # ── Authored times: readers ───────────────────────────────────────────────────
 
-def _view(rows: Sequence[Mapping]) -> Optional[dict]:
+
+def _view(rows: Sequence[Mapping]) -> dict | None:
     if not rows:
         return None
     first = rows[0]
@@ -419,11 +487,13 @@ def _view(rows: Sequence[Mapping]) -> Optional[dict]:
     }
 
 
-def current_schedule_in_txn(conn, order_id: str) -> Optional[dict]:
+def current_schedule_in_txn(conn, order_id: str) -> dict | None:
     """The order's set times now in force, or None."""
     rows = conn.execute(
         "SELECT * FROM med_order_schedule_times WHERE med_order_id = ? "
-        "AND superseded_at IS NULL ORDER BY due_time", (order_id,)).fetchall()
+        "AND superseded_at IS NULL ORDER BY due_time",
+        (order_id,),
+    ).fetchall()
     return _view([dict(r) for r in rows])
 
 
@@ -432,28 +502,44 @@ def current_schedules_in_txn(conn, order_ids: Iterable[str]) -> dict[str, dict]:
     ids = sorted({str(i) for i in order_ids if i})
     found: dict[str, list[dict]] = {}
     for start in range(0, len(ids), 500):
-        chunk = ids[start:start + 500]
+        chunk = ids[start : start + 500]
         marks = ",".join("?" for _ in chunk)
         for row in conn.execute(
             f"SELECT * FROM med_order_schedule_times WHERE med_order_id IN ({marks}) "
-            "AND superseded_at IS NULL ORDER BY med_order_id, due_time", chunk).fetchall():
+            "AND superseded_at IS NULL ORDER BY med_order_id, due_time",
+            chunk,
+        ).fetchall():
             found.setdefault(row["med_order_id"], []).append(dict(row))
-    return {oid: _view(rows) for oid, rows in found.items()}
+    views: dict[str, dict] = {}
+    for oid, rows in found.items():
+        view = _view(rows)
+        assert view is not None
+        views[oid] = view
+    return views
 
 
 # ── Authored times: the writer ────────────────────────────────────────────────
 
 _NOT_LIVE_WORDS = {
-    "stopped": "was stopped", "completed": "is complete", "cancelled": "was cancelled",
+    "stopped": "was stopped",
+    "completed": "is complete",
+    "cancelled": "was cancelled",
     "rejected": "was rejected by the pharmacist",
 }
 STALE_ORDER_MESSAGE = "This medicine's order changed since you opened it. Reload and try again."
 
 
-def set_schedule_in_txn(conn, order_id: str, times: Sequence[str], *, actor_id: str,
-                        actor_role: Optional[str], expected_version: Optional[int] = None,
-                        request_meta: Optional[Mapping] = None,
-                        now: Optional[str] = None) -> dict:
+def set_schedule_in_txn(
+    conn,
+    order_id: str,
+    times: Sequence[str],
+    *,
+    actor_id: str,
+    actor_role: str | None,
+    expected_version: int | None = None,
+    request_meta: Mapping | None = None,
+    now: str | None = None,
+) -> dict:
     """Set (or, with an empty list, clear) the times an order is due, in the
     caller's immediate transaction. Returns {order, schedule, event_id,
     replayed}.
@@ -465,8 +551,10 @@ def set_schedule_in_txn(conn, order_id: str, times: Sequence[str], *, actor_id: 
     has ended, an as-needed order, a frequency not given a fixed number of times
     a day, and a set of times that does not fit the frequency."""
     if not getattr(conn, "in_transaction", False):
-        raise core.StoreUsageError("set_schedule_in_txn runs inside the caller's write "
-                                   "transaction: open db_session(immediate=True) first")
+        raise core.StoreUsageError(
+            "set_schedule_in_txn runs inside the caller's write "
+            "transaction: open db_session(immediate=True) first"
+        )
     order = core.get_order_in_txn(conn, order_id)
     if order is None:
         raise core.MedOrderNotFound("This medication order no longer exists")
@@ -476,11 +564,16 @@ def set_schedule_in_txn(conn, order_id: str, times: Sequence[str], *, actor_id: 
     if status in core.TERMINAL_STATUSES:
         raise core.TransitionNotAllowed(
             f"This medicine's order {_NOT_LIVE_WORDS.get(status, 'has ended')}, so its times "
-            "cannot be changed.", code="order_not_live", order=order)
+            "cannot be changed.",
+            code="order_not_live",
+            order=order,
+        )
     if order.get("is_prn"):
         raise core.MedOrderInvalid(
             "An as-needed medicine has no set times: it is given when it is needed.",
-            code="prn_has_no_set_times", order=order)
+            code="prn_has_no_set_times",
+            order=order,
+        )
     if not isinstance(times, (list, tuple)):
         raise core.MedOrderInvalid("Give the times as a list.", code="invalid_times", order=order)
 
@@ -495,7 +588,9 @@ def set_schedule_in_txn(conn, order_id: str, times: Sequence[str], *, actor_id: 
                 "Set times can be given only for a medicine given a fixed number of times a "
                 f"day, no more often than every {_gap_words()} (for example OD, BD, TDS, QDS or "
                 "every 6 hours). This one keeps the times worked out from its frequency.",
-                code="frequency_not_daily", order=order)
+                code="frequency_not_daily",
+                order=order,
+            )
         try:
             new_times = clean_times(list(times), expected=expected)
         except ValueError as e:
@@ -512,73 +607,137 @@ def set_schedule_in_txn(conn, order_id: str, times: Sequence[str], *, actor_id: 
     cur = conn.execute(
         "UPDATE med_orders SET version = ?, updated_at = ? "
         "WHERE id = ? AND version = ? AND status = ?",
-        (order["version"] + 1, now, order["id"], order["version"], status))
+        (order["version"] + 1, now, order["id"], order["version"], status),
+    )
     if cur.rowcount != 1:
-        raise core.StaleOrderVersion(STALE_ORDER_MESSAGE,
-                                     order=core.get_order_in_txn(conn, order["id"]) or order)
+        raise core.StaleOrderVersion(
+            STALE_ORDER_MESSAGE, order=core.get_order_in_txn(conn, order["id"]) or order
+        )
     if current:
         conn.execute(
             "UPDATE med_order_schedule_times SET superseded_at = ?, superseded_by = ? "
-            "WHERE med_order_id = ? AND superseded_at IS NULL", (now, actor_id, order["id"]))
+            "WHERE med_order_id = ? AND superseded_at IS NULL",
+            (now, actor_id, order["id"]),
+        )
     site_version = site_fingerprint = None
     if basis == BASIS_SITE_TIMES:
         site = site_dose_times()
+        assert site is not None
         site_version, site_fingerprint = site.version, site.fingerprint
     if new_times:
         last = conn.execute(
             "SELECT COALESCE(MAX(schedule_version), 0) FROM med_order_schedule_times "
-            "WHERE med_order_id = ?", (order["id"],)).fetchone()[0]
+            "WHERE med_order_id = ?",
+            (order["id"],),
+        ).fetchone()[0]
         for due_time in new_times:
             conn.execute(
                 "INSERT INTO med_order_schedule_times (med_order_id, patient_id, "
                 "schedule_version, due_time, basis, site_times_version, site_times_fingerprint, "
                 "authored_by, authored_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (order["id"], order["patient_id"], int(last) + 1, due_time, basis, site_version,
-                 site_fingerprint, actor_id, now, now))
+                (
+                    order["id"],
+                    order["patient_id"],
+                    int(last) + 1,
+                    due_time,
+                    basis,
+                    site_version,
+                    site_fingerprint,
+                    actor_id,
+                    now,
+                    now,
+                ),
+            )
     after = core.get_order_in_txn(conn, order["id"])
+    assert after is not None, "Medication order disappeared inside its transaction"
     schedule = current_schedule_in_txn(conn, order["id"])
     changes = {"schedule_times": {"before": before or None, "after": list(new_times) or None}}
     event_id = core.record_event_in_txn(
-        conn, order=after, kind="amended", from_status=status, to_status=status,
-        actor_id=actor_id, actor_role=actor_role, entry_point=ENTRY_SCHEDULE,
-        payload={"changes": changes, "basis": basis, "site_times_version": site_version,
-                 "site_times_fingerprint": site_fingerprint},
-        created_at=now)
+        conn,
+        order=after,
+        kind="amended",
+        from_status=status,
+        to_status=status,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        entry_point=ENTRY_SCHEDULE,
+        payload={
+            "changes": changes,
+            "basis": basis,
+            "site_times_version": site_version,
+            "site_times_fingerprint": site_fingerprint,
+        },
+        created_at=now,
+    )
     core.audit_in_txn(
-        conn, order=after, action="med_order_amended", actor_id=actor_id,
-        actor_role=actor_role, entry_point=ENTRY_SCHEDULE, from_status=status, to_status=status,
-        lane=LANE_SCHEDULE, event_id=event_id,
-        extra={"amended_fields": ["schedule_times"], "schedule_times_before": before or None,
-               "schedule_times_after": list(new_times) or None, "schedule_basis": basis,
-               "site_times_version": site_version},
-        request_meta=request_meta)
+        conn,
+        order=after,
+        action="med_order_amended",
+        actor_id=actor_id,
+        actor_role=actor_role,
+        entry_point=ENTRY_SCHEDULE,
+        from_status=status,
+        to_status=status,
+        lane=LANE_SCHEDULE,
+        event_id=event_id,
+        extra={
+            "amended_fields": ["schedule_times"],
+            "schedule_times_before": before or None,
+            "schedule_times_after": list(new_times) or None,
+            "schedule_basis": basis,
+            "site_times_version": site_version,
+        },
+        request_meta=request_meta,
+    )
     return {"order": after, "schedule": schedule, "event_id": event_id, "replayed": False}
 
 
-def set_schedule(order_id: str, times: Sequence[str], *, actor_id: str,
-                 actor_role: Optional[str], expected_version: Optional[int] = None,
-                 request_meta: Optional[Mapping] = None) -> dict:
+def set_schedule(
+    order_id: str,
+    times: Sequence[str],
+    *,
+    actor_id: str,
+    actor_role: str | None,
+    expected_version: int | None = None,
+    request_meta: Mapping | None = None,
+) -> dict:
     """PUT /api/medorders/orders/{id}/schedule. BLOCKING: one immediate
     transaction."""
     from database import db_session
+
     with db_session(immediate=True) as conn:
-        return set_schedule_in_txn(conn, order_id, times, actor_id=actor_id,
-                                   actor_role=actor_role, expected_version=expected_version,
-                                   request_meta=request_meta)
+        return set_schedule_in_txn(
+            conn,
+            order_id,
+            times,
+            actor_id=actor_id,
+            actor_role=actor_role,
+            expected_version=expected_version,
+            request_meta=request_meta,
+        )
 
 
 # ── Authored times: when the order's frequency changes ────────────────────────
 
 #: Why a set of times stopped applying without a prescriber clearing it.
 FREQUENCY_CHANGED = "frequency_changed"
-_FREQUENCY_CHANGED_WORDS = ("The frequency changed, so the times set for the old frequency "
-                            "no longer apply.")
+_FREQUENCY_CHANGED_WORDS = (
+    "The frequency changed, so the times set for the old frequency no longer apply."
+)
 
 
 def supersede_for_frequency_change_in_txn(
-        conn, order: Mapping, *, frequency_before: Any, actor_id: Optional[str],
-        actor_role: Optional[str], entry_point: str, extra: Optional[Mapping] = None,
-        request_meta: Optional[Mapping] = None, now: Optional[str] = None) -> Optional[int]:
+    conn,
+    order: Mapping,
+    *,
+    frequency_before: Any,
+    actor_id: str | None,
+    actor_role: str | None,
+    entry_point: str,
+    extra: Mapping | None = None,
+    request_meta: Mapping | None = None,
+    now: str | None = None,
+) -> int | None:
     """The order's frequency has just changed, in the caller's transaction:
     the times set for the old frequency stop applying. Returns the id of the
     'amended' event that records it, or None when nothing changes (the same
@@ -601,8 +760,9 @@ def supersede_for_frequency_change_in_txn(
     after) and its clinical_access audit row (fail-closed), beside the
     caller's own."""
     if not getattr(conn, "in_transaction", False):
-        raise core.StoreUsageError("supersede_for_frequency_change_in_txn runs inside the "
-                                   "caller's write transaction")
+        raise core.StoreUsageError(
+            "supersede_for_frequency_change_in_txn runs inside the caller's write transaction"
+        )
     frequency_after = order.get("frequency")
     if normalise_frequency(frequency_before) == normalise_frequency(frequency_after):
         return None
@@ -610,40 +770,71 @@ def supersede_for_frequency_change_in_txn(
     if current is None:
         return None
     if not str(actor_id or "").strip():
-        raise core.MedOrderInvalid("A change to an order's times names the person who made it",
-                                   code="actor_required", order=order)
+        raise core.MedOrderInvalid(
+            "A change to an order's times names the person who made it",
+            code="actor_required",
+            order=order,
+        )
     now = now or utc_iso_now()
     conn.execute(
         "UPDATE med_order_schedule_times SET superseded_at = ?, superseded_by = ? "
-        "WHERE med_order_id = ? AND superseded_at IS NULL", (now, actor_id, order["id"]))
+        "WHERE med_order_id = ? AND superseded_at IS NULL",
+        (now, actor_id, order["id"]),
+    )
     before = list(current["times"])
     status = order["status"]
     event_id = core.record_event_in_txn(
-        conn, order=order, kind="amended", from_status=status, to_status=status,
-        actor_id=actor_id, actor_role=actor_role, entry_point=entry_point,
+        conn,
+        order=order,
+        kind="amended",
+        from_status=status,
+        to_status=status,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        entry_point=entry_point,
         reason=_FREQUENCY_CHANGED_WORDS,
-        payload={"changes": {"schedule_times": {"before": before, "after": None}},
-                 "superseded_because": FREQUENCY_CHANGED,
-                 "frequency": {"before": frequency_before, "after": frequency_after},
-                 "basis_before": current["basis"],
-                 "schedule_version_before": current["schedule_version"]},
-        created_at=now)
+        payload={
+            "changes": {"schedule_times": {"before": before, "after": None}},
+            "superseded_because": FREQUENCY_CHANGED,
+            "frequency": {"before": frequency_before, "after": frequency_after},
+            "basis_before": current["basis"],
+            "schedule_version_before": current["schedule_version"],
+        },
+        created_at=now,
+    )
     core.audit_in_txn(
-        conn, order=order, action="med_order_amended", actor_id=actor_id,
-        actor_role=actor_role, entry_point=entry_point, from_status=status, to_status=status,
-        reason=_FREQUENCY_CHANGED_WORDS, lane=LANE_SCHEDULE, event_id=event_id,
-        extra={**dict(extra or {}), "amended_fields": ["schedule_times"],
-               "schedule_times_before": before, "schedule_times_after": None,
-               "schedule_basis": None, "superseded_because": FREQUENCY_CHANGED,
-               "frequency_before": frequency_before, "frequency_after": frequency_after},
-        request_meta=request_meta)
+        conn,
+        order=order,
+        action="med_order_amended",
+        actor_id=actor_id,
+        actor_role=actor_role,
+        entry_point=entry_point,
+        from_status=status,
+        to_status=status,
+        reason=_FREQUENCY_CHANGED_WORDS,
+        lane=LANE_SCHEDULE,
+        event_id=event_id,
+        extra={
+            **dict(extra or {}),
+            "amended_fields": ["schedule_times"],
+            "schedule_times_before": before,
+            "schedule_times_after": None,
+            "schedule_basis": None,
+            "superseded_because": FREQUENCY_CHANGED,
+            "frequency_before": frequency_before,
+            "frequency_after": frequency_after,
+        },
+        request_meta=request_meta,
+    )
     return event_id
 
 
 # ── The board ─────────────────────────────────────────────────────────────────
 
-def board_schedule_for(order: Optional[Mapping], authored: Optional[Mapping],
-                       site: Optional[SiteDoseTimes]) -> Optional[dict]:
+
+def board_schedule_for(
+    order: Mapping | None, authored: Mapping | None, site: SiteDoseTimes | None
+) -> dict | None:
     """Which set times the board uses for one LINKED ward row: {times,
     source: 'prescriber' | 'site_times', ...} or None (the derived schedule).
     The caller has already checked the lifecycle is on. The order's own
@@ -662,20 +853,26 @@ def board_schedule_for(order: Optional[Mapping], authored: Optional[Mapping],
     if expected is None:
         return None
     if authored and len(authored.get("times") or ()) == expected:
-        return {"times": list(authored["times"]),
-                "source": authored.get("basis") or BASIS_PRESCRIBER,
-                "authored": True}
+        return {
+            "times": list(authored["times"]),
+            "source": authored.get("basis") or BASIS_PRESCRIBER,
+            "authored": True,
+        }
     site_times = site_times_for(order.get("frequency"), site)
     if site_times and len(site_times) == expected:
-        return {"times": list(site_times), "source": BASIS_SITE_TIMES, "authored": False,
-                "site_times_version": site.version if site else None}
+        return {
+            "times": list(site_times),
+            "source": BASIS_SITE_TIMES,
+            "authored": False,
+            "site_times_version": site.version if site else None,
+        }
     return None
 
 
 def _slots(times: Sequence[str], tz, start: datetime, end: datetime) -> list[datetime]:
     """Every set time from `start` to `end` inclusive, as aware UTC instants,
     in order. Both bounds aware."""
-    clock = sorted((_minutes(t) for t in times))
+    clock = sorted(_minutes(t) for t in times)
     first_day = start.astimezone(tz).date() - timedelta(days=1)
     last_day = end.astimezone(tz).date() + timedelta(days=1)
     out: list[datetime] = []
@@ -683,7 +880,7 @@ def _slots(times: Sequence[str], tz, start: datetime, end: datetime) -> list[dat
     while day <= last_day:
         for minute in clock:
             local = datetime.combine(day, dt_time(minute // 60, minute % 60), tzinfo=tz)
-            instant = local.astimezone(timezone.utc)
+            instant = local.astimezone(UTC)
             if start <= instant <= end:
                 out.append(instant)
         day += timedelta(days=1)
@@ -716,13 +913,20 @@ def _covered_by_dose(times: Sequence[str], tz, given_at: datetime) -> datetime:
     return following
 
 
-def scheduled_due(times: Sequence[str], *, last_given_at: Optional[datetime],
-                  started_at: Optional[datetime], now: datetime, tz=None) -> dict:
+def scheduled_due(
+    times: Sequence[str],
+    *,
+    last_given_at: datetime | None,
+    started_at: datetime | None,
+    now: datetime,
+    tz=None,
+) -> dict:
     """The due time on set times: {due_at, due_basis, missed_slots}, the same
     three facts the derived schedule gives. Aware datetimes in, aware UTC out.
     due_at None when there is nothing to anchor on (no dose and no start)."""
     if tz is None:
         from services.hospital_time import hospital_timezone
+
         tz = hospital_timezone()
     if last_given_at is not None:
         # The next set time due is the first one after the set time this dose
@@ -738,11 +942,9 @@ def scheduled_due(times: Sequence[str], *, last_given_at: Optional[datetime],
     window_start = max(floor, lookback) if floor < now else floor
     if window_start > now:
         upcoming = _slots(times, tz, window_start, window_start + timedelta(days=2))
-        return {"due_at": upcoming[0] if upcoming else None, "due_basis": basis,
-                "missed_slots": 0}
+        return {"due_at": upcoming[0] if upcoming else None, "due_basis": basis, "missed_slots": 0}
     past = _slots(times, tz, window_start, now)
     if not past:
         upcoming = _slots(times, tz, now, now + timedelta(days=2))
-        return {"due_at": upcoming[0] if upcoming else None, "due_basis": basis,
-                "missed_slots": 0}
+        return {"due_at": upcoming[0] if upcoming else None, "due_basis": basis, "missed_slots": 0}
     return {"due_at": past[-1], "due_basis": basis, "missed_slots": len(past) - 1}

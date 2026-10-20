@@ -51,26 +51,32 @@ token_version so outstanding JWTs die immediately, but until auth_routes gates o
 is_active a deactivated user could still obtain a *fresh* token by logging in
 again. See the schema notes returned by this task.
 """
+
 from __future__ import annotations
 
 import re
 import sqlite3
-from db_backend import DBIntegrityError
 import uuid
-
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from datetime import UTC
+from typing import Any
 
 import config
 from auth import get_current_user, hash_password, verify_password
 from database import SERVICE_ACCOUNT_IDS, db_session
+from db_backend import DBIntegrityError
+from fastapi import APIRouter, Depends, HTTPException, Request
 from permissions import (
-    DEPARTMENT_REQUIRED_ROLES, department_scope, has_permission, require_permission,
+    DEPARTMENT_REQUIRED_ROLES,
+    department_scope,
+    has_permission,
+    require_permission,
 )
+from pydantic import BaseModel, Field
 from roles import STORABLE_ROLES, role_switches
+from services.audit_service import AuditWriteError, log_audit_event
+
 from routes.opt_in_gates import feature_gate
 from services import facility_service
-from services.audit_service import AuditWriteError, log_audit_event
 
 router = APIRouter(prefix="/api/admin/users", tags=["admin-users"])
 
@@ -138,8 +144,15 @@ class SetPinBody(BaseModel):
 # ──────────────────────────────────────────────────────────────────────────────
 #  Helpers
 # ──────────────────────────────────────────────────────────────────────────────
-def _audit(request: Request, actor: dict, action_type: str, outcome: str,
-           summary: str, target_id: str | None, metadata: dict | None = None) -> None:
+def _audit(
+    request: Request,
+    actor: dict,
+    action_type: str,
+    outcome: str,
+    summary: str,
+    target_id: str | int | None,
+    metadata: dict | None = None,
+) -> None:
     """Standalone audit write (post-commit), mirroring the other routes."""
     log_audit_event(
         correlation_id=str(uuid.uuid4()),
@@ -150,7 +163,7 @@ def _audit(request: Request, actor: dict, action_type: str, outcome: str,
         actor_user_id=actor.get("id"),
         actor_role=actor.get("role"),
         target_type="user",
-        target_id=target_id,
+        target_id=str(target_id) if target_id is not None else None,
         request_path=request.url.path,
         http_method=request.method,
         ip_address=request.client.host if request.client else None,
@@ -171,18 +184,28 @@ def _validate_role(role: str) -> None:
 # that therefore cannot be made. Keyed by role; every ROLE_FEATURE role has one
 # (tests/test_role_batch.py checks it).
 _ROLE_SWITCH_OFF_WORDS: dict[str, str] = {
-    "receptionist": ("The registration desk is switched off on this site, so a "
-                     "receptionist account cannot be created."),
+    "receptionist": (
+        "The registration desk is switched off on this site, so a "
+        "receptionist account cannot be created."
+    ),
     # Either switch lets a ward clerk be staffed (roles.ROLE_FEATURE_ALSO).
-    "ward_clerk": ("Beds and admissions and Orb Ward Record are both switched off "
-                   "on this site. Ward clerks need Beds and admissions or Orb Ward "
-                   "Record switched on."),
-    "lab_technician": ("The laboratory module is switched off on this site, so a "
-                       "lab technician account cannot be created."),
-    "pathologist": ("The laboratory module is switched off on this site, so a "
-                    "pathologist account cannot be created."),
-    "phlebotomist": ("The laboratory module is switched off on this site, so a "
-                     "phlebotomist account cannot be created."),
+    "ward_clerk": (
+        "Beds and admissions and Orb Ward Record are both switched off "
+        "on this site. Ward clerks need Beds and admissions or Orb Ward "
+        "Record switched on."
+    ),
+    "lab_technician": (
+        "The laboratory module is switched off on this site, so a "
+        "lab technician account cannot be created."
+    ),
+    "pathologist": (
+        "The laboratory module is switched off on this site, so a "
+        "pathologist account cannot be created."
+    ),
+    "phlebotomist": (
+        "The laboratory module is switched off on this site, so a "
+        "phlebotomist account cannot be created."
+    ),
 }
 
 
@@ -198,8 +221,9 @@ def _require_role_switch(role: str) -> None:
     raise HTTPException(
         status_code=400,
         detail=_ROLE_SWITCH_OFF_WORDS.get(
-            role, "That part of Orb is switched off on this site, so this account "
-                  "cannot be created."),
+            role,
+            "That part of Orb is switched off on this site, so this account cannot be created.",
+        ),
     )
 
 
@@ -211,20 +235,23 @@ def _is_reserved_id(user_id: str) -> bool:
     return uid in SERVICE_ACCOUNT_IDS or uid.startswith("bot_")
 
 
-def _refuse_service_account(request: Request, actor: dict, user_id: str,
-                            action: str) -> None:
+def _refuse_service_account(request: Request, actor: dict, user_id: str, action: str) -> None:
     """409 (audited) for any change to a service identity."""
     if user_id not in SERVICE_ACCOUNT_IDS:
         return
     _audit(
-        request, actor, "user_service_account_change_denied", "denied",
-        f"Refused {action} on service account {user_id}", user_id,
+        request,
+        actor,
+        "user_service_account_change_denied",
+        "denied",
+        f"Refused {action} on service account {user_id}",
+        user_id,
         metadata={"action": action},
     )
     raise HTTPException(
         status_code=409,
         detail="This is a system account used by Orb's automation. "
-               "It has no login and cannot be changed here.",
+        "It has no login and cannot be changed here.",
     )
 
 
@@ -234,10 +261,14 @@ def _require_department(role: str, department: str | None) -> None:
     same holds for a ward clerk, whose bed board would otherwise be every
     ward's; the clerk is not a clinical role, so the words say so."""
     if role in DEPARTMENT_REQUIRED_ROLES and not (department or "").strip():
-        raise HTTPException(status_code=400,
-                            detail=("Department is required for a ward clerk"
-                                    if role == "ward_clerk"
-                                    else "Department is required for clinical roles"))
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Department is required for a ward clerk"
+                if role == "ward_clerk"
+                else "Department is required for clinical roles"
+            ),
+        )
 
 
 def _known_departments(db: sqlite3.Connection) -> list[str]:
@@ -251,7 +282,7 @@ def _known_departments(db: sqlite3.Connection) -> list[str]:
     ):
         try:
             names.update((r["d"] or "").strip() for r in db.execute(sql).fetchall())
-        except Exception:   # table absent on a partial schema: offer what we have
+        except Exception:  # table absent on a partial schema: offer what we have
             continue
     names.discard("")
     return sorted(names, key=str.lower)
@@ -290,14 +321,21 @@ def _get_user_row(db: sqlite3.Connection, user_id: str) -> sqlite3.Row:
 # facility_service.invalidate_cache() after its commit, so a revoke narrows the
 # scope on the very next request.
 
-_HOME_ROW_REFUSED = ("A home facility is only for staff without a department. Staff "
-                     "with a department work at their department's facility.")
-_OUTSIDE_SCOPE = ("This account works at another facility. Only an administrator at "
-                  "that facility, or one with group-wide access, can change it.")
-_GRANT_HOLDERS_ONLY = ("Only an administrator with group-wide access can see or change "
-                       "group-wide access.")
-_HOLDER_ACCOUNT = ("This administrator has access to all facilities. Only an "
-                   "administrator who also has it can change their account.")
+_HOME_ROW_REFUSED = (
+    "A home facility is only for staff without a department. Staff "
+    "with a department work at their department's facility."
+)
+_OUTSIDE_SCOPE = (
+    "This account works at another facility. Only an administrator at "
+    "that facility, or one with group-wide access, can change it."
+)
+_GRANT_HOLDERS_ONLY = (
+    "Only an administrator with group-wide access can see or change group-wide access."
+)
+_HOLDER_ACCOUNT = (
+    "This administrator has access to all facilities. Only an "
+    "administrator who also has it can change their account."
+)
 _MIN_REASON_LEN = 3
 
 
@@ -306,14 +344,21 @@ class _Refusal(Exception):
     roll back first and only then writes the denial's audit row, so that row is
     never rolled back with the change it refused."""
 
-    def __init__(self, status: int, error: str, message: str, *,
-                 audit: tuple[str, str, dict] | None = None):
+    def __init__(
+        self, status: int, error: str, message: str, *, audit: tuple[str, str, dict] | None = None
+    ):
         super().__init__(message)
         self.status, self.error, self.message, self.audit = status, error, message, audit
 
 
-def _audit_denial(request: Request, actor: dict, action_type: str, summary: str,
-                  target_id: str | None, metadata: dict | None = None) -> None:
+def _audit_denial(
+    request: Request,
+    actor: dict,
+    action_type: str,
+    summary: str,
+    target_id: str | None,
+    metadata: dict | None = None,
+) -> None:
     """An authorization row for a refused facility or grant action (written
     after any transaction has rolled back)."""
     log_audit_event(
@@ -325,7 +370,7 @@ def _audit_denial(request: Request, actor: dict, action_type: str, summary: str,
         actor_user_id=actor.get("id"),
         actor_role=actor.get("role"),
         target_type="user",
-        target_id=target_id,
+        target_id=str(target_id) if target_id is not None else None,
         request_path=request.url.path,
         http_method=request.method,
         ip_address=request.client.host if request.client else None,
@@ -334,17 +379,27 @@ def _audit_denial(request: Request, actor: dict, action_type: str, summary: str,
     )
 
 
-def _refused(request: Request, actor: dict, target_id: str | None,
-             refusal: _Refusal) -> HTTPException:
+def _refused(
+    request: Request, actor: dict, target_id: str | None, refusal: _Refusal
+) -> HTTPException:
     if refusal.audit is not None:
         action_type, summary, metadata = refusal.audit
         _audit_denial(request, actor, action_type, summary, target_id, metadata)
-    return HTTPException(status_code=refusal.status,
-                         detail={"error": refusal.error, "message": refusal.message})
+    return HTTPException(
+        status_code=refusal.status, detail={"error": refusal.error, "message": refusal.message}
+    )
 
 
-def _security_row(db, request: Request, actor: dict, action_type: str, summary: str,
-                  *, target_id: str, metadata: dict) -> None:
+def _security_row(
+    db,
+    request: Request,
+    actor: dict,
+    action_type: str,
+    summary: str,
+    *,
+    target_id: str,
+    metadata: dict,
+) -> None:
     """A security audit row inside the caller's transaction. Fail-closed: a
     failed write raises AuditWriteError, the transaction rolls back with it,
     and the route answers 503 with nothing saved."""
@@ -358,7 +413,7 @@ def _security_row(db, request: Request, actor: dict, action_type: str, summary: 
         actor_user_id=actor.get("id"),
         actor_role=actor.get("role"),
         target_type="user",
-        target_id=target_id,
+        target_id=str(target_id) if target_id is not None else None,
         request_path=request.url.path,
         http_method=request.method,
         ip_address=request.client.host if request.client else None,
@@ -368,11 +423,16 @@ def _security_row(db, request: Request, actor: dict, action_type: str, summary: 
 
 
 def _audit_unavailable() -> HTTPException:
-    return HTTPException(status_code=503, detail={
-        "error": "audit_unavailable",
-        "message": ("Nothing was saved, because the audit trail is not available. "
-                    "Try again in a moment."),
-    })
+    return HTTPException(
+        status_code=503,
+        detail={
+            "error": "audit_unavailable",
+            "message": (
+                "Nothing was saved, because the audit trail is not available. "
+                "Try again in a moment."
+            ),
+        },
+    )
 
 
 def _multi_site_on() -> bool:
@@ -387,8 +447,12 @@ def _facility_view_on(db=None) -> bool:
 
 
 def _has_table(db, name: str) -> bool:
-    return db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-                      (name,)).fetchone() is not None
+    return (
+        db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+        ).fetchone()
+        is not None
+    )
 
 
 def _live_home_row(db, user_id: str):
@@ -396,29 +460,35 @@ def _live_home_row(db, user_id: str):
         return None
     return db.execute(
         "SELECT id, facility_id FROM user_facilities "
-        "WHERE user_id = ? AND kind = 'home' AND revoked_at IS NULL", (user_id,)).fetchone()
+        "WHERE user_id = ? AND kind = 'home' AND revoked_at IS NULL",
+        (user_id,),
+    ).fetchone()
 
 
 def _live_grant(db, user_id: str | None):
     if user_id is None or not _has_table(db, "enterprise_access_grants"):
         return None
     return db.execute(
-        "SELECT id, user_id FROM enterprise_access_grants "
-        "WHERE user_id = ? AND revoked_at IS NULL", (user_id,)).fetchone()
+        "SELECT id, user_id FROM enterprise_access_grants WHERE user_id = ? AND revoked_at IS NULL",
+        (user_id,),
+    ).fetchone()
 
 
 def _holds_grant(db, actor: dict) -> bool:
     """An administrator with a live grant, read from the database, never the
     cache: only such an account may see, give or revoke group-wide access."""
-    return (actor.get("role") in facility_service.ENTERPRISE_GRANT_ROLES
-            and _live_grant(db, actor.get("id")) is not None)
+    return (
+        actor.get("role") in facility_service.ENTERPRISE_GRANT_ROLES
+        and _live_grant(db, actor.get("id")) is not None
+    )
 
 
 def _facility_row(db, facility_id: int | None):
     if facility_id is None or not _has_table(db, "facilities"):
         return None
-    return db.execute("SELECT id, code, is_active FROM facilities WHERE id = ?",
-                      (facility_id,)).fetchone()
+    return db.execute(
+        "SELECT id, code, is_active FROM facilities WHERE id = ?", (facility_id,)
+    ).fetchone()
 
 
 def _in_scope(scope, facility_id) -> bool:
@@ -430,48 +500,74 @@ def _scope_list(scope) -> list | None:
     return None if scope is None else sorted(scope)
 
 
-def _write_home_row(db, request: Request, actor: dict, user_id: str,
-                    facility_id: int, reason: str) -> None:
+def _write_home_row(
+    db, request: Request, actor: dict, user_id: str, facility_id: int, reason: str
+) -> None:
     cur = db.execute(
         "INSERT INTO user_facilities (user_id, facility_id, kind, granted_by, granted_at, reason) "
         "VALUES (?, ?, 'home', ?, CURRENT_TIMESTAMP, ?)",
-        (user_id, facility_id, actor.get("id"), reason))
-    _security_row(db, request, actor, "user_facility_assigned",
-                  f"Home facility {facility_id} set for user {user_id}",
-                  target_id=user_id,
-                  metadata={"facility_id": facility_id, "user_facility_id": cur.lastrowid,
-                            "reason": reason})
+        (user_id, facility_id, actor.get("id"), reason),
+    )
+    _security_row(
+        db,
+        request,
+        actor,
+        "user_facility_assigned",
+        f"Home facility {facility_id} set for user {user_id}",
+        target_id=user_id,
+        metadata={"facility_id": facility_id, "user_facility_id": cur.lastrowid, "reason": reason},
+    )
 
 
-def _revoke_home_row(db, request: Request, actor: dict, user_id: str, live,
-                     reason: str) -> None:
+def _revoke_home_row(db, request: Request, actor: dict, user_id: str, live, reason: str) -> None:
     db.execute(
         "UPDATE user_facilities SET revoked_at = CURRENT_TIMESTAMP, revoked_by = ?, "
         "revoke_reason = ? WHERE id = ? AND revoked_at IS NULL",
-        (actor.get("id"), reason, live["id"]))
-    _security_row(db, request, actor, "user_facility_revoked",
-                  f"Home facility {live['facility_id']} revoked for user {user_id}",
-                  target_id=user_id,
-                  metadata={"facility_id": int(live["facility_id"]),
-                            "user_facility_id": live["id"], "reason": reason})
+        (actor.get("id"), reason, live["id"]),
+    )
+    _security_row(
+        db,
+        request,
+        actor,
+        "user_facility_revoked",
+        f"Home facility {live['facility_id']} revoked for user {user_id}",
+        target_id=user_id,
+        metadata={
+            "facility_id": int(live["facility_id"]),
+            "user_facility_id": live["id"],
+            "reason": reason,
+        },
+    )
 
 
 def _revoke_grant(db, request: Request, actor: dict, grant, reason: str) -> None:
     db.execute(
         "UPDATE enterprise_access_grants SET revoked_at = CURRENT_TIMESTAMP, revoked_by = ?, "
         "revoke_reason = ? WHERE id = ? AND revoked_at IS NULL",
-        (actor.get("id"), reason, grant["id"]))
-    _security_row(db, request, actor, "enterprise_access_revoked",
-                  f"Group-wide access revoked for user {grant['user_id']}",
-                  target_id=grant["user_id"],
-                  metadata={"grant_id": grant["id"], "reason": reason})
+        (actor.get("id"), reason, grant["id"]),
+    )
+    _security_row(
+        db,
+        request,
+        actor,
+        "enterprise_access_revoked",
+        f"Group-wide access revoked for user {grant['user_id']}",
+        target_id=grant["user_id"],
+        metadata={"grant_id": grant["id"], "reason": reason},
+    )
 
 
 def _holder_target_refused(target_id: str, action: str) -> _Refusal:
-    return _Refusal(403, "enterprise_grant_required", _HOLDER_ACCOUNT, audit=(
-        "enterprise_access_denied",
-        f"Refused {action} on user {target_id}: the account has group-wide access",
-        {"action": action, "target_holds_grant": True}))
+    return _Refusal(
+        403,
+        "enterprise_grant_required",
+        _HOLDER_ACCOUNT,
+        audit=(
+            "enterprise_access_denied",
+            f"Refused {action} on user {target_id}: the account has group-wide access",
+            {"action": action, "target_holds_grant": True},
+        ),
+    )
 
 
 def _require_target_in_scope(request: Request, actor: dict, user_id: str, action: str) -> None:
@@ -482,13 +578,16 @@ def _require_target_in_scope(request: Request, actor: dict, user_id: str, action
     account that works outside the administrator's facilities."""
     multi = facility_service.multi_facility_data()
     with db_session() as db:
-        row = db.execute("SELECT id, role, department FROM users WHERE id = ?",
-                         (user_id,)).fetchone()
+        row = db.execute(
+            "SELECT id, role, department FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
         if row is None:
-            return      # the route's own lookup answers 404
-        holder_target = (user_id != actor.get("id")
-                         and row["role"] in facility_service.ENTERPRISE_GRANT_ROLES
-                         and _live_grant(db, user_id) is not None)
+            return  # the route's own lookup answers 404
+        holder_target = (
+            user_id != actor.get("id")
+            and row["role"] in facility_service.ENTERPRISE_GRANT_ROLES
+            and _live_grant(db, user_id) is not None
+        )
         refused_holder = holder_target and not _holds_grant(db, actor)
         if multi and not refused_holder:
             scope = facility_service.facility_scope_for(actor, db=db)
@@ -499,16 +598,22 @@ def _require_target_in_scope(request: Request, actor: dict, user_id: str, action
         raise _refused(request, actor, user_id, _holder_target_refused(user_id, action))
     if _in_scope(scope, facility_id):
         return
-    _audit_denial(request, actor, "user_outside_facility_scope",
-                  f"Refused {action} on user {user_id}: the account works at another facility",
-                  user_id, {"action": action, "facility_id": facility_id,
-                            "facility_scope": _scope_list(scope)})
-    raise HTTPException(status_code=403,
-                        detail={"error": "facility_scope", "message": _OUTSIDE_SCOPE})
+    _audit_denial(
+        request,
+        actor,
+        "user_outside_facility_scope",
+        f"Refused {action} on user {user_id}: the account works at another facility",
+        user_id,
+        {"action": action, "facility_id": facility_id, "facility_scope": _scope_list(scope)},
+    )
+    raise HTTPException(
+        status_code=403, detail={"error": "facility_scope", "message": _OUTSIDE_SCOPE}
+    )
 
 
-def _require_department_in_scope(request: Request, actor: dict, user_id: str,
-                                 department: str | None, action: str) -> None:
+def _require_department_in_scope(
+    request: Request, actor: dict, user_id: str, department: str | None, action: str
+) -> None:
     """With more than one facility on record, the department an account is put
     in must belong to one of the administrator's facilities. A department the
     master does not list has no facility, so only an administrator with
@@ -519,22 +624,40 @@ def _require_department_in_scope(request: Request, actor: dict, user_id: str,
     facility_id = facility_service.department_facility(department)
     if _in_scope(scope, facility_id):
         return
-    _audit_denial(request, actor, "user_outside_facility_scope",
-                  f"Refused {action} of user {user_id}: department outside the "
-                  "administrator's facilities",
-                  user_id, {"action": action, "department": department,
-                            "facility_id": facility_id, "facility_scope": _scope_list(scope)})
+    _audit_denial(
+        request,
+        actor,
+        "user_outside_facility_scope",
+        f"Refused {action} of user {user_id}: department outside the administrator's facilities",
+        user_id,
+        {
+            "action": action,
+            "department": department,
+            "facility_id": facility_id,
+            "facility_scope": _scope_list(scope),
+        },
+    )
     if facility_id is None:
-        raise HTTPException(status_code=400, detail={
-            "error": "department_not_listed",
-            "message": ("That department is not on your facility's list of departments. "
-                        "Choose one from the list."),
-        })
-    raise HTTPException(status_code=403, detail={
-        "error": "facility_scope",
-        "message": ("That department belongs to another facility. Only an administrator "
-                    "at that facility, or one with group-wide access, can put staff there."),
-    })
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "department_not_listed",
+                "message": (
+                    "That department is not on your facility's list of departments. "
+                    "Choose one from the list."
+                ),
+            },
+        )
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "error": "facility_scope",
+            "message": (
+                "That department belongs to another facility. Only an administrator "
+                "at that facility, or one with group-wide access, can put staff there."
+            ),
+        },
+    )
 
 
 def _master_spelling(department: str | None) -> str | None:
@@ -548,19 +671,25 @@ def _master_spelling(department: str | None) -> str | None:
     if department is None or not facility_service.multi_facility_data():
         return department
     from services.department_master import canonical_name
+
     return canonical_name(department) or department
 
 
 def _multi_site_off() -> HTTPException:
-    return HTTPException(status_code=400, detail={
-        "error": "multi_site_off",
-        "message": ("Multi-site is switched off on this site, so staff work at the "
-                    "first facility only."),
-    })
+    return HTTPException(
+        status_code=400,
+        detail={
+            "error": "multi_site_off",
+            "message": (
+                "Multi-site is switched off on this site, so staff work at the first facility only."
+            ),
+        },
+    )
 
 
-def _home_facility_for_new_account(request: Request, actor: dict, user_id: str,
-                                   department: str | None, requested: int | None) -> int | None:
+def _home_facility_for_new_account(
+    request: Request, actor: dict, user_id: str, department: str | None, requested: int | None
+) -> int | None:
     """The home facility row to write with a new account, or None for no row
     (facility 1, as for every account made before multi-site). Raises the
     refusal: a home facility with a department (400), an unknown or closed
@@ -569,8 +698,10 @@ def _home_facility_for_new_account(request: Request, actor: dict, user_id: str,
     audited)."""
     if department is not None:
         if requested is not None:
-            raise HTTPException(status_code=400, detail={
-                "error": "home_facility_refused", "message": _HOME_ROW_REFUSED})
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "home_facility_refused", "message": _HOME_ROW_REFUSED},
+            )
         _require_department_in_scope(request, actor, user_id, department, "create")
         return None
     multi = facility_service.multi_facility_data()
@@ -587,39 +718,71 @@ def _home_facility_for_new_account(request: Request, actor: dict, user_id: str,
         # A department-less account an administrator makes works where they do.
         target = facility_service.user_facility_id(actor)
         if target is None:
-            _audit_denial(request, actor, "user_outside_facility_scope",
-                          f"Refused create of user {user_id}: the administrator's own "
-                          "department is on no facility's list", user_id,
-                          {"action": "create", "facility_id": None})
-            raise HTTPException(status_code=403, detail={
-                "error": "facility_scope", "message": _OUTSIDE_SCOPE})
+            _audit_denial(
+                request,
+                actor,
+                "user_outside_facility_scope",
+                f"Refused create of user {user_id}: the administrator's own "
+                "department is on no facility's list",
+                user_id,
+                {"action": "create", "facility_id": None},
+            )
+            raise HTTPException(
+                status_code=403, detail={"error": "facility_scope", "message": _OUTSIDE_SCOPE}
+            )
     with db_session() as db:
         facility = _facility_row(db, target)
     if facility is None:
-        raise HTTPException(status_code=400, detail={
-            "error": "facility_not_found", "message": "There is no facility with that number."})
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "facility_not_found",
+                "message": "There is no facility with that number.",
+            },
+        )
     if not facility["is_active"]:
-        raise HTTPException(status_code=400, detail={
-            "error": "facility_inactive",
-            "message": "That facility is closed, so no staff can be added there."})
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "facility_inactive",
+                "message": "That facility is closed, so no staff can be added there.",
+            },
+        )
     if target != facility_service.MAIN_FACILITY_ID and not site_on:
         raise _multi_site_off()
     scope = facility_service.facility_scope_for(actor) if multi else None
     if not _in_scope(scope, target):
-        _audit_denial(request, actor, "user_outside_facility_scope",
-                      f"Refused create of user {user_id} at facility {target}: outside the "
-                      "administrator's facilities", user_id,
-                      {"action": "create", "facility_id": target,
-                       "facility_scope": _scope_list(scope)})
-        raise HTTPException(status_code=403, detail={
-            "error": "facility_scope",
-            "message": ("That facility is not yours. Only an administrator at that facility, "
-                        "or one with group-wide access, can add staff there.")})
+        _audit_denial(
+            request,
+            actor,
+            "user_outside_facility_scope",
+            f"Refused create of user {user_id} at facility {target}: outside the "
+            "administrator's facilities",
+            user_id,
+            {"action": "create", "facility_id": target, "facility_scope": _scope_list(scope)},
+        )
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "facility_scope",
+                "message": (
+                    "That facility is not yours. Only an administrator at that facility, "
+                    "or one with group-wide access, can add staff there."
+                ),
+            },
+        )
     return target
 
 
-def _settle_facility_rows(db, request: Request, actor: dict, current, new_role: str,
-                          new_dept: str | None, carry_facility: int | None) -> bool:
+def _settle_facility_rows(
+    db,
+    request: Request,
+    actor: dict,
+    current,
+    new_role: str,
+    new_dept: str | None,
+    carry_facility: int | None,
+) -> bool:
     """Keep the facility rows true to an account's new role and department,
     inside the PATCH's own transaction. Returns True when a row changed.
 
@@ -636,21 +799,38 @@ def _settle_facility_rows(db, request: Request, actor: dict, current, new_role: 
     live = _live_home_row(db, user_id)
     if department_scope({"department": new_dept}) is not None:
         if live is not None:
-            _revoke_home_row(db, request, actor, user_id, live,
-                             "The account now has a department, so it works at the "
-                             "department's facility")
+            _revoke_home_row(
+                db,
+                request,
+                actor,
+                user_id,
+                live,
+                "The account now has a department, so it works at the department's facility",
+            )
             changed = True
-    elif (department_scope({"department": current["department"]}) is not None
-          and live is None and carry_facility is not None):
-        _write_home_row(db, request, actor, user_id, carry_facility,
-                        "Kept at the same facility when the department was removed")
+    elif (
+        department_scope({"department": current["department"]}) is not None
+        and live is None
+        and carry_facility is not None
+    ):
+        _write_home_row(
+            db,
+            request,
+            actor,
+            user_id,
+            carry_facility,
+            "Kept at the same facility when the department was removed",
+        )
         changed = True
-    if (current["role"] in facility_service.ENTERPRISE_GRANT_ROLES
-            and new_role not in facility_service.ENTERPRISE_GRANT_ROLES):
+    if (
+        current["role"] in facility_service.ENTERPRISE_GRANT_ROLES
+        and new_role not in facility_service.ENTERPRISE_GRANT_ROLES
+    ):
         grant = _live_grant(db, user_id)
         if grant is not None:
-            _revoke_grant(db, request, actor, grant,
-                          f"Role changed from {current['role']} to {new_role}")
+            _revoke_grant(
+                db, request, actor, grant, f"Role changed from {current['role']} to {new_role}"
+            )
             changed = True
     return changed
 
@@ -676,20 +856,28 @@ def _staff_facility_view(db, actor: dict, rows) -> dict | None:
     master: dict[str, int] = {}
     department_facilities: dict[str, int] = {}
     if _has_table(db, "departments"):
-        for r in db.execute("SELECT name, facility_id, is_active FROM departments "
-                            "ORDER BY name COLLATE NOCASE").fetchall():
+        for r in db.execute(
+            "SELECT name, facility_id, is_active FROM departments ORDER BY name COLLATE NOCASE"
+        ).fetchall():
             master[r["name"].strip().casefold()] = int(r["facility_id"])
             if r["is_active"] and _in_scope(scope, int(r["facility_id"])):
                 department_facilities[r["name"]] = int(r["facility_id"])
     manageable = _holds_grant(db, actor)
     grants: dict = {}
     if manageable:
-        grants = {r["user_id"]: r["id"] for r in db.execute(
-            "SELECT id, user_id FROM enterprise_access_grants WHERE revoked_at IS NULL").fetchall()}
+        grants = {
+            r["user_id"]: r["id"]
+            for r in db.execute(
+                "SELECT id, user_id FROM enterprise_access_grants WHERE revoked_at IS NULL"
+            ).fetchall()
+        }
     return {
         "scope": scope,
-        "visible": {uid for uid, fid in row_facility.items()
-                    if uid == actor.get("id") or _in_scope(scope, fid)},
+        "visible": {
+            uid
+            for uid, fid in row_facility.items()
+            if uid == actor.get("id") or _in_scope(scope, fid)
+        },
         "user_facility": {uid: labels.get(fid) for uid, fid in row_facility.items()},
         "facilities": facilities,
         "master": master,
@@ -703,9 +891,11 @@ def _staff_facility_view(db, actor: dict, rows) -> dict | None:
 # ──────────────────────────────────────────────────────────────────────────────
 #  List
 # ──────────────────────────────────────────────────────────────────────────────
+_LIST_USERS_USER_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.get("")
-def list_users(include_patients: bool = False,
-               user: dict = Depends(require_permission("admin.overview"))):
+def list_users(include_patients: bool = False, user: dict = _LIST_USERS_USER_DEFAULT):
     """List staff accounts with recent auth activity.
 
     Service identities are never listed (they are not logins and cannot be
@@ -714,9 +904,9 @@ def list_users(include_patients: bool = False,
     set a clinical account can usefully be scoped to.
 
     Never returns password_hash / pin_hash / totp_secret."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
-    cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    cutoff_24h = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
     service_ids = sorted(SERVICE_ACCOUNT_IDS)
     patient_clause = "" if include_patients else " AND role != 'patient'"
     with db_session() as db:
@@ -764,7 +954,7 @@ def list_users(include_patients: bool = False,
             ).fetchall()
         }
 
-    body = {
+    body: dict[str, Any] = {
         "users": [
             {
                 "id": r["id"],
@@ -802,8 +992,10 @@ def list_users(include_patients: bool = False,
             u["enterprise_grant_id"] = grant_id
     if view["scope"] is not None:
         body["departments"] = [
-            d for d in departments
-            if _in_scope(view["scope"], view["master"].get(d.strip().casefold()))]
+            d
+            for d in departments
+            if _in_scope(view["scope"], view["master"].get(d.strip().casefold()))
+        ]
     body["facilities"] = view["facilities"]
     body["department_facilities"] = view["department_facilities"]
     body["own_facility_id"] = view["own_facility_id"]
@@ -814,11 +1006,14 @@ def list_users(include_patients: bool = False,
 # ──────────────────────────────────────────────────────────────────────────────
 #  Create
 # ──────────────────────────────────────────────────────────────────────────────
+_CREATE_USER_USER_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.post("", status_code=201)
 def create_user(
     body: CreateUserBody,
     request: Request,
-    user: dict = Depends(require_permission("admin.overview")),
+    user: dict = _CREATE_USER_USER_DEFAULT,
 ):
     """Create a new user with a bcrypt-hashed password."""
     user_id = body.id.strip()
@@ -826,8 +1021,9 @@ def create_user(
     if not user_id or not name:
         raise HTTPException(status_code=400, detail="id and name are required")
     if _is_reserved_id(user_id):
-        raise HTTPException(status_code=409,
-                            detail="This ID is reserved for a system account. Choose another.")
+        raise HTTPException(
+            status_code=409, detail="This ID is reserved for a system account. Choose another."
+        )
     _validate_role(body.role)
     if body.role == "patient":
         # A portal login made here is linked to no patient record (admission
@@ -842,7 +1038,8 @@ def create_user(
     # multisite-6: the home facility row to write in the same transaction, or
     # None (facility 1, unchanged) with one facility and the switch off.
     home_facility = _home_facility_for_new_account(
-        request, user, user_id, department, body.facility_id)
+        request, user, user_id, department, body.facility_id
+    )
     department = _master_spelling(department)
 
     password_hash = hash_password(body.password)
@@ -851,9 +1048,7 @@ def create_user(
         with db_session() as db:
             # Guard against duplicate id up front for a clean 409; the PK also
             # backstops this if two admins race.
-            existing = db.execute(
-                "SELECT 1 FROM users WHERE id = ?", (user_id,)
-            ).fetchone()
+            existing = db.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone()
             if existing:
                 raise HTTPException(status_code=409, detail="A user with this id already exists")
             db.execute(
@@ -862,25 +1057,38 @@ def create_user(
                 (user_id, name, body.role, department, password_hash),
             )
             if home_facility is not None:
-                _write_home_row(db, request, user, user_id, home_facility,
-                                "Home facility chosen when the account was created")
+                _write_home_row(
+                    db,
+                    request,
+                    user,
+                    user_id,
+                    home_facility,
+                    "Home facility chosen when the account was created",
+                )
     except DBIntegrityError:
         # Lost the race, or CHECK constraint tripped despite validation.
-        raise HTTPException(status_code=409, detail="A user with this id already exists")
+        raise HTTPException(status_code=409, detail="A user with this id already exists") from None
     except AuditWriteError:
         # The home row's security record could not be written: the account
         # and its row were rolled back together.
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
     if home_facility is not None:
         facility_service.invalidate_cache()
 
     _audit(
-        request, user, "user_created", "success",
-        f"Created user {user_id} ({body.role})", user_id,
-        metadata={"role": body.role, "department": department,
-                  **({"facility_id": home_facility} if home_facility is not None else {})},
+        request,
+        user,
+        "user_created",
+        "success",
+        f"Created user {user_id} ({body.role})",
+        user_id,
+        metadata={
+            "role": body.role,
+            "department": department,
+            **({"facility_id": home_facility} if home_facility is not None else {}),
+        },
     )
-    out = {
+    out: dict[str, Any] = {
         "id": user_id,
         "name": name,
         "role": body.role,
@@ -890,18 +1098,22 @@ def create_user(
     }
     if home_facility is not None or _facility_view_on():
         out["facility"] = facility_service.user_facility(
-            {"id": user_id, "role": body.role, "department": department})
+            {"id": user_id, "role": body.role, "department": department}
+        )
     return out
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Deactivate / Activate
 # ──────────────────────────────────────────────────────────────────────────────
+_DEACTIVATE_USER_USER_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.post("/{user_id}/deactivate")
 def deactivate_user(
     user_id: str,
     request: Request,
-    user: dict = Depends(require_permission("admin.overview")),
+    user: dict = _DEACTIVATE_USER_USER_DEFAULT,
 ):
     """Disable login for a user and revoke all outstanding JWTs.
 
@@ -925,17 +1137,24 @@ def deactivate_user(
         )
 
     _audit(
-        request, user, "user_deactivated", "success",
-        f"Deactivated user {user_id}; outstanding sessions revoked", user_id,
+        request,
+        user,
+        "user_deactivated",
+        "success",
+        f"Deactivated user {user_id}; outstanding sessions revoked",
+        user_id,
     )
     return {"status": "deactivated", "id": user_id}
+
+
+_ACTIVATE_USER_USER_DEFAULT = Depends(require_permission("admin.overview"))
 
 
 @router.post("/{user_id}/activate")
 def activate_user(
     user_id: str,
     request: Request,
-    user: dict = Depends(require_permission("admin.overview")),
+    user: dict = _ACTIVATE_USER_USER_DEFAULT,
 ):
     """Re-enable login for a previously deactivated user."""
     _refuse_service_account(request, user, user_id, "activate")
@@ -945,8 +1164,12 @@ def activate_user(
         db.execute("UPDATE users SET is_active = 1 WHERE id = ?", (user_id,))
 
     _audit(
-        request, user, "user_activated", "success",
-        f"Activated user {user_id}", user_id,
+        request,
+        user,
+        "user_activated",
+        "success",
+        f"Activated user {user_id}",
+        user_id,
     )
     return {"status": "activated", "id": user_id}
 
@@ -954,12 +1177,15 @@ def activate_user(
 # ──────────────────────────────────────────────────────────────────────────────
 #  Admin reset password
 # ──────────────────────────────────────────────────────────────────────────────
+_RESET_PASSWORD_USER_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.post("/{user_id}/reset-password")
 def reset_password(
     user_id: str,
     body: ResetPasswordBody,
     request: Request,
-    user: dict = Depends(require_permission("admin.overview")),
+    user: dict = _RESET_PASSWORD_USER_DEFAULT,
 ):
     """Set a new bcrypt password for a user and revoke their existing sessions."""
     _refuse_service_account(request, user, user_id, "password reset")
@@ -976,8 +1202,12 @@ def reset_password(
         )
 
     _audit(
-        request, user, "user_password_reset", "success",
-        f"Reset password for user {user_id}; sessions revoked", user_id,
+        request,
+        user,
+        "user_password_reset",
+        "success",
+        f"Reset password for user {user_id}; sessions revoked",
+        user_id,
     )
     return {"status": "password_reset", "id": user_id}
 
@@ -985,12 +1215,15 @@ def reset_password(
 # ──────────────────────────────────────────────────────────────────────────────
 #  Signing-PIN provisioning
 # ──────────────────────────────────────────────────────────────────────────────
+_SET_USER_PIN_USER_DEFAULT = Depends(get_current_user)
+
+
 @router.post("/{user_id}/pin")
 def set_user_pin(
     user_id: str,
     body: SetPinBody,
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = _SET_USER_PIN_USER_DEFAULT,
 ):
     """Provision (or replace) a user's signing PIN — the second factor for
     agentic order confirmation. Universal PIN seeding was removed, so pin_hash
@@ -1006,8 +1239,12 @@ def set_user_pin(
     if not is_self and not has_permission(user.get("role", ""), "admin.overview"):
         # Audit-log the denial, mirroring require_permission's behaviour.
         _audit(
-            request, user, "user_pin_provision_denied", "denied",
-            f"Refused PIN provisioning for {user_id}: not admin and not self", user_id,
+            request,
+            user,
+            "user_pin_provision_denied",
+            "denied",
+            f"Refused PIN provisioning for {user_id}: not admin and not self",
+            user_id,
         )
         raise HTTPException(status_code=403, detail="Only an admin can set another user's PIN")
     _refuse_service_account(request, user, user_id, "signing PIN")
@@ -1018,7 +1255,9 @@ def set_user_pin(
         # 400 (not 401) so the web client's session-expired interceptor is not
         # tripped — same convention as the password endpoints above.
         if not body.password:
-            raise HTTPException(status_code=400, detail="Setting your own PIN requires your password")
+            raise HTTPException(
+                status_code=400, detail="Setting your own PIN requires your password"
+            )
         if not verify_password(body.password, user["password_hash"]):
             raise HTTPException(status_code=400, detail="Password is incorrect")
 
@@ -1027,6 +1266,7 @@ def set_user_pin(
         raise HTTPException(status_code=400, detail="PIN must be 4-8 digits")
 
     from services import pin_security
+
     pin_hash = pin_security.hash_pin(body.pin)
     with db_session() as db:
         _get_user_row(db, user_id)
@@ -1040,7 +1280,8 @@ def set_user_pin(
         action_type="user_pin_provisioned",
         outcome="success",
         summary_message=(
-            f"Signing PIN self-provisioned by user {user_id}" if is_self
+            f"Signing PIN self-provisioned by user {user_id}"
+            if is_self
             else f"Signing PIN provisioned by admin {user.get('id')} for user {user_id}"
         ),
         actor_user_id=user.get("id"),
@@ -1059,12 +1300,15 @@ def set_user_pin(
 # ──────────────────────────────────────────────────────────────────────────────
 #  Patch role / department
 # ──────────────────────────────────────────────────────────────────────────────
+_PATCH_USER_USER_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.patch("/{user_id}")
 def patch_user(
     user_id: str,
     body: PatchUserBody,
     request: Request,
-    user: dict = Depends(require_permission("admin.overview")),
+    user: dict = _PATCH_USER_USER_DEFAULT,
 ):
     """Update a user's role and/or department. Role is validated against the
     users.role CHECK constraint's allowed set. A patient portal account and a
@@ -1109,30 +1353,39 @@ def patch_user(
             if new_role != current["role"]:
                 _require_role_switch(new_role)
             new_dept = changed["department"] if "department" in changed else current["department"]
+            assert new_dept is None or isinstance(new_dept, str)
             _require_department(new_role, new_dept)
             # Where the account works now, so a removed department leaves it at
             # the same facility (more than one facility on record only).
-            carry_facility = (facility_service.user_facility_id(current, db=db)
-                              if facility_service.multi_facility_data(db=db) else None)
+            carry_facility = (
+                facility_service.user_facility_id(current, db=db)
+                if facility_service.multi_facility_data(db=db)
+                else None
+            )
             db.execute(f"UPDATE users SET {', '.join(sets)} WHERE id = ?", params)
             facility_rows_changed = _settle_facility_rows(
-                db, request, user, current, new_role, new_dept, carry_facility)
+                db, request, user, current, new_role, new_dept, carry_facility
+            )
             row = db.execute(
                 "SELECT id, name, role, department FROM users WHERE id = ?", (user_id,)
             ).fetchone()
     except AuditWriteError:
         # A facility row's or grant's security record could not be written:
         # the whole change was rolled back.
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
     if facility_rows_changed:
         facility_service.invalidate_cache()
 
     _audit(
-        request, user, "user_updated", "success",
-        f"Updated user {user_id}: {', '.join(changed.keys())}", user_id,
+        request,
+        user,
+        "user_updated",
+        "success",
+        f"Updated user {user_id}: {', '.join(changed.keys())}",
+        user_id,
         metadata=changed,
     )
-    out = {
+    out: dict[str, Any] = {
         "id": row["id"],
         "name": row["name"],
         "role": row["role"],
@@ -1146,12 +1399,15 @@ def patch_user(
 # ──────────────────────────────────────────────────────────────────────────────
 #  Home facility move (multisite-6)
 # ──────────────────────────────────────────────────────────────────────────────
+_MOVE_USER_FACILITY_USER_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.post("/{user_id}/facility", dependencies=[Depends(feature_gate("multi_site"))])
 def move_user_facility(
     user_id: str,
     body: MoveFacilityBody,
     request: Request,
-    user: dict = Depends(require_permission("admin.overview")),
+    user: dict = _MOVE_USER_FACILITY_USER_DEFAULT,
 ):
     """Move an account with no department to another home facility. The live
     home row is revoked and a new one inserted in ONE transaction, each with a
@@ -1169,33 +1425,49 @@ def move_user_facility(
         with db_session(immediate=True) as db:
             current = _get_user_row(db, user_id)
             if current["role"] == "patient":
-                raise _Refusal(400, "patient_account",
-                               "A patient portal account has no home facility.")
-            if (user_id != user.get("id")
-                    and current["role"] in facility_service.ENTERPRISE_GRANT_ROLES
-                    and _live_grant(db, user_id) is not None
-                    and not _holds_grant(db, user)):
+                raise _Refusal(
+                    400, "patient_account", "A patient portal account has no home facility."
+                )
+            if (
+                user_id != user.get("id")
+                and current["role"] in facility_service.ENTERPRISE_GRANT_ROLES
+                and _live_grant(db, user_id) is not None
+                and not _holds_grant(db, user)
+            ):
                 raise _holder_target_refused(user_id, "facility move")
             if department_scope({"department": current["department"]}) is not None:
                 raise _Refusal(409, "home_facility_refused", _HOME_ROW_REFUSED)
             facility = _facility_row(db, target)
             if facility is None:
-                raise _Refusal(400, "facility_not_found",
-                               "There is no facility with that number.")
+                raise _Refusal(400, "facility_not_found", "There is no facility with that number.")
             if not facility["is_active"]:
-                raise _Refusal(400, "facility_inactive",
-                               "That facility is closed, so no staff can be moved there.")
+                raise _Refusal(
+                    400,
+                    "facility_inactive",
+                    "That facility is closed, so no staff can be moved there.",
+                )
             live = _live_home_row(db, user_id)
-            from_facility = (int(live["facility_id"]) if live is not None
-                             else facility_service.MAIN_FACILITY_ID)
+            from_facility = (
+                int(live["facility_id"]) if live is not None else facility_service.MAIN_FACILITY_ID
+            )
             scope = facility_service.facility_scope_for(user, db=db)
             if not (_in_scope(scope, from_facility) and _in_scope(scope, target)):
-                raise _Refusal(403, "facility_scope", _OUTSIDE_SCOPE, audit=(
-                    "user_outside_facility_scope",
-                    f"Refused facility move of user {user_id}: outside the "
-                    "administrator's facilities",
-                    {"action": "facility move", "from_facility_id": from_facility,
-                     "to_facility_id": target, "facility_scope": _scope_list(scope)}))
+                raise _Refusal(
+                    403,
+                    "facility_scope",
+                    _OUTSIDE_SCOPE,
+                    audit=(
+                        "user_outside_facility_scope",
+                        f"Refused facility move of user {user_id}: outside the "
+                        "administrator's facilities",
+                        {
+                            "action": "facility move",
+                            "from_facility_id": from_facility,
+                            "to_facility_id": target,
+                            "facility_scope": _scope_list(scope),
+                        },
+                    ),
+                )
             moved = from_facility != target
             if moved:
                 words = reason or f"Moved to facility {facility['code']}"
@@ -1203,19 +1475,22 @@ def move_user_facility(
                     _revoke_home_row(db, request, user, user_id, live, words)
                 _write_home_row(db, request, user, user_id, target, words)
     except _Refusal as refusal:
-        raise _refused(request, user, user_id, refusal)
+        raise _refused(request, user, user_id, refusal) from refusal
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
     except DBIntegrityError:
         # A live row for this account at that facility already exists (a
         # visiting row, multisite-19).
-        raise HTTPException(status_code=409, detail={
-            "error": "facility_row_exists",
-            "message": "This account already has a live row at that facility."})
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "facility_row_exists",
+                "message": "This account already has a live row at that facility.",
+            },
+        ) from None
     if moved:
         facility_service.invalidate_cache()
-    return {"id": user_id, "moved": moved,
-            "facility": facility_service.facility_identity(target)}
+    return {"id": user_id, "moved": moved, "facility": facility_service.facility_identity(target)}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1240,29 +1515,43 @@ def _grant_out(row) -> dict:
 _GRANT_SELECT = (
     "SELECT g.id, g.user_id, u.name AS user_name, u.role AS user_role, g.granted_by, "
     "g.granted_at, g.reason, g.revoked_at, g.revoked_by, g.revoke_reason "
-    "FROM enterprise_access_grants g LEFT JOIN users u ON u.id = g.user_id")
+    "FROM enterprise_access_grants g LEFT JOIN users u ON u.id = g.user_id"
+)
 
 
 def _not_a_holder(action: str) -> _Refusal:
-    return _Refusal(403, "enterprise_grant_required", _GRANT_HOLDERS_ONLY, audit=(
-        "enterprise_access_denied",
-        f"Refused {action}: the administrator holds no group-wide access",
-        {"action": action}))
+    return _Refusal(
+        403,
+        "enterprise_grant_required",
+        _GRANT_HOLDERS_ONLY,
+        audit=(
+            "enterprise_access_denied",
+            f"Refused {action}: the administrator holds no group-wide access",
+            {"action": action},
+        ),
+    )
 
 
 def _reason_or_400(raw: str) -> str:
     reason = (raw or "").strip()
     if len(reason) < _MIN_REASON_LEN:
-        raise HTTPException(status_code=400, detail={
-            "error": "reason_required",
-            "message": f"Give a reason of at least {_MIN_REASON_LEN} characters."})
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "reason_required",
+                "message": f"Give a reason of at least {_MIN_REASON_LEN} characters.",
+            },
+        )
     return reason
+
+
+_LIST_ENTERPRISE_GRANTS_USER_DEFAULT = Depends(require_permission("admin.overview"))
 
 
 @router.get("/enterprise-grants")
 def list_enterprise_grants(
     request: Request,
-    user: dict = Depends(require_permission("admin.overview")),
+    user: dict = _LIST_ENTERPRISE_GRANTS_USER_DEFAULT,
 ):
     """Every group-wide access grant, live first, then the revoked history.
     Only an administrator who holds a live grant may read it (403, audited)."""
@@ -1272,18 +1561,23 @@ def list_enterprise_grants(
                 raise _not_a_holder("list group-wide access")
             rows = db.execute(
                 f"{_GRANT_SELECT} ORDER BY (g.revoked_at IS NOT NULL), g.granted_at DESC, "
-                "g.id DESC LIMIT 500").fetchall()
+                "g.id DESC LIMIT 500"
+            ).fetchall()
     except _Refusal as refusal:
-        raise _refused(request, user, None, refusal)
+        raise _refused(request, user, None, refusal) from refusal
     return {"grants": [_grant_out(r) for r in rows]}
 
 
-@router.post("/enterprise-grants", status_code=201,
-             dependencies=[Depends(feature_gate("multi_site"))])
+_GRANT_ENTERPRISE_ACCESS_USER_DEFAULT = Depends(require_permission("admin.overview"))
+
+
+@router.post(
+    "/enterprise-grants", status_code=201, dependencies=[Depends(feature_gate("multi_site"))]
+)
 def grant_enterprise_access(
     body: GrantEnterpriseBody,
     request: Request,
-    user: dict = Depends(require_permission("admin.overview")),
+    user: dict = _GRANT_ENTERPRISE_ACCESS_USER_DEFAULT,
 ):
     """Give an administrator group-wide access, with a reason. 404 while
     ORB_MULTI_SITE is off. Only a holder may grant (403, audited); only an
@@ -1294,50 +1588,69 @@ def grant_enterprise_access(
     reason = _reason_or_400(body.reason)
     _refuse_service_account(request, user, target_id, "group-wide access")
     if _is_reserved_id(target_id):
-        raise HTTPException(status_code=409,
-                            detail="This ID is reserved for a system account.")
+        raise HTTPException(status_code=409, detail="This ID is reserved for a system account.")
     try:
         with db_session(immediate=True) as db:
             if not _holds_grant(db, user):
                 raise _not_a_holder("grant group-wide access")
             target = db.execute(
                 "SELECT id, role, COALESCE(is_active, 1) AS is_active FROM users WHERE id = ?",
-                (target_id,)).fetchone()
+                (target_id,),
+            ).fetchone()
             if target is None:
                 raise HTTPException(status_code=404, detail="User not found")
             if target["role"] not in facility_service.ENTERPRISE_GRANT_ROLES:
-                raise _Refusal(400, "enterprise_grant_admin_only",
-                               "Group-wide access is only for administrators.", audit=(
-                                   "enterprise_access_denied",
-                                   f"Refused group-wide access for user {target_id}: "
-                                   f"role {target['role']}",
-                                   {"action": "grant group-wide access",
-                                    "target_role": target["role"]}))
+                raise _Refusal(
+                    400,
+                    "enterprise_grant_admin_only",
+                    "Group-wide access is only for administrators.",
+                    audit=(
+                        "enterprise_access_denied",
+                        f"Refused group-wide access for user {target_id}: role {target['role']}",
+                        {"action": "grant group-wide access", "target_role": target["role"]},
+                    ),
+                )
             if not target["is_active"]:
-                raise _Refusal(400, "account_inactive",
-                               "This account is switched off. Activate it first.")
+                raise _Refusal(
+                    400, "account_inactive", "This account is switched off. Activate it first."
+                )
             if _live_grant(db, target_id) is not None:
-                raise _Refusal(409, "already_granted",
-                               "This administrator already has group-wide access.")
+                raise _Refusal(
+                    409, "already_granted", "This administrator already has group-wide access."
+                )
             cur = db.execute(
                 "INSERT INTO enterprise_access_grants (user_id, granted_by, granted_at, reason) "
-                "VALUES (?, ?, CURRENT_TIMESTAMP, ?)", (target_id, user.get("id"), reason))
+                "VALUES (?, ?, CURRENT_TIMESTAMP, ?)",
+                (target_id, user.get("id"), reason),
+            )
             grant_id = cur.lastrowid
-            _security_row(db, request, user, "enterprise_access_granted",
-                          f"Group-wide access granted to user {target_id}",
-                          target_id=target_id,
-                          metadata={"grant_id": grant_id, "reason": reason})
+            _security_row(
+                db,
+                request,
+                user,
+                "enterprise_access_granted",
+                f"Group-wide access granted to user {target_id}",
+                target_id=str(target_id) if target_id is not None else None,
+                metadata={"grant_id": grant_id, "reason": reason},
+            )
             row = db.execute(f"{_GRANT_SELECT} WHERE g.id = ?", (grant_id,)).fetchone()
     except _Refusal as refusal:
-        raise _refused(request, user, target_id, refusal)
+        raise _refused(request, user, target_id, refusal) from refusal
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
     except DBIntegrityError:
-        raise HTTPException(status_code=409, detail={
-            "error": "already_granted",
-            "message": "This administrator already has group-wide access."})
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "already_granted",
+                "message": "This administrator already has group-wide access.",
+            },
+        ) from None
     facility_service.invalidate_cache()
     return _grant_out(row)
+
+
+_REVOKE_ENTERPRISE_ACCESS_USER_DEFAULT = Depends(require_permission("admin.overview"))
 
 
 @router.post("/enterprise-grants/{grant_id}/revoke")
@@ -1345,7 +1658,7 @@ def revoke_enterprise_access(
     grant_id: int,
     body: RevokeEnterpriseBody,
     request: Request,
-    user: dict = Depends(require_permission("admin.overview")),
+    user: dict = _REVOKE_ENTERPRISE_ACCESS_USER_DEFAULT,
 ):
     """Revoke a group-wide access grant, with a reason. Works whatever
     ORB_MULTI_SITE says (a revoke only narrows). Only a holder may revoke
@@ -1359,7 +1672,8 @@ def revoke_enterprise_access(
                 raise _not_a_holder("revoke group-wide access")
             grant = db.execute(
                 "SELECT id, user_id, revoked_at FROM enterprise_access_grants WHERE id = ?",
-                (grant_id,)).fetchone()
+                (grant_id,),
+            ).fetchone()
             if grant is None:
                 raise HTTPException(status_code=404, detail="Grant not found")
             if grant["revoked_at"] is not None:
@@ -1367,9 +1681,9 @@ def revoke_enterprise_access(
             _revoke_grant(db, request, user, grant, reason)
             row = db.execute(f"{_GRANT_SELECT} WHERE g.id = ?", (grant_id,)).fetchone()
     except _Refusal as refusal:
-        raise _refused(request, user, None, refusal)
+        raise _refused(request, user, None, refusal) from refusal
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
     facility_service.invalidate_cache()
     return _grant_out(row)
 
@@ -1377,11 +1691,14 @@ def revoke_enterprise_access(
 # ──────────────────────────────────────────────────────────────────────────────
 #  Self-service password change
 # ──────────────────────────────────────────────────────────────────────────────
+_CHANGE_OWN_PASSWORD_USER_DEFAULT = Depends(get_current_user)
+
+
 @router.post("/me/password")
 def change_own_password(
     body: SelfPasswordBody,
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = _CHANGE_OWN_PASSWORD_USER_DEFAULT,
 ):
     """Any authenticated user changes their OWN password.
 
@@ -1408,7 +1725,11 @@ def change_own_password(
         )
 
     _audit(
-        request, user, "user_self_password_change", "success",
-        "User changed own password; all sessions revoked", user["id"],
+        request,
+        user,
+        "user_self_password_change",
+        "success",
+        "User changed own password; all sessions revoked",
+        user["id"],
     )
     return {"status": "password_changed", "relogin": True}

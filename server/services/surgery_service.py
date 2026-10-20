@@ -2,10 +2,12 @@
 
 Provides surgical schedule queries, detail retrieval, and MedGemma risk assessment.
 """
+
 import json
 import logging
+from datetime import UTC, datetime, timedelta
+
 from database import db_session
-from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -65,15 +67,17 @@ def turnaround_minutes(started_at, completed_at) -> float | None:
         return None
     if (start.tzinfo is None) != (end.tzinfo is None):
         logger.warning(
-            "[Surgery] turnaround not computed: mixed naive/aware timestamps "
-            "(%r -> %r)", started_at, completed_at,
+            "[Surgery] turnaround not computed: mixed naive/aware timestamps (%r -> %r)",
+            started_at,
+            completed_at,
         )
         return None
     delta = (end - start).total_seconds() / 60.0
     if delta < 0:
         logger.warning(
-            "[Surgery] turnaround not computed: completed_at precedes started_at "
-            "(%r -> %r)", started_at, completed_at,
+            "[Surgery] turnaround not computed: completed_at precedes started_at (%r -> %r)",
+            started_at,
+            completed_at,
         )
         return None
     return round(delta, 1)
@@ -90,7 +94,7 @@ def get_weekly_schedule(surgeon_id: str, days: int = 14) -> list:
     get their list. Anything that wires this to a route must derive scope through
     services/surgery_scope.py first, exactly like routes/surgery_routes.py does.
     """
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(UTC).date()
     end_date = today + timedelta(days=days)
 
     with db_session() as db:
@@ -113,6 +117,7 @@ def get_weekly_schedule(surgeon_id: str, days: int = 14) -> list:
         ).fetchall()
 
     from services.vigil_service import scoring_enabled
+
     scoring = scoring_enabled()
 
     # Group by date
@@ -130,30 +135,32 @@ def get_weekly_schedule(surgeon_id: str, days: int = 14) -> list:
                 "surgeries": [],
             }
 
-        grouped[date_str]["surgeries"].append({
-            "id": r["id"],
-            "patient_id": r["patient_id"],
-            "patient_name": r["patient_name"],
-            "age": r["age"],
-            "sex": r["sex"],
-            "mrn": r["mrn"],
-            "procedure_name": r["procedure_name"],
-            "diagnosis": r["diagnosis"],
-            "scheduled_time": r["scheduled_time"],
-            "estimated_duration_min": r["estimated_duration_min"],
-            "operating_room": r["operating_room"],
-            "status": r["status"],
-            # Scoring switched off (ORB_SCORING_ENABLED, the Orb Ward Record):
-            # no band, not the band stored before the switch and not "stable".
-            "risk_level": (r["risk_level"] or "stable") if scoring else None,
-            "risk_score": r["risk_score"] if scoring else None,
-            "success_probability": r["success_probability"],
-        })
+        grouped[date_str]["surgeries"].append(
+            {
+                "id": r["id"],
+                "patient_id": r["patient_id"],
+                "patient_name": r["patient_name"],
+                "age": r["age"],
+                "sex": r["sex"],
+                "mrn": r["mrn"],
+                "procedure_name": r["procedure_name"],
+                "diagnosis": r["diagnosis"],
+                "scheduled_time": r["scheduled_time"],
+                "estimated_duration_min": r["estimated_duration_min"],
+                "operating_room": r["operating_room"],
+                "status": r["status"],
+                # Scoring switched off (ORB_SCORING_ENABLED, the Orb Ward Record):
+                # no band, not the band stored before the switch and not "stable".
+                "risk_level": (r["risk_level"] or "stable") if scoring else None,
+                "risk_score": r["risk_score"] if scoring else None,
+                "success_probability": r["success_probability"],
+            }
+        )
 
     return list(grouped.values())
 
 
-def get_surgery_detail(surgery_id: str) -> dict:
+def get_surgery_detail(surgery_id: str) -> dict | None:
     """Get full surgery detail with all clinical data."""
     with db_session() as db:
         row = db.execute(
@@ -176,6 +183,7 @@ def get_surgery_detail(surgery_id: str) -> dict:
             return None
 
         from services.vigil_service import scoring_enabled
+
         scoring = scoring_enabled()
 
         # Parse JSON fields
@@ -188,6 +196,7 @@ def get_surgery_detail(surgery_id: str) -> dict:
                 return default or []
 
         from services.sage_service import _assemble_patient_context
+
         # dept=None is CORRECT HERE, and the reason changed on 2026-08-14.
         #
         # It used to mean "unscoped because surgery has no scope rule yet" — the
@@ -259,6 +268,7 @@ async def generate_risk_assessment(surgery_id: str, detail: dict | None = None):
     """
     if detail is None:
         from database import run_db
+
         detail = await run_db(get_surgery_detail, surgery_id)
     if not detail:
         yield f"data: {json.dumps({'error': 'Surgery not found'})}\n\n"
@@ -270,20 +280,23 @@ async def generate_risk_assessment(surgery_id: str, detail: dict | None = None):
     # integer, so the band is what can be said. No row at all (the score is
     # NOT NULL, so a None means the LEFT JOIN found nothing) is "not recorded":
     # get_surgery_detail's "stable" default is for the UI, not a finding.
-    risk_level_text = (detail['risk_level'] if detail.get('risk_score') is not None
-                       else "not recorded (no Vigil risk band on file)")
+    risk_level_text = (
+        detail["risk_level"]
+        if detail.get("risk_score") is not None
+        else "not recorded (no Vigil risk band on file)"
+    )
 
     # Build clinical risk prompt
     prompt = f"""You are Orb AI (MedGemma), a clinical decision support system. Provide a structured pre-operative risk assessment for the following surgery.
 
-PATIENT: {detail['patient_name']}, {detail['age']}y/{detail['sex']}
-MRN: {detail['mrn']}
-ADMISSION DIAGNOSIS: {detail['patient_diagnosis']}
-SURGICAL PROCEDURE: {detail['procedure_name']}
-SURGICAL DIAGNOSIS: {detail['diagnosis']}
-CO-MORBIDITIES: {', '.join(detail['co_morbidities'])}
+PATIENT: {detail["patient_name"]}, {detail["age"]}y/{detail["sex"]}
+MRN: {detail["mrn"]}
+ADMISSION DIAGNOSIS: {detail["patient_diagnosis"]}
+SURGICAL PROCEDURE: {detail["procedure_name"]}
+SURGICAL DIAGNOSIS: {detail["diagnosis"]}
+CO-MORBIDITIES: {", ".join(detail["co_morbidities"])}
 CURRENT RISK LEVEL: {risk_level_text}
-ESTIMATED DURATION: {detail['estimated_duration_min']} minutes
+ESTIMATED DURATION: {detail["estimated_duration_min"]} minutes
 
 Provide:
 1. **ASA Physical Status Classification** (I-V) with justification
@@ -300,12 +313,14 @@ Be concise, clinically precise, and use standard medical terminology."""
     try:
         import httpx
         from config import OLLAMA_KEEP_ALIVE
+
         from services import ollama_gateway
         from services.llm_queue_service import llm_queue
 
         # Route through the residency-aware router so surgical enrichment
         # cannot silently reload an operator-evicted 27B.
         from services.model_router import select_chat_model
+
         model_choice = await select_chat_model()
 
         await llm_queue.acquire(priority=2)
@@ -342,11 +357,14 @@ Be concise, clinically precise, and use standard medical terminology."""
         # and an estimated success rate built from the first two comorbidities,
         # a classification nobody had made, under the AI Risk Assessment title.
         logger.warning("[Surgery] Risk assessment unavailable for %s: %s", surgery_id, e)
-        fallback = ("Assessment unavailable. The AI pre-operative risk assessment "
-                    "could not be generated. Complete the risk assessment clinically.")
+        fallback = (
+            "Assessment unavailable. The AI pre-operative risk assessment "
+            "could not be generated. Complete the risk assessment clinically."
+        )
         yield f"data: {json.dumps({'content': fallback})}\n\n"
 
     yield "data: [DONE]\n\n"
+
 
 def _staff_display_names(staff_required) -> list[str]:
     """Best-effort display names from a free-form staff_required package.
@@ -368,9 +386,11 @@ def _staff_display_names(staff_required) -> list[str]:
     return names
 
 
-def trigger_surgery_prep(surgery_id: str, sender_id: str, sender_name: str, sender_role: str) -> dict:
+def trigger_surgery_prep(
+    surgery_id: str, sender_id: str, sender_name: str, sender_role: str
+) -> dict:
     from services.relay_service import send_message
-    
+
     detail = get_surgery_detail(surgery_id)
     if not detail:
         raise ValueError("Surgery not found")
@@ -390,7 +410,7 @@ def trigger_surgery_prep(surgery_id: str, sender_id: str, sender_name: str, send
     with db_session() as _db:
         assigned = _db.execute(
             "SELECT DISTINCT user_id FROM surgery_team_assignments WHERE surgery_id = ?",
-            (surgery_id,)
+            (surgery_id,),
         ).fetchall()
     for a in assigned:
         if a["user_id"]:
@@ -408,7 +428,7 @@ def trigger_surgery_prep(surgery_id: str, sender_id: str, sender_name: str, send
     # Role fallback is only used by get_user_alerts when BOTH role AND department
     # match — keep it narrow so this is not a blanket doctor/nurse broadcast.
     target_roles = ["doctor"] if not target_users else []
-        
+
     # Structured alert payload
     alert_payload = {
         "is_structured": True,
@@ -429,9 +449,9 @@ def trigger_surgery_prep(surgery_id: str, sender_id: str, sender_name: str, send
         "target_departments": ["Surgery", "Anesthesiology"],
         "urgency": "critical",
         "title": "PREP FOR SURGERY ALERT",
-        "action_required": "Navigate to Surgical Suite to review Handoff Context."
+        "action_required": "Navigate to Surgical Suite to review Handoff Context.",
     }
-    
+
     # Check for duplicate alerts within the last 4 hours
     with db_session() as db:
         recent_alerts = db.execute(
@@ -442,29 +462,32 @@ def trigger_surgery_prep(surgery_id: str, sender_id: str, sender_name: str, send
         for r in recent_alerts:
             try:
                 payload = json.loads(r["content"])
-                if payload.get("type") == "surgery_prep" and payload.get("surgery_id") == surgery_id:
+                if (
+                    payload.get("type") == "surgery_prep"
+                    and payload.get("surgery_id") == surgery_id
+                ):
                     # Alert already exists, don't create a new one
                     return {"status": "duplicate", "message": "Alert already active"}
             except Exception:
                 continue
-    
+
     # 1. Send to the Surgery department channel (for departmental visibility)
     dept_result = send_message(
-        channel_id="dept-surgery", 
+        channel_id="dept-surgery",
         sender_id=sender_id,
         sender_name=sender_name,
         sender_role=sender_role,
         content=json.dumps(alert_payload),
-        message_type="alert"
+        message_type="alert",
     )
-    
+
     # 2. Also send to the patient's case room (for patient-level visibility).
     #    Look up the real case-room channel id — it is not derivable from the
     #    patient id, so resolve it the same way surgery_routes does.
     with db_session() as db:
         case_channel = db.execute(
             "SELECT id FROM channels WHERE patient_id = ? AND type = 'case_room' LIMIT 1",
-            (detail["patient_id"],)
+            (detail["patient_id"],),
         ).fetchone()
     if case_channel:
         try:
@@ -474,9 +497,9 @@ def trigger_surgery_prep(surgery_id: str, sender_id: str, sender_name: str, send
                 sender_name=sender_name,
                 sender_role=sender_role,
                 content=json.dumps(alert_payload),
-                message_type="alert"
+                message_type="alert",
             )
         except Exception:
             pass  # Dept channel is the primary target
-    
+
     return dept_result

@@ -34,6 +34,7 @@ PHI posture (fail-closed by design):
     residual detail re-identifies. The classifier therefore never claims to
     sanitise text, only to label it.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -55,13 +56,28 @@ logger = logging.getLogger("orb.ai_governance")
 # (mirrors the referential detection in sage_service.get_relevant_context — if
 # retrieval can resolve it to a chart, the router must assume it will).
 _PRONOUN_PATTERNS = [
-    r"\bhe\b", r"\bshe\b", r"\bhim\b", r"\bhis\b", r"\bher\b",
-    r"\bthey\b", r"\btheir\b", r"\bthem\b",
+    r"\bhe\b",
+    r"\bshe\b",
+    r"\bhim\b",
+    r"\bhis\b",
+    r"\bher\b",
+    r"\bthey\b",
+    r"\btheir\b",
+    r"\bthem\b",
 ]
 _PATIENT_PHRASES = [
-    "this patient", "this guy", "this lady", "this one", "the patient",
-    "my patient", "current patient", "their vitals", "their labs",
-    "their medications", "their meds", "their diagnosis",
+    "this patient",
+    "this guy",
+    "this lady",
+    "this one",
+    "the patient",
+    "my patient",
+    "current patient",
+    "their vitals",
+    "their labs",
+    "their medications",
+    "their meds",
+    "their diagnosis",
 ]
 
 # Census / roster / board asks. Broad-scope context is one row PER PATIENT
@@ -69,8 +85,12 @@ _PATIENT_PHRASES = [
 # question sounds statistical. Kept in sync with sage_service broad detection
 # via classify-time import (see _broad_keywords()).
 _CENSUS_EXTRA_KEYWORDS = [
-    "discharge board", "discharge list", "patient list", "bed board",
-    "forecast for", "length of stay",
+    "discharge board",
+    "discharge list",
+    "patient list",
+    "bed board",
+    "forecast for",
+    "length of stay",
 ]
 
 _BED_REF = re.compile(
@@ -89,18 +109,41 @@ _DEIXIS = re.compile(
 
 # Confusable homoglyphs (Cyrillic/Greek that render like Latin letters) used to
 # smuggle a census surname past name matching. Normalised to Latin before match.
-_HOMOGLYPHS = str.maketrans({
-    "А": "A", "а": "a", "Е": "E", "е": "e", "О": "O",
-    "о": "o", "Р": "P", "р": "p", "С": "C", "с": "c",
-    "Х": "X", "х": "x", "І": "I", "і": "i", "К": "K",
-    "к": "k", "М": "M", "Т": "T", "Β": "B", "Η": "H",
-    "Ο": "O", "Ρ": "P", "Ι": "I", "ο": "o",
-})
+_HOMOGLYPHS = str.maketrans(
+    {
+        "А": "A",
+        "а": "a",
+        "Е": "E",
+        "е": "e",
+        "О": "O",
+        "о": "o",
+        "Р": "P",
+        "р": "p",
+        "С": "C",
+        "с": "c",
+        "Х": "X",
+        "х": "x",
+        "І": "I",
+        "і": "i",
+        "К": "K",
+        "к": "k",
+        "М": "M",
+        "Т": "T",
+        "Β": "B",
+        "Η": "H",
+        "Ο": "O",
+        "Ρ": "P",
+        "Ι": "I",
+        "ο": "o",
+    }
+)
 
 
 def _fold_homoglyphs(text: str) -> str:
     import unicodedata
+
     return unicodedata.normalize("NFKC", text).translate(_HOMOGLYPHS)
+
 
 # Patient-ENUMERATION intent: asking to list/name specific patients is a roster
 # request (PHI) even when phrased as a count follow-on ("...also show me the ICU
@@ -121,6 +164,7 @@ def _broad_keywords() -> list[str]:
     and the retrieval layer can never disagree about what counts as broad."""
     try:
         from services.sage_service import BROAD_QUERY_KEYWORDS
+
         return list(BROAD_QUERY_KEYWORDS) + _CENSUS_EXTRA_KEYWORDS
     except ImportError:  # circular-import fallback during startup
         return _CENSUS_EXTRA_KEYWORDS
@@ -129,12 +173,13 @@ def _broad_keywords() -> list[str]:
 @dataclass
 class QueryClassification:
     contains_phi: bool
-    query_class: str                 # patient_scoped | census_broad | contextual | general_knowledge
+    query_class: str  # patient_scoped | census_broad | contextual | general_knowledge
     reasons: list[str] = field(default_factory=list)
 
 
-def _match_patient_identifiers(query_lower: str, include_ward: bool = True,
-                               query: str | None = None) -> bool:
+def _match_patient_identifiers(
+    query_lower: str, include_ward: bool = True, query: str | None = None
+) -> bool:
     """LOCAL DB check: does the query mention an admitted/discharged patient's
     name or bed (and optionally ward)? Best-effort — any failure classifies as
     no-match, but the other signals still apply and routing defaults local.
@@ -162,6 +207,7 @@ def _match_patient_identifiers(query_lower: str, include_ward: bool = True,
     bed references are ruling R026's work, in retrieval and here alike."""
     try:
         from database import get_db
+
         db = get_db()
         try:
             rows = db.execute("SELECT name, ward, bed FROM patients").fetchall()
@@ -180,8 +226,11 @@ def _match_patient_identifiers(query_lower: str, include_ward: bool = True,
     tested_beds = set()
     for r in rows:
         name = str(r["name"] or "").lower()
-        name_parts = [p for p in re.split(r"[^a-zA-Z]", name)
-                      if p and p not in ("mr", "mrs", "ms", "dr", "prof")]
+        name_parts = [
+            p
+            for p in re.split(r"[^a-zA-Z]", name)
+            if p and p not in ("mr", "mrs", "ms", "dr", "prof")
+        ]
         for part in name_parts:
             if len(part) > 2 and part in words:
                 return True
@@ -219,9 +268,11 @@ def classify_query_sensitivity(
         if isinstance(sel, dict) and sel.get("patient_id"):
             reasons.append("panel selection is patient-scoped")
     # Referential pronouns + person/locative deixis — resolvable to a patient.
-    if (any(re.search(p, q) for p in _PRONOUN_PATTERNS)
-            or any(kw in q for kw in _PATIENT_PHRASES)
-            or _DEIXIS.search(q)):
+    if (
+        any(re.search(p, q) for p in _PRONOUN_PATTERNS)
+        or any(kw in q for kw in _PATIENT_PHRASES)
+        or _DEIXIS.search(q)
+    ):
         reasons.append("referential pronoun/deixis (may resolve to a patient)")
     # Bed references and patient NAME/BED matches against the local DB are HARD
     # signals (a name/bed identifies a person). A ward match alone is soft (a
@@ -245,9 +296,11 @@ def classify_query_sensitivity(
     if not hard_patient_signal:
         try:
             from services.sage_service import _is_aggregate_only
+
             if _is_aggregate_only(q):
                 return QueryClassification(
-                    contains_phi=False, query_class="aggregate_stats",
+                    contains_phi=False,
+                    query_class="aggregate_stats",
                     reasons=["aggregate count/distribution query with no per-patient signal"],
                 )
         except Exception:
@@ -267,6 +320,7 @@ def classify_query_sensitivity(
     # aggregate-only (the same filter excludes it from the aggregate lane).
     try:
         from services.sage_service import _COHORT_FILTER
+
         if _COHORT_FILTER.search(q):
             reasons.append("narrow demographic/clinical cohort (small-cell re-identification risk)")
     except Exception:
@@ -280,15 +334,21 @@ def classify_query_sensitivity(
     # Soft ward match: a ward reference in a NON-aggregate turn (we already
     # returned above for genuine aggregate ward questions) may be scoping to that
     # ward's patients → treat as PHI.
-    if (not hard_patient_signal
-            and _match_patient_identifiers(q, include_ward=True, query=query or "")
-            and not census_hit):
+    if (
+        not hard_patient_signal
+        and _match_patient_identifiers(q, include_ward=True, query=query or "")
+        and not census_hit
+    ):
         reasons.append("query references a ward on record")
 
     if reasons:
         if census_hit and not hard_patient_signal:
             qclass = "census_broad"
-        elif patient_id or (view_context or {}).get("patient_id") or "name/ward/bed" in " ".join(reasons):
+        elif (
+            patient_id
+            or (view_context or {}).get("patient_id")
+            or "name/ward/bed" in " ".join(reasons)
+        ):
             qclass = "patient_scoped"
         elif census_hit:
             qclass = "census_broad"
@@ -304,6 +364,7 @@ def classify_query_sensitivity(
 
 
 # ── Per-inference audit records (tamper-evident hash chain) ──
+
 
 def _prompt_messages(payload: dict) -> list[dict]:
     """The prompt material of one Ollama request as a message list.
@@ -324,7 +385,8 @@ def _prompt_messages(payload: dict) -> list[dict]:
         messages.append(user)
     return [
         {k: m.get(k) for k in ("role", "content", "images") if m.get(k) is not None}
-        for m in messages if isinstance(m, dict)
+        for m in messages
+        if isinstance(m, dict)
     ]
 
 
@@ -338,8 +400,9 @@ def hash_prompt(payload: dict) -> str:
     replayed draft) byte for byte. Model and sampling options are not part of
     it; the row records the model separately.
     """
-    canonical = json.dumps(_prompt_messages(payload), sort_keys=True,
-                           separators=(",", ":"), ensure_ascii=False)
+    canonical = json.dumps(
+        _prompt_messages(payload), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -348,7 +411,7 @@ def record_inference(
     provider: str,
     model: str,
     purpose: str,
-    outcome: str,                   # "served" | "denied" | "error" | "attempt"
+    outcome: str,  # "served" | "denied" | "error" | "attempt"
     classification: QueryClassification | None = None,
     egress_reason: str | None = None,
     user_id: str | None = None,
@@ -520,9 +583,9 @@ def local_asr_available() -> bool:
     # an installed model read as missing.
     try:
         from services.asr_model_files import is_installed
-        return (
-            is_installed(SCRIBE["asr"]["model"], SCRIBE["asr"].get("quant"))
-            or is_installed(VOICE["daemon"]["model"])
+
+        return is_installed(SCRIBE["asr"]["model"], SCRIBE["asr"].get("quant")) or is_installed(
+            VOICE["daemon"]["model"]
         )
     except Exception:  # pragma: no cover
         return False

@@ -20,21 +20,22 @@ so integrity is always verified over the full chain — a tampered row anywhere
 invalidates provenance for everyone. The patient_id argument scopes the reported
 row count/timeline, not the correctness of the chain walk.
 """
+
 from __future__ import annotations
 
 import json
 import threading
 import time
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from config import DB_PATH
 from database import db_session
+
 # Reuse the EXACT sealing algorithm — do not reinvent it, or verification would
 # silently diverge from how rows were written.
 from services.audit_service import compute_audit_row_hash
 from services.drug_chart import drug_chart_enabled as _drug_chart_enabled
-
 
 # The columns (and their order) that audit_service persists and hashes. Selected
 # explicitly so the dict handed to compute_audit_row_hash carries every hashed
@@ -129,22 +130,32 @@ def _walk_audit_rows(rows, state: dict[str, Any]) -> None:
 
 
 def _fresh_state() -> dict[str, Any]:
-    return {"tip_id": 0, "tip_hash": None, "rows_seen": 0, "last_hash": None,
-            "sealing_began": False, "broken": [], "checked": 0, "walked_at": None}
+    return {
+        "tip_id": 0,
+        "tip_hash": None,
+        "rows_seen": 0,
+        "last_hash": None,
+        "sealing_began": False,
+        "broken": [],
+        "checked": 0,
+        "walked_at": None,
+    }
 
 
 def _prefix_unchanged(conn, state: dict[str, Any]) -> bool:
     """Is the already-verified prefix still exactly the rows we walked?"""
     if not state["tip_id"]:
         return state["rows_seen"] == 0
-    n = conn.execute("SELECT COUNT(id) AS n FROM audit_logs WHERE id <= ?",
-                     (state["tip_id"],)).fetchone()["n"]
-    tip = conn.execute("SELECT row_hash FROM audit_logs WHERE id = ?",
-                       (state["tip_id"],)).fetchone()
+    n = conn.execute(
+        "SELECT COUNT(id) AS n FROM audit_logs WHERE id <= ?", (state["tip_id"],)
+    ).fetchone()["n"]
+    tip = conn.execute(
+        "SELECT row_hash FROM audit_logs WHERE id = ?", (state["tip_id"],)
+    ).fetchone()
     return n == state["rows_seen"] and tip is not None and tip["row_hash"] == state["tip_hash"]
 
 
-def _chain_state(conn, *, max_age_s: Optional[float] = None) -> dict[str, Any]:
+def _chain_state(conn, *, max_age_s: float | None = None) -> dict[str, Any]:
     """The chain walk, reusing the cached prefix when it is provably unchanged
     and younger than `max_age_s` (default _CHAIN_CACHE_MAX_AGE_S); otherwise a
     full walk. Returns a copy."""
@@ -154,9 +165,12 @@ def _chain_state(conn, *, max_age_s: Optional[float] = None) -> dict[str, Any]:
     with _chain_lock:
         state = _chain_cache.get(key)
         now = time.monotonic()
-        if (state is None or state["walked_at"] is None
-                or now - state["walked_at"] >= max_age_s
-                or not _prefix_unchanged(conn, state)):
+        if (
+            state is None
+            or state["walked_at"] is None
+            or now - state["walked_at"] >= max_age_s
+            or not _prefix_unchanged(conn, state)
+        ):
             state = _fresh_state()
             state["walked_at"] = now
         # Walk a copy and publish it only when complete, so a walk that fails
@@ -171,13 +185,13 @@ def _chain_state(conn, *, max_age_s: Optional[float] = None) -> dict[str, Any]:
         return {**work, "broken": list(work["broken"])}
 
 
-def _broken_audit_ids(conn, *, max_age_s: Optional[float] = None) -> tuple[list[int], int]:
+def _broken_audit_ids(conn, *, max_age_s: float | None = None) -> tuple[list[int], int]:
     """(broken_ids, checked) over the FULL audit chain, in id order."""
     state = _chain_state(conn, max_age_s=max_age_s)
     return state["broken"], state["checked"]
 
 
-def verify_chain(patient_id: Optional[str] = None) -> dict[str, Any]:
+def verify_chain(patient_id: str | None = None) -> dict[str, Any]:
     """Verify the audit hash chain for tamper-evidence.
 
     Returns {ok, broken_at, count} where broken_at is the id of the FIRST row
@@ -211,6 +225,7 @@ def verify_chain(patient_id: Optional[str] = None) -> dict[str, Any]:
 #  Unified timeline
 # ════════════════════════════════════════════════════════════════
 
+
 def _table_exists(conn, name: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?", (name,)
@@ -219,9 +234,9 @@ def _table_exists(conn, name: str) -> bool:
 
 
 def get_timeline(
-    patient_id: Optional[str] = None,
-    since: Optional[str] = None,
-    until: Optional[str] = None,
+    patient_id: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
     limit: int = 500,
 ) -> list[dict[str, Any]]:
     """Return a time-ordered, unified stream of everything that happened.
@@ -266,22 +281,26 @@ def get_timeline(
                 target = f"{d.get('target_type') or ''}:{d.get('target_id') or ''}".strip(":")
             elif d.get("request_path"):
                 target = d.get("request_path")
-            events.append({
-                "id": d["id"],
-                "ts": d["timestamp"],
-                "source": "audit",
-                "actor": d.get("actor_user_id") or d.get("actor_role"),
-                "action": d.get("action_type"),
-                "target": target,
-                "detail": d.get("summary_message"),
-                "chain_ok": d["row_hash"] is not None and d["id"] not in broken_ids,
-                "patient_id": d.get("patient_id"),
-                "correlation_id": d.get("correlation_id"),
-            })
+            events.append(
+                {
+                    "id": d["id"],
+                    "ts": d["timestamp"],
+                    "source": "audit",
+                    "actor": d.get("actor_user_id") or d.get("actor_role"),
+                    "action": d.get("action_type"),
+                    "target": target,
+                    "detail": d.get("summary_message"),
+                    "chain_ok": d["row_hash"] is not None and d["id"] not in broken_ids,
+                    "patient_id": d.get("patient_id"),
+                    "correlation_id": d.get("correlation_id"),
+                }
+            )
 
         # ── event_log (event bus WAL) ──
-        q = ("SELECT event_id, topic, source_node, event_type, patient_id, "
-             "payload, timestamp, correlation_id FROM event_log WHERE 1=1")
+        q = (
+            "SELECT event_id, topic, source_node, event_type, patient_id, "
+            "payload, timestamp, correlation_id FROM event_log WHERE 1=1"
+        )
         params = []
         if patient_id:
             q += " AND patient_id = ?"
@@ -296,26 +315,30 @@ def get_timeline(
         params.append(limit)
         for r in conn.execute(q, params).fetchall():
             d = dict(r)
-            events.append({
-                "id": d["event_id"],
-                "ts": d["timestamp"],
-                "source": "event",
-                "actor": d.get("source_node"),
-                "action": d.get("event_type"),
-                "target": d.get("topic"),
-                "detail": _summarize_payload(d.get("payload")),
-                "chain_ok": None,  # event_log is not hash-chained
-                "patient_id": d.get("patient_id"),
-                "correlation_id": d.get("correlation_id"),
-            })
+            events.append(
+                {
+                    "id": d["event_id"],
+                    "ts": d["timestamp"],
+                    "source": "event",
+                    "actor": d.get("source_node"),
+                    "action": d.get("event_type"),
+                    "target": d.get("topic"),
+                    "detail": _summarize_payload(d.get("payload")),
+                    "chain_ok": None,  # event_log is not hash-chained
+                    "patient_id": d.get("patient_id"),
+                    "correlation_id": d.get("correlation_id"),
+                }
+            )
 
         # ── order_events (optional table) ──
         if _table_exists(conn, "order_events"):
-            q = ("SELECT oe.id AS id, oe.order_id AS order_id, oe.prior_status AS prior_status, "
-                 "oe.new_status AS new_status, oe.actor_id AS actor_id, oe.reason AS reason, "
-                 "oe.created_at AS created_at, o.patient_id AS patient_id, "
-                 "o.description AS description "
-                 "FROM order_events oe LEFT JOIN orders o ON o.id = oe.order_id WHERE 1=1")
+            q = (
+                "SELECT oe.id AS id, oe.order_id AS order_id, oe.prior_status AS prior_status, "
+                "oe.new_status AS new_status, oe.actor_id AS actor_id, oe.reason AS reason, "
+                "oe.created_at AS created_at, o.patient_id AS patient_id, "
+                "o.description AS description "
+                "FROM order_events oe LEFT JOIN orders o ON o.id = oe.order_id WHERE 1=1"
+            )
             params = []
             if not _drug_chart_enabled():
                 # A medication order is the drug chart, which an Orb Ward
@@ -337,18 +360,21 @@ def get_timeline(
             for r in conn.execute(q, params).fetchall():
                 d = dict(r)
                 transition = f"{d.get('prior_status') or 'new'} → {d.get('new_status')}"
-                events.append({
-                    "id": d["id"],
-                    "ts": d["created_at"],
-                    "source": "order",
-                    "actor": d.get("actor_id"),
-                    "action": f"order_{d.get('new_status')}",
-                    "target": d.get("order_id"),
-                    "detail": d.get("reason") or f"{d.get('description') or 'order'}: {transition}",
-                    "chain_ok": None,  # order_events is not hash-chained
-                    "patient_id": d.get("patient_id"),
-                    "correlation_id": None,
-                })
+                events.append(
+                    {
+                        "id": d["id"],
+                        "ts": d["created_at"],
+                        "source": "order",
+                        "actor": d.get("actor_id"),
+                        "action": f"order_{d.get('new_status')}",
+                        "target": d.get("order_id"),
+                        "detail": d.get("reason")
+                        or f"{d.get('description') or 'order'}: {transition}",
+                        "chain_ok": None,  # order_events is not hash-chained
+                        "patient_id": d.get("patient_id"),
+                        "correlation_id": None,
+                    }
+                )
 
     # Merge + time-order ascending, then keep the most recent `limit`.
     events.sort(key=lambda e: (_parse_ts(e["ts"]), str(e["source"]), str(e["id"])))
@@ -357,7 +383,7 @@ def get_timeline(
     return events
 
 
-def _summarize_payload(payload: Any) -> Optional[str]:
+def _summarize_payload(payload: Any) -> str | None:
     """Compact one-line summary of an event_log JSON payload for the timeline."""
     if not payload:
         return None
@@ -375,7 +401,8 @@ def _summarize_payload(payload: Any) -> Optional[str]:
 #  Single-event detail
 # ════════════════════════════════════════════════════════════════
 
-def get_event_detail(event_id: Any, source: str) -> Optional[dict[str, Any]]:
+
+def get_event_detail(event_id: Any, source: str) -> dict[str, Any] | None:
     """Return the full raw row behind one timeline entry, plus chain status.
 
     `source` selects the backing table ('audit' | 'event' | 'order'). Returns
@@ -400,9 +427,7 @@ def get_event_detail(event_id: Any, source: str) -> Optional[dict[str, Any]]:
             return {"source": "audit", "event": d}
 
         if source == "event":
-            row = conn.execute(
-                "SELECT * FROM event_log WHERE event_id = ?", (event_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM event_log WHERE event_id = ?", (event_id,)).fetchone()
             if row is None:
                 return None
             d = dict(row)

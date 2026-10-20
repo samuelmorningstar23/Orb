@@ -14,10 +14,10 @@ Failure policy is deliberate and asymmetric:
   * a source that fails to STOP is logged and the rest are still stopped, so one
     stuck socket cannot block shutdown.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from .base import SourceKind, VitalsSource
 
@@ -41,7 +41,7 @@ class VitalsSourceRegistry:
     def unregister(self, source_id: str) -> None:
         self._sources.pop(source_id, None)
 
-    def get(self, source_id: str) -> Optional[VitalsSource]:
+    def get(self, source_id: str) -> VitalsSource | None:
         return self._sources.get(source_id)
 
     def of_kind(self, kind: SourceKind) -> list[VitalsSource]:
@@ -71,7 +71,8 @@ class VitalsSourceRegistry:
                 logger.error(
                     "Vitals source %r failed to start (%s). Orb continues without it; "
                     "manual entry remains available for those beds.",
-                    source.source_id, e,
+                    source.source_id,
+                    e,
                 )
         return started
 
@@ -80,8 +81,7 @@ class VitalsSourceRegistry:
             try:
                 await source.stop()
             except Exception as e:
-                logger.warning("Vitals source %r failed to stop cleanly: %s",
-                               source.source_id, e)
+                logger.warning("Vitals source %r failed to stop cleanly: %s", source.source_id, e)
 
     async def reset(self) -> None:
         """Stop everything and forget it (used by tests and by re-configuration)."""

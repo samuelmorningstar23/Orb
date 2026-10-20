@@ -225,38 +225,38 @@ sequenceDiagram
 **On screen:** it is the model name printed inside every provenance banner, "Fast mode is on, but this one needed the careful model (**medgemma:27b**)", and the `27B` chip in the header AI panel.
 **Breaks if you change it:** modules do `from config import LLM_MODEL` **by value**, so this must resolve at import. Making it lazy means a missing model 404s every AI feature with no visible error.
 
-#### `AMBIENT_LLM_MODEL`: `config.py:283`
+#### `AMBIENT_LLM_MODEL`: `config.py:301`
 **Signature:** `str`, defaults to `LLM_MODEL`
 **Does:** The cheap tier for non-interactive background work.
 **On screen:** nothing directly, but it is the **second** candidate in the fast-tier fallback chain (`:191-193`), so on a site that declared an ambient tier, thinking-OFF quietly rides on the model the operator already chose.
 **Breaks if you change it:** point it at a model that is not pulled and thinking-OFF resolves to it anyway when Ollama is unreachable (`:192`, `installed is None`), and every fast turn 404s.
 
-#### `THINKING_DEFAULT_ON`: `config.py:306`
+#### `THINKING_DEFAULT_ON`: `config.py:324`
 **Signature:** `bool`, from `ORB_THINKING_DEFAULT`, default `"on"`
 **Does:** What an absent or unparseable flag resolves to.
 **On screen:** nothing renders it. It is the value every non-Sage caller silently gets, the ward narrator, background summarisers, the Scribe demographics extraction.
 **Breaks if you change it:** setting it off means an old client, a scripted caller or a dropped JSON field quietly downgrades a clinician's answer to the model that is wrong 40% of the time on drug recall. The floor still stands above it (`test_thinking_mode.py:85-92`), but the general lane goes fast by default for everybody, including callers that have no toggle to notice it.
 
-#### `THINKING_FAST_MODE_ENABLED`: `config.py:312`
+#### `THINKING_FAST_MODE_ENABLED`: `config.py:333`
 **Signature:** `bool`, from `ORB_FAST_MODE_ENABLED`, default true
 **Does:** The panic switch. Off pins every Sage turn to the careful model regardless of what any client sends.
 **On screen:** **nothing today.** The server honours it (`fast_mode_available`, `:390`), but the composer still renders the toggle and the clinician still sees "Fast". See discrepancy 1.
 **Breaks if you change it:** turning it off is the correct response to a site deciding the fast lane is not for them, but until the availability flag reaches the UI, the ward will believe fast mode is on and be quietly served careful answers.
 
-#### `_resolve_fast_model`: `config.py:317`
+#### `_resolve_fast_model`: `config.py:341`
 **Signature:** `(preferred: str) -> str`
 **Does:** Picks the model that serves thinking-OFF, erring toward the careful one: preferred if pulled → a distinct ambient tier → otherwise `LLM_MODEL`.
 **On screen:** the model name in the fast-answer banner, and the `4B` chip in the header AI panel.
 **Gotchas, this is the subtle one:** matching is **exact on the tag**, unlike `_resolve_llm_model`, which matches the base name. Base-name matching here would happily return `"medgemma:4b"` on a box that only has `medgemma:27b` pulled, and every fast turn would 404 (`:218-221`).
 **Breaks if you change it:** invert the fallback direction, degrade to *anything smaller* rather than to the careful model, and an unavailable fast tier turns into either a 404 or a wrong answer. Both are worse than a slow correct one.
 
-#### `THINKING_FAST_MODEL`: `config.py:346`
+#### `THINKING_FAST_MODEL`: `config.py:372`
 **Signature:** `str`, from `ORB_FAST_MODEL`, default `medgemma:4b`
 **Does:** The fast tier's resolved name.
 **On screen:** printed inside the fast-answer banner (`thinkingMode.ts:172`).
 **Breaks if you change it:** when this equals `LLM_MODEL`, `fast_mode_available()` goes False and the whole toggle becomes inert, by design, but see discrepancy 1 for what the clinician sees.
 
-#### `FAST_MODE_SAFETY_FLOOR`: `config.py:350`
+#### `FAST_MODE_SAFETY_FLOOR`: `config.py:384`
 **Signature:** `bool`, from `ORB_FAST_MODE_SAFETY_FLOOR`, default `"1"` → **on**
 **Does:** Arms the floor. Setting it to `0` makes fast mode answer everything, including dosing and patient questions.
 **On screen:** stamped out as `safety_floor_enabled` on every answer's provenance, and persisted per turn, but **nothing in the UI reads it**. A ward cannot tell from the screen whether the floor is armed.
@@ -322,7 +322,7 @@ sequenceDiagram
 **Why the class names are in it (`:215-227`):** *"what is the mechanism of action of beta blockers"* names no molecule and carries no dose, and is squarely a medication question. Without the spoken class names, rule 2 has a hole the width of pharmacology teaching.
 **Breaks if you change it:** removing "protamine" or "vitamin k" removes the floor from the exact recorded failure.
 
-#### `_build_drug_vocabulary`: `thinking_mode.py:232`
+#### `_build_drug_vocabulary`: `thinking_mode.py:345`
 **Signature:** `() -> frozenset[str]`
 **Does:** Unions the local list with `drug_safety_service._DRUG_CLASS_PATTERNS` and `_ALLERGEN_CLASS_TERMS`, then drops any term shorter than 3 characters.
 **On screen:** nothing.
@@ -330,7 +330,7 @@ sequenceDiagram
 **Why the 3-character floor:** a one- or two-character term put into an alternation with `\b` guards would match inside ordinary words. None exist today; the filter keeps it that way (`:247-249`).
 **Breaks if you change it:** make the `except` narrower and a rename in `drug_safety_service` takes down every Sage turn at import, not just the drug rule.
 
-#### `_DRUG_NAMES`: `thinking_mode.py:261`
+#### `_DRUG_NAMES`: `thinking_mode.py:375`
 **Signature:** compiled alternation over the vocabulary, **longest-first**, with a trailing `s?`
 **Does:** Matches a free-text drug or drug-class mention.
 **On screen:** nothing directly.
@@ -338,53 +338,53 @@ sequenceDiagram
 **Breaks if you change it:** sort it any other way and specific compounds lose to their own prefixes; drop the `s?` and "statins", "opioids", "beta blockers" all stop matching.
 **Gotchas:** the vocabulary is static and English. A drug named in another language matches nothing.
 
-#### `_ORB_COMPUTED`: `thinking_mode.py:320`
+#### `_ORB_COMPUTED`: `thinking_mode.py:436`
 **Signature:** compiled regex, NEWS2, early-warning scores, escalation triggers, sepsis bundles, "why did Orb/Vigil escalate"
 **Does:** Rule 3.
 **On screen:** produces the clause *"it is about a score Orb computes itself"* in the floor banner.
 **Why it is separate from the other two:** it protects Orb's own determinism rather than the patient directly. A fabricated NEWS2 threshold discredits the score that was correct. It is called out separately so a site can reason about it, and remove it, independently (`:81-88`).
 
-#### `_thinking_flag`: `thinking_mode.py:347`
+#### `_thinking_flag`: `thinking_mode.py:463`
 **Signature:** `ContextVar[bool | None]`, default `None`
 **Does:** Carries the request's flag from the route (which sees the body) to `query_ollama` (which does not), without threading a parameter through a file this change does not own.
 **On screen:** nothing.
 **Why the transport is safe (`:286-292`):** Starlette handles each request in its own task and a task copies the context at creation, so one request cannot read another's value. The failure mode if that ever changed would be a **leaked "thinking OFF"**, a downgrade nobody asked for. Two guards make that harmless: the var carries **only the boolean, never the classification**, and `select_provider` re-derives the floor from the live prompt in flight. Even a leaked OFF cannot route a patient or dosing question to the 4B.
 **Breaks if you change it:** cache the *decision* here instead of the flag and that second guard disappears, a leaked context would then carry a leaked "no floor needed".
 
-#### `resolve_thinking_flag`: `thinking_mode.py:353`
+#### `resolve_thinking_flag`: `thinking_mode.py:469`
 **Signature:** `(raw: object) -> bool`
 **Does:** Normalises whatever the client sent. `None`, a missing key, `"maybe"`, `{}`, `[]`, everything ambiguous resolves to `THINKING_DEFAULT_ON`. Only an explicit `False`, `0`, `"false"`, `"off"`, `"fast"`, `"no"` buys the fast model (`_TRUTHY`/`_FALSY`, `:295-296`).
 **On screen:** nothing directly; it is why an old client cannot be downgraded.
 **Breaks if you change it:** make the fall-through return `False` and every caller that omits the field, every programmatic caller, every older client, is silently moved to the fast model. `test_thinking_mode.py:57-65` parametrises both directions.
 
-#### `begin_turn` / `end_turn`: `thinking_mode.py:376` / `:385`
+#### `begin_turn` / `end_turn`: `thinking_mode.py:492` / `:385`
 **Signature:** `(raw: object) -> Token` / `(token: Token) -> None`
 **Does:** Records the request's flag; restores it.
 **On screen:** nothing.
 **Gotchas:** the route deliberately keeps no reset token (`sage_routes.py:2328-2330`), the ContextVar dies with the request task. `end_turn` exists for tests that share one context; the suite's autouse fixture resets the var precisely because a leaked flag would make the default-is-ON tests pass or fail depending on ordering (`test_thinking_mode.py:34-51`).
 **Breaks if you change it:** call `begin_turn` anywhere outside a per-request task, a shared worker, a background loop, and one caller's fast-mode choice becomes another's.
 
-#### `current_thinking_flag`: `thinking_mode.py:393`
+#### `current_thinking_flag`: `thinking_mode.py:509`
 **Signature:** `() -> bool`
 **Does:** This request's flag, or the configured default when nothing was set.
 **On screen:** its value is also read directly by `sage_routes._prov_no_model_route_info` (`:1489`) so that a turn refused before any model ran still records what the clinician had chosen.
 **Why "nothing was set" means the default:** the un-integrated callers, the ward narrator, background summarisers, Scribe's demographics extraction, never go through `begin_turn`. They must not be moved onto the fast model merely because this feature exists (`test_thinking_mode.py:78-82`).
 **Breaks if you change it:** default to `False` here and every background LLM consumer in Orb silently switches tiers.
 
-#### `ThinkingDecision`: `thinking_mode.py:409`, `.thinking` at `:431`
+#### `ThinkingDecision`: `thinking_mode.py:525`, `.thinking` at `:431`
 **Signature:** frozen dataclass, `requested_thinking`, `tier`, `model`, `floor_fired`, `floor_rules`, `floor_enabled`, `fast_mode_available`, `reason`
 **Does:** The whole decision as one immutable value, including a sentence written for a doctor rather than for a log.
 **On screen:** every field except `floor_enabled` reaches the client through `stamp`; `reason` is the only one that is **computed and shipped but never rendered** (see discrepancy 2).
 **Gotchas:** `requested_thinking` and `.thinking` are deliberately different questions, "what did the clinician ask for" versus "what did they get". The floor banner exists exactly because those two can disagree (`test_thinking_mode.py:339-350`).
 **Breaks if you change it:** collapse the two into one boolean and the answer can no longer say "you asked for fast, and here is why you did not get it".
 
-#### `fast_mode_available`: `thinking_mode.py:436`
+#### `fast_mode_available`: `thinking_mode.py:552`
 **Signature:** `() -> bool` → `THINKING_FAST_MODE_ENABLED and THINKING_FAST_MODEL != LLM_MODEL`
 **Does:** Is there a real fast lane on this appliance?
 **On screen:** stamped as `thinking_available` (`:629`) and typed on the client (`src/api/thinkingMode.ts:44`), **and read by nothing.** The docstring says "the toggle should not be offered when this is False"; no code implements that today.
 **Breaks if you change it:** make it always true and a box without the 4B pulled routes fast turns to a model tag that is not there.
 
-#### `classify_floor`: `thinking_mode.py:447`
+#### `classify_floor`: `thinking_mode.py:563`
 **Signature:** `(query, patient_id=None, classification=None, context=None) -> tuple[str, ...]`
 **Does:** Returns which rules this turn trips, in `_FLOOR_RULES` order. Pure, no I/O, no DB, no event loop.
 **On screen:** the returned names become `safety_floor_rules`, which the client turns into the "because …" clause.
@@ -392,13 +392,13 @@ sequenceDiagram
 **Why every argument is optional:** each one only ever *adds* signal, so a caller with less information gets a floor that fires **at least as often**, never less often (`:401-403`). The text rules alone catch every measured failure.
 **Breaks if you change it:** make any argument mandatory and a caller that cannot supply it stops classifying at all. Add a DB read and this stops being callable from the hot path.
 
-#### `_floor_sentence`: `thinking_mode.py:544`
+#### `_floor_sentence`: `thinking_mode.py:668`
 **Signature:** `(rules) -> str`
 **Does:** Joins the matched rules' clauses into readable English ("A, B and C").
 **On screen:** the middle of the server-side `reason` string.
 **Gotchas:** the client builds the *same* sentence independently from `safety_floor_rules` (`thinkingMode.ts:151-165`), because it renders `reason` nowhere. Two sentence builders, one contract.
 
-#### `decide`: `thinking_mode.py:553`
+#### `decide`: `thinking_mode.py:677`
 **Signature:** `(query, patient_id=None, classification=None, context=None, thinking=None) -> ThinkingDecision`
 **Does:** The policy, in four branches and in this order: thinking ON → careful, no classification run at all (`:462`); no fast lane available → careful with an honest reason (`:470`); floor rules matched → careful, `floor_fired=True` (`:481`); otherwise → fast (`:491`).
 **On screen:** everything downstream.
@@ -406,7 +406,7 @@ sequenceDiagram
 **Gotchas:** `FAST_MODE_SAFETY_FLOOR` is consulted at `:588` as a **module-level constant imported by value**. Flipping the env var needs a restart; tests monkeypatch the module attribute, and there is a separate fresh-interpreter test (`test_thinking_mode.py:259-323`) that proves the wire from `ORB_FAST_MODE_SAFETY_FLOOR` to that branch actually exists, because a test that only patches the constant cannot tell a working env var from a typo'd one.
 **Breaks if you change it:** reorder the branches so the floor runs before the availability check and a box with no fast tier starts reporting `floor_fired=True` on questions that were never going anywhere else.
 
-#### `stamp`: `thinking_mode.py:610`
+#### `stamp`: `thinking_mode.py:748`
 **Signature:** `(route_info: dict | None, decision, served_model: str | None = None) -> dict`
 **Does:** Writes ten `thinking_*` / `safety_floor_*` keys into the dict the Sage route ships as `metadata.provider`.
 **On screen:** **this is the function that makes the feature visible at all.** Everything the clinician reads about which brain answered is derived from these keys.
@@ -414,7 +414,7 @@ sequenceDiagram
 **Why the keys are namespaced:** `query_ollama` calls `info.update(lane=…, provider=…, model=…, downgraded=…, preferred_model=…)` immediately afterwards (`sage_service.py:1845-1847`). A collision would let the routing label silently overwrite the clinician's label. `test_thinking_mode.py:371-377` asserts the two key sets are disjoint.
 **Breaks if you change it:** drop `safety_floor_unsatisfied` and the one genuinely dangerous case, told careful, served small, renders as an ordinary floor reassurance banner.
 
-#### `select_provider`: `thinking_mode.py:642`
+#### `select_provider`: `thinking_mode.py:782`
 **Signature:** `async (query, context=None, patient_id=None, classification=None, route_info=None, thinking=None) -> (ModelChoice, ChatProvider)`
 **Does:** The single integration point. Decides, resolves the provider, stamps, logs.
 **On screen:** indirectly, everything.
@@ -433,20 +433,20 @@ sequenceDiagram
 
 ### The call sites, in files `thinking_mode` does not own
 
-#### `begin_turn` in the query route: `server/routes/sage_routes.py:2331` (import at `:8`)
+#### `begin_turn` in the query route: `server/routes/sage_routes.py:2464` (import at `:8`)
 **Does:** Binds `body.get("thinking")` for the whole turn, immediately after `effective_patient_id` is resolved.
 **On screen:** nothing itself; it is what makes the composer's toggle mean anything.
 **Gotchas, the voice lane is deliberately excluded.** `/sage/voice` never calls `begin_turn`, so a spoken turn takes the default (careful) until voice grows a control of its own (`:1927-1928`). That is a real behavioural difference between typing and speaking the same question.
 **Breaks if you change it:** move it after the pre-LLM safety gate and a refused turn records no toggle position. Add it to the voice handler without adding a visible control and a clinician gets fast answers from a surface with no way to see or change the setting.
 
-#### `_prov_no_model_route_info`: `server/routes/sage_routes.py:2284`
+#### `_prov_no_model_route_info`: `server/routes/sage_routes.py:2383`
 **Signature:** `() -> dict` → `{"thinking_requested": …}`
 **Does:** Supplies a minimal `route_info` for the exits where no model is ever selected, a pre-LLM refusal, a retrieval failure.
 **On screen:** nothing. It exists for the provenance row.
 **Why it is read here and not later (`:1483-1486`):** the ContextVar belongs to the request's task, and a streaming generator is not guaranteed to be iterated inside it. Read it in the request's own context or you read the default.
 **Breaks if you change it:** move this read into the generator and every refused turn records "thinking ON" regardless of what the clinician chose.
 
-#### `select_provider` in `query_ollama`: `server/services/sage_service.py:1946`
+#### `select_provider` in `query_ollama`: `server/services/sage_service.py:2153`
 **Does:** Replaced the two lines that used to pick the model and the provider.
 **On screen:** everything; this is where the tier choice becomes real.
 **Gotchas:** `route_info=info` is passed **before** `info.update(lane=…, model=…)` at `:1948-1957`. The order matters only because the key sets must stay disjoint, see `stamp`.

@@ -39,14 +39,13 @@ The whole /api/facilities prefix is open through the facility fence
 is what an operator needs to see while the fence holds. Every route here must
 stay free of patient data for that reason.
 """
+
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, Body, Depends, HTTPException
+from permissions import FACILITY_MANAGE, FACILITY_READ, require_permission
 from pydantic import BaseModel, ConfigDict
 
-from permissions import FACILITY_MANAGE, FACILITY_READ, require_permission
 from routes.opt_in_gates import feature_gate
 
 router = APIRouter(prefix="/api/facilities", tags=["facilities"])
@@ -54,11 +53,15 @@ router = APIRouter(prefix="/api/facilities", tags=["facilities"])
 _MULTI_SITE = feature_gate("multi_site")
 
 
+_FACILITIES_META_USER_DEFAULT = Depends(require_permission(FACILITY_READ))
+
+
 @router.get("/meta")
-def facilities_meta(user: dict = Depends(require_permission(FACILITY_READ))):
+def facilities_meta(user: dict = _FACILITIES_META_USER_DEFAULT):
     """The facility switch board for the Facilities screen. Plain def: it may
     read the facilities table, which must never happen on the event loop."""
     import config
+
     from services import facility_service
 
     multi = facility_service.multi_facility_data()
@@ -82,35 +85,36 @@ class FacilityIdentityBody(BaseModel):
     """The identity fields. Each is optional; on PATCH only the fields sent
     change, and a blank or null value clears one. `code` is accepted on
     create only (a PATCH naming it is refused with code_fixed)."""
+
     model_config = ConfigDict(extra="forbid")
 
-    code: Optional[str] = None
-    name: Optional[str] = None
-    short_name: Optional[str] = None
-    legal_name: Optional[str] = None
-    address_line1: Optional[str] = None
-    address_line2: Optional[str] = None
-    city: Optional[str] = None
-    district: Optional[str] = None
-    state: Optional[str] = None
-    state_code: Optional[str] = None
-    pincode: Optional[str] = None
-    phone: Optional[str] = None
-    email: Optional[str] = None
-    gstin: Optional[str] = None
-    pan: Optional[str] = None
-    hfr_id: Optional[str] = None
-    abdm_hip_id: Optional[str] = None
-    nabh_accreditation_no: Optional[str] = None
-    nabh_valid_until: Optional[str] = None
-    clinical_establishment_reg_no: Optional[str] = None
-    timezone: Optional[str] = None
+    code: str | None = None
+    name: str | None = None
+    short_name: str | None = None
+    legal_name: str | None = None
+    address_line1: str | None = None
+    address_line2: str | None = None
+    city: str | None = None
+    district: str | None = None
+    state: str | None = None
+    state_code: str | None = None
+    pincode: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    gstin: str | None = None
+    pan: str | None = None
+    hfr_id: str | None = None
+    abdm_hip_id: str | None = None
+    nabh_accreditation_no: str | None = None
+    nabh_valid_until: str | None = None
+    clinical_establishment_reg_no: str | None = None
+    timezone: str | None = None
 
 
 class DeactivateBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 def _refused(exc) -> HTTPException:
@@ -119,14 +123,19 @@ def _refused(exc) -> HTTPException:
 
 def _switch_off() -> HTTPException:
     from routes.opt_in_gates import _feature_off
+
     return _feature_off("multi_site")
 
 
+_LIST_FACILITIES_USER_DEFAULT = Depends(require_permission(FACILITY_READ))
+
+
 @router.get("")
-def list_facilities(user: dict = Depends(require_permission(FACILITY_READ))):
+def list_facilities(user: dict = _LIST_FACILITIES_USER_DEFAULT):
     """Every facility, active or not, with its identity and whether this
     account may edit it. No patient data."""
     import config
+
     from services import facility_identity, facility_service
 
     return {
@@ -136,9 +145,12 @@ def list_facilities(user: dict = Depends(require_permission(FACILITY_READ))):
     }
 
 
+_CREATE_CHECK_GATE_DEFAULT = Depends(_MULTI_SITE)
+_CREATE_CHECK_USER_DEFAULT = Depends(require_permission(FACILITY_MANAGE))
+
+
 @router.get("/create-check")
-def create_check(_gate: None = Depends(_MULTI_SITE),
-                 user: dict = Depends(require_permission(FACILITY_MANAGE))):
+def create_check(_gate: None = _CREATE_CHECK_GATE_DEFAULT, user: dict = _CREATE_CHECK_USER_DEFAULT):
     """Why a facility cannot be added now: {allowed, reasons [{code, message}]}."""
     from services import facility_identity
 
@@ -146,8 +158,11 @@ def create_check(_gate: None = Depends(_MULTI_SITE),
     return {"allowed": not reasons, "reasons": reasons}
 
 
+_READ_FACILITY_USER_DEFAULT = Depends(require_permission(FACILITY_READ))
+
+
 @router.get("/{facility_id}")
-def read_facility(facility_id: int, user: dict = Depends(require_permission(FACILITY_READ))):
+def read_facility(facility_id: int, user: dict = _READ_FACILITY_USER_DEFAULT):
     from services import facility_identity
 
     try:
@@ -156,32 +171,45 @@ def read_facility(facility_id: int, user: dict = Depends(require_permission(FACI
         raise _refused(exc) from exc
 
 
+_UPDATE_FACILITY_BODY_DEFAULT = Body(...)
+_UPDATE_FACILITY_USER_DEFAULT = Depends(require_permission(FACILITY_MANAGE))
+
+
 @router.patch("/{facility_id}")
 def update_facility(
     facility_id: int,
-    body: FacilityIdentityBody = Body(...),
-    user: dict = Depends(require_permission(FACILITY_MANAGE)),
+    body: FacilityIdentityBody = _UPDATE_FACILITY_BODY_DEFAULT,
+    user: dict = _UPDATE_FACILITY_USER_DEFAULT,
 ):
     """Edit a facility's identity. Facility 1 whatever ORB_MULTI_SITE says;
     any other facility only with the switch on. The account's own facility
     only, unless it holds group-wide access."""
     import config
+
     from services import facility_identity, facility_service
 
-    if facility_id != facility_service.MAIN_FACILITY_ID and not config.feature_enabled("multi_site"):
+    if facility_id != facility_service.MAIN_FACILITY_ID and not config.feature_enabled(
+        "multi_site"
+    ):
         raise _switch_off()
     try:
         return facility_identity.update_facility(
-            facility_id, body.model_dump(exclude_unset=True), user=user)
+            facility_id, body.model_dump(exclude_unset=True), user=user
+        )
     except facility_identity.FacilityIdentityError as exc:
         raise _refused(exc) from exc
 
 
+_CREATE_FACILITY_BODY_DEFAULT = Body(...)
+_CREATE_FACILITY_GATE_DEFAULT = Depends(_MULTI_SITE)
+_CREATE_FACILITY_USER_DEFAULT = Depends(require_permission(FACILITY_MANAGE))
+
+
 @router.post("")
 def create_facility(
-    body: FacilityIdentityBody = Body(...),
-    _gate: None = Depends(_MULTI_SITE),
-    user: dict = Depends(require_permission(FACILITY_MANAGE)),
+    body: FacilityIdentityBody = _CREATE_FACILITY_BODY_DEFAULT,
+    _gate: None = _CREATE_FACILITY_GATE_DEFAULT,
+    user: dict = _CREATE_FACILITY_USER_DEFAULT,
 ):
     """Add a facility: 404 with the switch off, 409 with the reasons while the
     create gate refuses (always, while the facility fence holds '*')."""
@@ -193,12 +221,17 @@ def create_facility(
         raise _refused(exc) from exc
 
 
+_DEACTIVATE_FACILITY_BODY_DEFAULT = Body(default=None)
+_DEACTIVATE_FACILITY_GATE_DEFAULT = Depends(_MULTI_SITE)
+_DEACTIVATE_FACILITY_USER_DEFAULT = Depends(require_permission(FACILITY_MANAGE))
+
+
 @router.post("/{facility_id}/deactivate")
 def deactivate_facility(
     facility_id: int,
-    body: Optional[DeactivateBody] = Body(default=None),
-    _gate: None = Depends(_MULTI_SITE),
-    user: dict = Depends(require_permission(FACILITY_MANAGE)),
+    body: DeactivateBody | None = _DEACTIVATE_FACILITY_BODY_DEFAULT,
+    _gate: None = _DEACTIVATE_FACILITY_GATE_DEFAULT,
+    user: dict = _DEACTIVATE_FACILITY_USER_DEFAULT,
 ):
     """Close a facility: 404 with the switch off; facility 1 never; otherwise
     the create gate, a reason, and no open work there."""
@@ -206,7 +239,8 @@ def deactivate_facility(
 
     try:
         return facility_identity.deactivate_facility(
-            facility_id, user=user, reason=body.reason if body else None)
+            facility_id, user=user, reason=body.reason if body else None
+        )
     except facility_identity.FacilityIdentityError as exc:
         raise _refused(exc) from exc
 
@@ -214,19 +248,24 @@ def deactivate_facility(
 class DocumentSeriesBody(BaseModel):
     """The editable parts of one number series. On an edit only the fields sent
     change; setting up a facility's own series needs a prefix."""
+
     model_config = ConfigDict(extra="forbid")
 
-    prefix: Optional[str] = None
-    suffix: Optional[str] = None
-    pad_width: Optional[int] = None
-    is_configured: Optional[bool] = None
+    prefix: str | None = None
+    suffix: str | None = None
+    pad_width: int | None = None
+    is_configured: bool | None = None
+
+
+_LIST_DOCUMENT_SERIES_GATE_DEFAULT = Depends(_MULTI_SITE)
+_LIST_DOCUMENT_SERIES_USER_DEFAULT = Depends(require_permission(FACILITY_READ))
 
 
 @router.get("/{facility_id}/document-series")
 def list_document_series(
     facility_id: int,
-    _gate: None = Depends(_MULTI_SITE),
-    user: dict = Depends(require_permission(FACILITY_READ)),
+    _gate: None = _LIST_DOCUMENT_SERIES_GATE_DEFAULT,
+    user: dict = _LIST_DOCUMENT_SERIES_USER_DEFAULT,
 ):
     """A facility's number series and what it may still set up, with whether
     this account may edit them. No patient data."""
@@ -240,13 +279,18 @@ def list_document_series(
     return out
 
 
+_SAVE_DOCUMENT_SERIES_BODY_DEFAULT = Body(...)
+_SAVE_DOCUMENT_SERIES_GATE_DEFAULT = Depends(_MULTI_SITE)
+_SAVE_DOCUMENT_SERIES_USER_DEFAULT = Depends(require_permission(FACILITY_MANAGE))
+
+
 @router.put("/{facility_id}/document-series/{series_code}")
 def save_document_series(
     facility_id: int,
     series_code: str,
-    body: DocumentSeriesBody = Body(...),
-    _gate: None = Depends(_MULTI_SITE),
-    user: dict = Depends(require_permission(FACILITY_MANAGE)),
+    body: DocumentSeriesBody = _SAVE_DOCUMENT_SERIES_BODY_DEFAULT,
+    _gate: None = _SAVE_DOCUMENT_SERIES_GATE_DEFAULT,
+    user: dict = _SAVE_DOCUMENT_SERIES_USER_DEFAULT,
 ):
     """Set up or edit one series of one facility (multisite-7a). The account's
     own facility only, unless it holds group-wide access. A prefix that could
@@ -254,12 +298,16 @@ def save_document_series(
     from services import billing_masters, facility_identity
 
     if not facility_identity.can_edit(user, facility_id):
-        raise HTTPException(status_code=403, detail={
-            "error": "not_your_facility",
-            "message": "Only an administrator of this facility can change its numbering.",
-        })
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "not_your_facility",
+                "message": "Only an administrator of this facility can change its numbering.",
+            },
+        )
     try:
         return billing_masters.save_document_series(
-            facility_id, series_code, body.model_dump(exclude_unset=True), actor=user)
+            facility_id, series_code, body.model_dump(exclude_unset=True), actor=user
+        )
     except billing_masters.SeriesEditError as exc:
         raise HTTPException(status_code=exc.status, detail=exc.body()) from exc

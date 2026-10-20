@@ -215,7 +215,7 @@ describe('the supply line', () => {
 describe('the held refusal', () => {
   it("matches the bedside's own sentence on the server", () => {
     const core = readFileSync(join(process.cwd(), 'server/services/medorders/core.py'), 'utf8')
-    expect(core).toContain(`_HELD_WORDS = ("${HELD_REFUSAL_START}`)
+    expect(core.match(/_HELD_WORDS\s*=\s*\(\s*"([^"]+)/)?.[1]).toContain(HELD_REFUSAL_START)
     expect(isHeldRefusal(`${HELD_REFUSAL_START}, so a dose cannot be given.`)).toBe(true)
     expect(isHeldRefusal('This medicine was stopped, so a dose cannot be given.')).toBe(false)
   })

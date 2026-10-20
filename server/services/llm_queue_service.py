@@ -12,6 +12,7 @@ in-process torch/MLX work off the GPU while any Ollama stream is running; it is
 ref-counted across the two lanes, so it does not serialize Ollama against
 itself.
 """
+
 import asyncio
 import collections
 import contextvars
@@ -24,10 +25,11 @@ from config import (
     BG_LLM_QUIET_AFTER_INTERACTIVE_SECONDS,
     BG_LLM_YIELD_WAIT_SECONDS,
 )
+
 from services.gpu_coordinator import (
+    PRIORITY_BACKGROUND,
     PRIORITY_SAGE,
     PRIORITY_SCRIBE,
-    PRIORITY_BACKGROUND,
     acquire_gpu_gate,
     release_gpu_gate,
 )
@@ -41,6 +43,10 @@ LANE_BACKGROUND = "background"
 # A SECOND interactive turn waits on this semaphore — never behind background
 # work.
 MAX_INTERACTIVE = 1
+
+
+class _QueueEvent(asyncio.Event):
+    _is_cancelled: bool = False
 
 
 class BackgroundAdmissionRejected(asyncio.TimeoutError):
@@ -100,18 +106,29 @@ class BackgroundGovernor:
     # and are slept to directly.
     PREEMPT_POLL_SECONDS = 0.05
 
-    def __init__(self, *, enabled=None, max_per_min=None, yield_wait=None,
-                 quiet_after=None, preempt=None,
-                 clock=time.monotonic, sleep=asyncio.sleep):
+    def __init__(
+        self,
+        *,
+        enabled=None,
+        max_per_min=None,
+        yield_wait=None,
+        quiet_after=None,
+        preempt=None,
+        clock=time.monotonic,
+        sleep=asyncio.sleep,
+    ):
         self.enabled = BG_LLM_GOVERNOR_ENABLED if enabled is None else enabled
         self.max_per_min = BG_LLM_MAX_PER_MIN if max_per_min is None else max_per_min
         self.yield_wait = BG_LLM_YIELD_WAIT_SECONDS if yield_wait is None else yield_wait
-        self.quiet_after = (BG_LLM_QUIET_AFTER_INTERACTIVE_SECONDS
-                            if quiet_after is None else quiet_after)
+        self.quiet_after = (
+            BG_LLM_QUIET_AFTER_INTERACTIVE_SECONDS if quiet_after is None else quiet_after
+        )
         self._preempt = preempt if preempt is not None else (lambda: False)
         self._clock = clock
         self._sleep = sleep
-        self._admitted = collections.deque()   # monotonic stamps, oldest first
+        self._admitted: collections.deque[float] = (
+            collections.deque()
+        )  # monotonic stamps, oldest first
         self._quiet_until = float("-inf")
 
     def reset(self) -> None:
@@ -175,22 +192,23 @@ class _LaneTicket:
     their own PriorityLLMQueue) can never retire another instance's holder.
     """
 
-    __slots__ = ("owner", "lane", "priority", "released", "token", "t0",
-                 "watchdog")
+    __slots__ = ("owner", "lane", "priority", "released", "token", "t0", "watchdog")
 
     def __init__(self, owner, lane: str, priority: int):
         self.owner = owner
         self.lane = lane
         self.priority = priority
         self.released = False
-        self.token = None          # contextvars.Token for exact reset
+        self.token: contextvars.Token[_LaneTicket | None] | None = (
+            None  # contextvars.Token for exact reset
+        )
         self.t0 = time.monotonic()
-        self.watchdog = None       # loop.call_later handle; see _install_ticket
+        self.watchdog: asyncio.TimerHandle | None = (
+            None  # loop.call_later handle; see _install_ticket
+        )
 
 
-_lane_ticket: contextvars.ContextVar = contextvars.ContextVar(
-    "orb_llm_lane_ticket", default=None
-)
+_lane_ticket: contextvars.ContextVar = contextvars.ContextVar("orb_llm_lane_ticket", default=None)
 
 
 class PriorityLLMQueue:
@@ -250,16 +268,16 @@ class PriorityLLMQueue:
         self._loop = None
 
         self.counter = 0
-        self.max_concurrent = 1        # background lane: 1 stream
+        self.max_concurrent = 1  # background lane: 1 stream
         self.max_interactive = MAX_INTERACTIVE
 
-        self._bg_active = 0            # background holders (0..max_concurrent)
-        self._interactive_active = 0   # interactive holders (0..max_interactive)
+        self._bg_active = 0  # background holders (0..max_concurrent)
+        self._interactive_active = 0  # interactive holders (0..max_interactive)
         self._interactive_waiting = 0  # interactive acquires not yet granted
 
-        self._gate_refs = 0            # holders of the shared GPU gate (both lanes)
-        self._gate_token = None        # ownership token for the current gate hold
-        self._holders: list = []       # live tickets, oldest first
+        self._gate_refs = 0  # holders of the shared GPU gate (both lanes)
+        self._gate_token = None  # ownership token for the current gate hold
+        self._holders: list = []  # live tickets, oldest first
         # Count of holds that outran _hold_warn_seconds(). Monotonic for the
         # process lifetime and exported as a metric, so "the lane was occupied"
         # is answerable from /metrics instead of from the log.
@@ -285,12 +303,15 @@ class PriorityLLMQueue:
             return
         if self._loop is loop:
             return
-        if self._loop is not None and (self._bg_active or self._interactive_active
-                                       or self._gate_refs):
+        if self._loop is not None and (
+            self._bg_active or self._interactive_active or self._gate_refs
+        ):
             logger.warning(
                 "[LLMQueue] event loop changed while state was held "
                 "(bg=%s, interactive=%s, gate_refs=%s) — resetting lane state",
-                self._bg_active, self._interactive_active, self._gate_refs,
+                self._bg_active,
+                self._interactive_active,
+                self._gate_refs,
             )
         self._loop = loop
         self._lock = None
@@ -392,6 +413,7 @@ class PriorityLLMQueue:
         budgets (up to 120 s) are stall detectors, not hold limits.
         """
         import os
+
         try:
             return max(1.0, float(os.getenv("ORB_LLM_P3_HOLD_CAP", "60")))
         except (TypeError, ValueError):
@@ -408,9 +430,13 @@ class PriorityLLMQueue:
         ollama_gateway.post(yield_to_clinician=True) polls this while waiting.
         """
         ticket = _lane_ticket.get()
-        if (ticket is None or ticket.owner is not self or ticket.released
-                or ticket.lane != LANE_BACKGROUND
-                or ticket.priority < PRIORITY_BACKGROUND):
+        if (
+            ticket is None
+            or ticket.owner is not self
+            or ticket.released
+            or ticket.lane != LANE_BACKGROUND
+            or ticket.priority < PRIORITY_BACKGROUND
+        ):
             return None
         if self.preempt_requested:
             return "yielded to a clinician's turn"
@@ -453,7 +479,7 @@ class PriorityLLMQueue:
     async def _acquire_interactive(self, priority: int, timeout):
         deadline = None if timeout is None else time.monotonic() + timeout
         sem = self.interactive_sem
-        self._interactive_waiting += 1   # synchronous — preempt_requested is live NOW
+        self._interactive_waiting += 1  # synchronous — preempt_requested is live NOW
         slot_held = False
         gate_held = False
         granted = False
@@ -470,7 +496,10 @@ class PriorityLLMQueue:
             granted = True
             logger.info(
                 "[LLMQueue] P%s acquired INTERACTIVE lane (interactive=%s, bg=%s, gate_refs=%s)",
-                priority, self._interactive_active, self._bg_active, self._gate_refs,
+                priority,
+                self._interactive_active,
+                self._bg_active,
+                self._gate_refs,
             )
             return True
         finally:
@@ -491,8 +520,10 @@ class PriorityLLMQueue:
                 logger.warning(
                     "[LLMQueue] P%s interactive acquire failed/cancelled "
                     "(interactive=%s, waiting=%s, gate_refs=%s)",
-                    priority, self._interactive_active,
-                    self._interactive_waiting, self._gate_refs,
+                    priority,
+                    self._interactive_active,
+                    self._interactive_waiting,
+                    self._gate_refs,
                 )
 
     async def _acquire_background(self, priority: int, timeout):
@@ -504,13 +535,15 @@ class PriorityLLMQueue:
             # the single choke point — direct ambient callers and the batch
             # coordinator's coalesced acquisition both pass through here.
             await self.governor.admit(timeout)
-        event = asyncio.Event()
+        event = _QueueEvent()
         async with self.lock:
             self.counter += 1
             await self.queue.put((priority, self.counter, event))
             logger.info(
                 "[LLMQueue] P%s request queued (bg_active=%s, queued=%s)",
-                priority, self._bg_active, self.queue.qsize(),
+                priority,
+                self._bg_active,
+                self.queue.qsize(),
             )
             self._maybe_wake()
 
@@ -519,7 +552,7 @@ class PriorityLLMQueue:
         granted = False
         try:
             await asyncio.wait_for(event.wait(), timeout=self._remaining(deadline))
-            slot_held = True   # _maybe_wake() incremented _bg_active on our behalf
+            slot_held = True  # _maybe_wake() incremented _bg_active on our behalf
             await self._gate_ref_acquire(deadline)
             gate_held = True
 
@@ -527,7 +560,10 @@ class PriorityLLMQueue:
             granted = True
             logger.info(
                 "[LLMQueue] P%s acquired BACKGROUND lane (bg=%s, interactive=%s, gate_refs=%s)",
-                priority, self._bg_active, self._interactive_active, self._gate_refs,
+                priority,
+                self._bg_active,
+                self._interactive_active,
+                self._gate_refs,
             )
             return True
         finally:
@@ -542,12 +578,14 @@ class PriorityLLMQueue:
                     logger.warning(
                         "[LLMQueue] P%s timed out/cancelled post-acquisition; "
                         "released background slot. bg_active=%s",
-                        priority, self._bg_active,
+                        priority,
+                        self._bg_active,
                     )
                 else:
                     logger.warning(
                         "[LLMQueue] P%s timed out/cancelled in queue; removed. bg_active=%s",
-                        priority, self._bg_active,
+                        priority,
+                        self._bg_active,
                     )
                 self._maybe_wake()
 
@@ -638,6 +676,7 @@ class PriorityLLMQueue:
         background slot is worth a line either way.
         """
         import os
+
         try:
             return max(1.0, float(os.getenv("ORB_LLM_LANE_HOLD_WARN", "60")))
         except (TypeError, ValueError):
@@ -659,10 +698,12 @@ class PriorityLLMQueue:
                 "is %s slot(s) wide, so everything behind it is timing out "
                 "(queued=%s, gate_refs=%s). This is lane occupancy, not queue "
                 "depth: waiters will record a queue timeout either way.",
-                ticket.priority, ticket.lane, budget,
-                self.max_concurrent if ticket.lane == LANE_BACKGROUND
-                else self.max_interactive,
-                self.queue.qsize(), self._gate_refs,
+                ticket.priority,
+                ticket.lane,
+                budget,
+                self.max_concurrent if ticket.lane == LANE_BACKGROUND else self.max_interactive,
+                self.queue.qsize(),
+                self._gate_refs,
             )
 
         ticket.watchdog = loop.call_later(budget, _warn)
@@ -677,7 +718,7 @@ class PriorityLLMQueue:
         token, ticket.token = ticket.token, None
         try:
             if token is not None:
-                _lane_ticket.reset(token)   # restores any outer/nested value
+                _lane_ticket.reset(token)  # restores any outer/nested value
             else:
                 _lane_ticket.set(None)
         except ValueError:
@@ -743,20 +784,23 @@ class PriorityLLMQueue:
             self._retire(ticket)
             return
         if ticket is not None:
-            ticket = None   # belongs to a different queue instance — ignore it
+            ticket = None  # belongs to a different queue instance — ignore it
 
         ticket = self._infer_holder()
         if ticket is not None:
             logger.warning(
                 "[LLMQueue] release() had no lane ticket in context; "
-                "attributing to the %s lane by fallback", ticket.lane,
+                "attributing to the %s lane by fallback",
+                ticket.lane,
             )
 
         if ticket is None:
             logger.warning(
                 "[LLMQueue] release() with no attributable holder — ignoring "
                 "(bg=%s, interactive=%s, gate_refs=%s)",
-                self._bg_active, self._interactive_active, self._gate_refs,
+                self._bg_active,
+                self._interactive_active,
+                self._gate_refs,
             )
             return
 
@@ -789,9 +833,12 @@ class PriorityLLMQueue:
         logger.info(
             "[LLMQueue] Released %s lane after %sms "
             "(bg=%s, interactive=%s, queued=%s, gate_refs=%s)",
-            ticket.lane, int((time.monotonic() - ticket.t0) * 1000),
-            self._bg_active, self._interactive_active,
-            self.queue.qsize(), self._gate_refs,
+            ticket.lane,
+            int((time.monotonic() - ticket.t0) * 1000),
+            self._bg_active,
+            self._interactive_active,
+            self.queue.qsize(),
+            self._gate_refs,
         )
 
     def _free_interactive_slot(self) -> None:
@@ -804,8 +851,8 @@ class PriorityLLMQueue:
             # BoundedSemaphore guard: an unattributable release() tried to hand
             # back a slot nobody held. Log loudly; never raise out of a finally.
             logger.error(
-                "[LLMQueue] interactive semaphore over-release suppressed "
-                "(interactive_active=%s)", self._interactive_active,
+                "[LLMQueue] interactive semaphore over-release suppressed (interactive_active=%s)",
+                self._interactive_active,
             )
         except RuntimeError:  # pragma: no cover — loop teardown
             pass

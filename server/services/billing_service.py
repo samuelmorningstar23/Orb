@@ -62,15 +62,18 @@ CONVENTIONS (shared with the rest of server/services)
     (``config.X``), never imported by value, so a deployment or a test that
     changes it changes what this code does.
 """
+
 from __future__ import annotations
 
 import logging
 import uuid
-from datetime import date, datetime, timedelta, timezone
-from typing import Any, Optional, Sequence
+from collections.abc import Sequence
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
 import config
 from database import db_session
+
 from services import billing_masters, facility_identity
 from services.audit_service import log_audit_event
 from services.hospital_time import hospital_now, hospital_timezone, hospital_today
@@ -130,7 +133,7 @@ class BillingError(ValueError):
     ``rate_not_configured`` — the one error a clerk fixes rather than reports.
     """
 
-    def __init__(self, message: str, *, code: str = "billing_error", detail: Optional[dict] = None):
+    def __init__(self, message: str, *, code: str = "billing_error", detail: dict | None = None):
         super().__init__(message)
         self.code = code
         self.detail = detail or {}
@@ -172,8 +175,8 @@ _LEGAL_TRANSITIONS: dict[str, frozenset[str]] = {
     "draft": frozenset({"issued", "cancelled"}),
     "issued": frozenset({"partially_paid", "paid", "cancelled"}),
     "partially_paid": frozenset({"paid", "issued"}),
-    "paid": frozenset({"partially_paid", "issued"}),   # a reversed payment walks back
-    "cancelled": frozenset(),                           # terminal. Use a credit note.
+    "paid": frozenset({"partially_paid", "issued"}),  # a reversed payment walks back
+    "cancelled": frozenset(),  # terminal. Use a credit note.
     "void": frozenset(),
     "written_off": frozenset(),
 }
@@ -193,12 +196,13 @@ _DISPENSED_MED_STATUSES = ("dispensed", "delivered")
 
 # ── Small helpers ────────────────────────────────────────────────────────────
 
+
 def _row(row) -> dict:
     return {k: row[k] for k in row.keys()}
 
 
 def _count(n: int, singular: str, plural: str | None = None) -> str:
-    """"1 captured charge", "3 captured charges": a real plural, never "(s)"."""
+    """ "1 captured charge", "3 captured charges": a real plural, never "(s)"."""
     return f"{n} {singular if n == 1 else (plural or singular + 's')}"
 
 
@@ -208,16 +212,17 @@ def _table_exists(db, name: str) -> bool:
     A missing optional table must degrade to "no chargeable events found", never
     to an exception that takes out a billing screen.
     """
-    return db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
-    ).fetchone() is not None
+    return (
+        db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
+        is not None
+    )
 
 
-def _clean(text: Optional[str]) -> str:
+def _clean(text: str | None) -> str:
     return (text or "").strip()
 
 
-def _require_reason(reason: Optional[str], *, what: str) -> str:
+def _require_reason(reason: str | None, *, what: str) -> str:
     """A cancellation with no reason is an erasure with a UI on it."""
     cleaned = _clean(reason)
     if len(cleaned) < 3:
@@ -229,7 +234,7 @@ def _require_reason(reason: Optional[str], *, what: str) -> str:
     return cleaned[:500]
 
 
-def _iso_day(value: Optional[str | date | datetime]) -> str:
+def _iso_day(value: str | date | datetime | None) -> str:
     """The hospital-local day a charge belongs to.
 
     The OPD lane passes the consultation's full UTC timestamp. Slicing its first
@@ -251,7 +256,7 @@ def _now_iso() -> str:
     return hospital_now().isoformat(timespec="seconds")
 
 
-def _local_day_of_stored(value: Any) -> Optional[str]:
+def _local_day_of_stored(value: Any) -> str | None:
     """The HOSPITAL-LOCAL calendar day of a timestamp Orb stored (which is UTC).
 
     ``str(created_at)[:10]`` is wrong and it is wrong in the direction that costs
@@ -278,14 +283,12 @@ def _local_day_of_stored(value: Any) -> Optional[str]:
     except ValueError:
         return text[:10]
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(hospital_timezone()).date().isoformat()
 
 
 def _patient_exists(db, patient_id: str) -> bool:
-    return db.execute(
-        "SELECT 1 FROM patients WHERE id = ?", (patient_id,)
-    ).fetchone() is not None
+    return db.execute("SELECT 1 FROM patients WHERE id = ?", (patient_id,)).fetchone() is not None
 
 
 def _audit(
@@ -293,11 +296,11 @@ def _audit(
     *,
     action_type: str,
     summary: str,
-    patient_id: Optional[str] = None,
-    target_type: Optional[str] = None,
-    target_id: Optional[str] = None,
-    actor: Optional[str] = None,
-    metadata: Optional[dict] = None,
+    patient_id: str | None = None,
+    target_type: str | None = None,
+    target_id: str | int | None = None,
+    actor: str | None = None,
+    metadata: dict | None = None,
     outcome: str = "success",
 ) -> None:
     """One audit call for the whole module, written in the CALLER'S transaction.
@@ -325,6 +328,7 @@ def _audit(
 
 # ── Masters this module owns (the rest live in billing_masters) ──────────────
 
+
 def create_service_item(**fields) -> dict:
     """The price list's "New item": refuses a code already on the list.
 
@@ -351,9 +355,9 @@ def upsert_tariff_plan(
     plan_type: str = "self_pay",
     is_default: bool = False,
     is_active: bool = True,
-    effective_from: Optional[str] = None,
-    effective_to: Optional[str] = None,
-    notes: Optional[str] = None,
+    effective_from: str | None = None,
+    effective_to: str | None = None,
+    notes: str | None = None,
 ) -> dict:
     """Create or edit a price list.
 
@@ -380,26 +384,34 @@ def upsert_tariff_plan(
                  is_default=excluded.is_default, is_active=excluded.is_active,
                  notes=excluded.notes, updated_at=CURRENT_TIMESTAMP""",
             (
-                code, _clean(name), plan_type, effective_from, effective_to,
-                1 if is_default else 0, 1 if is_active else 0, notes,
+                code,
+                _clean(name),
+                plan_type,
+                effective_from,
+                effective_to,
+                1 if is_default else 0,
+                1 if is_active else 0,
+                notes,
             ),
         )
         if is_default:
-            db.execute(
-                "UPDATE tariff_plans SET is_default = 0 WHERE code <> ?", (code,)
-            )
+            db.execute("UPDATE tariff_plans SET is_default = 0 WHERE code <> ?", (code,))
         row = db.execute("SELECT * FROM tariff_plans WHERE code = ?", (code,)).fetchone()
     return _row(row)
 
 
 def list_tariff_rates(
-    *, tariff_plan_id: Optional[int] = None, service_code: Optional[str] = None,
+    *,
+    tariff_plan_id: int | None = None,
+    service_code: str | None = None,
     limit: int = 500,
 ) -> list[dict]:
     """The priced rows of a plan, newest effective date first, with display strings."""
-    sql = ("SELECT r.*, s.name AS service_name, s.category AS service_category "
-           "FROM tariff_rates r LEFT JOIN service_items s ON s.code = r.service_code "
-           "WHERE r.is_active = 1")
+    sql = (
+        "SELECT r.*, s.name AS service_name, s.category AS service_category "
+        "FROM tariff_rates r LEFT JOIN service_items s ON s.code = r.service_code "
+        "WHERE r.is_active = 1"
+    )
     params: list[Any] = []
     if tariff_plan_id is not None:
         sql += " AND r.tariff_plan_id = ?"
@@ -416,7 +428,7 @@ def list_tariff_rates(
     return rows
 
 
-def list_package_rates(*, tariff_plan_id: Optional[int] = None, limit: int = 200) -> list[dict]:
+def list_package_rates(*, tariff_plan_id: int | None = None, limit: int = 200) -> list[dict]:
     sql = "SELECT * FROM package_rates WHERE is_active = 1"
     params: list[Any] = []
     if tariff_plan_id is not None:
@@ -437,12 +449,12 @@ def upsert_package_rate(
     package_code: str,
     name: str,
     package_rate_paise: int,
-    ward_class: Optional[str] = None,
-    los_days_included: Optional[int] = None,
-    inclusions: Optional[str] = None,
-    exclusions: Optional[str] = None,
-    external_scheme_code: Optional[str] = None,
-    effective_from: Optional[str] = None,
+    ward_class: str | None = None,
+    los_days_included: int | None = None,
+    inclusions: str | None = None,
+    exclusions: str | None = None,
+    external_scheme_code: str | None = None,
+    effective_from: str | None = None,
 ) -> dict:
     """Price a bundled package (a surgery package, a PM-JAY benefit package).
 
@@ -475,8 +487,16 @@ def upsert_package_rate(
                              external_scheme_code=excluded.external_scheme_code,
                              is_active=1""",
             (
-                int(tariff_plan_id), code, _clean(name), ward_class, rate,
-                los_days_included, inclusions, exclusions, external_scheme_code, eff,
+                int(tariff_plan_id),
+                code,
+                _clean(name),
+                ward_class,
+                rate,
+                los_days_included,
+                inclusions,
+                exclusions,
+                external_scheme_code,
+                eff,
             ),
         )
         row = db.execute(
@@ -490,6 +510,7 @@ def upsert_package_rate(
 
 
 # ── Charge capture ───────────────────────────────────────────────────────────
+
 
 def _charge_line(row, *, interstate: bool = False) -> LineTotals:
     """Recompute one stored charge through money.compute_line.
@@ -531,9 +552,7 @@ def _decorate_charge(row: dict) -> dict:
     return row
 
 
-def _resolve_encounter_context(
-    db, *, patient_id: str, admission_id: Optional[str]
-) -> dict:
+def _resolve_encounter_context(db, *, patient_id: str, admission_id: str | None) -> dict:
     """Payer, tariff plan and encounter type for a charge or an invoice."""
     payer = billing_masters.resolve_patient_payer(patient_id, admission_id=admission_id)
     admission = None
@@ -559,23 +578,23 @@ def add_charge(
     *,
     patient_id: str,
     service_code: str,
-    description: Optional[str] = None,
+    description: str | None = None,
     quantity_milli: int = QUANTITY_SCALE,
-    unit_rate_paise: Optional[int] = None,
+    unit_rate_paise: int | None = None,
     discount_paise: int = 0,
     discount_bp: int = 0,
-    admission_id: Optional[str] = None,
-    encounter_type: Optional[str] = None,
-    ward_class: Optional[str] = None,
-    tariff_plan_id: Optional[int] = None,
-    gst_treatment: Optional[str] = None,
-    gst_rate_bp: Optional[int] = None,
-    service_date: Optional[str] = None,
+    admission_id: str | None = None,
+    encounter_type: str | None = None,
+    ward_class: str | None = None,
+    tariff_plan_id: int | None = None,
+    gst_treatment: str | None = None,
+    gst_rate_bp: int | None = None,
+    service_date: str | None = None,
     source: str = "manual",
-    source_ref: Optional[str] = None,
-    idempotency_key: Optional[str] = None,
-    notes: Optional[str] = None,
-    charged_by: Optional[str] = None,
+    source_ref: str | None = None,
+    idempotency_key: str | None = None,
+    notes: str | None = None,
+    charged_by: str | None = None,
 ) -> dict:
     """Post ONE chargeable line against a patient (and optionally an admission).
 
@@ -613,12 +632,8 @@ def add_charge(
                 return out
 
         if not _patient_exists(db, patient_id):
-            raise BillingError(
-                f"unknown patient {patient_id!r}", code="unknown_patient"
-            )
-        context = _resolve_encounter_context(
-            db, patient_id=patient_id, admission_id=admission_id
-        )
+            raise BillingError(f"unknown patient {patient_id!r}", code="unknown_patient")
+        context = _resolve_encounter_context(db, patient_id=patient_id, admission_id=admission_id)
         plan_id = tariff_plan_id if tariff_plan_id is not None else context["payer"].tariff_plan_id
 
         resolution = billing_masters.resolve_rate(
@@ -639,9 +654,7 @@ def add_charge(
 
         treatment = gst_treatment or resolution.gst_treatment or GST_EXEMPT
         if treatment not in GST_TREATMENTS:
-            raise BillingError(
-                f"unknown GST treatment {treatment!r}", code="invalid_input"
-            )
+            raise BillingError(f"unknown GST treatment {treatment!r}", code="invalid_input")
         rate_bp = int(resolution.gst_rate_bp or 0) if gst_rate_bp is None else int(gst_rate_bp)
 
         try:
@@ -677,15 +690,32 @@ def add_charge(
                   idempotency_key, notes)
                VALUES (?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                patient_id, admission_id,
+                patient_id,
+                admission_id,
                 encounter_type or context["encounter_type"],
-                resolution.service_item_id, service_code, text, qty, rate,
-                plan_id, ward_class,
-                line.gross_paise, line.discount_paise, line.gst_treatment,
-                line.gst_rate_bp, line.taxable_value_paise, line.cgst_paise,
-                line.sgst_paise, line.igst_paise, line.total_paise,
-                _CHARGE_BILLABLE, source, source_ref, day, charged_by,
-                idempotency_key, notes,
+                resolution.service_item_id,
+                service_code,
+                text,
+                qty,
+                rate,
+                plan_id,
+                ward_class,
+                line.gross_paise,
+                line.discount_paise,
+                line.gst_treatment,
+                line.gst_rate_bp,
+                line.taxable_value_paise,
+                line.cgst_paise,
+                line.sgst_paise,
+                line.igst_paise,
+                line.total_paise,
+                _CHARGE_BILLABLE,
+                source,
+                source_ref,
+                day,
+                charged_by,
+                idempotency_key,
+                notes,
             ),
         )
         charge_id = cur.lastrowid
@@ -711,9 +741,7 @@ def add_charge(
                 "rate_overridden": unit_rate_paise is not None,
             },
         )
-        row = db.execute(
-            "SELECT * FROM encounter_charges WHERE id = ?", (charge_id,)
-        ).fetchone()
+        row = db.execute("SELECT * FROM encounter_charges WHERE id = ?", (charge_id,)).fetchone()
 
     out = _decorate_charge(_row(row))
     out["replayed"] = False
@@ -723,10 +751,10 @@ def add_charge(
 
 def list_charges(
     *,
-    patient_id: Optional[str] = None,
-    admission_id: Optional[str] = None,
-    status: Optional[str] = None,
-    invoice_id: Optional[int] = None,
+    patient_id: str | None = None,
+    admission_id: str | None = None,
+    status: str | None = None,
+    invoice_id: int | None = None,
     limit: int = 500,
 ) -> list[dict]:
     sql = "SELECT * FROM encounter_charges WHERE 1=1"
@@ -757,8 +785,8 @@ OP_PATIENTS_LIMIT = 200
 
 def list_op_patients(
     *,
-    day: Optional[str] = None,
-    scope_department: Optional[str] = None,
+    day: str | None = None,
+    scope_department: str | None = None,
     limit: int = OP_PATIENTS_LIMIT,
 ) -> dict:
     """Outpatients with something still to bill on one hospital-local day (opd-14).
@@ -817,15 +845,18 @@ def list_op_patients(
         for r in rows:
             if _local_day_of_stored(r["service_date"]) != target:
                 continue
-            entry = by_patient.setdefault(r["patient_id"], {
-                "id": r["patient_id"],
-                "name": r["patient_name"],
-                "mrn": r["patient_mrn"],
-                "charge_ids": [],
-                "pending_charge_count": 0,
-                "unpriced_charge_count": 0,
-                "priced_total_paise": 0,
-            })
+            entry = by_patient.setdefault(
+                r["patient_id"],
+                {
+                    "id": r["patient_id"],
+                    "name": r["patient_name"],
+                    "mrn": r["patient_mrn"],
+                    "charge_ids": [],
+                    "pending_charge_count": 0,
+                    "unpriced_charge_count": 0,
+                    "priced_total_paise": 0,
+                },
+            )
             entry["charge_ids"].append(int(r["id"]))
             entry["pending_charge_count"] += 1
             if int(r["rate_is_configured"] or 0) == 1:
@@ -833,17 +864,19 @@ def list_op_patients(
             else:
                 entry["unpriced_charge_count"] += 1
 
-        ordered = sorted(by_patient.values(),
-                         key=lambda e: ((e["name"] or "").casefold(), e["id"]))
+        ordered = sorted(by_patient.values(), key=lambda e: ((e["name"] or "").casefold(), e["id"]))
         truncated = len(ordered) > cap
         listed = ordered[:cap]
 
         has_visits = _table_exists(db, "opd_visits")
         for entry in listed:
-            entry["inpatient_now"] = db.execute(
-                "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' LIMIT 1",
-                (entry["id"],),
-            ).fetchone() is not None
+            entry["inpatient_now"] = (
+                db.execute(
+                    "SELECT 1 FROM admissions WHERE patient_id = ? AND status = 'active' LIMIT 1",
+                    (entry["id"],),
+                ).fetchone()
+                is not None
+            )
             entry["visits"] = [
                 {
                     "department": v["department"],
@@ -851,11 +884,15 @@ def list_op_patients(
                     "token_number": v["token_number"],
                     "status": v["status"],
                 }
-                for v in (db.execute(
-                    "SELECT department, doctor_name, token_number, status FROM opd_visits "
-                    "WHERE patient_id = ? AND visit_date = ? ORDER BY registered_at, id",
-                    (entry["id"], target),
-                ).fetchall() if has_visits else [])
+                for v in (
+                    db.execute(
+                        "SELECT department, doctor_name, token_number, status FROM opd_visits "
+                        "WHERE patient_id = ? AND visit_date = ? ORDER BY registered_at, id",
+                        (entry["id"], target),
+                    ).fetchall()
+                    if has_visits
+                    else []
+                )
             ]
             entry["priced_total_display"] = format_inr(entry["priced_total_paise"])
 
@@ -867,7 +904,7 @@ def list_op_patients(
     }
 
 
-def cancel_charge(charge_id: int, *, reason: str, actor: Optional[str] = None) -> dict:
+def cancel_charge(charge_id: int, *, reason: str, actor: str | None = None) -> dict:
     """Cancel an unbilled charge. A charge already on an invoice cannot be cancelled.
 
     The row is KEPT with a reason and an actor — a charge that vanishes is a
@@ -914,6 +951,7 @@ def cancel_charge(charge_id: int, *, reason: str, actor: Optional[str] = None) -
 
 # ── Pharmacy at batch MRP (grn-16, ruling GRN-R12, ORB_PHARMACY_STORE) ───────
 
+
 def _pharmacy_store_on() -> bool:
     """The pharmacy store module is 'on' (not draining, not off)."""
     try:
@@ -922,7 +960,7 @@ def _pharmacy_store_on() -> bool:
         return False
 
 
-def _unit_mrp(lot: Optional[dict]) -> Optional[int]:
+def _unit_mrp(lot: dict | None) -> int | None:
     """A batch's MRP for one dispense unit: the pack MRP over the units in a
     pack, by money.py's one rounding rule. None where the batch has no MRP or
     pack size recorded (nothing is guessed). The same figure the ward-return
@@ -938,13 +976,16 @@ def _unit_mrp(lot: Optional[dict]) -> Optional[int]:
     return _div_round_half_up(mrp, per_pack)
 
 
-def _drug_name(db, medication_id: Optional[str], cache: dict) -> Optional[str]:
+def _drug_name(db, medication_id: str | None, cache: dict) -> str | None:
     med = _clean(medication_id)
     if not med:
         return None
     if med not in cache:
-        row = (db.execute("SELECT name FROM helix_medication_master WHERE id = ?", (med,)).fetchone()
-               if _table_exists(db, "helix_medication_master") else None)
+        row = (
+            db.execute("SELECT name FROM helix_medication_master WHERE id = ?", (med,)).fetchone()
+            if _table_exists(db, "helix_medication_master")
+            else None
+        )
         cache[med] = row["name"] if row is not None else None
     return cache[med]
 
@@ -953,7 +994,9 @@ def _dispensed_lots(db, order_id: str) -> list[dict]:
     """Every batch an order's dispense movements took, first taken first, with
     the drug that left the shelf (the substitute when one was set) and the
     units. One batch per order today (a dispense is never split)."""
-    if not (_table_exists(db, "helix_stock_movements") and _table_exists(db, "helix_inventory_lots")):
+    if not (
+        _table_exists(db, "helix_stock_movements") and _table_exists(db, "helix_inventory_lots")
+    ):
         return []
     out = []
     for r in db.execute(
@@ -965,14 +1008,21 @@ def _dispensed_lots(db, order_id: str) -> list[dict]:
     ).fetchall():
         lot = db.execute(
             "SELECT id, lot_number, mrp_pack_paise, units_per_pack FROM helix_inventory_lots "
-            "WHERE id = ?", (r["lot_id"],),
+            "WHERE id = ?",
+            (r["lot_id"],),
         ).fetchone()
-        out.append({"lot_id": r["lot_id"], "medication_id": r["medication_id"],
-                    "units": int(r["units"] or 0), "lot": _row(lot) if lot is not None else None})
+        out.append(
+            {
+                "lot_id": r["lot_id"],
+                "medication_id": r["medication_id"],
+                "units": int(r["units"] or 0),
+                "lot": _row(lot) if lot is not None else None,
+            }
+        )
     return out
 
 
-def _dispense_key(order_id: str, lot_id: Optional[str], first_lot_id: Optional[str]) -> str:
+def _dispense_key(order_id: str, lot_id: str | None, first_lot_id: str | None) -> str:
     """The charge key of one batch of an order's dispense: helix:<order> for
     the first (the key every pharmacy charge has carried), and the batch added
     for any further one, so a split dispense could never reuse a key."""
@@ -998,9 +1048,12 @@ def _dispense_candidates(db, *, patient_id: str) -> list[dict]:
     that charge's key)."""
     out: list[dict] = []
     names: dict = {}
-    order_cols = {r[1] for r in db.execute("PRAGMA table_info(helix_patient_med_orders)").fetchall()}
-    substitute = ("o.substitute_medication_id" if "substitute_medication_id" in order_cols
-                  else "NULL")
+    order_cols = {
+        r[1] for r in db.execute("PRAGMA table_info(helix_patient_med_orders)").fetchall()
+    }
+    substitute = (
+        "o.substitute_medication_id" if "substitute_medication_id" in order_cols else "NULL"
+    )
     first_lots: dict = {}
     for row in db.execute(
         f"SELECT o.id AS id, o.medication_id AS medication_id, {substitute} AS substitute_id, "
@@ -1015,40 +1068,46 @@ def _dispense_candidates(db, *, patient_id: str) -> list[dict]:
         if not lots:
             med_id = _clean(row["substitute_id"]) or _clean(row["medication_id"])
             name = _drug_name(db, med_id, names)
-            out.append({
-                "source": "pharmacy",
-                "source_ref": row["id"],
-                "idempotency_key": f"helix:{row['id']}",
-                "candidate_codes": [c for c in [med_id, f"RX-{med_id}" if med_id else ""] if c],
-                "description": name or med_id or "Pharmacy dispense",
-                "service_date": day,
-                "kind": "pharmacy",
-                "label": f"pharmacy: {name or med_id}",
-                "price_basis": "tariff",
-            })
+            out.append(
+                {
+                    "source": "pharmacy",
+                    "source_ref": row["id"],
+                    "idempotency_key": f"helix:{row['id']}",
+                    "candidate_codes": [c for c in [med_id, f"RX-{med_id}" if med_id else ""] if c],
+                    "description": name or med_id or "Pharmacy dispense",
+                    "service_date": day,
+                    "kind": "pharmacy",
+                    "label": f"pharmacy: {name or med_id}",
+                    "price_basis": "tariff",
+                }
+            )
             continue
         for lot in lots:
             med_id = _clean(lot["medication_id"])
             name = _drug_name(db, med_id, names)
             unit_mrp = _unit_mrp(lot["lot"])
-            out.append({
-                "source": "pharmacy",
-                "source_ref": row["id"],
-                "idempotency_key": _dispense_key(row["id"], lot["lot_id"], first_lots[row["id"]]),
-                "candidate_codes": [c for c in [med_id, f"RX-{med_id}" if med_id else ""] if c],
-                "description": name or med_id or "Pharmacy dispense",
-                "service_date": day,
-                "kind": "pharmacy",
-                "label": f"pharmacy: {name or med_id}",
-                "units": lot["units"],
-                "quantity_milli": lot["units"] * QUANTITY_SCALE,
-                "medication_id": med_id,
-                "prescribed_medication_id": _clean(row["medication_id"]),
-                "lot_id": lot["lot_id"],
-                "batch": (lot["lot"] or {}).get("lot_number"),
-                "unit_mrp_paise": unit_mrp,
-                "price_basis": "batch_mrp" if unit_mrp is not None else "tariff",
-            })
+            out.append(
+                {
+                    "source": "pharmacy",
+                    "source_ref": row["id"],
+                    "idempotency_key": _dispense_key(
+                        row["id"], lot["lot_id"], first_lots[row["id"]]
+                    ),
+                    "candidate_codes": [c for c in [med_id, f"RX-{med_id}" if med_id else ""] if c],
+                    "description": name or med_id or "Pharmacy dispense",
+                    "service_date": day,
+                    "kind": "pharmacy",
+                    "label": f"pharmacy: {name or med_id}",
+                    "units": lot["units"],
+                    "quantity_milli": lot["units"] * QUANTITY_SCALE,
+                    "medication_id": med_id,
+                    "prescribed_medication_id": _clean(row["medication_id"]),
+                    "lot_id": lot["lot_id"],
+                    "batch": (lot["lot"] or {}).get("lot_number"),
+                    "unit_mrp_paise": unit_mrp,
+                    "price_basis": "batch_mrp" if unit_mrp is not None else "tariff",
+                }
+            )
 
     if _table_exists(db, "pharmacy_ward_returns"):
         for r in db.execute(
@@ -1064,21 +1123,26 @@ def _dispense_candidates(db, *, patient_id: str) -> list[dict]:
             units = int(r["quantity_units"] or 0)
             if units <= 0:
                 continue
-            name = _drug_name(db, r["helix_medication_id"], names) or _clean(
-                r["helix_medication_id"]) or "Pharmacy return"
-            out.append({
-                "source": "pharmacy",
-                "source_ref": str(r["id"]),
-                "idempotency_key": f"helix-return:{r['id']}",
-                "candidate_codes": [],
-                "description": f"Returned: {name}, {_count(units, 'unit')}",
-                "service_date": _local_day_of_stored(r["occurred_at"] or r["created_at"]),
-                "kind": "pharmacy_return",
-                "label": f"pharmacy return: {name}",
-                "units": units,
-                "quantity_milli": units * QUANTITY_SCALE,
-                "credit_of": _dispense_key(order_id, r["lot_id"], first_lots.get(order_id)),
-            })
+            name = (
+                _drug_name(db, r["helix_medication_id"], names)
+                or _clean(r["helix_medication_id"])
+                or "Pharmacy return"
+            )
+            out.append(
+                {
+                    "source": "pharmacy",
+                    "source_ref": str(r["id"]),
+                    "idempotency_key": f"helix-return:{r['id']}",
+                    "candidate_codes": [],
+                    "description": f"Returned: {name}, {_count(units, 'unit')}",
+                    "service_date": _local_day_of_stored(r["occurred_at"] or r["created_at"]),
+                    "kind": "pharmacy_return",
+                    "label": f"pharmacy return: {name}",
+                    "units": units,
+                    "quantity_milli": units * QUANTITY_SCALE,
+                    "credit_of": _dispense_key(order_id, r["lot_id"], first_lots.get(order_id)),
+                }
+            )
     return out
 
 
@@ -1091,8 +1155,9 @@ def _tax_inclusive_unit_rate(unit_mrp: int, units: int, rate_bp: int) -> int:
     ceiling = unit_mrp * units
 
     def total(rate: int) -> int:
-        return compute_line(unit_rate_paise=rate, quantity_milli=qty, gst_rate_bp=rate_bp,
-                            gst_treatment="taxable").total_paise
+        return compute_line(
+            unit_rate_paise=rate, quantity_milli=qty, gst_rate_bp=rate_bp, gst_treatment="taxable"
+        ).total_paise
 
     rate = (unit_mrp * 10000) // (10000 + rate_bp)
     while total(rate + 1) <= ceiling:
@@ -1102,15 +1167,16 @@ def _tax_inclusive_unit_rate(unit_mrp: int, units: int, rate_bp: int) -> int:
     return rate
 
 
-def _mrp_line(cand: dict, *, plan_id: Optional[int], ward_class: Optional[str]) -> dict:
+def _mrp_line(cand: dict, *, plan_id: int | None, ward_class: str | None) -> dict:
     """How a batch-MRP candidate is charged: the service item (if the price
     list has the drug) supplies the code and the GST treatment, the batch the
     price. Without a service item the line is recorded under RX-<drug> and is
     exempt, the module's default treatment for an item the list does not know."""
     resolution = None
     for code in cand["candidate_codes"]:
-        attempt = billing_masters.resolve_rate(code, tariff_plan_id=plan_id, ward_class=ward_class,
-                                               on_date=cand["service_date"])
+        attempt = billing_masters.resolve_rate(
+            code, tariff_plan_id=plan_id, ward_class=ward_class, on_date=cand["service_date"]
+        )
         if attempt.source != "unknown_item":
             resolution = attempt
             break
@@ -1122,15 +1188,27 @@ def _mrp_line(cand: dict, *, plan_id: Optional[int], ward_class: Optional[str]) 
     units = int(cand["units"])
     inclusive = treatment == "taxable" and rate_bp > 0
     rate = _tax_inclusive_unit_rate(unit_mrp, units, rate_bp) if inclusive else unit_mrp
-    line = compute_line(unit_rate_paise=rate, quantity_milli=units * QUANTITY_SCALE,
-                        gst_rate_bp=rate_bp, gst_treatment=treatment)
-    note = (f"Priced at batch MRP: {format_inr(unit_mrp)} a unit"
-            + (f", batch {cand['batch']}" if cand.get("batch") else "")
-            + (", GST included in the MRP" if inclusive else ""))
-    return {"service_code": service_code, "unit_rate_paise": rate,
-            "quantity_milli": units * QUANTITY_SCALE, "gst_treatment": treatment,
-            "gst_rate_bp": rate_bp, "total_paise": line.total_paise, "notes": note,
-            "rate_display": format_inr(unit_mrp)}
+    line = compute_line(
+        unit_rate_paise=rate,
+        quantity_milli=units * QUANTITY_SCALE,
+        gst_rate_bp=rate_bp,
+        gst_treatment=treatment,
+    )
+    note = (
+        f"Priced at batch MRP: {format_inr(unit_mrp)} a unit"
+        + (f", batch {cand['batch']}" if cand.get("batch") else "")
+        + (", GST included in the MRP" if inclusive else "")
+    )
+    return {
+        "service_code": service_code,
+        "unit_rate_paise": rate,
+        "quantity_milli": units * QUANTITY_SCALE,
+        "gst_treatment": treatment,
+        "gst_rate_bp": rate_bp,
+        "total_paise": line.total_paise,
+        "notes": note,
+        "rate_display": format_inr(unit_mrp),
+    }
 
 
 def _clinical_candidates(db, *, patient_id: str) -> list[dict]:
@@ -1164,24 +1242,26 @@ def _clinical_candidates(db, *, patient_id: str) -> list[dict]:
                    result_at, created_at
               FROM orders
              WHERE patient_id = ?
-               AND order_type IN ({','.join('?' * len(_BILLABLE_ORDER_TYPES))})
-               AND status IN ({','.join('?' * len(_COMPLETED_ORDER_STATUSES))})
+               AND order_type IN ({",".join("?" * len(_BILLABLE_ORDER_TYPES))})
+               AND status IN ({",".join("?" * len(_COMPLETED_ORDER_STATUSES))})
              ORDER BY created_at""",
         (patient_id, *_BILLABLE_ORDER_TYPES, *_COMPLETED_ORDER_STATUSES),
     ).fetchall():
-        candidates.append({
-            "source": "order",
-            "source_ref": row["id"],
-            "idempotency_key": f"order:{row['id']}",
-            # The order's own code (LOINC/local) is the only honest join to a
-            # price list. A site prices a lab by creating a service item whose
-            # code is the code its order catalogue already uses.
-            "candidate_codes": [c for c in [_clean(row["code"])] if c],
-            "description": row["description"],
-            "service_date": _local_day_of_stored(row["result_at"] or row["created_at"]),
-            "kind": row["order_type"],
-            "label": f"{row['order_type']}: {row['description']}",
-        })
+        candidates.append(
+            {
+                "source": "order",
+                "source_ref": row["id"],
+                "idempotency_key": f"order:{row['id']}",
+                # The order's own code (LOINC/local) is the only honest join to a
+                # price list. A site prices a lab by creating a service item whose
+                # code is the code its order catalogue already uses.
+                "candidate_codes": [c for c in [_clean(row["code"])] if c],
+                "description": row["description"],
+                "service_date": _local_day_of_stored(row["result_at"] or row["created_at"]),
+                "kind": row["order_type"],
+                "label": f"{row['order_type']}: {row['description']}",
+            }
+        )
 
     # With the pharmacy store on (grn-16) the pharmacy source is read from the
     # dispense movements instead: the drug that left the shelf, at its batch
@@ -1197,26 +1277,31 @@ def _clinical_candidates(db, *, patient_id: str) -> list[dict]:
             "o.created_at AS created_at"
             + (", m.name AS med_name" if has_master else ", NULL AS med_name")
             + " FROM helix_patient_med_orders o"
-            + (" LEFT JOIN helix_medication_master m ON m.id = o.medication_id"
-               if has_master else "")
+            + (
+                " LEFT JOIN helix_medication_master m ON m.id = o.medication_id"
+                if has_master
+                else ""
+            )
             + f" WHERE o.patient_id = ? AND o.status IN "
-              f"({','.join('?' * len(_DISPENSED_MED_STATUSES))}) "
-              "ORDER BY o.created_at"
+            f"({','.join('?' * len(_DISPENSED_MED_STATUSES))}) "
+            "ORDER BY o.created_at"
         )
         for row in db.execute(sql, (patient_id, *_DISPENSED_MED_STATUSES)).fetchall():
             med_id = _clean(row["medication_id"])
-            candidates.append({
-                "source": "pharmacy",
-                "source_ref": row["id"],
-                "idempotency_key": f"helix:{row['id']}",
-                # Two spellings so a site can key its pharmacy price list either
-                # on the Helix medication id or on an RX- prefixed code.
-                "candidate_codes": [c for c in [med_id, f"RX-{med_id}" if med_id else ""] if c],
-                "description": row["med_name"] or med_id or "Pharmacy dispense",
-                "service_date": _local_day_of_stored(row["created_at"]),
-                "kind": "pharmacy",
-                "label": f"pharmacy: {row['med_name'] or med_id}",
-            })
+            candidates.append(
+                {
+                    "source": "pharmacy",
+                    "source_ref": row["id"],
+                    "idempotency_key": f"helix:{row['id']}",
+                    # Two spellings so a site can key its pharmacy price list either
+                    # on the Helix medication id or on an RX- prefixed code.
+                    "candidate_codes": [c for c in [med_id, f"RX-{med_id}" if med_id else ""] if c],
+                    "description": row["med_name"] or med_id or "Pharmacy dispense",
+                    "service_date": _local_day_of_stored(row["created_at"]),
+                    "kind": "pharmacy",
+                    "label": f"pharmacy: {row['med_name'] or med_id}",
+                }
+            )
 
     return candidates
 
@@ -1224,9 +1309,9 @@ def _clinical_candidates(db, *, patient_id: str) -> list[dict]:
 def capture_clinical_charges(
     *,
     patient_id: str,
-    admission_id: Optional[str] = None,
-    ward_class: Optional[str] = None,
-    actor: Optional[str] = None,
+    admission_id: str | None = None,
+    ward_class: str | None = None,
+    actor: str | None = None,
     dry_run: bool = False,
 ) -> dict:
     """Pull the chargeable clinical events Orb already recorded onto the bill.
@@ -1258,9 +1343,7 @@ def capture_clinical_charges(
     with db_session() as db:
         if not _patient_exists(db, patient_id):
             raise BillingError(f"unknown patient {patient_id!r}", code="unknown_patient")
-        context = _resolve_encounter_context(
-            db, patient_id=patient_id, admission_id=admission_id
-        )
+        context = _resolve_encounter_context(db, patient_id=patient_id, admission_id=admission_id)
         plan_id = context["payer"].tariff_plan_id
         candidates = _clinical_candidates(db, patient_id=patient_id)
         existing_keys = {
@@ -1282,7 +1365,8 @@ def capture_clinical_charges(
             continue
         if cand.get("credit_of") is not None:
             basis = charged_at.get(cand["credit_of"]) or _charged_line(
-                patient_id, cand["credit_of"])
+                patient_id, cand["credit_of"]
+            )
             if basis is None:
                 # Nothing on the bill to credit: the dispense was never
                 # charged, or its charge was cancelled.
@@ -1295,51 +1379,86 @@ def capture_clinical_charges(
                 gst_treatment=basis["gst_treatment"] or GST_EXEMPT,
             )
             if dry_run:
-                posted.append({**_candidate_view(cand), "service_code": basis["service_code"],
-                               "rate_paise": -int(basis["unit_rate_paise"]),
-                               "total_paise": credit.total_paise, "would_post": True})
+                posted.append(
+                    {
+                        **_candidate_view(cand),
+                        "service_code": basis["service_code"],
+                        "rate_paise": -int(basis["unit_rate_paise"]),
+                        "total_paise": credit.total_paise,
+                        "would_post": True,
+                    }
+                )
                 continue
             charge = add_charge(
-                patient_id=patient_id, admission_id=admission_id,
-                service_code=basis["service_code"], description=cand["description"],
+                patient_id=patient_id,
+                admission_id=admission_id,
+                service_code=basis["service_code"],
+                description=cand["description"],
                 quantity_milli=int(cand["quantity_milli"]),
                 unit_rate_paise=-int(basis["unit_rate_paise"]),
                 gst_treatment=basis["gst_treatment"] or GST_EXEMPT,
                 gst_rate_bp=int(basis["gst_rate_bp"] or 0),
-                ward_class=ward_class, tariff_plan_id=plan_id,
-                service_date=cand["service_date"], source=cand["source"],
-                source_ref=str(cand["source_ref"]), idempotency_key=cand["idempotency_key"],
+                ward_class=ward_class,
+                tariff_plan_id=plan_id,
+                service_date=cand["service_date"],
+                source=cand["source"],
+                source_ref=str(cand["source_ref"]),
+                idempotency_key=cand["idempotency_key"],
                 notes=f"Credit for medicine returned from the ward (charge {cand['credit_of']})",
                 charged_by=actor,
             )
-            posted.append({**_candidate_view(cand), "charge_id": charge["id"],
-                           "service_code": charge["service_code"],
-                           "total_paise": charge["total_paise"],
-                           "total_display": charge["total_display"]})
+            posted.append(
+                {
+                    **_candidate_view(cand),
+                    "charge_id": charge["id"],
+                    "service_code": charge["service_code"],
+                    "total_paise": charge["total_paise"],
+                    "total_display": charge["total_display"],
+                }
+            )
             continue
         if cand.get("unit_mrp_paise") is not None:
             line = _mrp_line(cand, plan_id=plan_id, ward_class=ward_class)
             charged_at[cand["idempotency_key"]] = line
             if dry_run:
-                posted.append({**_candidate_view(cand), "service_code": line["service_code"],
-                               "rate_paise": line["unit_rate_paise"],
-                               "rate_display": line["rate_display"],
-                               "total_paise": line["total_paise"], "would_post": True})
+                posted.append(
+                    {
+                        **_candidate_view(cand),
+                        "service_code": line["service_code"],
+                        "rate_paise": line["unit_rate_paise"],
+                        "rate_display": line["rate_display"],
+                        "total_paise": line["total_paise"],
+                        "would_post": True,
+                    }
+                )
                 continue
             charge = add_charge(
-                patient_id=patient_id, admission_id=admission_id,
-                service_code=line["service_code"], description=cand["description"],
-                quantity_milli=line["quantity_milli"], unit_rate_paise=line["unit_rate_paise"],
-                gst_treatment=line["gst_treatment"], gst_rate_bp=line["gst_rate_bp"],
-                ward_class=ward_class, tariff_plan_id=plan_id,
-                service_date=cand["service_date"], source=cand["source"],
-                source_ref=str(cand["source_ref"]), idempotency_key=cand["idempotency_key"],
-                notes=line["notes"], charged_by=actor,
+                patient_id=patient_id,
+                admission_id=admission_id,
+                service_code=line["service_code"],
+                description=cand["description"],
+                quantity_milli=line["quantity_milli"],
+                unit_rate_paise=line["unit_rate_paise"],
+                gst_treatment=line["gst_treatment"],
+                gst_rate_bp=line["gst_rate_bp"],
+                ward_class=ward_class,
+                tariff_plan_id=plan_id,
+                service_date=cand["service_date"],
+                source=cand["source"],
+                source_ref=str(cand["source_ref"]),
+                idempotency_key=cand["idempotency_key"],
+                notes=line["notes"],
+                charged_by=actor,
             )
-            posted.append({**_candidate_view(cand), "charge_id": charge["id"],
-                           "service_code": charge["service_code"],
-                           "total_paise": charge["total_paise"],
-                           "total_display": charge["total_display"]})
+            posted.append(
+                {
+                    **_candidate_view(cand),
+                    "charge_id": charge["id"],
+                    "service_code": charge["service_code"],
+                    "total_paise": charge["total_paise"],
+                    "total_display": charge["total_display"],
+                }
+            )
             continue
         if not cand["candidate_codes"]:
             skipped.append({**_candidate_view(cand), "reason": "no_service_code"})
@@ -1348,51 +1467,66 @@ def capture_clinical_charges(
         resolution = None
         for code in cand["candidate_codes"]:
             attempt = billing_masters.resolve_rate(
-                code, tariff_plan_id=plan_id, ward_class=ward_class,
+                code,
+                tariff_plan_id=plan_id,
+                ward_class=ward_class,
                 on_date=cand["service_date"],
             )
             if attempt.source != "unknown_item":
                 resolution = attempt
                 break
         if resolution is None:
-            skipped.append({
-                **_candidate_view(cand),
-                "reason": "no_service_item",
-                "hint": (
-                    "create a service item with code "
-                    f"{cand['candidate_codes'][0]!r} to price this"
-                ),
-            })
+            skipped.append(
+                {
+                    **_candidate_view(cand),
+                    "reason": "no_service_item",
+                    "hint": (
+                        "create a service item with code "
+                        f"{cand['candidate_codes'][0]!r} to price this"
+                    ),
+                }
+            )
             continue
         if not resolution.configured:
-            skipped.append({
-                **_candidate_view(cand),
-                "reason": "rate_not_configured",
-                "service_code": resolution.service_code,
-                "rate_display": resolution.display,
-            })
+            skipped.append(
+                {
+                    **_candidate_view(cand),
+                    "reason": "rate_not_configured",
+                    "service_code": resolution.service_code,
+                    "rate_display": resolution.display,
+                }
+            )
             continue
         charged_at[cand["idempotency_key"]] = {
-            "service_code": resolution.service_code, "unit_rate_paise": resolution.rate_paise,
-            "gst_rate_bp": resolution.gst_rate_bp, "gst_treatment": resolution.gst_treatment,
+            "service_code": resolution.service_code,
+            "unit_rate_paise": resolution.rate_paise,
+            "gst_rate_bp": resolution.gst_rate_bp,
+            "gst_treatment": resolution.gst_treatment,
         }
 
         if dry_run:
-            posted.append({
-                **_candidate_view(cand),
-                "service_code": resolution.service_code,
-                "rate_paise": resolution.rate_paise,
-                "rate_display": resolution.display,
-                # More than one unit (a grn-14 dispense): the line, not the rate.
-                **({"total_paise": compute_line(
-                    unit_rate_paise=int(resolution.rate_paise or 0),
-                    quantity_milli=int(cand["quantity_milli"]),
-                    gst_rate_bp=int(resolution.gst_rate_bp or 0),
-                    gst_treatment=resolution.gst_treatment or GST_EXEMPT,
-                ).total_paise} if cand.get("quantity_milli", QUANTITY_SCALE) != QUANTITY_SCALE
-                   else {}),
-                "would_post": True,
-            })
+            posted.append(
+                {
+                    **_candidate_view(cand),
+                    "service_code": resolution.service_code,
+                    "rate_paise": resolution.rate_paise,
+                    "rate_display": resolution.display,
+                    # More than one unit (a grn-14 dispense): the line, not the rate.
+                    **(
+                        {
+                            "total_paise": compute_line(
+                                unit_rate_paise=int(resolution.rate_paise or 0),
+                                quantity_milli=int(cand["quantity_milli"]),
+                                gst_rate_bp=int(resolution.gst_rate_bp or 0),
+                                gst_treatment=resolution.gst_treatment or GST_EXEMPT,
+                            ).total_paise
+                        }
+                        if cand.get("quantity_milli", QUANTITY_SCALE) != QUANTITY_SCALE
+                        else {}
+                    ),
+                    "would_post": True,
+                }
+            )
             continue
 
         charge = add_charge(
@@ -1411,12 +1545,17 @@ def capture_clinical_charges(
             idempotency_key=cand["idempotency_key"],
             charged_by=actor,
         )
-        posted.append({**_candidate_view(cand), **{
-            "charge_id": charge["id"],
-            "service_code": charge["service_code"],
-            "total_paise": charge["total_paise"],
-            "total_display": charge["total_display"],
-        }})
+        posted.append(
+            {
+                **_candidate_view(cand),
+                **{
+                    "charge_id": charge["id"],
+                    "service_code": charge["service_code"],
+                    "total_paise": charge["total_paise"],
+                    "total_display": charge["total_display"],
+                },
+            }
+        )
 
     posted_total = sum(int(p.get("total_paise") or p.get("rate_paise") or 0) for p in posted)
     unpriceable = [s for s in skipped if s["reason"] != "already_charged"]
@@ -1446,7 +1585,7 @@ def _candidate_view(cand: dict) -> dict:
     }
 
 
-def _charged_line(patient_id: str, key: str) -> Optional[dict]:
+def _charged_line(patient_id: str, key: str) -> dict | None:
     """The live (not cancelled) charge a return credit reverses, by its key,
     or None. A return is credited at the unit rate the patient was charged."""
     with db_session() as db:
@@ -1459,7 +1598,7 @@ def _charged_line(patient_id: str, key: str) -> Optional[dict]:
     return _row(row) if row is not None else None
 
 
-def _discharge_stamp(db, admission: dict) -> Optional[str]:
+def _discharge_stamp(db, admission: dict) -> str | None:
     """When a discharged admission ended, as stored (UTC), or None.
 
     ``admissions.discharged_at`` first: an imported encounter carries it, and
@@ -1497,9 +1636,12 @@ def _admission_moves(db, admission_id: str) -> list[dict]:
     by migration 51 (and lazily by services/frontdesk_service), so a database
     without it has no transfers to read, which is the same answer as an empty
     ledger."""
-    if db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'patient_movements'"
-    ).fetchone() is None:
+    if (
+        db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'patient_movements'"
+        ).fetchone()
+        is None
+    ):
         return []
     placeholders = ", ".join("?" for _ in _REPRICING_MOVEMENT_TYPES)
     rows = db.execute(
@@ -1511,8 +1653,7 @@ def _admission_moves(db, admission_id: str) -> list[dict]:
     return [_row(r) for r in rows]
 
 
-def _ward_by_day(moves: list[dict], current_ward: Optional[str],
-                 start_d: date, end_d: date) -> dict:
+def _ward_by_day(moves: list[dict], current_ward: str | None, start_d: date, end_d: date) -> dict:
     """The ward each bed day is priced at: the ward the patient was in at the
     END of that hospital-local day (a midnight census), so a transfer day is
     billed at the ward the patient moved to. Before the first transfer the
@@ -1526,7 +1667,11 @@ def _ward_by_day(moves: list[dict], current_ward: Optional[str],
     day = start_d
     idx = 0
     while day <= end_d:
-        while idx < len(dated) and dated[idx][0] and dated[idx][0] <= day.isoformat():
+        while (
+            idx < len(dated)
+            and (dated_day := dated[idx][0]) is not None
+            and dated_day <= day.isoformat()
+        ):
             ward = dated[idx][1] or ward
             idx += 1
         out[day] = ward
@@ -1540,7 +1685,12 @@ def _ward_by_day(moves: list[dict], current_ward: Optional[str],
 #: (services/adt_census_service._LOCATING_TYPES). A movement a correction
 #: points at (corrects_movement_id) never happened.
 _LOCATING_MOVEMENT_TYPES = (
-    "admission", "bed_assigned", "bed_change", "transfer", "bed_swap", "location_linked",
+    "admission",
+    "bed_assigned",
+    "bed_change",
+    "transfer",
+    "bed_swap",
+    "location_linked",
     "correction",
 )
 
@@ -1567,7 +1717,7 @@ def _adt_module_on() -> bool:
         return False
 
 
-def _parse_stored(value: Any) -> Optional[datetime]:
+def _parse_stored(value: Any) -> datetime | None:
     """A stored time as an aware UTC datetime (clinical_time reads every
     legacy spelling), or None."""
     from services.clinical_time import parse_to_utc
@@ -1583,8 +1733,7 @@ def _parse_stored(value: Any) -> Optional[datetime]:
 def _midnight_after(day: date) -> datetime:
     """The midnight that ends a hospital-local day, in UTC: the census instant."""
     tz = hospital_timezone()
-    return datetime.combine(day + timedelta(days=1), datetime.min.time(),
-                            tzinfo=tz).astimezone(timezone.utc)
+    return datetime.combine(day + timedelta(days=1), datetime.min.time(), tzinfo=tz).astimezone(UTC)
 
 
 def _stay_ledger(db, admission: dict) -> tuple[list[dict], list[dict]]:
@@ -1596,23 +1745,30 @@ def _stay_ledger(db, admission: dict) -> tuple[list[dict], list[dict]]:
     cols = {r[1] for r in db.execute("PRAGMA table_info(patient_movements)").fetchall()}
     if not {"to_bed_id", "from_bed_id", "corrects_movement_id"} <= cols:
         return [], []
-    rows = [_row(r) for r in db.execute(
-        "SELECT rowid AS row_order, id, movement_type, moved_at, from_bed_id, to_bed_id, "
-        "corrects_movement_id FROM patient_movements WHERE admission_id = ?",
-        (admission["id"],),
-    ).fetchall()]
+    rows = [
+        _row(r)
+        for r in db.execute(
+            "SELECT rowid AS row_order, id, movement_type, moved_at, from_bed_id, to_bed_id, "
+            "corrects_movement_id FROM patient_movements WHERE admission_id = ?",
+            (admission["id"],),
+        ).fetchall()
+    ]
     voided = {r["corrects_movement_id"] for r in rows if r.get("corrects_movement_id")}
-    floor = datetime.min.replace(tzinfo=timezone.utc)
+    floor = datetime.min.replace(tzinfo=UTC)
     for r in rows:
         r["at"] = _parse_stored(r.get("moved_at")) or floor
-    live = sorted((r for r in rows if r["id"] not in voided),
-                  key=lambda r: (r["at"], r.get("row_order") or 0))
-    return ([r for r in live if r["movement_type"] in _LOCATING_MOVEMENT_TYPES],
-            [r for r in live if r["movement_type"] in _PRESENCE_MOVEMENT_TYPES])
+    live = sorted(
+        (r for r in rows if r["id"] not in voided), key=lambda r: (r["at"], r.get("row_order") or 0)
+    )
+    return (
+        [r for r in live if r["movement_type"] in _LOCATING_MOVEMENT_TYPES],
+        [r for r in live if r["movement_type"] in _PRESENCE_MOVEMENT_TYPES],
+    )
 
 
-def _bed_at(placing: list[dict], admission: dict, instant: datetime, *,
-            inclusive: bool) -> Optional[str]:
+def _bed_at(
+    placing: list[dict], admission: dict, instant: datetime, *, inclusive: bool
+) -> str | None:
     """The bed (housekeeping_units.id) the stay lay in at `instant`.
 
     Before the first placing move: nowhere when that move is the admission
@@ -1659,14 +1815,12 @@ def _bed_master(db, bed_ids: set) -> tuple[dict, dict]:
         ).fetchall():
             beds[r["id"]] = _row(r)
     if _table_exists(db, "bed_classes"):
-        for r in db.execute(
-            "SELECT code, name, bed_day_service_code FROM bed_classes"
-        ).fetchall():
+        for r in db.execute("SELECT code, name, bed_day_service_code FROM bed_classes").fetchall():
             classes[r["code"]] = _row(r)
     return beds, classes
 
 
-def _class_of(bed: Optional[dict], classes: dict) -> Optional[dict]:
+def _class_of(bed: dict | None, classes: dict) -> dict | None:
     code = _clean((bed or {}).get("bed_class"))
     if not code:
         return None
@@ -1680,11 +1834,11 @@ def _class_of(bed: Optional[dict], classes: dict) -> Optional[dict]:
 def post_bed_day_charges(
     *,
     admission_id: str,
-    service_code: Optional[str] = None,
-    through: Optional[str] = None,
-    ward_class: Optional[str] = None,
-    actor: Optional[str] = None,
-    patient_id: Optional[str] = None,
+    service_code: str | None = None,
+    through: str | None = None,
+    ward_class: str | None = None,
+    actor: str | None = None,
+    patient_id: str | None = None,
 ) -> dict:
     """Post one bed-day charge per calendar day of an admission, idempotently.
 
@@ -1752,9 +1906,7 @@ def post_bed_day_charges(
             code="invalid_input",
         )
     with db_session() as db:
-        adm = db.execute(
-            "SELECT * FROM admissions WHERE id = ?", (admission_id,)
-        ).fetchone()
+        adm = db.execute("SELECT * FROM admissions WHERE id = ?", (admission_id,)).fetchone()
         if adm is None:
             raise BillingError(f"no admission {admission_id!r}", code="not_found")
         admission = _row(adm)
@@ -1764,21 +1916,30 @@ def post_bed_day_charges(
                 code="admission_patient_mismatch",
             )
         ended = (admission.get("status") or "active") != "active"
-        discharge_stamp = (_discharge_stamp(db, admission)
-                           if admission.get("status") == "discharged"
-                           or (by_class and ended) else None)
+        discharge_stamp = (
+            _discharge_stamp(db, admission)
+            if admission.get("status") == "discharged" or (by_class and ended)
+            else None
+        )
         moves = _admission_moves(db, admission_id)
         placing, presence = _stay_ledger(db, admission) if adt_on else ([], [])
+        beds: dict[str, dict]
+        classes: dict[int, dict]
         beds, classes = ({}, {})
         existing_keys: set = set()
         if by_class:
-            beds, classes = _bed_master(db, {admission.get("bed_id")}
-                                        | {m.get("to_bed_id") for m in placing}
-                                        | {m.get("from_bed_id") for m in placing})
+            beds, classes = _bed_master(
+                db,
+                {admission.get("bed_id")}
+                | {m.get("to_bed_id") for m in placing}
+                | {m.get("from_bed_id") for m in placing},
+            )
             existing_keys = {
-                r["idempotency_key"] for r in db.execute(
+                r["idempotency_key"]
+                for r in db.execute(
                     "SELECT idempotency_key FROM encounter_charges WHERE admission_id = ? "
-                    "AND idempotency_key IS NOT NULL", (admission_id,),
+                    "AND idempotency_key IS NOT NULL",
+                    (admission_id,),
                 ).fetchall()
             }
 
@@ -1787,9 +1948,9 @@ def post_bed_day_charges(
     stay_start = stay_times.stay_start_stored(admission)
     start = _local_day_of_stored(stay_start) or hospital_today().isoformat()
     if by_class:
-        last = (_local_day_of_stored(discharge_stamp) if ended
-                else hospital_today().isoformat())
+        last = _local_day_of_stored(discharge_stamp) if ended else hospital_today().isoformat()
         if through:
+            end: str | None
             end = _iso_day(through)
             if last and end > last:
                 raise BillingError(
@@ -1823,26 +1984,32 @@ def post_bed_day_charges(
         start_d = date.fromisoformat(start)
         end_d = date.fromisoformat(end)
     except ValueError as exc:
-        raise BillingError(f"unreadable date on this admission: {exc}", code="invalid_input")
-    if end_d < start_d:
         raise BillingError(
-            "the through-date is before the admission date", code="invalid_input"
-        )
+            f"unreadable date on this admission: {exc}", code="invalid_input"
+        ) from exc
+    if end_d < start_d:
+        raise BillingError("the through-date is before the admission date", code="invalid_input")
 
     wards = _ward_by_day(moves, admission.get("ward"), start_d, end_d)
+    posted: list[dict]
     posted, replayed, unpriced_days = [], [], []
     unpriced_detail: list[dict] = []
     leave_days: list[str] = []
     leave_rent = bool(getattr(config, "ADT_LEAVE_RENT_CHARGED", True))
     # The census instant of the stay's last day: its departure once it has
     # ended, now while it is live (today's midnight has not come yet).
-    cap = (_parse_stored(discharge_stamp) if ended
-           else datetime.now(timezone.utc)) if adt_on else None
+    cap = (_parse_stored(discharge_stamp) if ended else datetime.now(UTC)) if adt_on else None
 
     def _unpriced(day_iso: str, reason: str, **extra) -> None:
         unpriced_days.append(day_iso)
-        unpriced_detail.append({"day": day_iso, "reason": reason,
-                                "message": BED_DAY_UNPRICED_WORDS.get(reason, reason), **extra})
+        unpriced_detail.append(
+            {
+                "day": day_iso,
+                "reason": reason,
+                "message": BED_DAY_UNPRICED_WORDS.get(reason, reason),
+                **extra,
+            }
+        )
 
     day = start_d
     while day <= end_d:
@@ -1862,6 +2029,7 @@ def post_bed_day_charges(
                 continue
         code_for_day, class_for_day, words = service_code, ward_class, f"Bed charge: {iso}"
         if by_class:
+            assert instant is not None
             bed_id = _bed_at(placing, admission, instant, inclusive=inclusive)
             bed = beds.get(bed_id) if bed_id else None
             if bed is None:
@@ -1886,8 +2054,11 @@ def post_bed_day_charges(
                 patient_id=admission["patient_id"],
                 admission_id=admission_id,
                 service_code=code_for_day,
-                ward_class=(class_for_day if by_class
-                            else ward_class or wards.get(day) or admission.get("ward")),
+                ward_class=(
+                    class_for_day
+                    if by_class
+                    else ward_class or wards.get(day) or admission.get("ward")
+                ),
                 service_date=iso,
                 source="bed_day",
                 source_ref=f"{admission_id}:{iso}",
@@ -1907,8 +2078,13 @@ def post_bed_day_charges(
             # the gap when the final bill is short.
             unknown = (exc.detail or {}).get("source") == "unknown_item"
             if by_class:
-                _unpriced(iso, "no_service_item" if unknown else "rate_not_configured",
-                          bed=label, bed_class=class_for_day, service_code=code_for_day)
+                _unpriced(
+                    iso,
+                    "no_service_item" if unknown else "rate_not_configured",
+                    bed=label,
+                    bed_class=class_for_day,
+                    service_code=code_for_day,
+                )
             else:
                 _unpriced(iso, "rate_not_configured", service_code=code_for_day)
         day += timedelta(days=1)
@@ -1936,12 +2112,23 @@ def post_bed_day_charges(
 
 # ── Invoices ─────────────────────────────────────────────────────────────────
 
+
 def _decorate_invoice(row: dict) -> dict:
     for field in (
-        "subtotal_paise", "discount_paise", "taxable_value_paise", "cgst_paise",
-        "sgst_paise", "igst_paise", "tax_paise", "total_paise",
-        "rounding_adjustment_paise", "payable_paise", "amount_paid_paise",
-        "balance_paise", "patient_responsibility_paise", "payer_responsibility_paise",
+        "subtotal_paise",
+        "discount_paise",
+        "taxable_value_paise",
+        "cgst_paise",
+        "sgst_paise",
+        "igst_paise",
+        "tax_paise",
+        "total_paise",
+        "rounding_adjustment_paise",
+        "payable_paise",
+        "amount_paid_paise",
+        "balance_paise",
+        "patient_responsibility_paise",
+        "payer_responsibility_paise",
     ):
         if field in row:
             row[field.replace("_paise", "_display")] = format_inr(int(row[field] or 0))
@@ -1955,17 +2142,17 @@ def _decorate_invoice(row: dict) -> dict:
 def create_invoice(
     *,
     patient_id: str,
-    admission_id: Optional[str] = None,
+    admission_id: str | None = None,
     invoice_type: str = "final",
-    charge_ids: Optional[Sequence[int]] = None,
-    encounter_type: Optional[str] = None,
-    place_of_supply: Optional[str] = None,
+    charge_ids: Sequence[int] | None = None,
+    encounter_type: str | None = None,
+    place_of_supply: str | None = None,
     interstate: bool = False,
-    round_off: Optional[bool] = None,
+    round_off: bool | None = None,
     issue: bool = False,
-    notes: Optional[str] = None,
-    created_by: Optional[str] = None,
-    idempotency_key: Optional[str] = None,
+    notes: str | None = None,
+    created_by: str | None = None,
+    idempotency_key: str | None = None,
 ) -> dict:
     """Raise an invoice over pending charges. Draft by default.
 
@@ -2008,8 +2195,7 @@ def create_invoice(
     op_bill = _clean(encounter_type).lower() == "op"
     if op_bill and _clean(admission_id):
         raise BillingError(
-            "an outpatient bill carries no admission; bill the stay from its "
-            "admission instead",
+            "an outpatient bill carries no admission; bill the stay from its admission instead",
             code="op_bill_with_admission",
         )
 
@@ -2025,23 +2211,21 @@ def create_invoice(
 
         if not _patient_exists(db, patient_id):
             raise BillingError(f"unknown patient {patient_id!r}", code="unknown_patient")
-        context = _resolve_encounter_context(
-            db, patient_id=patient_id, admission_id=admission_id
-        )
+        context = _resolve_encounter_context(db, patient_id=patient_id, admission_id=admission_id)
         payer = context["payer"]
 
         if charge_ids:
             placeholders = ",".join("?" * len(charge_ids))
             rows = db.execute(
-                f"SELECT * FROM encounter_charges WHERE id IN ({placeholders}) "
-                "ORDER BY id",
+                f"SELECT * FROM encounter_charges WHERE id IN ({placeholders}) ORDER BY id",
                 tuple(int(c) for c in charge_ids),
             ).fetchall()
             found = {int(r["id"]) for r in rows}
             missing = [int(c) for c in charge_ids if int(c) not in found]
             if missing:
                 raise BillingError(
-                    f"no such charge(s): {missing}", code="not_found",
+                    f"no such charge(s): {missing}",
+                    code="not_found",
                     detail={"charge_ids": missing},
                 )
             wrong_patient = [int(r["id"]) for r in rows if r["patient_id"] != patient_id]
@@ -2052,16 +2236,19 @@ def create_invoice(
                 )
             not_pending = [
                 {"id": int(r["id"]), "status": r["status"]}
-                for r in rows if r["status"] != _CHARGE_BILLABLE
+                for r in rows
+                if r["status"] != _CHARGE_BILLABLE
             ]
             if not_pending:
                 raise BillingError(
                     "some charges are not pending (already billed or cancelled)",
-                    code="charge_not_billable", detail={"charges": not_pending},
+                    code="charge_not_billable",
+                    detail={"charges": not_pending},
                 )
             if op_bill:
                 not_outpatient = [
-                    int(r["id"]) for r in rows
+                    int(r["id"])
+                    for r in rows
                     if r["admission_id"] or (r["encounter_type"] or "") != "op"
                 ]
                 if not_outpatient:
@@ -2171,23 +2358,37 @@ def create_invoice(
                   period_from, period_to, idempotency_key, notes, created_by)
                VALUES (?,?,?,?,?,?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?)""",
             (
-                patient_id, admission_id,
+                patient_id,
+                admission_id,
                 encounter_type or context["encounter_type"],
-                payer.payer_id, payer.tariff_plan_id, invoice_type,
-                place_of_supply, 1 if interstate else 0,
-                totals.subtotal_paise, totals.discount_paise, totals.taxable_value_paise,
-                totals.cgst_paise, totals.sgst_paise, totals.igst_paise,
-                totals.tax_paise, totals.total_paise,
-                totals.rounding_adjustment_paise, totals.payable_paise,
-                totals.payable_paise,          # balance = payable until money arrives
-                patient_share, payer_share,
-                rows[0]["service_date"], rows[-1]["service_date"],
-                idempotency_key, notes, created_by,
+                payer.payer_id,
+                payer.tariff_plan_id,
+                invoice_type,
+                place_of_supply,
+                1 if interstate else 0,
+                totals.subtotal_paise,
+                totals.discount_paise,
+                totals.taxable_value_paise,
+                totals.cgst_paise,
+                totals.sgst_paise,
+                totals.igst_paise,
+                totals.tax_paise,
+                totals.total_paise,
+                totals.rounding_adjustment_paise,
+                totals.payable_paise,
+                totals.payable_paise,  # balance = payable until money arrives
+                patient_share,
+                payer_share,
+                rows[0]["service_date"],
+                rows[-1]["service_date"],
+                idempotency_key,
+                notes,
+                created_by,
             ),
         )
         invoice_id = int(cur.lastrowid)
 
-        for line_no, (charge, line) in enumerate(zip(rows, lines), start=1):
+        for line_no, (charge, line) in enumerate(zip(rows, lines, strict=False), start=1):
             db.execute(
                 """INSERT INTO invoice_lines
                      (invoice_id, line_no, encounter_charge_id, service_item_id,
@@ -2197,15 +2398,26 @@ def create_invoice(
                       igst_paise, tax_paise, total_paise)
                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    invoice_id, line_no, int(charge["id"]), charge["service_item_id"],
-                    charge["service_code"], charge["description"],
+                    invoice_id,
+                    line_no,
+                    int(charge["id"]),
+                    charge["service_item_id"],
+                    charge["service_code"],
+                    charge["description"],
                     _hsn_for(db, charge["service_code"]),
                     int(charge["quantity_milli"] or QUANTITY_SCALE),
                     _uom_for(db, charge["service_code"]),
                     int(charge["unit_rate_paise"] or 0),
-                    line.gross_paise, line.discount_paise, line.gst_treatment,
-                    line.gst_rate_bp, line.taxable_value_paise, line.cgst_paise,
-                    line.sgst_paise, line.igst_paise, line.tax_paise, line.total_paise,
+                    line.gross_paise,
+                    line.discount_paise,
+                    line.gst_treatment,
+                    line.gst_rate_bp,
+                    line.taxable_value_paise,
+                    line.cgst_paise,
+                    line.sgst_paise,
+                    line.igst_paise,
+                    line.tax_paise,
+                    line.total_paise,
                 ),
             )
 
@@ -2251,21 +2463,17 @@ def create_invoice(
     return get_invoice(invoice_id)
 
 
-def _hsn_for(db, service_code: str) -> Optional[str]:
-    row = db.execute(
-        "SELECT hsn_sac FROM service_items WHERE code = ?", (service_code,)
-    ).fetchone()
+def _hsn_for(db, service_code: str) -> str | None:
+    row = db.execute("SELECT hsn_sac FROM service_items WHERE code = ?", (service_code,)).fetchone()
     return row["hsn_sac"] if row else None
 
 
-def _uom_for(db, service_code: str) -> Optional[str]:
-    row = db.execute(
-        "SELECT uom FROM service_items WHERE code = ?", (service_code,)
-    ).fetchone()
+def _uom_for(db, service_code: str) -> str | None:
+    row = db.execute("SELECT uom FROM service_items WHERE code = ?", (service_code,)).fetchone()
     return row["uom"] if row else None
 
 
-def issue_invoice(invoice_id: int, *, actor: Optional[str] = None) -> dict:
+def issue_invoice(invoice_id: int, *, actor: str | None = None) -> dict:
     """Draft → issued. Allocates the GST invoice number.
 
     ORDER MATTERS HERE. The status is checked BEFORE a number is drawn, because
@@ -2295,7 +2503,8 @@ def issue_invoice(invoice_id: int, *, actor: Optional[str] = None) -> dict:
         # number (multisite-2, migration 72): a reprint after the hospital's
         # details change still shows what the invoice was issued with.
         snapshot = facility_identity.supplier_snapshot(
-            db, patient_id=patient_id, admission_id=admission_id)
+            db, patient_id=patient_id, admission_id=admission_id
+        )
         updated = db.execute(
             "UPDATE invoices SET status = 'issued', invoice_number = ?, "
             "issued_at = ?, issued_by = ?, updated_at = CURRENT_TIMESTAMP, "
@@ -2307,7 +2516,8 @@ def issue_invoice(invoice_id: int, *, actor: Optional[str] = None) -> dict:
             logger.error(
                 "Invoice %s was not in draft when its number was applied; document "
                 "number %s is now a GAP in the INV series and must be accounted for.",
-                invoice_id, allocation["number"],
+                invoice_id,
+                allocation["number"],
             )
             raise BillingError(
                 "this invoice was issued or cancelled by someone else; reload it",
@@ -2339,15 +2549,18 @@ def _assert_transition(current: str, target: str, invoice_id: int) -> None:
     if target not in allowed:
         raise BillingError(
             f"invoice {invoice_id} is {current}; it cannot become {target}"
-            + (", an invoice with payments against it is reversed with a credit "
-               "note, never cancelled" if current in ("paid", "partially_paid")
-               and target == "cancelled" else ""),
+            + (
+                ", an invoice with payments against it is reversed with a credit "
+                "note, never cancelled"
+                if current in ("paid", "partially_paid") and target == "cancelled"
+                else ""
+            ),
             code="illegal_transition",
             detail={"from": current, "to": target, "allowed": sorted(allowed)},
         )
 
 
-def cancel_invoice(invoice_id: int, *, reason: str, actor: Optional[str] = None) -> dict:
+def cancel_invoice(invoice_id: int, *, reason: str, actor: str | None = None) -> dict:
     """Cancel a draft or an unpaid issued invoice, with a typed reason.
 
     NOTHING IS DELETED. The invoice row, its lines and its number all stay; the
@@ -2402,8 +2615,7 @@ def cancel_invoice(invoice_id: int, *, reason: str, actor: Optional[str] = None)
             db,
             action_type="billing_invoice_cancelled",
             summary=(
-                f"Invoice {invoice_id} ({row['invoice_number'] or 'draft'}) cancelled: "
-                f"{cleaned}"
+                f"Invoice {invoice_id} ({row['invoice_number'] or 'draft'}) cancelled: {cleaned}"
             ),
             patient_id=row["patient_id"],
             target_type="invoice",
@@ -2434,9 +2646,7 @@ def _existing_credit_note(db, invoice_id: int):
     ).fetchone()
 
 
-def create_credit_note(
-    invoice_id: int, *, reason: str, actor: Optional[str] = None
-) -> dict:
+def create_credit_note(invoice_id: int, *, reason: str, actor: str | None = None) -> dict:
     """Reverse an issued invoice with a SECOND document, not an erasure.
 
     The credit note is a full invoice row of type ``credit_note`` whose lines are
@@ -2472,9 +2682,7 @@ def create_credit_note(
                 code="illegal_transition",
             )
         if row["invoice_type"] == "credit_note":
-            raise BillingError(
-                "a credit note cannot itself be credited", code="illegal_transition"
-            )
+            raise BillingError("a credit note cannot itself be credited", code="illegal_transition")
         existing = _existing_credit_note(db, invoice_id)
         if existing is not None:
             raise BillingError(
@@ -2490,20 +2698,22 @@ def create_credit_note(
                 },
             )
         source = _row(row)
-        lines = [_row(r) for r in db.execute(
-            "SELECT * FROM invoice_lines WHERE invoice_id = ? ORDER BY line_no",
-            (int(invoice_id),),
-        ).fetchall()]
+        lines = [
+            _row(r)
+            for r in db.execute(
+                "SELECT * FROM invoice_lines WHERE invoice_id = ? ORDER BY line_no",
+                (int(invoice_id),),
+            ).fetchall()
+        ]
         # The facility whose INV series numbers the note (multisite-7a): the
         # one its supplier snapshot below is taken for. Facility 1 while only
         # one is on record, with no statement run.
         series_facility = facility_identity.document_facility_id(
-            db, patient_id=source["patient_id"], admission_id=source["admission_id"])
+            db, patient_id=source["patient_id"], admission_id=source["admission_id"]
+        )
 
     if not lines:
-        raise BillingError(
-            f"invoice {invoice_id} has no lines to credit", code="no_charges"
-        )
+        raise BillingError(f"invoice {invoice_id} has no lines to credit", code="no_charges")
 
     reversed_lines = [
         compute_line(
@@ -2531,7 +2741,10 @@ def create_credit_note(
         logger.warning(
             "Credit note for invoice %s: reversed lines total %s against a payable "
             "of %s; the %s paise difference is carried as round-off.",
-            invoice_id, totals.total_paise, source_payable, cn_rounding,
+            invoice_id,
+            totals.total_paise,
+            source_payable,
+            cn_rounding,
         )
     try:
         allocation = billing_masters.next_document_number("INV", facility_id=series_facility)
@@ -2554,7 +2767,9 @@ def create_credit_note(
                 "Invoice %s was credited by note %s while credit note number %s was "
                 "being drawn; that number is now a GAP in the INV series and must be "
                 "accounted for.",
-                invoice_id, int(raced["id"]), allocation["number"],
+                invoice_id,
+                int(raced["id"]),
+                allocation["number"],
             )
             raise BillingError(
                 f"invoice {invoice_id} was credited by someone else while this "
@@ -2569,7 +2784,8 @@ def create_credit_note(
         # A credit note is numbered here, so its supplier block is fixed here
         # too (multisite-2, migration 72), from the identity on record now.
         snapshot = facility_identity.supplier_snapshot(
-            db, patient_id=source["patient_id"], admission_id=source["admission_id"])
+            db, patient_id=source["patient_id"], admission_id=source["admission_id"]
+        )
         cur = db.execute(
             """INSERT INTO invoices
                  (invoice_number, patient_id, admission_id, encounter_type, payer_id,
@@ -2578,25 +2794,42 @@ def create_credit_note(
                   sgst_paise, igst_paise, tax_paise, total_paise,
                   rounding_adjustment_paise, payable_paise, amount_paid_paise,
                   balance_paise, supersedes_invoice_id, issued_at, issued_by,
-                  notes, created_by, """ + facility_identity.SNAPSHOT_COLUMNS_SQL + """)
+                  notes, created_by, """
+            + facility_identity.SNAPSHOT_COLUMNS_SQL
+            + """)
                VALUES (?,?,?,?,?,?,'credit_note','issued',?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,"""
-            + facility_identity.SNAPSHOT_PLACEHOLDERS + ")",
+            + facility_identity.SNAPSHOT_PLACEHOLDERS
+            + ")",
             (
-                allocation["number"], source["patient_id"], source["admission_id"],
-                source["encounter_type"], source["payer_id"], source["tariff_plan_id"],
-                source["place_of_supply"], source["is_interstate"],
-                totals.subtotal_paise, totals.discount_paise, totals.taxable_value_paise,
-                totals.cgst_paise, totals.sgst_paise, totals.igst_paise,
-                totals.tax_paise, totals.total_paise,
-                cn_rounding, cn_payable,
-                cn_payable, int(invoice_id), _now_iso(), actor,
+                allocation["number"],
+                source["patient_id"],
+                source["admission_id"],
+                source["encounter_type"],
+                source["payer_id"],
+                source["tariff_plan_id"],
+                source["place_of_supply"],
+                source["is_interstate"],
+                totals.subtotal_paise,
+                totals.discount_paise,
+                totals.taxable_value_paise,
+                totals.cgst_paise,
+                totals.sgst_paise,
+                totals.igst_paise,
+                totals.tax_paise,
+                totals.total_paise,
+                cn_rounding,
+                cn_payable,
+                cn_payable,
+                int(invoice_id),
+                _now_iso(),
+                actor,
                 f"Credit note against invoice {source['invoice_number'] or invoice_id}: {cleaned}",
                 actor,
                 *snapshot,
             ),
         )
         note_id = int(cur.lastrowid)
-        for line_no, (src, line) in enumerate(zip(lines, reversed_lines), start=1):
+        for line_no, (src, line) in enumerate(zip(lines, reversed_lines, strict=False), start=1):
             db.execute(
                 """INSERT INTO invoice_lines
                      (invoice_id, line_no, encounter_charge_id, service_item_id,
@@ -2606,13 +2839,26 @@ def create_credit_note(
                       igst_paise, tax_paise, total_paise)
                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    note_id, line_no, src["encounter_charge_id"], src["service_item_id"],
-                    src["service_code"], f"Credit: {src['description']}", src["hsn_sac"],
-                    int(src["quantity_milli"] or QUANTITY_SCALE), src["uom"],
+                    note_id,
+                    line_no,
+                    src["encounter_charge_id"],
+                    src["service_item_id"],
+                    src["service_code"],
+                    f"Credit: {src['description']}",
+                    src["hsn_sac"],
+                    int(src["quantity_milli"] or QUANTITY_SCALE),
+                    src["uom"],
                     -int(src["unit_rate_paise"] or 0),
-                    line.gross_paise, line.discount_paise, line.gst_treatment,
-                    line.gst_rate_bp, line.taxable_value_paise, line.cgst_paise,
-                    line.sgst_paise, line.igst_paise, line.tax_paise, line.total_paise,
+                    line.gross_paise,
+                    line.discount_paise,
+                    line.gst_treatment,
+                    line.gst_rate_bp,
+                    line.taxable_value_paise,
+                    line.cgst_paise,
+                    line.sgst_paise,
+                    line.igst_paise,
+                    line.tax_paise,
+                    line.total_paise,
                 ),
             )
         _audit(
@@ -2700,9 +2946,11 @@ def refresh_invoice_payment_state(invoice_id: int) -> dict:
             else:
                 status = "partially_paid"
 
-        if (paid != int(row["amount_paid_paise"] or 0)
-                or balance != int(row["balance_paise"] or 0)
-                or status != row["status"]):
+        if (
+            paid != int(row["amount_paid_paise"] or 0)
+            or balance != int(row["balance_paise"] or 0)
+            or status != row["status"]
+        ):
             db.execute(
                 "UPDATE invoices SET amount_paid_paise = ?, balance_paise = ?, "
                 "status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -2716,10 +2964,13 @@ def get_invoice(invoice_id: int) -> dict:
     """One invoice, its lines, its patient and what has been paid against it."""
     header = refresh_invoice_payment_state(invoice_id)
     with db_session() as db:
-        lines = [_row(r) for r in db.execute(
-            "SELECT * FROM invoice_lines WHERE invoice_id = ? ORDER BY line_no",
-            (int(invoice_id),),
-        ).fetchall()]
+        lines = [
+            _row(r)
+            for r in db.execute(
+                "SELECT * FROM invoice_lines WHERE invoice_id = ? ORDER BY line_no",
+                (int(invoice_id),),
+            ).fetchall()
+        ]
         patient = db.execute(
             "SELECT id, name, mrn, age, sex, ward, bed FROM patients WHERE id = ?",
             (header["patient_id"],),
@@ -2730,26 +2981,40 @@ def get_invoice(invoice_id: int) -> dict:
                 "SELECT id, code, name, payer_type, gstin FROM payers WHERE id = ?",
                 (int(header["payer_id"]),),
             ).fetchone()
-        payments = [_row(r) for r in db.execute(
-            """SELECT p.id, p.receipt_number, p.amount_paise, p.direction, p.method,
+        payments = [
+            _row(r)
+            for r in db.execute(
+                """SELECT p.id, p.receipt_number, p.amount_paise, p.direction, p.method,
                       p.status, p.received_at
                  FROM payments p
                 WHERE p.invoice_id = ?
                    OR p.id IN (SELECT payment_id FROM payment_allocations
                                 WHERE invoice_id = ? AND reversed_at IS NULL)
                 ORDER BY p.id""",
-            (int(invoice_id), int(invoice_id)),
-        ).fetchall()]
-        credit_notes = [_row(r) for r in db.execute(
-            "SELECT id, invoice_number, payable_paise, issued_at FROM invoices "
-            "WHERE supersedes_invoice_id = ? ORDER BY id",
-            (int(invoice_id),),
-        ).fetchall()]
+                (int(invoice_id), int(invoice_id)),
+            ).fetchall()
+        ]
+        credit_notes = [
+            _row(r)
+            for r in db.execute(
+                "SELECT id, invoice_number, payable_paise, issued_at FROM invoices "
+                "WHERE supersedes_invoice_id = ? ORDER BY id",
+                (int(invoice_id),),
+            ).fetchall()
+        ]
 
     for line in lines:
-        for field in ("gross_paise", "discount_paise", "taxable_value_paise",
-                      "cgst_paise", "sgst_paise", "igst_paise", "tax_paise",
-                      "total_paise", "unit_rate_paise"):
+        for field in (
+            "gross_paise",
+            "discount_paise",
+            "taxable_value_paise",
+            "cgst_paise",
+            "sgst_paise",
+            "igst_paise",
+            "tax_paise",
+            "total_paise",
+            "unit_rate_paise",
+        ):
             line[field.replace("_paise", "_display")] = format_inr(int(line[field] or 0))
         line["quantity"] = int(line["quantity_milli"] or 0) / QUANTITY_SCALE
     for payment in payments:
@@ -2775,14 +3040,16 @@ def get_invoice(invoice_id: int) -> dict:
 
 def list_invoices(
     *,
-    patient_id: Optional[str] = None,
-    admission_id: Optional[str] = None,
-    status: Optional[str] = None,
-    invoice_type: Optional[str] = None,
+    patient_id: str | None = None,
+    admission_id: str | None = None,
+    status: str | None = None,
+    invoice_type: str | None = None,
     limit: int = 200,
 ) -> list[dict]:
-    sql = ("SELECT i.*, p.name AS patient_name, p.mrn AS patient_mrn "
-           "FROM invoices i LEFT JOIN patients p ON p.id = i.patient_id WHERE 1=1")
+    sql = (
+        "SELECT i.*, p.name AS patient_name, p.mrn AS patient_mrn "
+        "FROM invoices i LEFT JOIN patients p ON p.id = i.patient_id WHERE 1=1"
+    )
     params: list[Any] = []
     if patient_id:
         sql += " AND i.patient_id = ?"
@@ -2806,9 +3073,26 @@ def list_invoices(
 # ── The printable document ───────────────────────────────────────────────────
 
 _ONES = (
-    "", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
-    "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen",
-    "Seventeen", "Eighteen", "Nineteen",
+    "",
+    "One",
+    "Two",
+    "Three",
+    "Four",
+    "Five",
+    "Six",
+    "Seven",
+    "Eight",
+    "Nine",
+    "Ten",
+    "Eleven",
+    "Twelve",
+    "Thirteen",
+    "Fourteen",
+    "Fifteen",
+    "Sixteen",
+    "Seventeen",
+    "Eighteen",
+    "Nineteen",
 )
 _TENS = ("", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety")
 
@@ -2888,10 +3172,17 @@ def invoice_print_view(invoice_id: int) -> dict:
     # (multisite-7a); facility 1 for a bill numbered before migration 72.
     with db_session() as db:
         series_configured = billing_masters.series_is_configured(
-            db, "INV", facility_id=int(supplier.get("facility_id") or billing_masters.MAIN_FACILITY_ID))
+            db,
+            "INV",
+            facility_id=int(supplier.get("facility_id") or billing_masters.MAIN_FACILITY_ID),
+        )
 
-    tax_lines = [l for l in invoice["lines"] if int(l["tax_paise"] or 0) != 0]
-    exempt_lines = [l for l in invoice["lines"] if l["gst_treatment"] != "taxable"]
+    tax_lines = [
+        left_item for left_item in invoice["lines"] if int(left_item["tax_paise"] or 0) != 0
+    ]
+    exempt_lines = [
+        left_item for left_item in invoice["lines"] if left_item["gst_treatment"] != "taxable"
+    ]
 
     return {
         "invoice": invoice,
@@ -2903,8 +3194,9 @@ def invoice_print_view(invoice_id: int) -> dict:
         "supplier": supplier,
         "number_series_configured": series_configured,
         "number_notice": (
-            None if series_configured else
-            "Document numbers come from a placeholder series. Set the hospital's "
+            None
+            if series_configured
+            else "Document numbers come from a placeholder series. Set the hospital's "
             "real invoice series before treating these numbers as final."
         ),
         "amount_in_words": amount_in_words(int(invoice["payable_paise"] or 0)),
@@ -2921,6 +3213,7 @@ def invoice_print_view(invoice_id: int) -> dict:
 
 # ── Patient money view + the discharge advisory ──────────────────────────────
 
+
 def _refresh_patient_invoices(patient_id: str) -> None:
     """Re-derive payment state for every live invoice of one patient.
 
@@ -2934,7 +3227,8 @@ def _refresh_patient_invoices(patient_id: str) -> None:
     """
     with db_session() as db:
         ids = [
-            int(r["id"]) for r in db.execute(
+            int(r["id"])
+            for r in db.execute(
                 "SELECT id FROM invoices WHERE patient_id = ? AND status IN "
                 "('issued','partially_paid','paid')",
                 (patient_id,),
@@ -2947,9 +3241,7 @@ def _refresh_patient_invoices(patient_id: str) -> None:
             continue
 
 
-def patient_financial_summary(
-    patient_id: str, *, admission_id: Optional[str] = None
-) -> dict:
+def patient_financial_summary(patient_id: str, *, admission_id: str | None = None) -> dict:
     """What this patient owes, what is not yet billed, and what is unknowable.
 
     ``outstanding_paise`` is the SUM of the balances of live invoices — issued
@@ -2992,13 +3284,16 @@ def patient_financial_summary(
             "AS unpriced "
             "FROM encounter_charges WHERE patient_id = ? AND status = ?"
             + (" AND (admission_id = ? OR admission_id IS NULL)" if admission_id else ""),
-            ((patient_id, _CHARGE_BILLABLE, admission_id) if admission_id
-             else (patient_id, _CHARGE_BILLABLE)),
+            (
+                (patient_id, _CHARGE_BILLABLE, admission_id)
+                if admission_id
+                else (patient_id, _CHARGE_BILLABLE)
+            ),
         ).fetchone()
         deposit = db.execute(
             "SELECT COALESCE(SUM(amount_paise), 0) AS bal FROM patient_deposits "
-            "WHERE patient_id = ?" + (" AND (admission_id = ? OR admission_id IS NULL)"
-                                      if admission_id else ""),
+            "WHERE patient_id = ?"
+            + (" AND (admission_id = ? OR admission_id IS NULL)" if admission_id else ""),
             ((patient_id, admission_id) if admission_id else (patient_id,)),
         ).fetchone()["bal"]
         open_claims = 0
@@ -3038,8 +3333,8 @@ def patient_financial_summary(
 def discharge_financial_advisory(
     *,
     patient_id: str,
-    admission_id: Optional[str] = None,
-    checked_by: Optional[str] = None,
+    admission_id: str | None = None,
+    checked_by: str | None = None,
     record: bool = True,
 ) -> dict:
     """What the money side knows at discharge. ADVISORY. It cannot stop anything.
@@ -3070,7 +3365,7 @@ def discharge_financial_advisory(
     summary = patient_financial_summary(patient_id, admission_id=admission_id)
 
     unpriceable = 0
-    capture_error: Optional[str] = None
+    capture_error: str | None = None
     try:
         dry = capture_clinical_charges(
             patient_id=patient_id, admission_id=admission_id, dry_run=True
@@ -3086,14 +3381,16 @@ def discharge_financial_advisory(
         capture_error = str(exc)
         unpriceable, uncaptured = 0, 0
         logger.warning(
-            "Discharge advisory could not price this encounter for %s", patient_id,
+            "Discharge advisory could not price this encounter for %s",
+            patient_id,
             exc_info=True,
         )
 
     with db_session() as db:
-        has_plan = db.execute(
-            "SELECT 1 FROM tariff_plans WHERE is_active = 1 LIMIT 1"
-        ).fetchone() is not None
+        has_plan = (
+            db.execute("SELECT 1 FROM tariff_plans WHERE is_active = 1 LIMIT 1").fetchone()
+            is not None
+        )
 
     net_due = summary["net_due_paise"]
     # A captured-but-unpriced charge forces 'unknown' for the same reason an
@@ -3103,8 +3400,7 @@ def discharge_financial_advisory(
     # capture pass could NOT turn into charges; ``unpriced_charge_count`` is
     # charges that DID land (the frontdesk writes them deliberately — "UNPRICED
     # IS NOT FREE") and are waiting for the billing counter to price them.
-    if (capture_error or unpriceable > 0 or not has_plan
-            or summary["unpriced_charge_count"] > 0):
+    if capture_error or unpriceable > 0 or not has_plan or summary["unpriced_charge_count"] > 0:
         status = "unknown"
     elif net_due > 0:
         status = "outstanding"
@@ -3131,9 +3427,7 @@ def discharge_financial_advisory(
     # ₹-figure below only ever describes the PRICED ones. Say each thing about
     # the charges it is true of: a "worth ₹0.00" line that is really "worth
     # nobody-has-said" reads as "this costs nothing" at a discharge counter.
-    priced_unbilled = (
-        summary["unbilled_charge_count"] - summary["unpriced_charge_count"]
-    )
+    priced_unbilled = summary["unbilled_charge_count"] - summary["unpriced_charge_count"]
     if priced_unbilled:
         reasons.append(
             f"{_count(priced_unbilled, 'captured charge')} worth "
@@ -3155,13 +3449,13 @@ def discharge_financial_advisory(
     # and the patient left without the refund being raised.
     if status == "clear" and net_due < 0:
         reasons.append(
-            f"{format_inr(-net_due)} is due back to the patient: raise the refund "
-            "before they leave"
+            f"{format_inr(-net_due)} is due back to the patient: raise the refund before they leave"
         )
     if summary["open_claim_count"]:
         n_claims = summary["open_claim_count"]
         reasons.append(
-            f"{_count(n_claims, 'insurance claim')} {'is' if n_claims == 1 else 'are'} still open")
+            f"{_count(n_claims, 'insurance claim')} {'is' if n_claims == 1 else 'are'} still open"
+        )
 
     advisory = {
         **summary,
@@ -3174,8 +3468,8 @@ def discharge_financial_advisory(
         "headline": _advisory_headline(status, summary, blocks),
         "message": (
             "Advisory only: this does not prevent the discharge."
-            if not blocks else
-            "Financial clearance is ENFORCED at this deployment; an override is required."
+            if not blocks
+            else "Financial clearance is ENFORCED at this deployment; an override is required."
         ),
         "checked_at": _now_iso(),
         "checked_by": checked_by,
@@ -3196,7 +3490,7 @@ def _advisory_headline(status: str, summary: dict, blocks: bool) -> str:
     return "No outstanding balance recorded"
 
 
-def _record_discharge_check(advisory: dict, *, checked_by: Optional[str]) -> None:
+def _record_discharge_check(advisory: dict, *, checked_by: str | None) -> None:
     """Write the advisory into discharge_financial_checks. Never raises upward.
 
     ``discharge_proceeded`` is written as 1 and ``blocked_discharge`` as 0 unless
@@ -3215,12 +3509,13 @@ def _record_discharge_check(advisory: dict, *, checked_by: Optional[str]) -> Non
                       discharge_proceeded, notes)
                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    advisory["patient_id"], advisory["admission_id"], _now_iso(),
+                    advisory["patient_id"],
+                    advisory["admission_id"],
+                    _now_iso(),
                     checked_by,
                     # 'unknown' stores NULL rather than 0: the column must not
                     # claim a figure the check could not compute.
-                    None if advisory["advisory_status"] == "unknown"
-                    else advisory["net_due_paise"],
+                    None if advisory["advisory_status"] == "unknown" else advisory["net_due_paise"],
                     advisory["deposit_balance_paise"],
                     advisory["unbilled_charge_count"],
                     advisory["open_claim_count"],
@@ -3235,16 +3530,17 @@ def _record_discharge_check(advisory: dict, *, checked_by: Optional[str]) -> Non
         logger.warning(
             "Could not record the discharge financial check for %s; the advisory "
             "still stands and the discharge is unaffected.",
-            advisory.get("patient_id"), exc_info=True,
+            advisory.get("patient_id"),
+            exc_info=True,
         )
 
 
 def assert_discharge_permitted(
     *,
     patient_id: str,
-    admission_id: Optional[str] = None,
-    checked_by: Optional[str] = None,
-    override_reason: Optional[str] = None,
+    admission_id: str | None = None,
+    checked_by: str | None = None,
+    override_reason: str | None = None,
 ) -> dict:
     """The hook a discharge path may call. WITH THE FLAG OFF IT NEVER REFUSES.
 
@@ -3273,7 +3569,9 @@ def assert_discharge_permitted(
     ``override_reason`` always clears the stop — recorded against the actor.
     """
     advisory = discharge_financial_advisory(
-        patient_id=patient_id, admission_id=admission_id, checked_by=checked_by,
+        patient_id=patient_id,
+        admission_id=admission_id,
+        checked_by=checked_by,
     )
     if not advisory["blocks_discharge"]:
         return advisory

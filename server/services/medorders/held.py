@@ -18,9 +18,11 @@ Sage cannot describe the same hold three ways:
 tests/test_medorder_reader_registry.py lists every module that reads FROM
 medications and what a hold does to it.
 """
+
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from collections.abc import Mapping
+from typing import Any
 
 from services.hospital_time import hospital_stamp
 
@@ -33,7 +35,7 @@ HELD_COLUMNS = ("held_at", "hold_reason")
 PORTAL_STATUS = "On hold"
 
 
-def _field(row: Any, name: str) -> Optional[Any]:
+def _field(row: Any, name: str) -> Any | None:
     if row is None:
         return None
     if isinstance(row, Mapping):

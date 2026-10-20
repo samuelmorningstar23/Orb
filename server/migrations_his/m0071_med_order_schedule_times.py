@@ -42,6 +42,7 @@ second run changes nothing, and an index or trigger is created only when the
 table has every column it names, so an unusual table of the same name cannot
 stop boot.
 """
+
 from migrations import Migration
 
 #: Where a set of times came from. Shared with the writer.
@@ -72,27 +73,53 @@ TABLE_NAMES = ("med_order_schedule_times",)
 # (index name, key columns, unique, WHERE clause, every column it names)
 _INDEXES = (
     # One row per time per version of an order's schedule.
-    ("ux_med_order_schedule_times_slot", "med_order_id, schedule_version, due_time", True,
-     None, ("med_order_id", "schedule_version", "due_time")),
+    (
+        "ux_med_order_schedule_times_slot",
+        "med_order_id, schedule_version, due_time",
+        True,
+        None,
+        ("med_order_id", "schedule_version", "due_time"),
+    ),
     # The times in force, read by the nurse board for every linked drug.
-    ("idx_med_order_schedule_times_current", "med_order_id", False,
-     "superseded_at IS NULL", ("med_order_id", "superseded_at")),
-    ("idx_med_order_schedule_times_patient", "patient_id, created_at", False, None,
-     ("patient_id", "created_at")),
+    (
+        "idx_med_order_schedule_times_current",
+        "med_order_id",
+        False,
+        "superseded_at IS NULL",
+        ("med_order_id", "superseded_at"),
+    ),
+    (
+        "idx_med_order_schedule_times_patient",
+        "patient_id, created_at",
+        False,
+        None,
+        ("patient_id", "created_at"),
+    ),
 )
 
 INDEX_NAMES = frozenset(entry[0] for entry in _INDEXES)
 
-_IMMUTABLE = ("id", "med_order_id", "patient_id", "schedule_version", "due_time", "basis",
-              "site_times_version", "site_times_fingerprint", "authored_by", "authored_at",
-              "created_at")
+_IMMUTABLE = (
+    "id",
+    "med_order_id",
+    "patient_id",
+    "schedule_version",
+    "due_time",
+    "basis",
+    "site_times_version",
+    "site_times_fingerprint",
+    "authored_by",
+    "authored_at",
+    "created_at",
+)
 
 #: A set time is superseded once and otherwise never changes.
 WRITTEN_ONCE_TRIGGER = (
     "CREATE TRIGGER IF NOT EXISTS trg_med_order_schedule_times_written_once "
     "BEFORE UPDATE ON med_order_schedule_times "
     "WHEN OLD.superseded_at IS NOT NULL OR "
-    + " OR ".join(f"NEW.{c} IS NOT OLD.{c}" for c in _IMMUTABLE) + " "
+    + " OR ".join(f"NEW.{c} IS NOT OLD.{c}" for c in _IMMUTABLE)
+    + " "
     "BEGIN SELECT RAISE(ABORT, 'a set dose time is never rewritten: "
     "supersede it with a new version'); END"
 )
@@ -113,7 +140,8 @@ def apply(conn) -> None:
         kind = "UNIQUE INDEX" if unique else "INDEX"
         clause = f" WHERE {where}" if where else ""
         conn.execute(
-            f"CREATE {kind} IF NOT EXISTS {name} ON med_order_schedule_times({keyed}){clause}")
+            f"CREATE {kind} IF NOT EXISTS {name} ON med_order_schedule_times({keyed}){clause}"
+        )
     if set(_IMMUTABLE) | {"superseded_at"} <= present:
         conn.execute(WRITTEN_ONCE_TRIGGER)
 

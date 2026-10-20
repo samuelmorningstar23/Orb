@@ -8,13 +8,18 @@ Never downloads a model: the Whisper weights must already be installed under
 server/mlx_models/<name>/. When they are not, it says "speech model not
 installed" on stderr and exits 2 (Orb is offline, owner ruling 4 October 2026).
 """
-import sys
+
 import json
 import os
+import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from services.asr_model_files import SpeechModelNotInstalled, force_hub_offline, require_installed
-from services.audio_conversion import convert_to_wav
+from services.asr_model_files import (  # noqa: E402 - application imports require the path/environment bootstrap above.
+    SpeechModelNotInstalled,
+    force_hub_offline,
+    require_installed,
+)
+from services.audio_conversion import convert_to_wav  # noqa: E402 - application imports require the path/environment bootstrap above.
 
 # Before anything imports huggingface_hub, which reads it once at import time.
 force_hub_offline()
@@ -24,6 +29,7 @@ def main():
     audio_path = sys.argv[1]
     model = sys.argv[2] if len(sys.argv) > 2 else "large-v3"
     from services.asr_worker_protocol import STDIN_HINTS_FLAG, read_hints
+
     # Do not support legacy argv hints: patient context must never appear in ps.
     if len(sys.argv) > 3 and sys.argv[3] != STDIN_HINTS_FLAG:
         print("Invalid speech hint transport", file=sys.stderr)
@@ -64,7 +70,7 @@ def main():
             path_or_hf_repo=str(model_path),
             language=whisper_language,
             batch_size=batch_size,
-            initial_prompt=clinical_prompt
+            initial_prompt=clinical_prompt,
         )
 
         result_json = json.dumps({"text": result["text"]})

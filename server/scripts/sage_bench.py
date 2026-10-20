@@ -23,15 +23,16 @@ Usage (server already running):
     .venv/bin/python scripts/sage_bench.py --suite general --out docs/perf/sage-general.json
     .venv/bin/python scripts/sage_bench.py --suite patient --out docs/perf/sage-patient.json
 """
+
 from __future__ import annotations
 
 import argparse
 import json
 import statistics
-import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -85,8 +86,14 @@ PATIENT_TEMPLATES = [
     ("What is {name}'s respiratory rate?", "latest_rr"),
     ("Which ward is {name} admitted to?", "ward"),
     ("Has {name} had any critical alerts?", "risk_level"),
-    ("Given {name}'s diagnosis and current vitals, what should I watch for overnight?", "diagnosis"),
-    ("What antibiotics, if any, is {name} receiving, and are they appropriate for the diagnosis?", "medications"),
+    (
+        "Given {name}'s diagnosis and current vitals, what should I watch for overnight?",
+        "diagnosis",
+    ),
+    (
+        "What antibiotics, if any, is {name} receiving, and are they appropriate for the diagnosis?",
+        "medications",
+    ),
     ("Based on {name}'s NEWS2 and trajectory, does this patient need escalation now?", "news2"),
     ("Give me a handover summary for {name}.", "diagnosis"),
 ]
@@ -103,7 +110,8 @@ def fetch_patient_ground_truth(client: httpx.Client, patient_id: str) -> dict:
     latest = vitals[0] if vitals else {}
     meds = [
         f"{m.get('drug_name')} {m.get('dosage') or ''}".strip()
-        for m in d.get("medications", []) if m.get("status") == "active"
+        for m in d.get("medications", [])
+        if m.get("status") == "active"
     ]
     risk = d.get("risk", {}) or {}
     return {
@@ -115,8 +123,11 @@ def fetch_patient_ground_truth(client: httpx.Client, patient_id: str) -> dict:
         "ward": p.get("ward"),
         "diagnosis": p.get("diagnosis"),
         "latest_hr": latest.get("heart_rate"),
-        "latest_bp": (f"{latest.get('systolic_bp')}/{latest.get('diastolic_bp')}"
-                      if latest.get("systolic_bp") else None),
+        "latest_bp": (
+            f"{latest.get('systolic_bp')}/{latest.get('diastolic_bp')}"
+            if latest.get("systolic_bp")
+            else None
+        ),
         "latest_spo2": latest.get("spo2"),
         "latest_temp": latest.get("temperature"),
         "latest_rr": latest.get("respiratory_rate"),
@@ -135,7 +146,7 @@ def ask(client: httpx.Client, question: str, patient_id: str | None) -> dict:
         body["patient_id"] = patient_id
 
     t0 = time.perf_counter()
-    rec = {
+    rec: dict[str, Any] = {
         "question": question,
         "patient_id": patient_id,
         "stage_retrieving_ms": None,
@@ -203,6 +214,7 @@ def summarize(records: list[dict]) -> dict:
             "max": round(vals[-1], 1),
             "mean": round(statistics.fmean(vals), 1),
         }
+
     return {
         "count": len(records),
         "errors": sum(1 for r in records if r.get("error")),
@@ -211,7 +223,8 @@ def summarize(records: list[dict]) -> dict:
         "retrieval_ms": stat("retrieval_ms"),
         "total_ms": stat("total_ms"),
         "under_5s_first_words": sum(
-            1 for r in records
+            1
+            for r in records
             if r.get("first_words_ms") is not None and r["first_words_ms"] <= 5000
         ),
     }
@@ -229,8 +242,7 @@ def main():
     args = ap.parse_args()
 
     client = httpx.Client(base_url=args.base, timeout=60, trust_env=False)
-    r = client.post("/api/auth/login",
-                    json={"employee_id": args.user, "password": args.password})
+    r = client.post("/api/auth/login", json={"employee_id": args.user, "password": args.password})
     r.raise_for_status()
     tok = r.json().get("access_token") or r.json().get("token")
     client.headers["Authorization"] = f"Bearer {tok}"
@@ -243,8 +255,11 @@ def main():
             rec = ask(client, q, None)
             rec["tier"] = (i - 1) // 5 + 1
             records.append(rec)
-            print(f"      first_words={rec['first_words_ms']}ms total={rec['total_ms']}ms "
-                  f"err={rec['error']}", flush=True)
+            print(
+                f"      first_words={rec['first_words_ms']}ms total={rec['total_ms']}ms "
+                f"err={rec['error']}",
+                flush=True,
+            )
     else:
         pts = client.get("/api/vigil/patients?limit=100").json()
         assert pts, "no patients on the board"
@@ -262,19 +277,29 @@ def main():
             rec["ground_truth"] = truth
             rec["checked_field"] = field
             records.append(rec)
-            print(f"      first_words={rec['first_words_ms']}ms total={rec['total_ms']}ms "
-                  f"err={rec['error']}", flush=True)
+            print(
+                f"      first_words={rec['first_words_ms']}ms total={rec['total_ms']}ms "
+                f"err={rec['error']}",
+                flush=True,
+            )
 
     out = {
         "suite": args.suite,
         "label": args.label,
-        "run_at": datetime.now(timezone.utc).isoformat(),
+        "run_at": datetime.now(UTC).isoformat(),
         "summary": summarize(records),
         "records": records,
     }
-    path = Path(args.out) if args.out else (
-        SERVER_DIR.parent / "docs" / "perf" /
-        f"sage-{args.suite}-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.json")
+    path = (
+        Path(args.out)
+        if args.out
+        else (
+            SERVER_DIR.parent
+            / "docs"
+            / "perf"
+            / f"sage-{args.suite}-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}.json"
+        )
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(out, indent=2))
     print(f"\n→ {path}")

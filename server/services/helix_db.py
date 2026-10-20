@@ -1,5 +1,7 @@
 """Orb Hospital OS — Helix Database Layer"""
+
 import logging
+
 from database import db_session
 
 logger = logging.getLogger("orb.helix_db")
@@ -137,6 +139,7 @@ CREATE INDEX IF NOT EXISTS idx_helix_transitions_order ON helix_transitions(orde
 CREATE INDEX IF NOT EXISTS idx_helix_transitions_idem ON helix_transitions(idempotency_key);
 """
 
+
 def init_helix_db():
     """Initialize Helix schema and migrations additively.
 
@@ -172,7 +175,10 @@ def _index_med_order_link(conn):
     column a CREATE INDEX naming it would abort every statement after it. The
     index definition is migration 61's own, so the two can never disagree."""
     import migrations  # noqa: F401  (collects migrations_his before a file is imported)
-    from migrations_his.m0061_med_order_store import HELIX_MED_ORDER_INDEX, create_index_sql
+    from migrations_his.m0061_med_order_store import (
+        HELIX_MED_ORDER_INDEX,
+        create_index_sql,
+    )
 
     name, table, columns, where, unique = HELIX_MED_ORDER_INDEX
     cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -192,15 +198,19 @@ def _migrate_helix_orders(conn):
         # traceback saying the schema was left in an unknown state, which it was
         # not: the table is created correctly moments later. Ask sqlite_master,
         # exactly as migration 35 does for the same reason.
-        if conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' "
-            "AND name='helix_patient_med_orders'"
-        ).fetchone() is None:
+        if (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='helix_patient_med_orders'"
+            ).fetchone()
+            is None
+        ):
             return
 
         # Check if the new columns exist
-        cols = [row[1] for row in conn.execute("PRAGMA table_info(helix_patient_med_orders)").fetchall()]
-        if 'substitute_medication_id' not in cols:
+        cols = [
+            row[1] for row in conn.execute("PRAGMA table_info(helix_patient_med_orders)").fetchall()
+        ]
+        if "substitute_medication_id" not in cols:
             logger.info("Migrating helix_patient_med_orders for extended workflow")
             # Rename old, create new, copy, drop old
             conn.executescript("""
@@ -233,13 +243,17 @@ def _migrate_stock_movements(conn):
         # helix_stock_movements" and sent two ALTERs at nothing. Same guard as
         # _migrate_helix_orders above and migration 35. Since migration 49 the
         # runner creates the table before this runs, so this is the fallback.
-        if conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' "
-            "AND name='helix_stock_movements'"
-        ).fetchone() is None:
+        if (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='helix_stock_movements'"
+            ).fetchone()
+            is None
+        ):
             return
-        cols = [row[1] for row in conn.execute("PRAGMA table_info(helix_stock_movements)").fetchall()]
-        if 'medication_id' not in cols:
+        cols = [
+            row[1] for row in conn.execute("PRAGMA table_info(helix_stock_movements)").fetchall()
+        ]
+        if "medication_id" not in cols:
             logger.info("Migrating helix_stock_movements")
             try:
                 conn.execute("ALTER TABLE helix_stock_movements ADD COLUMN medication_id TEXT")

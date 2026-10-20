@@ -29,12 +29,13 @@ Sub-modules, one per concern, each exporting `router` (no prefix):
   reservations  bed reservations
   census        midnight census and its CSV
 """
-from fastapi import APIRouter, Depends
 
 import config
+from fastapi import APIRouter, Depends
 from permissions import ADT_READ, require_permission
-from routes.opt_in_gates import require_adt_module
+
 from routes.adt import board, census, end_stay, master, moves, presence, reservations
+from routes.opt_in_gates import require_adt_module
 
 router = APIRouter(
     prefix="/api/adt",
@@ -43,8 +44,11 @@ router = APIRouter(
 )
 
 
+_ADT_META_USER_DEFAULT = Depends(require_permission(ADT_READ))
+
+
 @router.get("/meta")
-def adt_meta(user: dict = Depends(require_permission(ADT_READ))):
+def adt_meta(user: dict = _ADT_META_USER_DEFAULT):
     """What this site's beds and admissions module is set to. No patient data."""
     return {
         "module": "adt",

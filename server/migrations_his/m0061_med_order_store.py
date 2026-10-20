@@ -59,10 +59,19 @@ default, no FOREIGN KEY, no CHECK on a column added to a Helix table, and no
 CURRENT_TIMESTAMP default (the writer stamps every instant in the canonical
 spelling from services/clinical_time).
 """
+
 from migrations import Migration
 
-STATUSES = ("draft", "prescribed", "verified", "held", "stopped", "completed",
-            "cancelled", "rejected")
+STATUSES = (
+    "draft",
+    "prescribed",
+    "verified",
+    "held",
+    "stopped",
+    "completed",
+    "cancelled",
+    "rejected",
+)
 
 MED_ORDERS_DDL = """CREATE TABLE IF NOT EXISTS med_orders (
     id TEXT PRIMARY KEY,
@@ -154,29 +163,67 @@ ADDED_COLUMNS = (
 #: same index, guarded on the column, for a database whose Helix tables were
 #: made after this migration ran (never inside its HELIX_SCHEMA script).
 HELIX_MED_ORDER_INDEX = (
-    "idx_helix_orders_med_order", "helix_patient_med_orders", ("med_order_id",),
-    "med_order_id IS NOT NULL", False,
+    "idx_helix_orders_med_order",
+    "helix_patient_med_orders",
+    ("med_order_id",),
+    "med_order_id IS NOT NULL",
+    False,
 )
 
 # (index name, table, columns, WHERE clause or "", unique)
 _INDEXES = (
     ("idx_med_orders_patient_status", "med_orders", ("patient_id", "status"), "", False),
-    ("idx_med_orders_status_verification", "med_orders", ("status", "needs_verification"),
-     "", False),
+    (
+        "idx_med_orders_status_verification",
+        "med_orders",
+        ("status", "needs_verification"),
+        "",
+        False,
+    ),
     ("idx_med_orders_cpoe", "med_orders", ("cpoe_order_id",), "cpoe_order_id IS NOT NULL", False),
-    ("idx_med_orders_admission", "med_orders", ("admission_id",), "admission_id IS NOT NULL",
-     False),
-    ("ux_med_orders_legacy_medication", "med_orders", ("legacy_medication_id",),
-     "legacy_medication_id IS NOT NULL", True),
-    ("ux_med_orders_idempotency", "med_orders", ("idempotency_key",),
-     "idempotency_key IS NOT NULL", True),
-    ("idx_med_order_events_order", "med_order_events", ("med_order_id", "created_at", "id"),
-     "", False),
+    (
+        "idx_med_orders_admission",
+        "med_orders",
+        ("admission_id",),
+        "admission_id IS NOT NULL",
+        False,
+    ),
+    (
+        "ux_med_orders_legacy_medication",
+        "med_orders",
+        ("legacy_medication_id",),
+        "legacy_medication_id IS NOT NULL",
+        True,
+    ),
+    (
+        "ux_med_orders_idempotency",
+        "med_orders",
+        ("idempotency_key",),
+        "idempotency_key IS NOT NULL",
+        True,
+    ),
+    (
+        "idx_med_order_events_order",
+        "med_order_events",
+        ("med_order_id", "created_at", "id"),
+        "",
+        False,
+    ),
     ("idx_med_order_events_patient", "med_order_events", ("patient_id", "created_at"), "", False),
-    ("ux_med_order_events_idempotency", "med_order_events", ("idempotency_key",),
-     "idempotency_key IS NOT NULL", True),
-    ("ux_medications_med_order", "medications", ("med_order_id",), "med_order_id IS NOT NULL",
-     True),
+    (
+        "ux_med_order_events_idempotency",
+        "med_order_events",
+        ("idempotency_key",),
+        "idempotency_key IS NOT NULL",
+        True,
+    ),
+    (
+        "ux_medications_med_order",
+        "medications",
+        ("med_order_id",),
+        "med_order_id IS NOT NULL",
+        True,
+    ),
     HELIX_MED_ORDER_INDEX,
 )
 

@@ -16,6 +16,7 @@ WHAT THESE TESTS ARE GUARDING, in the order the money is lost:
      are asserted in the service, in the route payloads and in the panel source.
      Deleting the sentence turns this file red.
 """
+from tests.source_contract import contract_source
 import os
 import sys
 
@@ -992,12 +993,26 @@ def test_every_write_route_is_gated_on_payer_write():
     that nobody wrote would catch it. So the rule is checked structurally: every
     `@router.get` takes `_DESK_READ`, everything else takes `_DESK_WRITE`.
     """
-    import inspect
+    import ast
     import re
 
     from routes import payer_routes as pr
 
-    blocks = re.split(r"\n@router\.", inspect.getsource(pr))[1:]
+    source = contract_source(pr)
+    handlers = [
+        node for node in ast.parse(source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and any(isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)
+                and isinstance(d.func.value, ast.Name) and d.func.value.id == "router"
+                for d in node.decorator_list)
+    ]
+    blocks = [
+        next(d.func.attr for d in node.decorator_list
+             if isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)
+             and isinstance(d.func.value, ast.Name) and d.func.value.id == "router")
+        + "(\n" + (ast.get_source_segment(source, node) or "")
+        for node in handlers
+    ]
     assert len(blocks) >= 20, "the router shrank — is this test still reading it?"
 
     seen_get = seen_write = 0

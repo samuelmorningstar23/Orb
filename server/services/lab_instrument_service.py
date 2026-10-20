@@ -59,6 +59,7 @@ EVERY WRITE is one BEGIN IMMEDIATE transaction with its audit row inside it,
 category clinical_config (fail-closed): an audit row that cannot be written
 rolls the change back, so the registry never changes unaudited.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -69,11 +70,12 @@ import secrets
 import uuid
 from datetime import date
 from decimal import Decimal, InvalidOperation
-from typing import Any, Optional
+from typing import Any, Literal, overload
 
 import config
 from database import db_session
 from permissions import LAB_INTERFACE, LAB_MASTER, has_permission
+
 from services.audit_service import log_audit_event
 from services.clinical_time import utc_iso_now
 
@@ -101,7 +103,8 @@ _NO_KEY_DIGEST = f"{CREDENTIAL_SCHEME}:{'0' * 64}"
 
 INSTRUMENT_ID_RE = re.compile(r"^[A-Z0-9][A-Z0-9_-]{1,31}$")
 _HOSTNAME_RE = re.compile(
-    r"^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$")
+    r"^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
+)
 # HL7 delimiters and control characters never survive into an OBX-3 code.
 _CODE_FORBIDDEN = re.compile(r"[|^~\\&\x00-\x1f\x7f]")
 
@@ -109,11 +112,20 @@ CODE_MAX = 64
 UNIT_MAX = 32
 TEXT_MAX = 200
 NOTE_MAX = 500
-FACTOR_MILLI_MAX = 1_000_000_000      # a factor of one million
+FACTOR_MILLI_MAX = 1_000_000_000  # a factor of one million
 
 _INSTRUMENT_EDITABLE = (
-    "name", "make", "model", "serial", "section_id", "protocol", "transport",
-    "host", "port", "assumed_timezone", "biomedical_asset_id",
+    "name",
+    "make",
+    "model",
+    "serial",
+    "section_id",
+    "protocol",
+    "transport",
+    "host",
+    "port",
+    "assumed_timezone",
+    "biomedical_asset_id",
 )
 
 # The public row: never credential_hash. An allow-list, so a later column is
@@ -173,7 +185,8 @@ class InstrumentAuthError(Exception):
 #  Small pure helpers
 # ════════════════════════════════════════════════════════════════════════════
 
-def normalise_instrument_id(value: Any) -> Optional[str]:
+
+def normalise_instrument_id(value: Any) -> str | None:
     """The instrument id in its one stored spelling (capitals), or None when
     it cannot be one: 2 to 32 of A-Z, 0-9, '-' and '_', starting with a letter
     or digit. The intake normalises the X-Instrument-Id header the same way."""
@@ -193,18 +206,21 @@ def hash_key(key: str) -> str:
     return f"{CREDENTIAL_SCHEME}:{hashlib.sha256(key.encode('utf-8')).hexdigest()}"
 
 
-def key_matches(stored: Optional[str], presented: Optional[str]) -> bool:
+def key_matches(stored: str | None, presented: str | None) -> bool:
     """Whether `presented` is the key whose digest is `stored`, compared in
     constant time. With nothing stored (an unknown instrument, or no key
     issued yet) the same comparison runs against a digest no key produces."""
     presented_digest = hash_key(presented if isinstance(presented, str) else "")
-    target = stored if isinstance(stored, str) and stored.startswith(f"{CREDENTIAL_SCHEME}:") \
+    target = (
+        stored
+        if isinstance(stored, str) and stored.startswith(f"{CREDENTIAL_SCHEME}:")
         else _NO_KEY_DIGEST
+    )
     same = hmac.compare_digest(presented_digest.encode("ascii"), target.encode("ascii"))
     return bool(same and stored and presented)
 
 
-def factor_text(factor_milli: Optional[int]) -> str:
+def factor_text(factor_milli: int | None) -> str:
     """'1', '0.1', '1000' from thousandths, with no trailing zeros."""
     if factor_milli is None:
         return ""
@@ -223,25 +239,47 @@ def _factor_milli(value: Any, *, numeric: bool) -> int:
     try:
         number = Decimal(str(value).strip())
     except (InvalidOperation, ValueError):
-        raise LabInstrumentError("invalid_value", "The factor must be a number.")
+        raise LabInstrumentError("invalid_value", "The factor must be a number.") from None
     if not number.is_finite() or number <= 0:
         raise LabInstrumentError("invalid_value", "The factor must be a number above zero.")
     milli = number * 1000
     if milli != milli.to_integral_value():
         raise LabInstrumentError(
-            "precision", "The factor can have at most three decimal places. Set the "
-            "analyser to report in the test's unit instead of converting here.")
+            "precision",
+            "The factor can have at most three decimal places. Set the "
+            "analyser to report in the test's unit instead of converting here.",
+        )
     milli_int = int(milli)
     if milli_int > FACTOR_MILLI_MAX:
         raise LabInstrumentError("invalid_value", "The factor is too large.")
     if not numeric and milli_int != 1000:
         raise LabInstrumentError(
-            "factor_not_numeric", "Only a test with a number result takes a conversion factor.")
+            "factor_not_numeric", "Only a test with a number result takes a conversion factor."
+        )
     return milli_int
 
 
-def _clean_text(value: Any, label: str, *, required: bool = False,
-                max_len: int = TEXT_MAX) -> Optional[str]:
+@overload
+def _clean_text(
+    value: Any, label: str, *, required: Literal[True], max_len: int = TEXT_MAX
+) -> str: ...
+
+
+@overload
+def _clean_text(
+    value: Any, label: str, *, required: Literal[False] = False, max_len: int = TEXT_MAX
+) -> str | None: ...
+
+
+@overload
+def _clean_text(
+    value: Any, label: str, *, required: bool = False, max_len: int = TEXT_MAX
+) -> str | None: ...
+
+
+def _clean_text(
+    value: Any, label: str, *, required: bool = False, max_len: int = TEXT_MAX
+) -> str | None:
     if value is not None and not isinstance(value, (str, int)):
         raise LabInstrumentError("invalid_value", f"{label} must be text.")
     text = str(value).strip() if value is not None else ""
@@ -256,7 +294,7 @@ def _clean_text(value: Any, label: str, *, required: bool = False,
     return text
 
 
-def _clean_host(value: Any) -> Optional[str]:
+def _clean_host(value: Any) -> str | None:
     """A network name or an IP address on the hospital's own network.
 
     Orb is strictly offline: an IP address that is not private, loopback or
@@ -274,17 +312,19 @@ def _clean_host(value: Any) -> Optional[str]:
             raise LabInstrumentError(
                 "host_not_local",
                 "This address is on the internet. Orb only talks to machines on the "
-                "hospital's own network.")
+                "hospital's own network.",
+            )
         return str(address)
     name = text.lower()
     if not _HOSTNAME_RE.fullmatch(name):
         raise LabInstrumentError(
             "invalid_value",
-            "Address must be a network name or an IP address, with no http:// and no path.")
+            "Address must be a network name or an IP address, with no http:// and no path.",
+        )
     return name
 
 
-def _clean_port(value: Any) -> Optional[int]:
+def _clean_port(value: Any) -> int | None:
     if value is None or (isinstance(value, str) and not value.strip()):
         return None
     if isinstance(value, bool):
@@ -292,13 +332,13 @@ def _clean_port(value: Any) -> Optional[int]:
     try:
         port = int(str(value).strip())
     except (TypeError, ValueError):
-        raise LabInstrumentError("invalid_value", "Port must be a whole number.")
+        raise LabInstrumentError("invalid_value", "Port must be a whole number.") from None
     if str(port) != str(value).strip() or not 1 <= port <= 65535:
         raise LabInstrumentError("invalid_value", "Port must be a whole number from 1 to 65535.")
     return port
 
 
-def _clean_timezone(value: Any) -> Optional[str]:
+def _clean_timezone(value: Any) -> str | None:
     """An IANA zone name ('Asia/Kolkata') or UTC; blank means the hospital's
     own zone. Offsets such as +05:30 are refused: a zone name says what the
     clock does on every date."""
@@ -310,26 +350,28 @@ def _clean_timezone(value: Any) -> Optional[str]:
     try:
         from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
     except ImportError:  # pragma: no cover - Python 3.9+ always has it
-        raise LabInstrumentError("invalid_value", "Time zones cannot be checked on this computer.")
+        raise LabInstrumentError(
+            "invalid_value", "Time zones cannot be checked on this computer."
+        ) from None
     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)+", text):
         raise LabInstrumentError(
-            "invalid_value", "Time zone must be a zone name such as Asia/Kolkata.")
+            "invalid_value", "Time zone must be a zone name such as Asia/Kolkata."
+        )
     try:
         ZoneInfo(text)
     except (ZoneInfoNotFoundError, ValueError, OSError):
-        raise LabInstrumentError("invalid_value", f"{text} is not a known time zone.")
+        raise LabInstrumentError("invalid_value", f"{text} is not a known time zone.") from None
     return text
 
 
-def _choice(value: Any, allowed: tuple, supported: tuple, label: str,
-            words: dict) -> str:
+def _choice(value: Any, allowed: tuple, supported: tuple, label: str, words: dict) -> str:
     text = str(value or "").strip().lower()
     if text not in allowed:
         raise LabInstrumentError("invalid_value", f"Unknown {label}: {value}.")
     if text not in supported:
         raise LabInstrumentError(
-            "not_supported",
-            f"{words.get(text, text)} is not supported in this version of Orb yet.")
+            "not_supported", f"{words.get(text, text)} is not supported in this version of Orb yet."
+        )
     return text
 
 
@@ -339,19 +381,33 @@ def _require(actor: dict, permission: str, message: str) -> None:
 
 
 def _table_exists(conn, name: str) -> bool:
-    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-                        (name,)).fetchone() is not None
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+        ).fetchone()
+        is not None
+    )
 
 
 def _require_tables(conn) -> None:
     for name in ("lab_instruments", "lab_instrument_test_map", "lab_tests", "lab_sections"):
         if not _table_exists(conn, name):
-            raise LabInstrumentError("not_ready", "The laboratory tables are not installed yet.", 409)
+            raise LabInstrumentError(
+                "not_ready", "The laboratory tables are not installed yet.", 409
+            )
 
 
-def _audit(conn, actor: dict, action: str, *, target_type: str, target_id: Any,
-           summary: str, metadata: Optional[dict] = None,
-           request_meta: Optional[dict] = None) -> None:
+def _audit(
+    conn,
+    actor: dict,
+    action: str,
+    *,
+    target_type: str,
+    target_id: Any,
+    summary: str,
+    metadata: dict | None = None,
+    request_meta: dict | None = None,
+) -> None:
     meta = request_meta or {}
     log_audit_event(
         correlation_id=str(uuid.uuid4()),
@@ -376,15 +432,21 @@ def _audit(conn, actor: dict, action: str, *, target_type: str, target_id: Any,
 #  Reads
 # ════════════════════════════════════════════════════════════════════════════
 
+
 def options() -> dict:
     """What the set-up screen offers. No patient data."""
     from services.hospital_time import hospital_timezone
+
     zone = hospital_timezone()
     return {
-        "protocols": [{"value": p, "label": PROTOCOL_LABELS[p], "supported": p in SUPPORTED_PROTOCOLS}
-                      for p in PROTOCOLS],
-        "transports": [{"value": t, "label": TRANSPORT_LABELS[t], "supported": t in SUPPORTED_TRANSPORTS}
-                       for t in TRANSPORTS],
+        "protocols": [
+            {"value": p, "label": PROTOCOL_LABELS[p], "supported": p in SUPPORTED_PROTOCOLS}
+            for p in PROTOCOLS
+        ],
+        "transports": [
+            {"value": t, "label": TRANSPORT_LABELS[t], "supported": t in SUPPORTED_TRANSPORTS}
+            for t in TRANSPORTS
+        ],
         "hospital_timezone": getattr(zone, "key", None) or str(zone),
         "listener": {
             "enabled": bool(config.feature_enabled("lab_analyser_listener")),
@@ -393,7 +455,7 @@ def options() -> dict:
     }
 
 
-def _parse_day(value: Any) -> Optional[date]:
+def _parse_day(value: Any) -> date | None:
     if value is None:
         return None
     try:
@@ -402,7 +464,7 @@ def _parse_day(value: Any) -> Optional[date]:
         return None
 
 
-def _biomedical(conn, asset_id: Optional[int]) -> Optional[dict]:
+def _biomedical(conn, asset_id: int | None) -> dict | None:
     """The analyser's entry in the biomedical register and its calibration,
     or None when it is not linked."""
     if asset_id is None:
@@ -411,7 +473,8 @@ def _biomedical(conn, asset_id: Optional[int]) -> Optional[dict]:
         return {"id": asset_id, "found": False}
     asset = conn.execute(
         "SELECT id, asset_tag, name, status, is_active FROM biomedical_assets WHERE id = ?",
-        (asset_id,)).fetchone()
+        (asset_id,),
+    ).fetchone()
     if asset is None:
         return {"id": asset_id, "found": False}
     calibration = None
@@ -419,10 +482,14 @@ def _biomedical(conn, asset_id: Optional[int]) -> Optional[dict]:
         row = conn.execute(
             "SELECT last_done_date, next_due_date, grace_days FROM biomedical_schedules "
             "WHERE asset_id = ? AND schedule_type = 'calibration' AND is_active = 1 "
-            "ORDER BY next_due_date, id LIMIT 1", (asset_id,)).fetchone()
+            "ORDER BY next_due_date, id LIMIT 1",
+            (asset_id,),
+        ).fetchone()
         if row is not None:
             from datetime import timedelta
+
             from services.hospital_time import hospital_today
+
             due = _parse_day(row["next_due_date"])
             grace = int(row["grace_days"] or 0)
             calibration = {
@@ -430,9 +497,15 @@ def _biomedical(conn, asset_id: Optional[int]) -> Optional[dict]:
                 "next_due_date": row["next_due_date"],
                 "overdue": bool(due and hospital_today() > due + timedelta(days=grace)),
             }
-    return {"id": asset["id"], "found": True, "asset_tag": asset["asset_tag"],
-            "name": asset["name"], "status": asset["status"],
-            "in_register": bool(asset["is_active"]), "calibration": calibration}
+    return {
+        "id": asset["id"],
+        "found": True,
+        "asset_tag": asset["asset_tag"],
+        "name": asset["name"],
+        "status": asset["status"],
+        "in_register": bool(asset["is_active"]),
+        "calibration": calibration,
+    }
 
 
 def _instrument_row(conn, r) -> dict:
@@ -449,7 +522,8 @@ def _instrument_row(conn, r) -> dict:
         "protocol_label": PROTOCOL_LABELS.get(row["protocol"], row["protocol"]),
         "transport": row["transport"],
         "transport_label": TRANSPORT_LABELS.get(row["transport"], row["transport"]),
-        "supported": row["protocol"] in SUPPORTED_PROTOCOLS and row["transport"] in SUPPORTED_TRANSPORTS,
+        "supported": row["protocol"] in SUPPORTED_PROTOCOLS
+        and row["transport"] in SUPPORTED_TRANSPORTS,
         "host": row["host"],
         "port": row["port"],
         "assumed_timezone": row["assumed_timezone"],
@@ -496,7 +570,7 @@ def list_mappings(conn, instrument_id: str, *, include_retired: bool = True) -> 
     return [_mapping_row(r) for r in conn.execute(sql, (instrument_id,)).fetchall()]
 
 
-def get_instrument(conn, instrument_id: Any, *, include_map: bool = True) -> Optional[dict]:
+def get_instrument(conn, instrument_id: Any, *, include_map: bool = True) -> dict | None:
     ident = normalise_instrument_id(instrument_id)
     if ident is None:
         return None
@@ -509,7 +583,7 @@ def get_instrument(conn, instrument_id: Any, *, include_map: bool = True) -> Opt
     return out
 
 
-def mapping_for(conn, instrument_id: Any, instrument_code: Any) -> Optional[dict]:
+def mapping_for(conn, instrument_id: Any, instrument_code: Any) -> dict | None:
     """The ACTIVE mapping for a code exactly as the analyser sent it, with the
     test it names, or None. For the intake (lis-24): None means quarantine,
     and so does a mapping whose test is no longer an active laboratory
@@ -517,8 +591,10 @@ def mapping_for(conn, instrument_id: Any, instrument_code: Any) -> Optional[dict
     ident = normalise_instrument_id(instrument_id)
     if ident is None or not isinstance(instrument_code, str):
         return None
-    r = conn.execute(_MAP_SELECT + " WHERE m.instrument_id = ? AND m.instrument_code = ? "
-                     "AND m.active = 1", (ident, instrument_code.strip())).fetchone()
+    r = conn.execute(
+        _MAP_SELECT + " WHERE m.instrument_id = ? AND m.instrument_code = ? AND m.active = 1",
+        (ident, instrument_code.strip()),
+    ).fetchone()
     return _mapping_row(r) if r is not None else None
 
 
@@ -532,21 +608,27 @@ def authenticate(conn, instrument_id: Any, presented_key: Any) -> dict:
     ident = normalise_instrument_id(instrument_id)
     row = None
     if ident is not None and _table_exists(conn, "lab_instruments"):
-        row = conn.execute("SELECT id, enabled, credential_hash FROM lab_instruments WHERE id = ?",
-                           (ident,)).fetchone()
+        row = conn.execute(
+            "SELECT id, enabled, credential_hash FROM lab_instruments WHERE id = ?", (ident,)
+        ).fetchone()
     stored = row["credential_hash"] if row is not None else None
     if not key_matches(stored, presented_key if isinstance(presented_key, str) else None):
         raise InstrumentAuthError("unauthenticated")
+    assert row is not None
     if not row["enabled"]:
         raise InstrumentAuthError("instrument_disabled")
-    return get_instrument(conn, ident, include_map=False)
+    _written_row = get_instrument(conn, ident, include_map=False)
+    assert _written_row is not None, "Expected the row written in this transaction"
+    return _written_row
 
 
-def record_message_received(conn, instrument_id: str, *, at: Optional[str] = None) -> None:
+def record_message_received(conn, instrument_id: str, *, at: str | None = None) -> None:
     """Stamp last_message_at (for the intake, inside its own transaction). No
     audit here: the intake audits the message under 'ingestion'."""
-    conn.execute("UPDATE lab_instruments SET last_message_at = ? WHERE id = ?",
-                 (at or utc_iso_now(), instrument_id))
+    conn.execute(
+        "UPDATE lab_instruments SET last_message_at = ? WHERE id = ?",
+        (at or utc_iso_now(), instrument_id),
+    )
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -556,15 +638,19 @@ def record_message_received(conn, instrument_id: str, *, at: Optional[str] = Non
 _INTERFACE_ONLY = "Only an administrator can register analysers and issue their keys."
 
 
-def _check_section(conn, section_id: Optional[str]) -> None:
+def _check_section(conn, section_id: str | None) -> None:
     if section_id is None:
         return
-    if conn.execute("SELECT 1 FROM lab_sections WHERE id = ? AND active = 1",
-                    (section_id,)).fetchone() is None:
+    if (
+        conn.execute(
+            "SELECT 1 FROM lab_sections WHERE id = ? AND active = 1", (section_id,)
+        ).fetchone()
+        is None
+    ):
         raise LabInstrumentError("unknown_reference", f"Unknown laboratory section: {section_id}.")
 
 
-def _check_asset(conn, value: Any) -> Optional[int]:
+def _check_asset(conn, value: Any) -> int | None:
     if value is None or (isinstance(value, str) and not value.strip()):
         return None
     if isinstance(value, bool):
@@ -572,12 +658,19 @@ def _check_asset(conn, value: Any) -> Optional[int]:
     try:
         asset_id = int(str(value).strip())
     except (TypeError, ValueError):
-        raise LabInstrumentError("invalid_value", "The biomedical register entry must be a number.")
-    if not _table_exists(conn, "biomedical_assets") or conn.execute(
-            "SELECT 1 FROM biomedical_assets WHERE id = ? AND is_active = 1",
-            (asset_id,)).fetchone() is None:
-        raise LabInstrumentError("unknown_reference",
-                                 f"No entry {asset_id} in the biomedical register.")
+        raise LabInstrumentError(
+            "invalid_value", "The biomedical register entry must be a number."
+        ) from None
+    if (
+        not _table_exists(conn, "biomedical_assets")
+        or conn.execute(
+            "SELECT 1 FROM biomedical_assets WHERE id = ? AND is_active = 1", (asset_id,)
+        ).fetchone()
+        is None
+    ):
+        raise LabInstrumentError(
+            "unknown_reference", f"No entry {asset_id} in the biomedical register."
+        )
     return asset_id
 
 
@@ -593,11 +686,13 @@ def _validated_fields(conn, data: dict) -> dict:
         out["section_id"] = _clean_text(data["section_id"], "Section", max_len=64)
         _check_section(conn, out["section_id"])
     if "protocol" in data:
-        out["protocol"] = _choice(data["protocol"], PROTOCOLS, SUPPORTED_PROTOCOLS,
-                                  "protocol", PROTOCOL_LABELS)
+        out["protocol"] = _choice(
+            data["protocol"], PROTOCOLS, SUPPORTED_PROTOCOLS, "protocol", PROTOCOL_LABELS
+        )
     if "transport" in data:
-        out["transport"] = _choice(data["transport"], TRANSPORTS, SUPPORTED_TRANSPORTS,
-                                   "connection", TRANSPORT_LABELS)
+        out["transport"] = _choice(
+            data["transport"], TRANSPORTS, SUPPORTED_TRANSPORTS, "connection", TRANSPORT_LABELS
+        )
     if "host" in data:
         out["host"] = _clean_host(data["host"])
     if "port" in data:
@@ -614,11 +709,13 @@ def _public_fields(row: dict) -> dict:
     return {k: row.get(k) for k in ("id",) + _INSTRUMENT_EDITABLE + ("enabled",)}
 
 
-def _stored(conn, ident: str) -> Optional[dict]:
+def _stored(conn, ident: str) -> dict | None:
     r = conn.execute(
         "SELECT id, name, make, model, serial, section_id, protocol, transport, host, port, "
         "assumed_timezone, biomedical_asset_id, enabled, credential_hash, credential_rotated_at, "
-        "version FROM lab_instruments WHERE id = ?", (ident,)).fetchone()
+        "version FROM lab_instruments WHERE id = ?",
+        (ident,),
+    ).fetchone()
     return dict(r) if r is not None else None
 
 
@@ -627,11 +724,12 @@ def _id_or_refuse(value: Any) -> str:
     if ident is None:
         raise LabInstrumentError(
             "invalid_id",
-            "The analyser id is 2 to 32 letters, digits, '-' or '_', for example XN1000-1.")
+            "The analyser id is 2 to 32 letters, digits, '-' or '_', for example XN1000-1.",
+        )
     return ident
 
 
-def create_instrument(data: dict, *, actor: dict, request_meta: Optional[dict] = None) -> dict:
+def create_instrument(data: dict, *, actor: dict, request_meta: dict | None = None) -> dict:
     """Register an analyser. It starts switched off and with no key."""
     _require(actor, LAB_INTERFACE, _INTERFACE_ONLY)
     unknown = set(data) - set(_INSTRUMENT_EDITABLE) - {"id"}
@@ -642,31 +740,65 @@ def create_instrument(data: dict, *, actor: dict, request_meta: Optional[dict] =
     with db_session(immediate=True) as conn:
         _require_tables(conn)
         if conn.execute("SELECT 1 FROM lab_instruments WHERE id = ?", (ident,)).fetchone():
-            raise LabInstrumentError("duplicate", f"An analyser with the id {ident} is already registered.",
-                                     409)
+            raise LabInstrumentError(
+                "duplicate", f"An analyser with the id {ident} is already registered.", 409
+            )
         fields = {"protocol": "hl7v2", "transport": "http"}
-        fields.update(_validated_fields(conn, {"name": data.get("name"), **{
-            k: v for k, v in data.items() if k in _INSTRUMENT_EDITABLE}}))
-        row = {"id": ident, **fields, "enabled": 0, "version": 1, "created_at": now,
-               "created_by": actor["id"], "updated_at": now, "updated_by": actor["id"]}
+        fields.update(
+            _validated_fields(
+                conn,
+                {
+                    "name": data.get("name"),
+                    **{k: v for k, v in data.items() if k in _INSTRUMENT_EDITABLE},
+                },
+            )
+        )
+        row = {
+            "id": ident,
+            **fields,
+            "enabled": 0,
+            "version": 1,
+            "created_at": now,
+            "created_by": actor["id"],
+            "updated_at": now,
+            "updated_by": actor["id"],
+        }
         cols = ", ".join(row)
-        conn.execute(f"INSERT INTO lab_instruments ({cols}) VALUES ({', '.join('?' for _ in row)})",
-                     tuple(row.values()))
-        _audit(conn, actor, "lab_instrument_registered", target_type="lab_instrument",
-               target_id=ident, summary=f"Analyser registered: {row['name']} ({ident})",
-               metadata={"after": _public_fields(row)}, request_meta=request_meta)
-        return get_instrument(conn, ident)
+        conn.execute(
+            f"INSERT INTO lab_instruments ({cols}) VALUES ({', '.join('?' for _ in row)})",
+            tuple(row.values()),
+        )
+        _audit(
+            conn,
+            actor,
+            "lab_instrument_registered",
+            target_type="lab_instrument",
+            target_id=ident,
+            summary=f"Analyser registered: {row['name']} ({ident})",
+            metadata={"after": _public_fields(row)},
+            request_meta=request_meta,
+        )
+        _written_row = get_instrument(conn, ident)
+        assert _written_row is not None, "Expected the row written in this transaction"
+        return _written_row
 
 
-def update_instrument(instrument_id: str, changes: dict, *, actor: dict,
-                      expected_version: Optional[int] = None,
-                      request_meta: Optional[dict] = None) -> dict:
+def update_instrument(
+    instrument_id: str,
+    changes: dict,
+    *,
+    actor: dict,
+    expected_version: int | None = None,
+    request_meta: dict | None = None,
+) -> dict:
     """Change an analyser's details. Its id never changes; its key and its
     on or off state have their own steps."""
     _require(actor, LAB_INTERFACE, _INTERFACE_ONLY)
     unknown = set(changes) - set(_INSTRUMENT_EDITABLE)
     if unknown:
-        raise LabInstrumentError("not_editable", f"These cannot be changed here: {', '.join(sorted(unknown))}.")
+        raise LabInstrumentError(
+            "not_editable", f"These cannot be changed here: {', '.join(sorted(unknown))}."
+        )
     if not changes:
         raise LabInstrumentError("missing_field", "Nothing to change.")
     ident = _id_or_refuse(instrument_id)
@@ -677,29 +809,46 @@ def update_instrument(instrument_id: str, changes: dict, *, actor: dict,
             raise LabInstrumentError("not_found", "No such analyser.", 404)
         if expected_version is not None and int(expected_version) != int(before["version"]):
             raise LabInstrumentError(
-                "stale_version", "Someone changed this analyser since you opened it. Reload and try again.",
-                409)
+                "stale_version",
+                "Someone changed this analyser since you opened it. Reload and try again.",
+                409,
+            )
         fields = _validated_fields(conn, changes)
         changed = {k: v for k, v in fields.items() if before.get(k) != v}
         if not changed:
-            return get_instrument(conn, ident)
+            _written_row = get_instrument(conn, ident)
+            assert _written_row is not None, "Expected the row written in this transaction"
+            return _written_row
         now = utc_iso_now()
-        changed_sql = dict(changed, version=int(before["version"]) + 1, updated_at=now,
-                           updated_by=actor["id"])
+        changed_sql = dict(
+            changed, version=int(before["version"]) + 1, updated_at=now, updated_by=actor["id"]
+        )
         assignments = ", ".join(f"{k} = ?" for k in changed_sql)
-        conn.execute(f"UPDATE lab_instruments SET {assignments} WHERE id = ?",
-                     (*changed_sql.values(), ident))
-        _audit(conn, actor, "lab_instrument_changed", target_type="lab_instrument",
-               target_id=ident,
-               summary=f"Analyser changed: {changed.get('name', before['name'])} ({ident})",
-               metadata={"before": {k: before.get(k) for k in changed},
-                         "after": changed, "version": changed_sql["version"]},
-               request_meta=request_meta)
-        return get_instrument(conn, ident)
+        conn.execute(
+            f"UPDATE lab_instruments SET {assignments} WHERE id = ?", (*changed_sql.values(), ident)
+        )
+        _audit(
+            conn,
+            actor,
+            "lab_instrument_changed",
+            target_type="lab_instrument",
+            target_id=ident,
+            summary=f"Analyser changed: {changed.get('name', before['name'])} ({ident})",
+            metadata={
+                "before": {k: before.get(k) for k in changed},
+                "after": changed,
+                "version": changed_sql["version"],
+            },
+            request_meta=request_meta,
+        )
+        _written_row = get_instrument(conn, ident)
+        assert _written_row is not None, "Expected the row written in this transaction"
+        return _written_row
 
 
-def set_instrument_enabled(instrument_id: str, enabled: bool, reason: Any, *, actor: dict,
-                           request_meta: Optional[dict] = None) -> dict:
+def set_instrument_enabled(
+    instrument_id: str, enabled: bool, reason: Any, *, actor: dict, request_meta: dict | None = None
+) -> dict:
     """Switch an analyser on (it may then send results, once intake exists)
     or off (everything it sends is refused). Both need a reason; switching on
     needs a key."""
@@ -715,31 +864,47 @@ def set_instrument_enabled(instrument_id: str, enabled: bool, reason: Any, *, ac
             raise LabInstrumentError("not_found", "No such analyser.", 404)
         if bool(before["enabled"]) == enabled:
             raise LabInstrumentError(
-                "no_change", f"This analyser is already switched {'on' if enabled else 'off'}.", 409)
+                "no_change", f"This analyser is already switched {'on' if enabled else 'off'}.", 409
+            )
         if enabled:
             if before["credential_hash"] is None:
                 raise LabInstrumentError(
-                    "key_required", "Issue this analyser a key before switching it on.", 409)
-            if before["protocol"] not in SUPPORTED_PROTOCOLS or \
-                    before["transport"] not in SUPPORTED_TRANSPORTS:
+                    "key_required", "Issue this analyser a key before switching it on.", 409
+                )
+            if (
+                before["protocol"] not in SUPPORTED_PROTOCOLS
+                or before["transport"] not in SUPPORTED_TRANSPORTS
+            ):
                 raise LabInstrumentError(
-                    "not_supported", "This analyser's connection is not supported in this version "
-                    "of Orb yet.", 409)
+                    "not_supported",
+                    "This analyser's connection is not supported in this version of Orb yet.",
+                    409,
+                )
         now = utc_iso_now()
         version = int(before["version"]) + 1
-        conn.execute("UPDATE lab_instruments SET enabled = ?, status_reason = ?, version = ?, "
-                     "updated_at = ?, updated_by = ? WHERE id = ?",
-                     (1 if enabled else 0, why, version, now, actor["id"], ident))
-        _audit(conn, actor, "lab_instrument_enabled" if enabled else "lab_instrument_disabled",
-               target_type="lab_instrument", target_id=ident,
-               summary=f"Analyser switched {'on' if enabled else 'off'}: {before['name']} ({ident})",
-               metadata={"enabled": enabled, "reason": why, "version": version},
-               request_meta=request_meta)
-        return get_instrument(conn, ident)
+        conn.execute(
+            "UPDATE lab_instruments SET enabled = ?, status_reason = ?, version = ?, "
+            "updated_at = ?, updated_by = ? WHERE id = ?",
+            (1 if enabled else 0, why, version, now, actor["id"], ident),
+        )
+        _audit(
+            conn,
+            actor,
+            "lab_instrument_enabled" if enabled else "lab_instrument_disabled",
+            target_type="lab_instrument",
+            target_id=ident,
+            summary=f"Analyser switched {'on' if enabled else 'off'}: {before['name']} ({ident})",
+            metadata={"enabled": enabled, "reason": why, "version": version},
+            request_meta=request_meta,
+        )
+        _written_row = get_instrument(conn, ident)
+        assert _written_row is not None, "Expected the row written in this transaction"
+        return _written_row
 
 
-def issue_key(instrument_id: str, *, actor: dict, reason: Any = None,
-              request_meta: Optional[dict] = None) -> dict:
+def issue_key(
+    instrument_id: str, *, actor: dict, reason: Any = None, request_meta: dict | None = None
+) -> dict:
     """Issue the analyser a new key and return it, ONCE.
 
     The answer is {"instrument", "key", "issued_at", "replaced"}. Only the
@@ -757,26 +922,47 @@ def issue_key(instrument_id: str, *, actor: dict, reason: Any = None,
         replacing = before["credential_hash"] is not None
         if replacing and why is None:
             raise LabInstrumentError(
-                "reason_required", "Say why the key is being replaced, for example a service "
-                "visit or a key that may have been seen.")
+                "reason_required",
+                "Say why the key is being replaced, for example a service "
+                "visit or a key that may have been seen.",
+            )
         key = new_key()
         now = utc_iso_now()
         version = int(before["version"]) + 1
-        conn.execute("UPDATE lab_instruments SET credential_hash = ?, credential_rotated_at = ?, "
-                     "credential_rotated_by = ?, version = ?, updated_at = ?, updated_by = ? "
-                     "WHERE id = ?",
-                     (hash_key(key), now, actor["id"], version, now, actor["id"], ident))
-        _audit(conn, actor,
-               "lab_instrument_credential_rotated" if replacing else "lab_instrument_credential_issued",
-               target_type="lab_instrument", target_id=ident,
-               summary=(f"Analyser key replaced: {before['name']} ({ident})" if replacing
-                        else f"Analyser key issued: {before['name']} ({ident})"),
-               metadata={"replaced": replacing, "reason": why,
-                         "previous_issued_at": before["credential_rotated_at"],
-                         "enabled": bool(before["enabled"]), "version": version},
-               request_meta=request_meta)
-        answer = {"instrument": get_instrument(conn, ident), "key": key, "issued_at": now,
-                  "replaced": replacing}
+        conn.execute(
+            "UPDATE lab_instruments SET credential_hash = ?, credential_rotated_at = ?, "
+            "credential_rotated_by = ?, version = ?, updated_at = ?, updated_by = ? "
+            "WHERE id = ?",
+            (hash_key(key), now, actor["id"], version, now, actor["id"], ident),
+        )
+        _audit(
+            conn,
+            actor,
+            "lab_instrument_credential_rotated"
+            if replacing
+            else "lab_instrument_credential_issued",
+            target_type="lab_instrument",
+            target_id=ident,
+            summary=(
+                f"Analyser key replaced: {before['name']} ({ident})"
+                if replacing
+                else f"Analyser key issued: {before['name']} ({ident})"
+            ),
+            metadata={
+                "replaced": replacing,
+                "reason": why,
+                "previous_issued_at": before["credential_rotated_at"],
+                "enabled": bool(before["enabled"]),
+                "version": version,
+            },
+            request_meta=request_meta,
+        )
+        answer = {
+            "instrument": get_instrument(conn, ident),
+            "key": key,
+            "issued_at": now,
+            "replaced": replacing,
+        }
     return answer
 
 
@@ -790,32 +976,45 @@ _MASTER_ONLY = "Only a pathologist can change which test an analyser code is."
 def _clean_code(value: Any) -> str:
     code = _clean_text(value, "Analyser code", required=True, max_len=CODE_MAX)
     if _CODE_FORBIDDEN.search(code):
-        raise LabInstrumentError("invalid_value",
-                                 "An analyser code cannot contain | ^ ~ \\ or &.")
+        raise LabInstrumentError("invalid_value", "An analyser code cannot contain | ^ ~ \\ or &.")
     return code
 
 
-def _map_audit_picture(row: Optional[dict]) -> Optional[dict]:
+def _map_audit_picture(row: dict | None) -> dict | None:
     if row is None:
         return None
-    return {k: row.get(k) for k in ("test_id", "factor_milli", "instrument_unit", "active",
-                                    "note", "retire_reason", "version")}
+    return {
+        k: row.get(k)
+        for k in (
+            "test_id",
+            "factor_milli",
+            "instrument_unit",
+            "active",
+            "note",
+            "retire_reason",
+            "version",
+        )
+    }
 
 
-def _stored_mapping(conn, ident: str, code: str) -> Optional[dict]:
-    r = conn.execute("SELECT * FROM lab_instrument_test_map WHERE instrument_id = ? "
-                     "AND instrument_code = ?", (ident, code)).fetchone()
+def _stored_mapping(conn, ident: str, code: str) -> dict | None:
+    r = conn.execute(
+        "SELECT * FROM lab_instrument_test_map WHERE instrument_id = ? AND instrument_code = ?",
+        (ident, code),
+    ).fetchone()
     return dict(r) if r is not None else None
 
 
 def _mapping_out(conn, ident: str, code: str) -> dict:
-    r = conn.execute(_MAP_SELECT + " WHERE m.instrument_id = ? AND m.instrument_code = ?",
-                     (ident, code)).fetchone()
+    r = conn.execute(
+        _MAP_SELECT + " WHERE m.instrument_id = ? AND m.instrument_code = ?", (ident, code)
+    ).fetchone()
     return _mapping_row(r)
 
 
-def save_mapping(instrument_id: str, data: dict, *, actor: dict,
-                 request_meta: Optional[dict] = None) -> dict:
+def save_mapping(
+    instrument_id: str, data: dict, *, actor: dict, request_meta: dict | None = None
+) -> dict:
     """Map one analyser code to an Orb test, or change or bring back that
     mapping. Body: instrument_code, test_id, factor (default 1),
     instrument_unit (number tests only), note (required)."""
@@ -833,41 +1032,56 @@ def save_mapping(instrument_id: str, data: dict, *, actor: dict,
         instrument = _stored(conn, ident)
         if instrument is None:
             raise LabInstrumentError("not_found", "No such analyser.", 404)
-        test = conn.execute("SELECT id, name, kind, active, performed_at, result_type FROM lab_tests "
-                            "WHERE id = ?", (test_id,)).fetchone()
+        test = conn.execute(
+            "SELECT id, name, kind, active, performed_at, result_type FROM lab_tests WHERE id = ?",
+            (test_id,),
+        ).fetchone()
         if test is None:
             raise LabInstrumentError("unknown_reference", f"Unknown test: {test_id}.")
         if test["kind"] != "analyte":
-            raise LabInstrumentError("not_an_analyte",
-                                     "A code maps to one test, never a panel. Map each test in the panel.")
+            raise LabInstrumentError(
+                "not_an_analyte",
+                "A code maps to one test, never a panel. Map each test in the panel.",
+            )
         if not test["active"]:
-            raise LabInstrumentError("test_inactive", f"{test['name']} is switched off in the catalogue.")
+            raise LabInstrumentError(
+                "test_inactive", f"{test['name']} is switched off in the catalogue."
+            )
         if test["performed_at"] != "lab":
             raise LabInstrumentError(
                 "test_is_bedside",
-                f"{test['name']} is done at the bedside, so its results never come from the laboratory.")
+                f"{test['name']} is done at the bedside, so its results never come from the laboratory.",
+            )
         numeric = test["result_type"] == "numeric"
         factor_milli = _factor_milli(data.get("factor"), numeric=numeric)
         if unit is not None and not numeric:
-            raise LabInstrumentError("invalid_value", "Only a test with a number result has a unit.")
+            raise LabInstrumentError(
+                "invalid_value", "Only a test with a number result has a unit."
+            )
         twin = conn.execute(
             "SELECT instrument_code FROM lab_instrument_test_map WHERE instrument_id = ? "
             "AND instrument_code = ? COLLATE NOCASE AND instrument_code != ?",
-            (ident, code, code)).fetchone()
+            (ident, code, code),
+        ).fetchone()
         if twin is not None:
             raise LabInstrumentError(
                 "code_case_twin",
                 f"This analyser already has the code {twin['instrument_code']}, which differs from "
-                f"{code} only in capitals. Change that one instead.", 409)
+                f"{code} only in capitals. Change that one instead.",
+                409,
+            )
         other = conn.execute(
             "SELECT instrument_code FROM lab_instrument_test_map WHERE instrument_id = ? "
             "AND test_id = ? AND active = 1 AND instrument_code != ?",
-            (ident, test_id, code)).fetchone()
+            (ident, test_id, code),
+        ).fetchone()
         if other is not None:
             raise LabInstrumentError(
                 "test_already_mapped",
                 f"{test['name']} already comes from the code {other['instrument_code']} on this "
-                "analyser. Retire that mapping first.", 409)
+                "analyser. Retire that mapping first.",
+                409,
+            )
         before = _stored_mapping(conn, ident, code)
         now = utc_iso_now()
         if before is None:
@@ -875,12 +1089,17 @@ def save_mapping(instrument_id: str, data: dict, *, actor: dict,
                 "INSERT INTO lab_instrument_test_map (instrument_id, instrument_code, test_id, "
                 "factor_milli, instrument_unit, active, note, approved_by, approved_at, version) "
                 "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, 1)",
-                (ident, code, test_id, factor_milli, unit, note, actor["id"], now))
+                (ident, code, test_id, factor_milli, unit, note, actor["id"], now),
+            )
             change = "added"
         else:
-            same = (before["active"] == 1 and before["test_id"] == test_id
-                    and before["factor_milli"] == factor_milli
-                    and (before["instrument_unit"] or None) == unit and before["note"] == note)
+            same = (
+                before["active"] == 1
+                and before["test_id"] == test_id
+                and before["factor_milli"] == factor_milli
+                and (before["instrument_unit"] or None) == unit
+                and before["note"] == note
+            )
             if same:
                 return _mapping_out(conn, ident, code)
             change = "changed" if before["active"] == 1 else "brought_back"
@@ -889,20 +1108,37 @@ def save_mapping(instrument_id: str, data: dict, *, actor: dict,
                 "instrument_unit = ?, active = 1, note = ?, approved_by = ?, approved_at = ?, "
                 "retired_by = NULL, retired_at = NULL, retire_reason = NULL, version = version + 1 "
                 "WHERE instrument_id = ? AND instrument_code = ?",
-                (test_id, factor_milli, unit, note, actor["id"], now, ident, code))
+                (test_id, factor_milli, unit, note, actor["id"], now, ident, code),
+            )
         after = _stored_mapping(conn, ident, code)
-        _audit(conn, actor, "lab_analyser_map_changed", target_type="lab_instrument",
-               target_id=ident,
-               summary=f"Analyser code {code} on {instrument['name']} ({ident}) {change.replace('_', ' ')}: "
-                       f"{test['name']}",
-               metadata={"instrument_id": ident, "instrument_code": code, "change": change,
-                         "before": _map_audit_picture(before), "after": _map_audit_picture(after)},
-               request_meta=request_meta)
+        _audit(
+            conn,
+            actor,
+            "lab_analyser_map_changed",
+            target_type="lab_instrument",
+            target_id=ident,
+            summary=f"Analyser code {code} on {instrument['name']} ({ident}) {change.replace('_', ' ')}: "
+            f"{test['name']}",
+            metadata={
+                "instrument_id": ident,
+                "instrument_code": code,
+                "change": change,
+                "before": _map_audit_picture(before),
+                "after": _map_audit_picture(after),
+            },
+            request_meta=request_meta,
+        )
         return _mapping_out(conn, ident, code)
 
 
-def retire_mapping(instrument_id: str, instrument_code: Any, reason: Any, *, actor: dict,
-                   request_meta: Optional[dict] = None) -> dict:
+def retire_mapping(
+    instrument_id: str,
+    instrument_code: Any,
+    reason: Any,
+    *,
+    actor: dict,
+    request_meta: dict | None = None,
+) -> dict:
     """Retire one mapping with a reason. It is kept, so a result entered from
     it can always be traced; a result with this code is then quarantined."""
     _require(actor, LAB_MASTER, _MASTER_ONLY)
@@ -916,19 +1152,32 @@ def retire_mapping(instrument_id: str, instrument_code: Any, reason: Any, *, act
             raise LabInstrumentError("not_found", "No such analyser.", 404)
         before = _stored_mapping(conn, ident, code)
         if before is None:
-            raise LabInstrumentError("not_found", f"No mapping for the code {code} on this analyser.", 404)
+            raise LabInstrumentError(
+                "not_found", f"No mapping for the code {code} on this analyser.", 404
+            )
         if before["active"] != 1:
             raise LabInstrumentError("no_change", "This mapping is already retired.", 409)
         now = utc_iso_now()
         conn.execute(
             "UPDATE lab_instrument_test_map SET active = 0, retired_by = ?, retired_at = ?, "
             "retire_reason = ?, version = version + 1 WHERE instrument_id = ? AND instrument_code = ?",
-            (actor["id"], now, why, ident, code))
+            (actor["id"], now, why, ident, code),
+        )
         after = _stored_mapping(conn, ident, code)
-        _audit(conn, actor, "lab_analyser_map_changed", target_type="lab_instrument",
-               target_id=ident,
-               summary=f"Analyser code {code} on {instrument['name']} ({ident}) retired",
-               metadata={"instrument_id": ident, "instrument_code": code, "change": "retired",
-                         "before": _map_audit_picture(before), "after": _map_audit_picture(after)},
-               request_meta=request_meta)
+        _audit(
+            conn,
+            actor,
+            "lab_analyser_map_changed",
+            target_type="lab_instrument",
+            target_id=ident,
+            summary=f"Analyser code {code} on {instrument['name']} ({ident}) retired",
+            metadata={
+                "instrument_id": ident,
+                "instrument_code": code,
+                "change": "retired",
+                "before": _map_audit_picture(before),
+                "after": _map_audit_picture(after),
+            },
+            request_meta=request_meta,
+        )
         return _mapping_out(conn, ident, code)

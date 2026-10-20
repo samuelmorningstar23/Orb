@@ -21,11 +21,13 @@ From migration 48 on (3 October 2026), each new migration is its own file under
 merged into ``MIGRATIONS`` at the bottom of this module. This file keeps 1 to
 47, the runner and the users rebuild helper.
 """
+
 from __future__ import annotations
 
 import json
 import logging
-from typing import Callable, NamedTuple
+from collections.abc import Callable
+from typing import NamedTuple
 
 logger = logging.getLogger("orb.migrations")
 
@@ -53,15 +55,22 @@ def _applied_versions(conn) -> set[int]:
 
 # ── Migrations (ascending version; never renumber a shipped one) ──────────────
 
+
 def _m1_hot_path_indexes(conn) -> None:
     """Composite indexes for the busiest per-patient / queue lookups that the
     single-column indexes don't fully cover — the patient-story merge, the
     pharmacy verify queue, and per-patient audit (PHI-access) review. Pure
     read-path scale; no data change."""
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_medications_patient_status ON medications(patient_id, status)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_medications_source_verified ON medications(source, verified_by)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_medications_patient_status ON medications(patient_id, status)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_medications_source_verified ON medications(source, verified_by)"
+    )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_patient ON audit_logs(patient_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_clinical_docs_patient_created ON clinical_documents(patient_id, created_at)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_clinical_docs_patient_created ON clinical_documents(patient_id, created_at)"
+    )
 
 
 def _m2_messages_idempotency(conn) -> None:
@@ -111,8 +120,12 @@ def _m3_sage_insights_auto_resolved(conn) -> None:
     )
     conn.execute("INSERT INTO sage_insights SELECT * FROM sage_insights_old")
     conn.execute("DROP TABLE sage_insights_old")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_sage_insights_active ON sage_insights(state, target_user_id, created_at DESC)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_sage_insights_dedup ON sage_insights(dedup_key, state, created_at DESC)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sage_insights_active ON sage_insights(state, target_user_id, created_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sage_insights_dedup ON sage_insights(dedup_key, state, created_at DESC)"
+    )
 
 
 def _m4_shadow_events(conn) -> None:
@@ -169,10 +182,18 @@ def _m4_shadow_events(conn) -> None:
         )"""
     )
 
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_shadow_episode      ON shadow_events(episode_id, id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_shadow_kind_time    ON shadow_events(kind, occurred_at)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_shadow_patient_time ON shadow_events(patient_id, occurred_at)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_shadow_subject      ON shadow_events(subject_type, subject_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_shadow_episode      ON shadow_events(episode_id, id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_shadow_kind_time    ON shadow_events(kind, occurred_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_shadow_patient_time ON shadow_events(patient_id, occurred_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_shadow_subject      ON shadow_events(subject_type, subject_id)"
+    )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_shadow_supersedes ON shadow_events(supersedes_event_id) "
         "WHERE supersedes_event_id IS NOT NULL"
@@ -516,7 +537,8 @@ def _m9_recover_stranded_sage_insights(conn) -> None:
         # insight feed is worse than a manual recovery.
         logger.error(
             "sage_insights_old exists but shares no 'id' column with sage_insights "
-            "(shared columns: %s). NOT merging — recover it by hand.", shared
+            "(shared columns: %s). NOT merging — recover it by hand.",
+            shared,
         )
         return
 
@@ -529,7 +551,9 @@ def _m9_recover_stranded_sage_insights(conn) -> None:
     logger.warning(
         "Recovered %d of %d sage_insights row(s) stranded in sage_insights_old by an "
         "INTERRUPTED table rebuild. The old table is left in place on purpose — "
-        "verify, then drop it by hand.", recovered, total
+        "verify, then drop it by hand.",
+        recovered,
+        total,
     )
 
 
@@ -683,8 +707,7 @@ def _m11_escalation_chain(conn) -> None:
         "ON clinical_escalations(patient_id) WHERE status != 'resolved'"
     )
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_escalation_due "
-        "ON clinical_escalations(status, tier_due_at)"
+        "CREATE INDEX IF NOT EXISTS idx_escalation_due ON clinical_escalations(status, tier_due_at)"
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_escalation_patient_raised "
@@ -865,8 +888,7 @@ def _m13_order_sets(conn) -> None:
         "ON order_set_applications(patient_id, id DESC)"
     )
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_orders_set_application "
-        "ON orders(order_set_application_id)"
+        "CREATE INDEX IF NOT EXISTS idx_orders_set_application ON orders(order_set_application_id)"
     )
 
     conn.executemany(
@@ -882,7 +904,11 @@ _ORDER_SET_LOCAL_CODES = [
     ("LOCAL", "ORB-LAB-BLOOD-CULTURE", "Blood culture, two sets (Orb local code)"),
     ("LOCAL", "ORB-LAB-ABG", "Arterial blood gas (Orb local code)"),
     ("LOCAL", "ORB-LAB-VBG", "Venous blood gas (Orb local code)"),
-    ("LOCAL", "ORB-LAB-BLOOD-KETONES", "Capillary blood ketones, beta-hydroxybutyrate (Orb local code)"),
+    (
+        "LOCAL",
+        "ORB-LAB-BLOOD-KETONES",
+        "Capillary blood ketones, beta-hydroxybutyrate (Orb local code)",
+    ),
     ("LOCAL", "ORB-IMG-CXR", "Chest X-ray, portable (Orb local code)"),
     ("LOCAL", "ORB-PROC-ECG", "12-lead electrocardiogram (Orb local code)"),
     ("LOCAL", "ORB-MED-OXYGEN", "Oxygen (Orb local code)"),
@@ -1246,107 +1272,142 @@ _DPDP_RETENTION_SEED = [
         "clinical_record",
         "Inpatient and outpatient medical records: notes, discharge summaries, "
         "observations, problem list, admissions.",
-        1095, "last_clinical_activity", "legal_obligation",
+        1095,
+        "last_clinical_activity",
+        "legal_obligation",
         "Indian Medical Council (Professional Conduct, Etiquette and Ethics) "
         "Regulations 2002, Reg. 1.3.1: indoor records retained 3 years from the "
         "commencement of treatment. Retention also required to answer a claim "
         "within the Limitation Act 1963 / Consumer Protection Act 2019 window."
         " A patient who was a MINOR is protected for longer: Limitation Act 1963 s.6 starts the limitation period at majority, so the window closes at 18+3=21. Enforced as a floor by consent_service.retention_review, not by this row.",
-        0, "retain: review after the limitation window, destroy only on a signed order",
+        0,
+        "retain: review after the limitation window, destroy only on a signed order",
     ),
     (
         "medico_legal_record",
-        "Records attached to a medico-legal case, police requisition, or live "
-        "litigation.",
-        None, "last_clinical_activity", "legal_obligation",
+        "Records attached to a medico-legal case, police requisition, or live litigation.",
+        None,
+        "last_clinical_activity",
+        "legal_obligation",
         "Retained until the proceedings conclude and any appeal window closes. "
         "No fixed period; destruction requires the hospital's legal officer.",
-        0, "retain indefinitely until legal hold is lifted",
+        0,
+        "retain indefinitely until legal hold is lifted",
     ),
     (
         "prescription_and_dispensing",
         "Prescriptions, medication orders and administration records.",
-        1095, "record_created", "legal_obligation",
+        1095,
+        "record_created",
+        "legal_obligation",
         "Drugs and Cosmetics Rules 1945: Schedule H1 register retained 3 years; "
         "dispensing records retained under Rule 65."
         " A patient who was a MINOR is protected for longer: Limitation Act 1963 s.6 starts the limitation period at majority, so the window closes at 18+3=21. Enforced as a floor by consent_service.retention_review, not by this row.",
-        0, "retain: destroy only with the pharmacist-in-charge's sign-off",
+        0,
+        "retain: destroy only with the pharmacist-in-charge's sign-off",
     ),
     (
         "imaging",
         "Radiology and other clinical images with their reports.",
-        1095, "record_created", "legal_obligation",
+        1095,
+        "record_created",
+        "legal_obligation",
         "Pre-Conception and Pre-Natal Diagnostic Techniques Act 1994, s.29 sets a "
         "2-year floor for records under that Act; Orb applies the 3-year clinical "
         "record period as the safer single rule."
         " A patient who was a MINOR is protected for longer: Limitation Act 1963 s.6 starts the limitation period at majority, so the window closes at 18+3=21. Enforced as a floor by consent_service.retention_review, not by this row.",
-        0, "retain with the clinical record",
+        0,
+        "retain with the clinical record",
     ),
     (
         "audit_trail",
         "The tamper-evident access and mutation log (audit_logs).",
-        2920, "record_created", "legal_obligation",
+        2920,
+        "record_created",
+        "legal_obligation",
         "DPDP Act 2023 s.8(5) reasonable security safeguards: the trail is the "
         "evidence the safeguards existed. Rows are also chained by SHA-256: "
         "removing one destroys tamper-evidence for every row after it.",
-        0, "never erase: the chain is the control",
+        0,
+        "never erase: the chain is the control",
     ),
     (
         "breach_record",
         "Personal data breach register and the notifications sent for it.",
-        2920, "record_created", "legal_obligation",
+        2920,
+        "record_created",
+        "legal_obligation",
         "DPDP Act 2023 s.8(6) breach notification to the Data Protection Board "
         "and to affected Data Principals; the register is the proof it was done.",
-        0, "never erase",
+        0,
+        "never erase",
     ),
     (
         "consent_record",
         "Consent records and their withdrawals.",
-        None, "record_created", "legal_obligation",
+        None,
+        "record_created",
+        "legal_obligation",
         "DPDP Act 2023 s.5 and s.6: the Data Fiduciary must be able to "
         "demonstrate that valid consent was given and when it was withdrawn.",
-        0, "never erase: this is the proof consent existed",
+        0,
+        "never erase: this is the proof consent existed",
     ),
     (
         "ai_interaction_transcript",
         "Sage working memory: AI observations, room memory, decision cache, "
         "insight feedback. Derived material, not the signed clinical record.",
-        365, "record_created", "consent",
+        365,
+        "record_created",
+        "consent",
         "Held to make the assistant useful, not because any law requires it. "
         "DPDP s.8(7): erase on withdrawal of consent or when the purpose is served.",
-        1, "erase on request; sweep annually",
+        1,
+        "erase on request; sweep annually",
     ),
     (
         "ambient_audio",
         "Raw Scribe dictation audio kept after the note it produced was signed.",
-        30, "record_created", "consent",
+        30,
+        "record_created",
+        "consent",
         "The SIGNED NOTE is the medical record; the audio is working material. "
         "No Indian rule requires keeping the recording once the note is final.",
-        1, "erase 30 days after the note is signed",
+        1,
+        "erase 30 days after the note is signed",
     ),
     (
         "patient_portal_account",
         "Bridge portal login, device credentials and discharge access tokens.",
-        None, "record_created", "consent",
+        None,
+        "record_created",
+        "consent",
         "An account is a convenience, not a medical record. Revoking it does not "
         "touch the clinical record it gave access to.",
-        1, "erase/revoke on request",
+        1,
+        "erase/revoke on request",
     ),
     (
         "non_clinical_contact",
         "Contact details held for messaging and reminders that are not part of "
         "the medical record proforma.",
-        None, "record_created", "consent",
+        None,
+        "record_created",
+        "consent",
         "DPDP s.8(7). NOTE: name, address and next-of-kin inside the medical "
         "record proforma are NOT this category, those fall under clinical_record.",
-        1, "erase on request",
+        1,
+        "erase on request",
     ),
     (
         "marketing_communications",
         "Any contact list used for outreach, campaigns or feedback drives.",
-        None, "record_created", "consent",
+        None,
+        "record_created",
+        "consent",
         "Pure consent basis. Withdrawal must be honoured in full.",
-        1, "erase on request",
+        1,
+        "erase on request",
     ),
 ]
 
@@ -1437,8 +1498,14 @@ def _m15_history_import(conn) -> None:
         conn.execute("ALTER TABLE admissions ADD COLUMN discharged_at TIMESTAMP")
 
     # ── 1 + 2: provenance columns and the idempotency index, per table ────────
-    for table in ("patients", "admissions", "problem_list", "medications",
-                  "observations", "clinical_documents"):
+    for table in (
+        "patients",
+        "admissions",
+        "problem_list",
+        "medications",
+        "observations",
+        "clinical_documents",
+    ):
         cols = {r[1] for r in conn.execute(f'PRAGMA table_info("{table}")').fetchall()}
         if not cols:
             # Table absent on a minimal/older DB — nothing to decorate, and the
@@ -1448,15 +1515,14 @@ def _m15_history_import(conn) -> None:
             if column not in cols:
                 conn.execute(f'ALTER TABLE "{table}" ADD COLUMN {column} TEXT')
         conn.execute(
-            f'CREATE UNIQUE INDEX IF NOT EXISTS idx_{table}_import_external '
+            f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table}_import_external "
             f'ON "{table}"(import_source_system, import_external_id) '
-            f'WHERE import_external_id IS NOT NULL'
+            f"WHERE import_external_id IS NOT NULL"
         )
         # The "show me everything that came from the old system" query, and the
         # per-run rollback/inspection path.
         conn.execute(
-            f'CREATE INDEX IF NOT EXISTS idx_{table}_import_run '
-            f'ON "{table}"(import_run_id)'
+            f'CREATE INDEX IF NOT EXISTS idx_{table}_import_run ON "{table}"(import_run_id)'
         )
 
     # ── 3: cross-system patient identity ─────────────────────────────────────
@@ -1606,12 +1672,10 @@ def _m17_patient_review_marks(conn) -> None:
     # The ward-board badge asks "for THIS user, across every patient in scope,
     # what is my watermark?" — one lookup per board render, not per patient.
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_review_marks_user "
-        "ON patient_review_marks(user_id)"
+        "CREATE INDEX IF NOT EXISTS idx_review_marks_user ON patient_review_marks(user_id)"
     )
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_review_marks_patient "
-        "ON patient_review_marks(patient_id)"
+        "CREATE INDEX IF NOT EXISTS idx_review_marks_patient ON patient_review_marks(patient_id)"
     )
 
 
@@ -1670,7 +1734,9 @@ def _m18_shadow_none_confirmed_once(conn) -> None:
             "Removed %d duplicate outcome.none_confirmed row(s) across %d "
             "ward-shift(s) before extending idx_shadow_once (the resubmission "
             "bug this migration closes). The earliest confirmation per "
-            "ward-shift was kept.", cur.rowcount or 0, dup_groups,
+            "ward-shift was kept.",
+            cur.rowcount or 0,
+            dup_groups,
         )
         # Byte-for-byte the trigger migration 4 installs.
         conn.execute(
@@ -1754,7 +1820,9 @@ def _m19_scribe_unverified_ack_columns(conn) -> None:
         logger.info(
             "scribe_notes unverified-sign acknowledgements: %d migrated into "
             "columns, %d left in verification_json only (marker unattributable "
-            "or carried over from another note)", migrated, skipped,
+            "or carried over from another note)",
+            migrated,
+            skipped,
         )
 
 
@@ -1875,7 +1943,6 @@ _M20_TABLES: list[str] = [
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     """CREATE TABLE IF NOT EXISTS tariff_plans (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         code TEXT NOT NULL UNIQUE,
@@ -1891,7 +1958,6 @@ _M20_TABLES: list[str] = [
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     """CREATE TABLE IF NOT EXISTS tariff_rates (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         tariff_plan_id INTEGER NOT NULL,
@@ -1906,7 +1972,6 @@ _M20_TABLES: list[str] = [
         created_by TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     """CREATE TABLE IF NOT EXISTS package_rates (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         tariff_plan_id INTEGER NOT NULL,
@@ -1924,7 +1989,6 @@ _M20_TABLES: list[str] = [
         is_active INTEGER NOT NULL DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     # ── Payer master ──────────────────────────────────────────────────────────
     """CREATE TABLE IF NOT EXISTS payers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1950,7 +2014,6 @@ _M20_TABLES: list[str] = [
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     """CREATE TABLE IF NOT EXISTS patient_payer_policies (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         patient_id TEXT NOT NULL,
@@ -1979,7 +2042,6 @@ _M20_TABLES: list[str] = [
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     # ── Charge capture ────────────────────────────────────────────────────────
     """CREATE TABLE IF NOT EXISTS encounter_charges (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2026,7 +2088,6 @@ _M20_TABLES: list[str] = [
         idempotency_key TEXT,
         notes TEXT
     )""",
-
     # ── Invoices ──────────────────────────────────────────────────────────────
     """CREATE TABLE IF NOT EXISTS invoices (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2075,7 +2136,6 @@ _M20_TABLES: list[str] = [
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     """CREATE TABLE IF NOT EXISTS invoice_lines (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         invoice_id INTEGER NOT NULL,
@@ -2101,7 +2161,6 @@ _M20_TABLES: list[str] = [
         total_paise INTEGER NOT NULL DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     """CREATE TABLE IF NOT EXISTS document_number_series (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         series_code TEXT NOT NULL UNIQUE,
@@ -2116,7 +2175,6 @@ _M20_TABLES: list[str] = [
         is_configured INTEGER NOT NULL DEFAULT 0,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     # ── Payments, deposits, refunds, discounts ────────────────────────────────
     """CREATE TABLE IF NOT EXISTS payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2151,7 +2209,6 @@ _M20_TABLES: list[str] = [
         idempotency_key TEXT,
         notes TEXT
     )""",
-
     """CREATE TABLE IF NOT EXISTS payment_allocations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         payment_id INTEGER NOT NULL,
@@ -2163,7 +2220,6 @@ _M20_TABLES: list[str] = [
         reversed_by TEXT,
         notes TEXT
     )""",
-
     """CREATE TABLE IF NOT EXISTS patient_deposits (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         patient_id TEXT NOT NULL,
@@ -2181,7 +2237,6 @@ _M20_TABLES: list[str] = [
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         notes TEXT
     )""",
-
     """CREATE TABLE IF NOT EXISTS refunds (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         refund_number TEXT,
@@ -2206,7 +2261,6 @@ _M20_TABLES: list[str] = [
         paid_at TIMESTAMP,
         idempotency_key TEXT
     )""",
-
     """CREATE TABLE IF NOT EXISTS discount_approvals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         patient_id TEXT NOT NULL,
@@ -2230,7 +2284,6 @@ _M20_TABLES: list[str] = [
         decided_at TIMESTAMP,
         decision_note TEXT
     )""",
-
     # ── Claims ────────────────────────────────────────────────────────────────
     """CREATE TABLE IF NOT EXISTS claims (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2268,7 +2321,6 @@ _M20_TABLES: list[str] = [
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         notes TEXT
     )""",
-
     """CREATE TABLE IF NOT EXISTS claim_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         claim_id INTEGER NOT NULL,
@@ -2287,7 +2339,6 @@ _M20_TABLES: list[str] = [
         occurred_at TIMESTAMP,
         recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     # ── Procurement (NON-pharmacy stores; Helix owns drug stock) ──────────────
     """CREATE TABLE IF NOT EXISTS vendors (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2319,7 +2370,6 @@ _M20_TABLES: list[str] = [
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     """CREATE TABLE IF NOT EXISTS stores (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         code TEXT NOT NULL UNIQUE,
@@ -2332,7 +2382,6 @@ _M20_TABLES: list[str] = [
         is_active INTEGER NOT NULL DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     """CREATE TABLE IF NOT EXISTS inventory_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         code TEXT NOT NULL UNIQUE,
@@ -2365,7 +2414,6 @@ _M20_TABLES: list[str] = [
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     """CREATE TABLE IF NOT EXISTS indents (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         indent_number TEXT,
@@ -2385,7 +2433,6 @@ _M20_TABLES: list[str] = [
         rejected_reason TEXT,
         remarks TEXT
     )""",
-
     """CREATE TABLE IF NOT EXISTS indent_lines (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         indent_id INTEGER NOT NULL,
@@ -2400,7 +2447,6 @@ _M20_TABLES: list[str] = [
             'pending','approved','rejected','ordered','received','cancelled')),
         remarks TEXT
     )""",
-
     """CREATE TABLE IF NOT EXISTS purchase_orders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         po_number TEXT,
@@ -2435,7 +2481,6 @@ _M20_TABLES: list[str] = [
         cancel_reason TEXT,
         remarks TEXT
     )""",
-
     """CREATE TABLE IF NOT EXISTS purchase_order_lines (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         purchase_order_id INTEGER NOT NULL,
@@ -2464,7 +2509,6 @@ _M20_TABLES: list[str] = [
             'open','partially_received','received','cancelled','short_closed')),
         remarks TEXT
     )""",
-
     """CREATE TABLE IF NOT EXISTS goods_receipts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         grn_number TEXT,
@@ -2495,7 +2539,6 @@ _M20_TABLES: list[str] = [
         idempotency_key TEXT,
         remarks TEXT
     )""",
-
     """CREATE TABLE IF NOT EXISTS goods_receipt_lines (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         goods_receipt_id INTEGER NOT NULL,
@@ -2525,7 +2568,6 @@ _M20_TABLES: list[str] = [
         total_paise INTEGER NOT NULL DEFAULT 0,
         remarks TEXT
     )""",
-
     """CREATE TABLE IF NOT EXISTS stock_movements (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         inventory_item_id INTEGER,
@@ -2554,7 +2596,6 @@ _M20_TABLES: list[str] = [
         idempotency_key TEXT,
         remarks TEXT
     )""",
-
     # ── Front desk ────────────────────────────────────────────────────────────
     """CREATE TABLE IF NOT EXISTS cash_counter_sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2576,7 +2617,6 @@ _M20_TABLES: list[str] = [
         reconciled_at TIMESTAMP,
         notes TEXT
     )""",
-
     """CREATE TABLE IF NOT EXISTS discharge_financial_checks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         patient_id TEXT NOT NULL,
@@ -2618,7 +2658,6 @@ _M20_INDEXES: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_policies_patient ON patient_payer_policies("
     "patient_id, status, is_primary DESC, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_policies_admission ON patient_payer_policies(admission_id)",
-
     # Charge capture — the hot read is "everything unbilled for this admission".
     "CREATE INDEX IF NOT EXISTS idx_charges_admission ON encounter_charges("
     "admission_id, status, id DESC)",
@@ -2628,7 +2667,6 @@ _M20_INDEXES: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_charges_source ON encounter_charges(source, source_ref)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_charges_idempotency ON encounter_charges("
     "idempotency_key) WHERE idempotency_key IS NOT NULL",
-
     # Invoices — a draft holds no number, so the uniqueness is partial.
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_number ON invoices(invoice_number) "
     "WHERE invoice_number IS NOT NULL",
@@ -2639,7 +2677,6 @@ _M20_INDEXES: list[str] = [
     "WHERE idempotency_key IS NOT NULL",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_invoice_lines_no ON invoice_lines(invoice_id, line_no)",
     "CREATE INDEX IF NOT EXISTS idx_invoice_lines_charge ON invoice_lines(encounter_charge_id)",
-
     # Payments.
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_receipt ON payments(receipt_number) "
     "WHERE receipt_number IS NOT NULL",
@@ -2660,7 +2697,6 @@ _M20_INDEXES: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_discounts_status ON discount_approvals(status, requested_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_discounts_invoice ON discount_approvals(invoice_id)",
     "CREATE INDEX IF NOT EXISTS idx_discounts_patient ON discount_approvals(patient_id, id DESC)",
-
     # Claims.
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_number ON claims(claim_number) "
     "WHERE claim_number IS NOT NULL",
@@ -2668,7 +2704,6 @@ _M20_INDEXES: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_claims_payer ON claims(payer_id, status, submitted_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_claims_admission ON claims(admission_id)",
     "CREATE INDEX IF NOT EXISTS idx_claim_events_claim ON claim_events(claim_id, id)",
-
     # Procurement.
     "CREATE INDEX IF NOT EXISTS idx_vendors_active ON vendors(is_active, is_blacklisted, name)",
     "CREATE INDEX IF NOT EXISTS idx_inventory_active ON inventory_items(is_active, category, name)",
@@ -2695,7 +2730,6 @@ _M20_INDEXES: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_stock_patient ON stock_movements(patient_id, moved_at DESC)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_stock_idempotency ON stock_movements(idempotency_key) "
     "WHERE idempotency_key IS NOT NULL",
-
     # Front desk.
     "CREATE INDEX IF NOT EXISTS idx_counter_sessions_open ON cash_counter_sessions("
     "status, counter_code, opened_at DESC)",
@@ -2756,7 +2790,6 @@ _M21_TABLES = [
         updated_by TEXT,
         updated_at TIMESTAMP
     )""",
-
     # ── Preventive maintenance / calibration schedules ────────────────────────
     #
     # ONE ROW PER (asset, schedule_type). A ventilator has a PM schedule AND a
@@ -2789,7 +2822,6 @@ _M21_TABLES = [
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP
     )""",
-
     # Append-only history of every PM/calibration actually performed. This is the
     # evidence half of the register: the schedule says when it is next due, this
     # says what happened and against which certificate. `was_overdue` /
@@ -2817,7 +2849,6 @@ _M21_TABLES = [
         recorded_by TEXT,
         recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     # ── Breakdown / service calls, with downtime ──────────────────────────────
     #
     # `down_from` is SEPARATE from `reported_at` on purpose. A pump fails at
@@ -2856,7 +2887,6 @@ _M21_TABLES = [
         created_by TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     # ── AMC / CMC contracts ───────────────────────────────────────────────────
     #
     # A real AMC covers a FLEET ("all 14 infusion pumps"), not one machine, so the
@@ -2893,7 +2923,6 @@ _M21_TABLES = [
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP
     )""",
-
     """CREATE TABLE IF NOT EXISTS biomedical_contract_assets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         contract_id INTEGER NOT NULL,
@@ -2913,7 +2942,6 @@ _M21_INDEXES = [
     "criticality, is_active, status)",
     "CREATE INDEX IF NOT EXISTS idx_biomed_assets_warranty ON biomedical_assets("
     "warranty_expiry_date) WHERE warranty_expiry_date IS NOT NULL",
-
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_biomed_sched_asset_type ON biomedical_schedules("
     "asset_id, schedule_type)",
     # The overdue view's index. next_due_date leads because that is what the
@@ -2924,7 +2952,6 @@ _M21_INDEXES = [
     "schedule_id, performed_date DESC, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_biomed_sched_events_asset ON biomedical_schedule_events("
     "asset_id, performed_date DESC)",
-
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_biomed_calls_number ON biomedical_service_calls("
     "call_number) WHERE call_number IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS idx_biomed_calls_asset ON biomedical_service_calls("
@@ -2932,11 +2959,9 @@ _M21_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_biomed_calls_status ON biomedical_service_calls("
     "status, reported_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_biomed_calls_ward ON biomedical_service_calls(ward, status)",
-
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_biomed_contracts_number ON biomedical_contracts("
     "contract_number)",
-    "CREATE INDEX IF NOT EXISTS idx_biomed_contracts_end ON biomedical_contracts("
-    "end_date, status)",
+    "CREATE INDEX IF NOT EXISTS idx_biomed_contracts_end ON biomedical_contracts(end_date, status)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_biomed_contract_assets ON biomedical_contract_assets("
     "contract_id, asset_id)",
     "CREATE INDEX IF NOT EXISTS idx_biomed_contract_assets_asset ON biomedical_contract_assets("
@@ -3032,7 +3057,6 @@ HOUSEKEEPING_TABLES: list[str] = [
         created_at TEXT,
         updated_at TEXT
     )""",
-
     # ── The state ledger ──────────────────────────────────────────────────────
     #
     # Every transition, with who moved it and when. `housekeeping_units.state` is
@@ -3051,7 +3075,6 @@ HOUSEKEEPING_TABLES: list[str] = [
         actor_role TEXT,
         occurred_at TEXT NOT NULL
     )""",
-
     # ── Cleaning requests ─────────────────────────────────────────────────────
     #
     # NO patient_id, NO patient name, NO diagnosis, and no copy of the chart's
@@ -3104,7 +3127,6 @@ HOUSEKEEPING_TABLES: list[str] = [
         cancel_reason TEXT,
         created_at TEXT
     )""",
-
     # ── Linen ────────────────────────────────────────────────────────────────
     #
     # A tiny master so the four wards of a pilot site do not each invent their own
@@ -3116,7 +3138,6 @@ HOUSEKEEPING_TABLES: list[str] = [
         name TEXT NOT NULL,
         is_active INTEGER NOT NULL DEFAULT 1
     )""",
-
     # `direction` is four words, not two, because "return" is ambiguous and the
     # ambiguity is where linen goes missing: clean linen ISSUED to a ward comes
     # back either soiled (to the laundry) or unused-clean (to the store), and
@@ -3143,7 +3164,6 @@ HOUSEKEEPING_INDEXES: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_hk_units_ward ON housekeeping_units(ward, state, unit_code)",
     "CREATE INDEX IF NOT EXISTS idx_hk_events_unit ON housekeeping_unit_events(unit_id, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_hk_events_task ON housekeeping_unit_events(task_id, id)",
-
     # ── THE IDEMPOTENCY GUARD ────────────────────────────────────────────────
     #
     # THIS INDEX IS THE ONLY THING THAT STOPS ONE DISCHARGE PRODUCING TEN
@@ -3163,12 +3183,10 @@ HOUSEKEEPING_INDEXES: list[str] = [
     # constraint that silently swallowed the second would lose a request.
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_hk_tasks_source ON housekeeping_tasks("
     "source_type, source_ref) WHERE source_ref IS NOT NULL",
-
     "CREATE INDEX IF NOT EXISTS idx_hk_tasks_queue ON housekeeping_tasks("
     "status, priority, requested_at)",
     "CREATE INDEX IF NOT EXISTS idx_hk_tasks_unit ON housekeeping_tasks(unit_id, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_hk_tasks_ward ON housekeeping_tasks(ward, ready_at)",
-
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_hk_linen_idempotency ON "
     "housekeeping_linen_movements(idempotency_key) WHERE idempotency_key IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS idx_hk_linen_ward ON housekeeping_linen_movements("
@@ -3329,7 +3347,6 @@ _M23_TABLES: list[str] = [
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     # ── The verification record ───────────────────────────────────────────────
     #
     # WHO verified, WHEN, and BY WHAT METHOD — the three facts a NABH assessor or
@@ -3361,7 +3378,6 @@ _M23_TABLES: list[str] = [
         failure_reason TEXT,
         notes TEXT
     )""",
-
     # ── Care-context links ────────────────────────────────────────────────────
     #
     # A care context is one episode (an admission, an OPD visit) that was linked
@@ -3400,7 +3416,6 @@ _M23_TABLES: list[str] = [
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     # ── Consent artefacts ─────────────────────────────────────────────────────
     #
     # Under ABDM a Health Information User asks the patient's Consent Manager for
@@ -3455,7 +3470,6 @@ _M23_TABLES: list[str] = [
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     # ── The event trail ───────────────────────────────────────────────────────
     #
     # One append-only line per state change across all three record types. This
@@ -3494,12 +3508,10 @@ _M23_INDEXES: list[str] = [
     "WHERE abha_address IS NOT NULL AND status = 'active'",
     "CREATE INDEX IF NOT EXISTS idx_abha_verification_state ON abha_identities("
     "verification_status, status, id DESC)",
-
     "CREATE INDEX IF NOT EXISTS idx_abha_verif_identity ON abha_verifications("
     "abha_identity_id, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_abha_verif_patient ON abha_verifications("
     "patient_id, performed_at DESC)",
-
     "CREATE INDEX IF NOT EXISTS idx_cc_patient ON abdm_care_contexts(patient_id, status, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_cc_identity ON abdm_care_contexts(abha_identity_id, status)",
     "CREATE INDEX IF NOT EXISTS idx_cc_encounter ON abdm_care_contexts(encounter_ref, status)",
@@ -3507,14 +3519,11 @@ _M23_INDEXES: list[str] = [
     # allowed and creates a new row; two simultaneous links are not.
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_cc_live_reference ON abdm_care_contexts("
     "abha_identity_id, care_context_reference) WHERE status = 'linked'",
-
     "CREATE INDEX IF NOT EXISTS idx_consent_patient ON abdm_consent_artefacts("
     "patient_id, status, id DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_consent_status ON abdm_consent_artefacts("
-    "status, expires_at)",
+    "CREATE INDEX IF NOT EXISTS idx_consent_status ON abdm_consent_artefacts(status, expires_at)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_consent_artefact_id ON abdm_consent_artefacts("
     "artefact_id) WHERE artefact_id IS NOT NULL",
-
     "CREATE INDEX IF NOT EXISTS idx_abdm_events_entity ON abdm_events(entity_type, entity_id, id)",
     "CREATE INDEX IF NOT EXISTS idx_abdm_events_patient ON abdm_events(patient_id, id DESC)",
 ]
@@ -3662,7 +3671,6 @@ _M24_TABLES: list[str] = [
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     # WHAT A SHIFT IS. Held as start + duration in minutes, never as two clock
     # strings: "21:00-07:00" cannot be compared for overlap without first
     # deciding which day the 07:00 belongs to, and that decision is exactly
@@ -3680,7 +3688,6 @@ _M24_TABLES: list[str] = [
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     # WHO IS PLANNED TO BE ON. The PLANNED half of "planned vs actual".
     """CREATE TABLE IF NOT EXISTS duty_roster (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3697,7 +3704,6 @@ _M24_TABLES: list[str] = [
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     # WHO ACTUALLY CAME. One row per employee per calendar day, and the ABSENCE
     # of a row means UNRECORDED — never "absent". See the migration docstring.
     """CREATE TABLE IF NOT EXISTS attendance_days (
@@ -3732,7 +3738,6 @@ _M24_TABLES: list[str] = [
         CHECK (status = 'present' OR (worked_minutes = 0 AND overtime_minutes = 0)),
         CHECK (worked_minutes >= 0 AND late_minutes >= 0 AND overtime_minutes >= 0)
     )""",
-
     # The hospital's leave vocabulary. `is_paid` is a classification, not a rate.
     """CREATE TABLE IF NOT EXISTS leave_types (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3743,7 +3748,6 @@ _M24_TABLES: list[str] = [
         is_active INTEGER NOT NULL DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     # Declared non-working days. ONE list, hospital-wide: this is a single-site
     # appliance, and a per-state holiday calendar would be a fiction on a box
     # that sits in exactly one state.
@@ -3758,7 +3762,6 @@ _M24_TABLES: list[str] = [
         created_by TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     # WHAT WE SENT THE BUREAU, AND WHEN. A payroll dispute three months later is
     # answered by the checksum of the exact file that left the building, not by
     # regenerating it from data that has since been corrected.
@@ -3788,7 +3791,6 @@ _M24_INDEXES: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_staff_employment_active ON staff_employment("
     "is_active, department, full_name)",
     "CREATE INDEX IF NOT EXISTS idx_staff_employment_user ON staff_employment(user_id)",
-
     # The same person cannot hold the same shift on the same day twice. Partial
     # so that cancelling an assignment frees the slot for a re-assign rather
     # than leaving a tombstone in the way.
@@ -3798,16 +3800,13 @@ _M24_INDEXES: list[str] = [
     "roster_date, department, shift_code)",
     "CREATE INDEX IF NOT EXISTS idx_duty_roster_employee ON duty_roster("
     "employee_code, roster_date)",
-
     # One attendance row per person per day — the identity the monthly summary's
     # arithmetic rests on. Enforced by the DATABASE because a duplicate row
     # would make present + absent + leave exceed the working days with no error
     # raised anywhere.
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_day ON attendance_days("
     "employee_code, attendance_date)",
-    "CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance_days("
-    "attendance_date, status)",
-
+    "CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance_days(attendance_date, status)",
     "CREATE INDEX IF NOT EXISTS idx_holidays_date ON hospital_holidays(holiday_date)",
     "CREATE INDEX IF NOT EXISTS idx_payroll_runs_period ON payroll_export_runs("
     "period_start, generated_at DESC)",
@@ -3891,7 +3890,6 @@ _DIETARY_TABLES: list[str] = [
         discontinue_reason TEXT,
         CHECK (diet_type <> 'npo' OR npo_until IS NOT NULL)
     )""",
-
     # ── The ward-wise plan for one service on one day ─────────────────────────
     """CREATE TABLE IF NOT EXISTS meal_plans (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3923,7 +3921,6 @@ _DIETARY_TABLES: list[str] = [
         cancelled_at TIMESTAMP,
         notes TEXT
     )""",
-
     """CREATE TABLE IF NOT EXISTS meal_plan_lines (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         meal_plan_id INTEGER NOT NULL,
@@ -3933,7 +3930,6 @@ _DIETARY_TABLES: list[str] = [
         meal_count INTEGER NOT NULL DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     # ── The requisition the kitchen cooks against ─────────────────────────────
     """CREATE TABLE IF NOT EXISTS kitchen_indents (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3954,7 +3950,6 @@ _DIETARY_TABLES: list[str] = [
         cancel_reason TEXT,
         notes TEXT
     )""",
-
     """CREATE TABLE IF NOT EXISTS kitchen_indent_lines (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         kitchen_indent_id INTEGER NOT NULL,
@@ -3973,10 +3968,8 @@ _DIETARY_INDEXES: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_diet_orders_patient ON diet_orders("
     "patient_id, status, id DESC)",
     # The NPO sweep: "who on this ward cannot eat, and has their window passed".
-    "CREATE INDEX IF NOT EXISTS idx_diet_orders_npo ON diet_orders("
-    "diet_type, status, npo_until)",
+    "CREATE INDEX IF NOT EXISTS idx_diet_orders_npo ON diet_orders(diet_type, status, npo_until)",
     "CREATE INDEX IF NOT EXISTS idx_diet_orders_admission ON diet_orders(admission_id)",
-
     # One plan per ward per service per day.
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_meal_plans_unique ON meal_plans("
     "service_date, meal_service, ward)",
@@ -3984,7 +3977,6 @@ _DIETARY_INDEXES: list[str] = [
     "service_date DESC, meal_service, ward)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_meal_plan_lines_no ON meal_plan_lines("
     "meal_plan_id, line_no)",
-
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_kitchen_indents_number ON kitchen_indents("
     "indent_number) WHERE indent_number IS NOT NULL",
     # A plan may hold at most one live indent; cancelling one frees the slot.
@@ -4030,6 +4022,7 @@ def _m25_dietary(conn) -> None:
 
 
 # ── Migration 26: NABH accreditation evidence pack ───────────────────────────
+
 
 def _m26_nabh_evidence(conn) -> None:
     """The incident / adverse-event register, the discharge-disposition record
@@ -4172,7 +4165,6 @@ _M26_TABLES: list[str] = [
         -- future column, and anybody who did not read the service.
         CHECK (is_anonymous = 0 OR (reported_by IS NULL AND reporter_role IS NULL))
     )""",
-
     """CREATE TABLE IF NOT EXISTS nabh_incident_actions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         incident_id INTEGER NOT NULL,
@@ -4192,7 +4184,6 @@ _M26_TABLES: list[str] = [
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     """CREATE TABLE IF NOT EXISTS nabh_incident_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         incident_id INTEGER NOT NULL,
@@ -4208,7 +4199,6 @@ _M26_TABLES: list[str] = [
         occurred_at TIMESTAMP NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     """CREATE TABLE IF NOT EXISTS nabh_discharge_dispositions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         patient_id TEXT NOT NULL,
@@ -4226,7 +4216,6 @@ _M26_TABLES: list[str] = [
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-
     """CREATE TABLE IF NOT EXISTS nabh_evidence_exports (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         reference TEXT NOT NULL UNIQUE,
@@ -4258,8 +4247,7 @@ _M26_INDEXES: list[str] = [
     "incident_type, occurred_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_nabh_incidents_status ON nabh_incidents("
     "status, reported_at DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_nabh_incidents_ward ON nabh_incidents("
-    "ward, occurred_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_nabh_incidents_ward ON nabh_incidents(ward, occurred_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_nabh_incidents_patient ON nabh_incidents("
     "patient_id, occurred_at DESC)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_nabh_incident_events_seq "
@@ -4316,8 +4304,7 @@ def _m27_surgery_timing(conn) -> None:
     if "completed_at" not in cols:
         conn.execute("ALTER TABLE surgeries ADD COLUMN completed_at TIMESTAMP")
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_surgeries_completed_at "
-        "ON surgeries(completed_at DESC)"
+        "CREATE INDEX IF NOT EXISTS idx_surgeries_completed_at ON surgeries(completed_at DESC)"
     )
 
 
@@ -4378,7 +4365,15 @@ def _m28_patient_appointment_requests_bridge(conn) -> None:
     carried = 0
     for r in rows:
         req_id, patient_id, req_date, req_time, dept, reason, status, created_at, user_id = (
-            r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8]
+            r[0],
+            r[1],
+            r[2],
+            r[3],
+            r[4],
+            r[5],
+            r[6],
+            r[7],
+            r[8],
         )
         if not req_date:
             continue
@@ -4493,17 +4488,23 @@ def _m29_sage_assessments(conn) -> None:
             updated_at         TEXT NOT NULL
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_sage_assessments_channel "
-                 "ON sage_assessments(channel_id, created_at DESC)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_sage_assessments_patient "
-                 "ON sage_assessments(patient_id, created_at DESC)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sage_assessments_channel "
+        "ON sage_assessments(channel_id, created_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sage_assessments_patient "
+        "ON sage_assessments(patient_id, created_at DESC)"
+    )
     # One assessment per Relay alert message. A retry, a restart race or a
     # double publish must not produce two drafts for one alert — a clinician
     # reading two machine assessments of the same deterioration has no way to
     # tell which is current. Partial (message_id IS NOT NULL) because a lane
     # that raised no Relay message still deserves its row.
-    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sage_assessments_once "
-                 "ON sage_assessments(message_id) WHERE message_id IS NOT NULL")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_sage_assessments_once "
+        "ON sage_assessments(message_id) WHERE message_id IS NOT NULL"
+    )
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS sage_assessment_events (
@@ -4520,8 +4521,10 @@ def _m29_sage_assessments(conn) -> None:
             created_at    TEXT NOT NULL
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_sage_assessment_events_assessment "
-                 "ON sage_assessment_events(assessment_id, created_at DESC)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sage_assessment_events_assessment "
+        "ON sage_assessment_events(assessment_id, created_at DESC)"
+    )
 
     # The explicit proposal link. `sage_actions` already carries room_id +
     # source_msg_id, but source_msg_id means "the Relay message this was
@@ -4658,7 +4661,8 @@ def _m31_sage_patient_specific(conn) -> None:
     # uses, so this index serves both the debounce and the new gate.
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_sage_assessments_patient_depth_created "
-        "ON sage_assessments(patient_id, depth, created_at DESC)")
+        "ON sage_assessments(patient_id, depth, created_at DESC)"
+    )
 
 
 def _m32_allergy_override_attribution(conn) -> None:
@@ -4689,14 +4693,13 @@ def _m32_allergy_override_attribution(conn) -> None:
     ``users`` rows would manufacture exactly the false confidence the columns
     exist to remove.
     """
-    cols = {r[1] for r in conn.execute(
-        "PRAGMA table_info(medication_allergy_overrides)").fetchall()}
+    cols = {
+        r[1] for r in conn.execute("PRAGMA table_info(medication_allergy_overrides)").fetchall()
+    }
     if "drug_name" not in cols:
-        conn.execute(
-            "ALTER TABLE medication_allergy_overrides ADD COLUMN drug_name TEXT")
+        conn.execute("ALTER TABLE medication_allergy_overrides ADD COLUMN drug_name TEXT")
     if "overridden_by_role" not in cols:
-        conn.execute(
-            "ALTER TABLE medication_allergy_overrides ADD COLUMN overridden_by_role TEXT")
+        conn.execute("ALTER TABLE medication_allergy_overrides ADD COLUMN overridden_by_role TEXT")
 
 
 def _rebuild_users_role_check(conn, allowed_roles: tuple) -> None:
@@ -4768,11 +4771,25 @@ def _rebuild_users_role_check(conn, allowed_roles: tuple) -> None:
     # column the live table lacks stays at its DEFAULT; a live column this
     # DDL doesn't know aborts rather than silently vanishing.
     canonical = [
-        "id", "name", "role", "department", "registration_number",
-        "password_hash", "pin_hash", "created_at", "failed_login_attempts",
-        "login_locked_until", "totp_secret", "totp_enabled", "token_version",
-        "totp_last_step", "is_active", "device_pin_hash", "device_pin_set_at",
-        "device_pin_failed_attempts", "device_pin_locked_until",
+        "id",
+        "name",
+        "role",
+        "department",
+        "registration_number",
+        "password_hash",
+        "pin_hash",
+        "created_at",
+        "failed_login_attempts",
+        "login_locked_until",
+        "totp_secret",
+        "totp_enabled",
+        "token_version",
+        "totp_last_step",
+        "is_active",
+        "device_pin_hash",
+        "device_pin_set_at",
+        "device_pin_failed_attempts",
+        "device_pin_locked_until",
     ]
     old_cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
     unknown = [c for c in old_cols if c not in canonical]
@@ -4829,8 +4846,17 @@ def _rebuild_users_role_check(conn, allowed_roles: tuple) -> None:
 # m0048_users_role_batch.py, 3 October 2026), whose FROZEN_ROLES must equal this
 # tuple. Migration 33 (cashier) froze the first six.
 LATEST_USERS_ROLE_CHECK: tuple = (
-    "doctor", "nurse", "admin", "patient", "pharmacist", "cashier",
-    "receptionist", "ward_clerk", "lab_technician", "pathologist", "phlebotomist",
+    "doctor",
+    "nurse",
+    "admin",
+    "patient",
+    "pharmacist",
+    "cashier",
+    "receptionist",
+    "ward_clerk",
+    "lab_technician",
+    "pathologist",
+    "phlebotomist",
 )
 
 
@@ -4931,6 +4957,7 @@ def _m35_ward_receipt(conn) -> None:
     apply. Guarded anyway: an appliance on an older SQLite keeps the column, and
     the code no longer writes or reads it either way.
     """
+
     # The Helix tables are created lazily by services/helix_db.init_helix_db(),
     # which runs OUTSIDE this runner — so on a fresh database this migration
     # executes before they exist. That is not a problem to work around: the
@@ -4940,35 +4967,36 @@ def _m35_ward_receipt(conn) -> None:
     # raising, which would make every check below look like "column missing" and
     # send an ALTER at a table that is not there. Ask sqlite_master instead.
     def _table(name: str) -> bool:
-        return conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
-        ).fetchone() is not None
+        return (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+            ).fetchone()
+            is not None
+        )
 
     if not _table("helix_patient_med_orders"):
         return
 
-    cols = {r[1] for r in conn.execute(
-        "PRAGMA table_info(helix_patient_med_orders)").fetchall()}
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(helix_patient_med_orders)").fetchall()}
 
     if "received_by" not in cols:
         conn.execute(
-            "ALTER TABLE helix_patient_med_orders ADD COLUMN received_by TEXT "
-            "REFERENCES users(id)")
+            "ALTER TABLE helix_patient_med_orders ADD COLUMN received_by TEXT REFERENCES users(id)"
+        )
     if "received_at" not in cols:
-        conn.execute(
-            "ALTER TABLE helix_patient_med_orders ADD COLUMN received_at TIMESTAMP")
+        conn.execute("ALTER TABLE helix_patient_med_orders ADD COLUMN received_at TIMESTAMP")
 
     if "is_mock_event" in cols:
         try:
-            conn.execute(
-                "ALTER TABLE helix_patient_med_orders DROP COLUMN is_mock_event")
+            conn.execute("ALTER TABLE helix_patient_med_orders DROP COLUMN is_mock_event")
         except Exception:
             # Pre-3.35 SQLite. The column stays and stays at its 0 default:
             # helix_service no longer writes it and billing_service no longer
             # reads it, so it is inert rather than load-bearing.
             logger.info(
                 "migration 35: DROP COLUMN unsupported, leaving is_mock_event "
-                "in place (inert: nothing reads or writes it)")
+                "in place (inert: nothing reads or writes it)"
+            )
 
     # Same story one table over: `helix_stock_movements.is_mock` DEFAULTED TO 1,
     # so every real FIFO decrement recorded itself as simulator output. Nothing
@@ -4976,23 +5004,22 @@ def _m35_ward_receipt(conn) -> None:
     if not _table("helix_stock_movements"):
         return
 
-    mv_cols = {r[1] for r in conn.execute(
-        "PRAGMA table_info(helix_stock_movements)").fetchall()}
+    mv_cols = {r[1] for r in conn.execute("PRAGMA table_info(helix_stock_movements)").fetchall()}
     if "is_mock" in mv_cols:
         try:
-            conn.execute(
-                "ALTER TABLE helix_stock_movements DROP COLUMN is_mock")
+            conn.execute("ALTER TABLE helix_stock_movements DROP COLUMN is_mock")
         except Exception:
             logger.info(
                 "migration 35: DROP COLUMN unsupported, leaving is_mock in "
-                "place (inert: nothing reads or writes it)")
+                "place (inert: nothing reads or writes it)"
+            )
 
     # Historical rows written by the old code name themselves "mock_dispense".
     # They ARE real dispenses — the string described the demo script the code was
     # written for, not the event — so they are renamed rather than deleted.
     conn.execute(
-        "UPDATE helix_stock_movements SET reason = 'dispense' "
-        "WHERE reason = 'mock_dispense'")
+        "UPDATE helix_stock_movements SET reason = 'dispense' WHERE reason = 'mock_dispense'"
+    )
 
 
 def _m36_pharmacy_is_not_a_ward(conn) -> None:
@@ -5029,14 +5056,14 @@ def _m36_pharmacy_is_not_a_ward(conn) -> None:
     change (services/relay_service.py): no department now means no department
     room.
     """
-    if conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'"
-    ).fetchone() is None:
+    if (
+        conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'").fetchone()
+        is None
+    ):
         return
 
     cur = conn.execute(
-        "UPDATE users SET department = NULL "
-        " WHERE role = 'pharmacist' AND department = 'Pharmacy'"
+        "UPDATE users SET department = NULL  WHERE role = 'pharmacist' AND department = 'Pharmacy'"
     )
     if getattr(cur, "rowcount", 0) > 0:
         logger.info(
@@ -5068,9 +5095,10 @@ def _m37_system_account_has_no_ward(conn) -> None:
     Matched on id AND the exact value, so a deployment that has deliberately put
     something else there is left alone.
     """
-    if conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'"
-    ).fetchone() is None:
+    if (
+        conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'").fetchone()
+        is None
+    ):
         return
 
     cur = conn.execute(
@@ -5078,8 +5106,7 @@ def _m37_system_account_has_no_ward(conn) -> None:
     )
     if getattr(cur, "rowcount", 0) > 0:
         logger.info(
-            "migration 37: cleared the 'system' audit identity's department "
-            "('IT' was never a ward)"
+            "migration 37: cleared the 'system' audit identity's department ('IT' was never a ward)"
         )
 
 
@@ -5126,15 +5153,17 @@ def _m38_retire_unknown_models(conn) -> None:
     table has no such case: it is written from `_default_models()` and nowhere
     else, so a key outside that set cannot be a deliberate local choice.
     """
-    if conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='model_registry'"
-    ).fetchone() is None:
+    if (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='model_registry'"
+        ).fetchone()
+        is None
+    ):
         return
 
     known = ("vigil_news2", "vigil_cfc", "forecast_lstm", "sage_llm")
     cur = conn.execute(
-        "DELETE FROM model_registry WHERE model_key NOT IN "
-        f"({','.join('?' * len(known))})",
+        f"DELETE FROM model_registry WHERE model_key NOT IN ({','.join('?' * len(known))})",
         known,
     )
     if getattr(cur, "rowcount", 0) > 0:
@@ -5190,10 +5219,21 @@ def _rebuild_sage_handoffs_blocked_status(conn) -> None:
             f"to preserve: {[(r[0], r[1]) for r in assoc]}"
         )
     canonical = [
-        "id", "source_action_id", "room_id", "patient_id", "target_module",
-        "handoff_type", "payload_json", "status", "downstream_ref_id",
-        "error_summary", "created_by", "last_attempted_at", "created_at",
-        "updated_at", "safety_json",
+        "id",
+        "source_action_id",
+        "room_id",
+        "patient_id",
+        "target_module",
+        "handoff_type",
+        "payload_json",
+        "status",
+        "downstream_ref_id",
+        "error_summary",
+        "created_by",
+        "last_attempted_at",
+        "created_at",
+        "updated_at",
+        "safety_json",
     ]
     unknown = [c for c in old_cols if c not in canonical]
     if unknown:
@@ -5481,8 +5521,7 @@ MIGRATIONS: list[Migration] = [
     Migration(25, "dietary", _m25_dietary),
     Migration(26, "nabh_evidence", _m26_nabh_evidence),
     Migration(27, "surgery_timing", _m27_surgery_timing),
-    Migration(28, "patient_appointment_requests_bridge",
-              _m28_patient_appointment_requests_bridge),
+    Migration(28, "patient_appointment_requests_bridge", _m28_patient_appointment_requests_bridge),
     Migration(29, "sage_assessments", _m29_sage_assessments),
     Migration(30, "sage_assessment_tiers", _m30_sage_assessment_tiers),
     Migration(31, "sage_patient_specific", _m31_sage_patient_specific),
@@ -5543,14 +5582,20 @@ def _with_his_migrations(core: list) -> list:
                 import migrations_his as pkg
             except ImportError:
                 spec = importlib.util.spec_from_file_location(
-                    "migrations_his", pkg_dir / "__init__.py",
-                    submodule_search_locations=[str(pkg_dir)])
+                    "migrations_his",
+                    pkg_dir / "__init__.py",
+                    submodule_search_locations=[str(pkg_dir)],
+                )
+                if spec is None or spec.loader is None:
+                    raise ImportError(f"Cannot load migrations package from {pkg_dir}") from None
                 pkg = importlib.util.module_from_spec(spec)
                 sys.modules["migrations_his"] = pkg
                 spec.loader.exec_module(pkg)
+        assert pkg is not None and pkg.__file__ is not None
         if Path(pkg.__file__).resolve().parent != pkg_dir:
             raise RuntimeError(
-                f"migrations_his was imported from {pkg.__file__}, not from {pkg_dir}")
+                f"migrations_his was imported from {pkg.__file__}, not from {pkg_dir}"
+            )
         return pkg.merge(core, pkg.collect())
     finally:
         if alias is not None and sys.modules.get("migrations") is alias:

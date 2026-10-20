@@ -58,21 +58,23 @@ seed_helix: seed_helix replaces every drug lot after this module has run, so a
 drug order received here would describe lots that no longer exist. It reuses
 SEED_MARKER and CODE_PREFIX below.
 """
+
 from __future__ import annotations
 
 import os
 import sys
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from database import db_session  # noqa: E402
-from services.money import format_inr, rupees  # noqa: E402
 
 #: Stamped into a notes/remarks column on every master or module row this file
 #: writes. Screens show it, so it is plain words with no file path, and
 #: `module_row_counts()` is not the only way to find these rows again: a human
 #: can grep the database for one string.
+from database import db_session  # noqa: E402
+from services.money import format_inr, rupees  # noqa: E402
+
 SEED_MARKER = "Sample data"
 
 #: Earlier spellings of the marker. The idempotency guards still recognise them,
@@ -84,6 +86,7 @@ _ALL_SEED_MARKERS: tuple[str, ...] = (SEED_MARKER, *_LEGACY_SEED_MARKERS)
 def _is_seed_text(text: str | None) -> bool:
     """True when a notes/remarks/description value was written by this seed."""
     return any((text or "").startswith(marker) for marker in _ALL_SEED_MARKERS)
+
 
 #: Every generated code starts with this, so a real vendor/payer/asset can never
 #: collide with a seeded one and an operator can see at a glance which is which.
@@ -128,12 +131,13 @@ def _refuse_on_prod_profile() -> None:
 #  Small helpers
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _today() -> date:
     return date.today()
 
 
 def _utc_iso(when: datetime) -> str:
-    return when.astimezone(timezone.utc).isoformat()
+    return when.astimezone(UTC).isoformat()
 
 
 def _admitted_patients() -> list[dict]:
@@ -183,14 +187,21 @@ def _split_bed_label(label: str) -> tuple[str, int, int] | None:
 #: India (Notification 12/2017-CT(R) entry 74), which is `upsert_service_item`'s
 #: default — so no GST is attached to any of these, deliberately.
 _SERVICE_ITEMS: tuple[tuple[str, str, str, str | None, str, str], ...] = (
-    ("SEED-CONS-FU",   "Consultation: follow-up (seed)",        "consultation",  None,               "500",  "each"),
-    ("SEED-BED-DAY",   "Bed charge per day (seed)",              "bed",           None,               "1500", "day"),
-    ("SEED-NUR-INJ",   "Nursing: injection administration (seed)", "nursing",    None,               "150",  "each"),
-    ("SEED-PROC-DRESS", "Dressing: minor (seed)",               "procedure",     None,               "350",  "each"),
-    ("SEED-INV-CBC",   "Complete blood count (seed)",            "investigation", "Laboratory",       "300",  "each"),
-    ("SEED-INV-RFT",   "Renal function test (seed)",             "investigation", "Laboratory",       "600",  "each"),
-    ("SEED-IMG-CXR",   "Chest X-ray, PA view (seed)",            "imaging",       "Radiology",        "450",  "each"),
-    ("SEED-OT-MINOR",  "Operation theatre: minor procedure (seed)", "ot",        "General Surgery",  "8000", "each"),
+    ("SEED-CONS-FU", "Consultation: follow-up (seed)", "consultation", None, "500", "each"),
+    ("SEED-BED-DAY", "Bed charge per day (seed)", "bed", None, "1500", "day"),
+    ("SEED-NUR-INJ", "Nursing: injection administration (seed)", "nursing", None, "150", "each"),
+    ("SEED-PROC-DRESS", "Dressing: minor (seed)", "procedure", None, "350", "each"),
+    ("SEED-INV-CBC", "Complete blood count (seed)", "investigation", "Laboratory", "300", "each"),
+    ("SEED-INV-RFT", "Renal function test (seed)", "investigation", "Laboratory", "600", "each"),
+    ("SEED-IMG-CXR", "Chest X-ray, PA view (seed)", "imaging", "Radiology", "450", "each"),
+    (
+        "SEED-OT-MINOR",
+        "Operation theatre: minor procedure (seed)",
+        "ot",
+        "General Surgery",
+        "8000",
+        "each",
+    ),
 )
 
 #: The price-list codes this seed owns. reset_db_and_seed keeps these (and the
@@ -256,9 +267,11 @@ def _seed_billing_masters(log) -> dict:
 #  2 · Payer — one TPA, one state scheme, a policy, and a claim mid-lifecycle
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _seed_payer(log, patients: list[dict]) -> dict:
-    from services import payer_service
     from services.payer_service import ClaimError, PayerError
+
+    from services import payer_service
 
     payer_service.upsert_payer(
         code=f"{CODE_PREFIX}TPA1",
@@ -329,8 +342,9 @@ def _seed_payer(log, patients: list[dict]) -> dict:
     # a draft claim and a settled claim both demo as "nothing to do".
     with db_session() as db:
         claim_row = db.execute(
-            "SELECT id, status FROM claims WHERE patient_id = ? AND notes IN (%s)"
-            % ",".join("?" for _ in _ALL_SEED_MARKERS),
+            "SELECT id, status FROM claims WHERE patient_id = ? AND notes IN ({})".format(
+                ",".join("?" for _ in _ALL_SEED_MARKERS)
+            ),
             (patient["id"], *_ALL_SEED_MARKERS),
         ).fetchone()
 
@@ -344,7 +358,11 @@ def _seed_payer(log, patients: list[dict]) -> dict:
     # interim invoice are posted first, through the billing service, and the
     # claim is for the payer's share of that invoice.
     bill = _seed_interim_bill(
-        log, patient, admission_id, _CLAIM_BILL_LINES, key=f"seed-tpa-{patient['id']}",
+        log,
+        patient,
+        admission_id,
+        _CLAIM_BILL_LINES,
+        key=f"seed-tpa-{patient['id']}",
     )
     if bill is None:
         log("  ~ no interim bill, claim skipped: a claim with no bill behind it is the defect")
@@ -364,7 +382,7 @@ def _seed_payer(log, patients: list[dict]) -> dict:
             created_by=SEED_ACTOR,
         )
         claim_id = int(claim["id"])
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # The pre-auth was asked for the whole expected stay, so it is larger
         # than the interim bill, and the bill sits inside what was approved.
         payer_service.record_preauth_request(
@@ -395,8 +413,10 @@ def _seed_payer(log, patients: list[dict]) -> dict:
             actor_id=SEED_ACTOR,
             occurred_at=_utc_iso(now - timedelta(hours=6)),
         )
-        log(f"  + claim #{claim_id} for {format_inr(claimed)}: pre-auth approved in part, "
-            "submitted, payer query open")
+        log(
+            f"  + claim #{claim_id} for {format_inr(claimed)}: pre-auth approved in part, "
+            "submitted, payer query open"
+        )
         return {"payers": 2, "policies": policies_made, "claims": 1}
     except (ClaimError, PayerError) as exc:
         log(f"  x claim not seeded: {exc}")
@@ -406,28 +426,40 @@ def _seed_payer(log, patients: list[dict]) -> dict:
 #: What a stay has run up so far, as (service code, quantity). Bed days are
 #: charged at the patient's own ward rate, so a CCU bed costs a CCU bed.
 _CLAIM_BILL_LINES: tuple[tuple[str, int], ...] = (
-    ("SEED-BED-DAY", 3), ("SEED-CONS-FU", 4), ("SEED-INV-CBC", 3),
-    ("SEED-INV-RFT", 2), ("SEED-IMG-CXR", 1), ("SEED-NUR-INJ", 12),
+    ("SEED-BED-DAY", 3),
+    ("SEED-CONS-FU", 4),
+    ("SEED-INV-CBC", 3),
+    ("SEED-INV-RFT", 2),
+    ("SEED-IMG-CXR", 1),
+    ("SEED-NUR-INJ", 12),
 )
 _SELF_PAY_BILL_LINES: tuple[tuple[str, int], ...] = (
-    ("SEED-BED-DAY", 2), ("SEED-CONS-FU", 2), ("SEED-INV-CBC", 1), ("SEED-NUR-INJ", 4),
+    ("SEED-BED-DAY", 2),
+    ("SEED-CONS-FU", 2),
+    ("SEED-INV-CBC", 1),
+    ("SEED-NUR-INJ", 4),
 )
 _SCHEME_BILL_LINES: tuple[tuple[str, int], ...] = (
-    ("SEED-BED-DAY", 2), ("SEED-CONS-FU", 2), ("SEED-INV-RFT", 1), ("SEED-IMG-CXR", 1),
+    ("SEED-BED-DAY", 2),
+    ("SEED-CONS-FU", 2),
+    ("SEED-INV-RFT", 1),
+    ("SEED-IMG-CXR", 1),
 )
 
 
-def _seed_interim_bill(log, patient: dict, admission_id: str | None,
-                       lines: tuple[tuple[str, int], ...], *, key: str) -> dict | None:
+def _seed_interim_bill(
+    log, patient: dict, admission_id: str | None, lines: tuple[tuple[str, int], ...], *, key: str
+) -> dict | None:
     """Post a stay's charges and raise an issued interim invoice over them.
 
     Every write carries an idempotency key derived from `key`, so a second run
     replays the same charges and the same invoice instead of billing twice.
     Returns the invoice, or None when there is no admission to bill.
     """
-    from services import billing_service
     from services.billing_service import BillingError
     from services.money import QUANTITY_SCALE
+
+    from services import billing_service
 
     if not admission_id:
         log(f"  ~ {patient['name']} has no active admission, no bill")
@@ -456,14 +488,17 @@ def _seed_interim_bill(log, patient: dict, admission_id: str | None,
     except BillingError as exc:
         log(f"  x interim bill for {patient['name']} not seeded: {exc}")
         return None
-    log(f"  {'~' if invoice.get('replayed') else '+'} interim invoice #{invoice['id']} for "
-        f"{patient['name']}: {format_inr(int(invoice['payable_paise'] or 0))}")
+    log(
+        f"  {'~' if invoice.get('replayed') else '+'} interim invoice #{invoice['id']} for "
+        f"{patient['name']}: {format_inr(int(invoice['payable_paise'] or 0))}"
+    )
     return invoice
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  2b · Money desks: a deposit, a discount awaiting a decision, a denial
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def _seed_money_desk(log, patients: list[dict]) -> dict:
     """The rest of what the cashier and the payer desk exist to show.
@@ -473,10 +508,11 @@ def _seed_money_desk(log, patients: list[dict]) -> dict:
     against its own interim bill has been denied, with the payer's reason, so
     the denial log is not empty. All through the services, all idempotent.
     """
-    from services import payer_service
-    from services import payments_service as pay
     from services.payer_service import ClaimError, PayerError
     from services.payments_service import PaymentError
+
+    from services import payer_service
+    from services import payments_service as pay
 
     out = {"deposit_receipts": 0, "discount_requests": 0, "denied_claims": 0}
     if not patients:
@@ -498,8 +534,10 @@ def _seed_money_desk(log, patients: list[dict]) -> dict:
             idempotency_key=f"seed-deposit-{payer_patient['id']}",
         )
         out["deposit_receipts"] = 0 if receipt.get("replayed") else 1
-        log(f"  {'~' if receipt.get('replayed') else '+'} deposit of "
-            f"{format_inr(rupees('5000'))} from {payer_patient['name']}")
+        log(
+            f"  {'~' if receipt.get('replayed') else '+'} deposit of "
+            f"{format_inr(rupees('5000'))} from {payer_patient['name']}"
+        )
     except PaymentError as exc:
         log(f"  x deposit not seeded: {exc}")
 
@@ -508,7 +546,11 @@ def _seed_money_desk(log, patients: list[dict]) -> dict:
         self_pay = patients[1]
         admission_id = _current_admission_id(self_pay["id"])
         bill = _seed_interim_bill(
-            log, self_pay, admission_id, _SELF_PAY_BILL_LINES, key=f"seed-selfpay-{self_pay['id']}",
+            log,
+            self_pay,
+            admission_id,
+            _SELF_PAY_BILL_LINES,
+            key=f"seed-selfpay-{self_pay['id']}",
         )
         if bill is not None and not pay.list_discounts(invoice_id=int(bill["id"])):
             try:
@@ -522,15 +564,18 @@ def _seed_money_desk(log, patients: list[dict]) -> dict:
                     requested_paise=rupees("1000"),
                 )
                 out["discount_requests"] = 1
-                log(f"  + discount of {format_inr(rupees('1000'))} requested for {self_pay['name']}")
+                log(
+                    f"  + discount of {format_inr(rupees('1000'))} requested for {self_pay['name']}"
+                )
             except PaymentError as exc:
                 log(f"  x discount request not seeded: {exc}")
 
     # 3. A state-scheme claim against its own bill, denied with a reason.
     if len(patients) > 2:
         scheme_patient = patients[2]
-        out["denied_claims"] = _seed_denied_claim(log, scheme_patient, payer_service,
-                                                  (ClaimError, PayerError))
+        out["denied_claims"] = _seed_denied_claim(
+            log, scheme_patient, payer_service, (ClaimError, PayerError)
+        )
     return out
 
 
@@ -560,7 +605,11 @@ def _seed_denied_claim(log, patient: dict, payer_service, errors: tuple) -> int:
                 created_by=SEED_ACTOR,
             )
         bill = _seed_interim_bill(
-            log, patient, admission_id, _SCHEME_BILL_LINES, key=f"seed-scheme-{patient['id']}",
+            log,
+            patient,
+            admission_id,
+            _SCHEME_BILL_LINES,
+            key=f"seed-scheme-{patient['id']}",
         )
         if bill is None:
             return 0
@@ -579,7 +628,7 @@ def _seed_denied_claim(log, patient: dict, payer_service, errors: tuple) -> int:
         if claim.get("replayed"):
             log(f"  ~ denied claim #{claim['id']} exists ({claim['status']})")
             return 0
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         payer_service.record_preauth_request(
             claim_id=int(claim["id"]),
             requested_paise=int(bill["payer_responsibility_paise"] or 0),
@@ -608,49 +657,121 @@ def _seed_denied_claim(log, patient: dict, payer_service, errors: tuple) -> int:
 # ═════════════════════════════════════════════════════════════════════════════
 
 _VENDORS: tuple[tuple[str, str, str, str, int], ...] = (
-    (f"{CODE_PREFIX}VEN1", "Deccan Surgicals & Disposables (seed)", "supplier", "29AAACS0000A1Z5", 30),
-    (f"{CODE_PREFIX}VEN2", "Kaveri Diagnostics Supplies (seed)", "distributor", "29AAACK1111B1Z2", 45),
+    (
+        f"{CODE_PREFIX}VEN1",
+        "Deccan Surgicals & Disposables (seed)",
+        "supplier",
+        "29AAACS0000A1Z5",
+        30,
+    ),
+    (
+        f"{CODE_PREFIX}VEN2",
+        "Kaveri Diagnostics Supplies (seed)",
+        "distributor",
+        "29AAACK1111B1Z2",
+        45,
+    ),
     (f"{CODE_PREFIX}VEN3", "Nandi Biomedical Services (seed)", "amc", "29AAACN2222C1Z9", 60),
 )
 
 #: (code, name, category, uom, reorder_level, reorder_qty, lead_days, rupees)
 _ITEMS: tuple[tuple[str, str, str, str, int, int, int, str], ...] = (
-    (f"{CODE_PREFIX}GLOVE-M", "Examination gloves, medium (box of 100) (seed)", "ppe", "box", 40, 120, 7, "320"),
-    (f"{CODE_PREFIX}SYR-5ML", "Disposable syringe 5 ml (seed)", "consumable", "each", 500, 2000, 5, "6"),
+    (
+        f"{CODE_PREFIX}GLOVE-M",
+        "Examination gloves, medium (box of 100) (seed)",
+        "ppe",
+        "box",
+        40,
+        120,
+        7,
+        "320",
+    ),
+    (
+        f"{CODE_PREFIX}SYR-5ML",
+        "Disposable syringe 5 ml (seed)",
+        "consumable",
+        "each",
+        500,
+        2000,
+        5,
+        "6",
+    ),
     (f"{CODE_PREFIX}IV-CANN18", "IV cannula 18G (seed)", "consumable", "each", 200, 600, 7, "28"),
-    (f"{CODE_PREFIX}GAUZE", "Sterile gauze pad 10x10 cm (seed)", "consumable", "each", 300, 1000, 5, "9"),
+    (
+        f"{CODE_PREFIX}GAUZE",
+        "Sterile gauze pad 10x10 cm (seed)",
+        "consumable",
+        "each",
+        300,
+        1000,
+        5,
+        "9",
+    ),
     (f"{CODE_PREFIX}MASK-N95", "N95 respirator (seed)", "ppe", "each", 150, 500, 10, "45"),
-    (f"{CODE_PREFIX}REAG-CBC", "Haematology analyser reagent pack (seed)", "reagent", "pack", 6, 20, 14, "4200"),
+    (
+        f"{CODE_PREFIX}REAG-CBC",
+        "Haematology analyser reagent pack (seed)",
+        "reagent",
+        "pack",
+        6,
+        20,
+        14,
+        "4200",
+    ),
     (f"{CODE_PREFIX}LINEN-BS", "Bedsheet, cotton (seed)", "linen", "each", 60, 200, 21, "260"),
-    (f"{CODE_PREFIX}HK-PHENYL", "Floor disinfectant concentrate 5 L (seed)", "housekeeping", "can", 20, 60, 7, "540"),
+    (
+        f"{CODE_PREFIX}HK-PHENYL",
+        "Floor disinfectant concentrate 5 L (seed)",
+        "housekeeping",
+        "can",
+        20,
+        60,
+        7,
+        "540",
+    ),
 )
 
 
 def _seed_procurement(log) -> dict:
-    from services import procurement_service as proc
     from services.procurement_service import ProcurementError
+
+    from services import procurement_service as proc
 
     for code, name, vtype, gstin, terms in _VENDORS:
         proc.upsert_vendor(
-            code=code, name=name, vendor_type=vtype, gstin=gstin,
-            state_code="29", payment_terms_days=terms,
-            contact_name="Sales desk (seed)", contact_phone="080-4000-0001",
-            notes=SEED_MARKER, created_by=SEED_ACTOR,
+            code=code,
+            name=name,
+            vendor_type=vtype,
+            gstin=gstin,
+            state_code="29",
+            payment_terms_days=terms,
+            contact_name="Sales desk (seed)",
+            contact_phone="080-4000-0001",
+            notes=SEED_MARKER,
+            created_by=SEED_ACTOR,
         )
     log(f"  + vendors: {len(_VENDORS)}")
 
-    proc.upsert_store(code=f"{CODE_PREFIX}STORE-GEN", name="General sub-store (seed)",
-                      store_type="sub_store")
-    proc.upsert_store(code=f"{CODE_PREFIX}STORE-HK", name="Housekeeping store (seed)",
-                      store_type="housekeeping")
+    proc.upsert_store(
+        code=f"{CODE_PREFIX}STORE-GEN", name="General sub-store (seed)", store_type="sub_store"
+    )
+    proc.upsert_store(
+        code=f"{CODE_PREFIX}STORE-HK", name="Housekeeping store (seed)", store_type="housekeeping"
+    )
     store = proc.get_store(f"{CODE_PREFIX}STORE-GEN")
     store_id = int(store["id"]) if store else None
 
     for code, name, category, uom, level, qty, lead, _rate in _ITEMS:
         proc.upsert_inventory_item(
-            code=code, name=name, category=category, uom=uom,
-            reorder_level_qty=level, reorder_qty=qty, lead_time_days=lead,
-            gst_treatment="taxable", gst_rate_bp=1200,
+            code=code,
+            name=name,
+            category=category,
+            uom=uom,
+            reorder_level_qty=level,
+            reorder_qty=qty,
+            lead_time_days=lead,
+            gst_treatment="taxable",
+            gst_rate_bp=1200,
             default_store_id=store_id,
             notes=f"{SEED_MARKER}: reorder point is illustrative",
         )
@@ -659,8 +780,7 @@ def _seed_procurement(log) -> dict:
     # One purchase order, ISSUED, with a PARTIAL goods receipt against it — the
     # flow verification called unreachable. Guarded on its own remark so a second
     # run neither raises a second PO nor re-receives the same goods.
-    existing = [p for p in proc.list_purchase_orders(limit=200)
-                if _is_seed_text(p.get("remarks"))]
+    existing = [p for p in proc.list_purchase_orders(limit=200) if _is_seed_text(p.get("remarks"))]
     if existing:
         log(f"  ~ purchase order #{existing[0]['id']} exists ({existing[0]['status']})")
         return {"vendors": len(_VENDORS), "items": len(_ITEMS), "purchase_orders": 0}
@@ -670,15 +790,21 @@ def _seed_procurement(log) -> dict:
             vendor_code=f"{CODE_PREFIX}VEN1",
             store_code=f"{CODE_PREFIX}STORE-GEN",
             lines=[
-                {"item_code": f"{CODE_PREFIX}GLOVE-M",
-                 "quantity_milli": proc.units_to_milli(100),
-                 "unit_rate_paise": rupees("320")},
-                {"item_code": f"{CODE_PREFIX}SYR-5ML",
-                 "quantity_milli": proc.units_to_milli(2000),
-                 "unit_rate_paise": rupees("6")},
-                {"item_code": f"{CODE_PREFIX}IV-CANN18",
-                 "quantity_milli": proc.units_to_milli(600),
-                 "unit_rate_paise": rupees("28")},
+                {
+                    "item_code": f"{CODE_PREFIX}GLOVE-M",
+                    "quantity_milli": proc.units_to_milli(100),
+                    "unit_rate_paise": rupees("320"),
+                },
+                {
+                    "item_code": f"{CODE_PREFIX}SYR-5ML",
+                    "quantity_milli": proc.units_to_milli(2000),
+                    "unit_rate_paise": rupees("6"),
+                },
+                {
+                    "item_code": f"{CODE_PREFIX}IV-CANN18",
+                    "quantity_milli": proc.units_to_milli(600),
+                    "unit_rate_paise": rupees("28"),
+                },
             ],
             order_date=(_today() - timedelta(days=6)).isoformat(),
             expected_date=(_today() + timedelta(days=1)).isoformat(),
@@ -700,13 +826,21 @@ def _seed_procurement(log) -> dict:
         glove = by_item.get(f"{CODE_PREFIX}GLOVE-M")
         syringe = by_item.get(f"{CODE_PREFIX}SYR-5ML")
         if glove:
-            grn_lines.append({"po_line_no": glove.get("line_no"),
-                              "item_code": f"{CODE_PREFIX}GLOVE-M",
-                              "accepted_quantity_milli": proc.units_to_milli(100)})
+            grn_lines.append(
+                {
+                    "po_line_no": glove.get("line_no"),
+                    "item_code": f"{CODE_PREFIX}GLOVE-M",
+                    "accepted_quantity_milli": proc.units_to_milli(100),
+                }
+            )
         if syringe:
-            grn_lines.append({"po_line_no": syringe.get("line_no"),
-                              "item_code": f"{CODE_PREFIX}SYR-5ML",
-                              "accepted_quantity_milli": proc.units_to_milli(1200)})
+            grn_lines.append(
+                {
+                    "po_line_no": syringe.get("line_no"),
+                    "item_code": f"{CODE_PREFIX}SYR-5ML",
+                    "accepted_quantity_milli": proc.units_to_milli(1200),
+                }
+            )
         if grn_lines:
             proc.create_goods_receipt(
                 purchase_order_id=po_id,
@@ -729,6 +863,7 @@ def _seed_procurement(log) -> dict:
 # ═════════════════════════════════════════════════════════════════════════════
 #  4 · Housekeeping — a bed register for EVERY real ward
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def _ward_bed_labels(ward: str, occupied: list[str], target: int) -> list[str]:
     """The ward's bed list: the beds patients are actually in, extended to the
@@ -755,8 +890,9 @@ def _ward_bed_labels(ward: str, occupied: list[str], target: int) -> list[str]:
 
 
 def _seed_housekeeping(log, patients: list[dict]) -> dict:
-    from services import housekeeping_service as hk
     from services.forecast_service import DEFAULT_WARD_BEDS
+
+    from services import housekeeping_service as hk
 
     by_ward: dict[str, list[str]] = {}
     for p in patients:
@@ -796,8 +932,7 @@ def _seed_housekeeping(log, patients: list[dict]) -> dict:
     # something in them. Raised on a vacant_dirty unit only — never on a bed with
     # a patient in it, which would vacate that bed in the same transaction.
     tasks = 0
-    open_tasks = [t for t in hk.list_tasks(status="open")
-                  if _is_seed_text(t.get("description"))]
+    open_tasks = [t for t in hk.list_tasks(status="open") if _is_seed_text(t.get("description"))]
     if open_tasks:
         log(f"  ~ cleaning request already open ({open_tasks[0]['id']})")
     else:
@@ -838,13 +973,34 @@ _LEGACY_SEED_SHIFTS: dict[str, str] = {
 
 #: (employee_code, name, department, designation, employment_type, user_id)
 _EMPLOYEES: tuple[tuple[str, str, str, str, str, str | None], ...] = (
-    (f"{CODE_PREFIX}EMP01", "Priya Reddy", "General Medicine", "Staff Nurse", "permanent", "NUR001"),
+    (
+        f"{CODE_PREFIX}EMP01",
+        "Priya Reddy",
+        "General Medicine",
+        "Staff Nurse",
+        "permanent",
+        "NUR001",
+    ),
     (f"{CODE_PREFIX}EMP02", "Fatima Sheikh", "General Medicine", "Staff Nurse", "permanent", None),
     (f"{CODE_PREFIX}EMP03", "Joseph Mathew", "General Medicine", "Staff Nurse", "contract", None),
     (f"{CODE_PREFIX}EMP04", "Sunita Yadav", "Cardiology", "Senior Staff Nurse", "permanent", None),
     (f"{CODE_PREFIX}EMP05", "Ravi Shankar", "Cardiology", "Staff Nurse", "permanent", None),
-    (f"{CODE_PREFIX}EMP06", "Meenakshi Iyer", "General Medicine", "Ward Assistant", "outsourced", None),
-    (f"{CODE_PREFIX}EMP07", "Abdul Rahman", "Housekeeping", "Housekeeping Attendant", "outsourced", None),
+    (
+        f"{CODE_PREFIX}EMP06",
+        "Meenakshi Iyer",
+        "General Medicine",
+        "Ward Assistant",
+        "outsourced",
+        None,
+    ),
+    (
+        f"{CODE_PREFIX}EMP07",
+        "Abdul Rahman",
+        "Housekeeping",
+        "Housekeeping Attendant",
+        "outsourced",
+        None,
+    ),
     (f"{CODE_PREFIX}EMP08", "Lata Kulkarni", "Dietetics", "Dietitian", "permanent", None),
 )
 
@@ -870,8 +1026,9 @@ _ROSTER_PLAN: tuple[tuple[int, str, str, str | None], ...] = (
 
 
 def _seed_workforce(log) -> dict:
-    from services import workforce_service as wf
     from services.workforce_service import RosterConflict, WorkforceError
+
+    from services import workforce_service as wf
 
     with db_session() as db:
         for code, name in _LEGACY_SEED_SHIFTS.items():
@@ -880,17 +1037,24 @@ def _seed_workforce(log) -> dict:
                 "WHERE code = ? AND name = ? AND is_active = 1",
                 (code, name),
             )
-        present = {r["code"] for r in db.execute(
-            "SELECT code FROM duty_shift_types WHERE is_active = 1").fetchall()}
+        present = {
+            r["code"]
+            for r in db.execute("SELECT code FROM duty_shift_types WHERE is_active = 1").fetchall()
+        }
     missing = [code for code in _SHIFT_CODES if code not in present]
     if missing:
         log(f"  x shift types missing (migration 24 not applied?): {', '.join(missing)}")
     for code, name, dept, designation, etype, user_id in _EMPLOYEES:
         wf.upsert_employee(
-            employee_code=code, full_name=name, department=dept,
-            designation=designation, employment_type=etype, user_id=user_id,
+            employee_code=code,
+            full_name=name,
+            department=dept,
+            designation=designation,
+            employment_type=etype,
+            user_id=user_id,
             date_of_joining=(_today() - timedelta(days=400)).isoformat(),
-            notes=SEED_MARKER, created_by=SEED_ACTOR,
+            notes=SEED_MARKER,
+            created_by=SEED_ACTOR,
         )
     log(f"  + shift types in use: {len(_SHIFT_CODES) - len(missing)}; employees: {len(_EMPLOYEES)}")
 
@@ -908,16 +1072,24 @@ def _seed_workforce(log) -> dict:
             continue
         try:
             wf.assign_roster(
-                roster_date=day, shift_code=shift, employee_code=employee,
-                ward=ward, status="published", notes=SEED_MARKER,
-                created_by=SEED_ACTOR, allow_short_rest=True,
+                roster_date=day,
+                shift_code=shift,
+                employee_code=employee,
+                ward=ward,
+                status="published",
+                notes=SEED_MARKER,
+                created_by=SEED_ACTOR,
+                allow_short_rest=True,
             )
             made += 1
         except (RosterConflict, WorkforceError) as exc:
             log(f"  x roster {day} {shift} {employee}: {exc}")
     log(f"  + roster lines: {made} new")
-    return {"shift_types": len(_SHIFT_CODES) - len(missing), "employees": len(_EMPLOYEES),
-            "roster_lines": made}
+    return {
+        "shift_types": len(_SHIFT_CODES) - len(missing),
+        "employees": len(_EMPLOYEES),
+        "roster_lines": made,
+    }
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -950,8 +1122,13 @@ def _diet_for(diagnosis: str) -> str:
 
 
 def _seed_dietary(log, patients: list[dict]) -> dict:
+    from services.dietary_service import (
+        DietOrderError,
+        KitchenIndentError,
+        MealPlanError,
+    )
+
     from services import dietary_service as diet
-    from services.dietary_service import DietOrderError, MealPlanError, KitchenIndentError
 
     if not patients:
         log("  ~ no admitted patient, no diet orders")
@@ -968,9 +1145,12 @@ def _seed_dietary(log, patients: list[dict]) -> dict:
     # Exactly ONE patient is nil by mouth, and it is a surgical patient, with a
     # reason and an end time — order_diet refuses an NPO without both.
     npo_patient = next(
-        (p for p in patients
-         if "surg" in (diagnoses.get(p["id"], "")).lower()
-         or (p.get("ward") or "").startswith("SW")),
+        (
+            p
+            for p in patients
+            if "surg" in (diagnoses.get(p["id"], "")).lower()
+            or (p.get("ward") or "").startswith("SW")
+        ),
         patients[-1],
     )
 
@@ -987,15 +1167,19 @@ def _seed_dietary(log, patients: list[dict]) -> dict:
         try:
             if p["id"] == npo_patient["id"]:
                 diet.order_diet(
-                    patient_id=p["id"], diet_type="npo", ordered_by="DOC004",
+                    patient_id=p["id"],
+                    diet_type="npo",
+                    ordered_by="DOC004",
                     npo_reason="Nil by mouth for theatre in the morning",
-                    npo_until=_utc_iso(datetime.now(timezone.utc) + timedelta(hours=14)),
+                    npo_until=_utc_iso(datetime.now(UTC) + timedelta(hours=14)),
                 )
                 npo_written = True
             else:
                 diet.order_diet(
-                    patient_id=p["id"], diet_type=_diet_for(diagnoses.get(p["id"], "")),
-                    ordered_by="DOC001", texture="regular",
+                    patient_id=p["id"],
+                    diet_type=_diet_for(diagnoses.get(p["id"], "")),
+                    ordered_by="DOC001",
+                    texture="regular",
                 )
             made += 1
         except DietOrderError as exc:
@@ -1008,18 +1192,26 @@ def _seed_dietary(log, patients: list[dict]) -> dict:
     ward = next((p.get("ward") for p in patients if p.get("ward")), None)
     if ward:
         today_iso = _today().isoformat()
-        existing = [pl for pl in diet.list_meal_plans(ward=ward, service_date=today_iso)
-                    if pl.get("meal_service") == "lunch"]
+        existing = [
+            pl
+            for pl in diet.list_meal_plans(ward=ward, service_date=today_iso)
+            if pl.get("meal_service") == "lunch"
+        ]
         if existing:
             log(f"  ~ meal plan for {ward} lunch already exists (#{existing[0]['id']})")
         else:
             try:
-                plan = diet.build_meal_plan(ward=ward, meal_service="lunch",
-                                            generated_by="DOC001",
-                                            service_date=today_iso, notes=SEED_MARKER)
+                plan = diet.build_meal_plan(
+                    ward=ward,
+                    meal_service="lunch",
+                    generated_by="DOC001",
+                    service_date=today_iso,
+                    notes=SEED_MARKER,
+                )
                 diet.lock_meal_plan(int(plan["id"]), locked_by="DOC001")
-                diet.raise_kitchen_indent(meal_plan_id=int(plan["id"]),
-                                          raised_by="DOC001", notes=SEED_MARKER)
+                diet.raise_kitchen_indent(
+                    meal_plan_id=int(plan["id"]), raised_by="DOC001", notes=SEED_MARKER
+                )
                 plans, indents = 1, 1
                 log(f"  + meal plan #{plan['id']} locked for {ward} lunch, indent raised")
             except (MealPlanError, KitchenIndentError) as exc:
@@ -1034,20 +1226,77 @@ def _seed_dietary(log, patients: list[dict]) -> dict:
 
 #: (tag, name, category, ward, criticality, produces_readings, cost_rupees)
 _ASSETS: tuple[tuple[str, str, str, str, str, bool, str], ...] = (
-    (f"{CODE_PREFIX}VENT-01", "ICU ventilator (seed)", "ventilator", "CCU", "life_support", True, "1200000"),
-    (f"{CODE_PREFIX}MON-01", "Bedside patient monitor (seed)", "patient_monitor", "CCU", "critical", True, "185000"),
-    (f"{CODE_PREFIX}MON-02", "Bedside patient monitor (seed)", "patient_monitor", "GM-1", "critical", True, "185000"),
-    (f"{CODE_PREFIX}PUMP-01", "Volumetric infusion pump (seed)", "infusion_pump", "CCU", "critical", False, "48000"),
-    (f"{CODE_PREFIX}PUMP-02", "Syringe pump (seed)", "syringe_pump", "RCU", "critical", False, "36000"),
-    (f"{CODE_PREFIX}DEFIB-01", "Biphasic defibrillator (seed)", "defibrillator", "CCU", "life_support", False, "420000"),
+    (
+        f"{CODE_PREFIX}VENT-01",
+        "ICU ventilator (seed)",
+        "ventilator",
+        "CCU",
+        "life_support",
+        True,
+        "1200000",
+    ),
+    (
+        f"{CODE_PREFIX}MON-01",
+        "Bedside patient monitor (seed)",
+        "patient_monitor",
+        "CCU",
+        "critical",
+        True,
+        "185000",
+    ),
+    (
+        f"{CODE_PREFIX}MON-02",
+        "Bedside patient monitor (seed)",
+        "patient_monitor",
+        "GM-1",
+        "critical",
+        True,
+        "185000",
+    ),
+    (
+        f"{CODE_PREFIX}PUMP-01",
+        "Volumetric infusion pump (seed)",
+        "infusion_pump",
+        "CCU",
+        "critical",
+        False,
+        "48000",
+    ),
+    (
+        f"{CODE_PREFIX}PUMP-02",
+        "Syringe pump (seed)",
+        "syringe_pump",
+        "RCU",
+        "critical",
+        False,
+        "36000",
+    ),
+    (
+        f"{CODE_PREFIX}DEFIB-01",
+        "Biphasic defibrillator (seed)",
+        "defibrillator",
+        "CCU",
+        "life_support",
+        False,
+        "420000",
+    ),
     (f"{CODE_PREFIX}ECG-01", "12-lead ECG machine (seed)", "ecg", "GM-1", "routine", True, "95000"),
-    (f"{CODE_PREFIX}O2C-01", "Oxygen concentrator (seed)", "oxygen_concentrator", "RCU", "critical", False, "62000"),
+    (
+        f"{CODE_PREFIX}O2C-01",
+        "Oxygen concentrator (seed)",
+        "oxygen_concentrator",
+        "RCU",
+        "critical",
+        False,
+        "62000",
+    ),
 )
 
 
 def _seed_biomedical(log) -> dict:
-    from services import biomedical_service as bio
     from services.biomedical_service import BiomedicalError
+
+    from services import biomedical_service as bio
     from services import procurement_service as proc
 
     vendor = proc.get_vendor(f"{CODE_PREFIX}VEN3")
@@ -1055,9 +1304,14 @@ def _seed_biomedical(log) -> dict:
 
     for tag, name, category, ward, criticality, readings, cost in _ASSETS:
         bio.upsert_asset(
-            asset_tag=tag, name=name, category=category, ward=ward,
-            manufacturer="Nandi Medical Systems (seed)", model="SEED-100",
-            serial_number=f"SN-{tag}", criticality=criticality,
+            asset_tag=tag,
+            name=name,
+            category=category,
+            ward=ward,
+            manufacturer="Nandi Medical Systems (seed)",
+            model="SEED-100",
+            serial_number=f"SN-{tag}",
+            criticality=criticality,
             produces_clinical_readings=readings,
             purchase_date=(_today() - timedelta(days=900)).isoformat(),
             commissioned_date=(_today() - timedelta(days=870)).isoformat(),
@@ -1079,19 +1333,25 @@ def _seed_biomedical(log) -> dict:
             # entirely green teaches nobody to read it.
             last_done_days = 400 if tag == overdue_tag else 60
             bio.upsert_schedule(
-                asset_tag=tag, schedule_type="calibration", interval_days=365,
+                asset_tag=tag,
+                schedule_type="calibration",
+                interval_days=365,
                 last_done_date=(_today() - timedelta(days=last_done_days)).isoformat(),
-                grace_days=15, responsible="Biomedical engineering (seed)",
+                grace_days=15,
+                responsible="Biomedical engineering (seed)",
                 vendor_id=vendor_id,
                 certificate_reference=f"SEED/CAL/{tag}",
                 actor=SEED_ACTOR,
             )
             bio.upsert_schedule(
-                asset_tag=tag, schedule_type="preventive_maintenance",
+                asset_tag=tag,
+                schedule_type="preventive_maintenance",
                 interval_days=180,
                 last_done_date=(_today() - timedelta(days=90)).isoformat(),
-                grace_days=7, responsible="Nandi Biomedical Services (seed)",
-                vendor_id=vendor_id, actor=SEED_ACTOR,
+                grace_days=7,
+                responsible="Nandi Biomedical Services (seed)",
+                vendor_id=vendor_id,
+                actor=SEED_ACTOR,
             )
             made += 2
         except BiomedicalError as exc:
@@ -1114,8 +1374,9 @@ _SEED_CONSENT_REQUEST_ID = "SEED-CONSENT-0001"
 
 
 def _seed_abdm(log, patients: list[dict]) -> dict:
-    from services import abdm_service as abdm
     from services.abdm_service import AbdmError
+
+    from services import abdm_service as abdm
 
     if not patients:
         log("  ~ no admitted patient, no ABHA identity")
@@ -1210,7 +1471,7 @@ def _seed_abdm(log, patients: list[dict]) -> dict:
                 hi_types=["OPConsultation", "DiagnosticReport"],
                 date_range_from=(_today() - timedelta(days=365)).isoformat(),
                 date_range_to=_today().isoformat(),
-                expires_at=_utc_iso(datetime.now(timezone.utc) + timedelta(days=30)),
+                expires_at=_utc_iso(datetime.now(UTC) + timedelta(days=30)),
                 request_id=_SEED_CONSENT_REQUEST_ID,
                 identity_id=identity_id,
                 recorded_by=SEED_ACTOR,
@@ -1226,8 +1487,11 @@ def _seed_abdm(log, patients: list[dict]) -> dict:
         except AbdmError as exc:
             log(f"  x consent: {exc}")
 
-    return {"abha_identities": identities, "abdm_consents": consents,
-            "abdm_care_contexts": contexts}
+    return {
+        "abha_identities": identities,
+        "abdm_consents": consents,
+        "abdm_care_contexts": contexts,
+    }
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1256,9 +1520,8 @@ def module_row_counts() -> dict[str, dict[str, int]]:
     out: dict[str, dict[str, int]] = {}
     with db_session() as db:
         present = {
-            r["name"] for r in db.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            ).fetchall()
+            r["name"]
+            for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
         }
         for module, tables in MODULE_TABLES.items():
             counts: dict[str, int] = {}
@@ -1276,6 +1539,7 @@ def module_row_counts() -> dict[str, dict[str, int]]:
 # ═════════════════════════════════════════════════════════════════════════════
 #  Entry point
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def seed_modules(*, verbose: bool = True) -> dict:
     """Seed every empty module. Idempotent. Refuses on a non-dev profile."""

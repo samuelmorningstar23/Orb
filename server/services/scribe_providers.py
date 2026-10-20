@@ -5,15 +5,17 @@ without rewriting business logic. Only OllamaProvider is implemented
 in this pass; the interface is designed so OpenAI-compatible, vLLM,
 or local-transformers providers can be added later.
 """
+
 import json
 import logging
 import time
-from typing import Optional, AsyncGenerator
 from abc import ABC, abstractmethod
+from collections.abc import AsyncGenerator
 
 import httpx
 from config import OLLAMA_BASE_URL
 from offline_policy import local_model_origin
+
 # ORB_MODELS_ENABLED off (or the Orb Ward Record): every provider refuses
 # before it loads or asks a model (services/model_switch.py).
 from services.model_switch import refuse_when_models_off
@@ -53,7 +55,7 @@ class LLMProvider(ABC):
         ...
 
     @abstractmethod
-    async def agenerate_stream(
+    def agenerate_stream(
         self,
         prompt: str,
         system: str = "",
@@ -194,7 +196,9 @@ class OllamaProvider(LLMProvider):
                         if not isinstance(data, dict) or data.get("error"):
                             raise RuntimeError("Scribe model stream reported a failure")
                         message = data.get("message", {})
-                        if not isinstance(message, dict) or not isinstance(message.get("content", ""), str):
+                        if not isinstance(message, dict) or not isinstance(
+                            message.get("content", ""), str
+                        ):
                             raise RuntimeError("Invalid Scribe stream message")
                         if "done" in data and not isinstance(data["done"], bool):
                             raise RuntimeError("Invalid Scribe completion marker")
@@ -213,8 +217,8 @@ class OllamaProvider(LLMProvider):
                     await response.aclose()
 
 
-
 # ── Provider Registry ──
+
 
 class MLXProvider(LLMProvider):
     """MLX-LM backed local LLM provider. Runs in-process on Apple Silicon GPU."""
@@ -236,24 +240,29 @@ class MLXProvider(LLMProvider):
         refuse_when_models_off("Scribe MLX generate")
         try:
             from services.voice_agent_service import get_voice_agent
+
             agent = get_voice_agent()
             agent.load()
             if not agent._loaded:
                 return ""
-            
+
             from mlx_lm import generate as mlx_generate
             from mlx_lm.sample_utils import make_sampler
+
             from services.gpu_coordinator import vram_guard
-            
+
             messages = []
             if system:
                 messages.append({"role": "system", "content": system})
             messages.append({"role": "user", "content": prompt})
-            
-            formatted_prompt = agent._tokenizer.apply_chat_template(
+
+            tokenizer = agent._tokenizer
+            if tokenizer is None:
+                raise RuntimeError("The Scribe tokenizer has not been loaded")
+            formatted_prompt = tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
             )
-            
+
             with vram_guard("Scribe MLX (sync)"):
                 result = mlx_generate(
                     agent._model,
@@ -280,16 +289,10 @@ class MLXProvider(LLMProvider):
         """Async non-streaming generation running on thread executor."""
         refuse_when_models_off("Scribe MLX agenerate")
         import asyncio
+
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
-            None,
-            self.generate,
-            prompt,
-            system,
-            model,
-            temperature,
-            max_tokens,
-            ctx_size
+            None, self.generate, prompt, system, model, temperature, max_tokens, ctx_size
         )
 
     async def agenerate_stream(
@@ -303,37 +306,44 @@ class MLXProvider(LLMProvider):
         purpose: str = "scribe_draft",
     ) -> AsyncGenerator[str, None]:
         """Async streaming generation using background thread queue.
-        
+
         Acquires UMSQ GPU lock at PRIORITY_SCRIBE (2) — user-initiated but
         yields to Sage voice if both are queued simultaneously.
         """
         refuse_when_models_off("Scribe MLX agenerate_stream")
         try:
             from services.voice_agent_service import get_voice_agent
+
             agent = get_voice_agent()
             agent.load()
             if not agent._loaded:
                 raise RuntimeError("Scribe model is unavailable")
-            
+
             import asyncio
             import queue
             import threading
+
             from mlx_lm import stream_generate
             from mlx_lm.sample_utils import make_sampler
-            from services.gpu_coordinator import umsq, vram_guard, PRIORITY_SCRIBE
-            
+
+            from services.gpu_coordinator import PRIORITY_SCRIBE, umsq, vram_guard
+
             messages = []
             if system:
                 messages.append({"role": "system", "content": system})
             messages.append({"role": "user", "content": prompt})
-            
-            formatted_prompt = agent._tokenizer.apply_chat_template(
+
+            tokenizer = agent._tokenizer
+            if tokenizer is None:
+                raise RuntimeError("The Scribe tokenizer has not been loaded")
+            formatted_prompt = tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
             )
-            
+
             sampler = make_sampler(temp=temperature)
+            q: queue.Queue[str | Exception | None]
             q = queue.Queue()
-            
+
             def _producer():
                 with vram_guard("Scribe MLX (stream)"):
                     try:
@@ -349,11 +359,11 @@ class MLXProvider(LLMProvider):
                         q.put(e)
                     finally:
                         q.put(None)
-            
+
             async with umsq.acquire("Scribe MLX", priority=PRIORITY_SCRIBE):
                 thread = threading.Thread(target=_producer, daemon=True)
                 thread.start()
-                
+
                 loop = asyncio.get_running_loop()
                 while True:
                     item = await loop.run_in_executor(None, q.get)
@@ -363,7 +373,9 @@ class MLXProvider(LLMProvider):
                         raise RuntimeError("Scribe model stream failed") from item
                     yield item
         except Exception:
-            logger.exception("Scribe model stream failed", extra={"event": "scribe_provider_stream_failed"})
+            logger.exception(
+                "Scribe model stream failed", extra={"event": "scribe_provider_stream_failed"}
+            )
             raise
 
 
@@ -379,7 +391,9 @@ def get_provider(provider_name: str = "ollama") -> LLMProvider:
     note), so inference never leaves the building."""
     cls = _PROVIDERS.get(provider_name)
     if not cls:
-        raise ValueError(f"Unknown Scribe LLM provider: {provider_name!r}. Available: {list(_PROVIDERS.keys())}")
+        raise ValueError(
+            f"Unknown Scribe LLM provider: {provider_name!r}. Available: {list(_PROVIDERS.keys())}"
+        )
     return cls()
 
 
@@ -388,8 +402,8 @@ class StageTimer:
 
     def __init__(self):
         self.timings: dict[str, float] = {}
-        self._start: Optional[float] = None
-        self._stage: Optional[str] = None
+        self._start: float | None = None
+        self._stage: str | None = None
 
     def start(self, stage: str):
         self._stage = stage

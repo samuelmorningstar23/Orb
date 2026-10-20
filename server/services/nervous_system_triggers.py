@@ -1,4 +1,5 @@
 """Orb Hospital OS — Hospital Nervous System Cross-Node Triggers"""
+
 import asyncio
 import atexit
 import json
@@ -7,36 +8,53 @@ import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 
 import httpx
-from datetime import datetime, timezone, timedelta
 from database import db_session, run_db
-from services.event_bus import event_bus, StateEvent
-from services.medication_safety_gate import MedicationSafetyBlocked, enforce_medication_safety
+
+from services.event_bus import StateEvent, event_bus
+from services.llm_queue_service import llm_queue
+from services.medication_safety_gate import (
+    MedicationSafetyBlocked,
+    enforce_medication_safety,
+)
 from services.retrieval_query import build_guideline_query
 from services.sage_service import _assemble_patient_context, _get_guideline_context
 from services.voice_agent_service import get_voice_agent
-from services.llm_queue_service import llm_queue
 
 logger = logging.getLogger(__name__)
+
 
 async def on_critical_vigil_alert(event: StateEvent):
     """Subscriber triggered by Vigil alerts to pre-assemble RAG context for Sage."""
     patient_id = event.patient_id
+    if patient_id is None:
+        return
     payload = event.payload
     mews_score = payload.get("risk_score", 0.0) or payload.get("score", 0.0)
     drivers = payload.get("drivers", [])
-    
+
     correlation_id = event.correlation_id
-    logger.info("[SagePreloader] Pre-assembling context for patient %s. Correlation ID: %s", patient_id, correlation_id)
+    logger.info(
+        "[SagePreloader] Pre-assembling context for patient %s. Correlation ID: %s",
+        patient_id,
+        correlation_id,
+    )
 
     # Deterioration → open a Sepsis Six / deterioration care bundle for review.
     # This event only fires on a critical Vigil alert, so a time-boxed bundle is
     # opened (idempotent, clinician can cancel) turning the alert into a tracked,
     # measurable protocol. Best-effort: must never break the preloader path.
     try:
-        from services.sepsis_bundle_service import autostart_enabled, maybe_autostart, start_bundle
+        from services.sepsis_bundle_service import (
+            autostart_enabled,
+            maybe_autostart,
+            start_bundle,
+        )
+
         raw = event.payload.get("raw_news2")
+
         def _open_bundle():
             # ORB_SEPSIS_AUTOSTART off: no automatic bundle on either branch,
             # including the no-score fallback below, which skips maybe_autostart.
@@ -45,8 +63,13 @@ async def on_critical_vigil_alert(event: StateEvent):
             if raw is not None:
                 return maybe_autostart(patient_id, {"raw_news2": raw})
             # No raw score in payload, but this IS the critical event → open one.
-            return start_bundle(patient_id, triggered_by="vigil_auto",
-                                trigger_reason="Critical Vigil alert", source="vigil_auto")
+            return start_bundle(
+                patient_id,
+                triggered_by="vigil_auto",
+                trigger_reason="Critical Vigil alert",
+                source="vigil_auto",
+            )
+
         # run_db, not to_thread: this is pure blocking SQLite, and to_thread's
         # default executor is shared process-wide. A ward-wide alert storm fires
         # this once per critical patient per vitals cycle, which is exactly the
@@ -66,8 +89,11 @@ async def on_critical_vigil_alert(event: StateEvent):
     # services/retrieval_query.py).
     query_hint = " ".join(str(d) for d in (drivers or []))
     await warm_patient_context(
-        patient_id, query_hint=query_hint, ttl_minutes=10,
-        reason="vigil_critical_alert", mews_score=mews_score,
+        patient_id,
+        query_hint=query_hint,
+        ttl_minutes=10,
+        reason="vigil_critical_alert",
+        mews_score=mews_score,
     )
 
 
@@ -120,7 +146,7 @@ def _cache_is_fresh(patient_id: str, ttl_minutes: int) -> bool:
     if not row or not row["preloaded_at"] or not row["expires_at"]:
         return False
     try:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         preloaded = datetime.fromisoformat(row["preloaded_at"])
         expires = datetime.fromisoformat(row["expires_at"])
         if expires <= now:
@@ -170,8 +196,7 @@ def _compile_context(patient_id: str, query_hint: str):
     # against the live question later — so a pool that does not cover what the
     # patient is admitted with is a pool the reranker cannot rescue.
     hint = build_guideline_query(facts, [query_hint] if query_hint else None)
-    guideline_text, pool, confidence = _get_guideline_context(
-        hint, limit=_WARM_POOL_LIMIT)
+    guideline_text, pool, confidence = _get_guideline_context(hint, limit=_WARM_POOL_LIMIT)
     return facts, guideline_text, pool, confidence
 
 
@@ -210,6 +235,7 @@ def _prewarm_messages(patient_id: str, facts: dict):
     module note above _WARM_EXECUTOR).
     """
     from services.sage_service import _build_chat_messages, format_patient_channel_a
+
     context = "\n".join(format_patient_channel_a(facts, patient_id))
     return _build_chat_messages("", context, None, "patient")
 
@@ -254,16 +280,20 @@ async def prewarm_patient_prefix(patient_id: str, facts: dict | None) -> bool:
         fire a 27B prefill per navigation.
       * FAIL-SOFT. Any error is a lost optimisation, never a failed chart open.
     """
-    from config import (OLLAMA_KEEP_ALIVE, SAGE_PREWARM_ENABLED,
-                        SAGE_PREWARM_MIN_INTERVAL_SECONDS,
-                        SAGE_PREWARM_QUEUE_WAIT_SECONDS,
-                        SAGE_PREWARM_TIMEOUT_SECONDS)
+    from config import (
+        OLLAMA_KEEP_ALIVE,
+        SAGE_PREWARM_ENABLED,
+        SAGE_PREWARM_MIN_INTERVAL_SECONDS,
+        SAGE_PREWARM_QUEUE_WAIT_SECONDS,
+        SAGE_PREWARM_TIMEOUT_SECONDS,
+    )
 
     if not SAGE_PREWARM_ENABLED or not facts:
         return False
     # Models switched off (ORB_MODELS_ENABLED, or the Orb Ward Record): there
     # is no model to warm, so the gateway is not asked.
     from services.model_switch import models_enabled
+
     if not models_enabled():
         return False
     # monotonic(), not loop.time(): the rate limit must hold across event loops
@@ -271,8 +301,7 @@ async def prewarm_patient_prefix(patient_id: str, facts: dict | None) -> bool:
     now = time.monotonic()
     last = _PREWARM_LAST.get(patient_id)
     if last is not None and (now - last) < SAGE_PREWARM_MIN_INTERVAL_SECONDS:
-        logger.debug("[SagePrewarm] %s prewarmed %.0fs ago — skipping",
-                     patient_id, now - last)
+        logger.debug("[SagePrewarm] %s prewarmed %.0fs ago — skipping", patient_id, now - last)
         return False
 
     try:
@@ -281,8 +310,7 @@ async def prewarm_patient_prefix(patient_id: str, facts: dict | None) -> bool:
 
         choice = await select_chat_model()
         if choice.downgraded:
-            logger.info("[SagePrewarm] primary tier evicted — skipping prewarm for %s",
-                        patient_id)
+            logger.info("[SagePrewarm] primary tier evicted — skipping prewarm for %s", patient_id)
             return False
 
         # The SAME renderer the interactive turn uses (_prewarm_messages), on
@@ -302,9 +330,11 @@ async def prewarm_patient_prefix(patient_id: str, facts: dict | None) -> bool:
         await llm_queue.acquire(priority=3, timeout=SAGE_PREWARM_QUEUE_WAIT_SECONDS)
         t0 = time.monotonic()
         from services import ollama_gateway
+
         try:
-            async with httpx.AsyncClient(timeout=SAGE_PREWARM_TIMEOUT_SECONDS,
-                                         trust_env=False) as client:
+            async with httpx.AsyncClient(
+                timeout=SAGE_PREWARM_TIMEOUT_SECONDS, trust_env=False
+            ) as client:
                 # Audited: the chart block went to the model, so "which model
                 # saw this patient" has to include it. NOT yield_to_clinician:
                 # the turn most likely to arrive mid-prewarm is a question
@@ -319,8 +349,11 @@ async def prewarm_patient_prefix(patient_id: str, facts: dict | None) -> bool:
                         "messages": messages,
                         "stream": False,
                         "keep_alive": OLLAMA_KEEP_ALIVE,
-                        "options": {"num_predict": 1, "num_ctx": INTERACTIVE_NUM_CTX,
-                                    "temperature": 0.0},
+                        "options": {
+                            "num_predict": 1,
+                            "num_ctx": INTERACTIVE_NUM_CTX,
+                            "temperature": 0.0,
+                        },
                     },
                     purpose="sage_prefix_prewarm",
                     patient_id=patient_id,
@@ -332,7 +365,8 @@ async def prewarm_patient_prefix(patient_id: str, facts: dict | None) -> bool:
         logger.info(
             "[SagePrewarm] %s prefix resident on %s in %.0f ms "
             "(prompt_eval=%s tok, prompt_eval_ms=%.0f)",
-            patient_id, choice.model,
+            patient_id,
+            choice.model,
             (time.monotonic() - t0) * 1000,
             data.get("prompt_eval_count"),
             (data.get("prompt_eval_duration") or 0) / 1e6,
@@ -350,7 +384,13 @@ def _persist_cache(patient_id, mews_score, compiled_data, expires_at):
         db.execute(
             """INSERT OR REPLACE INTO sage_decision_cache (patient_id, mews_score, compiled_context, preloaded_at, expires_at)
                VALUES (?, ?, ?, ?, ?)""",
-            (patient_id, mews_score, json.dumps(compiled_data), compiled_data["preloaded_at"], expires_at)
+            (
+                patient_id,
+                mews_score,
+                json.dumps(compiled_data),
+                compiled_data["preloaded_at"],
+                expires_at,
+            ),
         )
 
 
@@ -378,8 +418,11 @@ async def warm_patient_context(
     prewarm = reason == "ui_patient_opened"
     _started = time.monotonic()
     _inflight_since = _WARM_INFLIGHT.get(patient_id)
-    if (prewarm and _inflight_since is not None
-            and (_started - _inflight_since) < _WARM_INFLIGHT_TTL_SECONDS):
+    if (
+        prewarm
+        and _inflight_since is not None
+        and (_started - _inflight_since) < _WARM_INFLIGHT_TTL_SECONDS
+    ):
         # A compile for this patient is already running. Its facts will be
         # newer than anything we could prewarm now, so a prewarm here would
         # prefill a chart block that is about to be superseded — and hold the
@@ -399,7 +442,9 @@ async def warm_patient_context(
         # write is INSERT OR REPLACE, so a concurrent warm cannot corrupt the
         # row — it can only overwrite it with an equally-valid one.
         if reason != "manual" and await run_db(_cache_is_fresh, patient_id, ttl_minutes):
-            logger.debug("[SagePreloader] cache still fresh for %s — skipping recompile", patient_id)
+            logger.debug(
+                "[SagePreloader] cache still fresh for %s — skipping recompile", patient_id
+            )
             # A FRESH CACHE IS NOT A WARM PREFIX. Re-opening a chart two minutes
             # later is precisely when the facts are still fresh and the KV cache
             # is not — other patients, the narrator and the clinician's own
@@ -407,7 +452,8 @@ async def warm_patient_context(
             # still runs, off the cached facts: one indexed read, no recompile.
             if prewarm:
                 await prewarm_patient_prefix(
-                    patient_id, await run_db(_load_cached_facts, patient_id))
+                    patient_id, await run_db(_load_cached_facts, patient_id)
+                )
             return True
 
         # Pre-assemble facts inside the PRIVATE warm pool (blocking SQLite +
@@ -428,25 +474,33 @@ async def warm_patient_context(
             "channel_b_c_candidates": pool,
             "sources": [s.get("document_id") if isinstance(s, dict) else str(s) for s in pool],
             "confidence": confidence,
-            "preloaded_at": datetime.now(timezone.utc).isoformat(),
+            "preloaded_at": datetime.now(UTC).isoformat(),
             "reason": reason,
         }
 
-        expires_at = (datetime.now(timezone.utc) + timedelta(minutes=ttl_minutes)).isoformat()
+        expires_at = (datetime.now(UTC) + timedelta(minutes=ttl_minutes)).isoformat()
 
         await run_db(_persist_cache, patient_id, mews_score, compiled_data, expires_at)
-        logger.info("[SagePreloader] Compiled context cached for patient %s (%s, ttl=%sm)", patient_id, reason, ttl_minutes)
+        logger.info(
+            "[SagePreloader] Compiled context cached for patient %s (%s, ttl=%sm)",
+            patient_id,
+            reason,
+            ttl_minutes,
+        )
 
         # Maintain the persistent world model (temporal/trajectory state) on the
         # same warm path, so it's kept current whenever context is warmed
         # (patient-open, critical alert) without adding a separate sweep.
         try:
             from services.world_model_service import update_patient_state
+
             await asyncio.get_running_loop().run_in_executor(
                 _WARM_EXECUTOR, update_patient_state, patient_id, reason
             )
         except Exception as wm_err:
-            logger.debug("[SagePreloader] world model update skipped for %s: %s", patient_id, wm_err)
+            logger.debug(
+                "[SagePreloader] world model update skipped for %s: %s", patient_id, wm_err
+            )
 
         # LAST, deliberately: the prewarm must fire the facts that were just
         # persisted, and the trajectory line the world-model update above may
@@ -462,6 +516,7 @@ async def warm_patient_context(
         # entry now, and clearing it here would let a third one in behind it.
         if _WARM_INFLIGHT.get(patient_id) == _started:
             _WARM_INFLIGHT.pop(patient_id, None)
+
 
 _EXTRACTOR_SYSTEM = (
     "You are a clinical database parser. You read a signed clinical note and emit "
@@ -510,13 +565,19 @@ def _sanitize_vitals(vitals, note_id) -> dict:
         except (TypeError, ValueError):
             logger.warning(
                 "[EHRExtractor] Dropping non-numeric %s=%r extracted from note %s",
-                field, raw, note_id,
+                field,
+                raw,
+                note_id,
             )
             continue
         if not (low <= value <= high):
             logger.warning(
                 "[EHRExtractor] Dropping out-of-range %s=%r (allowed %s-%s) extracted from note %s",
-                field, raw, low, high, note_id,
+                field,
+                raw,
+                low,
+                high,
+                note_id,
             )
             continue
         clean[field] = value
@@ -572,9 +633,11 @@ async def _extract_updates(note_id, patient_id: str, structured_text: str) -> di
     # closed exactly like the residency guard below, without asking the
     # gateway; the signed note stands as the source of truth.
     from services.model_switch import models_enabled
+
     if not models_enabled():
         return {}
     from services.model_router import ambient_tier_evicted, select_chat_model
+
     model_choice = await select_chat_model()
     if await ambient_tier_evicted(model_choice.model):
         return {}
@@ -582,7 +645,7 @@ async def _extract_updates(note_id, patient_id: str, structured_text: str) -> di
     updates = {}
     try:
         await llm_queue.acquire(priority=3)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         # Queue timeout or a BackgroundGovernor shed: fail closed exactly like
         # the residency guard above — the signed note stands as source of truth.
         return {}
@@ -594,6 +657,7 @@ async def _extract_updates(note_id, patient_id: str, structured_text: str) -> di
     except ValueError:
         extract_timeout = 120.0
     from services import ollama_gateway
+
     try:
         async with httpx.AsyncClient(timeout=extract_timeout, trust_env=False) as client:
             # NOT yield_to_clinician: this pass writes the chart, and its only
@@ -618,9 +682,9 @@ async def _extract_updates(note_id, patient_id: str, structured_text: str) -> di
             data = resp.json()
             raw_json = data.get("message", {}).get("content", "{}").strip()
             if raw_json.startswith("```"):
-                raw_json = re.sub(r'^```(?:json)?\s*', '', raw_json)
-                raw_json = re.sub(r'\s*```$', '', raw_json)
-                
+                raw_json = re.sub(r"^```(?:json)?\s*", "", raw_json)
+                raw_json = re.sub(r"\s*```$", "", raw_json)
+
             updates = json.loads(raw_json)
     except Exception as err:
         # FAIL CLOSED. A parse/extraction failure must NEVER fabricate clinical
@@ -632,7 +696,9 @@ async def _extract_updates(note_id, patient_id: str, structured_text: str) -> di
         # source of truth for a human to action.
         logger.error(
             "[EHRExtractor] Extraction failed for note %s (patient %s); aborting auto-EHR write (fail-closed): %s",
-            note_id, patient_id, err,
+            note_id,
+            patient_id,
+            err,
         )
         updates = {}
     finally:
@@ -640,12 +706,15 @@ async def _extract_updates(note_id, patient_id: str, structured_text: str) -> di
 
     return updates
 
+
 def _load_note(note_id):
     """Blocking signed-note read — dispatch via run_db()."""
     structured_text = ""
     author_id = ""
     with db_session() as db:
-        note_row = db.execute("SELECT structured_note, author_id FROM scribe_notes WHERE id = ?", (note_id,)).fetchone()
+        note_row = db.execute(
+            "SELECT structured_note, author_id FROM scribe_notes WHERE id = ?", (note_id,)
+        ).fetchone()
         if note_row:
             structured_text = note_row["structured_note"]
             author_id = note_row["author_id"]
@@ -655,6 +724,7 @@ def _load_note(note_id):
 def _note_plain_text(structured_text) -> str:
     """The signed note as plain text (services/note_text.py)."""
     from services.note_text import note_plain_text
+
     return note_plain_text(structured_text)
 
 
@@ -667,6 +737,7 @@ def _drug_sentence(note_text, drug) -> str | None:
     sentence ends and line breaks, 240 characters at most).
     """
     from services.coding_service import evidence_sentence
+
     text = _note_plain_text(note_text)
     name = (drug or "").strip()
     if not text or not name:
@@ -702,13 +773,16 @@ def _screen_medications(patient_id, author_id, note_id, updates, note_text=None)
     verified_by NULL), so a med that arrives during the gap is caught at
     verification rather than needing to be caught here.
     """
-    med_starts = []      # rows to chart as UNVERIFIED llm_extracted meds
+    med_starts: list[dict]
+    med_starts = []  # rows to chart as UNVERIFIED llm_extracted meds
+    stop_proposals: list[str]
     stop_proposals = []  # drug names PROPOSED for discontinuation (never auto-stopped)
     # On an Orb Ward Record computer the drug chart stays on paper
     # (services/drug_chart): a signed note charts no medicine and proposes no
     # stop, and nothing is screened. The models are off there too, so this
     # lane is not reached; this keeps it shut if it ever is.
     from services.drug_chart import drug_chart_enabled
+
     if not drug_chart_enabled():
         return med_starts, stop_proposals
     for med in updates.get("medications", []):
@@ -732,35 +806,45 @@ def _screen_medications(patient_id, author_id, note_id, updates, note_text=None)
             safety_note = None
             try:
                 enforce_medication_safety(
-                    patient_id, drug, actor_id=author_id,
-                    entry_point="scribe.auto_extraction", interactive=False,
+                    patient_id,
+                    drug,
+                    actor_id=author_id,
+                    entry_point="scribe.auto_extraction",
+                    interactive=False,
                 )
             except MedicationSafetyBlocked as blocked:
                 # An autonomous path must never ACTIVATE a severe-alert med —
                 # but nothing charted here is trusted until a pharmacist
                 # verifies it, so chart it unverified with the blocking alerts
                 # attached rather than dropping the extraction silently.
-                alerts = (blocked.safety.get("allergy_alerts", [])
-                          + blocked.safety.get("interaction_alerts", []))
-                summary = "; ".join(
-                    a.get("message") or f"{a.get('severity', 'unknown')} {a.get('type', 'alert')}"
-                    for a in alerts
-                ) or blocked.reason
+                alerts = blocked.safety.get("allergy_alerts", []) + blocked.safety.get(
+                    "interaction_alerts", []
+                )
+                summary = (
+                    "; ".join(
+                        a.get("message")
+                        or f"{a.get('severity', 'unknown')} {a.get('type', 'alert')}"
+                        for a in alerts
+                    )
+                    or blocked.reason
+                )
                 safety_note = f"[SAFETY] {summary}"
-            med_starts.append({
-                "drug": drug,
-                "dosage": med.get("dosage") or "REVIEW REQUIRED",
-                # Never a guessed route: an "Oral" default charted enoxaparin
-                # as oral. The placeholder makes the pharmacist enter it.
-                "route": med.get("route") or "REVIEW REQUIRED",
-                "frequency": med.get("frequency") or "REVIEW REQUIRED",
-                "notes": safety_note,
-                # Provenance (migration 79): which signed note, and the sentence
-                # in it that names the drug, so the pharmacist can check the
-                # read against what the doctor actually signed.
-                "source_note_id": note_id,
-                "source_sentence": _drug_sentence(note_text, drug),
-            })
+            med_starts.append(
+                {
+                    "drug": drug,
+                    "dosage": med.get("dosage") or "REVIEW REQUIRED",
+                    # Never a guessed route: an "Oral" default charted enoxaparin
+                    # as oral. The placeholder makes the pharmacist enter it.
+                    "route": med.get("route") or "REVIEW REQUIRED",
+                    "frequency": med.get("frequency") or "REVIEW REQUIRED",
+                    "notes": safety_note,
+                    # Provenance (migration 79): which signed note, and the sentence
+                    # in it that names the drug, so the pharmacist can check the
+                    # read against what the doctor actually signed.
+                    "source_note_id": note_id,
+                    "source_sentence": _drug_sentence(note_text, drug),
+                }
+            )
     return med_starts, stop_proposals
 
 
@@ -775,8 +859,13 @@ def _live_vitals_payload(db, patient_id, vitals_id):
     patient's SpO2 scale. overlay=False: the CfC overlay opens its own
     connection, which inside this write transaction is the WAL self-deadlock.
     """
-    from services.vigil_service import is_latest_vitals_row, score_vitals_row, scoring_enabled
     from ws.realtime import vitals_update_payload
+
+    from services.vigil_service import (
+        is_latest_vitals_row,
+        score_vitals_row,
+        scoring_enabled,
+    )
 
     if not is_latest_vitals_row(db, patient_id, vitals_id):
         return None
@@ -799,6 +888,7 @@ def _persist_extraction(note_id, patient_id, author_id, updates, med_starts, sto
         # The one stored vitals spelling (services/clinical_time.py); `now` also
         # stamps the medications and the summary note below, which is harmless.
         from services.clinical_time import utc_iso_now
+
         now = utc_iso_now()
 
         # 1. Update Medications
@@ -815,41 +905,61 @@ def _persist_extraction(note_id, patient_id, author_id, updates, med_starts, sto
         # rolls the whole extraction back, so no chart row is left without
         # its order. Held ruling W111 is untouched: never a draft.
         from services.medorders import ai_lanes
+
         through_store = ai_lanes.store_on() and bool(med_starts)
         for m in med_starts:
             cur = db.execute(
                 """INSERT INTO medications (patient_id, drug_name, dosage, route, frequency, status, prescribed_by, source, notes,
                                             source_note_id, source_sentence)
                    VALUES (?, ?, ?, ?, ?, 'active', ?, 'llm_extracted', ?, ?, ?)""",
-                (patient_id, m["drug"], m["dosage"], m["route"], m["frequency"], author_id, m["notes"],
-                 m.get("source_note_id"), m.get("source_sentence"))
+                (
+                    patient_id,
+                    m["drug"],
+                    m["dosage"],
+                    m["route"],
+                    m["frequency"],
+                    author_id,
+                    m["notes"],
+                    m.get("source_note_id"),
+                    m.get("source_sentence"),
+                ),
             )
             if through_store:
                 ai_lanes.write_scribe_order_in_txn(
-                    db, medication_id=cur.lastrowid, patient_id=patient_id, author_id=author_id,
-                    note_id=note_id, drug_name=m["drug"],
-                    dose=m["dosage"], route=m["route"], frequency=m["frequency"],
-                    notes=m["notes"], source_sentence=m.get("source_sentence"))
+                    db,
+                    medication_id=cur.lastrowid,
+                    patient_id=patient_id,
+                    author_id=author_id,
+                    note_id=note_id,
+                    drug_name=m["drug"],
+                    dose=m["dosage"],
+                    route=m["route"],
+                    frequency=m["frequency"],
+                    notes=m["notes"],
+                    source_sentence=m.get("source_sentence"),
+                )
         for drug in stop_proposals:
             db.execute(
                 """INSERT INTO clinical_documents (patient_id, doc_type, title, content, author_id, created_at)
                    VALUES (?, 'note', 'Proposed medication stop (from signed note)', ?, ?, ?)""",
-                (patient_id,
-                 f"Signed Scribe note #{note_id} proposes STOPPING {drug}. "
-                 "Auto-extraction never discontinues medications. Review the note and "
-                 "execute the stop via the chart if clinically appropriate.",
-                 author_id, now)
+                (
+                    patient_id,
+                    f"Signed Scribe note #{note_id} proposes STOPPING {drug}. "
+                    "Auto-extraction never discontinues medications. Review the note and "
+                    "execute the stop via the chart if clinically appropriate.",
+                    author_id,
+                    now,
+                ),
             )
         if stop_proposals:
             stop_channel = db.execute(
-                "SELECT id FROM channels WHERE type = 'case_room' AND patient_id = ?",
-                (patient_id,)
+                "SELECT id FROM channels WHERE type = 'case_room' AND patient_id = ?", (patient_id,)
             ).fetchone()
             if stop_channel:
                 # Ensure the Scribe bot user exists (messages.sender_id FK).
                 db.execute(
                     "INSERT OR IGNORE INTO users (id, name, role, password_hash) VALUES (?, ?, ?, ?)",
-                    ('bot_scribe', 'Orb Scribe', 'doctor', 'system')
+                    ("bot_scribe", "Orb Scribe", "doctor", "system"),
                 )
 
         # 2. Update Vitals
@@ -862,6 +972,7 @@ def _persist_extraction(note_id, patient_id, author_id, updates, med_starts, sto
             # -5). Carried from the latest row under the 12 h measured-time rule
             # (services/vitals_carry.py), else NULL, not assessed.
             from services.vitals_carry import carry_forward, dump_carried
+
             latest = db.execute(
                 "SELECT * FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
                 "ORDER BY timestamp DESC, id DESC LIMIT 1",
@@ -875,10 +986,19 @@ def _persist_extraction(note_id, patient_id, author_id, updates, med_starts, sto
                 """INSERT INTO vitals (patient_id, timestamp, heart_rate, systolic_bp, diastolic_bp, spo2, temperature, respiratory_rate,
                                      consciousness, on_oxygen, carried_from, source)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'llm_extracted')""",
-                (patient_id, now, v.get("heart_rate"), v.get("systolic_bp"), v.get("diastolic_bp"), v.get("spo2"), v.get("temperature"), v.get("respiratory_rate"),
-                 assessed["consciousness"],
-                 None if assessed["on_oxygen"] is None else (1 if assessed["on_oxygen"] else 0),
-                 dump_carried(carried))
+                (
+                    patient_id,
+                    now,
+                    v.get("heart_rate"),
+                    v.get("systolic_bp"),
+                    v.get("diastolic_bp"),
+                    v.get("spo2"),
+                    v.get("temperature"),
+                    v.get("respiratory_rate"),
+                    assessed["consciousness"],
+                    None if assessed["on_oxygen"] is None else (1 if assessed["on_oxygen"] else 0),
+                    dump_carried(carried),
+                ),
             )
             vitals_payload = _live_vitals_payload(db, patient_id, cur.lastrowid)
 
@@ -886,7 +1006,12 @@ def _persist_extraction(note_id, patient_id, author_id, updates, med_starts, sto
         db.execute(
             """INSERT INTO clinical_documents (patient_id, doc_type, title, content, author_id, created_at)
                VALUES (?, 'note', 'Auto-EHR Extraction (SOAP)', ?, ?, ?)""",
-            (patient_id, f"Auto-extracted from signed Scribe note #{note_id}:\n{json.dumps(updates, indent=2)}", author_id, now)
+            (
+                patient_id,
+                f"Auto-extracted from signed Scribe note #{note_id}:\n{json.dumps(updates, indent=2)}",
+                author_id,
+                now,
+            ),
         )
     return stop_channel, vitals_payload
 
@@ -895,9 +1020,16 @@ async def on_scribe_note_signed(event: StateEvent):
     """Subscriber that extracts structured observations from signed SOAP notes into the EHR."""
     note_id = event.payload.get("note_id")
     patient_id = event.patient_id
+    if patient_id is None:
+        return
     correlation_id = event.correlation_id
 
-    logger.info("[EHRExtractor] Parsing signed note %s for patient %s. Correlation ID: %s", note_id, patient_id, correlation_id)
+    logger.info(
+        "[EHRExtractor] Parsing signed note %s for patient %s. Correlation ID: %s",
+        note_id,
+        patient_id,
+        correlation_id,
+    )
 
     structured_text, author_id = await run_db(_load_note, note_id)
 
@@ -913,7 +1045,8 @@ async def on_scribe_note_signed(event: StateEvent):
         # failure).
         logger.error(
             "[EHRExtractor] Non-object extraction payload (%s) for note %s; aborting auto-EHR write (fail-closed)",
-            type(updates).__name__, note_id,
+            type(updates).__name__,
+            note_id,
         )
         return
     if not updates:
@@ -944,7 +1077,13 @@ async def on_scribe_note_signed(event: StateEvent):
         stop_channel = None
         try:
             stop_channel, vitals_payload = await run_db(
-                _persist_extraction, note_id, patient_id, author_id, updates, med_starts, stop_proposals
+                _persist_extraction,
+                note_id,
+                patient_id,
+                author_id,
+                updates,
+                med_starts,
+                stop_proposals,
             )
 
             from ws.realtime import emit_patient_vitals, sio
@@ -960,8 +1099,9 @@ async def on_scribe_note_signed(event: StateEvent):
                 try:
                     await emit_patient_vitals("vitals:update", vitals_payload)
                 except Exception as e:
-                    logger.warning("[EHRExtractor] vitals:update push failed for note %s: %s",
-                                   note_id, e)
+                    logger.warning(
+                        "[EHRExtractor] vitals:update push failed for note %s: %s", note_id, e
+                    )
 
             # Propose stops in the patient's case room (bot-provenance system
             # message) so a human sees and executes the stop via the chart. Runs
@@ -970,6 +1110,7 @@ async def on_scribe_note_signed(event: StateEvent):
             # row above is the record.
             if stop_channel:
                 from services.relay_service import send_message
+
                 for drug in stop_proposals:
                     # send_message is a blocking insert on its own connection, so it
                     # goes to the DB lane too. Kept one call per drug rather than one
@@ -982,35 +1123,55 @@ async def on_scribe_note_signed(event: StateEvent):
                         sender_id="bot_scribe",
                         sender_name="Orb Scribe",
                         sender_role="intelligence",
-                        content=(f"Signed note #{note_id} proposes STOPPING {drug}. "
-                                 "No medication was discontinued automatically. Please review "
-                                 "and action via the chart."),
+                        content=(
+                            f"Signed note #{note_id} proposes STOPPING {drug}. "
+                            "No medication was discontinued automatically. Please review "
+                            "and action via the chart."
+                        ),
                         message_type="system",
-                        is_bot=True, source="bot",
+                        is_bot=True,
+                        source="bot",
                     )
                     await sio.emit("message:new", msg, room=stop_channel["id"])
 
             # Department-scoped, like every per-patient event. It went to
             # room=<patient id>, which no socket ever joins, so PatientStory
             # (which filters on patient_id) never heard it (fixed 2026-10-03).
-            await emit_patient_vitals("patient:timeline_updated",
-                                      {"patient_id": patient_id, "source": "scribe_extraction"})
-            logger.info("[EHRExtractor] Successfully synchronized signed Scribe note %s to patient EHR.", note_id)
+            await emit_patient_vitals(
+                "patient:timeline_updated",
+                {"patient_id": patient_id, "source": "scribe_extraction"},
+            )
+            logger.info(
+                "[EHRExtractor] Successfully synchronized signed Scribe note %s to patient EHR.",
+                note_id,
+            )
         except Exception as e:
-            logger.error("[EHRExtractor] Error committing structured note updates for note %s: %s", note_id, e)
+            logger.error(
+                "[EHRExtractor] Error committing structured note updates for note %s: %s",
+                note_id,
+                e,
+            )
+
 
 async def on_relay_voice_prewarm(event: StateEvent):
     """Subscriber that warms up the local MedGemma voice model on Apple Silicon when speech markers are detected."""
     patient_id = event.patient_id
+    if patient_id is None:
+        return
     correlation_id = event.correlation_id
-    logger.info("[VoiceAgentPrewarm] Pre-warming MLX voice model for patient %s. Correlation: %s", patient_id, correlation_id)
-    
+    logger.info(
+        "[VoiceAgentPrewarm] Pre-warming MLX voice model for patient %s. Correlation: %s",
+        patient_id,
+        correlation_id,
+    )
+
     try:
         agent = get_voice_agent()
         asyncio.create_task(asyncio.to_thread(agent.load))
         logger.info("[VoiceAgentPrewarm] Voice agent model loading scheduled.")
     except Exception as e:
         logger.error("[VoiceAgentPrewarm] Pre-warming failed: %s", e)
+
 
 def register_triggers():
     """Register all reactive triggers on the global event bus."""

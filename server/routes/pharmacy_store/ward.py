@@ -70,11 +70,10 @@ does not allow, short stock, an open transfer or a drug already asked for is
 anything the request must correct is 422 (including a drug not on the stock
 list, a barred high-alert drug or concentrated electrolyte, and NDPS stock).
 """
-from typing import Any, List, Optional
+
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
-
 from permissions import (
     PHARMACY_STORE_APPROVE,
     PHARMACY_STORE_READ,
@@ -85,10 +84,12 @@ from permissions import (
     require_any_permission,
     require_permission,
 )
+from pydantic import BaseModel, Field
+from services.audit_service import AuditWriteError
+
 from routes.opt_in_gates import feature_gate
 from services import pharmacy_crash_cart_service as carts
 from services import pharmacy_transfer_service as transfers
-from services.audit_service import AuditWriteError
 
 require_pharmacy_ward_stock_feature = feature_gate("pharmacy_ward_stock")
 
@@ -137,66 +138,100 @@ def _fail(exc: transfers.TransferError) -> HTTPException:
 
 
 def _audit_unavailable() -> HTTPException:
-    return HTTPException(status_code=503, detail={
-        "error": "audit_unavailable",
-        "message": "The audit record could not be written, so nothing was changed. "
-                   "Try again shortly."})
+    return HTTPException(
+        status_code=503,
+        detail={
+            "error": "audit_unavailable",
+            "message": "The audit record could not be written, so nothing was changed. "
+            "Try again shortly.",
+        },
+    )
 
 
 def _ctx(request: Request) -> dict:
-    return {"request_path": request.url.path, "http_method": request.method,
-            "ip_address": request.client.host if request.client else None}
+    return {
+        "request_path": request.url.path,
+        "http_method": request.method,
+        "ip_address": request.client.host if request.client else None,
+    }
 
 
 # ── Reads ─────────────────────────────────────────────────────────────────────
 
+
+_WARD_STOCK_STORE_CODE_DEFAULT = Query(None, max_length=40)
+_WARD_STOCK_USER_DEFAULT = Depends(_WARD_READ)
+
+
 @router.get("/ward/stock")
-def ward_stock(store_code: Optional[str] = Query(None, max_length=40),
-               user: dict = Depends(_WARD_READ)):
+def ward_stock(
+    store_code: str | None = _WARD_STOCK_STORE_CODE_DEFAULT, user: dict = _WARD_STOCK_USER_DEFAULT
+):
     """Each ward store the caller sees, every drug on its list and every drug
     it holds: on hand, held, expired, on its way, asked for, par and top-up."""
     try:
         return transfers.ward_stock(actor=user, store_code=store_code)
     except transfers.TransferError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
+
+
+_WARD_TRANSFERS_AWAITING_USER_DEFAULT = Depends(_WARD_READ)
 
 
 @router.get("/ward/transfers/awaiting")
-def ward_transfers_awaiting(user: dict = Depends(_WARD_READ)):
+def ward_transfers_awaiting(user: dict = _WARD_TRANSFERS_AWAITING_USER_DEFAULT):
     """Transfers on their way to a ward store the caller sees, with their lines."""
     return {"transfers": transfers.ward_transfers_awaiting(actor=user)}
 
 
+_LIST_WARD_INDENTS_STATUS_DEFAULT = Query(None, max_length=40)
+_LIST_WARD_INDENTS_STORE_CODE_DEFAULT = Query(None, max_length=40)
+_LIST_WARD_INDENTS_LIMIT_DEFAULT = Query(100, ge=1, le=500)
+_LIST_WARD_INDENTS_USER_DEFAULT = Depends(_WARD_READ)
+
+
 @router.get("/ward/indents")
-def list_ward_indents(status: Optional[str] = Query(None, max_length=40),
-                      store_code: Optional[str] = Query(None, max_length=40),
-                      limit: int = Query(100, ge=1, le=500),
-                      user: dict = Depends(_WARD_READ)):
+def list_ward_indents(
+    status: str | None = _LIST_WARD_INDENTS_STATUS_DEFAULT,
+    store_code: str | None = _LIST_WARD_INDENTS_STORE_CODE_DEFAULT,
+    limit: int = _LIST_WARD_INDENTS_LIMIT_DEFAULT,
+    user: dict = _LIST_WARD_INDENTS_USER_DEFAULT,
+):
     try:
-        return {"indents": transfers.list_ward_indents(actor=user, status=status,
-                                                       store_code=store_code, limit=limit)}
+        return {
+            "indents": transfers.list_ward_indents(
+                actor=user, status=status, store_code=store_code, limit=limit
+            )
+        }
     except transfers.TransferError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
+
+
+_GET_WARD_INDENT_USER_DEFAULT = Depends(_WARD_READ)
 
 
 @router.get("/ward/indents/{indent_id}")
-def get_ward_indent(indent_id: int, user: dict = Depends(_WARD_READ)):
+def get_ward_indent(indent_id: int, user: dict = _GET_WARD_INDENT_USER_DEFAULT):
     try:
         return {"indent": transfers.get_ward_indent(indent_id, actor=user)}
     except transfers.TransferError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
+
+
+_WARD_ISSUE_PLAN_USER_DEFAULT = Depends(_PS_READ)
 
 
 @router.get("/ward/indents/{indent_id}/issue-plan")
-def ward_issue_plan(indent_id: int, user: dict = Depends(_PS_READ)):
+def ward_issue_plan(indent_id: int, user: dict = _WARD_ISSUE_PLAN_USER_DEFAULT):
     """What issuing this indent would take from the dispensing pharmacy, FEFO."""
     try:
         return transfers.ward_issue_plan(indent_id, actor=user)
     except transfers.TransferError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
 
 
 # ── Writes ────────────────────────────────────────────────────────────────────
+
 
 class IndentLineIn(BaseModel):
     helix_medication_id: str = Field(..., min_length=1, max_length=80)
@@ -205,22 +240,32 @@ class IndentLineIn(BaseModel):
 
 class IndentIn(BaseModel):
     store_code: str = Field(..., min_length=1, max_length=40)
-    lines: List[IndentLineIn] = Field(..., min_length=1, max_length=transfers.MAX_DRUGS)
+    lines: list[IndentLineIn] = Field(..., min_length=1, max_length=transfers.MAX_DRUGS)
     priority: str = Field("routine", max_length=20)
-    remarks: Optional[str] = Field(None, max_length=transfers.MAX_TEXT)
+    remarks: str | None = Field(None, max_length=transfers.MAX_TEXT)
+
+
+_RAISE_WARD_INDENT_USER_DEFAULT = Depends(_WARD_RAISE)
 
 
 @router.post("/ward/indents")
-def raise_ward_indent(body: IndentIn, request: Request, user: dict = Depends(_WARD_RAISE)):
+def raise_ward_indent(
+    body: IndentIn, request: Request, user: dict = _RAISE_WARD_INDENT_USER_DEFAULT
+):
     """Ask the dispensing pharmacy for drugs on a ward store's list."""
     try:
         return transfers.raise_ward_indent(
-            store_code=body.store_code, lines=[line.model_dump() for line in body.lines],
-            actor=user, priority=body.priority, remarks=body.remarks, audit_ctx=_ctx(request))
+            store_code=body.store_code,
+            lines=[line.model_dump() for line in body.lines],
+            actor=user,
+            priority=body.priority,
+            remarks=body.remarks,
+            audit_ctx=_ctx(request),
+        )
     except transfers.TransferError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
 
 
 class ApprovalIn(BaseModel):
@@ -229,40 +274,56 @@ class ApprovalIn(BaseModel):
 
 
 class DecisionIn(BaseModel):
-    approvals: Optional[List[ApprovalIn]] = Field(None, max_length=transfers.MAX_DRUGS)
+    approvals: list[ApprovalIn] | None = Field(None, max_length=transfers.MAX_DRUGS)
     reject: bool = False
-    reason: Optional[str] = Field(None, max_length=transfers.MAX_TEXT)
+    reason: str | None = Field(None, max_length=transfers.MAX_TEXT)
+
+
+_DECIDE_WARD_INDENT_USER_DEFAULT = Depends(_DECIDE)
 
 
 @router.post("/ward/indents/{indent_id}/decision")
-def decide_ward_indent(indent_id: int, body: DecisionIn, request: Request,
-                       user: dict = Depends(_DECIDE)):
+def decide_ward_indent(
+    indent_id: int,
+    body: DecisionIn,
+    request: Request,
+    user: dict = _DECIDE_WARD_INDENT_USER_DEFAULT,
+):
     """Approve (in whole or in part) or refuse a ward indent."""
     try:
         return transfers.decide_ward_indent(
-            indent_id, actor=user,
+            indent_id,
+            actor=user,
             approvals=[a.model_dump() for a in body.approvals] if body.approvals else None,
-            reject=body.reject, reason=body.reason, audit_ctx=_ctx(request))
+            reject=body.reject,
+            reason=body.reason,
+            audit_ctx=_ctx(request),
+        )
     except transfers.TransferError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
 
 
 class CancelIn(BaseModel):
-    reason: Optional[str] = Field(None, max_length=transfers.MAX_TEXT)
+    reason: str | None = Field(None, max_length=transfers.MAX_TEXT)
+
+
+_CANCEL_WARD_INDENT_USER_DEFAULT = Depends(_WARD_RAISE)
 
 
 @router.post("/ward/indents/{indent_id}/cancel")
-def cancel_ward_indent(indent_id: int, body: CancelIn, request: Request,
-                       user: dict = Depends(_WARD_RAISE)):
+def cancel_ward_indent(
+    indent_id: int, body: CancelIn, request: Request, user: dict = _CANCEL_WARD_INDENT_USER_DEFAULT
+):
     try:
-        return transfers.cancel_ward_indent(indent_id, actor=user, reason=body.reason,
-                                            audit_ctx=_ctx(request))
+        return transfers.cancel_ward_indent(
+            indent_id, actor=user, reason=body.reason, audit_ctx=_ctx(request)
+        )
     except transfers.TransferError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
 
 
 class IssueLineIn(BaseModel):
@@ -271,99 +332,145 @@ class IssueLineIn(BaseModel):
 
 
 class IssueIn(BaseModel):
-    lines: Optional[List[IssueLineIn]] = Field(None, max_length=transfers.MAX_DRUGS)
-    remarks: Optional[str] = Field(None, max_length=transfers.MAX_TEXT)
-    idempotency_key: Optional[str] = Field(None, max_length=120)
+    lines: list[IssueLineIn] | None = Field(None, max_length=transfers.MAX_DRUGS)
+    remarks: str | None = Field(None, max_length=transfers.MAX_TEXT)
+    idempotency_key: str | None = Field(None, max_length=120)
+
+
+_ISSUE_WARD_INDENT_USER_DEFAULT = Depends(_PS_WRITE)
 
 
 @router.post("/ward/indents/{indent_id}/issue")
-def issue_ward_indent(indent_id: int, body: IssueIn, request: Request,
-                      user: dict = Depends(_PS_WRITE)):
+def issue_ward_indent(
+    indent_id: int, body: IssueIn, request: Request, user: dict = _ISSUE_WARD_INDENT_USER_DEFAULT
+):
     """A transfer draft from the dispensing pharmacy with its FEFO plan.
     Nothing moves until it is sent with POST /transfers/{id}/dispatch."""
     try:
         return transfers.issue_ward_indent(
-            indent_id, actor=user,
+            indent_id,
+            actor=user,
             lines=[line.model_dump() for line in body.lines] if body.lines else None,
-            remarks=body.remarks, idempotency_key=body.idempotency_key,
-            audit_ctx=_ctx(request))
+            remarks=body.remarks,
+            idempotency_key=body.idempotency_key,
+            audit_ctx=_ctx(request),
+        )
     except transfers.TransferError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
 
 
 class WardReceiptLineIn(BaseModel):
     line_id: Any = None
     received_units: Any = None
-    discrepancy_reason: Optional[str] = Field(None, max_length=transfers.MAX_TEXT)
+    discrepancy_reason: str | None = Field(None, max_length=transfers.MAX_TEXT)
 
 
 class WardReceiptIn(BaseModel):
-    lines: List[WardReceiptLineIn] = Field(..., min_length=1, max_length=transfers.MAX_LINES)
-    witness_id: Optional[str] = Field(None, max_length=80)
-    witness_pin: Optional[str] = Field(None, max_length=64)
+    lines: list[WardReceiptLineIn] = Field(..., min_length=1, max_length=transfers.MAX_LINES)
+    witness_id: str | None = Field(None, max_length=80)
+    witness_pin: str | None = Field(None, max_length=64)
+
+
+_RECEIVE_WARD_TRANSFER_USER_DEFAULT = Depends(_RECEIVE)
 
 
 @router.post("/ward/transfers/{transfer_id}/receive")
-def receive_ward_transfer(transfer_id: int, body: WardReceiptIn, request: Request,
-                          user: dict = Depends(_RECEIVE)):
+def receive_ward_transfer(
+    transfer_id: int,
+    body: WardReceiptIn,
+    request: Request,
+    user: dict = _RECEIVE_WARD_TRANSFER_USER_DEFAULT,
+):
     """Receive a transfer on the ward. Never by the person who sent it. A
     transfer that became controlled on its way is received with a witness."""
     try:
         return transfers.receive_ward_transfer(
-            transfer_id, lines=[line.model_dump() for line in body.lines], actor=user,
-            witness_id=body.witness_id, witness_pin=body.witness_pin, audit_ctx=_ctx(request))
+            transfer_id,
+            lines=[line.model_dump() for line in body.lines],
+            actor=user,
+            witness_id=body.witness_id,
+            witness_pin=body.witness_pin,
+            audit_ctx=_ctx(request),
+        )
     except transfers.TransferError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
 
 
 # ── Crash carts (grn-23) ──────────────────────────────────────────────────────
 
+
+_CRASH_CARTS_STORE_CODE_DEFAULT = Query(None, max_length=40)
+_CRASH_CARTS_USER_DEFAULT = Depends(_WARD_READ)
+
+
 @router.get("/ward/crash-carts")
-def crash_carts(store_code: Optional[str] = Query(None, max_length=40),
-                user: dict = Depends(_WARD_READ)):
+def crash_carts(
+    store_code: str | None = _CRASH_CARTS_STORE_CODE_DEFAULT, user: dict = _CRASH_CARTS_USER_DEFAULT
+):
     """Each crash cart the caller sees against its list: its seal, its last
     checks, which check is due and why, expired, expiring and held lots, and
     the top-up a request would ask for."""
     try:
         return carts.crash_carts(actor=user, store_code=store_code)
     except transfers.TransferError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
+
+
+_LIST_CRASH_CART_CHECKS_STORE_CODE_DEFAULT = Query(None, max_length=40)
+_LIST_CRASH_CART_CHECKS_STATUS_DEFAULT = Query(None, max_length=20)
+_LIST_CRASH_CART_CHECKS_LIMIT_DEFAULT = Query(50, ge=1, le=carts.MAX_HISTORY)
+_LIST_CRASH_CART_CHECKS_USER_DEFAULT = Depends(_WARD_READ)
 
 
 @router.get("/ward/crash-carts/checks")
-def list_crash_cart_checks(store_code: Optional[str] = Query(None, max_length=40),
-                           status: Optional[str] = Query(None, max_length=20),
-                           limit: int = Query(50, ge=1, le=carts.MAX_HISTORY),
-                           user: dict = Depends(_WARD_READ)):
+def list_crash_cart_checks(
+    store_code: str | None = _LIST_CRASH_CART_CHECKS_STORE_CODE_DEFAULT,
+    status: str | None = _LIST_CRASH_CART_CHECKS_STATUS_DEFAULT,
+    limit: int = _LIST_CRASH_CART_CHECKS_LIMIT_DEFAULT,
+    user: dict = _LIST_CRASH_CART_CHECKS_USER_DEFAULT,
+):
     try:
-        return {"checks": carts.list_checks(actor=user, store_code=store_code, status=status,
-                                            limit=limit)}
+        return {
+            "checks": carts.list_checks(
+                actor=user, store_code=store_code, status=status, limit=limit
+            )
+        }
     except transfers.TransferError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
+
+
+_GET_CRASH_CART_CHECK_USER_DEFAULT = Depends(_WARD_READ)
 
 
 @router.get("/ward/crash-carts/checks/{check_id}")
-def get_crash_cart_check(check_id: int, user: dict = Depends(_WARD_READ)):
+def get_crash_cart_check(check_id: int, user: dict = _GET_CRASH_CART_CHECK_USER_DEFAULT):
     try:
         return {"check": carts.get_check(check_id, actor=user)}
     except transfers.TransferError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
+
+
+_CRASH_CART_BATCH_DRUG_ID_DEFAULT = Query(..., min_length=1, max_length=80)
+_CRASH_CART_BATCH_BATCH_NO_DEFAULT = Query(..., min_length=1, max_length=80)
+_CRASH_CART_BATCH_USER_DEFAULT = Depends(_PS_READ)
 
 
 @router.get("/ward/crash-carts/batch")
-def crash_cart_batch(drug_id: str = Query(..., min_length=1, max_length=80),
-                     batch_no: str = Query(..., min_length=1, max_length=80),
-                     user: dict = Depends(_PS_READ)):
+def crash_cart_batch(
+    drug_id: str = _CRASH_CART_BATCH_DRUG_ID_DEFAULT,
+    batch_no: str = _CRASH_CART_BATCH_BATCH_NO_DEFAULT,
+    user: dict = _CRASH_CART_BATCH_USER_DEFAULT,
+):
     """Every crash cart a batch was sent to, with what is still in the cart
     and what left it with no patient recorded."""
     try:
         return carts.batch_in_carts(drug_id, batch_no)
     except transfers.TransferError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
 
 
 class CartCountIn(BaseModel):
@@ -374,70 +481,104 @@ class CartCountIn(BaseModel):
 class CartExtraIn(BaseModel):
     drug_id: Any = None
     units: Any = None
-    batch_no: Optional[str] = Field(None, max_length=80)
-    expiry_date: Optional[str] = Field(None, max_length=20)
+    batch_no: str | None = Field(None, max_length=80)
+    expiry_date: str | None = Field(None, max_length=20)
 
 
 class CartCheckIn(BaseModel):
     kind: str = Field(..., max_length=10)
-    seal_found: Optional[str] = Field(None, max_length=carts.MAX_SEAL)
+    seal_found: str | None = Field(None, max_length=carts.MAX_SEAL)
     seal_intact: Any = None
-    seal_applied: Optional[str] = Field(None, max_length=carts.MAX_SEAL)
-    lines: Optional[List[CartCountIn]] = Field(None, max_length=carts.MAX_CHECK_LINES)
-    extra: Optional[List[CartExtraIn]] = Field(None, max_length=carts.MAX_EXTRA_LINES)
-    note: Optional[str] = Field(None, max_length=transfers.MAX_TEXT)
-    idempotency_key: Optional[str] = Field(None, max_length=120)
+    seal_applied: str | None = Field(None, max_length=carts.MAX_SEAL)
+    lines: list[CartCountIn] | None = Field(None, max_length=carts.MAX_CHECK_LINES)
+    extra: list[CartExtraIn] | None = Field(None, max_length=carts.MAX_EXTRA_LINES)
+    note: str | None = Field(None, max_length=transfers.MAX_TEXT)
+    idempotency_key: str | None = Field(None, max_length=120)
+
+
+_RECORD_CRASH_CART_CHECK_USER_DEFAULT = Depends(_CART_CHECK)
 
 
 @router.post("/ward/crash-carts/{store_code}/checks")
-def record_crash_cart_check(store_code: str, body: CartCheckIn, request: Request,
-                            user: dict = Depends(_CART_CHECK)):
+def record_crash_cart_check(
+    store_code: str,
+    body: CartCheckIn,
+    request: Request,
+    user: dict = _RECORD_CRASH_CART_CHECK_USER_DEFAULT,
+):
     """A seal check, or a full check of every batch in the cart with a new seal."""
     try:
         return carts.record_check(
-            store_code, actor=user, kind=body.kind, seal_found=body.seal_found,
-            seal_intact=body.seal_intact, seal_applied=body.seal_applied,
+            store_code,
+            actor=user,
+            kind=body.kind,
+            seal_found=body.seal_found,
+            seal_intact=body.seal_intact,
+            seal_applied=body.seal_applied,
             lines=[line.model_dump() for line in body.lines] if body.lines is not None else None,
             extra=[item.model_dump() for item in body.extra] if body.extra is not None else None,
-            note=body.note, idempotency_key=body.idempotency_key, audit_ctx=_ctx(request))
+            note=body.note,
+            idempotency_key=body.idempotency_key,
+            audit_ctx=_ctx(request),
+        )
     except transfers.TransferError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
 
 
 class CartDecisionIn(BaseModel):
     confirm: Any = None
-    reason: Optional[str] = Field(None, max_length=transfers.MAX_TEXT)
+    reason: str | None = Field(None, max_length=transfers.MAX_TEXT)
+
+
+_DECIDE_CRASH_CART_CHECK_USER_DEFAULT = Depends(_DECIDE)
 
 
 @router.post("/ward/crash-carts/checks/{check_id}/decision")
-def decide_crash_cart_check(check_id: int, body: CartDecisionIn, request: Request,
-                            user: dict = Depends(_DECIDE)):
+def decide_crash_cart_check(
+    check_id: int,
+    body: CartDecisionIn,
+    request: Request,
+    user: dict = _DECIDE_CRASH_CART_CHECK_USER_DEFAULT,
+):
     """Confirm a check that found a difference (units found short leave the
     cart's lots), or refuse it with a reason (count again)."""
     try:
-        return carts.decide_check(check_id, actor=user, confirm=body.confirm,
-                                  reason=body.reason, audit_ctx=_ctx(request))
+        return carts.decide_check(
+            check_id, actor=user, confirm=body.confirm, reason=body.reason, audit_ctx=_ctx(request)
+        )
     except transfers.TransferError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
 
 
 class CartTopUpIn(BaseModel):
-    priority: Optional[str] = Field(None, max_length=20)
-    remarks: Optional[str] = Field(None, max_length=transfers.MAX_TEXT)
+    priority: str | None = Field(None, max_length=20)
+    remarks: str | None = Field(None, max_length=transfers.MAX_TEXT)
+
+
+_REQUEST_CRASH_CART_TOP_UP_USER_DEFAULT = Depends(_WARD_RAISE)
 
 
 @router.post("/ward/crash-carts/{store_code}/top-up")
-def request_crash_cart_top_up(store_code: str, body: CartTopUpIn, request: Request,
-                              user: dict = Depends(_WARD_RAISE)):
+def request_crash_cart_top_up(
+    store_code: str,
+    body: CartTopUpIn,
+    request: Request,
+    user: dict = _REQUEST_CRASH_CART_TOP_UP_USER_DEFAULT,
+):
     """One ward indent for what the cart's list is short of, urgent by default."""
     try:
-        return carts.request_top_up(store_code, actor=user, priority=body.priority,
-                                    remarks=body.remarks, audit_ctx=_ctx(request))
+        return carts.request_top_up(
+            store_code,
+            actor=user,
+            priority=body.priority,
+            remarks=body.remarks,
+            audit_ctx=_ctx(request),
+        )
     except transfers.TransferError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None

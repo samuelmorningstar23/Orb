@@ -5,6 +5,7 @@ that quotes a note to a person (the pharmacist's Verify Queue, signed-note
 extraction finding the sentence that names a drug) wants its words, in order,
 not the JSON around them. Pure, no database.
 """
+
 from __future__ import annotations
 
 import json

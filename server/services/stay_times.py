@@ -51,10 +51,12 @@ end stays in the ledger and the audit trail.
 
 Every function takes the caller's connection and never commits.
 """
+
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
-from typing import Any, Mapping, Optional
+from typing import Any
 
 from services.clinical_time import parse_to_utc
 
@@ -74,7 +76,7 @@ __all__ = [
 ]
 
 
-def _parse(value: Any) -> Optional[datetime]:
+def _parse(value: Any) -> datetime | None:
     """Any stored spelling as an aware UTC datetime; None when blank or
     unreadable. A stored time with no offset is UTC, as every Orb writer
     stores it."""
@@ -89,6 +91,7 @@ def _parse(value: Any) -> Optional[datetime]:
 # ═════════════════════════════════════════════════════════════════════════════
 #  SQL fragments
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def stay_start_sql(alias: str = "a") -> str:
     """When the stay began, as SQL over the admissions alias `alias`."""
@@ -118,17 +121,18 @@ def stay_end_sql(alias: str = "a") -> str:
 #  One admission
 # ═════════════════════════════════════════════════════════════════════════════
 
-def stay_start_stored(admission: Mapping) -> Optional[str]:
+
+def stay_start_stored(admission: Mapping) -> str | None:
     """The stay start as stored (admitted_at, else created_at)."""
     return admission.get("admitted_at") or admission.get("created_at") or None
 
 
-def stay_start(admission: Mapping) -> Optional[datetime]:
+def stay_start(admission: Mapping) -> datetime | None:
     """When the stay began, as an aware UTC datetime, or None if unreadable."""
     return _parse(admission.get("admitted_at")) or _parse(admission.get("created_at"))
 
 
-def stay_end_stored(db, admission: Mapping) -> Optional[str]:
+def stay_end_stored(db, admission: Mapping) -> str | None:
     """When the stay ended, as stored, or None while the stay is active (or
     when no end time was recorded anywhere)."""
     if (admission.get("status") or "active") == "active":
@@ -154,16 +158,16 @@ def stay_end_stored(db, admission: Mapping) -> Optional[str]:
     return row["discharged_at"] if row is not None else None
 
 
-def stay_end(db, admission: Mapping) -> Optional[datetime]:
+def stay_end(db, admission: Mapping) -> datetime | None:
     """stay_end_stored as an aware UTC datetime."""
     return _parse(stay_end_stored(db, admission))
 
 
-def latest_admission(db, patient_id: str) -> Optional[dict]:
+def latest_admission(db, patient_id: str) -> dict | None:
     """The patient's most recent admission by stay start, active or ended."""
     row = db.execute(
         f"""SELECT a.* FROM admissions a WHERE a.patient_id = ?
-             ORDER BY julianday({stay_start_sql('a')}) DESC, a.rowid DESC LIMIT 1""",
+             ORDER BY julianday({stay_start_sql("a")}) DESC, a.rowid DESC LIMIT 1""",
         (patient_id,),
     ).fetchone()
     return dict(row) if row is not None else None
@@ -173,8 +177,9 @@ def latest_admission(db, patient_id: str) -> Optional[dict]:
 #  Ends the beds and admissions module recorded with no summary
 # ═════════════════════════════════════════════════════════════════════════════
 
-_LEDGER_COLUMNS = frozenset({"admission_id", "movement_type", "discharge_summary_id",
-                             "corrects_movement_id", "moved_at"})
+_LEDGER_COLUMNS = frozenset(
+    {"admission_id", "movement_type", "discharge_summary_id", "corrects_movement_id", "moved_at"}
+)
 
 
 def ledger_ready(db) -> bool:
@@ -210,8 +215,9 @@ def summary_less_ends_sql() -> str:
     )
 
 
-def summary_less_ends(db, *, since: Any = None, until: Any = None,
-                      patient_id: Optional[str] = None) -> list[dict]:
+def summary_less_ends(
+    db, *, since: Any = None, until: Any = None, patient_id: str | None = None
+) -> list[dict]:
     """The live summary-less ends whose end falls in [since, until), oldest
     first. Either bound may be None. Bounds are compared by julianday, so any
     stored spelling of either side compares correctly."""
@@ -247,7 +253,8 @@ def _bound(value: Any) -> str:
 #  The stay a discharge summary ended
 # ═════════════════════════════════════════════════════════════════════════════
 
-def admission_for_summary(db, summary: Mapping) -> Optional[dict]:
+
+def admission_for_summary(db, summary: Mapping) -> dict | None:
     """The admission a discharge summary row ended, or None.
 
     1. With ORB_ADT on, the discharge movement that carries this summary's id
@@ -275,8 +282,8 @@ def admission_for_summary(db, summary: Mapping) -> Optional[dict]:
     row = db.execute(
         f"""SELECT a.* FROM admissions a
              WHERE a.patient_id = ? AND a.status <> 'active'
-               AND julianday({stay_start_sql('a')}) <= julianday(?)
-             ORDER BY julianday({stay_start_sql('a')}) DESC, a.rowid DESC LIMIT 1""",
+               AND julianday({stay_start_sql("a")}) <= julianday(?)
+             ORDER BY julianday({stay_start_sql("a")}) DESC, a.rowid DESC LIMIT 1""",
         (patient_id, when),
     ).fetchone()
     return dict(row) if row is not None else None

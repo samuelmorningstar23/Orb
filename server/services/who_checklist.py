@@ -19,17 +19,37 @@ a prep package landing after a tick wiped the WHO record. A row still holding th
 old shape (written in the moment between the migration and this code, or brought
 back by an old backup) is read here as WHO state and split on its next write.
 """
+
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any, TypedDict
 
 from database import db_session
 
 TEMPLATE_VERSION = "who-ssc-2009"
 
+
 # Canonical WHO Surgical Safety Checklist items, grouped by phase.
-WHO_CHECKLIST = {
+class _ChecklistItem(TypedDict):
+    id: str
+    text: str
+
+
+class _ChecklistPhase(TypedDict):
+    id: str
+    label: str
+    when: str
+    items: list[_ChecklistItem]
+
+
+class _ChecklistTemplate(TypedDict):
+    version: str
+    phases: list[_ChecklistPhase]
+
+
+WHO_CHECKLIST: _ChecklistTemplate = {
     "version": TEMPLATE_VERSION,
     "phases": [
         {
@@ -37,13 +57,22 @@ WHO_CHECKLIST = {
             "label": "Sign In",
             "when": "Before induction of anaesthesia",
             "items": [
-                {"id": "si_identity", "text": "Patient has confirmed identity, site, procedure, and consent"},
+                {
+                    "id": "si_identity",
+                    "text": "Patient has confirmed identity, site, procedure, and consent",
+                },
                 {"id": "si_site_marked", "text": "Surgical site marked / not applicable"},
                 {"id": "si_anaesthesia_check", "text": "Anaesthesia safety check completed"},
                 {"id": "si_pulse_oximeter", "text": "Pulse oximeter on patient and functioning"},
                 {"id": "si_allergy", "text": "Known allergy reviewed"},
-                {"id": "si_airway", "text": "Difficult airway / aspiration risk assessed and equipment/assistance available"},
-                {"id": "si_blood_loss", "text": "Risk of >500 ml blood loss (7 ml/kg in children): IV access/fluids planned"},
+                {
+                    "id": "si_airway",
+                    "text": "Difficult airway / aspiration risk assessed and equipment/assistance available",
+                },
+                {
+                    "id": "si_blood_loss",
+                    "text": "Risk of >500 ml blood loss (7 ml/kg in children): IV access/fluids planned",
+                },
             ],
         },
         {
@@ -51,12 +80,30 @@ WHO_CHECKLIST = {
             "label": "Time Out",
             "when": "Before skin incision",
             "items": [
-                {"id": "to_team_intro", "text": "All team members have introduced themselves by name and role"},
-                {"id": "to_confirm_patient", "text": "Surgeon, anaesthetist and nurse confirm patient, site and procedure"},
-                {"id": "to_antibiotic", "text": "Antibiotic prophylaxis given within the last 60 minutes / not indicated"},
-                {"id": "to_critical_events_surgeon", "text": "Surgeon reviews critical/unexpected steps, duration, blood loss"},
-                {"id": "to_critical_events_anaesthesia", "text": "Anaesthetist reviews patient-specific concerns"},
-                {"id": "to_critical_events_nursing", "text": "Nursing team confirms sterility, equipment issues"},
+                {
+                    "id": "to_team_intro",
+                    "text": "All team members have introduced themselves by name and role",
+                },
+                {
+                    "id": "to_confirm_patient",
+                    "text": "Surgeon, anaesthetist and nurse confirm patient, site and procedure",
+                },
+                {
+                    "id": "to_antibiotic",
+                    "text": "Antibiotic prophylaxis given within the last 60 minutes / not indicated",
+                },
+                {
+                    "id": "to_critical_events_surgeon",
+                    "text": "Surgeon reviews critical/unexpected steps, duration, blood loss",
+                },
+                {
+                    "id": "to_critical_events_anaesthesia",
+                    "text": "Anaesthetist reviews patient-specific concerns",
+                },
+                {
+                    "id": "to_critical_events_nursing",
+                    "text": "Nursing team confirms sterility, equipment issues",
+                },
                 {"id": "to_imaging", "text": "Essential imaging displayed / not applicable"},
             ],
         },
@@ -65,30 +112,38 @@ WHO_CHECKLIST = {
             "label": "Sign Out",
             "when": "Before patient leaves operating room",
             "items": [
-                {"id": "so_procedure_recorded", "text": "Nurse verbally confirms the name of the procedure recorded"},
+                {
+                    "id": "so_procedure_recorded",
+                    "text": "Nurse verbally confirms the name of the procedure recorded",
+                },
                 {"id": "so_counts", "text": "Instrument, sponge and needle counts are correct"},
-                {"id": "so_specimen", "text": "Specimen labelled (incl. patient name) / not applicable"},
-                {"id": "so_equipment_problems", "text": "Any equipment problems identified and addressed"},
-                {"id": "so_recovery_concerns", "text": "Key concerns for recovery and management reviewed by whole team"},
+                {
+                    "id": "so_specimen",
+                    "text": "Specimen labelled (incl. patient name) / not applicable",
+                },
+                {
+                    "id": "so_equipment_problems",
+                    "text": "Any equipment problems identified and addressed",
+                },
+                {
+                    "id": "so_recovery_concerns",
+                    "text": "Key concerns for recovery and management reviewed by whole team",
+                },
             ],
         },
     ],
 }
 
-_ALL_ITEM_IDS = {
-    item["id"]
-    for phase in WHO_CHECKLIST["phases"]
-    for item in phase["items"]
-}
+_ALL_ITEM_IDS = {item["id"] for phase in WHO_CHECKLIST["phases"] for item in phase["items"]}
 
 
-def get_template() -> dict:
+def get_template() -> _ChecklistTemplate:
     """Return the canonical WHO checklist template."""
     return WHO_CHECKLIST
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _is_who_payload(raw) -> bool:
@@ -129,6 +184,7 @@ def summarize_state(raw: str | None) -> dict:
     ``completed`` counts only items whose ``checked`` is truthy; unchecking an
     item deletes its key (see ``set_item``), so a stale key cannot count.
     """
+    state: dict[str, Any]
     state = {}
     if raw:
         try:
@@ -171,8 +227,7 @@ def _with_attester_names(result: dict) -> dict:
     checklist printed "Attested by DOC004". An id no longer on file gets no
     name, and the screen falls back to the id rather than inventing one."""
     state = result.get("state") or {}
-    ids = sorted({str(v.get("by")) for v in state.values()
-                  if isinstance(v, dict) and v.get("by")})
+    ids = sorted({str(v.get("by")) for v in state.values() if isinstance(v, dict) and v.get("by")})
     if not ids:
         return result
     marks = ",".join("?" for _ in ids)
@@ -224,7 +279,10 @@ def set_item(surgery_id: str, item_id: str, checked: bool, actor_id: str) -> dic
         if not isinstance(existing, dict):
             existing = {}
         state = existing.get("state")
-        payload = {"template": TEMPLATE_VERSION, "state": state if isinstance(state, dict) else {}}
+        payload: dict[str, Any] = {
+            "template": TEMPLATE_VERSION,
+            "state": state if isinstance(state, dict) else {},
+        }
         if checked:
             payload["state"][item_id] = {"checked": True, "by": actor_id, "at": _now()}
         else:
@@ -234,7 +292,11 @@ def set_item(surgery_id: str, item_id: str, checked: bool, actor_id: str) -> dic
             legacy = existing.get("legacy")
             conn.execute(
                 "UPDATE surgeries SET who_checklist = ?, surgical_checklist = ? WHERE id = ?",
-                (json.dumps(payload), json.dumps(legacy) if legacy is not None else None, surgery_id),
+                (
+                    json.dumps(payload),
+                    json.dumps(legacy) if legacy is not None else None,
+                    surgery_id,
+                ),
             )
         else:
             conn.execute(

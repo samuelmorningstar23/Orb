@@ -15,8 +15,8 @@ feed still existed.
 """
 
 from fastapi import APIRouter, Depends, HTTPException
-
 from permissions import require_permission
+
 from services import seasonal_calendar
 
 router = APIRouter(prefix="/api/pulse", tags=["pulse"])
@@ -26,10 +26,13 @@ router = APIRouter(prefix="/api/pulse", tags=["pulse"])
 seasonal_calendar.preload()
 
 
+_PULSE_SEASON_USER_DEFAULT = Depends(require_permission("forecast.read"))
+
+
 @router.get("/season")
-def pulse_season(user: dict = Depends(require_permission("forecast.read"))):
+def pulse_season(user: dict = _PULSE_SEASON_USER_DEFAULT):
     """Season and conditions for the hospital's state, from the built-in calendar."""
     try:
         return seasonal_calendar.season_report()
     except seasonal_calendar.CalendarError as e:
-        raise HTTPException(status_code=503, detail=e.public_message)
+        raise HTTPException(status_code=503, detail=e.public_message) from e

@@ -1,24 +1,49 @@
 """Orb — Auth Routes"""
+
 import hashlib
-import re
-import uuid
-import time
 import logging
+import re
+import time
+import uuid
 from collections import defaultdict
-from fastapi import APIRouter, HTTPException, Request, Response
-from models.user import (
-    UserLogin, UserOut, TokenResponse, PinLogin, DeviceEnrollBody,
-    DeviceBindBody, DevicePinBody, AdminDevicePinBody,
-)
+from datetime import UTC
+
 from auth import (
-    hash_password, verify_password, verify_password_ct, verify_device_pin_ct,
-    create_token, generate_csrf_token, set_session_cookies, clear_session_cookies,
-    generate_device_secret, hash_device_secret, extract_device_token,
-    set_device_cookie, clear_device_cookie, load_active_device,
-    legacy_sha256_allowed, count_legacy_password_hashes,
-    DEVICE_COOKIE, DEVICE_PIN_SESSION_MINUTES,
+    DEVICE_COOKIE,
+    DEVICE_PIN_SESSION_MINUTES,
+    clear_device_cookie,
+    clear_session_cookies,
+    count_legacy_password_hashes,
+    create_token,
+    extract_device_token,
+    generate_csrf_token,
+    generate_device_secret,
+    get_current_user,
+    hash_device_secret,
+    hash_password,
+    legacy_sha256_allowed,
+    load_active_device,
+    set_device_cookie,
+    set_session_cookies,
+    verify_device_pin_ct,
+    verify_password,
+    verify_password_ct,
 )
 from database import get_db, run_db
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from models.user import (
+    AdminDevicePinBody,
+    DeviceBindBody,
+    DeviceEnrollBody,
+    DevicePinBody,
+    MfaDisableBody,
+    MfaEnrollBody,
+    PinLogin,
+    TokenResponse,
+    UserLogin,
+    UserOut,
+)
+from permissions import require_permission
 from services.audit_service import log_audit_event
 
 logger = logging.getLogger("orb.auth")
@@ -46,7 +71,8 @@ def _log_legacy_hash_posture() -> None:
             "%d account(s) still hold legacy unsalted-SHA-256 password hashes and "
             "cannot log in until an administrator resets their passwords "
             "(temporary escape hatch: ORB_ALLOW_LEGACY_SHA256=1, which also lets "
-            "a successful login upgrade the hash to bcrypt in place).", n,
+            "a successful login upgrade the hash to bcrypt in place).",
+            n,
         )
     else:
         logger.info("Password hash posture: no legacy SHA-256 hashes remain.")
@@ -66,6 +92,7 @@ _log_legacy_hash_posture()
 # when behind a known proxy. That requires a schema change (database.py) and is
 # recorded as deferred. The server currently runs single-process (uvicorn
 # workers=1), so the in-memory limiter is functional for the present deploy.
+LOGIN_ATTEMPTS: defaultdict[str, list[float]]
 LOGIN_ATTEMPTS = defaultdict(list)
 MAX_LOGIN_ATTEMPTS = 5
 LOCKOUT_DURATION_SECONDS = 900  # 15 minutes
@@ -78,20 +105,26 @@ def _prune_login_attempts(now: float) -> None:
 
     Bounds memory growth (finding: unbounded dict of every attacking IP).
     """
-    stale = [ip for ip, ts in LOGIN_ATTEMPTS.items()
-             if not ts or now - ts[-1] >= LOCKOUT_DURATION_SECONDS]
+    stale = [
+        ip
+        for ip, ts in LOGIN_ATTEMPTS.items()
+        if not ts or now - ts[-1] >= LOCKOUT_DURATION_SECONDS
+    ]
     for ip in stale:
         del LOGIN_ATTEMPTS[ip]
     # If still oversized (active spray), evict the oldest-touched buckets.
     if len(LOGIN_ATTEMPTS) > _MAX_TRACKED_IPS:
-        for ip in sorted(LOGIN_ATTEMPTS, key=lambda k: LOGIN_ATTEMPTS[k][-1])[:len(LOGIN_ATTEMPTS) - _MAX_TRACKED_IPS]:
+        for ip in sorted(LOGIN_ATTEMPTS, key=lambda k: LOGIN_ATTEMPTS[k][-1])[
+            : len(LOGIN_ATTEMPTS) - _MAX_TRACKED_IPS
+        ]:
             del LOGIN_ATTEMPTS[ip]
 
 
-def is_ip_rate_limited(ip: str) -> bool:
+def is_ip_rate_limited(ip: str | None) -> bool:
     if not ip:
         return False
     from config import DEPLOYMENT_PROFILE
+
     if DEPLOYMENT_PROFILE == "dev" and ip in ("127.0.0.1", "::1", "localhost"):
         return False
     now = time.time()
@@ -101,7 +134,7 @@ def is_ip_rate_limited(ip: str) -> bool:
     return len(LOGIN_ATTEMPTS[ip]) >= MAX_LOGIN_ATTEMPTS
 
 
-def record_login_attempt(ip: str):
+def record_login_attempt(ip: str | None):
     if ip:
         LOGIN_ATTEMPTS[ip].append(time.time())
 
@@ -183,17 +216,33 @@ def _clear_account_failures(user_id: str) -> None:
 # lockout on purpose (see migration 12): a PIN lock must degrade to "use your
 # password", never to "you are out of the EHR mid-shift".
 DEVICE_PIN_MAX_FAILURES = 5
-DEVICE_PIN_LOCK_SECONDS = 900          # 15 minutes
+DEVICE_PIN_LOCK_SECONDS = 900  # 15 minutes
 DEVICE_SWEEP_MAX_FAILURES = 15
-DEVICE_SWEEP_LOCK_SECONDS = 900        # 15 minutes
+DEVICE_SWEEP_LOCK_SECONDS = 900  # 15 minutes
 # Format rule for a tablet PIN. 4-8 digits, and a few catastrophically weak
 # sequences are refused outright — '1234' on a shared ward tablet is not a
 # credential. This is a floor, not a policy engine.
 _PIN_FORMAT = re.compile(r"^\d{4,8}$", re.ASCII)
 _BANNED_PINS = {
-    "0000", "1111", "2222", "3333", "4444", "5555", "6666", "7777", "8888",
-    "9999", "1234", "4321", "0123", "1212", "123456", "654321", "111111",
-    "000000", "12345678",
+    "0000",
+    "1111",
+    "2222",
+    "3333",
+    "4444",
+    "5555",
+    "6666",
+    "7777",
+    "8888",
+    "9999",
+    "1234",
+    "4321",
+    "0123",
+    "1212",
+    "123456",
+    "654321",
+    "111111",
+    "000000",
+    "12345678",
 }
 
 
@@ -228,7 +277,7 @@ def _locked_until(row, column: str) -> bool:
         return False
 
 
-def _record_pin_failure(user_id: str, device_id: str | None) -> None:
+def _record_pin_failure(user_id: str | None, device_id: str | None) -> None:
     """Bump BOTH counters for one failed PIN attempt, locking either that crosses
     its threshold. Never raises — a throttling bookkeeping error must not turn a
     failed sign-in into a 500 on the ward's only tablet."""
@@ -311,19 +360,23 @@ def consume_totp(user_id: str, secret: str, code: str) -> bool:
     code — or any earlier-step code still inside the skew window — cannot be
     replayed to mint a second session. RFC 6238 §5.2.
     """
-    from services import mfa_service
     from database import get_db
+
+    from services import mfa_service
 
     step = mfa_service.verify_code_step(secret, code)
     if step is None:
         return False
     db = get_db()
     try:
-        consumed = db.execute(
-            "UPDATE users SET totp_last_step = ? WHERE id = ? "
-            "AND (totp_last_step IS NULL OR totp_last_step < ?)",
-            (step, user_id, step),
-        ).rowcount == 1
+        consumed = (
+            db.execute(
+                "UPDATE users SET totp_last_step = ? WHERE id = ? "
+                "AND (totp_last_step IS NULL OR totp_last_step < ?)",
+                (step, user_id, step),
+            ).rowcount
+            == 1
+        )
         db.commit()
     finally:
         db.close()
@@ -352,15 +405,17 @@ def _mfa_enroll_key() -> str:
     """Signing key for enrolment tickets: derived from, and never equal to, the
     session-token secret."""
     from config import JWT_SECRET
+
     return hashlib.sha256(f"{JWT_SECRET}|{_MFA_ENROLL_SCOPE}".encode()).hexdigest()
 
 
 def issue_mfa_enroll_ticket(user_id: str, role: str, token_version: int) -> str:
+    from datetime import datetime, timedelta
+
     import jwt
-    from datetime import datetime, timedelta, timezone
     from config import JWT_ALGORITHM
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "sub": user_id,
         "role": role,
@@ -407,10 +462,12 @@ def user_out(user) -> UserOut:
     facility = None
     try:
         from services import facility_service
+
         facility = facility_service.user_facility(user)
     except Exception as e:
-        logger.warning("Could not work out the facility label for %s: %s",
-                       _user_field(user, "id"), e)
+        logger.warning(
+            "Could not work out the facility label for %s: %s", _user_field(user, "id"), e
+        )
     return UserOut(
         id=user["id"],
         name=user["name"],
@@ -446,16 +503,16 @@ def login(credentials: UserLogin, request: Request, response: Response):
             http_method=request.method,
             ip_address=client_host,
             user_agent=user_agent,
-            metadata={"attempted_id": credentials.employee_id}
+            metadata={"attempted_id": credentials.employee_id},
         )
-        raise HTTPException(status_code=429, detail="Too many login attempts. Please try again in 15 minutes.")
+        raise HTTPException(
+            status_code=429, detail="Too many login attempts. Please try again in 15 minutes."
+        )
 
     db = get_db()
 
     # Look up by ID (employee ID for clinicians, patient ID for patients)
-    user = db.execute(
-        "SELECT * FROM users WHERE id = ?", (credentials.employee_id,)
-    ).fetchone()
+    user = db.execute("SELECT * FROM users WHERE id = ?", (credentials.employee_id,)).fetchone()
 
     db.close()
 
@@ -464,13 +521,21 @@ def login(credentials: UserLogin, request: Request, response: Response):
     # across many source IPs against a single account.
     if user and _account_is_locked(user):
         log_audit_event(
-            correlation_id=correlation_id, event_category="authentication",
-            action_type="account_locked", outcome="denied",
+            correlation_id=correlation_id,
+            event_category="authentication",
+            action_type="account_locked",
+            outcome="denied",
             summary_message="Login blocked: account temporarily locked after repeated failures.",
-            actor_user_id=user["id"], request_path=request.url.path, http_method=request.method,
-            ip_address=client_host, user_agent=user_agent,
+            actor_user_id=user["id"],
+            request_path=request.url.path,
+            http_method=request.method,
+            ip_address=client_host,
+            user_agent=user_agent,
         )
-        raise HTTPException(status_code=429, detail="Account temporarily locked after too many failed attempts. Try again later.")
+        raise HTTPException(
+            status_code=429,
+            detail="Account temporarily locked after too many failed attempts. Try again later.",
+        )
 
     # Constant-work verification: verify_password_ct ALWAYS runs one bcrypt op,
     # even when `user` is None, so an unknown employee_id costs the same ~200 ms
@@ -494,7 +559,7 @@ def login(credentials: UserLogin, request: Request, response: Response):
             http_method=request.method,
             ip_address=client_host,
             user_agent=user_agent,
-            metadata={"attempted_id": credentials.employee_id}
+            metadata={"attempted_id": credentials.employee_id},
         )
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
@@ -504,14 +569,21 @@ def login(credentials: UserLogin, request: Request, response: Response):
     # the "can still re-login with valid credentials" gap.
     if "is_active" in user.keys() and user["is_active"] is not None and not user["is_active"]:
         log_audit_event(
-            correlation_id=correlation_id, event_category="authentication",
-            action_type="login_denied_inactive", outcome="denied",
+            correlation_id=correlation_id,
+            event_category="authentication",
+            action_type="login_denied_inactive",
+            outcome="denied",
             summary_message="Login denied: account is deactivated.",
-            actor_user_id=user["id"], actor_role=user["role"],
-            request_path=request.url.path, http_method=request.method,
-            ip_address=client_host, user_agent=user_agent,
+            actor_user_id=user["id"],
+            actor_role=user["role"],
+            request_path=request.url.path,
+            http_method=request.method,
+            ip_address=client_host,
+            user_agent=user_agent,
         )
-        raise HTTPException(status_code=403, detail="Account deactivated. Contact an administrator.")
+        raise HTTPException(
+            status_code=403, detail="Account deactivated. Contact an administrator."
+        )
 
     # Bridge is for the admission only (ruling R029): a patient login is refused
     # from the end of the hospital-local day of their discharge. Checked after
@@ -519,19 +591,26 @@ def login(credentials: UserLogin, request: Request, response: Response):
     # learns why. get_current_user applies the same rule to live sessions.
     if user["role"] == "patient":
         from services.patient_portal_access import portal_access_for
+
         portal = portal_access_for(user["id"])
         if not portal["open"]:
             log_audit_event(
-                correlation_id=correlation_id, event_category="authentication",
-                action_type="login_denied_portal_closed", outcome="denied",
+                correlation_id=correlation_id,
+                event_category="authentication",
+                action_type="login_denied_portal_closed",
+                outcome="denied",
                 summary_message=(
                     f"Patient portal sign-in refused: patient status "
                     f"'{portal['status']}', portal closed"
-                    + (f" at {portal['until']}" if portal["until"] else "") + "."
+                    + (f" at {portal['until']}" if portal["until"] else "")
+                    + "."
                 ),
-                actor_user_id=user["id"], actor_role=user["role"],
-                request_path=request.url.path, http_method=request.method,
-                ip_address=client_host, user_agent=user_agent,
+                actor_user_id=user["id"],
+                actor_role=user["role"],
+                request_path=request.url.path,
+                http_method=request.method,
+                ip_address=client_host,
+                user_agent=user_agent,
             )
             raise HTTPException(status_code=403, detail=portal["reason"])
 
@@ -546,14 +625,19 @@ def login(credentials: UserLogin, request: Request, response: Response):
     # unknown id, and the message itself names no account.
     if not user["password_hash"].startswith("$2") and not legacy_sha256_allowed():
         log_audit_event(
-            correlation_id=correlation_id, event_category="authentication",
-            action_type="login_denied_legacy_hash", outcome="denied",
+            correlation_id=correlation_id,
+            event_category="authentication",
+            action_type="login_denied_legacy_hash",
+            outcome="denied",
             summary_message="Login denied: account still holds a legacy unsalted-SHA-256 "
-                            "password hash. An administrator must reset the password "
-                            "(temporary escape hatch: ORB_ALLOW_LEGACY_SHA256=1).",
-            actor_user_id=user["id"], actor_role=user["role"],
-            request_path=request.url.path, http_method=request.method,
-            ip_address=client_host, user_agent=user_agent,
+            "password hash. An administrator must reset the password "
+            "(temporary escape hatch: ORB_ALLOW_LEGACY_SHA256=1).",
+            actor_user_id=user["id"],
+            actor_role=user["role"],
+            request_path=request.url.path,
+            http_method=request.method,
+            ip_address=client_host,
+            user_agent=user_agent,
         )
         raise HTTPException(status_code=403, detail="Password reset required by an administrator.")
 
@@ -561,7 +645,6 @@ def login(credentials: UserLogin, request: Request, response: Response):
     # TOTP second factor, verify it before issuing a token. A correct password
     # with a missing/invalid code is a failed login (counts toward lockout).
     from config import MFA_REQUIRED_ROLES
-    from services import mfa_service
 
     totp_enabled = bool(user["totp_enabled"]) if "totp_enabled" in user.keys() else False
     role_requires_mfa = user["role"] in MFA_REQUIRED_ROLES
@@ -573,7 +656,11 @@ def login(credentials: UserLogin, request: Request, response: Response):
         # account would be permanently unable to reach the only endpoints that
         # can clear this gate. The detail string is unchanged — the SPA branches
         # on it — and the ticket rides a response header.
-        _tv_enroll = user["token_version"] if "token_version" in user.keys() and user["token_version"] is not None else 0
+        _tv_enroll = (
+            user["token_version"]
+            if "token_version" in user.keys() and user["token_version"] is not None
+            else 0
+        )
         ticket = issue_mfa_enroll_ticket(user["id"], user["role"], _tv_enroll)
         log_audit_event(
             correlation_id=correlation_id,
@@ -581,7 +668,7 @@ def login(credentials: UserLogin, request: Request, response: Response):
             action_type="mfa_enrollment_ticket_issued",
             outcome="denied",
             summary_message="Login denied: role requires MFA and the account is not enrolled. "
-                            "Issued a 10-minute enrolment ticket scoped to /api/auth/mfa/enroll/*.",
+            "Issued a 10-minute enrolment ticket scoped to /api/auth/mfa/enroll/*.",
             actor_user_id=user["id"],
             actor_role=user["role"],
             request_path=request.url.path,
@@ -629,12 +716,12 @@ def login(credentials: UserLogin, request: Request, response: Response):
             raise HTTPException(status_code=401, detail="Invalid MFA code")
 
     # If login succeeds, clear lockout attempts (per-IP and per-account).
-    if client_host in LOGIN_ATTEMPTS:
+    if client_host is not None and client_host in LOGIN_ATTEMPTS:
         del LOGIN_ATTEMPTS[client_host]
     _clear_account_failures(user["id"])
 
     # Legacy hash auto-upgrade check
-    if not user["password_hash"].startswith('$2'):
+    if not user["password_hash"].startswith("$2"):
         try:
             new_hash = hash_password(credentials.password)
             db = get_db()
@@ -645,7 +732,11 @@ def login(credentials: UserLogin, request: Request, response: Response):
         except Exception as e:
             logger.warning("Failed to upgrade password hash for user %s: %s", user["id"], e)
 
-    _tv = user["token_version"] if "token_version" in user.keys() and user["token_version"] is not None else 0
+    _tv = (
+        user["token_version"]
+        if "token_version" in user.keys() and user["token_version"] is not None
+        else 0
+    )
     token = create_token(user["id"], user["role"], token_version=_tv)
 
     # Set the HttpOnly session cookie + JS-readable CSRF token so browser clients
@@ -673,14 +764,9 @@ def login(credentials: UserLogin, request: Request, response: Response):
     )
 
 
-
 # ── MFA (TOTP) enrolment + session revocation ──────────────────────────────────
 # These endpoints require an authenticated user. get_current_user is applied via
 # Depends so the caller must already hold a valid token.
-from fastapi import Depends
-from auth import get_current_user
-from permissions import require_permission
-from models.user import MfaEnrollBody, MfaDisableBody
 
 
 def _load_user_row(user_id: str):
@@ -728,21 +814,27 @@ async def _enrolment_principal(request: Request) -> dict:
             if principal.get("is_active") is not None and not principal["is_active"]:
                 raise HTTPException(status_code=403, detail="Account deactivated")
             if int(payload.get("tv", 0)) != int(principal.get("token_version") or 0):
-                raise HTTPException(status_code=401, detail="Enrolment ticket revoked; please log in again")
+                raise HTTPException(
+                    status_code=401, detail="Enrolment ticket revoked; please log in again"
+                )
             return principal
     return await get_current_user(request)
 
 
+_MFA_ENROLL_BEGIN_USER_DEFAULT = Depends(_enrolment_principal)
+
+
 @router.post("/mfa/enroll/begin")
-def mfa_enroll_begin(request: Request, user: dict = Depends(_enrolment_principal)):
+def mfa_enroll_begin(request: Request, user: dict = _MFA_ENROLL_BEGIN_USER_DEFAULT):
     """Phase 1 of MFA enrolment: generate a secret + otpauth URI for QR scan.
 
     The secret is stored immediately but totp_enabled stays 0 until the user
     proves possession by confirming a live code (enroll/confirm). Re-calling
     before confirmation rotates the pending secret.
     """
-    from services import mfa_service
     from config import MFA_ISSUER
+
+    from services import mfa_service
 
     if user.get("totp_enabled"):
         raise HTTPException(status_code=400, detail="MFA already enabled")
@@ -770,10 +862,14 @@ def mfa_enroll_begin(request: Request, user: dict = Depends(_enrolment_principal
     return payload
 
 
+_MFA_ENROLL_CONFIRM_USER_DEFAULT = Depends(_enrolment_principal)
+
+
 @router.post("/mfa/enroll/confirm")
-def mfa_enroll_confirm(body: MfaEnrollBody, request: Request, user: dict = Depends(_enrolment_principal)):
+def mfa_enroll_confirm(
+    body: MfaEnrollBody, request: Request, user: dict = _MFA_ENROLL_CONFIRM_USER_DEFAULT
+):
     """Phase 2: verify the first code and flip totp_enabled on."""
-    from services import mfa_service
 
     if user.get("totp_enabled"):
         raise HTTPException(status_code=400, detail="MFA already enabled")
@@ -803,10 +899,12 @@ def mfa_enroll_confirm(body: MfaEnrollBody, request: Request, user: dict = Depen
     return {"status": "enabled"}
 
 
+_MFA_DISABLE_USER_DEFAULT = Depends(get_current_user)
+
+
 @router.post("/mfa/disable")
-def mfa_disable(body: MfaDisableBody, request: Request, user: dict = Depends(get_current_user)):
+def mfa_disable(body: MfaDisableBody, request: Request, user: dict = _MFA_DISABLE_USER_DEFAULT):
     """Disable MFA. Requires current password AND a live code (defence in depth)."""
-    from services import mfa_service
 
     if not user.get("totp_enabled"):
         raise HTTPException(status_code=400, detail="MFA not enabled")
@@ -816,7 +914,7 @@ def mfa_disable(body: MfaDisableBody, request: Request, user: dict = Depends(get
     # "wrong password / code" error. 400 keeps the failure local to this form.
     if not verify_password(body.password, user["password_hash"]):
         raise HTTPException(status_code=400, detail="Invalid credentials")
-    if not consume_totp(user["id"], user.get("totp_secret"), body.totp_code):
+    if not consume_totp(user["id"], user["totp_secret"], body.totp_code):
         raise HTTPException(status_code=400, detail="Invalid MFA code")
 
     db = get_db()
@@ -842,8 +940,11 @@ def mfa_disable(body: MfaDisableBody, request: Request, user: dict = Depends(get
     return {"status": "disabled"}
 
 
+_MFA_ADMIN_RESET_ACTOR_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.post("/mfa/reset/{user_id}")
-def mfa_admin_reset(user_id: str, request: Request, actor: dict = Depends(require_permission("admin.overview"))):
+def mfa_admin_reset(user_id: str, request: Request, actor: dict = _MFA_ADMIN_RESET_ACTOR_DEFAULT):
     """Admin break-glass: clear another user's TOTP factor so they can re-enrol.
 
     Complements the enrolment ticket, which only covers the never-enrolled case.
@@ -886,8 +987,13 @@ def mfa_admin_reset(user_id: str, request: Request, actor: dict = Depends(requir
     return {"status": "reset", "user_id": user_id}
 
 
+_ADMIN_UNLOCK_ACCOUNT_ACTOR_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.post("/unlock/{user_id}")
-def admin_unlock_account(user_id: str, request: Request, actor: dict = Depends(require_permission("admin.overview"))):
+def admin_unlock_account(
+    user_id: str, request: Request, actor: dict = _ADMIN_UNLOCK_ACCOUNT_ACTOR_DEFAULT
+):
     """Admin break-glass: immediately clear a login lockout so a clinician can get
     back into the EHR without waiting out the window.
 
@@ -962,8 +1068,11 @@ def admin_unlock_account(user_id: str, request: Request, actor: dict = Depends(r
     }
 
 
+_LOGOUT_USER_DEFAULT = Depends(get_current_user)
+
+
 @router.post("/logout")
-def logout(request: Request, response: Response, user: dict = Depends(get_current_user)):
+def logout(request: Request, response: Response, user: dict = _LOGOUT_USER_DEFAULT):
     """Revoke ALL of this user's outstanding sessions by bumping token_version.
 
     Every previously-issued JWT embeds the token_version it was minted at;
@@ -996,8 +1105,11 @@ def logout(request: Request, response: Response, user: dict = Depends(get_curren
     return {"status": "logged_out"}
 
 
+_REFRESH_USER_DEFAULT = Depends(get_current_user)
+
+
 @router.post("/refresh", response_model=TokenResponse)
-def refresh(request: Request, response: Response, user: dict = Depends(get_current_user)):
+def refresh(request: Request, response: Response, user: dict = _REFRESH_USER_DEFAULT):
     """Slide the session forward: re-mint the JWT at the CURRENT token_version and
     re-set the session + CSRF cookies, extending expiry without a re-login. Runs
     behind get_current_user, so a revoked/expired/deactivated session cannot be
@@ -1010,16 +1122,25 @@ def refresh(request: Request, response: Response, user: dict = Depends(get_curre
     and it is holding a day-long session again — and dropping `did` would quietly
     un-bind it from the tablet, so revoking that device would no longer kill it.
     """
-    _tv = user["token_version"] if "token_version" in user.keys() and user["token_version"] is not None else 0
+    _tv = (
+        user["token_version"]
+        if "token_version" in user.keys() and user["token_version"] is not None
+        else 0
+    )
     device_id = user.get("device_id")
     token = create_token(
-        user["id"], user["role"], token_version=_tv,
+        user["id"],
+        user["role"],
+        token_version=_tv,
         device_id=device_id,
         auth_method=user.get("auth_method") if device_id else None,
         expires_in_minutes=DEVICE_PIN_SESSION_MINUTES if device_id else None,
     )
     set_session_cookies(
-        response, request, token, generate_csrf_token(),
+        response,
+        request,
+        token,
+        generate_csrf_token(),
         max_age=DEVICE_PIN_SESSION_MINUTES * 60 if device_id else None,
     )
     return TokenResponse(
@@ -1073,11 +1194,14 @@ def _device_public(row) -> dict:
     }
 
 
+_ENROLL_DEVICE_ACTOR_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.post("/devices", status_code=201)
 def enroll_device(
     body: DeviceEnrollBody,
     request: Request,
-    actor: dict = Depends(require_permission("admin.overview")),
+    actor: dict = _ENROLL_DEVICE_ACTOR_DEFAULT,
 ):
     """Admin enrols a ward tablet and receives its secret ONCE.
 
@@ -1094,8 +1218,13 @@ def enroll_device(
         db.execute(
             """INSERT INTO enrolled_devices (id, label, department, secret_hash, enrolled_by)
                VALUES (?, ?, ?, ?, ?)""",
-            (device_id, body.label.strip(), (body.department or "").strip() or None,
-             hash_device_secret(secret), actor["id"]),
+            (
+                device_id,
+                body.label.strip(),
+                (body.department or "").strip() or None,
+                hash_device_secret(secret),
+                actor["id"],
+            ),
         )
         db.commit()
     finally:
@@ -1126,10 +1255,13 @@ def enroll_device(
     }
 
 
+_LIST_DEVICES_ACTOR_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.get("/devices")
 def list_devices(
     request: Request,
-    actor: dict = Depends(require_permission("admin.overview")),
+    actor: dict = _LIST_DEVICES_ACTOR_DEFAULT,
 ):
     """The tablet inventory: which devices can take PIN sign-ins, and which are
     revoked or currently throttled. No secrets, in any form."""
@@ -1143,11 +1275,14 @@ def list_devices(
     return {"devices": [_device_public(r) for r in rows]}
 
 
+_REVOKE_DEVICE_ACTOR_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.post("/devices/{device_id}/revoke")
 def revoke_device(
     device_id: str,
     request: Request,
-    actor: dict = Depends(require_permission("admin.overview")),
+    actor: dict = _REVOKE_DEVICE_ACTOR_DEFAULT,
 ):
     """Retire a tablet — lost, stolen, re-imaged, or leaving the ward.
 
@@ -1193,11 +1328,14 @@ def revoke_device(
     return {"status": "revoked", "device_id": device_id}
 
 
+_UNLOCK_DEVICE_ACTOR_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.post("/devices/{device_id}/unlock")
 def unlock_device(
     device_id: str,
     request: Request,
-    actor: dict = Depends(require_permission("admin.overview")),
+    actor: dict = _UNLOCK_DEVICE_ACTOR_DEFAULT,
 ):
     """Clear a tablet's PIN throttle immediately.
 
@@ -1261,7 +1399,9 @@ def bind_device(body: DeviceBindBody, request: Request, response: Response):
     """
     client_host = request.client.host if request.client else None
     if is_ip_rate_limited(client_host):
-        raise HTTPException(status_code=429, detail="Too many attempts. Please try again in 15 minutes.")
+        raise HTTPException(
+            status_code=429, detail="Too many attempts. Please try again in 15 minutes."
+        )
 
     device = load_active_device(body.device_secret.strip())
     if not device:
@@ -1374,7 +1514,7 @@ def pin_login(credentials: PinLogin, request: Request, response: Response):
         raise HTTPException(
             status_code=401,
             detail="This device is not enrolled for PIN sign-in. Use your password, "
-                   "or ask an administrator to enrol this tablet.",
+            "or ask an administrator to enrol this tablet.",
         )
 
     # ── 2. Device-wide throttle (the roster sweep). ───────────────────────────
@@ -1385,7 +1525,7 @@ def pin_login(credentials: PinLogin, request: Request, response: Response):
             action_type="pin_login_device_locked",
             outcome="denied",
             summary_message="PIN sign-in blocked: this tablet is temporarily throttled "
-                            "after repeated failed PINs.",
+            "after repeated failed PINs.",
             target_type="device",
             target_id=device["id"],
             request_path=request.url.path,
@@ -1396,14 +1536,12 @@ def pin_login(credentials: PinLogin, request: Request, response: Response):
         raise HTTPException(
             status_code=429,
             detail="This tablet is temporarily locked after too many failed PINs. "
-                   "Sign in with your password, or ask an administrator to clear it.",
+            "Sign in with your password, or ask an administrator to clear it.",
         )
 
     db = get_db()
     try:
-        user = db.execute(
-            "SELECT * FROM users WHERE id = ?", (credentials.employee_id,)
-        ).fetchone()
+        user = db.execute("SELECT * FROM users WHERE id = ?", (credentials.employee_id,)).fetchone()
     finally:
         db.close()
 
@@ -1432,7 +1570,7 @@ def pin_login(credentials: PinLogin, request: Request, response: Response):
         raise HTTPException(
             status_code=429,
             detail="Your PIN is temporarily locked after too many failed attempts. "
-                   "Sign in with your password, or ask an administrator to clear it.",
+            "Sign in with your password, or ask an administrator to clear it.",
         )
 
     if user is None or not pin_ok:
@@ -1459,28 +1597,41 @@ def pin_login(credentials: PinLogin, request: Request, response: Response):
     # response to learn which ids are deactivated or privileged.
     if "is_active" in keys and user["is_active"] is not None and not user["is_active"]:
         log_audit_event(
-            correlation_id=correlation_id, event_category="authentication",
-            action_type="pin_login_denied_inactive", outcome="denied",
+            correlation_id=correlation_id,
+            event_category="authentication",
+            action_type="pin_login_denied_inactive",
+            outcome="denied",
             summary_message="PIN sign-in denied: account is deactivated.",
-            actor_user_id=user["id"], actor_role=user["role"],
-            request_path=request.url.path, http_method=request.method,
-            ip_address=client_host, user_agent=user_agent,
+            actor_user_id=user["id"],
+            actor_role=user["role"],
+            request_path=request.url.path,
+            http_method=request.method,
+            ip_address=client_host,
+            user_agent=user_agent,
         )
-        raise HTTPException(status_code=403, detail="Account deactivated. Contact an administrator.")
+        raise HTTPException(
+            status_code=403, detail="Account deactivated. Contact an administrator."
+        )
 
     from config import MFA_REQUIRED_ROLES
+
     # A PIN must not become the back door around a TOTP mandate. Device + PIN is
     # genuinely two factors, but it is not the factor the hospital mandated for
     # this role, and silently accepting a weaker one is how a policy stops being
     # a policy. Patients never use ward tablets, so they are excluded outright.
     if user["role"] == "patient" or user["role"] in MFA_REQUIRED_ROLES:
         log_audit_event(
-            correlation_id=correlation_id, event_category="authentication",
-            action_type="pin_login_denied_role", outcome="denied",
+            correlation_id=correlation_id,
+            event_category="authentication",
+            action_type="pin_login_denied_role",
+            outcome="denied",
             summary_message=f"PIN sign-in is not permitted for role '{user['role']}'.",
-            actor_user_id=user["id"], actor_role=user["role"],
-            request_path=request.url.path, http_method=request.method,
-            ip_address=client_host, user_agent=user_agent,
+            actor_user_id=user["id"],
+            actor_role=user["role"],
+            request_path=request.url.path,
+            http_method=request.method,
+            ip_address=client_host,
+            user_agent=user_agent,
         )
         raise HTTPException(
             status_code=403,
@@ -1488,18 +1639,28 @@ def pin_login(credentials: PinLogin, request: Request, response: Response):
         )
 
     # ── 6. Success. ──────────────────────────────────────────────────────────
-    if client_host in LOGIN_ATTEMPTS:
+    if client_host is not None and client_host in LOGIN_ATTEMPTS:
         del LOGIN_ATTEMPTS[client_host]
     _clear_pin_failures(user["id"], device["id"])
 
-    _tv = user["token_version"] if "token_version" in keys and user["token_version"] is not None else 0
+    _tv = (
+        user["token_version"]
+        if "token_version" in keys and user["token_version"] is not None
+        else 0
+    )
     token = create_token(
-        user["id"], user["role"], token_version=_tv,
-        device_id=device["id"], auth_method="pin",
+        user["id"],
+        user["role"],
+        token_version=_tv,
+        device_id=device["id"],
+        auth_method="pin",
         expires_in_minutes=DEVICE_PIN_SESSION_MINUTES,
     )
     set_session_cookies(
-        response, request, token, generate_csrf_token(),
+        response,
+        request,
+        token,
+        generate_csrf_token(),
         max_age=DEVICE_PIN_SESSION_MINUTES * 60,
     )
 
@@ -1536,6 +1697,7 @@ def pin_login(credentials: PinLogin, request: Request, response: Response):
 
 def _write_device_pin(user_id: str, pin: str) -> None:
     from services import pin_security
+
     db = get_db()
     try:
         db.execute(
@@ -1548,11 +1710,14 @@ def _write_device_pin(user_id: str, pin: str) -> None:
         db.close()
 
 
+_SET_OWN_DEVICE_PIN_USER_DEFAULT = Depends(get_current_user)
+
+
 @router.post("/device-pin")
 def set_own_device_pin(
     body: DevicePinBody,
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = _SET_OWN_DEVICE_PIN_USER_DEFAULT,
 ):
     """Set (or change) your own tablet PIN.
 
@@ -1589,12 +1754,15 @@ def set_own_device_pin(
     return {"status": "pin_set", "id": user["id"]}
 
 
+_ADMIN_SET_DEVICE_PIN_ACTOR_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.post("/device-pin/{user_id}")
 def admin_set_device_pin(
     user_id: str,
     body: AdminDevicePinBody,
     request: Request,
-    actor: dict = Depends(require_permission("admin.overview")),
+    actor: dict = _ADMIN_SET_DEVICE_PIN_ACTOR_DEFAULT,
 ):
     """Admin provisions a tablet PIN for a member of staff.
 

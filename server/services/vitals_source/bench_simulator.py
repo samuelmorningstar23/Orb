@@ -44,18 +44,18 @@ message or the vendor's point-mapping document does that.
 
 Or drive it from a test in-process via `BenchMonitor` / `build_oru`.
 """
+
 from __future__ import annotations
 
 import argparse
 import asyncio
 import logging
 import random
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import Iterable, Optional, Sequence
+from datetime import UTC, datetime, timedelta
 
-from . import hl7v2
-from . import vendor_profiles
+from . import hl7v2, vendor_profiles
 from .mllp import MllpFramer, frame
 
 logger = logging.getLogger("orb.vitals_source.bench")
@@ -92,15 +92,26 @@ VENDOR_SENDERS = {
 }
 
 FAULTS = (
-    "garbage", "truncate", "duplicate", "out_of_order",
-    "flood", "drop", "unsupported", "no_ack_wait", "unknown_obx",
+    "garbage",
+    "truncate",
+    "duplicate",
+    "out_of_order",
+    "flood",
+    "drop",
+    "unsupported",
+    "no_ack_wait",
+    "unknown_obx",
 )
 
 # An observation identifier nobody has mapped, per vendor family. Shaped like the
 # vendor's own vocabulary so the receiver's "unknown identifier" list looks
 # exactly as it would in the hospital.
 UNKNOWN_OBX = {
-    "philips_intellivue": ("150022^MDC_PRESS_BLD_ART_ABP_MEAN^MDIL", "266016^MDC_DIM_MMHG^MDIL", "76"),
+    "philips_intellivue": (
+        "150022^MDC_PRESS_BLD_ART_ABP_MEAN^MDIL",
+        "266016^MDC_DIM_MMHG^MDIL",
+        "76",
+    ),
     "ge_carescape": ("CO^CARDIAC OUTPUT^GEMS", "L/MIN", "4.8"),
     "generic": ("99999-9^Some Unmapped Parameter^LN", "widgets", "42"),
 }
@@ -110,9 +121,11 @@ UNKNOWN_OBX = {
 #  Message construction
 # ════════════════════════════════════════════
 
+
 @dataclass
 class BedState:
     """A simulated bed's slowly-drifting vitals."""
+
     patient_id: str
     bed: str = "BED-1"
     hr: float = 82.0
@@ -136,8 +149,14 @@ class BedState:
         self.sequence += 1
 
     def values(self) -> list[float]:
-        return [round(self.hr), round(self.sbp), round(self.dbp),
-                round(self.spo2), round(self.temp, 1), round(self.rr)]
+        return [
+            round(self.hr),
+            round(self.sbp),
+            round(self.dbp),
+            round(self.spo2),
+            round(self.temp, 1),
+            round(self.rr),
+        ]
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -147,10 +166,10 @@ def _clamp(value: float, low: float, high: float) -> float:
 def build_oru(
     state: BedState,
     *,
-    observed_at: Optional[datetime] = None,
-    control_id: Optional[str] = None,
-    sending_app: Optional[str] = None,
-    sending_facility: Optional[str] = None,
+    observed_at: datetime | None = None,
+    control_id: str | None = None,
+    sending_app: str | None = None,
+    sending_facility: str | None = None,
     patient_name: str = "Doe^Test",
     use_escapes: bool = False,
     device_timezone=None,
@@ -190,9 +209,9 @@ def build_oru(
     sending_app = sending_app or default_app
     sending_facility = sending_facility or default_facility
 
-    instant = observed_at or datetime.now(timezone.utc)
+    instant = observed_at or datetime.now(UTC)
     if instant.tzinfo is None:
-        instant = instant.replace(tzinfo=timezone.utc)
+        instant = instant.replace(tzinfo=UTC)
     if clock_offset_seconds:
         instant = instant + timedelta(seconds=clock_offset_seconds)
     zone = hl7v2.resolve_timezone(device_timezone) or datetime.now().astimezone().tzinfo
@@ -215,14 +234,13 @@ def build_oru(
         f"OBR|1|{ctrl}|{ctrl}|{panel}|||{ts}",
     ]
 
-    values = dict(zip(VITAL_ORDER, state.values()))
+    values = dict(zip(VITAL_ORDER, state.values(), strict=False))
     index = 0
     specs = profile.emission_specs()
     if specs:
         for vital, obx3, obx6, ref in specs:
             index += 1
-            segments.append(
-                f"OBX|{index}|NM|{obx3}||{values[vital]}|{obx6}|{ref}|N|||F|||{ts}")
+            segments.append(f"OBX|{index}|NM|{obx3}||{values[vital]}|{obx6}|{ref}|N|||F|||{ts}")
         # One observation the vendor sends that Orb recognises and deliberately
         # does not score (mean arterial pressure). It must be stored, not
         # scored, and must NOT show up as an unknown identifier.
@@ -230,10 +248,13 @@ def build_oru(
             index += 1
             segments.append(f"OBX|{index}|NM|{obx3}||{value}|{obx6}||N|||F|||{ts}")
     else:
-        for (code, name, unit, ref), value in zip(OBSERVATION_SPECS, state.values()):
+        for (code, name, unit, ref), numeric_value in zip(
+            OBSERVATION_SPECS, state.values(), strict=False
+        ):
             index += 1
             segments.append(
-                f"OBX|{index}|NM|{code}^{name}^LN||{value}|{unit}|{ref}|N|||F|||{ts}")
+                f"OBX|{index}|NM|{code}^{name}^LN||{numeric_value}|{unit}|{ref}|N|||F|||{ts}"
+            )
 
     if unknown_obx:
         obx3, obx6, value = UNKNOWN_OBX.get(profile.key, UNKNOWN_OBX["generic"])
@@ -243,7 +264,7 @@ def build_oru(
     return "\r".join(segments) + "\r"
 
 
-def _profile(vendor) -> "vendor_profiles.VendorProfile":
+def _profile(vendor) -> vendor_profiles.VendorProfile:
     """Accept a profile object, a name, an alias, or None."""
     if isinstance(vendor, vendor_profiles.VendorProfile):
         return vendor
@@ -253,15 +274,21 @@ def _profile(vendor) -> "vendor_profiles.VendorProfile":
 def build_adt(state: BedState) -> str:
     """A non-ORU message, for the 'shared gateway sends us everything' case."""
     ts = hl7v2.format_timestamp()
-    return "\r".join([
-        f"MSH|^~\\&|HIS|HOSPITAL_A|ORB|ORB_OS|{ts}||ADT^A08|ADT{state.sequence:05d}|P|2.5",
-        f"PID|1||{state.patient_id}^^^HOSPITAL_A||Doe^Test||19700101|U",
-    ]) + "\r"
+    return (
+        "\r".join(
+            [
+                f"MSH|^~\\&|HIS|HOSPITAL_A|ORB|ORB_OS|{ts}||ADT^A08|ADT{state.sequence:05d}|P|2.5",
+                f"PID|1||{state.patient_id}^^^HOSPITAL_A||Doe^Test||19700101|U",
+            ]
+        )
+        + "\r"
+    )
 
 
 # ════════════════════════════════════════════
 #  The bench monitor
 # ════════════════════════════════════════════
+
 
 @dataclass
 class BenchStats:
@@ -289,7 +316,7 @@ class BenchMonitor:
         patients: Sequence[str] = ("P001",),
         interval_seconds: float = 5.0,
         faults: Iterable[str] = (),
-        seed: Optional[int] = None,
+        seed: int | None = None,
         flood_burst: int = 200,
         read_acks: bool = True,
         device_timezone=None,
@@ -311,8 +338,7 @@ class BenchMonitor:
         self.flood_burst = int(flood_burst)
         self.read_acks = read_acks and "no_ack_wait" not in self.faults
         self.rng = random.Random(seed)
-        self.beds = [BedState(patient_id=p, bed=f"BED-{i + 1}")
-                     for i, p in enumerate(patients)]
+        self.beds = [BedState(patient_id=p, bed=f"BED-{i + 1}") for i, p in enumerate(patients)]
         self.stats = BenchStats()
         self._framer = MllpFramer()
 
@@ -361,7 +387,7 @@ class BenchMonitor:
             if "out_of_order" in self.faults and self.rng.random() < 0.3:
                 stale = self._oru(
                     bed,
-                    observed_at=datetime.now(timezone.utc) - timedelta(minutes=45),
+                    observed_at=datetime.now(UTC) - timedelta(minutes=45),
                     control_id=f"STALE{bed.sequence:06d}",
                 )
                 writer.write(frame(stale))
@@ -382,7 +408,7 @@ class BenchMonitor:
         bench records the codes so a run reports how Orb answered."""
         try:
             chunk = await asyncio.wait_for(reader.read(65536), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return
         if not chunk:
             return
@@ -409,7 +435,7 @@ class BenchMonitor:
             await self._close(writer)
         return self.stats
 
-    async def run_forever(self, cycles: Optional[int] = None) -> BenchStats:
+    async def run_forever(self, cycles: int | None = None) -> BenchStats:
         """Keep a connection up and push on the interval, reconnecting on loss."""
         sent_cycles = 0
         while cycles is None or sent_cycles < cycles:
@@ -452,6 +478,7 @@ class BenchMonitor:
 #  CLI
 # ════════════════════════════════════════════
 
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="bench_simulator",
@@ -459,33 +486,62 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--host", default="127.0.0.1", help="Orb MLLP listener host")
     p.add_argument("--port", type=int, default=2575, help="Orb MLLP listener port")
-    p.add_argument("--patients", default="P001",
-                   help="comma-separated patient identifiers (one simulated bed each)")
+    p.add_argument(
+        "--patients",
+        default="P001",
+        help="comma-separated patient identifiers (one simulated bed each)",
+    )
     p.add_argument("--interval", type=float, default=5.0, help="seconds between cycles")
-    p.add_argument("--cycles", type=int, default=None, help="stop after N cycles (default: forever)")
-    p.add_argument("--faults", default="",
-                   help=f"comma-separated fault modes: {','.join(FAULTS)}")
-    p.add_argument("--flood-burst", type=int, default=200,
-                   help="messages per flood burst when the flood fault fires")
+    p.add_argument(
+        "--cycles", type=int, default=None, help="stop after N cycles (default: forever)"
+    )
+    p.add_argument("--faults", default="", help=f"comma-separated fault modes: {','.join(FAULTS)}")
+    p.add_argument(
+        "--flood-burst",
+        type=int,
+        default=200,
+        help="messages per flood burst when the flood fault fires",
+    )
     p.add_argument("--seed", type=int, default=None, help="RNG seed for reproducible runs")
-    p.add_argument("--print", dest="print_only", action="store_true",
-                   help="print one sample message and exit (no network)")
-    p.add_argument("--device-tz", default=None,
-                   help="zone this fake monitor believes it is in, e.g. Asia/Kolkata "
-                        "(default: this machine's zone, like a real bedside unit)")
-    p.add_argument("--emit-offset", action="store_true",
-                   help="write the UTC offset into the DTM. OFF by default, because "
-                        "most bedside monitors send an offset-less local timestamp")
-    p.add_argument("--clock-offset", type=float, default=0.0, metavar="SECONDS",
-                   help="pretend this device's clock is wrong by N seconds "
-                        "(negative = slow). The commonest real integration fault")
-    p.add_argument("--vendor", default="generic",
-                   help="monitor family to imitate: philips | ge | generic "
-                        "(aliases: intellivue, intellibridge, carescape, unity, loinc)")
-    p.add_argument("--vendor-table", action="store_true",
-                   help="print this vendor's OBX mapping table, gateway defaults and the "
-                        "questions to ask the vendor, then exit. This is the sheet to send "
-                        "the biomedical engineer before bench day.")
+    p.add_argument(
+        "--print",
+        dest="print_only",
+        action="store_true",
+        help="print one sample message and exit (no network)",
+    )
+    p.add_argument(
+        "--device-tz",
+        default=None,
+        help="zone this fake monitor believes it is in, e.g. Asia/Kolkata "
+        "(default: this machine's zone, like a real bedside unit)",
+    )
+    p.add_argument(
+        "--emit-offset",
+        action="store_true",
+        help="write the UTC offset into the DTM. OFF by default, because "
+        "most bedside monitors send an offset-less local timestamp",
+    )
+    p.add_argument(
+        "--clock-offset",
+        type=float,
+        default=0.0,
+        metavar="SECONDS",
+        help="pretend this device's clock is wrong by N seconds "
+        "(negative = slow). The commonest real integration fault",
+    )
+    p.add_argument(
+        "--vendor",
+        default="generic",
+        help="monitor family to imitate: philips | ge | generic "
+        "(aliases: intellivue, intellibridge, carescape, unity, loinc)",
+    )
+    p.add_argument(
+        "--vendor-table",
+        action="store_true",
+        help="print this vendor's OBX mapping table, gateway defaults and the "
+        "questions to ask the vendor, then exit. This is the sheet to send "
+        "the biomedical engineer before bench day.",
+    )
     return p
 
 
@@ -502,12 +558,16 @@ def print_vendor_table(profile) -> None:
     rows = profile.mapping_table()
     if rows:
         width = max(len(r["obx_3_1"]) for r in rows)
-        print(f"{'VITAL':<6} {'OBX-3.1':<{width}}  {'OBX-3.2 (identifier text)':<46} "
-              f"{'UNIT':<8} CONFIDENCE")
+        print(
+            f"{'VITAL':<6} {'OBX-3.1':<{width}}  {'OBX-3.2 (identifier text)':<46} "
+            f"{'UNIT':<8} CONFIDENCE"
+        )
         print("-" * 78)
         for r in rows:
-            print(f"{r['vital']:<6} {r['obx_3_1']:<{width}}  {r['obx_3_2'][:44]:<46} "
-                  f"{r['unit']:<8} {r['confidence']}")
+            print(
+                f"{r['vital']:<6} {r['obx_3_1']:<{width}}  {r['obx_3_2'][:44]:<46} "
+                f"{r['unit']:<8} {r['confidence']}"
+            )
     else:
         print("(no vendor translation — Orb's own LOINC table is used as-is)")
     print()
@@ -529,13 +589,15 @@ def print_vendor_table(profile) -> None:
     print()
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     if not vendor_profiles.is_known_profile(args.vendor):
-        print(f"unknown vendor {args.vendor!r}; choose from: "
-              f"{', '.join(sorted(vendor_profiles.PROFILES))} (aliases: philips, ge, loinc)")
+        print(
+            f"unknown vendor {args.vendor!r}; choose from: "
+            f"{', '.join(sorted(vendor_profiles.PROFILES))} (aliases: philips, ge, loinc)"
+        )
         return 2
     profile = vendor_profiles.profile_for(args.vendor)
 
@@ -551,31 +613,48 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.print_only:
         bed = BedState(patient_id=patients[0])
         bed.step(random.Random(args.seed))
-        print(build_oru(bed, use_escapes=True, device_timezone=args.device_tz,
-                        emit_offset=args.emit_offset, vendor=profile,
-                        unknown_obx="unknown_obx" in args.faults,
-                        clock_offset_seconds=args.clock_offset).replace("\r", "\n"))
+        print(
+            build_oru(
+                bed,
+                use_escapes=True,
+                device_timezone=args.device_tz,
+                emit_offset=args.emit_offset,
+                vendor=profile,
+                unknown_obx="unknown_obx" in args.faults,
+                clock_offset_seconds=args.clock_offset,
+            ).replace("\r", "\n")
+        )
         return 0
 
     faults = [f.strip() for f in args.faults.split(",") if f.strip()]
     monitor = BenchMonitor(
-        args.host, args.port,
-        patients=patients, interval_seconds=args.interval,
-        faults=faults, seed=args.seed, flood_burst=args.flood_burst,
-        device_timezone=args.device_tz, emit_offset=args.emit_offset,
-        clock_offset_seconds=args.clock_offset, vendor=profile,
+        args.host,
+        args.port,
+        patients=patients,
+        interval_seconds=args.interval,
+        faults=faults,
+        seed=args.seed,
+        flood_burst=args.flood_burst,
+        device_timezone=args.device_tz,
+        emit_offset=args.emit_offset,
+        clock_offset_seconds=args.clock_offset,
+        vendor=profile,
     )
     logger.info("bench monitor imitating %s", profile.display_name)
     try:
         stats = asyncio.run(monitor.run_forever(cycles=args.cycles))
     except KeyboardInterrupt:
         stats = monitor.stats
-    print(f"vendor={profile.key} sent={stats.messages_sent} connects={stats.connects} "
-          f"errors={stats.errors} acks={stats.acks} faults={stats.faults_injected}")
+    print(
+        f"vendor={profile.key} sent={stats.messages_sent} connects={stats.connects} "
+        f"errors={stats.errors} acks={stats.acks} faults={stats.faults_injected}"
+    )
     if profile.key != "generic":
-        print("NOTE: vendor messages are generated from Orb's own (unverified) profile table. "
-              "A clean run proves the pipeline, not the mapping — confirm with a captured "
-              "message from the hospital's monitor.")
+        print(
+            "NOTE: vendor messages are generated from Orb's own (unverified) profile table. "
+            "A clean run proves the pipeline, not the mapping — confirm with a captured "
+            "message from the hospital's monitor."
+        )
     return 0
 
 

@@ -57,6 +57,7 @@ read-then-write cannot interleave; `on_done(db, visit, facts)` runs inside the
 transaction on every successful call, a repeat included, so the route's audit
 row commits with the change and a repeat writes its own row too.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -64,10 +65,13 @@ import json
 import logging
 import threading
 import time
-from typing import Any, Callable, Iterable, Optional
+from collections.abc import Callable, Iterable
+from datetime import UTC
+from typing import Any
 
 import config
 from database import db_session
+
 from services.audit_service import AuditWriteError
 from services.frontdesk_service import (
     _CONSULTING_ROLES,
@@ -178,6 +182,7 @@ class QueueConflict(FrontDeskError):
 
 # ── Vocabularies ─────────────────────────────────────────────────────────────
 
+
 def _humanise(code: str) -> str:
     words = code.replace("_", " ").strip()
     return words[:1].upper() + words[1:] if words else code
@@ -205,13 +210,16 @@ def priority_categories() -> tuple[tuple[str, str], ...]:
     return tuple(out)
 
 
-def priority_label(code: Optional[str]) -> str:
+def priority_label(code: str | None) -> str:
     code = (code or "normal").strip().lower() or "normal"
-    return dict(priority_categories()).get(code) or dict(DEFAULT_PRIORITY_CATEGORIES).get(
-        code) or _humanise(code)
+    return (
+        dict(priority_categories()).get(code)
+        or dict(DEFAULT_PRIORITY_CATEGORIES).get(code)
+        or _humanise(code)
+    )
 
 
-def priority_rank(code: Optional[str]) -> int:
+def priority_rank(code: str | None) -> int:
     """0 emergency, 1 any other category, 2 normal (or blank)."""
     code = (code or "normal").strip().lower()
     if code == "emergency":
@@ -221,7 +229,7 @@ def priority_rank(code: Optional[str]) -> int:
     return 1
 
 
-def cancel_reason_label(code: Optional[str]) -> Optional[str]:
+def cancel_reason_label(code: str | None) -> str | None:
     if not code:
         return None
     return dict(CANCEL_REASON_CODES).get(code) or _humanise(code)
@@ -266,7 +274,7 @@ def reissued_tokens(db, visit_ids: Iterable[Any]) -> dict[str, int]:
     ids = [str(v) for v in dict.fromkeys(visit_ids) if v]
     found: dict[str, int] = {}
     for start in range(0, len(ids), _REISSUE_CHUNK):
-        chunk = ids[start:start + _REISSUE_CHUNK]
+        chunk = ids[start : start + _REISSUE_CHUNK]
         marks = ",".join("?" for _ in chunk)
         rows = db.execute(
             f"SELECT target_id, metadata_json FROM audit_logs "
@@ -282,13 +290,16 @@ def reissued_tokens(db, visit_ids: Iterable[Any]) -> dict[str, int]:
             if not isinstance(meta, dict):
                 continue
             previous = meta.get("previous_token_number")
-            if (meta.get("token_changed") is True and isinstance(previous, int)
-                    and not isinstance(previous, bool)):
+            if (
+                meta.get("token_changed") is True
+                and isinstance(previous, int)
+                and not isinstance(previous, bool)
+            ):
                 found[str(r["target_id"])] = previous
     return found
 
 
-def _as_token(value: Any) -> Optional[int]:
+def _as_token(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         return None
     return value
@@ -355,6 +366,7 @@ def queue_sort_key(visit: dict) -> tuple:
 
 # ── The live nudge ───────────────────────────────────────────────────────────
 
+
 def queue_nudge_payload(department: str) -> dict:
     """What the socket carries: the clinic, and nothing else (no name, no token,
     no visit id). A doctor's screen refetches its queue over scoped REST."""
@@ -371,11 +383,10 @@ async def _emit_queue_changed(department: str) -> None:
     # 'opd:__all__') while the feature is on (opd-9b), which is every desk
     # account. ONE emit to the list, so a socket in two of the rooms (a doctor
     # holds both permissions) is told once.
-    await realtime.sio.emit(QUEUE_NUDGE_EVENT, payload,
-                            room=realtime.queue_nudge_rooms(department))
+    await realtime.sio.emit(QUEUE_NUDGE_EVENT, payload, room=realtime.queue_nudge_rooms(department))
 
 
-def nudge_queue_changed(department: Optional[str]) -> bool:
+def nudge_queue_changed(department: str | None) -> bool:
     """Tell open queues in this clinic to refetch. After the change committed;
     never raises; does nothing while the 'opd' feature is off."""
     dept = (department or "").strip()
@@ -383,8 +394,10 @@ def nudge_queue_changed(department: Optional[str]) -> bool:
         return False
     try:
         from ws import realtime
+
         return realtime.schedule_on_loop(
-            lambda: _emit_queue_changed(dept), f"{QUEUE_NUDGE_EVENT} for {dept}")
+            lambda: _emit_queue_changed(dept), f"{QUEUE_NUDGE_EVENT} for {dept}"
+        )
     except Exception as exc:  # noqa: BLE001 - a nudge must never fail a write
         logger.warning("%s not pushed: %s", QUEUE_NUDGE_EVENT, exc)
         return False
@@ -417,8 +430,9 @@ def queue_read_fingerprint(visit_ids: Iterable[Any]) -> str:
     return hashlib.sha256("\n".join(ids).encode("utf-8")).hexdigest()
 
 
-def claim_queue_read_audit(user_id: Any, visit_ids: Iterable[Any], *,
-                           now: Optional[float] = None) -> Optional[tuple]:
+def claim_queue_read_audit(
+    user_id: Any, visit_ids: Iterable[Any], *, now: float | None = None
+) -> tuple | None:
     """Should this queue read write its phi_access row? Returns a claim (pass
     it to release_queue_read_audit if the write then fails) when it should,
     None when the same user was audited for the same visits less than
@@ -440,14 +454,15 @@ def claim_queue_read_audit(user_id: Any, visit_ids: Iterable[Any], *,
             if len(_queue_read_audited) >= _QUEUE_READ_AUDIT_MAX_KEYS:
                 # Every key is live: forget the oldest half. That can only
                 # cause a row to be written again, never a row to be skipped.
-                for old in sorted(_queue_read_audited, key=_queue_read_audited.get)[
-                        :_QUEUE_READ_AUDIT_MAX_KEYS // 2]:
+                for old in sorted(_queue_read_audited, key=_queue_read_audited.__getitem__)[
+                    : _QUEUE_READ_AUDIT_MAX_KEYS // 2
+                ]:
                     del _queue_read_audited[old]
         _queue_read_audited[key] = stamp
     return (key[0], key[1], stamp)
 
 
-def release_queue_read_audit(claim: Optional[tuple]) -> None:
+def release_queue_read_audit(claim: tuple | None) -> None:
     """Undo a claim whose audit write failed, so the next read writes it."""
     if not claim or not claim[0]:
         return
@@ -465,6 +480,7 @@ def reset_queue_read_audit() -> None:
 
 # ── Queue actions ────────────────────────────────────────────────────────────
 
+
 def _load(db, visit_id: str):
     row = db.execute("SELECT * FROM opd_visits WHERE id = ?", (visit_id,)).fetchone()
     if row is None:
@@ -473,8 +489,9 @@ def _load(db, visit_id: str):
 
 
 def _reload(db, visit_id: str) -> dict:
-    return _serialize_visit(db, db.execute(
-        "SELECT * FROM opd_visits WHERE id = ?", (visit_id,)).fetchone())
+    return _serialize_visit(
+        db, db.execute("SELECT * FROM opd_visits WHERE id = ?", (visit_id,)).fetchone()
+    )
 
 
 def _finish(db, visit_id: str, on_done, facts: dict) -> dict:
@@ -487,8 +504,8 @@ def _finish(db, visit_id: str, on_done, facts: dict) -> dict:
 def skip_visit(
     visit_id: str,
     *,
-    actor_id: Optional[str] = None,
-    on_done: Optional[Callable[[Any, dict, dict], None]] = None,
+    actor_id: str | None = None,
+    on_done: Callable[[Any, dict, dict], None] | None = None,
 ) -> dict:
     """The patient did not come when called: back to waiting, marked skipped.
 
@@ -502,8 +519,9 @@ def skip_visit(
         row = _load(db, visit_id)
         status = row["status"]
         if status not in ("waiting", "in_consultation"):
-            raise QueueConflict("visit_closed",
-                                f"Visit {visit_id} is {status} and cannot be skipped")
+            raise QueueConflict(
+                "visit_closed", f"Visit {visit_id} is {status} and cannot be skipped"
+            )
         if status == "waiting" and row["skipped_at"]:
             return _finish(db, visit_id, on_done, {"replay": True})
         db.execute(
@@ -518,8 +536,8 @@ def skip_visit(
 def recall_visit(
     visit_id: str,
     *,
-    actor_id: Optional[str] = None,
-    on_done: Optional[Callable[[Any, dict, dict], None]] = None,
+    actor_id: str | None = None,
+    on_done: Callable[[Any, dict, dict], None] | None = None,
 ) -> dict:
     """A skipped patient is back: they rejoin the line at their own token.
 
@@ -530,8 +548,9 @@ def recall_visit(
     with db_session(immediate=True) as db:
         row = _load(db, visit_id)
         if row["status"] != "waiting":
-            raise QueueConflict("not_waiting",
-                                f"Visit {visit_id} is {row['status']} and cannot be recalled")
+            raise QueueConflict(
+                "not_waiting", f"Visit {visit_id} is {row['status']} and cannot be recalled"
+            )
         if not row["skipped_at"]:
             return _finish(db, visit_id, on_done, {"replay": True})
         db.execute("UPDATE opd_visits SET skipped_at = NULL WHERE id = ?", (visit_id,))
@@ -543,7 +562,7 @@ def assign_visit(
     visit_id: str,
     *,
     doctor_id: str,
-    on_done: Optional[Callable[[Any, dict, dict], None]] = None,
+    on_done: Callable[[Any, dict, dict], None] | None = None,
 ) -> dict:
     """A doctor takes an unassigned waiting patient of their own clinic.
 
@@ -577,8 +596,9 @@ def assign_visit(
     with db_session(immediate=True) as db:
         row = _load(db, visit_id)
         if row["status"] != "waiting":
-            raise QueueConflict("not_waiting",
-                                f"Visit {visit_id} is {row['status']} and cannot be reassigned")
+            raise QueueConflict(
+                "not_waiting", f"Visit {visit_id} is {row['status']} and cannot be reassigned"
+            )
         current = (row["doctor_id"] or "").strip()
         if current == doctor:
             visit = _finish(db, visit_id, on_done, {"replay": True})
@@ -586,8 +606,9 @@ def assign_visit(
             visit["previous_token_number"] = reissued_tokens(db, [visit_id]).get(visit_id)
             return visit
         if current:
-            raise QueueConflict("already_assigned",
-                                "This patient is already in another doctor's queue")
+            raise QueueConflict(
+                "already_assigned", "This patient is already in another doctor's queue"
+            )
         drow = db.execute(
             "SELECT name, role, TRIM(COALESCE(department, '')) AS department, "
             "COALESCE(is_active, 1) AS active FROM users WHERE id = ?",
@@ -600,8 +621,9 @@ def assign_visit(
             or not drow["active"]
             or drow["department"].casefold() != clinic.casefold()
         ):
-            raise QueueConflict("not_this_clinic",
-                                f"Only a consulting doctor of {clinic} can take this patient")
+            raise QueueConflict(
+                "not_this_clinic", f"Only a consulting doctor of {clinic} can take this patient"
+            )
         token = slip = int(row["token_number"])
         # Every visit of the doctor's line today, cancelled ones included (the
         # rule _next_token keeps), not only the live ones the unique index covers.
@@ -610,13 +632,12 @@ def assign_visit(
             "AND doctor_id = ? AND token_number = ? AND id != ?",
             (row["visit_date"], row["department"], doctor, token, visit_id),
         ).fetchone()
-        facts: dict = {"replay": False, "token_changed": False,
-                       "unassigned_token_number": slip}
+        facts: dict = {"replay": False, "token_changed": False, "unassigned_token_number": slip}
         if clash is not None:
-            new_token = _next_token(db, visit_date=row["visit_date"],
-                                    department=row["department"], doctor_id=doctor)
-            facts.update(token_changed=True, previous_token_number=token,
-                         token_number=new_token)
+            new_token = _next_token(
+                db, visit_date=row["visit_date"], department=row["department"], doctor_id=doctor
+            )
+            facts.update(token_changed=True, previous_token_number=token, token_number=new_token)
             token = new_token
         db.execute(
             "UPDATE opd_visits SET doctor_id = ?, doctor_name = ?, token_number = ? WHERE id = ?",
@@ -624,11 +645,14 @@ def assign_visit(
         )
         logger.info("OPD visit %s assigned to %s", visit_id, doctor)
         visit = _finish(db, visit_id, on_done, facts)
-        if taken_unassigned_top(db, visit_date=row["visit_date"],
-                                department=row["department"]) < slip:
+        if (
+            taken_unassigned_top(db, visit_date=row["visit_date"], department=row["department"])
+            < slip
+        ):
             raise AuditWriteError(
                 f"The take of OPD visit {visit_id} wrote no audit row, so token {slip} "
-                "could be issued again in the unassigned line; nothing was changed")
+                "could be issued again in the unassigned line; nothing was changed"
+            )
         visit["token_changed"] = facts["token_changed"]
         visit["previous_token_number"] = facts.get("previous_token_number")
         return visit
@@ -640,8 +664,8 @@ def update_queue_fields(
     priority: Any = _UNSET,
     priority_reason: Any = _UNSET,
     room: Any = _UNSET,
-    actor_id: Optional[str] = None,
-    on_done: Optional[Callable[[Any, dict, dict], None]] = None,
+    actor_id: str | None = None,
+    on_done: Callable[[Any, dict, dict], None] | None = None,
 ) -> dict:
     """Set a waiting or in-consultation visit's priority and room.
 
@@ -653,15 +677,18 @@ def update_queue_fields(
     with db_session(immediate=True) as db:
         row = _load(db, visit_id)
         if row["status"] not in ("waiting", "in_consultation"):
-            raise QueueConflict("visit_closed",
-                                f"Visit {visit_id} is {row['status']} and cannot be changed")
+            raise QueueConflict(
+                "visit_closed", f"Visit {visit_id} is {row['status']} and cannot be changed"
+            )
         changes: dict[str, Any] = {}
         if priority is not _UNSET:
             code = (str(priority or "").strip().lower()) or "normal"
             if code not in dict(priority_categories()):
                 raise FrontDeskError(f"{priority!r} is not one of this site's queue priorities")
-            reason = _clean(priority_reason if priority_reason is not _UNSET
-                            else row["priority_reason"], _MAX_PRIORITY_REASON_LEN)
+            reason = _clean(
+                priority_reason if priority_reason is not _UNSET else row["priority_reason"],
+                _MAX_PRIORITY_REASON_LEN,
+            )
             if code == "normal":
                 reason = None
             elif not reason:
@@ -672,8 +699,7 @@ def update_queue_fields(
             raise FrontDeskError("A priority reason is set together with the priority")
         if room is not _UNSET:
             changes["room"] = _clean(room, _MAX_ROOM_LEN)
-        changed = {k: v for k, v in changes.items()
-                   if (row[k] if k in row.keys() else None) != v}
+        changed = {k: v for k, v in changes.items() if (row[k] if k in row.keys() else None) != v}
         if not changed:
             return _finish(db, visit_id, on_done, {"replay": True})
         sets = ", ".join(f"{k} = ?" for k in changed)
@@ -684,17 +710,21 @@ def update_queue_fields(
 
 # ── The doctor's own queue ───────────────────────────────────────────────────
 
+
 def _consultations_table(db) -> bool:
-    return db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'opd_consultations'"
-    ).fetchone() is not None
+    return (
+        db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'opd_consultations'"
+        ).fetchone()
+        is not None
+    )
 
 
 def list_my_queue(
     *,
     doctor_id: str,
-    department: Optional[str],
-    visit_date: Optional[str] = None,
+    department: str | None,
+    visit_date: str | None = None,
 ) -> dict:
     """Today's queue for one doctor, plus the clinic's unassigned patients.
 
@@ -707,11 +737,14 @@ def list_my_queue(
     """
     ensure_frontdesk_schema()
     day = _hospital_day(visit_date)
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    now = datetime.now(timezone.utc)
-    clauses = ["v.visit_date = ?", "v.status IN ('waiting', 'in_consultation', 'completed')",
-               "(v.doctor_id = ? OR v.doctor_id IS NULL)"]
+    now = datetime.now(UTC)
+    clauses = [
+        "v.visit_date = ?",
+        "v.status IN ('waiting', 'in_consultation', 'completed')",
+        "(v.doctor_id = ? OR v.doctor_id IS NULL)",
+    ]
     params: list[Any] = [day, doctor_id]
     if department is not None:
         clauses.append("v.department = ?")
@@ -728,14 +761,19 @@ def list_my_queue(
                   FROM opd_visits v
                   LEFT JOIN patients p ON p.id = v.patient_id
                   {join}
-                 WHERE {' AND '.join(clauses)}""",
+                 WHERE {" AND ".join(clauses)}""",
             params,
         ).fetchall()
         # A taken patient whose slip shows an old token (see assign_visit).
         # Only a taken visit can have one, and only an open one still matters.
-        reissued = reissued_tokens(db, [
-            r["id"] for r in rows
-            if (r["doctor_id"] or "") == doctor_id and r["status"] != "completed"])
+        reissued = reissued_tokens(
+            db,
+            [
+                r["id"]
+                for r in rows
+                if (r["doctor_id"] or "") == doctor_id and r["status"] != "completed"
+            ],
+        )
 
     current: list[dict] = []
     waiting: list[dict] = []
@@ -808,8 +846,14 @@ BOARD_NEXT_COUNT = 3
 #: The request header carrying the board's device key.
 BOARD_KEY_HEADER = "X-Orb-Board-Key"
 #: The only keys a board answer carries, and the only keys each doctor carries.
-BOARD_RESPONSE_KEYS = ("board_label", "department", "visit_date", "generated_at",
-                       "poll_seconds", "doctors")
+BOARD_RESPONSE_KEYS = (
+    "board_label",
+    "department",
+    "visit_date",
+    "generated_at",
+    "poll_seconds",
+    "doctors",
+)
 BOARD_DOCTOR_KEYS = ("doctor_name", "room", "calling", "next")
 #: The record actions.
 BOARD_CREATED_ACTION = "opd_display_board_created"
@@ -843,7 +887,7 @@ def _new_board_key() -> str:
     return secrets.token_urlsafe(32)
 
 
-def _board_public(row, names: Optional[dict] = None) -> dict:
+def _board_public(row, names: dict | None = None) -> dict:
     """A board as the Display boards screen lists it: never the key or its hash."""
     names = names or {}
     return {
@@ -865,30 +909,52 @@ def _staff_names(db, ids: Iterable[Any]) -> dict:
     if not wanted:
         return {}
     marks = ",".join("?" for _ in wanted)
-    return {r["id"]: r["name"] for r in db.execute(
-        f"SELECT id, name FROM users WHERE id IN ({marks})", wanted).fetchall()}
+    return {
+        r["id"]: r["name"]
+        for r in db.execute(f"SELECT id, name FROM users WHERE id IN ({marks})", wanted).fetchall()
+    }
 
 
-def _board_audit(db, *, action: str, actor: dict, board: dict, summary: str,
-                 request_meta: Optional[dict], extra: Optional[dict] = None) -> None:
+def _board_audit(
+    db,
+    *,
+    action: str,
+    actor: dict,
+    board: dict,
+    summary: str,
+    request_meta: dict | None,
+    extra: dict | None = None,
+) -> None:
     """The fail-closed record of a board change, in the change's transaction.
     Carries the board's id, clinic and label: never the key or its hash."""
     from services.audit_service import log_audit_event
 
     meta = dict(request_meta or {})
     log_audit_event(
-        correlation_id=f"{action}-{board['id']}", event_category=BOARD_AUDIT_CATEGORY,
-        action_type=action, outcome="success", db=db, summary_message=summary,
-        actor_user_id=(actor or {}).get("id"), actor_role=(actor or {}).get("role"),
-        target_type="opd_display_board", target_id=str(board["id"]),
-        request_path=meta.get("request_path"), http_method=meta.get("http_method"),
-        ip_address=meta.get("ip_address"), user_agent=meta.get("user_agent"),
-        metadata={"board_id": board["id"], "department": board["department"],
-                  "label": board["label"], **(extra or {})},
+        correlation_id=f"{action}-{board['id']}",
+        event_category=BOARD_AUDIT_CATEGORY,
+        action_type=action,
+        outcome="success",
+        db=db,
+        summary_message=summary,
+        actor_user_id=(actor or {}).get("id"),
+        actor_role=(actor or {}).get("role"),
+        target_type="opd_display_board",
+        target_id=str(board["id"]),
+        request_path=meta.get("request_path"),
+        http_method=meta.get("http_method"),
+        ip_address=meta.get("ip_address"),
+        user_agent=meta.get("user_agent"),
+        metadata={
+            "board_id": board["id"],
+            "department": board["department"],
+            "label": board["label"],
+            **(extra or {}),
+        },
     )
 
 
-def _board_departments(scope_department: Optional[str]) -> list[str]:
+def _board_departments(scope_department: str | None) -> list[str]:
     """The clinics a board may be made for: the departments with clinical
     cover, narrowed to the caller's own when the caller has one."""
     from services.frontdesk_service import list_covering_departments
@@ -899,7 +965,7 @@ def _board_departments(scope_department: Optional[str]) -> list[str]:
     return departments
 
 
-def list_display_boards(*, scope_department: Optional[str]) -> dict:
+def list_display_boards(*, scope_department: str | None) -> dict:
     """Every board (revoked ones too, newest first) the caller may manage,
     and the clinics a new one may be made for. No patient data."""
     ensure_frontdesk_schema()
@@ -909,16 +975,25 @@ def list_display_boards(*, scope_department: Optional[str]) -> dict:
     with db_session() as db:
         rows = db.execute(
             f"SELECT * FROM opd_display_boards {clauses} "
-            f"ORDER BY (revoked_at IS NULL) DESC, created_at DESC, id", params).fetchall()
+            f"ORDER BY (revoked_at IS NULL) DESC, created_at DESC, id",
+            params,
+        ).fetchall()
         names = _staff_names(db, [n for r in rows for n in (r["created_by"], r["revoked_by"])])
-    return {"boards": [_board_public(r, names) for r in rows],
-            "departments": _board_departments(scope_department),
-            "poll_seconds": BOARD_POLL_SECONDS}
+    return {
+        "boards": [_board_public(r, names) for r in rows],
+        "departments": _board_departments(scope_department),
+        "poll_seconds": BOARD_POLL_SECONDS,
+    }
 
 
-def create_display_board(*, department: Any, label: Any, actor: dict,
-                         scope_department: Optional[str],
-                         request_meta: Optional[dict] = None) -> dict:
+def create_display_board(
+    *,
+    department: Any,
+    label: Any,
+    actor: dict,
+    scope_department: str | None,
+    request_meta: dict | None = None,
+) -> dict:
     """A new board for one clinic. Returns {board, key}: the key is in this
     answer only, and only its hash is stored. The clinic must have clinical
     cover and, for a caller with a department, be the caller's own."""
@@ -926,11 +1001,19 @@ def create_display_board(*, department: Any, label: Any, actor: dict,
 
     ensure_frontdesk_schema()
     wanted = _clean(department, 200)
-    clinic = next((d for d in _board_departments(scope_department)
-                   if wanted and d.casefold() == wanted.casefold()), None)
+    clinic = next(
+        (
+            d
+            for d in _board_departments(scope_department)
+            if wanted and d.casefold() == wanted.casefold()
+        ),
+        None,
+    )
     if clinic is None:
-        raise BoardError("department_not_covered",
-                         "Choose a clinic from the list. A board shows one clinic's tokens.")
+        raise BoardError(
+            "department_not_covered",
+            "Choose a clinic from the list. A board shows one clinic's tokens.",
+        )
     name = _clean(label, _BOARD_LABEL_MAX) or f"{clinic} waiting area"
     key = _new_board_key()
     board_id = f"BRD-{_uuid.uuid4().hex[:10].upper()}"
@@ -938,18 +1021,30 @@ def create_display_board(*, department: Any, label: Any, actor: dict,
         db.execute(
             "INSERT INTO opd_display_boards (id, department, label, key_hash, created_by, "
             "created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (board_id, clinic, name, _board_key_hash(key), (actor or {}).get("id"), _now()))
+            (board_id, clinic, name, _board_key_hash(key), (actor or {}).get("id"), _now()),
+        )
         row = db.execute("SELECT * FROM opd_display_boards WHERE id = ?", (board_id,)).fetchone()
         board = _board_public(row, _staff_names(db, [row["created_by"]]))
-        _board_audit(db, action=BOARD_CREATED_ACTION, actor=actor, board=board,
-                     summary=f"Token board {board_id} created for {clinic}",
-                     request_meta=request_meta)
+        _board_audit(
+            db,
+            action=BOARD_CREATED_ACTION,
+            actor=actor,
+            board=board,
+            summary=f"Token board {board_id} created for {clinic}",
+            request_meta=request_meta,
+        )
     logger.info("OPD token board %s created for %s", board_id, clinic)
     return {"board": board, "key": key}
 
 
-def revoke_display_board(board_id: Any, *, actor: dict, scope_department: Optional[str],
-                         reason: Any = None, request_meta: Optional[dict] = None) -> dict:
+def revoke_display_board(
+    board_id: Any,
+    *,
+    actor: dict,
+    scope_department: str | None,
+    reason: Any = None,
+    request_meta: dict | None = None,
+) -> dict:
     """Switch a board's key off for good: the screen stops showing tokens at
     its next read. A board of another clinic, for a caller with a department,
     is 404 like an unknown one."""
@@ -960,21 +1055,29 @@ def revoke_display_board(board_id: Any, *, actor: dict, scope_department: Option
         if row is None or (scope_department is not None and row["department"] != scope_department):
             raise BoardError("board_not_found", "Display board not found.", status=404)
         if row["revoked_at"] is not None:
-            raise BoardError("already_revoked", "This board's key was already switched off.",
-                             status=409)
-        db.execute("UPDATE opd_display_boards SET revoked_at = ?, revoked_by = ? WHERE id = ?",
-                   (_now(), (actor or {}).get("id"), bid))
+            raise BoardError(
+                "already_revoked", "This board's key was already switched off.", status=409
+            )
+        db.execute(
+            "UPDATE opd_display_boards SET revoked_at = ?, revoked_by = ? WHERE id = ?",
+            (_now(), (actor or {}).get("id"), bid),
+        )
         row = db.execute("SELECT * FROM opd_display_boards WHERE id = ?", (bid,)).fetchone()
         board = _board_public(row, _staff_names(db, [row["created_by"], row["revoked_by"]]))
-        _board_audit(db, action=BOARD_REVOKED_ACTION, actor=actor, board=board,
-                     summary=f"Token board {bid} switched off",
-                     request_meta=request_meta,
-                     extra={"reason": _clean(reason, 500)})
+        _board_audit(
+            db,
+            action=BOARD_REVOKED_ACTION,
+            actor=actor,
+            board=board,
+            summary=f"Token board {bid} switched off",
+            request_meta=request_meta,
+            extra={"reason": _clean(reason, 500)},
+        )
     logger.info("OPD token board %s revoked", bid)
     return board
 
 
-def board_for_key(presented: Any) -> Optional[dict]:
+def board_for_key(presented: Any) -> dict | None:
     """The live board this device key opens, or None: no key, a key of the
     wrong shape, an unknown key, a revoked one, and anything else (a staff
     session token included) all answer None alike."""
@@ -990,7 +1093,9 @@ def board_for_key(presented: Any) -> Optional[dict]:
     with db_session() as db:
         row = db.execute(
             "SELECT id, department, label, key_hash, revoked_at FROM opd_display_boards "
-            "WHERE key_hash = ?", (digest,)).fetchone()
+            "WHERE key_hash = ?",
+            (digest,),
+        ).fetchone()
     if row is None or row["revoked_at"] is not None:
         return None
     if not hmac.compare_digest(str(row["key_hash"]), digest):
@@ -998,15 +1103,16 @@ def board_for_key(presented: Any) -> Optional[dict]:
     return {"id": row["id"], "department": row["department"], "label": row["label"]}
 
 
-def board_snapshot(department: str, *, label: Optional[str] = None,
-                   visit_date: Optional[str] = None) -> dict:
+def board_snapshot(
+    department: str, *, label: str | None = None, visit_date: str | None = None
+) -> dict:
     """What one clinic's waiting-room board shows now (ruling OPD-N7): per
     doctor with a patient waiting or called in today, the doctor's name, the
     room, the token being called and the next tokens in seeing order (the
     same order as the doctor's own queue; skipped patients are not listed).
     Built from BOARD_RESPONSE_KEYS and BOARD_DOCTOR_KEYS only: no name, UHID,
     complaint, priority word or visit id ever leaves here."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     ensure_frontdesk_schema()
     day = _hospital_day(visit_date)
@@ -1025,37 +1131,48 @@ def board_snapshot(department: str, *, label: Optional[str] = None,
     for r in rows:
         by_doctor.setdefault(str(r["doctor_id"]), []).append(r)
     doctors: list[dict] = []
-    for doctor_id, visits in by_doctor.items():
+    for _doctor_id, visits in by_doctor.items():
         live = [v for v in visits if v["status"] in ("waiting", "in_consultation")]
         if not live:
             continue
-        called = sorted((v for v in live if v["status"] == "in_consultation"),
-                        key=lambda v: (str(v["called_at"] or ""), int(v["token_number"] or 0)))
-        waiting = sorted((dict(v) for v in live
-                          if v["status"] == "waiting" and not v["skipped_at"]),
-                         key=queue_sort_key)
+        called = sorted(
+            (v for v in live if v["status"] == "in_consultation"),
+            key=lambda v: (str(v["called_at"] or ""), int(v["token_number"] or 0)),
+        )
+        waiting = sorted(
+            (dict(v) for v in live if v["status"] == "waiting" and not v["skipped_at"]),
+            key=queue_sort_key,
+        )
         current = called[-1] if called else None
         # The room the doctor is seeing patients in: the current visit's, else
         # the room last set on any of the doctor's visits today.
         roomed = [v for v in visits if (v["room"] or "").strip()]
-        roomed.sort(key=lambda v: (str(v["called_at"] or v["registered_at"] or ""),
-                                   int(v["token_number"] or 0)))
-        room = ((current["room"] or "").strip() if current is not None and
-                (current["room"] or "").strip() else
-                ((roomed[-1]["room"] or "").strip() if roomed else None))
+        roomed.sort(
+            key=lambda v: (
+                str(v["called_at"] or v["registered_at"] or ""),
+                int(v["token_number"] or 0),
+            )
+        )
+        room = (
+            (current["room"] or "").strip()
+            if current is not None and (current["room"] or "").strip()
+            else ((roomed[-1]["room"] or "").strip() if roomed else None)
+        )
         name = (visits[0]["staff_name"] or visits[0]["doctor_name"] or "").strip() or "Doctor"
-        doctors.append({
-            "doctor_name": name,
-            "room": room or None,
-            "calling": int(current["token_number"]) if current is not None else None,
-            "next": [int(v["token_number"]) for v in waiting[:BOARD_NEXT_COUNT]],
-        })
+        doctors.append(
+            {
+                "doctor_name": name,
+                "room": room or None,
+                "calling": int(current["token_number"]) if current is not None else None,
+                "next": [int(v["token_number"]) for v in waiting[:BOARD_NEXT_COUNT]],
+            }
+        )
     doctors.sort(key=lambda d: (d["doctor_name"].casefold(), d["room"] or ""))
     answer = {
         "board_label": label,
         "department": clinic,
         "visit_date": day,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "poll_seconds": BOARD_POLL_SECONDS,
         "doctors": [{k: d[k] for k in BOARD_DOCTOR_KEYS} for d in doctors],
     }

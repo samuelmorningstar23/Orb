@@ -26,21 +26,14 @@ Nothing in this module touches the database, the event loop or the network — i
 is pure string work, so it is safe to call from anywhere (including inside a
 `run_db` worker).
 """
+
 from __future__ import annotations
 
 import os
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone, tzinfo
-from typing import Optional, Union
-
-try:  # stdlib since 3.9; the appliance ships 3.12
-    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-except ImportError:  # pragma: no cover - defensive, keeps the bench sim portable
-    ZoneInfo = None  # type: ignore[assignment]
-
-    class ZoneInfoNotFoundError(Exception):  # type: ignore[no-redef]
-        pass
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 class Hl7ParseError(ValueError):
@@ -55,6 +48,7 @@ class Hl7ParseError(ValueError):
 #  Encoding characters (MSH-1 / MSH-2)
 # ════════════════════════════════════════════
 
+
 @dataclass(frozen=True)
 class EncodingCharacters:
     field: str = "|"
@@ -64,7 +58,7 @@ class EncodingCharacters:
     subcomponent: str = "&"
 
     @classmethod
-    def from_msh(cls, msh_segment: str) -> "EncodingCharacters":
+    def from_msh(cls, msh_segment: str) -> EncodingCharacters:
         """Read the separators out of an MSH segment header.
 
         `MSH` is followed immediately by the field separator, then the encoding
@@ -77,15 +71,18 @@ class EncodingCharacters:
         field_sep = msh_segment[3]
         if field_sep in ("\r", "\n"):
             raise Hl7ParseError("MSH segment has no field separator")
-        enc = msh_segment[4:msh_segment.find(field_sep, 4)] if field_sep in msh_segment[4:] else msh_segment[4:]
+        enc = (
+            msh_segment[4 : msh_segment.find(field_sep, 4)]
+            if field_sep in msh_segment[4:]
+            else msh_segment[4:]
+        )
         # Pad with defaults: a sender may legally send fewer than four encoding
         # characters (only `^~\&` in full is universal, but `^~\` appears).
         comp = enc[0] if len(enc) > 0 else "^"
         rep = enc[1] if len(enc) > 1 else "~"
         esc = enc[2] if len(enc) > 2 else "\\"
         sub = enc[3] if len(enc) > 3 else "&"
-        return cls(field=field_sep, component=comp, repetition=rep,
-                   escape=esc, subcomponent=sub)
+        return cls(field=field_sep, component=comp, repetition=rep, escape=esc, subcomponent=sub)
 
 
 # ════════════════════════════════════════════
@@ -121,7 +118,7 @@ def unescape(text: str, enc: EncodingCharacters) -> str:
             # Unterminated escape — emit the rest literally.
             out.append(text[i:])
             break
-        code = text[i + 1:end]
+        code = text[i + 1 : end]
         i = end + 1
         if code == "F":
             out.append(enc.field)
@@ -151,6 +148,7 @@ def unescape(text: str, enc: EncodingCharacters) -> str:
 # ════════════════════════════════════════════
 #  Segment
 # ════════════════════════════════════════════
+
 
 class Segment:
     """One HL7 segment with 1-based, HL7-numbered field access."""
@@ -202,8 +200,13 @@ class Segment:
             return [""]
         return [unescape(c, self._enc) for c in reps[repeat].split(self._enc.component)]
 
-    def field(self, index: int, repeat: int = 0, component: Optional[int] = None,
-              subcomponent: Optional[int] = None) -> str:
+    def field(
+        self,
+        index: int,
+        repeat: int = 0,
+        component: int | None = None,
+        subcomponent: int | None = None,
+    ) -> str:
         """Read a field / component / sub-component, unescaped and stripped.
 
         `component` and `subcomponent` are 1-based HL7 positions. Out-of-range
@@ -279,7 +282,7 @@ class Hl7Message:
 
     # ── segment lookup ──
 
-    def first(self, name: str) -> Optional[Segment]:
+    def first(self, name: str) -> Segment | None:
         for seg in self.segments:
             if seg.name == name:
                 return seg
@@ -329,8 +332,10 @@ class Hl7Message:
         return self.msh.field(12, component=1)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
-        return (f"<Hl7Message {self.message_type}^{self.trigger_event} "
-                f"id={self.control_id!r} segments={len(self.segments)}>")
+        return (
+            f"<Hl7Message {self.message_type}^{self.trigger_event} "
+            f"id={self.control_id!r} segments={len(self.segments)}>"
+        )
 
 
 def parse(raw: str) -> Hl7Message:
@@ -355,11 +360,11 @@ _TS_OFFSET = re.compile(r"([+-]\d{4})$")
 TZ_ENV_VAR = "ORB_HL7_DEFAULT_TZ"
 
 # Resolved lazily and cached; `set_default_timezone(None)` re-reads the env.
-_default_tz: Optional[tzinfo] = None
+_default_tz: tzinfo | None = None
 _default_tz_resolved = False
 
 
-def resolve_timezone(value: Union[str, tzinfo, None]) -> Optional[tzinfo]:
+def resolve_timezone(value: str | tzinfo | None) -> tzinfo | None:
     """Turn an IANA name / tzinfo / `+05:30`-style offset into a tzinfo.
 
     Returns None for an unusable value rather than raising: a typo in a config
@@ -374,7 +379,7 @@ def resolve_timezone(value: Union[str, tzinfo, None]) -> Optional[tzinfo]:
     if not name:
         return None
     if name.upper() in ("UTC", "Z", "GMT"):
-        return timezone.utc
+        return UTC
     if name.upper() == "LOCAL":
         return datetime.now().astimezone().tzinfo
     m = re.fullmatch(r"([+-])(\d{1,2}):?(\d{2})", name)
@@ -414,12 +419,12 @@ def appliance_timezone() -> tzinfo:
     if not _default_tz_resolved:
         _default_tz = resolve_timezone(os.getenv(TZ_ENV_VAR))
         if _default_tz is None:
-            _default_tz = datetime.now().astimezone().tzinfo or timezone.utc
+            _default_tz = datetime.now().astimezone().tzinfo or UTC
         _default_tz_resolved = True
-    return _default_tz or timezone.utc
+    return _default_tz or UTC
 
 
-def set_default_timezone(value: Union[str, tzinfo, None]) -> tzinfo:
+def set_default_timezone(value: str | tzinfo | None) -> tzinfo:
     """Override the assumed zone process-wide. `None` re-reads the environment.
 
     Exists so a deployment (and the test suite) can state the assumption out
@@ -443,16 +448,19 @@ class Hl7Timestamp:
     to know the difference between "the device and I disagree by 20 minutes" and
     "the device never said which planet it was on".
     """
-    iso: str                     # ISO 8601, UTC
-    dt: datetime                 # the same instant, aware, UTC
-    had_offset: bool             # the DTM carried an explicit +/-ZZZZ
-    assumed_timezone: str        # the zone we applied when it did not
-    precision: str               # second | minute | hour | day
+
+    iso: str  # ISO 8601, UTC
+    dt: datetime  # the same instant, aware, UTC
+    had_offset: bool  # the DTM carried an explicit +/-ZZZZ
+    assumed_timezone: str  # the zone we applied when it did not
+    precision: str  # second | minute | hour | day
 
 
 def parse_timestamp_detail(
-    ts: str, *, default_tz: Union[str, tzinfo, None] = None,
-) -> Optional[Hl7Timestamp]:
+    ts: str,
+    *,
+    default_tz: str | tzinfo | None = None,
+) -> Hl7Timestamp | None:
     """HL7 DTM (`yyyyMMddHHmmss[.S][+/-ZZZZ]`) → an `Hl7Timestamp`, or None.
 
     Two rules, and the second one is the fix for a patient-safety defect:
@@ -470,12 +478,13 @@ def parse_timestamp_detail(
     if not text:
         return None
 
-    offset: Optional[timezone] = None
+    offset: timezone | None = None
     m = _TS_OFFSET.search(text)
     if m:
         sign = 1 if m.group(1)[0] == "+" else -1
-        offset = timezone(sign * timedelta(hours=int(m.group(1)[1:3]),
-                                           minutes=int(m.group(1)[3:5])))
+        offset = timezone(
+            sign * timedelta(hours=int(m.group(1)[1:3]), minutes=int(m.group(1)[3:5]))
+        )
         text = text[: m.start()]
     text = text.split(".")[0]  # drop fractional seconds
     digits = "".join(ch for ch in text if ch.isdigit())
@@ -503,22 +512,26 @@ def parse_timestamp_detail(
             # why this hospital is the easy case — other sites will not be.)
             aware = naive.replace(tzinfo=zone)
             assumed = str(getattr(zone, "key", None) or aware.tzname() or zone)
-        utc = aware.astimezone(timezone.utc)
-        return Hl7Timestamp(iso=utc.isoformat(), dt=utc,
-                            had_offset=offset is not None,
-                            assumed_timezone=assumed, precision=precision)
+        utc = aware.astimezone(UTC)
+        return Hl7Timestamp(
+            iso=utc.isoformat(),
+            dt=utc,
+            had_offset=offset is not None,
+            assumed_timezone=assumed,
+            precision=precision,
+        )
     return None
 
 
-def parse_timestamp(ts: str, *, default_tz: Union[str, tzinfo, None] = None) -> Optional[str]:
+def parse_timestamp(ts: str, *, default_tz: str | tzinfo | None = None) -> str | None:
     """HL7 DTM → ISO 8601 UTC string. See `parse_timestamp_detail` for the rules."""
     detail = parse_timestamp_detail(ts, default_tz=default_tz)
     return detail.iso if detail is not None else None
 
 
-def format_timestamp(dt: Optional[datetime] = None, *,
-                     tz: Union[str, tzinfo, None] = None,
-                     with_offset: bool = False) -> str:
+def format_timestamp(
+    dt: datetime | None = None, *, tz: str | tzinfo | None = None, with_offset: bool = False
+) -> str:
     """Render an HL7 DTM.
 
     Defaults to UTC without an offset, which is what Orb's ACKs have always
@@ -526,10 +539,10 @@ def format_timestamp(dt: Optional[datetime] = None, *,
     device might read back, because an offset-less DTM is precisely the
     ambiguity this module exists to stop guessing about.
     """
-    dt = dt or datetime.now(timezone.utc)
+    dt = dt or datetime.now(UTC)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    zone = resolve_timezone(tz) or timezone.utc
+        dt = dt.replace(tzinfo=UTC)
+    zone = resolve_timezone(tz) or UTC
     local = dt.astimezone(zone)
     return local.strftime("%Y%m%d%H%M%S%z" if with_offset else "%Y%m%d%H%M%S")
 
@@ -539,17 +552,22 @@ def format_timestamp(dt: Optional[datetime] = None, *,
 # ════════════════════════════════════════════
 
 # HL7 acknowledgement codes we emit.
-ACK_ACCEPT = "AA"       # accepted
-ACK_ERROR = "AE"        # application error — sender SHOULD retry
-ACK_REJECT = "AR"       # rejected — sender should NOT retry unchanged
+ACK_ACCEPT = "AA"  # accepted
+ACK_ERROR = "AE"  # application error — sender SHOULD retry
+ACK_REJECT = "AR"  # rejected — sender should NOT retry unchanged
 
 _ACK_TEXT_SAFE = re.compile(r"[\r\n|^~\\&]")
 
 
-def build_ack(message: Optional[Hl7Message], code: str = ACK_ACCEPT,
-              text: str = "", *, receiving_app: str = "ORB",
-              receiving_facility: str = "ORB_OS",
-              control_id: Optional[str] = None) -> str:
+def build_ack(
+    message: Hl7Message | None,
+    code: str = ACK_ACCEPT,
+    text: str = "",
+    *,
+    receiving_app: str = "ORB",
+    receiving_facility: str = "ORB_OS",
+    control_id: str | None = None,
+) -> str:
     """Build an ACK^R01 response.
 
     `message` may be None when the inbound payload could not be parsed at all —
@@ -571,17 +589,29 @@ def build_ack(message: Optional[Hl7Message], code: str = ACK_ACCEPT,
 
     f = enc.field
     c = enc.component
-    msh = f.join([
-        "MSH",
-        f"{c}{enc.repetition}{enc.escape}{enc.subcomponent}",
-        receiving_app, receiving_facility,
-        sending_app, sending_fac,
-        # MSH-7 carries its offset explicitly (`+0000`). We spend this module
-        # arguing that an offset-less DTM is a guess the receiver should not have
-        # to make; emitting one ourselves would be the same defect pointed the
-        # other way. The control id below stays bare — it is an opaque token.
-        format_timestamp(with_offset=True), "",
-        f"ACK{c}R01", f"ORB{format_timestamp()}", processing, version,
-    ])
-    msa = f.join(["MSA", code, msg_control, safe_text]) if safe_text else f.join(["MSA", code, msg_control])
+    msh = f.join(
+        [
+            "MSH",
+            f"{c}{enc.repetition}{enc.escape}{enc.subcomponent}",
+            receiving_app,
+            receiving_facility,
+            sending_app,
+            sending_fac,
+            # MSH-7 carries its offset explicitly (`+0000`). We spend this module
+            # arguing that an offset-less DTM is a guess the receiver should not have
+            # to make; emitting one ourselves would be the same defect pointed the
+            # other way. The control id below stays bare — it is an opaque token.
+            format_timestamp(with_offset=True),
+            "",
+            f"ACK{c}R01",
+            f"ORB{format_timestamp()}",
+            processing,
+            version,
+        ]
+    )
+    msa = (
+        f.join(["MSA", code, msg_control, safe_text])
+        if safe_text
+        else f.join(["MSA", code, msg_control])
+    )
     return f"{msh}\r{msa}\r"

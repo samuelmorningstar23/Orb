@@ -78,6 +78,7 @@ third bucket exists, it is carried all the way into the CSV as
     that is short-staffed is a fact to display, never a reason to refuse a nurse
     an action.
 """
+
 from __future__ import annotations
 
 import csv
@@ -85,9 +86,13 @@ import hashlib
 import io
 import logging
 from calendar import monthrange
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
-from typing import Any, Iterable, Optional
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
+
+import config
+from database import db_session
 
 # sqlcipher3 raises its OWN exception hierarchy: sqlcipher3.dbapi2.IntegrityError
 # is NOT a subclass of sqlite3.IntegrityError, so `except sqlite3.IntegrityError`
@@ -95,8 +100,6 @@ from typing import Any, Iterable, Optional
 # appliance. Guarded by tests/test_db_exception_aliases.py.
 from db_backend import DBIntegrityError
 
-import config
-from database import db_session
 from services.hospital_time import hospital_timezone, hospital_today
 
 logger = logging.getLogger("orb.workforce")
@@ -149,8 +152,7 @@ DAY_STATUSES = ("present", "absent", "leave", "weekly_off", "holiday")
 
 ROSTER_STATUSES = ("planned", "published", "cancelled")
 ATTENDANCE_SOURCES = ("manual", "biometric_import", "roster_default")
-EMPLOYMENT_TYPES = ("permanent", "probation", "contract", "consultant",
-                    "trainee", "outsourced")
+EMPLOYMENT_TYPES = ("permanent", "probation", "contract", "consultant", "trainee", "outsourced")
 ALLOWANCE_CODES = ("night", "evening")
 
 #: The value written into every row's `statutory_computed_by` column. It is a
@@ -244,6 +246,7 @@ class RosterConflict(WorkforceError):
 #  Policy
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def policy() -> dict[str, Any]:
     """The numbers this module judges a day against, and where they came from.
 
@@ -272,6 +275,7 @@ def policy() -> dict[str, Any]:
 #  Small helpers
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _row(r) -> dict:
     return dict(r) if r is not None else {}
 
@@ -290,8 +294,9 @@ def _as_date(value: Any, field: str = "date") -> date:
             return date.fromisoformat(value.strip()[:10])
         except ValueError:
             pass
-    raise WorkforceError(f"{field} must be an ISO date (YYYY-MM-DD), got {value!r}",
-                         code="bad_date")
+    raise WorkforceError(
+        f"{field} must be an ISO date (YYYY-MM-DD), got {value!r}", code="bad_date"
+    )
 
 
 def _as_instant(value: Any, field: str) -> datetime:
@@ -308,28 +313,30 @@ def _as_instant(value: Any, field: str) -> datetime:
         try:
             dt = datetime.fromisoformat(text)
         except ValueError:
-            raise WorkforceError(f"{field} must be an ISO timestamp, got {value!r}",
-                                 code="bad_timestamp")
+            raise WorkforceError(
+                f"{field} must be an ISO timestamp, got {value!r}", code="bad_timestamp"
+            ) from None
     else:
-        raise WorkforceError(f"{field} must be an ISO timestamp, got {value!r}",
-                             code="bad_timestamp")
+        raise WorkforceError(
+            f"{field} must be an ISO timestamp, got {value!r}", code="bad_timestamp"
+        )
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
-def _iso(dt: Optional[datetime]) -> Optional[str]:
+def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat() if dt is not None else None
 
 
-def _clean(value: Optional[str]) -> Optional[str]:
+def _clean(value: str | None) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
     return text or None
 
 
-def _require(value: Optional[str], field: str) -> str:
+def _require(value: str | None, field: str) -> str:
     text = _clean(value)
     if not text:
         raise WorkforceError(f"{field} is required", code="missing_field")
@@ -372,6 +379,7 @@ def _daterange(start: date, end: date) -> Iterable[date]:
 #  Shift types
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _shift_view(row: dict) -> dict:
     start = int(row["start_minute"])
     duration = int(row["duration_minutes"])
@@ -401,13 +409,21 @@ def list_shift_types(*, include_inactive: bool = False) -> list[dict]:
 
 
 def _shift_map(db) -> dict[str, dict]:
-    return {r["code"]: _shift_view(dict(r))
-            for r in db.execute("SELECT * FROM duty_shift_types").fetchall()}
+    return {
+        r["code"]: _shift_view(dict(r))
+        for r in db.execute("SELECT * FROM duty_shift_types").fetchall()
+    }
 
 
-def upsert_shift_type(*, code: str, name: str, start_minute: int,
-                      duration_minutes: int, allowance_code: Optional[str] = None,
-                      is_active: bool = True) -> dict:
+def upsert_shift_type(
+    *,
+    code: str,
+    name: str,
+    start_minute: int,
+    duration_minutes: int,
+    allowance_code: str | None = None,
+    is_active: bool = True,
+) -> dict:
     code = _require(code, "code").upper()
     name = _require(name, "name")
     start_minute, duration_minutes = int(start_minute), int(duration_minutes)
@@ -418,8 +434,8 @@ def upsert_shift_type(*, code: str, name: str, start_minute: int,
     allowance_code = _clean(allowance_code)
     if allowance_code and allowance_code not in ALLOWANCE_CODES:
         raise WorkforceError(
-            f"allowance_code must be one of {', '.join(ALLOWANCE_CODES)}",
-            code="bad_shift")
+            f"allowance_code must be one of {', '.join(ALLOWANCE_CODES)}", code="bad_shift"
+        )
     with db_session() as db:
         db.execute(
             """INSERT INTO duty_shift_types
@@ -431,8 +447,7 @@ def upsert_shift_type(*, code: str, name: str, start_minute: int,
                  allowance_code=excluded.allowance_code,
                  is_active=excluded.is_active,
                  updated_at=CURRENT_TIMESTAMP""",
-            (code, name, start_minute, duration_minutes, allowance_code,
-             1 if is_active else 0),
+            (code, name, start_minute, duration_minutes, allowance_code, 1 if is_active else 0),
         )
         row = db.execute("SELECT * FROM duty_shift_types WHERE code = ?", (code,)).fetchone()
     return _shift_view(dict(row))
@@ -444,14 +459,21 @@ def list_leave_types(*, include_inactive: bool = False) -> list[dict]:
         if not include_inactive:
             sql += " WHERE is_active = 1"
         sql += " ORDER BY sort_order, code"
-        return [{"code": r["code"], "name": r["name"], "is_paid": bool(r["is_paid"]),
-                 "is_active": bool(r["is_active"])}
-                for r in db.execute(sql).fetchall()]
+        return [
+            {
+                "code": r["code"],
+                "name": r["name"],
+                "is_paid": bool(r["is_paid"]),
+                "is_active": bool(r["is_active"]),
+            }
+            for r in db.execute(sql).fetchall()
+        ]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  Employees
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def _employee_view(row: dict) -> dict:
     return {
@@ -468,9 +490,11 @@ def _employee_view(row: dict) -> dict:
         # words as well as in the null, because a blank cell in a table reads as
         # "missing data" and this one is a fact about the job.
         "weekly_off_label": (
-            "Rotational" if row["weekly_off_day"] is None
-            else ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
-                  "Saturday", "Sunday")[int(row["weekly_off_day"])]
+            "Rotational"
+            if row["weekly_off_day"] is None
+            else ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")[
+                int(row["weekly_off_day"])
+            ]
         ),
         "payroll_bureau_ref": row["payroll_bureau_ref"],
         "is_active": bool(row["is_active"]),
@@ -478,15 +502,15 @@ def _employee_view(row: dict) -> dict:
     }
 
 
-def list_employees(*, department: Optional[str] = None,
-                   include_inactive: bool = False,
-                   search: Optional[str] = None) -> list[dict]:
+def list_employees(
+    *, department: str | None = None, include_inactive: bool = False, search: str | None = None
+) -> list[dict]:
     clauses, params = [], []
     if not include_inactive:
         clauses.append("is_active = 1")
     if _clean(department):
         clauses.append("department = ?")
-        params.append(_clean(department))
+        params.append(_clean(department) or "")
     if _clean(search):
         clauses.append("(full_name LIKE ? OR employee_code LIKE ?)")
         like = f"%{_clean(search)}%"
@@ -503,26 +527,31 @@ def list_employees(*, department: Optional[str] = None,
 def get_employee(employee_code: str) -> dict:
     code = _require(employee_code, "employee_code")
     with db_session() as db:
-        row = db.execute("SELECT * FROM staff_employment WHERE employee_code = ?",
-                         (code,)).fetchone()
+        row = db.execute(
+            "SELECT * FROM staff_employment WHERE employee_code = ?", (code,)
+        ).fetchone()
     if row is None:
         raise WorkforceError(f"No employee with code {code}", code="not_found")
     return _employee_view(dict(row))
 
 
-def upsert_employee(*, employee_code: str, full_name: str,
-                    department: Optional[str] = None,
-                    designation: Optional[str] = None,
-                    employment_type: str = "permanent",
-                    user_id: Optional[str] = None,
-                    date_of_joining: Optional[str] = None,
-                    date_of_exit: Optional[str] = None,
-                    weekly_off_day: Optional[int] = None,
-                    payroll_bureau_ref: Optional[str] = None,
-                    is_active: bool = True,
-                    notes: Optional[str] = None,
-                    created_by: Optional[str] = None,
-                    create_only: bool = False) -> dict:
+def upsert_employee(
+    *,
+    employee_code: str,
+    full_name: str,
+    department: str | None = None,
+    designation: str | None = None,
+    employment_type: str = "permanent",
+    user_id: str | None = None,
+    date_of_joining: str | None = None,
+    date_of_exit: str | None = None,
+    weekly_off_day: int | None = None,
+    payroll_bureau_ref: str | None = None,
+    is_active: bool = True,
+    notes: str | None = None,
+    created_by: str | None = None,
+    create_only: bool = False,
+) -> dict:
     """Create or update one employee, keyed on `employee_code`.
 
     `create_only` is the Add form: a code already on the register is refused
@@ -536,7 +565,8 @@ def upsert_employee(*, employee_code: str, full_name: str,
     if employment_type not in EMPLOYMENT_TYPES:
         raise WorkforceError(
             f"employment_type must be one of {', '.join(EMPLOYMENT_TYPES)}",
-            code="bad_employment_type")
+            code="bad_employment_type",
+        )
     doj = _as_date(date_of_joining, "date_of_joining").isoformat() if date_of_joining else None
     doe = _as_date(date_of_exit, "date_of_exit").isoformat() if date_of_exit else None
     if doj and doe and doe < doj:
@@ -544,19 +574,23 @@ def upsert_employee(*, employee_code: str, full_name: str,
     if weekly_off_day is not None:
         weekly_off_day = int(weekly_off_day)
         if not 0 <= weekly_off_day <= 6:
-            raise WorkforceError("weekly_off_day must be 0 (Mon) .. 6 (Sun), or null "
-                                 "for a rotational day off", code="bad_weekly_off")
+            raise WorkforceError(
+                "weekly_off_day must be 0 (Mon) .. 6 (Sun), or null for a rotational day off",
+                code="bad_weekly_off",
+            )
     with db_session() as db:
         if create_only:
             existing = db.execute(
                 "SELECT full_name, department FROM staff_employment WHERE employee_code = ?",
-                (code,)).fetchone()
+                (code,),
+            ).fetchone()
             if existing:
                 dept = f" ({existing['department']})" if existing["department"] else ""
                 raise WorkforceError(
                     f"{code} already exists as {existing['full_name']}{dept}. Nothing "
                     "was changed. Use a different code, or edit that person's record.",
-                    code="already_exists")
+                    code="already_exists",
+                )
         db.execute(
             """INSERT INTO staff_employment
                  (employee_code, user_id, full_name, department, designation,
@@ -574,12 +608,25 @@ def upsert_employee(*, employee_code: str, full_name: str,
                  payroll_bureau_ref=COALESCE(excluded.payroll_bureau_ref, payroll_bureau_ref),
                  is_active=excluded.is_active, notes=COALESCE(excluded.notes, notes),
                  updated_at=CURRENT_TIMESTAMP""",
-            (code, _clean(user_id), name, _clean(department), _clean(designation),
-             employment_type, doj, doe, weekly_off_day, _clean(payroll_bureau_ref),
-             1 if is_active else 0, _clean(notes), _clean(created_by)),
+            (
+                code,
+                _clean(user_id),
+                name,
+                _clean(department),
+                _clean(designation),
+                employment_type,
+                doj,
+                doe,
+                weekly_off_day,
+                _clean(payroll_bureau_ref),
+                1 if is_active else 0,
+                _clean(notes),
+                _clean(created_by),
+            ),
         )
-        row = db.execute("SELECT * FROM staff_employment WHERE employee_code = ?",
-                         (code,)).fetchone()
+        row = db.execute(
+            "SELECT * FROM staff_employment WHERE employee_code = ?", (code,)
+        ).fetchone()
     return _employee_view(dict(row))
 
 
@@ -587,8 +634,8 @@ def upsert_employee(*, employee_code: str, full_name: str,
 #  Holidays
 # ═════════════════════════════════════════════════════════════════════════════
 
-def list_holidays(*, date_from: Optional[str] = None,
-                  date_to: Optional[str] = None) -> list[dict]:
+
+def list_holidays(*, date_from: str | None = None, date_to: str | None = None) -> list[dict]:
     clauses, params = [], []
     if date_from:
         clauses.append("holiday_date >= ?")
@@ -600,14 +647,22 @@ def list_holidays(*, date_from: Optional[str] = None,
     with db_session() as db:
         rows = db.execute(
             f"SELECT holiday_date, name, is_restricted FROM hospital_holidays{where} "
-            "ORDER BY holiday_date", params,
+            "ORDER BY holiday_date",
+            params,
         ).fetchall()
-    return [{"holiday_date": r["holiday_date"], "name": r["name"],
-             "is_restricted": bool(r["is_restricted"])} for r in rows]
+    return [
+        {
+            "holiday_date": r["holiday_date"],
+            "name": r["name"],
+            "is_restricted": bool(r["is_restricted"]),
+        }
+        for r in rows
+    ]
 
 
-def upsert_holiday(*, holiday_date: str, name: str, is_restricted: bool = False,
-                   created_by: Optional[str] = None) -> dict:
+def upsert_holiday(
+    *, holiday_date: str, name: str, is_restricted: bool = False, created_by: str | None = None
+) -> dict:
     day = _as_date(holiday_date, "holiday_date")
     label = _require(name, "name")
     with db_session() as db:
@@ -618,24 +673,25 @@ def upsert_holiday(*, holiday_date: str, name: str, is_restricted: bool = False,
                  name=excluded.name, is_restricted=excluded.is_restricted""",
             (day.isoformat(), label, 1 if is_restricted else 0, _clean(created_by)),
         )
-    return {"holiday_date": day.isoformat(), "name": label,
-            "is_restricted": bool(is_restricted)}
+    return {"holiday_date": day.isoformat(), "name": label, "is_restricted": bool(is_restricted)}
 
 
 def delete_holiday(holiday_date: str) -> bool:
     day = _as_date(holiday_date, "holiday_date")
     with db_session() as db:
-        cur = db.execute("DELETE FROM hospital_holidays WHERE holiday_date = ?",
-                         (day.isoformat(),))
+        cur = db.execute("DELETE FROM hospital_holidays WHERE holiday_date = ?", (day.isoformat(),))
         return bool(cur.rowcount)
 
 
 def _holiday_set(db, start: date, end: date) -> set[str]:
-    return {r["holiday_date"] for r in db.execute(
-        "SELECT holiday_date FROM hospital_holidays "
-        "WHERE holiday_date >= ? AND holiday_date <= ?",
-        (start.isoformat(), end.isoformat()),
-    ).fetchall()}
+    return {
+        r["holiday_date"]
+        for r in db.execute(
+            "SELECT holiday_date FROM hospital_holidays "
+            "WHERE holiday_date >= ? AND holiday_date <= ?",
+            (start.isoformat(), end.isoformat()),
+        ).fetchall()
+    }
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -686,23 +742,30 @@ def _rest_minutes(a: tuple[int, int], b: tuple[int, int]) -> int:
 MIN_REST_MINUTES = 8 * 60
 
 
-def _conflict_candidates(db, employee_code: str, day: date,
-                         exclude_id: Optional[int] = None) -> list[dict]:
+def _conflict_candidates(
+    db, employee_code: str, day: date, exclude_id: int | None = None
+) -> list[dict]:
     """Assignments that could possibly touch `day` — the day before, the day
     itself and the day after. A shift cannot be longer than 24h (schema CHECK),
     so nothing outside that window can overlap."""
-    sql = ("SELECT * FROM duty_roster WHERE employee_code = ? AND status <> 'cancelled' "
-           "AND roster_date >= ? AND roster_date <= ?")
-    params: list[Any] = [employee_code, (day - timedelta(days=1)).isoformat(),
-                         (day + timedelta(days=1)).isoformat()]
+    sql = (
+        "SELECT * FROM duty_roster WHERE employee_code = ? AND status <> 'cancelled' "
+        "AND roster_date >= ? AND roster_date <= ?"
+    )
+    params: list[Any] = [
+        employee_code,
+        (day - timedelta(days=1)).isoformat(),
+        (day + timedelta(days=1)).isoformat(),
+    ]
     if exclude_id is not None:
         sql += " AND id <> ?"
         params.append(exclude_id)
     return _rows(db.execute(sql, params).fetchall())
 
 
-def _describe_conflicts(db, employee_code: str, day: date, shift_code: str,
-                        exclude_id: Optional[int] = None) -> tuple[list[dict], list[dict]]:
+def _describe_conflicts(
+    db, employee_code: str, day: date, shift_code: str, exclude_id: int | None = None
+) -> tuple[list[dict], list[dict]]:
     """(blocking, advisory) for putting `employee_code` on `shift_code` on `day`."""
     shifts = _shift_map(db)
     if shift_code not in shifts:
@@ -716,46 +779,81 @@ def _describe_conflicts(db, employee_code: str, day: date, shift_code: str,
             # A roster row naming a shift that has since been deleted. It cannot
             # be placed on a timeline, so it cannot be proven safe either —
             # surfaced as advisory rather than silently ignored.
-            advisory.append({
-                "kind": "unknown_shift", "roster_id": other["id"],
-                "roster_date": other["roster_date"], "shift_code": other["shift_code"],
-                "department": other["department"],
-                "message": (f"Already assigned to shift {other['shift_code']} on "
-                            f"{other['roster_date']}, which is no longer a defined "
-                            "shift. Orb cannot check it for a clash."),
-            })
+            advisory.append(
+                {
+                    "kind": "unknown_shift",
+                    "roster_id": other["id"],
+                    "roster_date": other["roster_date"],
+                    "shift_code": other["shift_code"],
+                    "department": other["department"],
+                    "message": (
+                        f"Already assigned to shift {other['shift_code']} on "
+                        f"{other['roster_date']}, which is no longer a defined "
+                        "shift. Orb cannot check it for a clash."
+                    ),
+                }
+            )
             continue
         other_window = _absolute_window(_as_date(other["roster_date"]), other_shift)
         entry = {
-            "roster_id": other["id"], "roster_date": other["roster_date"],
-            "shift_code": other["shift_code"], "shift_name": other_shift["name"],
-            "department": other["department"], "ward": other["ward"],
+            "roster_id": other["id"],
+            "roster_date": other["roster_date"],
+            "shift_code": other["shift_code"],
+            "shift_name": other_shift["name"],
+            "department": other["department"],
+            "ward": other["ward"],
         }
         if _overlaps(window, other_window):
-            blocking.append({**entry, "kind": "overlap", "message": (
-                f"Already on {other_shift['name']} on {other['roster_date']}"
-                + (f" in {other['department']}" if other["department"] else "")
-                + ", the two shifts overlap.")})
+            blocking.append(
+                {
+                    **entry,
+                    "kind": "overlap",
+                    "message": (
+                        f"Already on {other_shift['name']} on {other['roster_date']}"
+                        + (f" in {other['department']}" if other["department"] else "")
+                        + ", the two shifts overlap."
+                    ),
+                }
+            )
             continue
         rest = _rest_minutes(window, other_window)
         if rest < MIN_REST_MINUTES:
-            advisory.append({**entry, "kind": "short_rest", "rest_minutes": rest,
-                             "message": (
-                                 f"Only {rest // 60}h {rest % 60:02d}m between this "
-                                 f"shift and {other_shift['name']} on "
-                                 f"{other['roster_date']}.")})
+            advisory.append(
+                {
+                    **entry,
+                    "kind": "short_rest",
+                    "rest_minutes": rest,
+                    "message": (
+                        f"Only {rest // 60}h {rest % 60:02d}m between this "
+                        f"shift and {other_shift['name']} on "
+                        f"{other['roster_date']}."
+                    ),
+                }
+            )
         elif _as_date(other["roster_date"]) == day:
-            advisory.append({**entry, "kind": "double_shift", "message": (
-                f"Also on {other_shift['name']} the same day.")})
+            advisory.append(
+                {
+                    **entry,
+                    "kind": "double_shift",
+                    "message": (f"Also on {other_shift['name']} the same day."),
+                }
+            )
     return blocking, advisory
 
 
-def assign_roster(*, roster_date: str, shift_code: str, employee_code: str,
-                  department: Optional[str] = None, ward: Optional[str] = None,
-                  assigned_role: Optional[str] = None,
-                  status: str = "planned", notes: Optional[str] = None,
-                  created_by: Optional[str] = None,
-                  allow_short_rest: bool = True) -> dict:
+def assign_roster(
+    *,
+    roster_date: str,
+    shift_code: str,
+    employee_code: str,
+    department: str | None = None,
+    ward: str | None = None,
+    assigned_role: str | None = None,
+    status: str = "planned",
+    notes: str | None = None,
+    created_by: str | None = None,
+    allow_short_rest: bool = True,
+) -> dict:
     """Put one person on one shift on one day.
 
     REFUSES on an overlapping assignment (`RosterConflict`) — nobody is in two
@@ -766,35 +864,45 @@ def assign_roster(*, roster_date: str, shift_code: str, employee_code: str,
     code = _require(shift_code, "shift_code").upper()
     employee = _require(employee_code, "employee_code").upper()
     if status not in ROSTER_STATUSES or status == "cancelled":
-        raise WorkforceError("status must be 'planned' or 'published'",
-                             code="bad_status")
+        raise WorkforceError("status must be 'planned' or 'published'", code="bad_status")
     with db_session() as db:
-        emp = db.execute("SELECT * FROM staff_employment WHERE employee_code = ?",
-                         (employee,)).fetchone()
+        emp = db.execute(
+            "SELECT * FROM staff_employment WHERE employee_code = ?", (employee,)
+        ).fetchone()
         if emp is None:
             raise WorkforceError(f"No employee with code {employee}", code="not_found")
         if not emp["is_active"]:
-            raise WorkforceError(f"{emp['full_name']} is not an active employee",
-                                 code="inactive_employee")
+            raise WorkforceError(
+                f"{emp['full_name']} is not an active employee", code="inactive_employee"
+            )
         blocking, advisory = _describe_conflicts(db, employee, day, code)
         if blocking:
             raise RosterConflict(
-                f"{emp['full_name']} is already rostered on an overlapping shift.",
-                blocking)
+                f"{emp['full_name']} is already rostered on an overlapping shift.", blocking
+            )
         if advisory and not allow_short_rest:
             raise RosterConflict(
                 f"{emp['full_name']} would have less than "
-                f"{MIN_REST_MINUTES // 60}h between shifts.", advisory)
+                f"{MIN_REST_MINUTES // 60}h between shifts.",
+                advisory,
+            )
         try:
             cur = db.execute(
                 """INSERT INTO duty_roster
                      (roster_date, shift_code, employee_code, department, ward,
                       assigned_role, status, notes, created_by)
                    VALUES (?,?,?,?,?,?,?,?,?)""",
-                (day.isoformat(), code, employee,
-                 _clean(department) or emp["department"], _clean(ward),
-                 _clean(assigned_role) or emp["designation"], status,
-                 _clean(notes), _clean(created_by)),
+                (
+                    day.isoformat(),
+                    code,
+                    employee,
+                    _clean(department) or emp["department"],
+                    _clean(ward),
+                    _clean(assigned_role) or emp["designation"],
+                    status,
+                    _clean(notes),
+                    _clean(created_by),
+                ),
             )
         except DBIntegrityError:
             # The partial unique index. Reachable when two ward clerks assign the
@@ -802,17 +910,22 @@ def assign_roster(*, roster_date: str, shift_code: str, employee_code: str,
             # the other transaction committed.
             raise RosterConflict(
                 f"{emp['full_name']} is already on {code} on {day.isoformat()}.",
-                [{"kind": "duplicate", "roster_date": day.isoformat(),
-                  "shift_code": code,
-                  "message": "This exact assignment already exists."}])
-        row = db.execute("SELECT * FROM duty_roster WHERE id = ?",
-                         (cur.lastrowid,)).fetchone()
+                [
+                    {
+                        "kind": "duplicate",
+                        "roster_date": day.isoformat(),
+                        "shift_code": code,
+                        "message": "This exact assignment already exists.",
+                    }
+                ],
+            ) from None
+        row = db.execute("SELECT * FROM duty_roster WHERE id = ?", (cur.lastrowid,)).fetchone()
     result = _row(row)
     result["warnings"] = advisory
     return result
 
 
-def cancel_roster_entry(roster_id: int, *, actor: Optional[str] = None) -> dict:
+def cancel_roster_entry(roster_id: int, *, actor: str | None = None) -> dict:
     with db_session() as db:
         row = db.execute("SELECT * FROM duty_roster WHERE id = ?", (roster_id,)).fetchone()
         if row is None:
@@ -826,8 +939,7 @@ def cancel_roster_entry(roster_id: int, *, actor: Optional[str] = None) -> dict:
     return _row(row)
 
 
-def find_conflicts(*, date_from: str, date_to: str,
-                   department: Optional[str] = None) -> list[dict]:
+def find_conflicts(*, date_from: str, date_to: str, department: str | None = None) -> list[dict]:
     """Every overlapping pair already ON the roster in a window.
 
     `assign_roster` refuses to create one, but a roster can still hold conflicts
@@ -839,14 +951,18 @@ def find_conflicts(*, date_from: str, date_to: str,
         raise WorkforceError("date_to is before date_from", code="bad_range")
     with db_session() as db:
         shifts = _shift_map(db)
-        params: list[Any] = [(start - timedelta(days=1)).isoformat(),
-                             (end + timedelta(days=1)).isoformat()]
-        sql = ("SELECT r.*, e.full_name FROM duty_roster r "
-               "LEFT JOIN staff_employment e ON e.employee_code = r.employee_code "
-               "WHERE r.status <> 'cancelled' AND r.roster_date >= ? AND r.roster_date <= ?")
+        params: list[Any] = [
+            (start - timedelta(days=1)).isoformat(),
+            (end + timedelta(days=1)).isoformat(),
+        ]
+        sql = (
+            "SELECT r.*, e.full_name FROM duty_roster r "
+            "LEFT JOIN staff_employment e ON e.employee_code = r.employee_code "
+            "WHERE r.status <> 'cancelled' AND r.roster_date >= ? AND r.roster_date <= ?"
+        )
         if _clean(department):
             sql += " AND r.department = ?"
-            params.append(_clean(department))
+            params.append(_clean(department) or "")
         rows = _rows(db.execute(sql + " ORDER BY r.employee_code, r.roster_date", params))
 
     by_employee: dict[str, list[dict]] = {}
@@ -871,24 +987,35 @@ def find_conflicts(*, date_from: str, date_to: str,
                 # night shift, and those neighbours are context, not findings.
                 if not any(start <= _as_date(x["roster_date"]) <= end for x in (a, b)):
                     continue
-                out.append({
-                    "employee_code": employee_code,
-                    "employee_name": a.get("full_name") or "Unknown employee",
-                    "kind": "overlap",
-                    "first": {"roster_id": a["id"], "roster_date": a["roster_date"],
-                              "shift_code": a["shift_code"], "department": a["department"]},
-                    "second": {"roster_id": b["id"], "roster_date": b["roster_date"],
-                               "shift_code": b["shift_code"], "department": b["department"]},
-                    "message": (f"{a.get('full_name') or employee_code} is on "
-                                f"{a['shift_code']} ({a['roster_date']}) and "
-                                f"{b['shift_code']} ({b['roster_date']}), these overlap."),
-                })
+                out.append(
+                    {
+                        "employee_code": employee_code,
+                        "employee_name": a.get("full_name") or "Unknown employee",
+                        "kind": "overlap",
+                        "first": {
+                            "roster_id": a["id"],
+                            "roster_date": a["roster_date"],
+                            "shift_code": a["shift_code"],
+                            "department": a["department"],
+                        },
+                        "second": {
+                            "roster_id": b["id"],
+                            "roster_date": b["roster_date"],
+                            "shift_code": b["shift_code"],
+                            "department": b["department"],
+                        },
+                        "message": (
+                            f"{a.get('full_name') or employee_code} is on "
+                            f"{a['shift_code']} ({a['roster_date']}) and "
+                            f"{b['shift_code']} ({b['roster_date']}), these overlap."
+                        ),
+                    }
+                )
     out.sort(key=lambda c: (c["first"]["roster_date"], c["employee_code"]))
     return out
 
 
-def get_roster(*, date_from: str, date_to: str,
-               department: Optional[str] = None) -> dict:
+def get_roster(*, date_from: str, date_to: str, department: str | None = None) -> dict:
     """The board: for each date and shift, who is planned and what happened.
 
     PLANNED vs ACTUAL is the whole point. `planned` is the roster row; `actual`
@@ -908,20 +1035,23 @@ def get_roster(*, date_from: str, date_to: str,
     with db_session() as db:
         shifts = _shift_map(db)
         params: list[Any] = [start.isoformat(), end.isoformat()]
-        sql = ("SELECT r.*, e.full_name, e.designation FROM duty_roster r "
-               "LEFT JOIN staff_employment e ON e.employee_code = r.employee_code "
-               "WHERE r.status <> 'cancelled' AND r.roster_date >= ? AND r.roster_date <= ?")
+        sql = (
+            "SELECT r.*, e.full_name, e.designation FROM duty_roster r "
+            "LEFT JOIN staff_employment e ON e.employee_code = r.employee_code "
+            "WHERE r.status <> 'cancelled' AND r.roster_date >= ? AND r.roster_date <= ?"
+        )
         if _clean(department):
             sql += " AND r.department = ?"
-            params.append(_clean(department))
-        roster_rows = _rows(db.execute(
-            sql + " ORDER BY r.roster_date, r.shift_code, e.full_name", params))
+            params.append(_clean(department) or "")
+        roster_rows = _rows(
+            db.execute(sql + " ORDER BY r.roster_date, r.shift_code, e.full_name", params)
+        )
 
         attendance = {
             (r["employee_code"], r["attendance_date"]): dict(r)
             for r in db.execute(
-                "SELECT * FROM attendance_days WHERE attendance_date >= ? "
-                "AND attendance_date <= ?", (start.isoformat(), end.isoformat()),
+                "SELECT * FROM attendance_days WHERE attendance_date >= ? AND attendance_date <= ?",
+                (start.isoformat(), end.isoformat()),
             ).fetchall()
         }
         holidays = _holiday_set(db, start, end)
@@ -930,43 +1060,63 @@ def get_roster(*, date_from: str, date_to: str,
     days: dict[str, dict] = {}
     for day in _daterange(start, end):
         key = day.isoformat()
-        days[key] = {"date": key, "is_holiday": key in holidays,
-                     "weekday": day.weekday(), "shifts": {}}
+        days[key] = {
+            "date": key,
+            "is_holiday": key in holidays,
+            "weekday": day.weekday(),
+            "shifts": {},
+        }
 
     for row in roster_rows:
         day_key = str(row["roster_date"])[:10]
-        bucket = days.setdefault(day_key, {"date": day_key, "is_holiday": False,
-                                           "weekday": _as_date(day_key).weekday(),
-                                           "shifts": {}})
+        bucket = days.setdefault(
+            day_key,
+            {
+                "date": day_key,
+                "is_holiday": False,
+                "weekday": _as_date(day_key).weekday(),
+                "shifts": {},
+            },
+        )
         shift = shifts.get(row["shift_code"])
-        slot = bucket["shifts"].setdefault(row["shift_code"], {
-            "shift_code": row["shift_code"],
-            "shift_name": shift["name"] if shift else row["shift_code"],
-            "start_time": shift["start_time"] if shift else None,
-            "end_time": shift["end_time"] if shift else None,
-            "assignments": [], "planned_count": 0, "present_count": 0,
-            "absent_count": 0, "leave_count": 0, "unrecorded_count": 0,
-            "scheduled_count": 0,
-        })
+        slot = bucket["shifts"].setdefault(
+            row["shift_code"],
+            {
+                "shift_code": row["shift_code"],
+                "shift_name": shift["name"] if shift else row["shift_code"],
+                "start_time": shift["start_time"] if shift else None,
+                "end_time": shift["end_time"] if shift else None,
+                "assignments": [],
+                "planned_count": 0,
+                "present_count": 0,
+                "absent_count": 0,
+                "leave_count": 0,
+                "unrecorded_count": 0,
+                "scheduled_count": 0,
+            },
+        )
         actual = attendance.get((row["employee_code"], day_key))
         if actual:
             actual_status = actual["status"]
         else:
             actual_status = "scheduled" if day_key > today_key else "unrecorded"
-        slot["assignments"].append({
-            "roster_id": row["id"],
-            "employee_code": row["employee_code"],
-            "employee_name": row.get("full_name") or "Unknown employee",
-            "designation": row.get("designation") or row.get("assigned_role"),
-            "department": row["department"], "ward": row["ward"],
-            "status": row["status"],
-            "actual_status": actual_status,
-            "actual_in": actual["first_in_at"] if actual else None,
-            "actual_out": actual["last_out_at"] if actual else None,
-            "worked_minutes": actual["worked_minutes"] if actual else 0,
-            "overtime_minutes": actual["overtime_minutes"] if actual else 0,
-            "late_minutes": actual["late_minutes"] if actual else 0,
-        })
+        slot["assignments"].append(
+            {
+                "roster_id": row["id"],
+                "employee_code": row["employee_code"],
+                "employee_name": row.get("full_name") or "Unknown employee",
+                "designation": row.get("designation") or row.get("assigned_role"),
+                "department": row["department"],
+                "ward": row["ward"],
+                "status": row["status"],
+                "actual_status": actual_status,
+                "actual_in": actual["first_in_at"] if actual else None,
+                "actual_out": actual["last_out_at"] if actual else None,
+                "worked_minutes": actual["worked_minutes"] if actual else 0,
+                "overtime_minutes": actual["overtime_minutes"] if actual else 0,
+                "late_minutes": actual["late_minutes"] if actual else 0,
+            }
+        )
         slot["planned_count"] += 1
         if actual_status == "present":
             slot["present_count"] += 1
@@ -984,17 +1134,18 @@ def get_roster(*, date_from: str, date_to: str,
         bucket = days[key]
         bucket["shifts"] = sorted(
             bucket["shifts"].values(),
-            key=lambda s: (shifts.get(s["shift_code"], {}).get("start_minute", 0),
-                           s["shift_code"]),
+            key=lambda s: (shifts.get(s["shift_code"], {}).get("start_minute", 0), s["shift_code"]),
         )
         ordered_days.append(bucket)
 
     return {
-        "date_from": start.isoformat(), "date_to": end.isoformat(),
+        "date_from": start.isoformat(),
+        "date_to": end.isoformat(),
         "department": _clean(department),
         "days": ordered_days,
-        "shift_types": [_shift_view(dict(s)) if not isinstance(s, dict) else s
-                        for s in shifts.values()],
+        "shift_types": [
+            _shift_view(dict(s)) if not isinstance(s, dict) else s for s in shifts.values()
+        ],
     }
 
 
@@ -1002,8 +1153,10 @@ def get_roster(*, date_from: str, date_to: str,
 #  Attendance
 # ═════════════════════════════════════════════════════════════════════════════
 
-def _compute_span(first_in: Optional[datetime], last_out: Optional[datetime],
-                  shift: Optional[dict], attendance_date: date) -> tuple[int, int, int]:
+
+def _compute_span(
+    first_in: datetime | None, last_out: datetime | None, shift: dict | None, attendance_date: date
+) -> tuple[int, int, int]:
     """(worked_minutes, late_minutes, overtime_minutes) for one day.
 
     OVERTIME IS A DAILY THRESHOLD, and the boundary is `>`, not `>=`: working
@@ -1018,14 +1171,16 @@ def _compute_span(first_in: Optional[datetime], last_out: Optional[datetime],
         raise WorkforceError(
             "Punch-out is not after punch-in. Both are full timestamps, so a "
             "night shift ending the next morning is fine. This one is not.",
-            code="bad_span")
+            code="bad_span",
+        )
     if span > config.WORKFORCE_MAX_SPAN_MINUTES:
         raise WorkforceError(
             f"{span // 60}h {span % 60:02d}m is longer than this site allows for a "
             f"single attendance record ({config.WORKFORCE_MAX_SPAN_MINUTES // 60}h). "
             "That is nearly always a punch-out that was never recorded; correct "
             "the times or raise ORB_WORKFORCE_MAX_SPAN_MINUTES.",
-            code="span_too_long")
+            code="span_too_long",
+        )
 
     late = 0
     if shift is not None:
@@ -1041,8 +1196,9 @@ def _compute_span(first_in: Optional[datetime], last_out: Optional[datetime],
         # reason (see migration `workforce_attendance`), so both halves of this
         # module agree on which day a night belongs to.
         tz = hospital_timezone()
-        scheduled = datetime.combine(attendance_date, datetime.min.time(), tzinfo=tz) \
-            + timedelta(minutes=shift["start_minute"])
+        scheduled = datetime.combine(attendance_date, datetime.min.time(), tzinfo=tz) + timedelta(
+            minutes=shift["start_minute"]
+        )
         grace = timedelta(minutes=config.WORKFORCE_LATE_GRACE_MINUTES)
         behind = int((first_in - scheduled).total_seconds() // 60)
         # A LATE MARK IS ONLY MEANINGFUL WITHIN THE SHIFT ITSELF.
@@ -1063,14 +1219,19 @@ def _compute_span(first_in: Optional[datetime], last_out: Optional[datetime],
     return span, late, overtime
 
 
-def record_attendance(*, employee_code: str, attendance_date: str, status: str,
-                      shift_code: Optional[str] = None,
-                      first_in_at: Optional[str] = None,
-                      last_out_at: Optional[str] = None,
-                      leave_type_code: Optional[str] = None,
-                      source: str = "manual",
-                      remarks: Optional[str] = None,
-                      recorded_by: Optional[str] = None) -> dict:
+def record_attendance(
+    *,
+    employee_code: str,
+    attendance_date: str,
+    status: str,
+    shift_code: str | None = None,
+    first_in_at: str | None = None,
+    last_out_at: str | None = None,
+    leave_type_code: str | None = None,
+    source: str = "manual",
+    remarks: str | None = None,
+    recorded_by: str | None = None,
+) -> dict:
     """Record (or correct) one employee's one day. Upsert on (employee, date).
 
     Correcting an existing day REPLACES it rather than adding a second row: two
@@ -1080,67 +1241,72 @@ def record_attendance(*, employee_code: str, attendance_date: str, status: str,
     employee = _require(employee_code, "employee_code").upper()
     day = _as_date(attendance_date, "attendance_date")
     if status not in DAY_STATUSES:
-        raise WorkforceError(
-            f"status must be one of {', '.join(DAY_STATUSES)}", code="bad_status")
+        raise WorkforceError(f"status must be one of {', '.join(DAY_STATUSES)}", code="bad_status")
     if source not in ATTENDANCE_SOURCES:
         raise WorkforceError("unknown attendance source", code="bad_source")
     if day > hospital_today():
-        raise WorkforceError(
-            "Attendance cannot be recorded for a future date.", code="future_date")
+        raise WorkforceError("Attendance cannot be recorded for a future date.", code="future_date")
 
-    code = _clean(shift_code).upper() if _clean(shift_code) else None
-    leave_code = _clean(leave_type_code).upper() if _clean(leave_type_code) else None
+    code = clean_shift.upper() if (clean_shift := _clean(shift_code)) else None
+    leave_code = clean_leave.upper() if (clean_leave := _clean(leave_type_code)) else None
 
     if status == "leave" and not leave_code:
         raise WorkforceError(
             "A leave day must name its leave type. The payroll provider cannot "
             "price a leave day that does not say which leave it was.",
-            code="leave_type_required")
+            code="leave_type_required",
+        )
     if status != "leave" and leave_code:
-        raise WorkforceError("leave_type_code is only valid on a leave day",
-                             code="leave_type_unexpected")
+        raise WorkforceError(
+            "leave_type_code is only valid on a leave day", code="leave_type_unexpected"
+        )
     if status != "present" and (first_in_at or last_out_at):
         raise WorkforceError(
             f"A '{status}' day cannot carry punch times. Record it as present if "
-            "the person worked.", code="times_on_non_present")
+            "the person worked.",
+            code="times_on_non_present",
+        )
     if status == "present" and not (first_in_at and last_out_at):
         raise WorkforceError(
             "A present day needs both a punch-in and a punch-out. Record what is "
             "known and correct it later rather than guessing the other half.",
-            code="times_required")
+            code="times_required",
+        )
 
     first_in = _as_instant(first_in_at, "first_in_at") if first_in_at else None
     last_out = _as_instant(last_out_at, "last_out_at") if last_out_at else None
 
     with db_session() as db:
-        emp = db.execute("SELECT * FROM staff_employment WHERE employee_code = ?",
-                         (employee,)).fetchone()
+        emp = db.execute(
+            "SELECT * FROM staff_employment WHERE employee_code = ?", (employee,)
+        ).fetchone()
         if emp is None:
             raise WorkforceError(f"No employee with code {employee}", code="not_found")
         joining = _as_date(emp["date_of_joining"]) if emp["date_of_joining"] else None
         exit_day = _as_date(emp["date_of_exit"]) if emp["date_of_exit"] else None
         if joining and day < joining:
             raise WorkforceError(
-                f"{emp['full_name']} joined on {joining.isoformat()}.",
-                code="before_joining")
+                f"{emp['full_name']} joined on {joining.isoformat()}.", code="before_joining"
+            )
         if exit_day and day > exit_day:
             raise WorkforceError(
-                f"{emp['full_name']} left on {exit_day.isoformat()}.",
-                code="after_exit")
+                f"{emp['full_name']} left on {exit_day.isoformat()}.", code="after_exit"
+            )
 
         shift = None
         if code:
-            shift_row = db.execute("SELECT * FROM duty_shift_types WHERE code = ?",
-                                   (code,)).fetchone()
+            shift_row = db.execute(
+                "SELECT * FROM duty_shift_types WHERE code = ?", (code,)
+            ).fetchone()
             if shift_row is None:
                 raise WorkforceError(f"Unknown shift {code}", code="unknown_shift")
             shift = _shift_view(dict(shift_row))
         if leave_code:
-            leave_row = db.execute("SELECT code FROM leave_types WHERE code = ?",
-                                   (leave_code,)).fetchone()
+            leave_row = db.execute(
+                "SELECT code FROM leave_types WHERE code = ?", (leave_code,)
+            ).fetchone()
             if leave_row is None:
-                raise WorkforceError(f"Unknown leave type {leave_code}",
-                                     code="unknown_leave_type")
+                raise WorkforceError(f"Unknown leave type {leave_code}", code="unknown_leave_type")
 
         worked, late, overtime = _compute_span(first_in, last_out, shift, day)
 
@@ -1159,9 +1325,21 @@ def record_attendance(*, employee_code: str, attendance_date: str, status: str,
                  overtime_minutes=excluded.overtime_minutes,
                  source=excluded.source, remarks=excluded.remarks,
                  recorded_by=excluded.recorded_by, updated_at=CURRENT_TIMESTAMP""",
-            (day.isoformat(), employee, code, status, leave_code,
-             _iso(first_in), _iso(last_out), worked, late, overtime,
-             source, _clean(remarks), _clean(recorded_by)),
+            (
+                day.isoformat(),
+                employee,
+                code,
+                status,
+                leave_code,
+                _iso(first_in),
+                _iso(last_out),
+                worked,
+                late,
+                overtime,
+                source,
+                _clean(remarks),
+                _clean(recorded_by),
+            ),
         )
         row = db.execute(
             "SELECT * FROM attendance_days WHERE employee_code = ? AND attendance_date = ?",
@@ -1174,9 +1352,9 @@ def record_attendance(*, employee_code: str, attendance_date: str, status: str,
     return out
 
 
-def list_attendance(*, date_from: str, date_to: str,
-                    department: Optional[str] = None,
-                    employee_code: Optional[str] = None) -> list[dict]:
+def list_attendance(
+    *, date_from: str, date_to: str, department: str | None = None, employee_code: str | None = None
+) -> list[dict]:
     start, end = _as_date(date_from, "date_from"), _as_date(date_to, "date_to")
     if end < start:
         raise WorkforceError("date_to is before date_from", code="bad_range")
@@ -1184,17 +1362,20 @@ def list_attendance(*, date_from: str, date_to: str,
     params: list[Any] = [start.isoformat(), end.isoformat()]
     if _clean(department):
         clauses.append("e.department = ?")
-        params.append(_clean(department))
+        params.append(_clean(department) or "")
     if _clean(employee_code):
         clauses.append("a.employee_code = ?")
-        params.append(_clean(employee_code).upper())
+        params.append((_clean(employee_code) or "").upper())
     with db_session() as db:
-        rows = _rows(db.execute(
-            "SELECT a.*, e.full_name, e.department, e.designation FROM attendance_days a "
-            "LEFT JOIN staff_employment e ON e.employee_code = a.employee_code "
-            f"WHERE {' AND '.join(clauses)} "
-            "ORDER BY a.attendance_date DESC, e.full_name", params,
-        ))
+        rows = _rows(
+            db.execute(
+                "SELECT a.*, e.full_name, e.department, e.designation FROM attendance_days a "
+                "LEFT JOIN staff_employment e ON e.employee_code = a.employee_code "
+                f"WHERE {' AND '.join(clauses)} "
+                "ORDER BY a.attendance_date DESC, e.full_name",
+                params,
+            )
+        )
     for row in rows:
         row["employee_name"] = row.pop("full_name", None) or "Unknown employee"
         row["worked_hours"] = minutes_to_hours(row["worked_minutes"])
@@ -1205,6 +1386,7 @@ def list_attendance(*, date_from: str, date_to: str,
 # ═════════════════════════════════════════════════════════════════════════════
 #  Monthly summary — the arithmetic everything downstream trusts
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 @dataclass(frozen=True)
 class _Buckets:
@@ -1217,9 +1399,15 @@ class _Buckets:
     unrecorded: int = 0
 
 
-def _classify_period(employee: dict, start: date, end: date,
-                     attendance: dict[str, dict], holidays: set[str],
-                     paid_leave: dict[str, bool], today: Optional[date] = None) -> dict:
+def _classify_period(
+    employee: dict,
+    start: date,
+    end: date,
+    attendance: dict[str, dict],
+    holidays: set[str],
+    paid_leave: dict[str, bool],
+    today: date | None = None,
+) -> dict:
     """Assign EVERY day in [start, end] ∩ employment to exactly one bucket.
 
     The order of the tests below is the whole design:
@@ -1247,8 +1435,15 @@ def _classify_period(employee: dict, start: date, end: date,
     exit_day = _as_date(employee["date_of_exit"]) if employee["date_of_exit"] else None
     weekly_off = employee["weekly_off_day"]
 
-    counts = {"present": 0, "absent": 0, "leave_paid": 0, "leave_unpaid": 0,
-              "weekly_off": 0, "holiday": 0, "unrecorded": 0}
+    counts = {
+        "present": 0,
+        "absent": 0,
+        "leave_paid": 0,
+        "leave_unpaid": 0,
+        "weekly_off": 0,
+        "holiday": 0,
+        "unrecorded": 0,
+    }
     worked_minutes = overtime_minutes = late_minutes = late_marks = 0
     night = evening = holiday_shift = weekly_off_worked = 0
     leave_by_type: dict[str, int] = {}
@@ -1369,7 +1564,7 @@ def _load_period(db, start: date, end: date, employees: list[dict]) -> tuple[dic
         # Chunked so a hospital with more than SQLite's 999-variable limit worth
         # of staff still gets an answer instead of an OperationalError.
         for i in range(0, len(codes), 400):
-            chunk = codes[i:i + 400]
+            chunk = codes[i : i + 400]
             placeholders = ",".join("?" for _ in chunk)
             rows = db.execute(
                 f"SELECT a.*, s.allowance_code FROM attendance_days a "
@@ -1381,10 +1576,13 @@ def _load_period(db, start: date, end: date, employees: list[dict]) -> tuple[dic
             for r in rows:
                 row = dict(r)
                 attendance.setdefault(row["employee_code"], {})[
-                    str(row["attendance_date"])[:10]] = row
+                    str(row["attendance_date"])[:10]
+                ] = row
     holidays = _holiday_set(db, start, end)
-    paid_leave = {r["code"]: bool(r["is_paid"])
-                  for r in db.execute("SELECT code, is_paid FROM leave_types").fetchall()}
+    paid_leave = {
+        r["code"]: bool(r["is_paid"])
+        for r in db.execute("SELECT code, is_paid FROM leave_types").fetchall()
+    }
     return attendance, holidays, paid_leave
 
 
@@ -1398,42 +1596,59 @@ def monthly_summary(*, employee_code: str, year: int, month: int) -> dict:
     start, end = period_bounds(year, month)
     employee = get_employee(employee_code)
     with db_session() as db:
-        row = db.execute("SELECT * FROM staff_employment WHERE employee_code = ?",
-                         (employee["employee_code"],)).fetchone()
+        row = db.execute(
+            "SELECT * FROM staff_employment WHERE employee_code = ?", (employee["employee_code"],)
+        ).fetchone()
         attendance, holidays, paid_leave = _load_period(db, start, end, [dict(row)])
-    summary = _classify_period(dict(row), start, end,
-                               attendance.get(employee["employee_code"], {}),
-                               holidays, paid_leave)
+    summary = _classify_period(
+        dict(row), start, end, attendance.get(employee["employee_code"], {}), holidays, paid_leave
+    )
     return _with_identity(summary)
 
 
 def _with_identity(summary: dict) -> dict:
-    buckets = (summary["days_present"] + summary["days_absent"]
-               + summary["days_leave_total"] + summary["days_unrecorded"]
-               + summary["days_weekly_off"] + summary["days_holiday"])
+    buckets = (
+        summary["days_present"]
+        + summary["days_absent"]
+        + summary["days_leave_total"]
+        + summary["days_unrecorded"]
+        + summary["days_weekly_off"]
+        + summary["days_holiday"]
+    )
     summary["identity"] = {
         "buckets_sum": buckets,
         "days_in_period": summary["days_in_period"],
         "holds": buckets == summary["days_in_period"]
-        and (summary["days_present"] + summary["days_absent"]
-             + summary["days_leave_total"] + summary["days_unrecorded"]
-             == summary["days_working"]),
-        "statement": ("present + absent + leave + unrecorded + weekly off + holiday "
-                      "= days in period; present + absent + leave + unrecorded "
-                      "= working days"),
+        and (
+            summary["days_present"]
+            + summary["days_absent"]
+            + summary["days_leave_total"]
+            + summary["days_unrecorded"]
+            == summary["days_working"]
+        ),
+        "statement": (
+            "present + absent + leave + unrecorded + weekly off + holiday "
+            "= days in period; present + absent + leave + unrecorded "
+            "= working days"
+        ),
     }
     if not summary["identity"]["holds"]:
         # Not raised: a summary that refuses to render leaves a payroll clerk
         # with nothing at all. Logged loudly and flagged in the payload so the
         # screen can say the number is not trustworthy.
-        logger.error("workforce summary identity FAILED for %s %s..%s: %s",
-                     summary["employee_code"], summary["period_start"],
-                     summary["period_end"], summary["identity"])
+        logger.error(
+            "workforce summary identity FAILED for %s %s..%s: %s",
+            summary["employee_code"],
+            summary["period_start"],
+            summary["period_end"],
+            summary["identity"],
+        )
     return summary
 
 
-def period_summaries(*, year: int, month: int, department: Optional[str] = None,
-                     include_inactive: bool = False) -> dict:
+def period_summaries(
+    *, year: int, month: int, department: str | None = None, include_inactive: bool = False
+) -> dict:
     """Every employee's month, in one pass. The export and the UI both read this
     so the screen and the file can never disagree."""
     start, end = period_bounds(year, month)
@@ -1447,32 +1662,46 @@ def period_summaries(*, year: int, month: int, department: Optional[str] = None,
         params.append(start.isoformat())
     if _clean(department):
         clauses.append("department = ?")
-        params.append(_clean(department))
+        params.append(_clean(department) or "")
     # Somebody who joins after the period ends was never in it.
     clauses.append("(date_of_joining IS NULL OR date_of_joining <= ?)")
     params.append(end.isoformat())
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
 
     with db_session() as db:
-        employees = _rows(db.execute(
-            f"SELECT * FROM staff_employment{where} ORDER BY department, full_name",
-            params,
-        ))
+        employees = _rows(
+            db.execute(
+                f"SELECT * FROM staff_employment{where} ORDER BY department, full_name",
+                params,
+            )
+        )
         attendance, holidays, paid_leave = _load_period(db, start, end, employees)
 
     today = hospital_today()
-    rows = [_with_identity(_classify_period(
-        emp, start, end, attendance.get(emp["employee_code"], {}), holidays, paid_leave,
-        today=today))
-        for emp in employees]
+    rows = [
+        _with_identity(
+            _classify_period(
+                emp,
+                start,
+                end,
+                attendance.get(emp["employee_code"], {}),
+                holidays,
+                paid_leave,
+                today=today,
+            )
+        )
+        for emp in employees
+    ]
     # Nobody who was not employed for a single day of the period. Days still to
     # come count: a future month still lists the people rostered into it.
     rows = [r for r in rows if r["days_in_period"] + r["days_still_to_come"] > 0]
 
     incomplete = [r for r in rows if not r["attendance_complete"]]
     return {
-        "period_start": start.isoformat(), "period_end": end.isoformat(),
-        "year": start.year, "month": start.month,
+        "period_start": start.isoformat(),
+        "period_end": end.isoformat(),
+        "year": start.year,
+        "month": start.month,
         "department": _clean(department),
         # The last day counted (today, inside an open month), None when the
         # whole period is still to come, and whether the period is over.
@@ -1501,8 +1730,8 @@ def period_summaries(*, year: int, month: int, department: Optional[str] = None,
 #  Payroll export
 # ═════════════════════════════════════════════════════════════════════════════
 
-def build_payroll_export(*, year: int, month: int,
-                         department: Optional[str] = None) -> dict:
+
+def build_payroll_export(*, year: int, month: int, department: str | None = None) -> dict:
     """The rows a payroll bureau receives, as dicts keyed by the exact columns.
 
     Every statutory column is the EMPTY STRING and every row says
@@ -1558,7 +1787,7 @@ def build_payroll_export(*, year: int, month: int,
             "This month is not over. The file counts attendance up to "
             f"{summary['counted_through'] or 'nothing yet'}, and the {to_come} "
             f"{'day' if to_come == 1 else 'days'} still to come are not in any column. "
-            "Every row says \"no\" under \"attendance_complete\" until the month closes."
+            'Every row says "no" under "attendance_complete" until the month closes.'
         )
     if summary["unrecorded_day_count"]:
         people = sum(1 for e in summary["employees"] if e["days_unrecorded"])
@@ -1566,14 +1795,15 @@ def build_payroll_export(*, year: int, month: int,
         warnings.append(
             f"{people} {'employee has' if people == 1 else 'employees have'} {days} past "
             f"{'day' if days == 1 else 'days'} with no attendance record. Those days go "
-            "in the \"days_unrecorded\" column and the row says \"no\" under "
-            "\"attendance_complete\". Orb does not guess them: a missing day is "
+            'in the "days_unrecorded" column and the row says "no" under '
+            '"attendance_complete". Orb does not guess them: a missing day is '
             "not an absence."
         )
     if not summary["identity_holds"]:
         warnings.append(
             "The day buckets do not sum to the days in the period for at least "
-            "one employee. Do not send this file. Raise it as a defect.")
+            "one employee. Do not send this file. Raise it as a defect."
+        )
     if not rows:
         warnings.append("No employees fall inside this period.")
 
@@ -1582,27 +1812,27 @@ def build_payroll_export(*, year: int, month: int,
         "rows": rows,
         "period_start": summary["period_start"],
         "period_end": summary["period_end"],
-        "year": summary["year"], "month": summary["month"],
+        "year": summary["year"],
+        "month": summary["month"],
         "department": summary["department"],
         "employee_count": summary["employee_count"],
         "incomplete_employee_count": summary["incomplete_employee_count"],
         "counted_through": summary["counted_through"],
         "period_closed": summary["period_closed"],
         "still_to_come_day_count": summary["still_to_come_day_count"],
-        "file_name": _export_filename(summary["year"], summary["month"],
-                                      summary["department"]),
+        "file_name": _export_filename(summary["year"], summary["month"], summary["department"]),
         "warnings": warnings,
         "statutory_note": (
             "PF, ESI, Professional Tax and TDS columns are intentionally empty. "
             "They are computed by the hospital's payroll provider, not by Orb, "
             "those rules change with each budget and differ by state, and every "
-            "row of this file records that in its \"statutory_computed_by\" "
-            f"column (\"{STATUTORY_COMPUTED_BY}\")."
+            'row of this file records that in its "statutory_computed_by" '
+            f'column ("{STATUTORY_COMPUTED_BY}").'
         ),
     }
 
 
-def _export_filename(year: int, month: int, department: Optional[str]) -> str:
+def _export_filename(year: int, month: int, department: str | None) -> str:
     suffix = ""
     if department:
         safe = "".join(ch if ch.isalnum() else "-" for ch in department).strip("-")
@@ -1618,18 +1848,22 @@ def render_payroll_csv(export: dict) -> str:
     4180 is what those tools expect. Missing keys are written as empty, never
     skipped: a short row would silently shift every subsequent column."""
     buf = io.StringIO()
-    writer = csv.DictWriter(buf, fieldnames=list(PAYROLL_EXPORT_COLUMNS),
-                            lineterminator="\r\n", extrasaction="ignore",
-                            restval="")
+    writer = csv.DictWriter(
+        buf,
+        fieldnames=list(PAYROLL_EXPORT_COLUMNS),
+        lineterminator="\r\n",
+        extrasaction="ignore",
+        restval="",
+    )
     writer.writeheader()
     for row in export["rows"]:
         writer.writerow(row)
     return buf.getvalue()
 
 
-def record_export_run(export: dict, csv_text: str, *,
-                      generated_by: Optional[str] = None,
-                      notes: Optional[str] = None) -> dict:
+def record_export_run(
+    export: dict, csv_text: str, *, generated_by: str | None = None, notes: str | None = None
+) -> dict:
     """Persist WHAT LEFT THE BUILDING: the header order, the row count and the
     SHA-256 of the exact bytes. Three months later a bureau asks why an
     employee's overtime is 6 hours; the answer is this checksum against the file
@@ -1643,19 +1877,32 @@ def record_export_run(export: dict, csv_text: str, *,
                   employee_count, incomplete_employee_count, column_signature,
                   sha256, generated_by, notes)
                VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-            (export["period_start"], export["period_end"], export["department"],
-             export["file_name"], len(export["rows"]), export["employee_count"],
-             export["incomplete_employee_count"], header, digest,
-             _clean(generated_by), _clean(notes)),
+            (
+                export["period_start"],
+                export["period_end"],
+                export["department"],
+                export["file_name"],
+                len(export["rows"]),
+                export["employee_count"],
+                export["incomplete_employee_count"],
+                header,
+                digest,
+                _clean(generated_by),
+                _clean(notes),
+            ),
         )
-        row = db.execute("SELECT * FROM payroll_export_runs WHERE id = ?",
-                         (cur.lastrowid,)).fetchone()
+        row = db.execute(
+            "SELECT * FROM payroll_export_runs WHERE id = ?", (cur.lastrowid,)
+        ).fetchone()
     return _row(row)
 
 
 def list_export_runs(*, limit: int = 25) -> list[dict]:
     limit = max(1, min(int(limit), 200))
     with db_session() as db:
-        return _rows(db.execute(
-            "SELECT * FROM payroll_export_runs ORDER BY generated_at DESC, id DESC "
-            "LIMIT ?", (limit,)))
+        return _rows(
+            db.execute(
+                "SELECT * FROM payroll_export_runs ORDER BY generated_at DESC, id DESC LIMIT ?",
+                (limit,),
+            )
+        )

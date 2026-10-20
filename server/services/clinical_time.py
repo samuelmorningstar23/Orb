@@ -39,10 +39,10 @@ A naive value means a zone, and which zone depends on who wrote it:
 `services/hospital_time.py` answers "what day is it on the ward" and never
 formats stored data; this module only formats stored data.
 """
+
 from __future__ import annotations
 
-from datetime import datetime, timezone, tzinfo
-from typing import Optional, Union
+from datetime import UTC, datetime, tzinfo
 
 # The canonical spelling as a SQLite GLOB, for the migration and the tests.
 CANONICAL_GLOB = (
@@ -56,16 +56,15 @@ def format_utc(dt: datetime) -> str:
     the caller has to say which zone it is in (see `to_utc_iso`)."""
     if dt.tzinfo is None or dt.utcoffset() is None:
         raise ValueError("naive datetime: pass it through to_utc_iso with its zone")
-    return dt.astimezone(timezone.utc).isoformat(timespec="microseconds")
+    return dt.astimezone(UTC).isoformat(timespec="microseconds")
 
 
 def utc_iso_now() -> str:
     """Now, in the canonical spelling."""
-    return format_utc(datetime.now(timezone.utc))
+    return format_utc(datetime.now(UTC))
 
 
-def parse_to_utc(value: Union[str, datetime], *,
-                 naive_tz: Optional[tzinfo] = None) -> datetime:
+def parse_to_utc(value: str | datetime, *, naive_tz: tzinfo | None = None) -> datetime:
     """Any stored or received spelling to an aware UTC datetime.
 
     Accepts a datetime, ISO 8601 with 'Z' or any offset, and SQLite's
@@ -82,12 +81,11 @@ def parse_to_utc(value: Union[str, datetime], *,
             text = text[:-1] + "+00:00"
         dt = datetime.fromisoformat(text)
     if dt.tzinfo is None or dt.utcoffset() is None:
-        dt = dt.replace(tzinfo=naive_tz or timezone.utc)
-    return dt.astimezone(timezone.utc)
+        dt = dt.replace(tzinfo=naive_tz or UTC)
+    return dt.astimezone(UTC)
 
 
-def to_utc_iso(value: Union[str, datetime], *,
-               naive_tz: Optional[tzinfo] = None) -> str:
+def to_utc_iso(value: str | datetime, *, naive_tz: tzinfo | None = None) -> str:
     """Any accepted spelling (see `parse_to_utc`) in the canonical spelling."""
     return format_utc(parse_to_utc(value, naive_tz=naive_tz))
 
@@ -153,8 +151,12 @@ def backfill_canonical_timestamps(conn) -> dict:
             continue
         cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
         source_sql = ", source" if (table == "vitals" and "source" in cols) else ", NULL"
-        c = {"rewritten": 0, "unparseable": 0, "naive_read_as_utc": 0,
-             "naive_read_in_device_zone": 0}
+        c = {
+            "rewritten": 0,
+            "unparseable": 0,
+            "naive_read_as_utc": 0,
+            "naive_read_in_device_zone": 0,
+        }
         last_id = 0
         while True:
             rows = conn.execute(
@@ -170,15 +172,19 @@ def backfill_canonical_timestamps(conn) -> dict:
             updates = []
             for row_id, raw, source in ((r[0], r[1], r[2]) for r in rows):
                 try:
-                    probe = parse_to_utc(raw, naive_tz=timezone.utc)
+                    probe = parse_to_utc(raw, naive_tz=UTC)
                     naive = not _has_offset(raw)
-                    device = (naive and table == "vitals"
-                              and (source or "").strip().lower() not in _ORB_WRITTEN_VITALS_SOURCES)
+                    device = (
+                        naive
+                        and table == "vitals"
+                        and (source or "").strip().lower() not in _ORB_WRITTEN_VITALS_SOURCES
+                    )
                     new = to_utc_iso(raw, naive_tz=device_tz) if device else format_utc(probe)
                 except (TypeError, ValueError):
                     c["unparseable"] += 1
-                    log.warning("timestamp backfill: %s id %s left as %r (unparseable)",
-                                table, row_id, raw)
+                    log.warning(
+                        "timestamp backfill: %s id %s left as %r (unparseable)", table, row_id, raw
+                    )
                     continue
                 if naive:
                     c["naive_read_in_device_zone" if device else "naive_read_as_utc"] += 1
@@ -201,8 +207,10 @@ def backfill_canonical_timestamps(conn) -> dict:
             db=conn,
             summary_message=(
                 "vitals/risk_scores timestamps rewritten to one UTC spelling: "
-                + ", ".join(f"{t} {c['rewritten']} rewritten, {c['unparseable']} unparseable"
-                            for t, c in counts.items())
+                + ", ".join(
+                    f"{t} {c['rewritten']} rewritten, {c['unparseable']} unparseable"
+                    for t, c in counts.items()
+                )
             ),
             actor_user_id="system",
             metadata={"counts": counts, "device_zone": _zone_name(device_tz)},

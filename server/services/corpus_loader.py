@@ -43,6 +43,7 @@ tables when its own corpus fingerprint changes. Run this loader AFTER boot to ex
 the corpus; a fingerprint-unchanged boot keeps loaded docs intact (see that module's
 fast-path). This loader never edits clinical_knowledge.py — it only reuses its tables.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -51,11 +52,9 @@ import json
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-
-import numpy as np
+from typing import Any
 
 from config import EMBEDDING_DIM
 from database import db_session
@@ -88,7 +87,7 @@ def _real_embedder_available() -> bool:
     return importlib.util.find_spec("FlagEmbedding") is not None
 
 
-def _embed_composites(texts: List[str]) -> List[bytes]:
+def _embed_composites(texts: list[str]) -> list[bytes]:
     """Embed chunk composite texts, reusing clinical_knowledge's embedder.
 
     Only called when :func:`_real_embedder_available` is True.
@@ -110,13 +109,13 @@ def _embed_composites(texts: List[str]) -> List[bytes]:
 _FRONT_MATTER_RE = re.compile(r"^﻿?---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
 
 
-def _parse_front_matter(text: str) -> Tuple[Dict[str, Any], str]:
+def _parse_front_matter(text: str) -> tuple[dict[str, Any], str]:
     """Split leading ``---`` YAML front-matter from the body. Returns (meta, body)."""
     m = _FRONT_MATTER_RE.match(text)
     if not m:
         return {}, text
     raw, body = m.group(1), m.group(2)
-    meta: Dict[str, Any] = {}
+    meta: dict[str, Any] = {}
     try:
         import yaml  # PyYAML is available in the runtime; degrade if not.
 
@@ -133,9 +132,9 @@ def _parse_front_matter(text: str) -> Tuple[Dict[str, Any], str]:
     return meta, body
 
 
-def _parse_simple_kv(raw: str) -> Dict[str, Any]:
+def _parse_simple_kv(raw: str) -> dict[str, Any]:
     """Minimal ``key: value`` fallback parser when PyYAML is unavailable."""
-    meta: Dict[str, Any] = {}
+    meta: dict[str, Any] = {}
     for line in raw.splitlines():
         line = line.rstrip()
         if not line or line.lstrip().startswith("#") or ":" not in line:
@@ -145,7 +144,7 @@ def _parse_simple_kv(raw: str) -> Dict[str, Any]:
     return meta
 
 
-def _load_sidecar(path: Path) -> Dict[str, Any]:
+def _load_sidecar(path: Path) -> dict[str, Any]:
     """Load a JSON metadata sidecar if one sits next to the file."""
     candidates = [
         path.with_name(path.stem + ".meta.json"),
@@ -166,7 +165,7 @@ def _load_sidecar(path: Path) -> Dict[str, Any]:
 # ─────────────────────────────────────────────────────────────────────────────
 # Chunking (heading + paragraph aware, char-target with overlap)
 # ─────────────────────────────────────────────────────────────────────────────
-def _first_heading(body: str) -> Optional[str]:
+def _first_heading(body: str) -> str | None:
     for line in body.splitlines():
         m = re.match(r"^#{1,6}\s+(.*)", line)
         if m:
@@ -176,11 +175,11 @@ def _first_heading(body: str) -> Optional[str]:
     return None
 
 
-def _split_sections(body: str) -> List[Tuple[Optional[str], str]]:
+def _split_sections(body: str) -> list[tuple[str | None, str]]:
     """Break a document into (heading, section_body) pairs on markdown headings."""
-    sections: List[Tuple[Optional[str], str]] = []
-    heading: Optional[str] = None
-    buf: List[str] = []
+    sections: list[tuple[str | None, str]] = []
+    heading: str | None = None
+    buf: list[str] = []
     for line in body.splitlines():
         m = re.match(r"^#{1,6}\s+(.*)", line)
         if m:
@@ -195,7 +194,7 @@ def _split_sections(body: str) -> List[Tuple[Optional[str], str]]:
     return sections
 
 
-def _word_wrap(text: str, target: int) -> List[str]:
+def _word_wrap(text: str, target: int) -> list[str]:
     """Hard-wrap an over-long unit on word boundaries."""
     words = text.split()
     out, cur = [], ""
@@ -210,7 +209,7 @@ def _word_wrap(text: str, target: int) -> List[str]:
     return out
 
 
-def _chunk_text(text: str, target: int, overlap: int) -> List[str]:
+def _chunk_text(text: str, target: int, overlap: int) -> list[str]:
     """Pack paragraphs into ~``target``-char chunks with a small trailing overlap."""
     text = re.sub(r"\n{3,}", "\n\n", text.strip())
     if not text:
@@ -219,7 +218,7 @@ def _chunk_text(text: str, target: int, overlap: int) -> List[str]:
         return [text]
 
     # Break into units no larger than target (paragraphs, then sentences, then words).
-    units: List[str] = []
+    units: list[str] = []
     for para in (p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()):
         if len(para) <= target:
             units.append(para)
@@ -230,14 +229,14 @@ def _chunk_text(text: str, target: int, overlap: int) -> List[str]:
                 continue
             units.extend([sent] if len(sent) <= target else _word_wrap(sent, target))
 
-    chunks: List[str] = []
+    chunks: list[str] = []
     buf = ""
     for unit in units:
         if buf and len(buf) + 2 + len(unit) > target:
             chunks.append(buf)
             tail = buf[-overlap:]
             sp = tail.find(" ")
-            tail = tail[sp + 1:] if sp != -1 else ""
+            tail = tail[sp + 1 :] if sp != -1 else ""
             buf = f"{tail} {unit}".strip() if tail else unit
         else:
             buf = f"{buf}\n\n{unit}".strip() if buf else unit
@@ -250,10 +249,10 @@ def chunk_markdown(
     body: str,
     target: int = CHUNK_TARGET_CHARS,
     overlap: int = CHUNK_OVERLAP_CHARS,
-) -> List[str]:
+) -> list[str]:
     """Split a document body into overlapping chunks, prefixing each with its heading."""
     sections = _split_sections(body) or [(None, body)]
-    chunks: List[str] = []
+    chunks: list[str] = []
     for heading, sec_body in sections:
         pieces = _chunk_text(sec_body, target, overlap)
         if not pieces and heading:
@@ -269,7 +268,7 @@ def chunk_markdown(
 # ─────────────────────────────────────────────────────────────────────────────
 # Store schema (mirrors clinical_knowledge.init_knowledge_base exactly)
 # ─────────────────────────────────────────────────────────────────────────────
-def _ensure_store(db) -> Tuple[bool, bool]:
+def _ensure_store(db) -> tuple[bool, bool]:
     """Create the shared retrieval tables (if absent) + loader bookkeeping table.
 
     Returns (fts_available, vec_available).
@@ -395,7 +394,7 @@ def _delete_document(db, document_id: str, fts: bool, vec: bool) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 # Metadata resolution
 # ─────────────────────────────────────────────────────────────────────────────
-_SEED_IDS_CACHE: Optional[set] = None
+_SEED_IDS_CACHE: set | None = None
 
 
 def _seed_document_ids() -> set:
@@ -405,8 +404,10 @@ def _seed_document_ids() -> set:
     if _SEED_IDS_CACHE is None:
         try:
             import services.clinical_knowledge as ck
+
             _SEED_IDS_CACHE = {
-                str(d.get("document_id")) for d in getattr(ck, "CLINICAL_DOCUMENTS", [])
+                str(d.get("document_id"))
+                for d in getattr(ck, "CLINICAL_DOCUMENTS", [])
                 if d.get("document_id")
             }
         except Exception:
@@ -420,8 +421,8 @@ def _slug(text: str) -> str:
 
 
 def _resolve_metadata(
-    path: Path, meta: Dict[str, Any], body: str, default_trust_tier: int
-) -> Dict[str, Any]:
+    path: Path, meta: dict[str, Any], body: str, default_trust_tier: int
+) -> dict[str, Any]:
     stem = path.stem
     try:
         trust_tier = int(meta.get("trust_tier", default_trust_tier) or default_trust_tier)
@@ -435,8 +436,12 @@ def _resolve_metadata(
     )
     document_id = str(meta.get("document_id") or _slug(stem))
     source = str(meta.get("source") or title)
-    source_type = str(meta.get("source_type") or _TIER_SOURCE_TYPE.get(trust_tier, "external_guideline"))
-    source_origin = str(meta.get("source_origin") or ("demo_local" if trust_tier == 1 else "external"))
+    source_type = str(
+        meta.get("source_type") or _TIER_SOURCE_TYPE.get(trust_tier, "external_guideline")
+    )
+    source_origin = str(
+        meta.get("source_origin") or ("demo_local" if trust_tier == 1 else "external")
+    )
     return {
         "document_id": document_id,
         "title": title,
@@ -455,13 +460,15 @@ def _resolve_metadata(
 # ─────────────────────────────────────────────────────────────────────────────
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
-def load_file(db, path: Path, default_trust_tier: int, fts: bool, vec: bool, embed: bool) -> Dict[str, Any]:
+def load_file(
+    db, path: Path, default_trust_tier: int, fts: bool, vec: bool, embed: bool
+) -> dict[str, Any]:
     """Parse + chunk + (re-)insert a single guideline file. Returns a per-file summary."""
     text = path.read_text(encoding="utf-8")
     front_meta, body = _parse_front_matter(text)
-    combined: Dict[str, Any] = {}
+    combined: dict[str, Any] = {}
     combined.update(_load_sidecar(path))  # sidecar first…
-    combined.update(front_meta)           # …front-matter wins
+    combined.update(front_meta)  # …front-matter wins
     md = _resolve_metadata(path, combined, body, default_trust_tier)
 
     # Safety: never let a loader document_id collide with a built-in seed
@@ -481,7 +488,7 @@ def load_file(db, path: Path, default_trust_tier: int, fts: bool, vec: bool, emb
     # pass, starving every other writer in the server process.
     chunks = chunk_markdown(body)
 
-    embeddings: Optional[List[bytes]] = None
+    embeddings: list[bytes] | None = None
     if chunks and embed and vec:
         composites = [
             f"Title: {md['title']}\nCategory: {md['category']}\nSource: {md['source']}\nContent: {c}"
@@ -511,13 +518,24 @@ def load_file(db, path: Path, default_trust_tier: int, fts: bool, vec: bool, emb
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                md["document_id"], idx, md["category"], md["title"], chunk, md["source"],
-                md["source_type"], md["source_origin"], md["trust_tier"], md["specialty"],
-                md["effective_date"], md["version"], int(md["is_synthetic"]),
+                md["document_id"],
+                idx,
+                md["category"],
+                md["title"],
+                chunk,
+                md["source"],
+                md["source_type"],
+                md["source_origin"],
+                md["trust_tier"],
+                md["specialty"],
+                md["effective_date"],
+                md["version"],
+                int(md["is_synthetic"]),
             ),
         )
         rowid = cur.lastrowid
         if doc_embedded and vec:
+            assert embeddings is not None
             db.execute(
                 "INSERT INTO clinical_knowledge_vec (rowid, embedding) VALUES (?, ?)",
                 (rowid, embeddings[idx]),
@@ -538,7 +556,7 @@ def load_file(db, path: Path, default_trust_tier: int, fts: bool, vec: bool, emb
     else:
         approval_status = _default_approval_status(md)
         approved_by = "loader:auto" if approval_status == "approved" else None
-        approved_at = datetime.now(timezone.utc).isoformat() if approval_status == "approved" else None
+        approved_at = datetime.now(UTC).isoformat() if approval_status == "approved" else None
     db.execute(
         """
         INSERT OR REPLACE INTO corpus_documents
@@ -547,9 +565,19 @@ def load_file(db, path: Path, default_trust_tier: int, fts: bool, vec: bool, emb
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            md["document_id"], md["title"], md["source"], md["trust_tier"], md["version"],
-            str(path), content_hash, len(chunks), int(doc_embedded),
-            datetime.now(timezone.utc).isoformat(), approval_status, approved_by, approved_at,
+            md["document_id"],
+            md["title"],
+            md["source"],
+            md["trust_tier"],
+            md["version"],
+            str(path),
+            content_hash,
+            len(chunks),
+            int(doc_embedded),
+            datetime.now(UTC).isoformat(),
+            approval_status,
+            approved_by,
+            approved_at,
         ),
     )
     return {
@@ -564,7 +592,7 @@ def load_file(db, path: Path, default_trust_tier: int, fts: bool, vec: bool, emb
     }
 
 
-def load_directory(path, default_trust_tier: int = 3) -> Dict[str, Any]:
+def load_directory(path, default_trust_tier: int = 3) -> dict[str, Any]:
     """Load every ``.md``/``.txt`` guideline file in ``path`` into the RAG store.
 
     Args:
@@ -580,7 +608,8 @@ def load_directory(path, default_trust_tier: int = 3) -> Dict[str, Any]:
         raise NotADirectoryError(f"Corpus path is not a directory: {directory}")
 
     files = sorted(
-        p for p in directory.iterdir()
+        p
+        for p in directory.iterdir()
         if p.is_file()
         and p.suffix.lower() in _SUPPORTED_SUFFIXES
         and not p.name.endswith((".meta.json", ".meta.md"))
@@ -590,11 +619,13 @@ def load_directory(path, default_trust_tier: int = 3) -> Dict[str, Any]:
     mode = "embedded" if embed else "lexical"
     logger.info(
         "Loading %d guideline file(s) from %s in %s mode%s",
-        len(files), directory, mode,
+        len(files),
+        directory,
+        mode,
         "" if embed else " (BGE-M3/FlagEmbedding unavailable — FTS lexical index only)",
     )
 
-    per_file: List[Dict[str, Any]] = []
+    per_file: list[dict[str, Any]] = []
     # One SHORT transaction per file instead of a single directory-wide one:
     # a whole-directory transaction held the write lock across every file's
     # embedding, wedging concurrent server writers for the full load.
@@ -616,7 +647,12 @@ def load_directory(path, default_trust_tier: int = 3) -> Dict[str, Any]:
     loaded_ok = [d for d in per_file if d.get("chunks", 0) > 0]
     logger.info(
         "Loaded %d/%d file(s), %d chunk(s) in %s mode (fts=%s, vec=%s)",
-        len(loaded_ok), len(files), total_chunks, mode, fts, vec,
+        len(loaded_ok),
+        len(files),
+        total_chunks,
+        mode,
+        fts,
+        vec,
     )
     return {
         "directory": str(directory),
@@ -641,14 +677,14 @@ def _table_exists(db, name: str) -> bool:
     )
 
 
-def corpus_stats() -> Dict[str, Any]:
+def corpus_stats() -> dict[str, Any]:
     """Return corpus counts: documents, chunks, embedded vs lexical-only.
 
     Counts reflect the entire ``clinical_knowledge`` store (built-in seed + loaded).
     A chunk is "embedded" when it has a row in the vector index; otherwise it is
     lexical-only (retrievable through FTS/BM25).
     """
-    stats: Dict[str, Any] = {
+    stats: dict[str, Any] = {
         "documents": 0,
         "chunks": 0,
         "embedded_chunks": 0,
@@ -711,14 +747,16 @@ def corpus_stats() -> Dict[str, Any]:
 _APPROVAL_STATUSES = ("draft", "approved", "retired")
 
 
-def _default_approval_status(md: Dict[str, Any]) -> str:
+def _default_approval_status(md: dict[str, Any]) -> str:
     """Per-source default status for a freshly-loaded document.
 
     Tier-1 hospital protocols are governed locally and trusted, so they load
     pre-approved. Everything else the loader ingests starts as 'draft' and must be
     signed off before it can be surfaced under ``approved_only`` retrieval.
     """
-    if int(md.get("trust_tier", 3) or 3) == 1 and str(md.get("source_type", "")).startswith("hospital"):
+    if int(md.get("trust_tier", 3) or 3) == 1 and str(md.get("source_type", "")).startswith(
+        "hospital"
+    ):
         return "approved"
     return "draft"
 
@@ -740,15 +778,17 @@ def _get_approval_row(db, document_id: str):
     return (row[0], row[1], row[2]) if row else None
 
 
-def set_document_status(document_id: str, status: str, actor: Optional[str] = None) -> Dict[str, Any]:
+def set_document_status(document_id: str, status: str, actor: str | None = None) -> dict[str, Any]:
     """Set a document's approval_status. `status` must be one of _APPROVAL_STATUSES.
 
     Returns a summary dict with ``updated`` True/False. Raises ValueError for an
     unknown status.
     """
     if status not in _APPROVAL_STATUSES:
-        raise ValueError(f"Invalid approval status {status!r}; expected one of {_APPROVAL_STATUSES}")
-    now = datetime.now(timezone.utc).isoformat()
+        raise ValueError(
+            f"Invalid approval status {status!r}; expected one of {_APPROVAL_STATUSES}"
+        )
+    now = datetime.now(UTC).isoformat()
     with db_session() as db:
         _ensure_bookkeeping(db)
         exists = db.execute(
@@ -771,7 +811,7 @@ def set_document_status(document_id: str, status: str, actor: Optional[str] = No
     return {"document_id": document_id, "updated": True, "approval_status": status, "actor": actor}
 
 
-def approve_document(document_id: str, approver: str) -> Dict[str, Any]:
+def approve_document(document_id: str, approver: str) -> dict[str, Any]:
     """Approve a loaded document so it is surfaced under ``approved_only`` retrieval.
 
     Records the approver and an approval timestamp. Returns a summary dict.
@@ -779,33 +819,35 @@ def approve_document(document_id: str, approver: str) -> Dict[str, Any]:
     return set_document_status(document_id, "approved", actor=approver)
 
 
-def retire_document(document_id: str, actor: Optional[str] = None) -> Dict[str, Any]:
+def retire_document(document_id: str, actor: str | None = None) -> dict[str, Any]:
     """Retire a document (excluded from ``approved_only`` retrieval)."""
     return set_document_status(document_id, "retired", actor=actor)
 
 
-def list_documents(status: Optional[str] = None) -> List[Dict[str, Any]]:
+def list_documents(status: str | None = None) -> list[dict[str, Any]]:
     """List loader-tracked documents, optionally filtered by approval_status.
 
     Returns one dict per row in ``corpus_documents`` (empty list if the table does
     not exist yet). `status`, if given, must be a valid approval status.
     """
     if status is not None and status not in _APPROVAL_STATUSES:
-        raise ValueError(f"Invalid approval status {status!r}; expected one of {_APPROVAL_STATUSES}")
-    out: List[Dict[str, Any]] = []
+        raise ValueError(
+            f"Invalid approval status {status!r}; expected one of {_APPROVAL_STATUSES}"
+        )
+    out: list[dict[str, Any]] = []
     with db_session() as db:
         if not _table_exists(db, "corpus_documents"):
             return out
         _ensure_bookkeeping(db)
         cols = [r[1] for r in db.execute("PRAGMA table_info(corpus_documents)").fetchall()]
         sql = "SELECT * FROM corpus_documents"
-        params: Tuple = ()
+        params: tuple = ()
         if status is not None:
             sql += " WHERE approval_status = ?"
             params = (status,)
         sql += " ORDER BY loaded_at DESC"
         for row in db.execute(sql, params).fetchall():
-            out.append(dict(zip(cols, row)))
+            out.append(dict(zip(cols, row, strict=False)))
     return out
 
 

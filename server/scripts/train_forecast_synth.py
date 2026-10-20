@@ -39,11 +39,12 @@ Reproduce:
     python scripts/train_forecast_synth.py            # defaults: seed=1234
     # -> writes server/models/checkpoints/forecast_lstm_synth_v1.pt
 """
+
 from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -53,24 +54,22 @@ import torch.optim as optim
 
 # Import the network + schema constants from the (unmodified) model module.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from models.forecast_lstm import (  # noqa: E402
-    OrbForecastLSTM,
-    INPUT_DIM,
-    HIDDEN_DIM,
-    NUM_LAYERS,
-)
 
 # Default export target. Both this dir (server/models/*/) and *.pt are gitignored,
 # so the weights are produced locally and never committed — the HARNESS is the
 # deliverable, not the .pt file.
-DEFAULT_CKPT = (
-    Path(__file__).resolve().parent.parent
-    / "models"
-    / "checkpoints"
-    / "forecast_lstm_synth_v1.pt"
+from models.forecast_lstm import (  # noqa: E402
+    HIDDEN_DIM,
+    INPUT_DIM,
+    NUM_LAYERS,
+    OrbForecastLSTM,
 )
-DATA_SOURCE = "synthetic_v1"       # legible provenance tag stored in the checkpoint
-SEQ_LEN = 48                       # 48 steps == same window the service extracts
+
+DEFAULT_CKPT = (
+    Path(__file__).resolve().parent.parent / "models" / "checkpoints" / "forecast_lstm_synth_v1.pt"
+)
+DATA_SOURCE = "synthetic_v1"  # legible provenance tag stored in the checkpoint
+SEQ_LEN = 48  # 48 steps == same window the service extracts
 
 # Acuity classes: 0 improving, 1 stable, 2 worsening (matches ACUITY_LABELS).
 _SEVERITIES = ("critical", "elevated", "stable")
@@ -101,13 +100,13 @@ _SEVERITIES = ("critical", "elevated", "stable")
 _LOS_PARAMS = {
     "critical": dict(mu=2.0, sigma=0.45, hr=118.0, sbp=88.0, spo2=90.0, temp=38.8, rr=26.0),
     "elevated": dict(mu=1.4, sigma=0.35, hr=96.0, sbp=106.0, spo2=93.5, temp=37.9, rr=22.0),
-    "stable":   dict(mu=0.7, sigma=0.25, hr=80.0, sbp=120.0, spo2=97.0, temp=36.8, rr=16.0),
+    "stable": dict(mu=0.7, sigma=0.25, hr=80.0, sbp=120.0, spo2=97.0, temp=36.8, rr=16.0),
 }
 _WARD_WEIGHTS = {
     # (ICU, W1, W2, W3) sampling weights per severity
     "critical": np.array([0.80, 0.20, 0.0, 0.0]),
     "elevated": np.array([0.0, 0.30, 0.30, 0.40]),
-    "stable":   np.array([0.0, 0.20, 0.40, 0.40]),
+    "stable": np.array([0.0, 0.20, 0.40, 0.40]),
 }
 _WARD_ORDER = ("ICU", "W1", "W2", "W3")
 _MED_RANGE = {"critical": (6, 12), "elevated": (3, 8), "stable": (1, 5)}
@@ -150,7 +149,9 @@ def _make_patient_window(rng: np.random.Generator) -> tuple[np.ndarray, dict]:
         feats[t, 0] = p["hr"] + (78.0 - p["hr"]) * improvement * 0.5 + rng.normal(0, 4.0)
         feats[t, 1] = p["sbp"] + (120.0 - p["sbp"]) * improvement * 0.4 + rng.normal(0, 5.0)
         feats[t, 2] = feats[t, 1] * 0.6 + rng.normal(0, 3.0)
-        feats[t, 3] = min(100.0, p["spo2"] + (98.0 - p["spo2"]) * improvement * 0.3 + rng.normal(0, 1.0))
+        feats[t, 3] = min(
+            100.0, p["spo2"] + (98.0 - p["spo2"]) * improvement * 0.3 + rng.normal(0, 1.0)
+        )
         feats[t, 4] = p["temp"] + (36.8 - p["temp"]) * improvement * 0.5 + rng.normal(0, 0.15)
         feats[t, 5] = max(8.0, p["rr"] + (16.0 - p["rr"]) * improvement * 0.4 + rng.normal(0, 1.5))
 
@@ -214,6 +215,7 @@ def build_dataset(rng: np.random.Generator, n_patients: int, n_obs: int):
 # TRAINING
 # ══════════════════════════════════════════════════════════════════════
 
+
 def train(args) -> float:
     device = torch.device("cpu")  # tiny model — CPU is the reproducible target
     rng = np.random.default_rng(args.seed)
@@ -227,13 +229,17 @@ def train(args) -> float:
 
     X, los_t, dis_t, acu_t = build_dataset(rng, args.patients, args.obs_per_patient)
     n = X.shape[0]
-    print(f"→ dataset: {n} windows from {args.patients} synthetic patients "
-          f"({args.obs_per_patient} obs each)")
+    print(
+        f"→ dataset: {n} windows from {args.patients} synthetic patients "
+        f"({args.obs_per_patient} obs each)"
+    )
 
     model = OrbForecastLSTM(input_dim=INPUT_DIM).to(device)
     n_params = sum(p.numel() for p in model.parameters())
-    print(f"→ model: OrbForecastLSTM(input_dim={INPUT_DIM}, hidden={HIDDEN_DIM}, "
-          f"layers={NUM_LAYERS}) — {n_params:,} params")
+    print(
+        f"→ model: OrbForecastLSTM(input_dim={INPUT_DIM}, hidden={HIDDEN_DIM}, "
+        f"layers={NUM_LAYERS}) — {n_params:,} params"
+    )
 
     los_criterion = nn.MSELoss()
     dis_criterion = nn.BCELoss()
@@ -245,8 +251,10 @@ def train(args) -> float:
 
     # Deterministic mini-batch order per epoch from the same rng.
     batch = args.batch_size
-    print(f"→ training: epochs={args.epochs} batch={batch} lr={args.lr} "
-          f"(weights LoS={alpha} Dis={beta} Acu={gamma})\n")
+    print(
+        f"→ training: epochs={args.epochs} batch={batch} lr={args.lr} "
+        f"(weights LoS={alpha} Dis={beta} Acu={gamma})\n"
+    )
 
     final_avg = float("nan")
     for epoch in range(args.epochs):
@@ -255,7 +263,7 @@ def train(args) -> float:
         running = los_run = dis_run = acu_run = 0.0
         n_batches = 0
         for start in range(0, n - batch + 1, batch):
-            idx = perm[start:start + batch]
+            idx = perm[start : start + batch]
             xb, lb, db_, ab = X[idx], los_t[idx], dis_t[idx], acu_t[idx]
 
             optimizer.zero_grad()
@@ -276,9 +284,11 @@ def train(args) -> float:
 
         scheduler.step()
         final_avg = running / max(1, n_batches)
-        print(f"  epoch {epoch + 1:2d}/{args.epochs} │ train {final_avg:.4f} "
-              f"(LoS {los_run / n_batches:.3f}  Dis {dis_run / n_batches:.3f}  "
-              f"Acu {acu_run / n_batches:.3f})")
+        print(
+            f"  epoch {epoch + 1:2d}/{args.epochs} │ train {final_avg:.4f} "
+            f"(LoS {los_run / n_batches:.3f}  Dis {dis_run / n_batches:.3f}  "
+            f"Acu {acu_run / n_batches:.3f})"
+        )
 
     print(f"\n✓ Final train loss: {final_avg:.4f}")
 
@@ -297,7 +307,7 @@ def train(args) -> float:
         # off. load_model() reads this and predict() omits icu_transfer_risk_3h.
         "icu_head_trained": False,
         "seed": args.seed,
-        "training_date": datetime.now(timezone.utc).isoformat(),
+        "training_date": datetime.now(UTC).isoformat(),
         "provenance": (
             "SYNTHETIC v1, deterministic self-contained generator; "
             "NOT trained or validated on real clinical data; demo/plumbing only. "
@@ -309,7 +319,7 @@ def train(args) -> float:
     size_kb = ckpt_path.stat().st_size / 1024
     print(f"✓ Checkpoint written: {ckpt_path}  ({size_kb:.1f} KB)")
     print("  provenance: synthetic_v1 — NOT for clinical use")
-    print(f"\nTo activate as the runtime model, load it explicitly, e.g.:")
+    print("\nTo activate as the runtime model, load it explicitly, e.g.:")
     print(f"  load_model(checkpoint_path='{ckpt_path}')  # .trained == True")
     print("  (or copy/symlink to models/forecast_checkpoint.pt for the default path)")
     return final_avg
@@ -323,8 +333,9 @@ def parse_args():
     ap.add_argument("--obs-per-patient", type=int, default=3, help="windows per patient")
     ap.add_argument("--batch-size", type=int, default=32)
     ap.add_argument("--lr", type=float, default=1e-3)
-    ap.add_argument("--out", type=str, default=str(DEFAULT_CKPT),
-                    help="checkpoint output path (.pt)")
+    ap.add_argument(
+        "--out", type=str, default=str(DEFAULT_CKPT), help="checkpoint output path (.pt)"
+    )
     return ap.parse_args()
 
 

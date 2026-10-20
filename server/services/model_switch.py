@@ -18,6 +18,7 @@ Two ways to refuse, for two kinds of caller:
   * require_models_on is a FastAPI dependency that answers 404 before a route
     reads anything, for the routes of the model features themselves.
 """
+
 from __future__ import annotations
 
 import logging
@@ -37,8 +38,10 @@ class ModelsSwitchedOff(RuntimeError):
 def models_enabled() -> bool:
     """ORB_MODELS_ENABLED, and never on under the Orb Ward Record profile."""
     import config
-    return (bool(getattr(config, "MODELS_ENABLED", True))
-            and not bool(getattr(config, "WARD_RECORD", False)))
+
+    return bool(getattr(config, "MODELS_ENABLED", True)) and not bool(
+        getattr(config, "WARD_RECORD", False)
+    )
 
 
 def refuse_when_models_off(what: str) -> None:
@@ -48,7 +51,8 @@ def refuse_when_models_off(what: str) -> None:
     logger.info("model request refused, models switched off: %s", what)
     raise ModelsSwitchedOff(
         f"{what}: the models are switched off on this computer "
-        "(ORB_MODELS_ENABLED is off or ORB_WARD_RECORD is on)")
+        "(ORB_MODELS_ENABLED is off or ORB_WARD_RECORD is on)"
+    )
 
 
 def require_models_on() -> None:

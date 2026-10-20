@@ -24,12 +24,12 @@ Use as a router-level dependency, so a route added later inherits it:
     router = APIRouter(prefix="/api/adt",
                        dependencies=[Depends(require_adt_module)])
 """
-from __future__ import annotations
 
-from fastapi import Depends, HTTPException
+from __future__ import annotations
 
 import config
 from auth import get_current_user
+from fastapi import Depends, HTTPException
 
 # Plain words for the 404 body. No variable names on screen: a client that was
 # built before a switch flipped deserves a sentence.
@@ -82,13 +82,19 @@ def module_gate(module_id: str, *, allow_draining: bool = False, require_session
     # async: the check reads config and a cached, DB-free drain check only,
     # so it never needs a worker thread.
     if require_session:
-        async def _gate(user: dict = Depends(get_current_user)) -> None:
+        _GATE_USER_DEFAULT = Depends(get_current_user)
+
+        async def _gate_first(user: dict = _GATE_USER_DEFAULT) -> None:
             _check()
+
         suffix = ""
     else:
-        async def _gate() -> None:
+
+        async def _gate_second() -> None:
             _check()
+
         suffix = "_without_session"
+    _gate = _gate_first if require_session else _gate_second
     _gate.__name__ = f"require_{module_id.replace('-', '_')}_module{suffix}"
     return _gate
 
@@ -106,13 +112,19 @@ def feature_gate(flag_id: str, *, require_session: bool = True):
     # async: the check reads config and a cached, DB-free drain check only,
     # so it never needs a worker thread.
     if require_session:
-        async def _gate(user: dict = Depends(get_current_user)) -> None:
+        _GATE_USER_DEFAULT = Depends(get_current_user)
+
+        async def _gate_first(user: dict = _GATE_USER_DEFAULT) -> None:
             _check()
+
         suffix = ""
     else:
-        async def _gate() -> None:
+
+        async def _gate_second() -> None:
             _check()
+
         suffix = "_without_session"
+    _gate = _gate_first if require_session else _gate_second
     _gate.__name__ = f"require_{flag_id}_feature{suffix}"
     return _gate
 
@@ -132,7 +144,12 @@ def require_lab_module(allow_draining: bool = False, *, require_session: bool = 
     return module_gate("lab", allow_draining=allow_draining, require_session=require_session)
 
 
-async def require_lab_critical_surface(user: dict = Depends(get_current_user)) -> None:
+_REQUIRE_LAB_CRITICAL_SURFACE_USER_DEFAULT = Depends(get_current_user)
+
+
+async def require_lab_critical_surface(
+    user: dict = _REQUIRE_LAB_CRITICAL_SURFACE_USER_DEFAULT,
+) -> None:
     """The gate for the laboratory critical-result routes (routes/lab/
     criticals.py): open while the laboratory is on or draining, AND while
     interfaced criticals are on without the laboratory (that switch works

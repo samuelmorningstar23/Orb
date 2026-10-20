@@ -33,12 +33,11 @@ status does not allow, more units than the lot holds or a reused request key
 is 409; an audit outage is 503 audit_unavailable and nothing was changed;
 anything the request must correct is 422.
 """
+
 import uuid
-from typing import Any, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from pydantic import BaseModel, Field
-
 from permissions import (
     PHARMACY_STORE_APPROVE,
     PHARMACY_STORE_NDPS,
@@ -47,8 +46,10 @@ from permissions import (
     has_permission,
     require_permission,
 )
-from services import pharmacy_purchasing_service as purchasing
+from pydantic import BaseModel, Field
 from services.audit_service import AuditWriteError
+
+from services import pharmacy_purchasing_service as purchasing
 
 router = APIRouter()
 
@@ -83,14 +84,19 @@ def _audit_denied(request: Request, user: dict, missing: list[str]) -> None:
 
     try:
         log_audit_event(
-            correlation_id=str(uuid.uuid4()), event_category="authorization",
-            action_type="permission_denied", outcome="denied",
+            correlation_id=str(uuid.uuid4()),
+            event_category="authorization",
+            action_type="permission_denied",
+            outcome="denied",
             summary_message=f"Missing permissions: {' or '.join(missing)}",
-            actor_user_id=user.get("id"), actor_role=user.get("role"),
-            request_path=request.url.path, http_method=request.method,
+            actor_user_id=user.get("id"),
+            actor_role=user.get("role"),
+            request_path=request.url.path,
+            http_method=request.method,
             ip_address=request.client.host if request.client else None,
             user_agent=request.headers.get("user-agent"),
-            metadata={"missing_permissions": missing, "user_role": user.get("role")})
+            metadata={"missing_permissions": missing, "user_role": user.get("role")},
+        )
     except Exception:
         pass
 
@@ -105,152 +111,228 @@ def _fail(exc: purchasing.PurchasingError, request: Request, user: dict) -> HTTP
 
 
 def _audit_unavailable() -> HTTPException:
-    return HTTPException(status_code=503, detail={
-        "error": "audit_unavailable",
-        "message": "The audit record could not be written, so nothing was changed. "
-                   "Try again shortly."})
+    return HTTPException(
+        status_code=503,
+        detail={
+            "error": "audit_unavailable",
+            "message": "The audit record could not be written, so nothing was changed. "
+            "Try again shortly.",
+        },
+    )
 
 
 def _ctx(request: Request) -> dict:
-    return {"request_path": request.url.path, "http_method": request.method,
-            "ip_address": request.client.host if request.client else None}
+    return {
+        "request_path": request.url.path,
+        "http_method": request.method,
+        "ip_address": request.client.host if request.client else None,
+    }
 
 
-def _write_or_approve(request: Request, user: dict = Depends(_PS_READ)) -> dict:
+_WRITE_OR_APPROVE_USER_DEFAULT = Depends(_PS_READ)
+
+
+def _write_or_approve(request: Request, user: dict = _WRITE_OR_APPROVE_USER_DEFAULT) -> dict:
     """Read plus write or approve, for recording a credit note."""
     role = user.get("role", "")
     if has_permission(role, PHARMACY_STORE_WRITE) or has_permission(role, PHARMACY_STORE_APPROVE):
         return user
     _audit_denied(request, user, [PHARMACY_STORE_WRITE, PHARMACY_STORE_APPROVE])
-    raise HTTPException(status_code=403, detail={
-        "error": "permission_denied", "message": "Insufficient permissions",
-        "required": [PHARMACY_STORE_READ,
-                     f"{PHARMACY_STORE_WRITE} or {PHARMACY_STORE_APPROVE}"]})
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "error": "permission_denied",
+            "message": "Insufficient permissions",
+            "required": [
+                PHARMACY_STORE_READ,
+                f"{PHARMACY_STORE_WRITE} or {PHARMACY_STORE_APPROVE}",
+            ],
+        },
+    )
 
 
 # ── Reads ─────────────────────────────────────────────────────────────────────
 
+
+_LIST_VENDOR_RETURNS_STATUS_DEFAULT = Query(None, max_length=40)
+_LIST_VENDOR_RETURNS_LIMIT_DEFAULT = Query(100, ge=1, le=500)
+_LIST_VENDOR_RETURNS_USER_DEFAULT = Depends(_PS_READ)
+
+
 @router.get("/vendor-returns")
-def list_vendor_returns(request: Request,
-                        status: Optional[str] = Query(None, max_length=40),
-                        limit: int = Query(100, ge=1, le=500),
-                        user: dict = Depends(_PS_READ)):
+def list_vendor_returns(
+    request: Request,
+    status: str | None = _LIST_VENDOR_RETURNS_STATUS_DEFAULT,
+    limit: int = _LIST_VENDOR_RETURNS_LIMIT_DEFAULT,
+    user: dict = _LIST_VENDOR_RETURNS_USER_DEFAULT,
+):
     try:
-        return {"vendor_returns": purchasing.list_vendor_returns(status=status or None,
-                                                                 limit=limit)}
+        return {
+            "vendor_returns": purchasing.list_vendor_returns(status=status or None, limit=limit)
+        }
     except purchasing.PurchasingError as exc:
-        raise _fail(exc, request, user)
+        raise _fail(exc, request, user) from exc
+
+
+_VENDOR_RETURN_OPTIONS_USER_DEFAULT = Depends(_PS_READ)
 
 
 @router.get("/vendor-returns/options")
-def vendor_return_options(user: dict = Depends(_PS_READ)):
+def vendor_return_options(user: dict = _VENDOR_RETURN_OPTIONS_USER_DEFAULT):
     """Stores stock goes back from, vendors, who may witness a controlled
     return (never the caller) and the near-expiry window."""
     return purchasing.vendor_return_options(user)
 
 
+_VENDOR_RETURN_STOCK_STORE_CODE_DEFAULT = Query(..., min_length=1, max_length=40)
+_VENDOR_RETURN_STOCK_USER_DEFAULT = Depends(_PS_READ)
+
+
 @router.get("/vendor-returns/stock")
-def vendor_return_stock(request: Request,
-                        store_code: str = Query(..., min_length=1, max_length=40),
-                        user: dict = Depends(_PS_READ)):
+def vendor_return_stock(
+    request: Request,
+    store_code: str = _VENDOR_RETURN_STOCK_STORE_CODE_DEFAULT,
+    user: dict = _VENDOR_RETURN_STOCK_USER_DEFAULT,
+):
     """The lots of one store that may go back to a vendor now: held off the
     shelf, expired or near expiry."""
     try:
         return purchasing.returnable_stock(store_code)
     except purchasing.PurchasingError as exc:
-        raise _fail(exc, request, user)
+        raise _fail(exc, request, user) from exc
+
+
+_GET_VENDOR_RETURN_USER_DEFAULT = Depends(_PS_READ)
 
 
 @router.get("/vendor-returns/{return_id}")
-def get_vendor_return(return_id: int, user: dict = Depends(_PS_READ)):
+def get_vendor_return(return_id: int, user: dict = _GET_VENDOR_RETURN_USER_DEFAULT):
     doc = purchasing.get_vendor_return(return_id)
     if doc is None:
-        raise HTTPException(status_code=404, detail={
-            "error": "not_found", "message": f"No return to vendor {return_id}"})
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "not_found", "message": f"No return to vendor {return_id}"},
+        )
     return {"vendor_return": doc}
 
 
 # ── Writes ────────────────────────────────────────────────────────────────────
 
+
 class VendorReturnLineIn(BaseModel):
     lot_id: str = Field(..., min_length=1, max_length=80)
     quantity_units: Any = None
-    reason: Optional[str] = Field(None, max_length=purchasing.VR_TEXT_LIMIT)
+    reason: str | None = Field(None, max_length=purchasing.VR_TEXT_LIMIT)
 
 
 class VendorReturnIn(BaseModel):
     vendor_code: str = Field(..., min_length=1, max_length=40)
     store_code: str = Field(..., min_length=1, max_length=40)
-    lines: List[VendorReturnLineIn] = Field(..., min_length=1,
-                                            max_length=purchasing.VR_MAX_LINES)
-    reason: Optional[str] = Field(None, max_length=purchasing.VR_TEXT_LIMIT)
-    remarks: Optional[str] = Field(None, max_length=purchasing.VR_TEXT_LIMIT)
-    idempotency_key: Optional[str] = Field(None, max_length=120)
+    lines: list[VendorReturnLineIn] = Field(..., min_length=1, max_length=purchasing.VR_MAX_LINES)
+    reason: str | None = Field(None, max_length=purchasing.VR_TEXT_LIMIT)
+    remarks: str | None = Field(None, max_length=purchasing.VR_TEXT_LIMIT)
+    idempotency_key: str | None = Field(None, max_length=120)
+
+
+_CREATE_VENDOR_RETURN_IDEMPOTENCY_KEY_DEFAULT = Header(None, max_length=120)
+_CREATE_VENDOR_RETURN_USER_DEFAULT = Depends(_PS_WRITE)
 
 
 @router.post("/vendor-returns")
-def create_vendor_return(body: VendorReturnIn, request: Request,
-                         idempotency_key: Optional[str] = Header(None, max_length=120),
-                         user: dict = Depends(_PS_WRITE)):
+def create_vendor_return(
+    body: VendorReturnIn,
+    request: Request,
+    idempotency_key: str | None = _CREATE_VENDOR_RETURN_IDEMPOTENCY_KEY_DEFAULT,
+    user: dict = _CREATE_VENDOR_RETURN_USER_DEFAULT,
+):
     """Draft a return. Nothing leaves the shelf until it is posted."""
     try:
         return purchasing.create_vendor_return(
-            vendor_code=body.vendor_code, store_code=body.store_code,
-            lines=[line.model_dump() for line in body.lines], actor=user,
-            reason=body.reason, remarks=body.remarks,
-            idempotency_key=idempotency_key or body.idempotency_key, audit_ctx=_ctx(request))
+            vendor_code=body.vendor_code,
+            store_code=body.store_code,
+            lines=[line.model_dump() for line in body.lines],
+            actor=user,
+            reason=body.reason,
+            remarks=body.remarks,
+            idempotency_key=idempotency_key or body.idempotency_key,
+            audit_ctx=_ctx(request),
+        )
     except purchasing.PurchasingError as exc:
-        raise _fail(exc, request, user)
+        raise _fail(exc, request, user) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
 
 
 class WitnessIn(BaseModel):
-    witness_id: Optional[str] = Field(None, max_length=80)
-    witness_pin: Optional[str] = Field(None, max_length=64)
+    witness_id: str | None = Field(None, max_length=80)
+    witness_pin: str | None = Field(None, max_length=64)
+
+
+_POST_VENDOR_RETURN_USER_DEFAULT = Depends(_PS_APPROVE)
 
 
 @router.post("/vendor-returns/{return_id}/post")
-def post_vendor_return(return_id: int, body: WitnessIn, request: Request,
-                       user: dict = Depends(_PS_APPROVE)):
+def post_vendor_return(
+    return_id: int, body: WitnessIn, request: Request, user: dict = _POST_VENDOR_RETURN_USER_DEFAULT
+):
     """Send it back. A return already sent posts nothing again."""
     try:
         return purchasing.post_vendor_return(
-            return_id, actor=user, witness_id=body.witness_id, witness_pin=body.witness_pin,
-            audit_ctx=_ctx(request))
+            return_id,
+            actor=user,
+            witness_id=body.witness_id,
+            witness_pin=body.witness_pin,
+            audit_ctx=_ctx(request),
+        )
     except purchasing.PurchasingError as exc:
-        raise _fail(exc, request, user)
+        raise _fail(exc, request, user) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
 
 
 class CreditIn(BaseModel):
-    credit_note_ref: Optional[str] = Field(None, max_length=purchasing.VR_TEXT_LIMIT)
+    credit_note_ref: str | None = Field(None, max_length=purchasing.VR_TEXT_LIMIT)
+
+
+_CREDIT_VENDOR_RETURN_USER_DEFAULT = Depends(_write_or_approve)
 
 
 @router.post("/vendor-returns/{return_id}/credit")
-def credit_vendor_return(return_id: int, body: CreditIn, request: Request,
-                         user: dict = Depends(_write_or_approve)):
+def credit_vendor_return(
+    return_id: int,
+    body: CreditIn,
+    request: Request,
+    user: dict = _CREDIT_VENDOR_RETURN_USER_DEFAULT,
+):
     try:
-        return purchasing.record_vendor_credit(return_id, credit_note_ref=body.credit_note_ref,
-                                               actor=user, audit_ctx=_ctx(request))
+        return purchasing.record_vendor_credit(
+            return_id, credit_note_ref=body.credit_note_ref, actor=user, audit_ctx=_ctx(request)
+        )
     except purchasing.PurchasingError as exc:
-        raise _fail(exc, request, user)
+        raise _fail(exc, request, user) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
 
 
 class CancelIn(BaseModel):
-    reason: Optional[str] = Field(None, max_length=purchasing.VR_TEXT_LIMIT)
+    reason: str | None = Field(None, max_length=purchasing.VR_TEXT_LIMIT)
+
+
+_CANCEL_VENDOR_RETURN_USER_DEFAULT = Depends(_PS_WRITE)
 
 
 @router.post("/vendor-returns/{return_id}/cancel")
-def cancel_vendor_return(return_id: int, body: CancelIn, request: Request,
-                         user: dict = Depends(_PS_WRITE)):
+def cancel_vendor_return(
+    return_id: int,
+    body: CancelIn,
+    request: Request,
+    user: dict = _CANCEL_VENDOR_RETURN_USER_DEFAULT,
+):
     try:
-        return purchasing.cancel_vendor_return(return_id, reason=body.reason, actor=user,
-                                               audit_ctx=_ctx(request))
+        return purchasing.cancel_vendor_return(
+            return_id, reason=body.reason, actor=user, audit_ctx=_ctx(request)
+        )
     except purchasing.PurchasingError as exc:
-        raise _fail(exc, request, user)
+        raise _fail(exc, request, user) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None

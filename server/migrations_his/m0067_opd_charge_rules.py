@@ -44,6 +44,7 @@ services.clinical_time writes.
 Idempotent: CREATE TABLE and CREATE INDEX IF NOT EXISTS only, one statement per
 conn.execute (executescript would commit the runner's transaction).
 """
+
 from migrations import Migration
 
 RULE_KINDS: tuple = ("consultation", "follow_up", "registration")

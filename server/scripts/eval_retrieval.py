@@ -13,6 +13,7 @@ Usage:
 Exit code is non-zero when exact-match hit-rate falls below --min-hit-rate, so CI
 can gate on it.
 """
+
 import argparse
 import json
 import os
@@ -31,13 +32,23 @@ def main() -> int:
     parser.add_argument("--questions", default=None, help="Path to the question bank JSON")
     parser.add_argument("--k", type=int, default=5, help="Retrieval depth (top-k)")
     parser.add_argument("--no-rerank", action="store_true", help="Disable second-stage reranking")
-    parser.add_argument("--approved-only", action="store_true", help="Restrict to approved documents")
-    parser.add_argument("--load-corpus", default=None,
-                        help="Optional corpus directory to load before evaluating (e.g. 'corpus')")
-    parser.add_argument("--skip-init", action="store_true",
-                        help="Do not (re)build the seeded knowledge base first")
-    parser.add_argument("--min-hit-rate", type=float, default=0.0,
-                        help="Fail (non-zero exit) if exact-match hit-rate is below this")
+    parser.add_argument(
+        "--approved-only", action="store_true", help="Restrict to approved documents"
+    )
+    parser.add_argument(
+        "--load-corpus",
+        default=None,
+        help="Optional corpus directory to load before evaluating (e.g. 'corpus')",
+    )
+    parser.add_argument(
+        "--skip-init", action="store_true", help="Do not (re)build the seeded knowledge base first"
+    )
+    parser.add_argument(
+        "--min-hit-rate",
+        type=float,
+        default=0.0,
+        help="Fail (non-zero exit) if exact-match hit-rate is below this",
+    )
     parser.add_argument("--json", action="store_true", help="Emit metrics as JSON")
     parser.add_argument("--verbose", action="store_true", help="Print per-question detail")
     args = parser.parse_args()
@@ -46,15 +57,19 @@ def main() -> int:
     if not args.skip_init:
         try:
             from services.clinical_knowledge import init_knowledge_base
+
             init_knowledge_base()
         except Exception as e:
             print(f"! Knowledge base init failed: {e}", file=sys.stderr)
 
     if args.load_corpus:
         from services import corpus_loader
+
         summary = corpus_loader.load_directory(args.load_corpus, default_trust_tier=3)
-        print(f"Loaded corpus '{args.load_corpus}': {summary['files_loaded']} file(s), "
-              f"{summary['chunks_loaded']} chunk(s), mode={summary['mode']}")
+        print(
+            f"Loaded corpus '{args.load_corpus}': {summary['files_loaded']} file(s), "
+            f"{summary['chunks_loaded']} chunk(s), mode={summary['mode']}"
+        )
 
     from services.retrieval_eval import run_eval
 
@@ -73,13 +88,17 @@ def main() -> int:
         print(f"  rerank={metrics['rerank']}  approved_only={metrics['approved_only']}")
         print("=" * 56)
         for kk in metrics["ks"]:
-            print(f"  recall@{kk:<2d}   {_fmt_pct(metrics[f'recall@{kk}'])}"
-                  f"     hit_rate@{kk:<2d}  {_fmt_pct(metrics[f'hit_rate@{kk}'])}")
+            print(
+                f"  recall@{kk:<2d}   {_fmt_pct(metrics[f'recall@{kk}'])}"
+                f"     hit_rate@{kk:<2d}  {_fmt_pct(metrics[f'hit_rate@{kk}'])}"
+            )
         print("-" * 56)
         print(f"  MRR                {metrics['mrr']:.4f}")
         print(f"  hit_rate (k={metrics['k']})     {_fmt_pct(metrics['hit_rate'])}")
-        print(f"  exact-match hit    {_fmt_pct(metrics['exact_match_hit_rate'])} "
-              f"({metrics['num_exact_match']} q)")
+        print(
+            f"  exact-match hit    {_fmt_pct(metrics['exact_match_hit_rate'])} "
+            f"({metrics['num_exact_match']} q)"
+        )
         print("=" * 56)
         if args.verbose:
             print("\n  Per-question:")
@@ -91,8 +110,11 @@ def main() -> int:
                     print(f"           retrieved: {q['retrieved']}")
 
     if args.min_hit_rate > 0 and metrics["exact_match_hit_rate"] < args.min_hit_rate:
-        print(f"\nFAIL: exact-match hit-rate {metrics['exact_match_hit_rate']:.3f} "
-              f"< threshold {args.min_hit_rate:.3f}", file=sys.stderr)
+        print(
+            f"\nFAIL: exact-match hit-rate {metrics['exact_match_hit_rate']:.3f} "
+            f"< threshold {args.min_hit_rate:.3f}",
+            file=sys.stderr,
+        )
         return 1
     return 0
 

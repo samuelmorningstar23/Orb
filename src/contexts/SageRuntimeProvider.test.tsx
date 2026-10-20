@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 /**
  * The shell's Sage runtime asks /sage/ai-posture once on mount. With the
  * models switched off (ORB_MODELS_ENABLED, or the Orb Ward Record, which forces
@@ -18,7 +19,8 @@ import { useSageRuntime } from './SageRuntimeContext'
 
 let seen: boolean | null | undefined
 function Probe() {
-  seen = useSageRuntime().localAsrAvailable
+  const available = useSageRuntime().localAsrAvailable
+  useEffect(() => { seen = available }, [available])
   return null
 }
 

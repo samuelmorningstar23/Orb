@@ -46,14 +46,11 @@ money, and even when enforcement is enabled it reports ``blocks_discharge`` as
 DATA rather than as an HTTP error, because it is the discharge path's decision,
 not billing's.
 """
+
 from __future__ import annotations
 
-from typing import Optional
-
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
-
 import config
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from permissions import (
     BILLING_READ,
     BILLING_TARIFF,
@@ -64,12 +61,14 @@ from permissions import (
     require_patient_access,
     require_permission,
 )
-from routes.opt_in_gates import require_opd_feature
-from services import billing_masters, billing_service
+from pydantic import BaseModel, Field
 from services.audit_service import AuditWriteError
 from services.billing_masters import MasterDataError
 from services.billing_service import BillingError
 from services.money import GST_EXEMPT, GST_TREATMENTS, QUANTITY_SCALE
+
+from routes.opt_in_gates import require_opd_feature
+from services import billing_masters, billing_service
 
 router = APIRouter(prefix="/api/billing", tags=["Billing"])
 
@@ -77,8 +76,13 @@ router = APIRouter(prefix="/api/billing", tags=["Billing"])
 #: issued the invoice, the charge is already billed) is 409, so a UI can tell
 #: "fix your input" from "reload and look again".
 _CONFLICT_CODES = {
-    "illegal_transition", "invoice_raced", "charges_raced", "charge_not_billable",
-    "charge_not_cancellable", "invoice_has_payments", "already_exists",
+    "illegal_transition",
+    "invoice_raced",
+    "charges_raced",
+    "charge_not_billable",
+    "charge_not_cancellable",
+    "invoice_has_payments",
+    "already_exists",
 }
 
 
@@ -90,8 +94,7 @@ def _billing_enabled() -> None:
             detail={
                 "error": "module_disabled",
                 "module": "billing",
-                "message": "The billing module is not enabled for this deployment "
-                           "(ORB_BILLING=0).",
+                "message": "The billing module is not enabled for this deployment (ORB_BILLING=0).",
             },
         )
 
@@ -105,19 +108,28 @@ _DESK_WRITE = require_permission(BILLING_READ, BILLING_WRITE)
 _DESK_TARIFF = require_permission(BILLING_READ, BILLING_TARIFF)
 
 
-def _read(user: dict = Depends(_DESK_READ)) -> dict:
+_READ_USER_DEFAULT = Depends(_DESK_READ)
+
+
+def _read(user: dict = _READ_USER_DEFAULT) -> dict:
     """billing.read + the module flag, in one dependency."""
     _billing_enabled()
     return user
 
 
-def _write(user: dict = Depends(_DESK_WRITE)) -> dict:
+_WRITE_USER_DEFAULT = Depends(_DESK_WRITE)
+
+
+def _write(user: dict = _WRITE_USER_DEFAULT) -> dict:
     """Charge capture / invoice lifecycle: billing.read + billing.write."""
     _billing_enabled()
     return user
 
 
-def _tariff(user: dict = Depends(_DESK_TARIFF)) -> dict:
+_TARIFF_USER_DEFAULT = Depends(_DESK_TARIFF)
+
+
+def _tariff(user: dict = _TARIFF_USER_DEFAULT) -> dict:
     """Tariff-master mutations: billing.read + billing.tariff — the second pen."""
     _billing_enabled()
     return user
@@ -131,33 +143,34 @@ def _handle(fn, *args, **kwargs):
         raise HTTPException(
             status_code=409 if exc.code in _CONFLICT_CODES else 422,
             detail={"error": exc.code, "message": str(exc), "detail": exc.detail},
-        )
+        ) from exc
     except MasterDataError as exc:
         raise HTTPException(
             status_code=422, detail={"error": "master_data", "message": str(exc)}
-        )
-    except ValueError as exc:   # money.MoneyError and friends
+        ) from exc
+    except ValueError as exc:  # money.MoneyError and friends
         raise HTTPException(
             status_code=422, detail={"error": "invalid_amount", "message": str(exc)}
-        )
+        ) from exc
 
 
 # ── Request models ───────────────────────────────────────────────────────────
+
 
 class ServiceItemIn(BaseModel):
     code: str
     name: str
     category: str = "other"
-    department: Optional[str] = None
+    department: str | None = None
     uom: str = "each"
     gst_treatment: str = GST_EXEMPT
     gst_rate_bp: int = 0
-    hsn_sac: Optional[str] = None
+    hsn_sac: str | None = None
     #: None means "no price", which is NOT ₹0. An explicit 0 means a genuinely
     #: free item and is stored as a configured price.
-    default_rate_paise: Optional[int] = None
+    default_rate_paise: int | None = None
     is_active: bool = True
-    notes: Optional[str] = None
+    notes: str | None = None
     #: Set by the price list's New item: a code already on the list is refused
     #: (409) rather than overwritten.
     create_only: bool = False
@@ -169,17 +182,17 @@ class TariffPlanIn(BaseModel):
     plan_type: str = "self_pay"
     is_default: bool = False
     is_active: bool = True
-    effective_from: Optional[str] = None
-    effective_to: Optional[str] = None
-    notes: Optional[str] = None
+    effective_from: str | None = None
+    effective_to: str | None = None
+    notes: str | None = None
 
 
 class TariffRateIn(BaseModel):
     tariff_plan_id: int
     service_code: str
     rate_paise: int
-    ward_class: Optional[str] = None
-    effective_from: Optional[str] = None
+    ward_class: str | None = None
+    effective_from: str | None = None
 
 
 class PackageRateIn(BaseModel):
@@ -187,37 +200,37 @@ class PackageRateIn(BaseModel):
     package_code: str
     name: str
     package_rate_paise: int
-    ward_class: Optional[str] = None
-    los_days_included: Optional[int] = None
-    inclusions: Optional[str] = None
-    exclusions: Optional[str] = None
-    external_scheme_code: Optional[str] = None
-    effective_from: Optional[str] = None
+    ward_class: str | None = None
+    los_days_included: int | None = None
+    inclusions: str | None = None
+    exclusions: str | None = None
+    external_scheme_code: str | None = None
+    effective_from: str | None = None
 
 
 class ChargeIn(BaseModel):
     service_code: str
-    description: Optional[str] = None
+    description: str | None = None
     quantity_milli: int = QUANTITY_SCALE
     #: Omit to price from the tariff. Supplying it is an explicit override and is
     #: recorded as one on the audit row.
-    unit_rate_paise: Optional[int] = None
+    unit_rate_paise: int | None = None
     discount_paise: int = 0
     discount_bp: int = 0
-    admission_id: Optional[str] = None
-    encounter_type: Optional[str] = None
-    ward_class: Optional[str] = None
-    tariff_plan_id: Optional[int] = None
-    gst_treatment: Optional[str] = None
-    gst_rate_bp: Optional[int] = None
-    service_date: Optional[str] = None
-    idempotency_key: Optional[str] = None
-    notes: Optional[str] = None
+    admission_id: str | None = None
+    encounter_type: str | None = None
+    ward_class: str | None = None
+    tariff_plan_id: int | None = None
+    gst_treatment: str | None = None
+    gst_rate_bp: int | None = None
+    service_date: str | None = None
+    idempotency_key: str | None = None
+    notes: str | None = None
 
 
 class CaptureIn(BaseModel):
-    admission_id: Optional[str] = None
-    ward_class: Optional[str] = None
+    admission_id: str | None = None
+    ward_class: str | None = None
     dry_run: bool = False
 
 
@@ -225,30 +238,31 @@ class BedDaysIn(BaseModel):
     admission_id: str
     #: Omit to price each day by the class of the patient's bed (adt-15, needs
     #: ORB_ADT on); with ORB_ADT off a bed-day service code is still required.
-    service_code: Optional[str] = None
-    through: Optional[str] = None
-    ward_class: Optional[str] = None
+    service_code: str | None = None
+    through: str | None = None
+    ward_class: str | None = None
 
 
 class InvoiceIn(BaseModel):
-    admission_id: Optional[str] = None
+    admission_id: str | None = None
     invoice_type: str = "final"
-    charge_ids: Optional[list[int]] = None
-    encounter_type: Optional[str] = None
-    place_of_supply: Optional[str] = None
+    charge_ids: list[int] | None = None
+    encounter_type: str | None = None
+    place_of_supply: str | None = None
     interstate: bool = False
-    round_off: Optional[bool] = None
+    round_off: bool | None = None
     issue: bool = False
-    notes: Optional[str] = None
-    idempotency_key: Optional[str] = None
+    notes: str | None = None
+    idempotency_key: str | None = None
 
 
 class OpdInvoiceIn(BaseModel):
     """An OPD bill in one call: capture the lines, raise the invoice, issue it."""
+
     lines: list[ChargeIn] = Field(min_length=1)
-    place_of_supply: Optional[str] = None
+    place_of_supply: str | None = None
     interstate: bool = False
-    notes: Optional[str] = None
+    notes: str | None = None
     issue: bool = True
 
 
@@ -258,8 +272,12 @@ class ReasonIn(BaseModel):
 
 # ── Config / masters ─────────────────────────────────────────────────────────
 
+
+_BILLING_CONFIG_USER_DEFAULT = Depends(_read)
+
+
 @router.get("/config")
-def billing_config(user: dict = Depends(_read)):
+def billing_config(user: dict = _BILLING_CONFIG_USER_DEFAULT):
     """What this deployment has configured — including what it has NOT."""
     plan = billing_masters.default_tariff_plan()
     items = billing_masters.list_service_items(limit=1000)
@@ -267,9 +285,7 @@ def billing_config(user: dict = Depends(_read)):
     return {
         "module": "billing",
         "enabled": True,
-        "discharge_financial_enforce": bool(
-            getattr(config, "DISCHARGE_FINANCIAL_ENFORCE", False)
-        ),
+        "discharge_financial_enforce": bool(getattr(config, "DISCHARGE_FINANCIAL_ENFORCE", False)),
         "default_tariff_plan": plan,
         "service_item_count": len(items),
         "priced_service_item_count": priced,
@@ -278,13 +294,17 @@ def billing_config(user: dict = Depends(_read)):
     }
 
 
+_LIST_SERVICE_ITEMS_LIMIT_DEFAULT = Query(500, ge=1, le=2000)
+_LIST_SERVICE_ITEMS_USER_DEFAULT = Depends(_read)
+
+
 @router.get("/service-items")
 def list_service_items(
-    category: Optional[str] = None,
-    search: Optional[str] = None,
+    category: str | None = None,
+    search: str | None = None,
     active_only: bool = True,
-    limit: int = Query(500, ge=1, le=2000),
-    user: dict = Depends(_read),
+    limit: int = _LIST_SERVICE_ITEMS_LIMIT_DEFAULT,
+    user: dict = _LIST_SERVICE_ITEMS_USER_DEFAULT,
 ):
     return {
         "items": billing_masters.list_service_items(
@@ -293,49 +313,76 @@ def list_service_items(
     }
 
 
+_UPSERT_SERVICE_ITEM_USER_DEFAULT = Depends(_tariff)
+
+
 @router.post("/service-items")
-def upsert_service_item(payload: ServiceItemIn, user: dict = Depends(_tariff)):
+def upsert_service_item(payload: ServiceItemIn, user: dict = _UPSERT_SERVICE_ITEM_USER_DEFAULT):
     if payload.gst_treatment not in GST_TREATMENTS:
         raise HTTPException(
             status_code=422,
-            detail={"error": "invalid_input",
-                    "message": f"unknown GST treatment {payload.gst_treatment!r}"},
+            detail={
+                "error": "invalid_input",
+                "message": f"unknown GST treatment {payload.gst_treatment!r}",
+            },
         )
     item = _handle(
-        billing_service.create_service_item if payload.create_only
+        billing_service.create_service_item
+        if payload.create_only
         else billing_masters.upsert_service_item,
-        code=payload.code, name=payload.name, category=payload.category,
-        department=payload.department, uom=payload.uom,
-        gst_treatment=payload.gst_treatment, gst_rate_bp=payload.gst_rate_bp,
-        hsn_sac=payload.hsn_sac, default_rate_paise=payload.default_rate_paise,
-        is_active=payload.is_active, notes=payload.notes, created_by=user.get("id"),
+        code=payload.code,
+        name=payload.name,
+        category=payload.category,
+        department=payload.department,
+        uom=payload.uom,
+        gst_treatment=payload.gst_treatment,
+        gst_rate_bp=payload.gst_rate_bp,
+        hsn_sac=payload.hsn_sac,
+        default_rate_paise=payload.default_rate_paise,
+        is_active=payload.is_active,
+        notes=payload.notes,
+        created_by=user.get("id"),
     )
     return {"status": "success", "item": item}
 
 
+_LIST_TARIFF_PLANS_USER_DEFAULT = Depends(_read)
+
+
 @router.get("/tariff-plans")
-def list_tariff_plans(active_only: bool = True, user: dict = Depends(_read)):
+def list_tariff_plans(active_only: bool = True, user: dict = _LIST_TARIFF_PLANS_USER_DEFAULT):
     return {"plans": billing_masters.list_tariff_plans(active_only=active_only)}
 
 
+_UPSERT_TARIFF_PLAN_USER_DEFAULT = Depends(_tariff)
+
+
 @router.post("/tariff-plans")
-def upsert_tariff_plan(payload: TariffPlanIn, user: dict = Depends(_tariff)):
+def upsert_tariff_plan(payload: TariffPlanIn, user: dict = _UPSERT_TARIFF_PLAN_USER_DEFAULT):
     plan = _handle(
         billing_service.upsert_tariff_plan,
-        code=payload.code, name=payload.name, plan_type=payload.plan_type,
-        is_default=payload.is_default, is_active=payload.is_active,
-        effective_from=payload.effective_from, effective_to=payload.effective_to,
+        code=payload.code,
+        name=payload.name,
+        plan_type=payload.plan_type,
+        is_default=payload.is_default,
+        is_active=payload.is_active,
+        effective_from=payload.effective_from,
+        effective_to=payload.effective_to,
         notes=payload.notes,
     )
     return {"status": "success", "plan": plan}
 
 
+_LIST_TARIFF_RATES_LIMIT_DEFAULT = Query(500, ge=1, le=2000)
+_LIST_TARIFF_RATES_USER_DEFAULT = Depends(_read)
+
+
 @router.get("/tariff-rates")
 def list_tariff_rates(
-    tariff_plan_id: Optional[int] = None,
-    service_code: Optional[str] = None,
-    limit: int = Query(500, ge=1, le=2000),
-    user: dict = Depends(_read),
+    tariff_plan_id: int | None = None,
+    service_code: str | None = None,
+    limit: int = _LIST_TARIFF_RATES_LIMIT_DEFAULT,
+    user: dict = _LIST_TARIFF_RATES_USER_DEFAULT,
 ):
     return {
         "rates": billing_service.list_tariff_rates(
@@ -344,48 +391,69 @@ def list_tariff_rates(
     }
 
 
+_SET_TARIFF_RATE_USER_DEFAULT = Depends(_tariff)
+
+
 @router.post("/tariff-rates")
-def set_tariff_rate(payload: TariffRateIn, user: dict = Depends(_tariff)):
+def set_tariff_rate(payload: TariffRateIn, user: dict = _SET_TARIFF_RATE_USER_DEFAULT):
     rate = _handle(
         billing_masters.set_tariff_rate,
-        tariff_plan_id=payload.tariff_plan_id, service_code=payload.service_code,
-        rate_paise=payload.rate_paise, ward_class=payload.ward_class,
-        effective_from=payload.effective_from, created_by=user.get("id"),
+        tariff_plan_id=payload.tariff_plan_id,
+        service_code=payload.service_code,
+        rate_paise=payload.rate_paise,
+        ward_class=payload.ward_class,
+        effective_from=payload.effective_from,
+        created_by=user.get("id"),
     )
     return {"status": "success", "rate": rate}
 
 
+_LIST_PACKAGES_USER_DEFAULT = Depends(_read)
+
+
 @router.get("/packages")
-def list_packages(tariff_plan_id: Optional[int] = None, user: dict = Depends(_read)):
+def list_packages(tariff_plan_id: int | None = None, user: dict = _LIST_PACKAGES_USER_DEFAULT):
     return {"packages": billing_service.list_package_rates(tariff_plan_id=tariff_plan_id)}
 
 
+_UPSERT_PACKAGE_USER_DEFAULT = Depends(_tariff)
+
+
 @router.post("/packages")
-def upsert_package(payload: PackageRateIn, user: dict = Depends(_tariff)):
+def upsert_package(payload: PackageRateIn, user: dict = _UPSERT_PACKAGE_USER_DEFAULT):
     package = _handle(
         billing_service.upsert_package_rate,
-        tariff_plan_id=payload.tariff_plan_id, package_code=payload.package_code,
-        name=payload.name, package_rate_paise=payload.package_rate_paise,
-        ward_class=payload.ward_class, los_days_included=payload.los_days_included,
-        inclusions=payload.inclusions, exclusions=payload.exclusions,
+        tariff_plan_id=payload.tariff_plan_id,
+        package_code=payload.package_code,
+        name=payload.name,
+        package_rate_paise=payload.package_rate_paise,
+        ward_class=payload.ward_class,
+        los_days_included=payload.los_days_included,
+        inclusions=payload.inclusions,
+        exclusions=payload.exclusions,
         external_scheme_code=payload.external_scheme_code,
         effective_from=payload.effective_from,
     )
     return {"status": "success", "package": package}
 
 
+_RESOLVE_RATE_USER_DEFAULT = Depends(_read)
+
+
 @router.get("/rate/{service_code}")
 def resolve_rate(
     service_code: str,
-    tariff_plan_id: Optional[int] = None,
-    ward_class: Optional[str] = None,
-    on_date: Optional[str] = None,
-    user: dict = Depends(_read),
+    tariff_plan_id: int | None = None,
+    ward_class: str | None = None,
+    on_date: str | None = None,
+    user: dict = _RESOLVE_RATE_USER_DEFAULT,
 ):
     """What one service costs — with ``rate_is_configured`` so the UI can say
     "Not configured" instead of drawing a zero."""
     resolution = billing_masters.resolve_rate(
-        service_code, tariff_plan_id=tariff_plan_id, ward_class=ward_class,
+        service_code,
+        tariff_plan_id=tariff_plan_id,
+        ward_class=ward_class,
         on_date=on_date,
     )
     return resolution.as_dict()
@@ -393,12 +461,18 @@ def resolve_rate(
 
 # ── Outpatients at the counter (opd-14, the 'opd' feature) ──────────────────
 
+
+_LIST_OP_PATIENTS_DATE_DEFAULT = Query(None, max_length=10)
+_LIST_OP_PATIENTS_OPD_DEFAULT = Depends(require_opd_feature)
+_LIST_OP_PATIENTS_USER_DEFAULT = Depends(_read)
+
+
 @router.get("/op-patients")
 def list_op_patients(
     request: Request,
-    date: Optional[str] = Query(None, max_length=10),
-    _opd: None = Depends(require_opd_feature),
-    user: dict = Depends(_read),
+    date: str | None = _LIST_OP_PATIENTS_DATE_DEFAULT,
+    _opd: None = _LIST_OP_PATIENTS_OPD_DEFAULT,
+    user: dict = _LIST_OP_PATIENTS_USER_DEFAULT,
 ):
     """Outpatients with pending outpatient lines on one hospital-local day.
 
@@ -417,7 +491,9 @@ def list_op_patients(
     if result["patients"]:
         try:
             log_phi_read(
-                request=request, user=user, action_type="billing_op_patients_listed",
+                request=request,
+                user=user,
+                action_type="billing_op_patients_listed",
                 summary_message=(
                     f"Outpatients to bill on {result['date']} listed "
                     f"({result['patient_count']} patients)"
@@ -436,28 +512,36 @@ def list_op_patients(
                 status_code=503,
                 detail={
                     "error": "audit_unavailable",
-                    "message": ("The list could not be shown because the audit trail "
-                                "is not available. Try again in a moment."),
+                    "message": (
+                        "The list could not be shown because the audit trail "
+                        "is not available. Try again in a moment."
+                    ),
                 },
-            )
+            ) from None
     return result
 
 
 # ── Charge capture ───────────────────────────────────────────────────────────
 
+
+_LIST_PATIENT_CHARGES_LIMIT_DEFAULT = Query(500, ge=1, le=2000)
+_LIST_PATIENT_CHARGES_USER_DEFAULT = Depends(
+    require_patient_access(BILLING_READ, audit_action="billing_charges_read")
+)
+
+
 @router.get("/patients/{patient_id}/charges")
 def list_patient_charges(
     patient_id: str,
-    admission_id: Optional[str] = None,
-    status: Optional[str] = None,
-    limit: int = Query(500, ge=1, le=2000),
+    admission_id: str | None = None,
+    status: str | None = None,
+    limit: int = _LIST_PATIENT_CHARGES_LIMIT_DEFAULT,
     # require_patient_access = the permission + "…and this patient is on your
     # ward" + a fail-closed phi_access audit row, in one dependency. It is the
     # house guard for every /{patient_id} route, and
     # tests/test_patient_scope_routes.py enumerates the live app to prove no new
     # one is added without it.
-    user: dict = Depends(require_patient_access(
-        BILLING_READ, audit_action="billing_charges_read")),
+    user: dict = _LIST_PATIENT_CHARGES_USER_DEFAULT,
 ):
     _billing_enabled()
     charges = billing_service.list_charges(
@@ -466,10 +550,11 @@ def list_patient_charges(
     return {
         "patient_id": patient_id,
         "charges": charges,
-        "summary": billing_service.patient_financial_summary(
-            patient_id, admission_id=admission_id
-        ),
+        "summary": billing_service.patient_financial_summary(patient_id, admission_id=admission_id),
     }
+
+
+_POST_CHARGE_USER_DEFAULT = Depends(require_patient_access(BILLING_READ, BILLING_WRITE))
 
 
 @router.post("/patients/{patient_id}/charges")
@@ -479,29 +564,40 @@ def post_charge(
     # Same house guard as the reads: permission + ward scope off the PATH. No
     # audit_action — a mutation is already covered by the audit middleware and
     # by this module's own billing_charge_posted row.
-    user: dict = Depends(require_patient_access(BILLING_READ, BILLING_WRITE)),
+    user: dict = _POST_CHARGE_USER_DEFAULT,
 ):
     _billing_enabled()
     charge = _handle(
         billing_service.add_charge,
-        patient_id=patient_id, service_code=payload.service_code,
-        description=payload.description, quantity_milli=payload.quantity_milli,
-        unit_rate_paise=payload.unit_rate_paise, discount_paise=payload.discount_paise,
-        discount_bp=payload.discount_bp, admission_id=payload.admission_id,
-        encounter_type=payload.encounter_type, ward_class=payload.ward_class,
-        tariff_plan_id=payload.tariff_plan_id, gst_treatment=payload.gst_treatment,
-        gst_rate_bp=payload.gst_rate_bp, service_date=payload.service_date,
-        idempotency_key=payload.idempotency_key, notes=payload.notes,
+        patient_id=patient_id,
+        service_code=payload.service_code,
+        description=payload.description,
+        quantity_milli=payload.quantity_milli,
+        unit_rate_paise=payload.unit_rate_paise,
+        discount_paise=payload.discount_paise,
+        discount_bp=payload.discount_bp,
+        admission_id=payload.admission_id,
+        encounter_type=payload.encounter_type,
+        ward_class=payload.ward_class,
+        tariff_plan_id=payload.tariff_plan_id,
+        gst_treatment=payload.gst_treatment,
+        gst_rate_bp=payload.gst_rate_bp,
+        service_date=payload.service_date,
+        idempotency_key=payload.idempotency_key,
+        notes=payload.notes,
         charged_by=user.get("id"),
     )
     return {"status": "success", "charge": charge}
+
+
+_CAPTURE_CHARGES_USER_DEFAULT = Depends(require_patient_access(BILLING_READ, BILLING_WRITE))
 
 
 @router.post("/patients/{patient_id}/charges/capture")
 def capture_charges(
     patient_id: str,
     payload: CaptureIn,
-    user: dict = Depends(require_patient_access(BILLING_READ, BILLING_WRITE)),
+    user: dict = _CAPTURE_CHARGES_USER_DEFAULT,
 ):
     """Pull the chargeable clinical events Orb already recorded onto the bill.
 
@@ -511,17 +607,23 @@ def capture_charges(
     _billing_enabled()
     result = _handle(
         billing_service.capture_clinical_charges,
-        patient_id=patient_id, admission_id=payload.admission_id,
-        ward_class=payload.ward_class, dry_run=payload.dry_run, actor=user.get("id"),
+        patient_id=patient_id,
+        admission_id=payload.admission_id,
+        ward_class=payload.ward_class,
+        dry_run=payload.dry_run,
+        actor=user.get("id"),
     )
     return {"status": "success", **result}
+
+
+_POST_BED_DAYS_USER_DEFAULT = Depends(require_patient_access(BILLING_READ, BILLING_WRITE))
 
 
 @router.post("/patients/{patient_id}/bed-days")
 def post_bed_days(
     patient_id: str,
     payload: BedDaysIn,
-    user: dict = Depends(require_patient_access(BILLING_READ, BILLING_WRITE)),
+    user: dict = _POST_BED_DAYS_USER_DEFAULT,
 ):
     """Post bed days through a date (W136, adt-15). The admission must be the
     path patient's: the scope check above covers the patient, not an
@@ -529,17 +631,25 @@ def post_bed_days(
     _billing_enabled()
     result = _handle(
         billing_service.post_bed_day_charges,
-        admission_id=payload.admission_id, service_code=payload.service_code,
-        through=payload.through, ward_class=payload.ward_class, actor=user.get("id"),
+        admission_id=payload.admission_id,
+        service_code=payload.service_code,
+        through=payload.through,
+        ward_class=payload.ward_class,
+        actor=user.get("id"),
         patient_id=patient_id,
     )
     return {"status": "success", **result}
 
 
+_CANCEL_CHARGE_USER_DEFAULT = Depends(_write)
+
+
 @router.post("/charges/{charge_id}/cancel")
-def cancel_charge(charge_id: int, payload: ReasonIn, user: dict = Depends(_write)):
+def cancel_charge(charge_id: int, payload: ReasonIn, user: dict = _CANCEL_CHARGE_USER_DEFAULT):
     charge = _handle(
-        billing_service.cancel_charge, charge_id, reason=payload.reason,
+        billing_service.cancel_charge,
+        charge_id,
+        reason=payload.reason,
         actor=user.get("id"),
     )
     return {"status": "success", "charge": charge}
@@ -547,50 +657,70 @@ def cancel_charge(charge_id: int, payload: ReasonIn, user: dict = Depends(_write
 
 # ── Invoices ─────────────────────────────────────────────────────────────────
 
+
+_LIST_INVOICES_LIMIT_DEFAULT = Query(200, ge=1, le=1000)
+_LIST_INVOICES_USER_DEFAULT = Depends(_read)
+
+
 @router.get("/invoices")
 def list_invoices(
-    patient_id: Optional[str] = None,
-    admission_id: Optional[str] = None,
-    status: Optional[str] = None,
-    invoice_type: Optional[str] = None,
-    limit: int = Query(200, ge=1, le=1000),
-    user: dict = Depends(_read),
+    patient_id: str | None = None,
+    admission_id: str | None = None,
+    status: str | None = None,
+    invoice_type: str | None = None,
+    limit: int = _LIST_INVOICES_LIMIT_DEFAULT,
+    user: dict = _LIST_INVOICES_USER_DEFAULT,
 ):
     if patient_id:
         enforce_patient_scope(user, patient_id)
     return {
         "invoices": billing_service.list_invoices(
-            patient_id=patient_id, admission_id=admission_id, status=status,
-            invoice_type=invoice_type, limit=limit,
+            patient_id=patient_id,
+            admission_id=admission_id,
+            status=status,
+            invoice_type=invoice_type,
+            limit=limit,
         )
     }
+
+
+_CREATE_INVOICE_USER_DEFAULT = Depends(require_patient_access(BILLING_READ, BILLING_WRITE))
 
 
 @router.post("/patients/{patient_id}/invoices")
 def create_invoice(
     patient_id: str,
     payload: InvoiceIn,
-    user: dict = Depends(require_patient_access(BILLING_READ, BILLING_WRITE)),
+    user: dict = _CREATE_INVOICE_USER_DEFAULT,
 ):
     """Raise an IPD interim/final bill (or an advance demand) over pending charges."""
     _billing_enabled()
     invoice = _handle(
         billing_service.create_invoice,
-        patient_id=patient_id, admission_id=payload.admission_id,
-        invoice_type=payload.invoice_type, charge_ids=payload.charge_ids,
-        encounter_type=payload.encounter_type, place_of_supply=payload.place_of_supply,
-        interstate=payload.interstate, round_off=payload.round_off,
-        issue=payload.issue, notes=payload.notes,
-        idempotency_key=payload.idempotency_key, created_by=user.get("id"),
+        patient_id=patient_id,
+        admission_id=payload.admission_id,
+        invoice_type=payload.invoice_type,
+        charge_ids=payload.charge_ids,
+        encounter_type=payload.encounter_type,
+        place_of_supply=payload.place_of_supply,
+        interstate=payload.interstate,
+        round_off=payload.round_off,
+        issue=payload.issue,
+        notes=payload.notes,
+        idempotency_key=payload.idempotency_key,
+        created_by=user.get("id"),
     )
     return {"status": "success", "invoice": invoice}
+
+
+_CREATE_OPD_INVOICE_USER_DEFAULT = Depends(require_patient_access(BILLING_READ, BILLING_WRITE))
 
 
 @router.post("/patients/{patient_id}/opd-invoice")
 def create_opd_invoice(
     patient_id: str,
     payload: OpdInvoiceIn,
-    user: dict = Depends(require_patient_access(BILLING_READ, BILLING_WRITE)),
+    user: dict = _CREATE_OPD_INVOICE_USER_DEFAULT,
 ):
     """The outpatient counter: type the lines, get a bill, in one round trip.
 
@@ -603,75 +733,112 @@ def create_opd_invoice(
     for line in payload.lines:
         charge = _handle(
             billing_service.add_charge,
-            patient_id=patient_id, service_code=line.service_code,
-            description=line.description, quantity_milli=line.quantity_milli,
-            unit_rate_paise=line.unit_rate_paise, discount_paise=line.discount_paise,
-            discount_bp=line.discount_bp, encounter_type="op",
-            tariff_plan_id=line.tariff_plan_id, gst_treatment=line.gst_treatment,
-            gst_rate_bp=line.gst_rate_bp, service_date=line.service_date,
-            idempotency_key=line.idempotency_key, notes=line.notes,
+            patient_id=patient_id,
+            service_code=line.service_code,
+            description=line.description,
+            quantity_milli=line.quantity_milli,
+            unit_rate_paise=line.unit_rate_paise,
+            discount_paise=line.discount_paise,
+            discount_bp=line.discount_bp,
+            encounter_type="op",
+            tariff_plan_id=line.tariff_plan_id,
+            gst_treatment=line.gst_treatment,
+            gst_rate_bp=line.gst_rate_bp,
+            service_date=line.service_date,
+            idempotency_key=line.idempotency_key,
+            notes=line.notes,
             charged_by=user.get("id"),
         )
         charge_ids.append(int(charge["id"]))
 
     invoice = _handle(
         billing_service.create_invoice,
-        patient_id=patient_id, invoice_type="final", charge_ids=charge_ids,
-        encounter_type="op", place_of_supply=payload.place_of_supply,
-        interstate=payload.interstate, issue=payload.issue, notes=payload.notes,
+        patient_id=patient_id,
+        invoice_type="final",
+        charge_ids=charge_ids,
+        encounter_type="op",
+        place_of_supply=payload.place_of_supply,
+        interstate=payload.interstate,
+        issue=payload.issue,
+        notes=payload.notes,
         created_by=user.get("id"),
     )
     return {"status": "success", "invoice": invoice, "charge_ids": charge_ids}
 
 
+_GET_INVOICE_USER_DEFAULT = Depends(_read)
+
+
 @router.get("/invoices/{invoice_id}")
-def get_invoice(invoice_id: int, request: Request, user: dict = Depends(_read)):
+def get_invoice(invoice_id: int, request: Request, user: dict = _GET_INVOICE_USER_DEFAULT):
     invoice = _handle(billing_service.get_invoice, invoice_id)
     enforce_patient_scope(user, invoice.get("patient_id"))
     log_phi_read(
-        request=request, user=user, action_type="billing_invoice_read",
+        request=request,
+        user=user,
+        action_type="billing_invoice_read",
         summary_message=f"Invoice {invoice_id} read",
-        patient_id=invoice.get("patient_id"), target_type="invoice",
+        patient_id=invoice.get("patient_id"),
+        target_type="invoice",
         target_id=str(invoice_id),
     )
     return {"invoice": invoice}
 
 
+_PRINT_INVOICE_USER_DEFAULT = Depends(_read)
+
+
 @router.get("/invoices/{invoice_id}/print")
-def print_invoice(invoice_id: int, request: Request, user: dict = Depends(_read)):
+def print_invoice(invoice_id: int, request: Request, user: dict = _PRINT_INVOICE_USER_DEFAULT):
     """The printable/exportable document, with its own honesty notices attached."""
     view = _handle(billing_service.invoice_print_view, invoice_id)
     enforce_patient_scope(user, view["invoice"].get("patient_id"))
     log_phi_read(
-        request=request, user=user, action_type="billing_invoice_printed",
+        request=request,
+        user=user,
+        action_type="billing_invoice_printed",
         summary_message=f"Invoice {invoice_id} rendered for print/export",
-        patient_id=view["invoice"].get("patient_id"), target_type="invoice",
+        patient_id=view["invoice"].get("patient_id"),
+        target_type="invoice",
         target_id=str(invoice_id),
     )
     return view
 
 
+_ISSUE_INVOICE_USER_DEFAULT = Depends(_write)
+
+
 @router.post("/invoices/{invoice_id}/issue")
-def issue_invoice(invoice_id: int, user: dict = Depends(_write)):
+def issue_invoice(invoice_id: int, user: dict = _ISSUE_INVOICE_USER_DEFAULT):
     invoice = _handle(billing_service.issue_invoice, invoice_id, actor=user.get("id"))
     return {"status": "success", "invoice": invoice}
 
 
+_CANCEL_INVOICE_USER_DEFAULT = Depends(_write)
+
+
 @router.post("/invoices/{invoice_id}/cancel")
-def cancel_invoice(invoice_id: int, payload: ReasonIn, user: dict = Depends(_write)):
+def cancel_invoice(invoice_id: int, payload: ReasonIn, user: dict = _CANCEL_INVOICE_USER_DEFAULT):
     """Cancel with a typed reason. Nothing is deleted; the number is never reused."""
     invoice = _handle(
-        billing_service.cancel_invoice, invoice_id, reason=payload.reason,
+        billing_service.cancel_invoice,
+        invoice_id,
+        reason=payload.reason,
         actor=user.get("id"),
     )
     return {"status": "success", "invoice": invoice}
 
 
+_CREDIT_NOTE_USER_DEFAULT = Depends(_write)
+
+
 @router.post("/invoices/{invoice_id}/credit-note")
-def credit_note(invoice_id: int, payload: ReasonIn, user: dict = Depends(_write)):
+def credit_note(invoice_id: int, payload: ReasonIn, user: dict = _CREDIT_NOTE_USER_DEFAULT):
     """Reverse a paid/part-paid invoice with a second document."""
     invoice = _handle(
-        billing_service.create_credit_note, invoice_id, reason=payload.reason,
+        billing_service.create_credit_note,
+        invoice_id,
+        reason=payload.reason,
         actor=user.get("id"),
     )
     return {"status": "success", "invoice": invoice}
@@ -679,24 +846,33 @@ def credit_note(invoice_id: int, payload: ReasonIn, user: dict = Depends(_write)
 
 # ── Patient money view + the discharge advisory ──────────────────────────────
 
+
+_PATIENT_SUMMARY_USER_DEFAULT = Depends(
+    require_patient_access(BILLING_READ, audit_action="billing_summary_read")
+)
+
+
 @router.get("/patients/{patient_id}/summary")
 def patient_summary(
     patient_id: str,
-    admission_id: Optional[str] = None,
-    user: dict = Depends(require_patient_access(
-        BILLING_READ, audit_action="billing_summary_read")),
+    admission_id: str | None = None,
+    user: dict = _PATIENT_SUMMARY_USER_DEFAULT,
 ):
     _billing_enabled()
     return billing_service.patient_financial_summary(patient_id, admission_id=admission_id)
 
 
+_DISCHARGE_ADVISORY_USER_DEFAULT = Depends(
+    require_patient_access("discharge.read", audit_action="billing_discharge_advisory_read")
+)
+
+
 @router.get("/patients/{patient_id}/discharge-advisory")
 def discharge_advisory(
     patient_id: str,
-    admission_id: Optional[str] = None,
+    admission_id: str | None = None,
     record: bool = True,
-    user: dict = Depends(require_patient_access(
-        "discharge.read", audit_action="billing_discharge_advisory_read")),
+    user: dict = _DISCHARGE_ADVISORY_USER_DEFAULT,
 ):
     """The discharge warning. ALWAYS 200. NEVER a refusal.
 
@@ -713,7 +889,9 @@ def discharge_advisory(
     """
     _billing_enabled()
     advisory = billing_service.discharge_financial_advisory(
-        patient_id=patient_id, admission_id=admission_id,
-        checked_by=user.get("id"), record=record,
+        patient_id=patient_id,
+        admission_id=admission_id,
+        checked_by=user.get("id"),
+        record=record,
     )
     return advisory

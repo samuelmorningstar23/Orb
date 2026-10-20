@@ -39,11 +39,21 @@ then (it owns its own transaction), so the refusal stops the runner before the
 ledger records 48: restore the verified backup taken before the deploy rather
 than run on a users table whose children no longer resolve.
 """
+
 from migrations import Migration, _rebuild_users_role_check
 
 FROZEN_ROLES: tuple = (
-    "doctor", "nurse", "admin", "patient", "pharmacist", "cashier",
-    "receptionist", "ward_clerk", "lab_technician", "pathologist", "phlebotomist",
+    "doctor",
+    "nurse",
+    "admin",
+    "patient",
+    "pharmacist",
+    "cashier",
+    "receptionist",
+    "ward_clerk",
+    "lab_technician",
+    "pathologist",
+    "phlebotomist",
 )
 
 
@@ -62,9 +72,12 @@ def _users_fk_violations(conn) -> set:
     against users, over the tables that reference users. Read-only, and
     correct with foreign_keys on or off."""
     found: set = set()
-    tables = [r[0] for r in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-    ).fetchall()]
+    tables = [
+        r[0]
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+    ]
     for name in tables:
         quoted = name.replace('"', '""')
         refs_users = any(

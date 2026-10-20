@@ -15,21 +15,21 @@ Falls back to real-time inference if cache is stale.
 import json
 import logging
 import os
-import math
 import threading
 import time
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from datetime import UTC, datetime, timedelta
+from typing import NotRequired, TypedDict
 
 import numpy as np
 import torch
+from database import db_session
+from models.forecast_lstm import INPUT_DIM, OrbForecastLSTM, load_model
+
+from services.hospital_time import hospital_today, local_day_bounds_utc
+from services.stay_times import count_summary_less_ends, stay_start_sql
 
 logger = logging.getLogger("orb.forecast")
 
-from database import get_db, db_session
-from models.forecast_lstm import OrbForecastLSTM, load_model, INPUT_DIM
-from services.hospital_time import hospital_today, local_day_bounds_utc
-from services.stay_times import count_summary_less_ends, stay_start_sql
 
 # ── Singleton model instance ──
 _model: OrbForecastLSTM | None = None
@@ -45,6 +45,20 @@ _hospital_flow_cache: dict[tuple, tuple[float, dict]] = {}
 HOSPITAL_FLOW_CACHE_TTL = 3600  # 1 hour — forecasts are stable for 1 hour
 
 
+class _DailyForecast(TypedDict):
+    date: str
+    day_label: str
+    predicted_admissions: float
+    predicted_discharges: float
+    predicted_occupancy: float
+    occupancy_pct: float
+    ward_breakdown: dict[str, int]
+    is_current: NotRequired[bool]
+    actual_admissions: NotRequired[int]
+    actual_discharges: NotRequired[int]
+    measured_occupancy: NotRequired[int]
+
+
 def get_model() -> OrbForecastLSTM:
     """Lazy-load the trained LSTM model."""
     global _model
@@ -53,6 +67,7 @@ def get_model() -> OrbForecastLSTM:
         # never spawns a per-core OpenMP gang inside the API process.
         try:
             import torch
+
             torch.set_num_threads(1)
         except Exception:
             pass
@@ -113,6 +128,7 @@ def _bed_register_on() -> bool:
     on. Read at call time."""
     try:
         import config
+
         return config.module_state("adt") == "on"
     except Exception:  # noqa: BLE001 - a config without modules is off
         return False
@@ -128,20 +144,30 @@ def _register_bed_counts() -> dict[str, tuple[str, int]]:
     retired, not a temporary extra bed, and of a class counted in the census
     (bed_classes.counts_in_census), the beds the Beds census calls licensed."""
     with db_session() as db:
-        if db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'wards'"
-                      ).fetchone() is None:
+        if (
+            db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'wards'"
+            ).fetchone()
+            is None
+        ):
             return {}
         ward_cols = {r[1] for r in db.execute("PRAGMA table_info(wards)").fetchall()}
         unit_cols = {r[1] for r in db.execute("PRAGMA table_info(housekeeping_units)").fetchall()}
         if "register_complete" not in ward_cols or "ward_id" not in unit_cols:
             return {}
-        has_classes = db.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'bed_classes'"
-        ).fetchone() is not None
+        has_classes = (
+            db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'bed_classes'"
+            ).fetchone()
+            is not None
+        )
         uncounted = (
             "AND NOT EXISTS (SELECT 1 FROM bed_classes c "
             "WHERE LOWER(TRIM(c.code)) = LOWER(TRIM(u.bed_class)) "
-            "AND COALESCE(c.counts_in_census, 1) = 0)" if has_classes else "")
+            "AND COALESCE(c.counts_in_census, 1) = 0)"
+            if has_classes
+            else ""
+        )
         rows = db.execute(
             "SELECT w.code AS code, "
             "(SELECT COUNT(*) FROM housekeeping_units u WHERE u.ward_id = w.id "
@@ -149,8 +175,11 @@ def _register_bed_counts() -> dict[str, tuple[str, int]]:
             f" {uncounted}) AS beds "
             "FROM wards w WHERE COALESCE(w.register_complete, 0) = 1 ORDER BY LOWER(w.code)"
         ).fetchall()
-    return {_ward_text_key(r["code"]): (r["code"], int(r["beds"] or 0))
-            for r in rows if _ward_text_key(r["code"])}
+    return {
+        _ward_text_key(r["code"]): (r["code"], int(r["beds"] or 0))
+        for r in rows
+        if _ward_text_key(r["code"])
+    }
 
 
 def capacity_source_for(ward: str) -> dict | None:
@@ -178,15 +207,15 @@ def capacity_source_summary() -> dict | None:
         source, words = "site_setting", CAPACITY_SOURCE_WORDS["site_setting"]
     else:
         source = "mixed"
-        words = (f"from bed register for {register} of {total} wards, "
-                 "site setting for the rest")
+        words = f"from bed register for {register} of {total} wards, site setting for the rest"
     return {
         "source": source,
         "words": words,
         "bed_register_wards": register,
         "wards": total,
-        "by_ward": {w: {"source": s, "words": CAPACITY_SOURCE_WORDS[s]}
-                    for w, s in by_ward.items()},
+        "by_ward": {
+            w: {"source": s, "words": CAPACITY_SOURCE_WORDS[s]} for w, s in by_ward.items()
+        },
     }
 
 
@@ -218,8 +247,7 @@ def _apply_register_capacity(wards: list[str]) -> dict[str, int]:
             sources[code] = "bed_register"
     if not new:
         return WARD_CAPACITY
-    changed = (dict(WARD_CAPACITY) != new
-               or {w: WARD_CAPACITY_SOURCE.get(w) for w in new} != sources)
+    changed = dict(WARD_CAPACITY) != new or {w: WARD_CAPACITY_SOURCE.get(w) for w in new} != sources
     for gone in [w for w in WARD_CAPACITY if w not in new]:
         del WARD_CAPACITY[gone]
     for w, beds in new.items():
@@ -234,8 +262,10 @@ def _apply_register_capacity(wards: list[str]) -> dict[str, int]:
         _hospital_flow_cache.clear()
     logger.info(
         "Ward capacity: %d ward(s), %d from the bed register, %d beds (%s)",
-        len(WARD_CAPACITY), sum(1 for s in sources.values() if s == "bed_register"),
-        TOTAL_CAPACITY, ", ".join(sorted(WARD_CAPACITY)),
+        len(WARD_CAPACITY),
+        sum(1 for s in sources.values() if s == "bed_register"),
+        TOTAL_CAPACITY,
+        ", ".join(sorted(WARD_CAPACITY)),
     )
     return WARD_CAPACITY
 
@@ -263,6 +293,7 @@ def refresh_ward_capacity() -> dict[str, int]:
         wards: list[str] = []
         try:
             from services.site_config_service import current_site_config
+
             wards = [w for w in (current_site_config().wards or []) if w]
         except Exception:
             wards = []
@@ -270,9 +301,11 @@ def refresh_ward_capacity() -> dict[str, int]:
         if not wards:
             try:
                 from database import db_session
+
                 with db_session() as db:
                     wards = [
-                        r["ward"] for r in db.execute(
+                        r["ward"]
+                        for r in db.execute(
                             "SELECT DISTINCT ward FROM patients "
                             "WHERE status = 'admitted' AND ward IS NOT NULL AND ward <> '' "
                             "ORDER BY ward"
@@ -299,10 +332,13 @@ def refresh_ward_capacity() -> dict[str, int]:
         TOTAL_CAPACITY = sum(WARD_CAPACITY.values())
         logger.info(
             "Ward capacity: %d ward(s) x %d beds = %d (%s)",
-            len(WARD_CAPACITY), DEFAULT_WARD_BEDS, TOTAL_CAPACITY,
+            len(WARD_CAPACITY),
+            DEFAULT_WARD_BEDS,
+            TOTAL_CAPACITY,
             ", ".join(sorted(WARD_CAPACITY)),
         )
         return WARD_CAPACITY
+
 
 # Day-of-week admission multipliers (Indian hospital patterns)
 DOW_MULTIPLIERS = {0: 1.35, 1: 1.25, 2: 1.10, 3: 1.00, 4: 0.95, 5: 0.70, 6: 0.65}
@@ -319,6 +355,7 @@ DOW_MULTIPLIERS = {0: 1.35, 1: 1.25, 2: 1.10, 3: 1.00, 4: 0.95, 5: 0.70, 6: 0.65
 # FEATURE EXTRACTION
 # ══════════════════════════════════════════════════════════════════════
 
+
 def extract_patient_features(patient_id: str, seq_len: int = 48) -> torch.Tensor | None:
     """
     Extract LSTM input features for a patient from the database.
@@ -327,9 +364,7 @@ def extract_patient_features(patient_id: str, seq_len: int = 48) -> torch.Tensor
     """
     with db_session() as db:
         # Patient demographics
-        patient = db.execute(
-            "SELECT * FROM patients WHERE id = ?", (patient_id,)
-        ).fetchone()
+        patient = db.execute("SELECT * FROM patients WHERE id = ?", (patient_id,)).fetchone()
         if not patient:
             return None
 
@@ -384,7 +419,7 @@ def extract_patient_features(patient_id: str, seq_len: int = 48) -> torch.Tensor
         features[t, 8] = 1.0 if patient["sex"] == "F" else 0.0
 
         ward = (patient["ward"] or "").upper()
-        features[t, 9]  = 1.0 if ward == "ICU" else 0.0
+        features[t, 9] = 1.0 if ward == "ICU" else 0.0
         features[t, 10] = 1.0 if ward in ("W1", "WARD 1") else 0.0
         features[t, 11] = 1.0 if ward in ("W2", "WARD 2") else 0.0
         features[t, 12] = 1.0 if ward in ("W3", "WARD 3") else 0.0
@@ -399,7 +434,7 @@ def extract_patient_features(patient_id: str, seq_len: int = 48) -> torch.Tensor
         if patient["admission_date"]:
             try:
                 adm = datetime.fromisoformat(patient["admission_date"].replace("Z", "+00:00"))
-                days = (datetime.now(timezone.utc) - adm).total_seconds() / 86400
+                days = (datetime.now(UTC) - adm).total_seconds() / 86400
             except (ValueError, TypeError):
                 days = 3.0
         else:
@@ -407,7 +442,7 @@ def extract_patient_features(patient_id: str, seq_len: int = 48) -> torch.Tensor
         features[t, 16] = days
 
         # Medication count
-        features[t, 17] = (med_count["cnt"] if med_count else 3)
+        features[t, 17] = med_count["cnt"] if med_count else 3
 
         # Risk score
         features[t, 18] = risk["score"] if risk else 0.5
@@ -419,6 +454,7 @@ def extract_patient_features(patient_id: str, seq_len: int = 48) -> torch.Tensor
 # PER-PATIENT PREDICTIONS
 # ══════════════════════════════════════════════════════════════════════
 
+
 def predict_patient_los(patient_id: str) -> dict:
     """
     Predict length-of-stay and discharge probability for a single patient.
@@ -428,6 +464,7 @@ def predict_patient_los(patient_id: str) -> dict:
     # LSTM is not loaded or run. The transparent heuristic answers instead,
     # labelled as such, exactly as it does for an untrained network.
     from services.model_switch import models_enabled
+
     if not models_enabled():
         result = _heuristic_prediction(patient_id)
         result["model_trained"] = False
@@ -467,7 +504,7 @@ def predict_patient_los(patient_id: str) -> dict:
     result["prediction_source"] = "lstm"
 
     # Add estimated discharge date
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     est_discharge = now + timedelta(days=result["predicted_los_days"])
     result["estimated_discharge_date"] = est_discharge.strftime("%Y-%m-%d")
 
@@ -491,7 +528,9 @@ def _heuristic_prediction(patient_id: str) -> dict:
             "discharge_probability": 0.15,
             "acuity_trajectory": "stable",
             "confidence": 0.3,
-            "estimated_discharge_date": (datetime.now(timezone.utc) + timedelta(days=3)).strftime("%Y-%m-%d"),
+            "estimated_discharge_date": (datetime.now(UTC) + timedelta(days=3)).strftime(
+                "%Y-%m-%d"
+            ),
         }
 
     ward = (patient["ward"] or "").upper()
@@ -501,7 +540,7 @@ def _heuristic_prediction(patient_id: str) -> dict:
     if patient["admission_date"]:
         try:
             adm = datetime.fromisoformat(patient["admission_date"].replace("Z", "+00:00"))
-            days_in = (datetime.now(timezone.utc) - adm).total_seconds() / 86400
+            days_in = (datetime.now(UTC) - adm).total_seconds() / 86400
         except (ValueError, TypeError):
             days_in = 2.0
     else:
@@ -515,7 +554,9 @@ def _heuristic_prediction(patient_id: str) -> dict:
         "discharge_probability": round(discharge_prob, 3),
         "acuity_trajectory": "stable",
         "confidence": 0.45,
-        "estimated_discharge_date": (datetime.now(timezone.utc) + timedelta(days=remaining)).strftime("%Y-%m-%d"),
+        "estimated_discharge_date": (datetime.now(UTC) + timedelta(days=remaining)).strftime(
+            "%Y-%m-%d"
+        ),
     }
 
 
@@ -534,10 +575,12 @@ def _cache_prediction(patient_id: str, result: dict):
                     result["discharge_probability"],
                     result["acuity_trajectory"],
                     result["confidence"],
-                    json.dumps({
-                        "estimated_discharge_date": result.get("estimated_discharge_date"),
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                    }),
+                    json.dumps(
+                        {
+                            "estimated_discharge_date": result.get("estimated_discharge_date"),
+                            "timestamp": datetime.now(UTC).isoformat(),
+                        }
+                    ),
                 ),
             )
     except Exception as e:
@@ -548,6 +591,7 @@ def _cache_prediction(patient_id: str, result: dict):
 # HOSPITAL-LEVEL FORECASTING
 # ══════════════════════════════════════════════════════════════════════
 
+
 def _season_context(today) -> list[dict]:
     """[{id, title, kind, in_peak}] for today's active seasonal entries."""
     # Imported here so the forecast never depends on the calendar loading.
@@ -557,7 +601,7 @@ def _season_context(today) -> list[dict]:
 
 
 def _day_label(d) -> str:
-    """"Thu 1 Oct": day before month, unpadded, as the rest of Orb writes a date.
+    """ "Thu 1 Oct": day before month, unpadded, as the rest of Orb writes a date.
     "%a %b %d" gave the US "Thu Oct 01". `date` beside it stays ISO for code."""
     return f"{d.strftime('%a')} {d.day} {d.strftime('%b')}"
 
@@ -593,9 +637,7 @@ def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False
 
     # Get all admitted patients
     with db_session() as db:
-        patients = db.execute(
-            "SELECT id, ward FROM patients WHERE status = 'admitted'"
-        ).fetchall()
+        patients = db.execute("SELECT id, ward FROM patients WHERE status = 'admitted'").fetchall()
 
         # Current occupancy by ward, keyed the SAME WAY the breakdown below reads
         # it — through `_normalize_ward`, which is the one derivation.
@@ -674,7 +716,7 @@ def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False
         patient_predictions[p["id"]] = pred
 
     # Build daily forecasts
-    daily_forecasts = []
+    daily_forecasts: list[_DailyForecast] = []
     running_occupancy = n_patients
 
     for day in range(days_ahead):
@@ -692,7 +734,7 @@ def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False
 
         # Predicted discharges (from LoS predictions)
         predicted_discharges = 0
-        for pid, pred in patient_predictions.items():
+        for _pid, pred in patient_predictions.items():
             remaining = pred.get("predicted_los_days", 5.0)
             if remaining <= (day + 1) and remaining > day:
                 predicted_discharges += 1
@@ -729,15 +771,17 @@ def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False
             projected = round(running_occupancy * ratio)
             ward_breakdown[w] = min(projected, cap + 1)
 
-        daily_forecasts.append({
-            "date": future_date.strftime("%Y-%m-%d"),
-            "day_label": _day_label(future_date),
-            "predicted_admissions": predicted_admissions,
-            "predicted_discharges": predicted_discharges,
-            "predicted_occupancy": running_occupancy,
-            "occupancy_pct": round(running_occupancy / TOTAL_CAPACITY * 100, 1),
-            "ward_breakdown": ward_breakdown,
-        })
+        daily_forecasts.append(
+            {
+                "date": future_date.strftime("%Y-%m-%d"),
+                "day_label": _day_label(future_date),
+                "predicted_admissions": predicted_admissions,
+                "predicted_discharges": predicted_discharges,
+                "predicted_occupancy": running_occupancy,
+                "occupancy_pct": round(running_occupancy / TOTAL_CAPACITY * 100, 1),
+                "ward_breakdown": ward_breakdown,
+            }
+        )
 
     # ── Day 0: measured, not predicted ────────────────────────────────────────
     # Today's census and today's actual admissions/discharges so far. It carries
@@ -747,23 +791,26 @@ def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False
     # ward's) would silently fail the equality test and render two "today"s.
     series = daily_forecasts
     if include_current_day:
-        series = [{
-            "date": today_local.strftime("%Y-%m-%d"),
-            "day_label": _day_label(today_local),
-            "is_current": True,
-            # The honest names. These are observations.
-            "actual_admissions": admissions_today,
-            "actual_discharges": discharges_today,
-            "measured_occupancy": n_patients,
-            # The same three numbers under the series' own keys, so every
-            # consumer that walks daily_forecasts plots a continuous curve
-            # instead of a hole. `is_current` is what says they are measured.
-            "predicted_admissions": admissions_today,
-            "predicted_discharges": discharges_today,
-            "predicted_occupancy": n_patients,
-            "occupancy_pct": round(n_patients / TOTAL_CAPACITY * 100, 1),
-            "ward_breakdown": {w: ward_counts.get(w, 0) for w in WARD_CAPACITY},
-        }, *daily_forecasts]
+        series = [
+            {
+                "date": today_local.strftime("%Y-%m-%d"),
+                "day_label": _day_label(today_local),
+                "is_current": True,
+                # The honest names. These are observations.
+                "actual_admissions": admissions_today,
+                "actual_discharges": discharges_today,
+                "measured_occupancy": n_patients,
+                # The same three numbers under the series' own keys, so every
+                # consumer that walks daily_forecasts plots a continuous curve
+                # instead of a hole. `is_current` is what says they are measured.
+                "predicted_admissions": admissions_today,
+                "predicted_discharges": discharges_today,
+                "predicted_occupancy": n_patients,
+                "occupancy_pct": round(n_patients / TOTAL_CAPACITY * 100, 1),
+                "ward_breakdown": {w: ward_counts.get(w, 0) for w in WARD_CAPACITY},
+            },
+            *daily_forecasts,
+        ]
 
     # Summary statistics — over the PREDICTED days only. A measured day 0 must
     # not move the peak, the averages or the 7-day totals, and
@@ -786,8 +833,14 @@ def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False
             "peak_day": peak_day["day_label"],
             "peak_occupancy": peak_day["predicted_occupancy"],
             "total_predicted_discharges_7d": total_discharges,
-            "total_predicted_admissions_7d": sum(d["predicted_admissions"] for d in daily_forecasts),
-            "beds_available_in_48h": max(0, TOTAL_CAPACITY - daily_forecasts[1]["predicted_occupancy"]) if len(daily_forecasts) > 1 else 0,
+            "total_predicted_admissions_7d": sum(
+                d["predicted_admissions"] for d in daily_forecasts
+            ),
+            "beds_available_in_48h": max(
+                0, TOTAL_CAPACITY - daily_forecasts[1]["predicted_occupancy"]
+            )
+            if len(daily_forecasts) > 1
+            else 0,
         },
     }
     # Where the bed count came from (adt-14), only while Beds and admissions
@@ -810,17 +863,12 @@ def predict_hospital_flow(days_ahead: int = 7, include_current_day: bool = False
 def get_bed_capacity_forecast() -> dict:
     """Current + projected bed utilization by ward."""
     with db_session() as db:
-        patients = db.execute(
-            "SELECT id, ward FROM patients WHERE status = 'admitted'"
-        ).fetchall()
+        patients = db.execute("SELECT id, ward FROM patients WHERE status = 'admitted'").fetchall()
 
     # Current occupancy
     current = {}
     for w, cap in WARD_CAPACITY.items():
-        count = sum(
-            1 for p in patients
-            if _normalize_ward(p["ward"]) == w
-        )
+        count = sum(1 for p in patients if _normalize_ward(p["ward"]) == w)
         current[w] = {
             "total": cap,
             "occupied": count,
@@ -830,6 +878,7 @@ def get_bed_capacity_forecast() -> dict:
 
     # 48h projection (using LoS predictions)
     projected_48h = {}
+    discharge_count_by_ward: dict[str, int]
     discharge_count_by_ward = {}
 
     for p in patients:
@@ -864,7 +913,8 @@ def get_bed_capacity_forecast() -> dict:
     if source is not None:
         for w, row in current.items():
             row["capacity_source"] = source["by_ward"].get(
-                w, {"source": "site_setting", "words": CAPACITY_SOURCE_WORDS["site_setting"]})
+                w, {"source": "site_setting", "words": CAPACITY_SOURCE_WORDS["site_setting"]}
+            )
         out["capacity_source"] = {k: source[k] for k in ("source", "words")}
     return out
 
@@ -882,7 +932,7 @@ def get_discharge_board() -> list:
         ).fetchall()
 
     board = []
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     for p in patients:
         pred = _get_cached_or_predict(p["id"])
@@ -897,21 +947,23 @@ def get_discharge_board() -> list:
         else:
             days_in = 3.0
 
-        board.append({
-            "patient_id": p["id"],
-            "name": p["name"],
-            "ward": p["ward"],
-            "bed": p["bed"],
-            "diagnosis": p["diagnosis"],
-            "age": p["age"],
-            "sex": p["sex"],
-            "days_admitted": round(days_in, 1),
-            "predicted_remaining_days": pred["predicted_los_days"],
-            "discharge_probability": pred["discharge_probability"],
-            "acuity_trajectory": pred["acuity_trajectory"],
-            "confidence": pred["confidence"],
-            "estimated_discharge_date": pred.get("estimated_discharge_date", ""),
-        })
+        board.append(
+            {
+                "patient_id": p["id"],
+                "name": p["name"],
+                "ward": p["ward"],
+                "bed": p["bed"],
+                "diagnosis": p["diagnosis"],
+                "age": p["age"],
+                "sex": p["sex"],
+                "days_admitted": round(days_in, 1),
+                "predicted_remaining_days": pred["predicted_los_days"],
+                "discharge_probability": pred["discharge_probability"],
+                "acuity_trajectory": pred["acuity_trajectory"],
+                "confidence": pred["confidence"],
+                "estimated_discharge_date": pred.get("estimated_discharge_date", ""),
+            }
+        )
 
     # Sort by discharge probability (highest first)
     board.sort(key=lambda x: x["discharge_probability"], reverse=True)
@@ -934,7 +986,10 @@ def get_admission_patterns() -> dict:
 
     if not history:
         return {
-            "daily_summary": [{"day": d, "avg_admissions": 0, "total": 0} for d in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]],
+            "daily_summary": [
+                {"day": d, "avg_admissions": 0, "total": 0}
+                for d in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+            ],
             "total_30d": 0,
             "avg_daily": 0,
             "avg_los": 0,
@@ -944,6 +999,7 @@ def get_admission_patterns() -> dict:
         }
 
     # Daily admission counts
+    daily_counts: dict[str, int]
     daily_counts = {}
     severity_counts = {"critical": 0, "elevated": 0, "stable": 0}
     ward_counts = {"ICU": 0, "W1": 0, "W2": 0, "W3": 0}
@@ -982,11 +1038,13 @@ def get_admission_patterns() -> dict:
     daily_summary = []
     for i in range(7):
         avg = dow_totals[i] / max(1, dow_counts_n[i])
-        daily_summary.append({
-            "day": dow_names[i],
-            "avg_admissions": round(avg, 1),
-            "total": dow_totals[i],
-        })
+        daily_summary.append(
+            {
+                "day": dow_names[i],
+                "avg_admissions": round(avg, 1),
+                "total": dow_totals[i],
+            }
+        )
 
     return {
         "daily_summary": daily_summary,
@@ -995,13 +1053,16 @@ def get_admission_patterns() -> dict:
         "avg_los": round(total_los / max(1, los_count), 1),
         "severity_distribution": severity_counts,
         "ward_distribution": ward_counts,
-        "discharge_rate": round(sum(1 for h in history if h["discharged"]) / max(1, len(history)) * 100, 1),
+        "discharge_rate": round(
+            sum(1 for h in history if h["discharged"]) / max(1, len(history)) * 100, 1
+        ),
     }
 
 
 # ══════════════════════════════════════════════════════════════════════
 # REFRESH ALL (called by bot every 60s)
 # ══════════════════════════════════════════════════════════════════════
+
 
 def refresh_all_predictions():
     """
@@ -1010,9 +1071,7 @@ def refresh_all_predictions():
     """
     try:
         with db_session() as db:
-            patients = db.execute(
-                "SELECT id FROM patients WHERE status = 'admitted'"
-            ).fetchall()
+            patients = db.execute("SELECT id FROM patients WHERE status = 'admitted'").fetchall()
 
         count = 0
         for p in patients:
@@ -1041,6 +1100,7 @@ def refresh_all_predictions():
 # ══════════════════════════════════════════════════════════════════════
 # HELPERS
 # ══════════════════════════════════════════════════════════════════════
+
 
 def _normalize_ward(ward: str) -> str:
     """Map a patient's ward onto a key in WARD_CAPACITY.
@@ -1108,6 +1168,7 @@ def _get_cached_or_predict(patient_id: str) -> dict:
 # ══════════════════════════════════════════════════════════════════════
 # APPOINTMENTS SCHEDULE
 # ══════════════════════════════════════════════════════════════════════
+
 
 def get_appointments(days_ahead: int = 7, department: str | None = None) -> list:
     """Booked appointments for the next `days_ahead` hospital-local days.
@@ -1181,10 +1242,13 @@ def get_appointments(days_ahead: int = 7, department: str | None = None) -> list
                 (pid,),
             ).fetchone()
             scale = db.execute(
-                "SELECT on_scale_2 FROM patients WHERE id = ?", (pid,),
+                "SELECT on_scale_2 FROM patients WHERE id = ?",
+                (pid,),
             ).fetchone()
-            latest[pid] = (dict(v) if v else None,
-                           bool(scale["on_scale_2"]) if scale and scale["on_scale_2"] is not None else False)
+            latest[pid] = (
+                dict(v) if v else None,
+                bool(scale["on_scale_2"]) if scale and scale["on_scale_2"] is not None else False,
+            )
 
     # Scored after the session closes: the CfC overlay reads the vitals history
     # on its own connection.
@@ -1200,35 +1264,37 @@ def get_appointments(days_ahead: int = 7, department: str | None = None) -> list
     appointments = []
     for b in booked:
         news2, news2_at = scores.get(b["patient_id"], (None, None))
-        appointments.append({
-            "id": b["id"],
-            "date": b["scheduled_date"],
-            "time": b["scheduled_time"],
-            "patient_id": b["patient_id"],
-            "patient_name": b["name"],
-            "age": b["age"],
-            "sex": b["sex"],
-            "ward": b["ward"],
-            "bed": b["bed"],
-            "diagnosis": b["diagnosis"],
-            "type": b["appointment_type"] or "Follow-up",
-            # One of services.appointment_types; an old free-text type is
-            # "other" and keeps its own text in type_label.
-            "type_key": type_key(b["appointment_type"]),
-            "type_label": type_label(b["appointment_type"]),
-            "reason": b["reason"],
-            "origin": b["origin"] or "staff",
-            "department": b["department"],
-            "doctor_id": b["doctor_id"],
-            "doctor_name": b["doctor_name"],
-            # The band of the latest vitals, or None. Never defaulted to
-            # "stable": a patient nobody has scored is not a stable patient.
-            "acuity": news2["level"] if news2 else None,
-            "news2": news2["raw_news2"] if news2 else None,
-            "news2_complete": news2.get("complete") if news2 else None,
-            "news2_at": news2_at,
-            "source": "booked",
-        })
+        appointments.append(
+            {
+                "id": b["id"],
+                "date": b["scheduled_date"],
+                "time": b["scheduled_time"],
+                "patient_id": b["patient_id"],
+                "patient_name": b["name"],
+                "age": b["age"],
+                "sex": b["sex"],
+                "ward": b["ward"],
+                "bed": b["bed"],
+                "diagnosis": b["diagnosis"],
+                "type": b["appointment_type"] or "Follow-up",
+                # One of services.appointment_types; an old free-text type is
+                # "other" and keeps its own text in type_label.
+                "type_key": type_key(b["appointment_type"]),
+                "type_label": type_label(b["appointment_type"]),
+                "reason": b["reason"],
+                "origin": b["origin"] or "staff",
+                "department": b["department"],
+                "doctor_id": b["doctor_id"],
+                "doctor_name": b["doctor_name"],
+                # The band of the latest vitals, or None. Never defaulted to
+                # "stable": a patient nobody has scored is not a stable patient.
+                "acuity": news2["level"] if news2 else None,
+                "news2": news2["raw_news2"] if news2 else None,
+                "news2_complete": news2.get("complete") if news2 else None,
+                "news2_at": news2_at,
+                "source": "booked",
+            }
+        )
     # Within a day the sickest patient comes first, then by time: the nurse
     # planning the day sees who needs looking at before who comes earliest.
     # "Sickest" is the Vigil board's own order (vigil_service.board_order:
@@ -1239,8 +1305,12 @@ def get_appointments(days_ahead: int = 7, department: str | None = None) -> list
 
     def _day_order(a: dict) -> tuple:
         news2, _ = scores.get(a["patient_id"], (None, None))
-        return (a["date"], *board_order(a["patient_id"], news2)[:4],
-                a["time"] or "", a["patient_name"] or "")
+        return (
+            a["date"],
+            *board_order(a["patient_id"], news2)[:4],
+            a["time"] or "",
+            a["patient_name"] or "",
+        )
 
     appointments.sort(key=_day_order)
     return appointments

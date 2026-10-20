@@ -1,21 +1,30 @@
 import asyncio
-import random
-import os
 import json
+import logging
+import os
+import random
 import time
 import uuid
-import logging
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import TypedDict
 
-logger = logging.getLogger("orb.bot")
-from database import get_db, db_session, run_db
 from config import UPLOAD_DIR
-from services.vigil_service import (generate_ai_recommendation, news2_reason_line,
-                                    score_vitals_row, scoring_enabled)
+from database import db_session, run_db
+
+from services.clinical_time import utc_iso_now
+from services.news2_text import news2_description
+from services.vigil_service import (
+    generate_ai_recommendation,
+    news2_reason_line,
+    score_vitals_row,
+    scoring_enabled,
+)
 from services.vital_charting import as_charted, vitals_line
 from services.vitals_carry import carry_forward, dump_carried
-from services.news2_text import news2_description
-from services.clinical_time import utc_iso_now
+
+logger = logging.getLogger("orb.bot")
+
 
 # The service identities this module writes as, named once. Each must stay in
 # database.SERVICE_ACCOUNT_IDS, the set User Management refuses to reset, re-role
@@ -64,40 +73,70 @@ _ALERT_ASK = {
 # ── Per-patient severity cache (loaded once from DB) ──
 _severity_cache: dict[str, str] = {}  # patient_id → "critical" | "elevated" | "stable"
 
+
 # ── Severity-aware vitals profiles ──
 # Each profile defines: targets (what vitals drift toward), reversion strength,
 # noise amplitude, clamp ranges, and crisis spike probability
-SEVERITY_PROFILES = {
+class _SeverityProfile(TypedDict):
+    targets: dict[str, float]
+    reversion: float
+    noise: dict[str, float]
+    clamp: dict[str, tuple[float, float]]
+    spike_chance: float
+
+
+SEVERITY_PROFILES: dict[str, _SeverityProfile] = {
     "critical": {
         "targets": {"hr": 118.0, "sbp": 88.0, "dia": 52.0, "spo2": 90.0, "temp": 38.8, "rr": 26.0},
-        "reversion": 0.03,       # weak pull — stays unstable
+        "reversion": 0.03,  # weak pull — stays unstable
         "noise": {"hr": 4.0, "sbp": 5.0, "dia": 2.5, "spo2": 0.8, "temp": 0.12, "rr": 1.2},
-        "clamp": {"hr": (45, 150), "sbp": (65, 180), "dia": (35, 110), "spo2": (80, 99), "temp": (35.5, 40.5), "rr": (8, 38)},
-        "spike_chance": 0.15,    # 15% chance of crisis spike per cycle
+        "clamp": {
+            "hr": (45, 150),
+            "sbp": (65, 180),
+            "dia": (35, 110),
+            "spo2": (80, 99),
+            "temp": (35.5, 40.5),
+            "rr": (8, 38),
+        },
+        "spike_chance": 0.15,  # 15% chance of crisis spike per cycle
     },
     "elevated": {
         "targets": {"hr": 98.0, "sbp": 105.0, "dia": 62.0, "spo2": 93.0, "temp": 37.9, "rr": 22.0},
-        "reversion": 0.05,       # moderate pull
+        "reversion": 0.05,  # moderate pull
         "noise": {"hr": 3.0, "sbp": 4.0, "dia": 2.0, "spo2": 0.5, "temp": 0.08, "rr": 0.8},
-        "clamp": {"hr": (50, 130), "sbp": (75, 170), "dia": (42, 105), "spo2": (85, 100), "temp": (36.0, 39.8), "rr": (10, 32)},
-        "spike_chance": 0.08,    # 8% chance
+        "clamp": {
+            "hr": (50, 130),
+            "sbp": (75, 170),
+            "dia": (42, 105),
+            "spo2": (85, 100),
+            "temp": (36.0, 39.8),
+            "rr": (10, 32),
+        },
+        "spike_chance": 0.08,  # 8% chance
     },
     "stable": {
         "targets": {"hr": 78.0, "sbp": 122.0, "dia": 78.0, "spo2": 97.0, "temp": 36.8, "rr": 16.0},
-        "reversion": 0.10,       # strong pull toward normal
+        "reversion": 0.10,  # strong pull toward normal
         "noise": {"hr": 1.5, "sbp": 2.0, "dia": 1.0, "spo2": 0.2, "temp": 0.03, "rr": 0.4},
-        "clamp": {"hr": (55, 105), "sbp": (100, 150), "dia": (60, 90), "spo2": (93, 100), "temp": (36.2, 37.8), "rr": (12, 22)},
-        "spike_chance": 0.0,     # stable patients don't spike
+        "clamp": {
+            "hr": (55, 105),
+            "sbp": (100, 150),
+            "dia": (60, 90),
+            "spo2": (93, 100),
+            "temp": (36.2, 37.8),
+            "rr": (12, 22),
+        },
+        "spike_chance": 0.0,  # stable patients don't spike
     },
 }
 
 # ── Crisis spike definitions (what happens during a spike event) ──
-CRISIS_SPIKES = [
-    {"hr": +20, "spo2": -5, "sbp": -15, "rr": +6, "temp": 0, "dia": -8},   # acute decompensation
-    {"hr": +15, "spo2": -8, "sbp": 0, "rr": +8, "temp": 0, "dia": 0},      # respiratory distress
-    {"hr": +10, "spo2": -3, "sbp": -20, "rr": +4, "temp": +0.8, "dia": -10}, # septic shock pattern
-    {"hr": +25, "spo2": -2, "sbp": +20, "rr": +3, "temp": 0, "dia": +12},   # hypertensive crisis
-    {"hr": -15, "spo2": -4, "sbp": -12, "rr": -3, "temp": -0.5, "dia": -8}, # bradycardic event
+CRISIS_SPIKES: list[dict[str, float]] = [
+    {"hr": +20, "spo2": -5, "sbp": -15, "rr": +6, "temp": 0, "dia": -8},  # acute decompensation
+    {"hr": +15, "spo2": -8, "sbp": 0, "rr": +8, "temp": 0, "dia": 0},  # respiratory distress
+    {"hr": +10, "spo2": -3, "sbp": -20, "rr": +4, "temp": +0.8, "dia": -10},  # septic shock pattern
+    {"hr": +25, "spo2": -2, "sbp": +20, "rr": +3, "temp": 0, "dia": +12},  # hypertensive crisis
+    {"hr": -15, "spo2": -4, "sbp": -12, "rr": -3, "temp": -0.5, "dia": -8},  # bradycardic event
 ]
 
 
@@ -133,7 +172,7 @@ def _get_patient_severity(db, pid: str) -> str:
            LEFT JOIN risk_scores rs ON rs.patient_id = p.id
            WHERE p.id = ?
            ORDER BY rs.timestamp DESC, rs.id DESC LIMIT 1""",
-        (pid,)
+        (pid,),
     ).fetchone()
 
     if row:
@@ -233,8 +272,7 @@ def _next_reading(db, pid: str, latest: dict, now_ts, *, on_scale_2: bool):
     #    tick, and it presented a finding nobody made. ──
     carried_values, carried = carry_forward(latest, now_ts, ["consciousness", "on_oxygen"])
     consciousness = carried_values["consciousness"]
-    on_oxygen = (None if carried_values["on_oxygen"] is None
-                 else bool(carried_values["on_oxygen"]))
+    on_oxygen = None if carried_values["on_oxygen"] is None else bool(carried_values["on_oxygen"])
 
     # Scored through the SHARED entry point, on THIS patient's SpO2 scale. Until
     # 2026-10-02 this called compute_news2 with no scale, so a COPD patient on
@@ -246,18 +284,38 @@ def _next_reading(db, pid: str, latest: dict, now_ts, *, on_scale_2: bool):
     # the CfC overlay on the paging path is a separate decision.
     # Scoring switched off (the Orb Ward Record): the reading is stored and
     # pushed with risk None, and nothing below pages on it.
-    risk = score_vitals_row(
-        {"heart_rate": new_hr, "systolic_bp": new_sys, "respiratory_rate": new_rr,
-         "temperature": new_temp, "spo2": new_spo2,
-         "consciousness": consciousness, "on_oxygen": on_oxygen},
-        on_scale_2=on_scale_2, overlay=False,
-    ) if scoring_enabled() else None
+    risk = (
+        score_vitals_row(
+            {
+                "heart_rate": new_hr,
+                "systolic_bp": new_sys,
+                "respiratory_rate": new_rr,
+                "temperature": new_temp,
+                "spo2": new_spo2,
+                "consciousness": consciousness,
+                "on_oxygen": on_oxygen,
+            },
+            on_scale_2=on_scale_2,
+            overlay=False,
+        )
+        if scoring_enabled()
+        else None
+    )
 
     return (
-        (pid, now_ts, new_hr, new_sys, new_dia, new_spo2,
-         new_temp, new_rr, consciousness,
-         None if on_oxygen is None else (1 if on_oxygen else 0),
-         dump_carried(carried)),
+        (
+            pid,
+            now_ts,
+            new_hr,
+            new_sys,
+            new_dia,
+            new_spo2,
+            new_temp,
+            new_rr,
+            consciousness,
+            None if on_oxygen is None else (1 if on_oxygen else 0),
+            dump_carried(carried),
+        ),
         {
             "patient_id": pid,
             "timestamp": now_ts,
@@ -299,6 +357,7 @@ def _generate_vitals(now_ts, cycle_counter):
         # None otherwise, and every admitted patient ticks as before); the
         # first tick after the return is recorded writes for them again.
         from services.adt.clinical_pause import away_by_patient
+
         away = away_by_patient([p["id"] for p in patients], db=db)
         if away:
             patients = [p for p in patients if p["id"] not in away]
@@ -307,7 +366,7 @@ def _generate_vitals(now_ts, cycle_counter):
             return
 
         # Fetch latest vitals for ALL patients in one query
-        latest_map = {}
+        latest_map: dict[str, dict] = {}
         for row in db.execute(
             """SELECT v.* FROM vitals v
                INNER JOIN (
@@ -334,8 +393,7 @@ def _generate_vitals(now_ts, cycle_counter):
                 continue
 
             try:
-                produced = _next_reading(db, pid, latest, now_ts,
-                                         on_scale_2=bool(p["on_scale_2"]))
+                produced = _next_reading(db, pid, latest, now_ts, on_scale_2=bool(p["on_scale_2"]))
             except Exception:
                 # DEFENCE IN DEPTH, and the real lesson of the NULL-BP crash:
                 # the BUG was one patient's missing diastolic, but the DAMAGE
@@ -359,7 +417,6 @@ def _generate_vitals(now_ts, cycle_counter):
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 inserts,
             )
-
 
         # Periodic pruning — demo housekeeping only.
         # IMPORTANT: prune ONLY simulator-generated rows (source='simulated').
@@ -407,9 +464,11 @@ async def run_vitals_bot(sio):
     # The LSTM is a model: not run while the models are switched off
     # (ORB_MODELS_ENABLED, or the Orb Ward Record).
     from services.model_switch import models_enabled
+
     if _cycle_counter % 120 == 0 and models_enabled():
         try:
             from services.forecast_service import refresh_all_predictions
+
             await run_db(refresh_all_predictions)
         except Exception as e:
             logger.error("[Forecast] Refresh error: %s", e)
@@ -427,6 +486,7 @@ async def run_vitals_bot(sio):
     # Emit all updates (outside the DB session), scoped to each patient's
     # department room instead of a global broadcast (PHI over-broadcast fix).
     from ws.realtime import emit_patient_vitals
+
     for payload in emit_queue:
         await emit_patient_vitals("vitals:update", payload)
 
@@ -451,20 +511,21 @@ def _persist_alerts(alerts, episodes=None):
     """
     from services import shadow_service
     from services.relay_service import _message_row_to_dict
+
     episodes = episodes or {}
     out = []
     with db_session() as db:
         # Ensure Orb Vigil bot user exists
         db.execute(
             "INSERT OR IGNORE INTO users (id, name, role, password_hash) VALUES (?, ?, ?, ?)",
-            (VIGIL_BOT_ID, 'Orb Vigil', 'doctor', 'system')
+            (VIGIL_BOT_ID, "Orb Vigil", "doctor", "system"),
         )
         shadow_batch = []
         for alert in alerts:
             episode_id = episodes.get(alert["pid"])
             channel = db.execute(
                 "SELECT id FROM channels WHERE type = 'case_room' AND patient_id = ?",
-                (alert["pid"],)
+                (alert["pid"],),
             ).fetchone()
             if not channel:
                 # A NEGATIVE, and one that is invisible everywhere else in Orb:
@@ -472,36 +533,51 @@ def _persist_alerts(alerts, episodes=None):
                 # has no case room. Silently `continue`-ing here is exactly how
                 # a scorecard ends up measuring only the alerts that worked.
                 if episode_id:
-                    shadow_batch.append(shadow_service.build(
-                        "alert.dropped", episode_id, "simulator",
-                        occurred_at=alert.get("fired_at"), patient_id=alert["pid"],
-                        payload={"reason": "no_case_room", "level": alert["risk_level"]},
-                    ))
+                    shadow_batch.append(
+                        shadow_service.build(
+                            "alert.dropped",
+                            episode_id,
+                            "simulator",
+                            occurred_at=alert.get("fired_at"),
+                            patient_id=alert["pid"],
+                            payload={"reason": "no_case_room", "level": alert["risk_level"]},
+                        )
+                    )
                 continue
             cursor = db.execute(
                 """INSERT INTO messages (channel_id, sender_id, sender_name, sender_role, content, message_type, is_bot, source)
                    VALUES (?, ?, ?, ?, ?, 'alert', 1, 'bot')""",
-                (channel["id"], VIGIL_BOT_ID, 'Orb Vigil', 'intelligence', alert["content"])
+                (channel["id"], VIGIL_BOT_ID, "Orb Vigil", "intelligence", alert["content"]),
             )
             msg_id = cursor.lastrowid
             row = db.execute("SELECT * FROM messages WHERE id = ?", (msg_id,)).fetchone()
-            patient = db.execute("SELECT name FROM patients WHERE id = ?", (alert["pid"],)).fetchone()
-            out.append({
-                "alert": alert,
-                "channel_id": channel["id"],
-                "msg_id": msg_id,
-                "episode_id": episode_id,
-                # The history endpoint's serializer, so the live alert carries
-                # `is_bot` (Relay's AUTO chip) and `source` (2026-10-03).
-                "msg_data": _message_row_to_dict(row) if row else None,
-                "pname": patient["name"] if patient else alert["pid"],
-            })
+            patient = db.execute(
+                "SELECT name FROM patients WHERE id = ?", (alert["pid"],)
+            ).fetchone()
+            out.append(
+                {
+                    "alert": alert,
+                    "channel_id": channel["id"],
+                    "msg_id": msg_id,
+                    "episode_id": episode_id,
+                    # The history endpoint's serializer, so the live alert carries
+                    # `is_bot` (Relay's AUTO chip) and `source` (2026-10-03).
+                    "msg_data": _message_row_to_dict(row) if row else None,
+                    "pname": patient["name"] if patient else alert["pid"],
+                }
+            )
             if episode_id:
-                shadow_batch.append(shadow_service.build(
-                    "alert.persisted", episode_id, "simulator",
-                    patient_id=alert["pid"], subject_type="messages", subject_id=msg_id,
-                    payload={"message_id": msg_id, "channel_id": channel["id"]},
-                ))
+                shadow_batch.append(
+                    shadow_service.build(
+                        "alert.persisted",
+                        episode_id,
+                        "simulator",
+                        patient_id=alert["pid"],
+                        subject_type="messages",
+                        subject_id=msg_id,
+                        payload={"message_id": msg_id, "channel_id": channel["id"]},
+                    )
+                )
         shadow_service.emit_many(shadow_batch, db=db)
     return out
 
@@ -528,10 +604,13 @@ def _fallback_recommendation() -> str:
     """
     try:
         from services.vigil_service import _FALLBACK_RECOMMENDATION
+
         return _FALLBACK_RECOMMENDATION
     except Exception:
-        logger.warning("[Vigil Alert] vigil_service._FALLBACK_RECOMMENDATION is gone — "
-                       "sage.drafted can no longer exclude the static fallback")
+        logger.warning(
+            "[Vigil Alert] vigil_service._FALLBACK_RECOMMENDATION is gone — "
+            "sage.drafted can no longer exclude the static fallback"
+        )
         return "\x00__orb_no_fallback_sentinel__"
 
 
@@ -548,8 +627,9 @@ _bus_inflight: set = set()
 _MAX_BUS_INFLIGHT = 256
 
 
-def _schedule_assessment(patient_id, *, level, score, drivers,
-                         message_id=None, raw_news2=None, lane="simulator") -> bool:
+def _schedule_assessment(
+    patient_id, *, level, score, drivers, message_id=None, raw_news2=None, lane="simulator"
+) -> bool:
     """Ask Sage for a drafted assessment of an alert that is ALREADY delivered.
 
     A thin, never-raising wrapper so the alert path has ONE line to read and one
@@ -576,16 +656,24 @@ def _schedule_assessment(patient_id, *, level, score, drivers,
     """
     try:
         from services.sage_assessment_service import schedule_for_alert
+
         return schedule_for_alert(
-            patient_id, level=level, score=score, drivers=drivers,
-            message_id=message_id, raw_news2=raw_news2, lane=lane)
+            patient_id,
+            level=level,
+            score=score,
+            drivers=drivers,
+            message_id=message_id,
+            raw_news2=raw_news2,
+            lane=lane,
+        )
     except Exception as e:
         logger.warning("[Vigil Alert] Sage assessment not scheduled for %s: %s", patient_id, e)
         return False
 
 
-def build_vigil_critical_event(patient_id, *, level, score, drivers,
-                               message_id=None, raw_news2=None, lane="simulator"):
+def build_vigil_critical_event(
+    patient_id, *, level, score, drivers, message_id=None, raw_news2=None, lane="simulator"
+):
     """THE `vigil.alert.critical` StateEvent. Built in one place, by every lane.
 
     `nervous_system_triggers.on_critical_vigil_alert` is the hospital's prewarm:
@@ -608,6 +696,7 @@ def build_vigil_critical_event(patient_id, *, level, score, drivers,
     should open stops opening.
     """
     from services.event_bus import StateEvent
+
     return StateEvent(
         topic="vigil.alert.critical",
         source_node="vigil",
@@ -627,8 +716,9 @@ def build_vigil_critical_event(patient_id, *, level, score, drivers,
     )
 
 
-def publish_vigil_critical(patient_id, *, level, score, drivers,
-                           message_id=None, raw_news2=None, lane="simulator") -> bool:
+def publish_vigil_critical(
+    patient_id, *, level, score, drivers, message_id=None, raw_news2=None, lane="simulator"
+) -> bool:
     """Publish the alert event from ANY lane, on or off the event loop.
 
     ALSO SCHEDULES SAGE'S DRAFT ASSESSMENT. This is the seam because it is the
@@ -670,8 +760,13 @@ def publish_vigil_critical(patient_id, *, level, score, drivers,
     """
     try:
         evt = build_vigil_critical_event(
-            patient_id, level=level, score=score, drivers=drivers,
-            message_id=message_id, raw_news2=raw_news2, lane=lane,
+            patient_id,
+            level=level,
+            score=score,
+            drivers=drivers,
+            message_id=message_id,
+            raw_news2=raw_news2,
+            lane=lane,
         )
     except Exception as build_err:
         logger.warning("[Vigil Alert] Event Bus event build failed: %s", build_err)
@@ -679,6 +774,7 @@ def publish_vigil_critical(patient_id, *, level, score, drivers,
 
     def _schedule_on_loop() -> bool:
         from services.event_bus import event_bus
+
         loop = asyncio.get_running_loop()
         # SAGE'S DRAFT, FIRST AND INDEPENDENTLY. First because it is the thing a
         # clinician is about to look for; independently because the two have
@@ -688,11 +784,19 @@ def publish_vigil_critical(patient_id, *, level, score, drivers,
         # It has its own bounded in-flight set inside the service. Only critical
         # alerts get one; the service enforces that too, so the rule lives in
         # one place rather than in every call site.
-        _schedule_assessment(patient_id, level=level, score=score, drivers=drivers,
-                             message_id=message_id, raw_news2=raw_news2, lane=lane)
+        _schedule_assessment(
+            patient_id,
+            level=level,
+            score=score,
+            drivers=drivers,
+            message_id=message_id,
+            raw_news2=raw_news2,
+            lane=lane,
+        )
         if len(_bus_inflight) >= _MAX_BUS_INFLIGHT:
-            logger.warning("[Vigil Alert] Event Bus backpressure — publish dropped for %s",
-                           patient_id)
+            logger.warning(
+                "[Vigil Alert] Event Bus backpressure — publish dropped for %s", patient_id
+            )
             return False
         task = loop.create_task(event_bus.publish(evt))
         _bus_inflight.add(task)
@@ -712,6 +816,7 @@ def publish_vigil_critical(patient_id, *, level, score, drivers,
 
     try:
         from anyio.from_thread import run_sync as _portal_run_sync
+
         return bool(_portal_run_sync(_schedule_on_loop))
     except Exception as bus_err:
         # RuntimeError here means "this thread was not started by anyio", i.e.
@@ -719,7 +824,10 @@ def publish_vigil_critical(patient_id, *, level, score, drivers,
         # unit tests); worth a line, never worth an exception.
         logger.warning(
             "[Vigil Alert] no event loop reachable from this thread — "
-            "vigil.alert.critical NOT published for %s (%s)", patient_id, bus_err)
+            "vigil.alert.critical NOT published for %s (%s)",
+            patient_id,
+            bus_err,
+        )
         return False
 
 
@@ -747,11 +855,7 @@ def alert_cooldown_check(pid: str, risk_level: str, raw_news2, now: float | None
     now = time.time() if now is None else now
     last_ts, last_level, last_news2 = _alert_cooldowns.get(pid, (0.0, "stable", None))
     escalated = _LEVEL_RANK.get(risk_level, 0) > _LEVEL_RANK.get(last_level, 0)
-    worsened = (
-        raw_news2 is not None
-        and last_news2 is not None
-        and raw_news2 > last_news2
-    )
+    worsened = raw_news2 is not None and last_news2 is not None and raw_news2 > last_news2
     bypass = (escalated or worsened) and now - last_ts >= MIN_REALERT_SECONDS
     suppressed = not bypass and now - last_ts < ALERT_COOLDOWN_SECONDS
     return suppressed, (round(now - last_ts, 1) if last_ts else None)
@@ -771,8 +875,9 @@ def reconcile_alert_cooldowns(now: float | None = None) -> int:
     many patients were seeded. With the shadow log switched off it finds
     nothing, which is the old behaviour, not a new failure."""
     now = time.time() if now is None else now
-    cutoff = datetime.fromtimestamp(now - ALERT_COOLDOWN_SECONDS, tz=timezone.utc) \
-        .isoformat(timespec="milliseconds")
+    cutoff = datetime.fromtimestamp(now - ALERT_COOLDOWN_SECONDS, tz=UTC).isoformat(
+        timespec="milliseconds"
+    )
     with db_session() as db:
         rows = db.execute(
             f"""SELECT patient_id, occurred_at, payload_json FROM shadow_events_current
@@ -818,6 +923,7 @@ async def evaluate_and_dispatch_alerts(sio, emit_queue: list):
     Called by both the normal bot loop and the deterministic demo trigger.
     """
     from services import shadow_service
+
     # Scoring switched off: there is no level to alert on, so nothing is sent.
     if not scoring_enabled():
         return
@@ -883,19 +989,21 @@ async def evaluate_and_dispatch_alerts(sio, emit_queue: list):
             # A NEGATIVE. The suppressed alert still gets an episode: if it did
             # not, "how many deteriorations did Vigil see but not surface?" would
             # be unanswerable, and the suppression rate would look like zero.
-            shadow_obs.append({
-                "patient_id": pid,
-                "kind": "alert.suppressed",
-                "occurred_at": fired_at,
-                "trigger": "news2_threshold",
-                "episode_payload": {"level": risk_level, "raw_news2": raw_news2},
-                "payload": {
-                    "level": risk_level,
-                    "raw_news2": raw_news2,
-                    "suppressed_by": "cooldown",
-                    "seconds_since_last": seconds_since_last,
-                },
-            })
+            shadow_obs.append(
+                {
+                    "patient_id": pid,
+                    "kind": "alert.suppressed",
+                    "occurred_at": fired_at,
+                    "trigger": "news2_threshold",
+                    "episode_payload": {"level": risk_level, "raw_news2": raw_news2},
+                    "payload": {
+                        "level": risk_level,
+                        "raw_news2": raw_news2,
+                        "suppressed_by": "cooldown",
+                        "seconds_since_last": seconds_since_last,
+                    },
+                }
+            )
             continue
 
         # AS CHARTED (services/vital_charting.py): the numbers NEWS2 scored and
@@ -979,8 +1087,9 @@ async def evaluate_and_dispatch_alerts(sio, emit_queue: list):
                 # phrase any lane strips, every lane must strip — and the same
                 # disclosure any lane makes, every lane must make. No ✦, no model
                 # name: nothing here was assessed by a model.
-                base_alert += (f"\n\n**Standing guidance**: {ai_rec}"
-                               f"\n_{RELAY_DEGRADED_MODE_DISCLAIMER}_")
+                base_alert += (
+                    f"\n\n**Standing guidance**: {ai_rec}\n_{RELAY_DEGRADED_MODE_DISCLAIMER}_"
+                )
             # ── SHADOW: this is the ONLY Sage output anywhere in the wedge ──
             # Recorded so "what did Sage contribute to this alert?" is a query
             # rather than an opinion. Two deliberate restrictions, both about
@@ -999,44 +1108,50 @@ async def evaluate_and_dispatch_alerts(sio, emit_queue: list):
             #     The latency IS worth measuring; adding it needs `_time_saved`
             #     narrowed by `query_class` first, which is a read-side change.
             if model_drafted:
-                sage_drafts.append({
-                    "pid": pid,
-                    "occurred_at": shadow_service.utc_now(),
-                    "conversation_id": f"vigil-{uuid.uuid4().hex[:16]}",
-                })
+                sage_drafts.append(
+                    {
+                        "pid": pid,
+                        "occurred_at": shadow_service.utc_now(),
+                        "conversation_id": f"vigil-{uuid.uuid4().hex[:16]}",
+                    }
+                )
 
-        alerts_to_send.append({
-            "pid": pid,
-            "content": base_alert,
-            "risk_level": risk_level,
-            # Captured PER ALERT: the send loop below runs after this loop
-            # finishes, so reading the loop variables there gave every alert
-            # in a batch the LAST patient's score/drivers.
-            "score": risk_score,
-            "drivers": drivers,
-            "raw_news2": raw_news2,
-            "fired_at": fired_at,
-        })
+        alerts_to_send.append(
+            {
+                "pid": pid,
+                "content": base_alert,
+                "risk_level": risk_level,
+                # Captured PER ALERT: the send loop below runs after this loop
+                # finishes, so reading the loop variables there gave every alert
+                # in a batch the LAST patient's score/drivers.
+                "score": risk_score,
+                "drivers": drivers,
+                "raw_news2": raw_news2,
+                "fired_at": fired_at,
+            }
+        )
         # A RE-ALERT JOINS THE OPEN EPISODE (shadow_service.open_episode resolves
         # before it mints), carrying repeat=True. Minting per alert instead would
         # turn a storm into thousands of one-row episodes and make the
         # false-alert denominator a measurement of ALERT_COOLDOWN_SECONDS.
-        shadow_obs.append({
-            "patient_id": pid,
-            "kind": "alert.fired",
-            "occurred_at": fired_at,
-            "trigger": "news2_threshold",
-            "episode_payload": {"level": risk_level, "raw_news2": raw_news2},
-            "payload": {
-                "level": risk_level,
-                "raw_news2": raw_news2,
-                "score": risk_score,
-                "drivers": drivers[:6],
-                "single_param_3": bool(risk.get("single_param_3")),
-                "spo2_scale": risk.get("spo2_scale"),
-                "repeat": pid in _alert_cooldowns,
-            },
-        })
+        shadow_obs.append(
+            {
+                "patient_id": pid,
+                "kind": "alert.fired",
+                "occurred_at": fired_at,
+                "trigger": "news2_threshold",
+                "episode_payload": {"level": risk_level, "raw_news2": raw_news2},
+                "payload": {
+                    "level": risk_level,
+                    "raw_news2": raw_news2,
+                    "score": risk_score,
+                    "drivers": drivers[:6],
+                    "single_param_3": bool(risk.get("single_param_3")),
+                    "spo2_scale": risk.get("spo2_scale"),
+                    "repeat": pid in _alert_cooldowns,
+                },
+            }
+        )
         record_alert_dispatched(pid, risk_level, raw_news2, now)
 
     # SHADOW: one off-loop transaction for the whole cycle, BEFORE the alert
@@ -1047,25 +1162,31 @@ async def evaluate_and_dispatch_alerts(sio, emit_queue: list):
     # SHADOW: Sage's contribution to this cycle's alerts, threaded onto the same
     # episodes. After arecord_batch because that is what mints them.
     if sage_drafts:
-        await shadow_service.aemit_many([
-            shadow_service.build(
-                "sage.drafted", episodes[d["pid"]], "simulator",
-                occurred_at=d["occurred_at"], patient_id=d["pid"],
-                payload={
-                    "conversation_id": d["conversation_id"],
-                    # No retrieval ran and nothing was cited. Said explicitly —
-                    # the same value the voice lane records — rather than left
-                    # null, which reads as "not captured" instead of "none".
-                    "citation_basis": "none",
-                    "retrieved_doc_ids": [],
-                    "cited_doc_ids": [],
-                    "trust_tiers": [],
-                    "query_class": "VIGIL_ALERT_RECOMMENDATION",
-                    "cancelled": False,
-                },
-            )
-            for d in sage_drafts if episodes.get(d["pid"])
-        ])
+        await shadow_service.aemit_many(
+            [
+                shadow_service.build(
+                    "sage.drafted",
+                    episodes[d["pid"]],
+                    "simulator",
+                    occurred_at=d["occurred_at"],
+                    patient_id=d["pid"],
+                    payload={
+                        "conversation_id": d["conversation_id"],
+                        # No retrieval ran and nothing was cited. Said explicitly —
+                        # the same value the voice lane records — rather than left
+                        # null, which reads as "not captured" instead of "none".
+                        "citation_basis": "none",
+                        "retrieved_doc_ids": [],
+                        "cited_doc_ids": [],
+                        "trust_tiers": [],
+                        "query_class": "VIGIL_ALERT_RECOMMENDATION",
+                        "cancelled": False,
+                    },
+                )
+                for d in sage_drafts
+                if episodes.get(d["pid"])
+            ]
+        )
 
     # Send alerts to Relay case rooms. All DB work happens off-loop in one
     # short transaction; socket emits and event-bus publishes happen back on
@@ -1094,11 +1215,19 @@ async def evaluate_and_dispatch_alerts(sio, emit_queue: list):
                 await sio.emit("message:new", item["msg_data"], room=item["channel_id"])
                 if item.get("episode_id"):
                     shadow_service.emit_bg(
-                        "alert.delivered", item["episode_id"], "simulator",
-                        patient_id=alert["pid"], subject_type="messages", subject_id=item["msg_id"],
+                        "alert.delivered",
+                        item["episode_id"],
+                        "simulator",
+                        patient_id=alert["pid"],
+                        subject_type="messages",
+                        subject_id=item["msg_id"],
                         payload={"channel_id": item["channel_id"], "transport": "socket"},
                     )
-            logger.info("[Vigil Alert] %s: %s — alert sent to case room", item["pname"], alert['risk_level'].upper())
+            logger.info(
+                "[Vigil Alert] %s: %s — alert sent to case room",
+                item["pname"],
+                alert["risk_level"].upper(),
+            )
 
 
 def get_dynamic_finding(db, pid, scan_type):
@@ -1110,40 +1239,91 @@ def get_dynamic_finding(db, pid, scan_type):
     vital = db.execute(
         "SELECT heart_rate FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
         "ORDER BY timestamp DESC, id DESC LIMIT 1",
-        (pid,)
+        (pid,),
     ).fetchone()
     if vital:
         latest_hr = int(vital["heart_rate"])
 
     templates = {
         "ECG": [
-            (f"Sinus rhythm identified at {latest_hr} BPM. Normal axis. No ST segment deviation detected.", "info"),
-            (f"Borderline Sinus Rhythm @ {latest_hr} BPM. Rare PVCs noted. Suggest clinical correlation.", "alert"),
-            (f"Orb Vision detects Sinus Tachycardia ({latest_hr} BPM). No acute ischemic changes visible.", "alert" if latest_hr > 110 else "info"),
-            (f"Baseline Normal ECG @ {latest_hr} BPM. Stable conduction intervals. No significant Q waves.", "info"),
-            (f"Orb AI detects Sinus Rhythm ({latest_hr} BPM) with minor non-specific T-wave flattening.", "info")
+            (
+                f"Sinus rhythm identified at {latest_hr} BPM. Normal axis. No ST segment deviation detected.",
+                "info",
+            ),
+            (
+                f"Borderline Sinus Rhythm @ {latest_hr} BPM. Rare PVCs noted. Suggest clinical correlation.",
+                "alert",
+            ),
+            (
+                f"Orb Vision detects Sinus Tachycardia ({latest_hr} BPM). No acute ischemic changes visible.",
+                "alert" if latest_hr > 110 else "info",
+            ),
+            (
+                f"Baseline Normal ECG @ {latest_hr} BPM. Stable conduction intervals. No significant Q waves.",
+                "info",
+            ),
+            (
+                f"Orb AI detects Sinus Rhythm ({latest_hr} BPM) with minor non-specific T-wave flattening.",
+                "info",
+            ),
         ],
         "XRAY": [
-            ("AI analysis highlights clear lung fields. No focal consolidations or pneumothorax visible.", "info"),
-            ("Evidence of mild interstitial prominence. No acute infiltrate. Pleural spaces are clear.", "info"),
-            ("Orb Vision identifies normal pulmonary vascularity. Lungs are well-expanded.", "info"),
-            ("Minimal bibasilar atelectasis noted. No pneumonia-like consolidations. Mediastinum is centered.", "info"),
-            ("Orb Lens detects opacity in right lower lobe. Clinical correlation for atypical pneumonia suggested.", "alert")
+            (
+                "AI analysis highlights clear lung fields. No focal consolidations or pneumothorax visible.",
+                "info",
+            ),
+            (
+                "Evidence of mild interstitial prominence. No acute infiltrate. Pleural spaces are clear.",
+                "info",
+            ),
+            (
+                "Orb Vision identifies normal pulmonary vascularity. Lungs are well-expanded.",
+                "info",
+            ),
+            (
+                "Minimal bibasilar atelectasis noted. No pneumonia-like consolidations. Mediastinum is centered.",
+                "info",
+            ),
+            (
+                "Orb Lens detects opacity in right lower lobe. Clinical correlation for atypical pneumonia suggested.",
+                "alert",
+            ),
         ],
         "MRI": [
-            ("Orb Vision detects normal grey-white matter differentiation. No intracranial masses observed.", "info"),
+            (
+                "Orb Vision detects normal grey-white matter differentiation. No intracranial masses observed.",
+                "info",
+            ),
             ("Stable MRI findings. No evidence of acute infarction or demyelination.", "info"),
-            ("Slight non-specific white matter hyperintensities. No focal mass effect detected.", "info"),
+            (
+                "Slight non-specific white matter hyperintensities. No focal mass effect detected.",
+                "info",
+            ),
             ("Normal intracranial flow voids. No acute intracranial process identified.", "info"),
-            ("Orb AI detects small area of restricted diffusion in left parietal lobe. Suspected acute ischemic event.", "alert")
+            (
+                "Orb AI detects small area of restricted diffusion in left parietal lobe. Suspected acute ischemic event.",
+                "alert",
+            ),
         ],
         "CT": [
-            ("Analysis of abdominal slices reveals normal organ sizing. Liver and spleen unremarkable.", "info"),
+            (
+                "Analysis of abdominal slices reveals normal organ sizing. Liver and spleen unremarkable.",
+                "info",
+            ),
             ("No evidence of bowel wall thickening. Appendix is seen and is normal.", "info"),
-            ("Stable CT findings. No retroperitoneal lymphadenopathy. Bladder is normally distended.", "info"),
-            ("Orb AI identifies fat stranding around the cecum. Findings highly suspicious for acute appendicitis.", "alert"),
-            ("Minimal dependent atelectasis in lung bases. Upper abdominal organs are within normal limits.", "info")
-        ]
+            (
+                "Stable CT findings. No retroperitoneal lymphadenopathy. Bladder is normally distended.",
+                "info",
+            ),
+            (
+                "Orb AI identifies fat stranding around the cecum. Findings highly suspicious for acute appendicitis.",
+                "alert",
+            ),
+            (
+                "Minimal dependent atelectasis in lung bases. Upper abdominal organs are within normal limits.",
+                "info",
+            ),
+        ],
     }
 
     options = templates.get(scan_type, [("No abnormal findings detected.", "info")])
@@ -1154,6 +1334,7 @@ def _synthetic_content_allowed() -> bool:
     """True when this deployment permits fabricated clinical content
     (ORB_DEMO_MODE). Read at call time so a test or an operator flip applies."""
     import config
+
     return bool(getattr(config, "DEMO_MODE", False))
 
 
@@ -1174,7 +1355,7 @@ def _create_report(available):
 
         db.execute(
             "INSERT OR IGNORE INTO users (id, name, role, password_hash) VALUES (?, ?, ?, ?)",
-            (LENS_BOT_ID, 'Orb AI Lens', 'doctor', 'system')
+            (LENS_BOT_ID, "Orb AI Lens", "doctor", "system"),
         )
 
         # source = 'simulated' (migration 46): a template finding is not a
@@ -1190,13 +1371,15 @@ def _create_report(available):
                 scan["type"],
                 scan["context"],
                 analysis,
-                datetime.now(timezone.utc).isoformat(),
+                datetime.now(UTC).isoformat(),
                 LENS_BOT_ID,
                 SIMULATED_SOURCE,
-            )
+            ),
         )
 
-        channel = db.execute("SELECT id FROM channels WHERE type = 'case_room' AND patient_id = ?", (pid,)).fetchone()
+        channel = db.execute(
+            "SELECT id FROM channels WHERE type = 'case_room' AND patient_id = ?", (pid,)
+        ).fetchone()
         return pid, scan, analysis, urgency, channel
 
 
@@ -1212,7 +1395,11 @@ async def run_reports_bot():
         return
     mock_scans = [
         {"file": "mock_xray.png", "type": "XRAY", "context": "Routine Chest check"},
-        {"file": "mock_mri.png", "type": "MRI", "context": "Brain scan due to neurological symptoms"},
+        {
+            "file": "mock_mri.png",
+            "type": "MRI",
+            "context": "Brain scan due to neurological symptoms",
+        },
         {"file": "mock_ct.png", "type": "CT", "context": "Abdominal CT for suspected appendicitis"},
         {"file": "mock_ecg.png", "type": "ECG", "context": "12-lead ECG for palpitations"},
     ]
@@ -1235,8 +1422,9 @@ async def run_reports_bot():
     pid, scan, analysis, urgency, channel = result
 
     if channel:
-        from services.relay_service import send_message
         from ws.realtime import sio
+
+        from services.relay_service import send_message
 
         # send_message opens its own db_session, so calling it inline put a
         # SQLite INSERT back on the loop right after we had just moved the
@@ -1250,18 +1438,25 @@ async def run_reports_bot():
             content=f"Diagnostic Update: New {scan['type'].upper()} scan processed.\nFindings: {analysis}",
             message_type=urgency if urgency in ("alert", "system") else "text",
             # 'simulated', not 'bot': Relay badges the post as a simulator's.
-            is_bot=True, source=SIMULATED_SOURCE,
+            is_bot=True,
+            source=SIMULATED_SOURCE,
         )
         await sio.emit("message:new", msg, room=channel["id"])
 
-    logger.info("[Reports Bot] Generated %s for patient %s", scan['type'], pid)
+    logger.info("[Reports Bot] Generated %s for patient %s", scan["type"], pid)
 
 
 # ── Lab Report Bot ──
 _lab_cooldown: dict[str, float] = {}
 LAB_COOLDOWN_SECONDS = 180  # 3 minutes between lab reports per patient
 
-LAB_PANELS = {
+
+class _LabPanel(TypedDict):
+    panel: str
+    generate: Callable
+
+
+LAB_PANELS: dict[str, list[_LabPanel]] = {
     "critical": [
         {
             "panel": "CBC (STAT)",
@@ -1271,7 +1466,7 @@ LAB_PANELS = {
                 "Platelets": (random.randint(45, 130), "x10³/μL", "[L]", "150-400"),
                 "Neutrophils": (random.uniform(78, 92), "%", "[H]", "40-70"),
                 "Bands": (random.randint(6, 18), "%", "[H] LEFT SHIFT", "0-5"),
-            }
+            },
         },
         {
             "panel": "BMP (STAT)",
@@ -1281,7 +1476,7 @@ LAB_PANELS = {
                 "BUN": (random.randint(35, 68), "mg/dL", "[H]", "7-20"),
                 "Creatinine": (random.uniform(2.2, 5.5), "mg/dL", "[H]", "0.7-1.3"),
                 "Lactate": (random.uniform(3.5, 8.2), "mmol/L", "[H] ⚠️ CRITICAL", "0.5-2.0"),
-            }
+            },
         },
         {
             "panel": "ABG (STAT)",
@@ -1291,7 +1486,7 @@ LAB_PANELS = {
                 "pO₂": (random.uniform(52, 75), "mmHg", "[L]", "80-100"),
                 "HCO₃": (random.uniform(14, 20), "mEq/L", "[L]", "22-26"),
                 "Lactate": (random.uniform(3.0, 7.0), "mmol/L", "[H]", "0.5-2.0"),
-            }
+            },
         },
         {
             "panel": "Coagulation (STAT)",
@@ -1300,7 +1495,7 @@ LAB_PANELS = {
                 "INR": (random.uniform(1.5, 2.8), "", "[H]", "0.8-1.1"),
                 "aPTT": (random.uniform(38, 65), "sec", "[H]", "25-35"),
                 "D-Dimer": (random.uniform(2.5, 8.0), "μg/mL", "[H]", "<0.5"),
-            }
+            },
         },
     ],
     "elevated": [
@@ -1311,7 +1506,7 @@ LAB_PANELS = {
                 "Hemoglobin": (random.uniform(10.5, 13), "g/dL", "", "12.0-17.5"),
                 "Platelets": (random.randint(140, 220), "x10³/μL", "", "150-400"),
                 "CRP": (random.uniform(25, 85), "mg/L", "[H]", "<5"),
-            }
+            },
         },
         {
             "panel": "BMP",
@@ -1320,7 +1515,7 @@ LAB_PANELS = {
                 "Potassium": (random.uniform(3.6, 5.2), "mEq/L", "", "3.5-5.0"),
                 "Creatinine": (random.uniform(1.0, 2.0), "mg/dL", "[H]", "0.7-1.3"),
                 "Glucose": (random.randint(85, 180), "mg/dL", "", "70-100"),
-            }
+            },
         },
     ],
     "stable": [
@@ -1330,7 +1525,7 @@ LAB_PANELS = {
                 "WBC": (random.uniform(5.5, 10), "x10³/μL", "", "4.5-11.0"),
                 "Hemoglobin": (random.uniform(12, 15.5), "g/dL", "", "12.0-17.5"),
                 "Platelets": (random.randint(180, 350), "x10³/μL", "", "150-400"),
-            }
+            },
         },
     ],
 }
@@ -1360,7 +1555,9 @@ def _generate_lab_result(now):
             return
 
         # Filter out patients with recent lab results
-        eligible = [p for p in patients if now - _lab_cooldown.get(p["id"], 0) > LAB_COOLDOWN_SECONDS]
+        eligible = [
+            p for p in patients if now - _lab_cooldown.get(p["id"], 0) > LAB_COOLDOWN_SECONDS
+        ]
         if not eligible:
             return
 
@@ -1377,16 +1574,20 @@ def _generate_lab_result(now):
         diag = patient["diagnosis"] or ""
 
         # Try condition-specific panels from seed_labs first
-        panel_cfg = None
+        panel_cfg: _LabPanel | None = None
         try:
             from seed_labs import DIAGNOSIS_LAB_SCHEDULE
+
             diag_lower = diag.lower()
             for keyword, schedule in DIAGNOSIS_LAB_SCHEDULE.items():
                 if keyword.lower() in diag_lower:
                     # Pick a random panel from the schedule
                     _, panel_gen = random.choice(schedule)
                     panel_data = panel_gen()
-                    panel_cfg = {"panel": panel_data["panel"], "generate": lambda pd=panel_data: pd["results"]}
+                    panel_cfg = {
+                        "panel": panel_data["panel"],
+                        "generate": lambda pd=panel_data: pd["results"],
+                    }
                     break
         except Exception:
             pass
@@ -1416,14 +1617,14 @@ def _generate_lab_result(now):
         # Store as clinical document
         db.execute(
             "INSERT OR IGNORE INTO users (id, name, role, password_hash) VALUES (?, ?, ?, ?)",
-            (LAB_BOT_ID, 'Orb Lab System', 'doctor', 'system')
+            (LAB_BOT_ID, "Orb Lab System", "doctor", "system"),
         )
         # source = 'simulated' (migration 46) on both copies: the chart labels
         # it, Sage prefixes it, and the Tier 1 renal rules never flag off it.
         db.execute(
             """INSERT INTO clinical_documents (patient_id, doc_type, title, content, author_id, source)
                VALUES (?, 'lab_result', ?, ?, ?, ?)""",
-            (pid, panel_cfg["panel"], content, LAB_BOT_ID, SIMULATED_SOURCE)
+            (pid, panel_cfg["panel"], content, LAB_BOT_ID, SIMULATED_SOURCE),
         )
 
         # Also store in lens_analyses so the patient timeline picks it up
@@ -1431,8 +1632,14 @@ def _generate_lab_result(now):
             """INSERT INTO lens_analyses (patient_id, image_path, image_type, clinical_context, analysis, author_id, created_at,
                                           source)
                VALUES (?, '', 'lab', ?, ?, ?, ?, ?)""",
-            (pid, f"Lab: {panel_cfg['panel']}", content, LAB_BOT_ID,
-             datetime.now(timezone.utc).isoformat(), SIMULATED_SOURCE)
+            (
+                pid,
+                f"Lab: {panel_cfg['panel']}",
+                content,
+                LAB_BOT_ID,
+                datetime.now(UTC).isoformat(),
+                SIMULATED_SOURCE,
+            ),
         )
 
         # Post to Relay case room
@@ -1471,8 +1678,9 @@ async def run_lab_bot():
     _lab_cooldown[pid] = now
 
     if channel:
-        from services.relay_service import send_message
         from ws.realtime import sio
+
+        from services.relay_service import send_message
 
         # Off the loop for the same reason as the reports bot: send_message
         # opens its own db_session.
@@ -1485,9 +1693,11 @@ async def run_lab_bot():
             content=content,
             message_type="alert" if has_critical else "system",
             # 'simulated', not 'bot': Relay badges the post as a simulator's.
-            is_bot=True, source=SIMULATED_SOURCE,
+            is_bot=True,
+            source=SIMULATED_SOURCE,
         )
         await sio.emit("message:new", msg, room=channel["id"])
 
-    logger.info("[Lab Bot] %s for %s %s", panel_cfg['panel'], pname, '⚠️ CRITICAL' if has_critical else '✓')
-
+    logger.info(
+        "[Lab Bot] %s for %s %s", panel_cfg["panel"], pname, "⚠️ CRITICAL" if has_critical else "✓"
+    )

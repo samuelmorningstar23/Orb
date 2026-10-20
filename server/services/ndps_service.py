@@ -82,6 +82,7 @@ always blocks, because nothing waits on it at a bedside):
             variance or its audit row cannot be written either, the dispense is
             refused: a discrepancy is never left unrecorded.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -90,10 +91,12 @@ import csv
 import io
 import logging
 import uuid
-from typing import Any, Iterator, Mapping, Optional, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from typing import Any, Literal, overload
 
 import config
 from database import db_session
+
 from services import pharmacy_stock_service as stock
 from services.clinical_time import utc_iso_now
 
@@ -105,8 +108,18 @@ logger = logging.getLogger("orb.ndps")
 
 #: ndps_register.entry_type, as migration 54's CHECK spells it.
 ENTRY_TYPES: tuple[str, ...] = (
-    "opening", "receipt", "dispense", "transfer_in", "transfer_out", "ward_return",
-    "vendor_return", "wastage", "destruction", "write_off", "adjustment", "count_variance",
+    "opening",
+    "receipt",
+    "dispense",
+    "transfer_in",
+    "transfer_out",
+    "ward_return",
+    "vendor_return",
+    "wastage",
+    "destruction",
+    "write_off",
+    "adjustment",
+    "count_variance",
 )
 
 ENTRY_LABELS = {
@@ -145,9 +158,16 @@ MOVEMENT_ENTRY = {
 WRITE_OFF_ENTRIES: tuple[str, ...] = ("write_off", "wastage", "destruction")
 
 #: Entries made only with a witness, besides any transfer touching the vault.
-WITNESSED_ENTRIES = frozenset({
-    "wastage", "destruction", "write_off", "adjustment", "count_variance", "vendor_return",
-})
+WITNESSED_ENTRIES = frozenset(
+    {
+        "wastage",
+        "destruction",
+        "write_off",
+        "adjustment",
+        "count_variance",
+        "vendor_return",
+    }
+)
 
 #: Movements the 'record' failure mode applies to (GRN-RS7 is about the
 #: dispense). Every other movement blocks in both modes.
@@ -158,7 +178,10 @@ LANES: tuple[str, ...] = ("live", "non_production")
 
 #: ndps_variances.variance_kind, as migration 54's CHECK spells it.
 VARIANCE_KINDS: tuple[str, ...] = (
-    "register_write_failed", "negative_balance", "count_mismatch", "reconciliation_mismatch",
+    "register_write_failed",
+    "negative_balance",
+    "count_mismatch",
+    "reconciliation_mismatch",
 )
 VARIANCE_LABELS = {
     "register_write_failed": "The register could not record a movement",
@@ -205,8 +228,7 @@ class NdpsError(ValueError):
 
     code = "ndps_error"
 
-    def __init__(self, message: str, *, code: Optional[str] = None,
-                 detail: Optional[dict] = None):
+    def __init__(self, message: str, *, code: str | None = None, detail: dict | None = None):
         super().__init__(message)
         if code:
             self.code = code
@@ -233,7 +255,8 @@ class NegativeBalance(RegisterWriteError):
 #  The switch, the mode and the lane
 # ═════════════════════════════════════════════════════════════════════════════
 
-def failure_mode() -> Optional[str]:
+
+def failure_mode() -> str | None:
     """'block', 'record' or None (ruling GRN-RS7 not set on this site)."""
     mode = getattr(config, "PHARMACY_NDPS_ON_FAILURE", None)
     return mode if mode in FAILURE_MODES else None
@@ -257,8 +280,9 @@ def is_controlled_category(category: Any) -> bool:
 def is_controlled(conn, medication_id: Any) -> bool:
     """Is this drug classified narcotic or psychotropic now? Unclassified is
     never read as controlled here (nor as 'none' anywhere else)."""
-    row = conn.execute("SELECT ndps_category FROM helix_medication_master WHERE id = ?",
-                       (medication_id,)).fetchone()
+    row = conn.execute(
+        "SELECT ndps_category FROM helix_medication_master WHERE id = ?", (medication_id,)
+    ).fetchone()
     return bool(row) and is_controlled_category(row["ndps_category"])
 
 
@@ -266,16 +290,21 @@ def is_controlled(conn, medication_id: Any) -> bool:
 #  What the lane writing a movement tells the register
 # ═════════════════════════════════════════════════════════════════════════════
 
-_CONTEXT: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
-    "ndps_entry_context", default=None)
+_CONTEXT: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "ndps_entry_context", default=None
+)
 
 
 @contextlib.contextmanager
-def entry_context(*, witness_id: Optional[str] = None, entry_type: Optional[str] = None,
-                  counterparty_type: Optional[str] = None,
-                  counterparty_ref: Optional[str] = None,
-                  document_ref: Optional[str] = None,
-                  remarks: Optional[str] = None) -> Iterator[None]:
+def entry_context(
+    *,
+    witness_id: str | None = None,
+    entry_type: str | None = None,
+    counterparty_type: str | None = None,
+    counterparty_ref: str | None = None,
+    document_ref: str | None = None,
+    remarks: str | None = None,
+) -> Iterator[None]:
     """Around a lane's post_movement calls: the witness that lane verified
     (verify_witness, before its transaction), the entry a write-off is
     (write_off, wastage or destruction), the counterparty and the document.
@@ -284,10 +313,16 @@ def entry_context(*, witness_id: Optional[str] = None, entry_type: Optional[str]
         raise ValueError(f"a lane may only name a write-off entry, not {entry_type!r}")
     if counterparty_type is not None and counterparty_type not in COUNTERPARTY_TYPES:
         raise ValueError(f"unknown counterparty type {counterparty_type!r}")
-    token = _CONTEXT.set({"witness_id": witness_id, "entry_type": entry_type,
-                          "counterparty_type": counterparty_type,
-                          "counterparty_ref": counterparty_ref,
-                          "document_ref": document_ref, "remarks": remarks})
+    token = _CONTEXT.set(
+        {
+            "witness_id": witness_id,
+            "entry_type": entry_type,
+            "counterparty_type": counterparty_type,
+            "counterparty_ref": counterparty_ref,
+            "document_ref": document_ref,
+            "remarks": remarks,
+        }
+    )
     try:
         yield
     finally:
@@ -298,7 +333,7 @@ def _context() -> dict:
     return dict(_CONTEXT.get() or {})
 
 
-def _transfer_leg() -> Optional[dict]:
+def _transfer_leg() -> dict | None:
     from services import pharmacy_transfer_service as transfers
 
     return transfers.current_transfer_leg()
@@ -308,43 +343,66 @@ def _transfer_leg() -> Optional[dict]:
 #  Reads on the caller's connection
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _last_entry(conn, lane: str, store_id: int, drug_id: str):
     return conn.execute(
         "SELECT * FROM ndps_register WHERE lane = ? AND store_id = ? "
         "AND helix_medication_id = ? ORDER BY seq DESC LIMIT 1",
-        (lane, store_id, drug_id)).fetchone()
+        (lane, store_id, drug_id),
+    ).fetchone()
 
 
 def _next_seq(conn, store_id: int, drug_id: str) -> int:
     # Across lanes: (store, drug, seq) is unique whatever the lane.
-    return int(conn.execute(
-        "SELECT COALESCE(MAX(seq), 0) + 1 FROM ndps_register WHERE store_id = ? "
-        "AND helix_medication_id = ?", (store_id, drug_id)).fetchone()[0])
+    return int(
+        conn.execute(
+            "SELECT COALESCE(MAX(seq), 0) + 1 FROM ndps_register WHERE store_id = ? "
+            "AND helix_medication_id = ?",
+            (store_id, drug_id),
+        ).fetchone()[0]
+    )
 
 
 def ledger_units(conn, store_id: int, drug_id: str) -> int:
     """Units of the drug on the stock ledger in this store, every status."""
     row = conn.execute(
         "SELECT COALESCE(SUM(COALESCE(quantity, 0)), 0) FROM helix_inventory_lots "
-        "WHERE store_id = ? AND medication_id = ?", (store_id, drug_id)).fetchone()
+        "WHERE store_id = ? AND medication_id = ?",
+        (store_id, drug_id),
+    ).fetchone()
     return int(row[0] or 0)
 
 
-def _store_kind(conn, store_id: Optional[int]) -> Optional[str]:
+def _store_kind(conn, store_id: int | None) -> str | None:
     if store_id is None:
         return None
     row = conn.execute("SELECT pharmacy_kind FROM stores WHERE id = ?", (store_id,)).fetchone()
     return row["pharmacy_kind"] if row else None
 
 
-def _insert_entry(conn, *, lane: str, store_id: int, drug_id: str, entry_type: str,
-                  quantity: int, balance_after: int, actor_id: str, occurred_at: str,
-                  lot_id: Optional[str] = None, batch_no: Optional[str] = None,
-                  counterparty_type: Optional[str] = None,
-                  counterparty_ref: Optional[str] = None, patient_id: Optional[str] = None,
-                  helix_order_id: Optional[str] = None, prescriber_id: Optional[str] = None,
-                  document_ref: Optional[str] = None, movement_ref: Optional[str] = None,
-                  witness_id: Optional[str] = None, remarks: Optional[str] = None) -> dict:
+def _insert_entry(
+    conn,
+    *,
+    lane: str,
+    store_id: int,
+    drug_id: str,
+    entry_type: str,
+    quantity: int,
+    balance_after: int,
+    actor_id: str,
+    occurred_at: str,
+    lot_id: str | None = None,
+    batch_no: str | None = None,
+    counterparty_type: str | None = None,
+    counterparty_ref: str | None = None,
+    patient_id: str | None = None,
+    helix_order_id: str | None = None,
+    prescriber_id: str | None = None,
+    document_ref: str | None = None,
+    movement_ref: str | None = None,
+    witness_id: str | None = None,
+    remarks: str | None = None,
+) -> dict:
     if balance_after < 0:
         raise NegativeBalance("the register's balance would go below zero")
     seq = _next_seq(conn, store_id, drug_id)
@@ -354,26 +412,46 @@ def _insert_entry(conn, *, lane: str, store_id: int, drug_id: str, entry_type: s
                counterparty_ref, patient_id, helix_order_id, prescriber_id, document_ref,
                movement_ref, actor_id, witness_id, occurred_at, remarks)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (lane, store_id, drug_id, seq, lot_id, batch_no, entry_type, quantity, balance_after,
-         counterparty_type, counterparty_ref, patient_id, helix_order_id, prescriber_id,
-         document_ref, movement_ref, actor_id, witness_id, occurred_at,
-         (remarks or None) and str(remarks)[:MAX_TEXT])).lastrowid
-    return dict(conn.execute("SELECT * FROM ndps_register WHERE id = ?",
-                             (entry_id,)).fetchone())
+        (
+            lane,
+            store_id,
+            drug_id,
+            seq,
+            lot_id,
+            batch_no,
+            entry_type,
+            quantity,
+            balance_after,
+            counterparty_type,
+            counterparty_ref,
+            patient_id,
+            helix_order_id,
+            prescriber_id,
+            document_ref,
+            movement_ref,
+            actor_id,
+            witness_id,
+            occurred_at,
+            (remarks or None) and str(remarks)[:MAX_TEXT],
+        ),
+    ).lastrowid
+    return dict(conn.execute("SELECT * FROM ndps_register WHERE id = ?", (entry_id,)).fetchone())
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  The movement hook (called by pharmacy_stock_service.post_movement)
 # ═════════════════════════════════════════════════════════════════════════════
 
-def write_movement_entry(conn, movement: Mapping) -> Optional[dict]:
+
+def write_movement_entry(conn, movement: Mapping) -> dict | None:
     """Write the register entry for one stock movement of a controlled drug,
     in the movement's transaction. Returns the entry, or None for a drug that
     is not controlled. Raises RegisterWriteError (NegativeBalance for a balance
     below zero) when the entry cannot be written; nothing here commits."""
     drug_id = movement["medication_id"]
-    drug = conn.execute("SELECT id, name, ndps_category FROM helix_medication_master "
-                        "WHERE id = ?", (drug_id,)).fetchone()
+    drug = conn.execute(
+        "SELECT id, name, ndps_category FROM helix_medication_master WHERE id = ?", (drug_id,)
+    ).fetchone()
     if drug is None or not is_controlled_category(drug["ndps_category"]):
         return None
     drug_name = drug["name"] or drug_id
@@ -383,18 +461,22 @@ def write_movement_entry(conn, movement: Mapping) -> Optional[dict]:
     if entry_type is None:
         raise RegisterWriteError(
             f"the NDPS register has no entry for a {str(movement_type).replace('_', ' ')} "
-            f"movement, so {drug_name} cannot move this way while the register is on")
+            f"movement, so {drug_name} cannot move this way while the register is on"
+        )
     if entry_type == "write_off" and ctx.get("entry_type"):
         entry_type = ctx["entry_type"]
     store_id = movement["store_id"]
     if store_id is None:
         raise RegisterWriteError(
             f"this lot of {drug_name} is not in a pharmacy store yet, and the register is "
-            "kept per store. Create the dispensing store or the NDPS vault first")
+            "kept per store. Create the dispensing store or the NDPS vault first"
+        )
     actor_id = str(movement["actor_id"] or "")
     quantity = int(movement["quantity_change"])
-    lot = conn.execute("SELECT id, lot_number, vendor_id FROM helix_inventory_lots WHERE id = ?",
-                       (movement["lot_id"],)).fetchone()
+    lot = conn.execute(
+        "SELECT id, lot_number, vendor_id FROM helix_inventory_lots WHERE id = ?",
+        (movement["lot_id"],),
+    ).fetchone()
     leg = _transfer_leg() if movement_type in ("transfer_in", "transfer_out") else None
 
     # Who the units went to or came from.
@@ -403,13 +485,19 @@ def write_movement_entry(conn, movement: Mapping) -> Optional[dict]:
     counterparty_ref = ctx.get("counterparty_ref")
     if entry_type == "dispense":
         order_id = movement["order_id"] or movement["reference_id"]
-        order = conn.execute(
-            "SELECT id, patient_id, prescribed_by FROM helix_patient_med_orders WHERE id = ?",
-            (order_id,)).fetchone() if order_id else None
+        order = (
+            conn.execute(
+                "SELECT id, patient_id, prescribed_by FROM helix_patient_med_orders WHERE id = ?",
+                (order_id,),
+            ).fetchone()
+            if order_id
+            else None
+        )
         if order is None or not order["patient_id"]:
             raise RegisterWriteError(
                 f"a dispense of {drug_name} is entered with its patient and order, and this "
-                "one names no order on file")
+                "one names no order on file"
+            )
         patient_id, prescriber_id = str(order["patient_id"]), order["prescribed_by"]
         order_id = str(order["id"])
         counterparty_type, counterparty_ref = "patient", patient_id
@@ -421,8 +509,11 @@ def write_movement_entry(conn, movement: Mapping) -> Optional[dict]:
         elif entry_type in ("transfer_in", "transfer_out"):
             other = None
             if leg:
-                other = leg.get("to_store_id") if entry_type == "transfer_out" \
+                other = (
+                    leg.get("to_store_id")
+                    if entry_type == "transfer_out"
                     else leg.get("from_store_id")
+                )
             counterparty_type = "store"
             counterparty_ref = str(other) if other is not None else None
         elif entry_type == "destruction":
@@ -436,16 +527,24 @@ def write_movement_entry(conn, movement: Mapping) -> Optional[dict]:
         witness_id = leg.get("witness_id")
     vault_transfer = entry_type in ("transfer_in", "transfer_out") and (
         _store_kind(conn, store_id) == stock.NDPS_VAULT_KIND
-        or (leg is not None and stock.NDPS_VAULT_KIND in (
-            _store_kind(conn, leg.get("from_store_id")),
-            _store_kind(conn, leg.get("to_store_id")))))
+        or (
+            leg is not None
+            and stock.NDPS_VAULT_KIND
+            in (
+                _store_kind(conn, leg.get("from_store_id")),
+                _store_kind(conn, leg.get("to_store_id")),
+            )
+        )
+    )
     if (entry_type in WITNESSED_ENTRIES or vault_transfer) and not witness_id:
         raise RegisterWriteError(
             f"a {ENTRY_LABELS[entry_type].lower()} entry for {drug_name} needs a witness who "
-            "confirmed with their signing PIN")
+            "confirmed with their signing PIN"
+        )
     if witness_id and str(witness_id) == actor_id:
-        raise RegisterWriteError("the witness must be somebody other than the person making "
-                                 "the entry")
+        raise RegisterWriteError(
+            "the witness must be somebody other than the person making the entry"
+        )
 
     lane = current_lane()
     occurred = movement["occurred_at"] or utc_iso_now()
@@ -457,65 +556,131 @@ def write_movement_entry(conn, movement: Mapping) -> Optional[dict]:
                 f"the NDPS register has not been opened for {drug_name} in this store, which "
                 f"held {before} units before this movement. Open the register with a "
                 "witnessed count on the NDPS screen first",
-                code="register_not_opened")
+                code="register_not_opened",
+            )
         last = _insert_entry(
-            conn, lane=lane, store_id=store_id, drug_id=drug_id, entry_type="opening",
-            quantity=0, balance_after=0, actor_id=actor_id, occurred_at=occurred,
+            conn,
+            lane=lane,
+            store_id=store_id,
+            drug_id=drug_id,
+            entry_type="opening",
+            quantity=0,
+            balance_after=0,
+            actor_id=actor_id,
+            occurred_at=occurred,
             counterparty_type="none",
-            remarks="Register opened at zero by the first movement into this store")
+            remarks="Register opened at zero by the first movement into this store",
+        )
     balance = int(last["balance_after_units"]) + quantity
     if balance < 0:
         raise NegativeBalance(
             f"the register holds {int(last['balance_after_units'])} units of {drug_name} "
-            f"in this store, so {abs(quantity)} cannot leave it")
+            f"in this store, so {abs(quantity)} cannot leave it"
+        )
     document_ref = ctx.get("document_ref")
     if document_ref is None and movement["reference_type"]:
         document_ref = f"{movement['reference_type']}:{movement['reference_id'] or ''}"
     return _insert_entry(
-        conn, lane=lane, store_id=store_id, drug_id=drug_id, entry_type=entry_type,
-        quantity=quantity, balance_after=balance, actor_id=actor_id, occurred_at=occurred,
-        lot_id=movement["lot_id"], batch_no=lot["lot_number"] if lot is not None else None,
-        counterparty_type=counterparty_type, counterparty_ref=counterparty_ref,
-        patient_id=patient_id, helix_order_id=order_id, prescriber_id=prescriber_id,
-        document_ref=document_ref, movement_ref=str(movement["id"]),
+        conn,
+        lane=lane,
+        store_id=store_id,
+        drug_id=drug_id,
+        entry_type=entry_type,
+        quantity=quantity,
+        balance_after=balance,
+        actor_id=actor_id,
+        occurred_at=occurred,
+        lot_id=movement["lot_id"],
+        batch_no=lot["lot_number"] if lot is not None else None,
+        counterparty_type=counterparty_type,
+        counterparty_ref=counterparty_ref,
+        patient_id=patient_id,
+        helix_order_id=order_id,
+        prescriber_id=prescriber_id,
+        document_ref=document_ref,
+        movement_ref=str(movement["id"]),
         witness_id=str(witness_id) if witness_id else None,
-        remarks=ctx.get("remarks") or movement["remarks"])
+        remarks=ctx.get("remarks") or movement["remarks"],
+    )
 
 
-def _audit(conn, action: str, *, summary: str, actor_id: Optional[str],
-           actor_role: Optional[str] = None, target_type: str, target_id: Any,
-           metadata: Optional[dict] = None, patient_id: Optional[str] = None,
-           category: str = "security", outcome: str = "success",
-           audit_ctx: Optional[Mapping] = None) -> None:
+def _audit(
+    conn,
+    action: str,
+    *,
+    summary: str,
+    actor_id: str | None,
+    actor_role: str | None = None,
+    target_type: str,
+    target_id: Any,
+    metadata: dict | None = None,
+    patient_id: str | None = None,
+    category: str = "security",
+    outcome: str = "success",
+    audit_ctx: Mapping | None = None,
+) -> None:
     """One audit row. With conn, in the caller's transaction: 'security' and
     'phi_access' are fail-closed, so a failed write rolls the action back."""
     from services import audit_service
 
     ctx = audit_ctx or {}
     audit_service.log_audit_event(
-        correlation_id=str(uuid.uuid4()), event_category=category, action_type=action,
-        outcome=outcome, db=conn, summary_message=summary,
-        actor_user_id=str(actor_id) if actor_id else None, actor_role=actor_role,
-        target_type=target_type, target_id=str(target_id) if target_id is not None else None,
-        patient_id=patient_id, request_path=ctx.get("request_path"),
-        http_method=ctx.get("http_method"), ip_address=ctx.get("ip_address"),
-        metadata=metadata or {})
+        correlation_id=str(uuid.uuid4()),
+        event_category=category,
+        action_type=action,
+        outcome=outcome,
+        db=conn,
+        summary_message=summary,
+        actor_user_id=str(actor_id) if actor_id else None,
+        actor_role=actor_role,
+        target_type=target_type,
+        target_id=str(target_id) if target_id is not None else None,
+        patient_id=patient_id,
+        request_path=ctx.get("request_path"),
+        http_method=ctx.get("http_method"),
+        ip_address=ctx.get("ip_address"),
+        metadata=metadata or {},
+    )
 
 
-def _insert_variance(conn, *, kind: str, store_id: Optional[int], drug_id: str,
-                     raised_by: str, lot_id: Optional[str] = None,
-                     helix_order_id: Optional[str] = None, movement_ref: Optional[str] = None,
-                     expected: Optional[int] = None, found: Optional[int] = None,
-                     detail: Optional[str] = None) -> int:
+def _insert_variance(
+    conn,
+    *,
+    kind: str,
+    store_id: int | None,
+    drug_id: str,
+    raised_by: str,
+    lot_id: str | None = None,
+    helix_order_id: str | None = None,
+    movement_ref: str | None = None,
+    expected: int | None = None,
+    found: int | None = None,
+    detail: str | None = None,
+) -> int:
     variance = (found - expected) if (found is not None and expected is not None) else None
-    return int(conn.execute(
-        """INSERT INTO ndps_variances (lane, store_id, helix_medication_id, lot_id,
+    return int(
+        conn.execute(
+            """INSERT INTO ndps_variances (lane, store_id, helix_medication_id, lot_id,
                helix_order_id, movement_ref, variance_kind, expected_units, found_units,
                variance_units, detail, status, raised_by, raised_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)""",
-        (current_lane(), store_id, drug_id, lot_id, helix_order_id, movement_ref, kind,
-         expected, found, variance, (detail or None) and str(detail)[:MAX_TEXT], raised_by,
-         utc_iso_now())).lastrowid)
+            (
+                current_lane(),
+                store_id,
+                drug_id,
+                lot_id,
+                helix_order_id,
+                movement_ref,
+                kind,
+                expected,
+                found,
+                variance,
+                (detail or None) and str(detail)[:MAX_TEXT],
+                raised_by,
+                utc_iso_now(),
+            ),
+        ).lastrowid
+    )
 
 
 #: balances() statuses a reconciliation raises a variance for.
@@ -538,8 +703,9 @@ def _units_words(units: int) -> str:
     return f"{words} over" if units > 0 else "no units"
 
 
-def _reconciliation_variance(conn, row: Mapping, *, raised_by: str,
-                             when: Optional[str] = None) -> tuple[Optional[int], bool]:
+def _reconciliation_variance(
+    conn, row: Mapping, *, raised_by: str, when: str | None = None
+) -> tuple[int | None, bool]:
     """Record, in the caller's transaction, the part of a balances() row's
     difference from the shelf that the OPEN 'reconciliation_mismatch'
     variances of its register do not record: (variance id, raised now).
@@ -574,30 +740,46 @@ def _reconciliation_variance(conn, row: Mapping, *, raised_by: str,
         "SELECT id, variance_units FROM ndps_variances WHERE lane = ? AND store_id = ? AND "
         "helix_medication_id = ? AND variance_kind = 'reconciliation_mismatch' AND "
         "movement_ref = ? AND status = 'open' ORDER BY id",
-        (current_lane(), row["store_id"], row["drug_id"], ref)).fetchall()
+        (current_lane(), row["store_id"], row["drug_id"], ref),
+    ).fetchall()
     register_units, shelf = int(row["register_units"]), int(row["shelf_units"])
     difference = shelf - register_units
     covered = sum(int(r["variance_units"] or 0) for r in still_open)
     rest = difference - covered
     if still_open and not ((difference < 0 and rest < 0) or (difference > 0 and rest > 0)):
         return int(still_open[-1]["id"]), False
-    detail = (f"{row['status_label']}: the register holds {register_units} "
-              f"units, the shelf {shelf}")
+    detail = f"{row['status_label']}: the register holds {register_units} units, the shelf {shelf}"
     if still_open:
-        detail += (f". Variances still open for this register record "
-                   f"{_units_words(covered)}; this one records the rest, {_units_words(rest)}")
+        detail += (
+            f". Variances still open for this register record "
+            f"{_units_words(covered)}; this one records the rest, {_units_words(rest)}"
+        )
     if when:
         detail += f". Raised when {when}"
     variance_id = _insert_variance(
-        conn, kind="reconciliation_mismatch", store_id=row["store_id"],
-        drug_id=row["drug_id"], raised_by=raised_by, expected=register_units + covered,
-        found=shelf, movement_ref=ref, detail=detail)
+        conn,
+        kind="reconciliation_mismatch",
+        store_id=row["store_id"],
+        drug_id=row["drug_id"],
+        raised_by=raised_by,
+        expected=register_units + covered,
+        found=shelf,
+        movement_ref=ref,
+        detail=detail,
+    )
     return variance_id, True
 
 
-def _variance_before_opening(conn, row: Mapping, *, raised_by: str, actor_role: Optional[str],
-                             opened_by: str, when: str,
-                             audit_ctx: Optional[Mapping] = None) -> tuple[Optional[int], bool]:
+def _variance_before_opening(
+    conn,
+    row: Mapping,
+    *,
+    raised_by: str,
+    actor_role: str | None,
+    opened_by: str,
+    when: str,
+    audit_ctx: Mapping | None = None,
+) -> tuple[int | None, bool]:
     """Before an opening writes over a register that disagrees with the shelf:
     the variance recording whatever part of that register's difference its
     open variances do not record, with its 'security' audit row (fail-closed, so
@@ -605,26 +787,38 @@ def _variance_before_opening(conn, row: Mapping, *, raised_by: str, actor_role: 
     _reconciliation_variance's answer."""
     variance_id, raised = _reconciliation_variance(conn, row, raised_by=raised_by, when=when)
     if raised:
-        made = conn.execute("SELECT expected_units, found_units, variance_units FROM "
-                            "ndps_variances WHERE id = ?", (variance_id,)).fetchone()
-        _audit(conn, "ndps_variance_raised",
-               summary=(f"NDPS register opened again over a difference: the register held "
-                        f"{row['register_units']} units, the shelf {row['shelf_units']}; "
-                        f"a variance was raised for {_units_words(made['variance_units'])}"),
-               actor_id=raised_by, actor_role=actor_role, target_type="ndps_variance",
-               target_id=variance_id,
-               metadata={"variance_id": str(variance_id),
-                         "variance_kind": "reconciliation_mismatch",
-                         "opened_by": opened_by, "lane": current_lane(),
-                         "store_id": str(row["store_id"]),
-                         "medication_id": str(row["drug_id"]),
-                         "previous_status": row["status"],
-                         "register_units": row["register_units"],
-                         "shelf_units": row["shelf_units"],
-                         "expected_units": made["expected_units"],
-                         "found_units": made["found_units"],
-                         "variance_units": made["variance_units"]},
-               audit_ctx=audit_ctx)
+        made = conn.execute(
+            "SELECT expected_units, found_units, variance_units FROM ndps_variances WHERE id = ?",
+            (variance_id,),
+        ).fetchone()
+        _audit(
+            conn,
+            "ndps_variance_raised",
+            summary=(
+                f"NDPS register opened again over a difference: the register held "
+                f"{row['register_units']} units, the shelf {row['shelf_units']}; "
+                f"a variance was raised for {_units_words(made['variance_units'])}"
+            ),
+            actor_id=raised_by,
+            actor_role=actor_role,
+            target_type="ndps_variance",
+            target_id=variance_id,
+            metadata={
+                "variance_id": str(variance_id),
+                "variance_kind": "reconciliation_mismatch",
+                "opened_by": opened_by,
+                "lane": current_lane(),
+                "store_id": str(row["store_id"]),
+                "medication_id": str(row["drug_id"]),
+                "previous_status": row["status"],
+                "register_units": row["register_units"],
+                "shelf_units": row["shelf_units"],
+                "expected_units": made["expected_units"],
+                "found_units": made["found_units"],
+                "variance_units": made["variance_units"],
+            },
+            audit_ctx=audit_ctx,
+        )
     return variance_id, raised
 
 
@@ -645,31 +839,56 @@ def record_failure(conn, movement: Mapping, exc: BaseException) -> int:
         found = ledger_units(conn, store_id, drug_id)
         if last is not None:
             expected = int(last["balance_after_units"]) + int(movement["quantity_change"])
-    order_id = movement["order_id"] or (movement["reference_id"]
-                                        if movement["reference_type"] == "helix_order" else None)
+    order_id = movement["order_id"] or (
+        movement["reference_id"] if movement["reference_type"] == "helix_order" else None
+    )
     variance_id = _insert_variance(
-        conn, kind=kind, store_id=store_id, drug_id=drug_id,
-        raised_by=str(movement["actor_id"] or "system"), lot_id=movement["lot_id"],
-        helix_order_id=str(order_id) if order_id else None, movement_ref=str(movement["id"]),
-        expected=expected, found=found, detail=str(exc))
-    _audit(conn, "ndps_variance_raised",
-           summary=(f"NDPS register entry not written for a {movement['movement_type']}; "
-                    "the movement went ahead and a variance was raised"),
-           actor_id=movement["actor_id"], target_type="ndps_variance", target_id=variance_id,
-           metadata={"variance_id": str(variance_id), "variance_kind": kind,
-                     "failure_mode": "record", "movement_id": str(movement["id"]),
-                     "movement_type": movement["movement_type"],
-                     "medication_id": str(drug_id),
-                     "store_id": str(store_id) if store_id is not None else None,
-                     "order_id": str(order_id) if order_id else None,
-                     "reason": str(exc)[:MAX_TEXT]})
-    logger.error("NDPS register entry not written for movement %s (%s); variance %s raised",
-                 movement["id"], kind, variance_id)
+        conn,
+        kind=kind,
+        store_id=store_id,
+        drug_id=drug_id,
+        raised_by=str(movement["actor_id"] or "system"),
+        lot_id=movement["lot_id"],
+        helix_order_id=str(order_id) if order_id else None,
+        movement_ref=str(movement["id"]),
+        expected=expected,
+        found=found,
+        detail=str(exc),
+    )
+    _audit(
+        conn,
+        "ndps_variance_raised",
+        summary=(
+            f"NDPS register entry not written for a {movement['movement_type']}; "
+            "the movement went ahead and a variance was raised"
+        ),
+        actor_id=movement["actor_id"],
+        target_type="ndps_variance",
+        target_id=variance_id,
+        metadata={
+            "variance_id": str(variance_id),
+            "variance_kind": kind,
+            "failure_mode": "record",
+            "movement_id": str(movement["id"]),
+            "movement_type": movement["movement_type"],
+            "medication_id": str(drug_id),
+            "store_id": str(store_id) if store_id is not None else None,
+            "order_id": str(order_id) if order_id else None,
+            "reason": str(exc)[:MAX_TEXT],
+        },
+    )
+    logger.error(
+        "NDPS register entry not written for movement %s (%s); variance %s raised",
+        movement["id"],
+        kind,
+        variance_id,
+    )
     return variance_id
 
 
-def open_after_classification(conn, drug_id: str, *, actor_id: str,
-                              category: Optional[str] = None) -> list[dict]:
+def open_after_classification(
+    conn, drug_id: str, *, actor_id: str, category: str | None = None
+) -> list[dict]:
     """A drug holding stock has just been classified narcotic or psychotropic,
     in the caller's transaction: open its register in every store that holds
     it, at what the stock ledger holds there. Nothing while the register is
@@ -690,39 +909,57 @@ def open_after_classification(conn, drug_id: str, *, actor_id: str,
     before = {int(r["store_id"]): r for r in balances(conn, drug_id=drug_id)["rows"]}
     out: list[dict] = []
     for row in conn.execute(
-            "SELECT store_id, COALESCE(SUM(COALESCE(quantity, 0)), 0) AS units "
-            "FROM helix_inventory_lots WHERE medication_id = ? AND store_id IS NOT NULL "
-            "GROUP BY store_id ORDER BY store_id", (drug_id,)).fetchall():
+        "SELECT store_id, COALESCE(SUM(COALESCE(quantity, 0)), 0) AS units "
+        "FROM helix_inventory_lots WHERE medication_id = ? AND store_id IS NOT NULL "
+        "GROUP BY store_id ORDER BY store_id",
+        (drug_id,),
+    ).fetchall():
         units = int(row["units"] or 0)
         if units <= 0 and _last_entry(conn, lane, row["store_id"], drug_id) is None:
             continue
         previous = before.get(int(row["store_id"]))
         if previous is not None:
             _variance_before_opening(
-                conn, previous, raised_by=str(actor_id), actor_role=None,
+                conn,
+                previous,
+                raised_by=str(actor_id),
+                actor_role=None,
                 opened_by="classification",
                 when=f"the drug was classified {words} again and its register opened from "
-                     "the stock ledger")
-        out.append(_insert_entry(
-            conn, lane=lane, store_id=int(row["store_id"]), drug_id=drug_id,
-            entry_type="opening", quantity=max(units, 0), balance_after=max(units, 0),
-            actor_id=str(actor_id), occurred_at=occurred, counterparty_type="none",
-            document_ref=f"classification:{drug_id}",
-            remarks=f"Register opened when the drug was classified {words}, from the "
-                    "stock ledger"))
+                "the stock ledger",
+            )
+        out.append(
+            _insert_entry(
+                conn,
+                lane=lane,
+                store_id=int(row["store_id"]),
+                drug_id=drug_id,
+                entry_type="opening",
+                quantity=max(units, 0),
+                balance_after=max(units, 0),
+                actor_id=str(actor_id),
+                occurred_at=occurred,
+                counterparty_type="none",
+                document_ref=f"classification:{drug_id}",
+                remarks=f"Register opened when the drug was classified {words}, from the "
+                "stock ledger",
+            )
+        )
     return out
 
 
-def record_transit_shortfalls(conn, *, transfer_id: int, lines: Sequence[Mapping],
-                              actor_id: str) -> list[int]:
+def record_transit_shortfalls(
+    conn, *, transfer_id: int, lines: Sequence[Mapping], actor_id: str
+) -> list[int]:
     """A controlled transfer was received short, in the receipt's transaction:
     one 'count_mismatch' variance per short line of a narcotic or psychotropic
     drug, with its 'security' audit row. Nothing while the register is off.
     Returns the variance ids."""
     if not register_on():
         return []
-    row = conn.execute("SELECT to_store_id FROM pharmacy_transfers WHERE id = ?",
-                       (transfer_id,)).fetchone()
+    row = conn.execute(
+        "SELECT to_store_id FROM pharmacy_transfers WHERE id = ?", (transfer_id,)
+    ).fetchone()
     to_store = row["to_store_id"] if row else None
     ids: list[int] = []
     for line in lines:
@@ -732,19 +969,37 @@ def record_transit_shortfalls(conn, *, transfer_id: int, lines: Sequence[Mapping
             continue
         sent, got = int(line.get("sent_units") or 0), int(line.get("received_units") or 0)
         variance_id = _insert_variance(
-            conn, kind="count_mismatch", store_id=to_store, drug_id=drug_id,
-            raised_by=str(actor_id), lot_id=line.get("to_lot_id"),
+            conn,
+            kind="count_mismatch",
+            store_id=to_store,
+            drug_id=drug_id,
+            raised_by=str(actor_id),
+            lot_id=line.get("to_lot_id"),
             movement_ref=f"pharmacy_transfer:{transfer_id}:line:{line.get('line_no')}",
-            expected=sent, found=got,
-            detail=(f"Transfer {transfer_id}, line {line.get('line_no')}: {sent} units sent, "
-                    f"{got} received. {line.get('reason') or ''}").strip())
-        _audit(conn, "ndps_variance_raised",
-               summary=f"Controlled transfer {transfer_id} received {short} units short",
-               actor_id=actor_id, target_type="ndps_variance", target_id=variance_id,
-               metadata={"variance_id": str(variance_id), "variance_kind": "count_mismatch",
-                         "transfer_id": str(transfer_id), "line_no": line.get("line_no"),
-                         "medication_id": str(drug_id), "sent_units": sent,
-                         "received_units": got})
+            expected=sent,
+            found=got,
+            detail=(
+                f"Transfer {transfer_id}, line {line.get('line_no')}: {sent} units sent, "
+                f"{got} received. {line.get('reason') or ''}"
+            ).strip(),
+        )
+        _audit(
+            conn,
+            "ndps_variance_raised",
+            summary=f"Controlled transfer {transfer_id} received {short} units short",
+            actor_id=actor_id,
+            target_type="ndps_variance",
+            target_id=variance_id,
+            metadata={
+                "variance_id": str(variance_id),
+                "variance_kind": "count_mismatch",
+                "transfer_id": str(transfer_id),
+                "line_no": line.get("line_no"),
+                "medication_id": str(drug_id),
+                "sent_units": sent,
+                "received_units": got,
+            },
+        )
         ids.append(variance_id)
     return ids
 
@@ -752,6 +1007,7 @@ def record_transit_shortfalls(conn, *, transfer_id: int, lines: Sequence[Mapping
 # ═════════════════════════════════════════════════════════════════════════════
 #  The witness (before an action's transaction)
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def _actor_id(actor: Mapping) -> str:
     uid = actor.get("id") if actor else None
@@ -766,9 +1022,16 @@ def may_ndps(role: Any) -> bool:
     return has_permission(str(role or ""), PHARMACY_STORE_NDPS)
 
 
-def verify_witness(*, actor: Mapping, witness_id: Any, witness_pin: Any, purpose: str,
-                   target_type: str, target_id: Any,
-                   audit_ctx: Optional[Mapping] = None) -> str:
+def verify_witness(
+    *,
+    actor: Mapping,
+    witness_id: Any,
+    witness_pin: Any,
+    purpose: str,
+    target_type: str,
+    target_id: Any,
+    audit_ctx: Mapping | None = None,
+) -> str:
     """Confirm a witness BEFORE the action's transaction opens (verify_pin may
     write to upgrade a legacy hash). Returns the witness's user id, or refuses:
     witness_required (422), witness_same_person, witness_not_eligible,
@@ -780,57 +1043,82 @@ def verify_witness(*, actor: Mapping, witness_id: Any, witness_pin: Any, purpose
     wid = witness_id.strip() if isinstance(witness_id, str) else ""
     pin = witness_pin if isinstance(witness_pin, str) else ""
     if not wid or not pin:
-        raise NdpsError(f"{purpose} involves controlled stock, so a second pharmacist "
-                        "witnesses it: choose the witness and have them enter their signing PIN.",
-                        code="witness_required")
+        raise NdpsError(
+            f"{purpose} involves controlled stock, so a second pharmacist "
+            "witnesses it: choose the witness and have them enter their signing PIN.",
+            code="witness_required",
+        )
     if wid == me:
-        raise NdpsError("the witness must be somebody other than you",
-                        code="witness_same_person")
+        raise NdpsError("the witness must be somebody other than you", code="witness_same_person")
     if pin_security.is_pin_locked(wid):
-        raise NdpsError("too many wrong PINs for this witness. PIN entry is locked for 15 "
-                        "minutes.", code="witness_locked")
+        raise NdpsError(
+            "too many wrong PINs for this witness. PIN entry is locked for 15 minutes.",
+            code="witness_locked",
+        )
     with db_session() as conn:
-        row = conn.execute("SELECT id, name, role, pin_hash, is_active FROM users WHERE id = ?",
-                           (wid,)).fetchone()
-    if (row is None or (row["is_active"] is not None and not row["is_active"])
-            or not may_ndps(row["role"])):
-        raise NdpsError("that person cannot witness controlled stock",
-                        code="witness_not_eligible")
+        row = conn.execute(
+            "SELECT id, name, role, pin_hash, is_active FROM users WHERE id = ?", (wid,)
+        ).fetchone()
+    if (
+        row is None
+        or (row["is_active"] is not None and not row["is_active"])
+        or not may_ndps(row["role"])
+    ):
+        raise NdpsError("that person cannot witness controlled stock", code="witness_not_eligible")
     if not row["pin_hash"]:
-        raise NdpsError("the witness has no signing PIN yet. Ask an administrator to set one.",
-                        code="witness_no_pin")
+        raise NdpsError(
+            "the witness has no signing PIN yet. Ask an administrator to set one.",
+            code="witness_no_pin",
+        )
     if not pin_security.verify_pin(row, pin):
         pin_security.record_pin_failure(wid)
-        _audit(None, "ndps_witness_refused", summary=f"Witness PIN refused: {purpose}",
-               actor_id=me, actor_role=actor.get("role"), target_type=target_type,
-               target_id=target_id, outcome="failure",
-               metadata={"purpose": purpose, "witness_id": wid}, audit_ctx=audit_ctx)
-        raise NdpsError("the witness's PIN is not right. Nothing was changed.",
-                        code="witness_pin_wrong")
+        _audit(
+            None,
+            "ndps_witness_refused",
+            summary=f"Witness PIN refused: {purpose}",
+            actor_id=me,
+            actor_role=actor.get("role"),
+            target_type=target_type,
+            target_id=target_id,
+            outcome="failure",
+            metadata={"purpose": purpose, "witness_id": wid},
+            audit_ctx=audit_ctx,
+        )
+        raise NdpsError(
+            "the witness's PIN is not right. Nothing was changed.", code="witness_pin_wrong"
+        )
     pin_security.clear_pin_failures(wid)
     return wid
 
 
-def witnesses(conn, *, exclude: Optional[str] = None) -> list[dict]:
+def witnesses(conn, *, exclude: str | None = None) -> list[dict]:
     """Active people who may witness controlled stock, with a signing PIN,
     never `exclude`. Names only."""
     from permissions import PHARMACY_STORE_NDPS, ROLE_PERMISSIONS
 
-    roles = sorted(r for r, perms in ROLE_PERMISSIONS.items()
-                   if isinstance(r, str) and PHARMACY_STORE_NDPS in perms)
+    roles = sorted(
+        r
+        for r, perms in ROLE_PERMISSIONS.items()
+        if isinstance(r, str) and PHARMACY_STORE_NDPS in perms
+    )
     if not roles:
         return []
     marks = ",".join("?" for _ in roles)
-    return [{"id": u["id"], "name": u["name"] or u["id"]} for u in conn.execute(
-        f"SELECT id, name FROM users WHERE role IN ({marks}) "
-        "AND (is_active IS NULL OR is_active = 1) AND id <> ? "
-        "AND pin_hash IS NOT NULL AND pin_hash <> '' ORDER BY name, id LIMIT 500",
-        (*roles, exclude or "")).fetchall()]
+    return [
+        {"id": u["id"], "name": u["name"] or u["id"]}
+        for u in conn.execute(
+            f"SELECT id, name FROM users WHERE role IN ({marks}) "
+            "AND (is_active IS NULL OR is_active = 1) AND id <> ? "
+            "AND pin_hash IS NOT NULL AND pin_hash <> '' ORDER BY name, id LIMIT 500",
+            (*roles, exclude or ""),
+        ).fetchall()
+    ]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  Reads for the NDPS screen
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def _names(conn, ids) -> dict[str, str]:
     from services.actor_names import names_for
@@ -839,26 +1127,30 @@ def _names(conn, ids) -> dict[str, str]:
 
 
 def _store_rows(conn) -> dict[int, dict]:
-    return {int(r["id"]): dict(r) for r in conn.execute(
-        "SELECT id, code, name, pharmacy_kind, is_active FROM stores "
-        "WHERE pharmacy_kind IS NOT NULL").fetchall()}
+    return {
+        int(r["id"]): dict(r)
+        for r in conn.execute(
+            "SELECT id, code, name, pharmacy_kind, is_active FROM stores "
+            "WHERE pharmacy_kind IS NOT NULL"
+        ).fetchall()
+    }
 
 
 def _drug_rows(conn, ids) -> dict[str, dict]:
     ids = sorted({str(i) for i in ids if i})
     out: dict[str, dict] = {}
     for start in range(0, len(ids), 500):
-        chunk = ids[start:start + 500]
+        chunk = ids[start : start + 500]
         for r in conn.execute(
-                "SELECT id, name, generic_name, strength, form, ndps_category, dispense_unit "
-                f"FROM helix_medication_master WHERE id IN ({','.join('?' * len(chunk))})",
-                chunk).fetchall():
+            "SELECT id, name, generic_name, strength, form, ndps_category, dispense_unit "
+            f"FROM helix_medication_master WHERE id IN ({','.join('?' * len(chunk))})",
+            chunk,
+        ).fetchall():
             out[r["id"]] = dict(r)
     return out
 
 
-def balances(conn=None, *, store_id: Optional[int] = None,
-             drug_id: Optional[str] = None) -> dict:
+def balances(conn=None, *, store_id: int | None = None, drug_id: str | None = None) -> dict:
     """The register against the shelf, per drug and store, in this lane.
     Read-only. Reconciliation runs from the latest opening entry: every entry
     after it must carry on the running balance, and the balance must equal
@@ -870,6 +1162,7 @@ def balances(conn=None, *, store_id: Optional[int] = None,
             return balances(fresh, store_id=store_id, drug_id=drug_id)
     lane = current_lane()
     pairs: set[tuple[int, str]] = set()
+    params: list[str | int | float | bytes | None]
     where, params = "", []
     if store_id is not None:
         where += " AND l.store_id = ?"
@@ -878,11 +1171,14 @@ def balances(conn=None, *, store_id: Optional[int] = None,
         where += " AND l.medication_id = ?"
         params.append(drug_id)
     for r in conn.execute(
-            "SELECT DISTINCT l.store_id, l.medication_id FROM helix_inventory_lots l "
-            "JOIN helix_medication_master m ON m.id = l.medication_id "
-            "WHERE l.store_id IS NOT NULL AND COALESCE(l.quantity, 0) <> 0 "
-            f"AND m.ndps_category IN ('narcotic', 'psychotropic'){where}", params).fetchall():
+        "SELECT DISTINCT l.store_id, l.medication_id FROM helix_inventory_lots l "
+        "JOIN helix_medication_master m ON m.id = l.medication_id "
+        "WHERE l.store_id IS NOT NULL AND COALESCE(l.quantity, 0) <> 0 "
+        f"AND m.ndps_category IN ('narcotic', 'psychotropic'){where}",
+        params,
+    ).fetchall():
         pairs.add((int(r["store_id"]), str(r["medication_id"])))
+    rparams: list[str | int | float | bytes | None]
     rwhere, rparams = "", [lane]
     if store_id is not None:
         rwhere += " AND store_id = ?"
@@ -890,30 +1186,45 @@ def balances(conn=None, *, store_id: Optional[int] = None,
     if drug_id:
         rwhere += " AND helix_medication_id = ?"
         rparams.append(drug_id)
-    for r in conn.execute("SELECT DISTINCT store_id, helix_medication_id FROM ndps_register "
-                          f"WHERE lane = ?{rwhere}", rparams).fetchall():
+    for r in conn.execute(
+        f"SELECT DISTINCT store_id, helix_medication_id FROM ndps_register WHERE lane = ?{rwhere}",
+        rparams,
+    ).fetchall():
         pairs.add((int(r["store_id"]), str(r["helix_medication_id"])))
-    unplaced = int(conn.execute(
-        "SELECT COALESCE(SUM(COALESCE(l.quantity, 0)), 0) FROM helix_inventory_lots l "
-        "JOIN helix_medication_master m ON m.id = l.medication_id WHERE l.store_id IS NULL "
-        "AND m.ndps_category IN ('narcotic', 'psychotropic')"
-        + (" AND l.medication_id = ?" if drug_id else ""),
-        ([drug_id] if drug_id else [])).fetchone()[0] or 0)
+    unplaced = int(
+        conn.execute(
+            "SELECT COALESCE(SUM(COALESCE(l.quantity, 0)), 0) FROM helix_inventory_lots l "
+            "JOIN helix_medication_master m ON m.id = l.medication_id WHERE l.store_id IS NULL "
+            "AND m.ndps_category IN ('narcotic', 'psychotropic')"
+            + (" AND l.medication_id = ?" if drug_id else ""),
+            ([drug_id] if drug_id else []),
+        ).fetchone()[0]
+        or 0
+    )
 
     stores = _store_rows(conn)
     drugs = _drug_rows(conn, [d for _, d in pairs])
     open_variances: dict[tuple, int] = {}
-    for r in conn.execute("SELECT store_id, helix_medication_id, COUNT(*) AS n FROM ndps_variances "
-                          "WHERE lane = ? AND status = 'open' GROUP BY store_id, "
-                          "helix_medication_id", (lane,)).fetchall():
+    for r in conn.execute(
+        "SELECT store_id, helix_medication_id, COUNT(*) AS n FROM ndps_variances "
+        "WHERE lane = ? AND status = 'open' GROUP BY store_id, "
+        "helix_medication_id",
+        (lane,),
+    ).fetchall():
         open_variances[(r["store_id"], r["helix_medication_id"])] = int(r["n"])
     rows: list[dict] = []
-    for sid, did in sorted(pairs, key=lambda p: (stores.get(p[0], {}).get("name") or "",
-                                                 drugs.get(p[1], {}).get("name") or p[1])):
+    for sid, did in sorted(
+        pairs,
+        key=lambda p: (
+            stores.get(p[0], {}).get("name") or "",
+            drugs.get(p[1], {}).get("name") or p[1],
+        ),
+    ):
         opening = conn.execute(
             "SELECT * FROM ndps_register WHERE lane = ? AND store_id = ? AND "
             "helix_medication_id = ? AND entry_type = 'opening' ORDER BY seq DESC LIMIT 1",
-            (lane, sid, did)).fetchone()
+            (lane, sid, did),
+        ).fetchone()
         shelf = ledger_units(conn, sid, did)
         chain_ok = True
         register_balance = None
@@ -921,9 +1232,11 @@ def balances(conn=None, *, store_id: Optional[int] = None,
         if opening is not None:
             running = int(opening["balance_after_units"])
             for e in conn.execute(
-                    "SELECT seq, entry_type, quantity_units, balance_after_units FROM "
-                    "ndps_register WHERE lane = ? AND store_id = ? AND helix_medication_id = ? "
-                    "AND seq > ? ORDER BY seq", (lane, sid, did, opening["seq"])).fetchall():
+                "SELECT seq, entry_type, quantity_units, balance_after_units FROM "
+                "ndps_register WHERE lane = ? AND store_id = ? AND helix_medication_id = ? "
+                "AND seq > ? ORDER BY seq",
+                (lane, sid, did, opening["seq"]),
+            ).fetchall():
                 entries_since += 1
                 if e["entry_type"] == "opening":  # pragma: no cover - latest opening found above
                     running = int(e["balance_after_units"])
@@ -943,52 +1256,69 @@ def balances(conn=None, *, store_id: Optional[int] = None,
             status = "matches"
         store = stores.get(sid, {})
         drug = drugs.get(did, {})
-        rows.append({
-            "store_id": sid, "store_code": store.get("code"),
-            "store_name": store.get("name") or store.get("code") or f"Store {sid}",
-            "store_kind": store.get("pharmacy_kind"),
-            "drug_id": did, "drug_name": drug.get("name") or did,
-            "strength": drug.get("strength"), "form": drug.get("form"),
-            "ndps_category": drug.get("ndps_category"),
-            "controlled": is_controlled_category(drug.get("ndps_category")),
-            "register_units": register_balance, "shelf_units": shelf,
-            "difference_units": (shelf - register_balance) if register_balance is not None
-            else None,
-            "opened_at": opening["occurred_at"] if opening is not None else None,
-            "opening_seq": int(opening["seq"]) if opening is not None else None,
-            "entries_since_opening": entries_since,
-            "status": status, "status_label": BALANCE_STATUS_LABELS[status],
-            "open_variances": open_variances.get((sid, did), 0),
-        })
-    return {"lane": lane, "lane_label": LANE_LABELS[lane], "rows": rows,
-            "clean": all(r["status"] == "matches" for r in rows),
-            "unplaced_units": unplaced}
+        rows.append(
+            {
+                "store_id": sid,
+                "store_code": store.get("code"),
+                "store_name": store.get("name") or store.get("code") or f"Store {sid}",
+                "store_kind": store.get("pharmacy_kind"),
+                "drug_id": did,
+                "drug_name": drug.get("name") or did,
+                "strength": drug.get("strength"),
+                "form": drug.get("form"),
+                "ndps_category": drug.get("ndps_category"),
+                "controlled": is_controlled_category(drug.get("ndps_category")),
+                "register_units": register_balance,
+                "shelf_units": shelf,
+                "difference_units": (shelf - register_balance)
+                if register_balance is not None
+                else None,
+                "opened_at": opening["occurred_at"] if opening is not None else None,
+                "opening_seq": int(opening["seq"]) if opening is not None else None,
+                "entries_since_opening": entries_since,
+                "status": status,
+                "status_label": BALANCE_STATUS_LABELS[status],
+                "open_variances": open_variances.get((sid, did), 0),
+            }
+        )
+    return {
+        "lane": lane,
+        "lane_label": LANE_LABELS[lane],
+        "rows": rows,
+        "clean": all(r["status"] == "matches" for r in rows),
+        "unplaced_units": unplaced,
+    }
 
 
 def _patient_rows(conn, ids) -> dict[str, dict]:
     ids = sorted({str(i) for i in ids if i})
     out: dict[str, dict] = {}
     for start in range(0, len(ids), 500):
-        chunk = ids[start:start + 500]
-        for r in conn.execute(f"SELECT id, name, mrn FROM patients WHERE id IN "
-                              f"({','.join('?' * len(chunk))})", chunk).fetchall():
+        chunk = ids[start : start + 500]
+        for r in conn.execute(
+            f"SELECT id, name, mrn FROM patients WHERE id IN ({','.join('?' * len(chunk))})", chunk
+        ).fetchall():
             out[r["id"]] = dict(r)
     return out
 
 
-def _decorate_entries(conn, rows: list[dict], *, dept: Optional[str]) -> tuple[list[dict], list]:
+def _decorate_entries(conn, rows: list[dict], *, dept: str | None) -> tuple[list[dict], list]:
     """Words for each entry. A patient outside the caller's department is
     named only as such. Returns (entries, patient ids disclosed)."""
     from permissions import patient_in_scope
 
     stores = _store_rows(conn)
     drugs = _drug_rows(conn, [r["helix_medication_id"] for r in rows])
-    names = _names(conn, [x for r in rows for x in (r["actor_id"], r["witness_id"],
-                                                    r["prescriber_id"])])
+    names = _names(
+        conn, [x for r in rows for x in (r["actor_id"], r["witness_id"], r["prescriber_id"])]
+    )
     patients = _patient_rows(conn, [r["patient_id"] for r in rows])
     vendors: dict[str, str] = {}
-    vendor_ids = {r["counterparty_ref"] for r in rows if r["counterparty_type"] == "vendor"
-                  and r["counterparty_ref"]}
+    vendor_ids = {
+        r["counterparty_ref"]
+        for r in rows
+        if r["counterparty_type"] == "vendor" and r["counterparty_ref"]
+    }
     for vid in vendor_ids:
         v = conn.execute("SELECT name, code FROM vendors WHERE id = ?", (vid,)).fetchone()
         if v is not None:
@@ -1013,49 +1343,73 @@ def _decorate_entries(conn, rows: list[dict], *, dept: Optional[str]) -> tuple[l
                     disclosed.append(pid)
         party = r["counterparty_type"]
         if party == "patient":
-            party_words = (patient_name or "Patient not on file") if in_scope \
-                else OUT_OF_SCOPE_PATIENT
+            party_words = (
+                (patient_name or "Patient not on file") if in_scope else OUT_OF_SCOPE_PATIENT
+            )
         elif party == "vendor":
             party_words = vendors.get(str(r["counterparty_ref"]), "Vendor not on file")
         elif party == "store":
-            other = stores.get(int(r["counterparty_ref"])) if (r["counterparty_ref"] or "").isdigit() \
+            other = (
+                stores.get(int(r["counterparty_ref"]))
+                if (r["counterparty_ref"] or "").isdigit()
                 else None
+            )
             party_words = (other or {}).get("name") or "Another store"
         elif party == "destruction":
             party_words = "Destroyed"
         else:
             party_words = ""
-        out.append({
-            "id": r["id"], "seq": r["seq"], "lane": r["lane"],
-            "lane_label": LANE_LABELS.get(r["lane"], r["lane"]),
-            "store_id": r["store_id"], "store_name": store.get("name") or store.get("code"),
-            "drug_id": r["helix_medication_id"],
-            "drug_name": drug.get("name") or r["helix_medication_id"],
-            "strength": drug.get("strength"), "form": drug.get("form"),
-            "lot_id": r["lot_id"], "batch_no": r["batch_no"],
-            "entry_type": r["entry_type"],
-            "entry_label": ENTRY_LABELS.get(r["entry_type"], r["entry_type"]),
-            "quantity_units": r["quantity_units"], "balance_after_units": r["balance_after_units"],
-            "counterparty_type": party, "counterparty": party_words,
-            "patient_id": pid if in_scope else None,
-            "patient_name": patient_name, "patient_mrn": patient_mrn,
-            "patient_in_scope": in_scope if pid else None,
-            "helix_order_id": r["helix_order_id"] if in_scope else None,
-            "prescriber_name": (names.get(str(r["prescriber_id"])) or r["prescriber_id"])
-            if (in_scope and r["prescriber_id"]) else None,
-            "document_ref": r["document_ref"], "movement_ref": r["movement_ref"],
-            "actor_id": r["actor_id"], "actor_name": names.get(str(r["actor_id"])),
-            "witness_id": r["witness_id"],
-            "witness_name": names.get(str(r["witness_id"])) if r["witness_id"] else None,
-            "occurred_at": r["occurred_at"], "recorded_at": r["recorded_at"],
-            "remarks": r["remarks"] if in_scope else None,
-        })
+        out.append(
+            {
+                "id": r["id"],
+                "seq": r["seq"],
+                "lane": r["lane"],
+                "lane_label": LANE_LABELS.get(r["lane"], r["lane"]),
+                "store_id": r["store_id"],
+                "store_name": store.get("name") or store.get("code"),
+                "drug_id": r["helix_medication_id"],
+                "drug_name": drug.get("name") or r["helix_medication_id"],
+                "strength": drug.get("strength"),
+                "form": drug.get("form"),
+                "lot_id": r["lot_id"],
+                "batch_no": r["batch_no"],
+                "entry_type": r["entry_type"],
+                "entry_label": ENTRY_LABELS.get(r["entry_type"], r["entry_type"]),
+                "quantity_units": r["quantity_units"],
+                "balance_after_units": r["balance_after_units"],
+                "counterparty_type": party,
+                "counterparty": party_words,
+                "patient_id": pid if in_scope else None,
+                "patient_name": patient_name,
+                "patient_mrn": patient_mrn,
+                "patient_in_scope": in_scope if pid else None,
+                "helix_order_id": r["helix_order_id"] if in_scope else None,
+                "prescriber_name": (names.get(str(r["prescriber_id"])) or r["prescriber_id"])
+                if (in_scope and r["prescriber_id"])
+                else None,
+                "document_ref": r["document_ref"],
+                "movement_ref": r["movement_ref"],
+                "actor_id": r["actor_id"],
+                "actor_name": names.get(str(r["actor_id"])),
+                "witness_id": r["witness_id"],
+                "witness_name": names.get(str(r["witness_id"])) if r["witness_id"] else None,
+                "occurred_at": r["occurred_at"],
+                "recorded_at": r["recorded_at"],
+                "remarks": r["remarks"] if in_scope else None,
+            }
+        )
     return out, disclosed
 
 
-def _register_query(*, store_id: Optional[int], drug_id: Optional[str],
-                    lane: Optional[str], date_from: Optional[str] = None,
-                    date_to: Optional[str] = None) -> tuple[str, list]:
+def _register_query(
+    *,
+    store_id: int | None,
+    drug_id: str | None,
+    lane: str | None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> tuple[str, list]:
+    params: list[str | int | float | bytes | None]
     where, params = ["1 = 1"], []
     if lane:
         where.append("lane = ?")
@@ -1075,7 +1429,7 @@ def _register_query(*, store_id: Optional[int], drug_id: Optional[str],
     return " AND ".join(where), params
 
 
-def _clean_date(value: Any, name: str) -> Optional[str]:
+def _clean_date(value: Any, name: str) -> str | None:
     if value in (None, ""):
         return None
     text = str(value).strip()[:10]
@@ -1088,9 +1442,15 @@ def _clean_date(value: Any, name: str) -> Optional[str]:
     return text
 
 
-def register_page(*, actor: Mapping, store_id: Optional[int] = None,
-                  drug_id: Optional[str] = None, before_id: Optional[int] = None,
-                  limit: int = 100, audit_ctx: Optional[Mapping] = None) -> dict:
+def register_page(
+    *,
+    actor: Mapping,
+    store_id: int | None = None,
+    drug_id: str | None = None,
+    before_id: int | None = None,
+    limit: int = 100,
+    audit_ctx: Mapping | None = None,
+) -> dict:
     """Register entries in this lane, newest first, paged by entry id. A read
     that names a patient writes one fail-closed phi_access row in the same
     session before anything is returned."""
@@ -1099,34 +1459,52 @@ def register_page(*, actor: Mapping, store_id: Optional[int] = None,
     me = _actor_id(actor)
     limit = max(1, min(int(limit or 100), MAX_PAGE))
     lane = current_lane()
+    params: list[str | int | float | bytes | None]
     sql, params = _register_query(store_id=store_id, drug_id=drug_id, lane=lane)
     if before_id is not None:
         sql += " AND id < ?"
         params.append(int(before_id))
     with db_session() as conn:
-        rows = [dict(r) for r in conn.execute(
-            f"SELECT * FROM ndps_register WHERE {sql} ORDER BY id DESC LIMIT ?",
-            (*params, limit + 1)).fetchall()]
+        rows = [
+            dict(r)
+            for r in conn.execute(
+                f"SELECT * FROM ndps_register WHERE {sql} ORDER BY id DESC LIMIT ?",
+                (*params, limit + 1),
+            ).fetchall()
+        ]
         more = len(rows) > limit
         rows = rows[:limit]
         entries, disclosed = _decorate_entries(conn, rows, dept=department_scope(actor))
         if disclosed:
-            _audit(conn, "ndps_register_viewed",
-                   summary=f"NDPS register read: {len(entries)} entries naming "
-                           f"{len(disclosed)} patients",
-                   actor_id=me, actor_role=actor.get("role"), category="phi_access",
-                   target_type="ndps_register", target_id=str(store_id or "all"),
-                   patient_id=disclosed[0] if len(disclosed) == 1 else None,
-                   metadata={"patient_count": len(disclosed),
-                             "patient_ids": disclosed[:MAX_AUDITED_PATIENT_IDS],
-                             "store_id": str(store_id) if store_id is not None else None,
-                             "drug_id": drug_id, "entries": len(entries)},
-                   audit_ctx=audit_ctx)
-    return {"lane": lane, "lane_label": LANE_LABELS[lane], "entries": entries,
-            "next_before_id": entries[-1]["id"] if (more and entries) else None}
+            _audit(
+                conn,
+                "ndps_register_viewed",
+                summary=f"NDPS register read: {len(entries)} entries naming "
+                f"{len(disclosed)} patients",
+                actor_id=me,
+                actor_role=actor.get("role"),
+                category="phi_access",
+                target_type="ndps_register",
+                target_id=str(store_id or "all"),
+                patient_id=disclosed[0] if len(disclosed) == 1 else None,
+                metadata={
+                    "patient_count": len(disclosed),
+                    "patient_ids": disclosed[:MAX_AUDITED_PATIENT_IDS],
+                    "store_id": str(store_id) if store_id is not None else None,
+                    "drug_id": drug_id,
+                    "entries": len(entries),
+                },
+                audit_ctx=audit_ctx,
+            )
+    return {
+        "lane": lane,
+        "lane_label": LANE_LABELS[lane],
+        "entries": entries,
+        "next_before_id": entries[-1]["id"] if (more and entries) else None,
+    }
 
 
-def list_variances(*, status: Optional[str] = "open", limit: int = 200) -> dict:
+def list_variances(*, status: str | None = "open", limit: int = 200) -> dict:
     """Variances in this lane, newest first. No patient is named: a dispense
     variance carries its order id only."""
     if status not in (None, "", "all") and status not in VARIANCE_STATUSES:
@@ -1147,16 +1525,20 @@ def list_variances(*, status: Optional[str] = "open", limit: int = 200) -> dict:
     out = []
     for r in rows:
         store = stores.get(int(r["store_id"])) if r["store_id"] is not None else None
-        out.append(r | {
-            "variance_label": VARIANCE_LABELS.get(r["variance_kind"], r["variance_kind"]),
-            "store_name": (store or {}).get("name") or ((store or {}).get("code")),
-            "drug_name": drugs.get(r["helix_medication_id"], {}).get("name")
-            or r["helix_medication_id"],
-            "raised_by_name": names.get(str(r["raised_by"])),
-            "reconciled_by_name": names.get(str(r["reconciled_by"])) if r["reconciled_by"]
-            else None,
-            "lane_label": LANE_LABELS.get(r["lane"], r["lane"]),
-        })
+        out.append(
+            r
+            | {
+                "variance_label": VARIANCE_LABELS.get(r["variance_kind"], r["variance_kind"]),
+                "store_name": (store or {}).get("name") or ((store or {}).get("code")),
+                "drug_name": drugs.get(r["helix_medication_id"], {}).get("name")
+                or r["helix_medication_id"],
+                "raised_by_name": names.get(str(r["raised_by"])),
+                "reconciled_by_name": names.get(str(r["reconciled_by"]))
+                if r["reconciled_by"]
+                else None,
+                "lane_label": LANE_LABELS.get(r["lane"], r["lane"]),
+            }
+        )
     return {"lane": lane, "variances": out}
 
 
@@ -1166,30 +1548,67 @@ def options(actor: Mapping) -> dict:
     caller). No patient data."""
     me = str(actor.get("id") or "")
     with db_session() as conn:
-        stores = [{"id": s["id"], "code": s["code"], "name": s["name"] or s["code"],
-                   "pharmacy_kind": s["pharmacy_kind"]} for s in conn.execute(
-            "SELECT id, code, name, pharmacy_kind FROM stores WHERE pharmacy_kind IS NOT NULL "
-            "AND is_active = 1 ORDER BY name, code").fetchall()]
-        drugs = [{"id": d["id"], "name": d["name"] or d["id"], "strength": d["strength"],
-                  "form": d["form"], "ndps_category": d["ndps_category"]}
-                 for d in conn.execute(
-                     "SELECT id, name, strength, form, ndps_category FROM helix_medication_master "
-                     "WHERE ndps_category IN ('narcotic', 'psychotropic') ORDER BY name, id "
-                     "LIMIT 1000").fetchall()]
+        stores = [
+            {
+                "id": s["id"],
+                "code": s["code"],
+                "name": s["name"] or s["code"],
+                "pharmacy_kind": s["pharmacy_kind"],
+            }
+            for s in conn.execute(
+                "SELECT id, code, name, pharmacy_kind FROM stores WHERE pharmacy_kind IS NOT NULL "
+                "AND is_active = 1 ORDER BY name, code"
+            ).fetchall()
+        ]
+        drugs = [
+            {
+                "id": d["id"],
+                "name": d["name"] or d["id"],
+                "strength": d["strength"],
+                "form": d["form"],
+                "ndps_category": d["ndps_category"],
+            }
+            for d in conn.execute(
+                "SELECT id, name, strength, form, ndps_category FROM helix_medication_master "
+                "WHERE ndps_category IN ('narcotic', 'psychotropic') ORDER BY name, id "
+                "LIMIT 1000"
+            ).fetchall()
+        ]
         people = witnesses(conn, exclude=me)
     lane = current_lane()
-    return {"register_on": register_on(), "failure_mode": failure_mode(),
-            "requested": bool(getattr(config, "_FEATURE_REQUESTED", {}).get("ndps_register")),
-            "lane": lane, "lane_label": LANE_LABELS[lane], "stores": stores, "drugs": drugs,
-            "witnesses": people, "may_ndps": may_ndps(actor.get("role")),
-            "entry_labels": ENTRY_LABELS, "variance_labels": VARIANCE_LABELS}
+    return {
+        "register_on": register_on(),
+        "failure_mode": failure_mode(),
+        "requested": bool(getattr(config, "_FEATURE_REQUESTED", {}).get("ndps_register")),
+        "lane": lane,
+        "lane_label": LANE_LABELS[lane],
+        "stores": stores,
+        "drugs": drugs,
+        "witnesses": people,
+        "may_ndps": may_ndps(actor.get("role")),
+        "entry_labels": ENTRY_LABELS,
+        "variance_labels": VARIANCE_LABELS,
+    }
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  Actions on the NDPS screen, each in one immediate transaction
 # ═════════════════════════════════════════════════════════════════════════════
 
-def _text(value: Any, name: str, *, required: bool = False) -> Optional[str]:
+
+@overload
+def _text(value: Any, name: str, *, required: Literal[True]) -> str: ...
+
+
+@overload
+def _text(value: Any, name: str, *, required: Literal[False] = False) -> str | None: ...
+
+
+@overload
+def _text(value: Any, name: str, *, required: bool = False) -> str | None: ...
+
+
+def _text(value: Any, name: str, *, required: bool = False) -> str | None:
     if value is None:
         text = ""
     elif isinstance(value, str):
@@ -1208,7 +1627,8 @@ def _require_register_on() -> None:
         raise NdpsError(
             "the NDPS register is off on this site. It turns on only when the hospital has "
             "chosen what happens if an entry cannot be written during a dispense.",
-            code="register_off")
+            code="register_off",
+        )
 
 
 def _require_ndps(actor: Mapping) -> None:
@@ -1216,9 +1636,16 @@ def _require_ndps(actor: Mapping) -> None:
         raise NdpsError("this needs the NDPS permission", code="ndps_permission_needed")
 
 
-def open_register(*, actor: Mapping, reason: Any, witness_id: Any, witness_pin: Any,
-                  store_id: Optional[int] = None, drug_id: Optional[str] = None,
-                  audit_ctx: Optional[Mapping] = None) -> dict:
+def open_register(
+    *,
+    actor: Mapping,
+    reason: Any,
+    witness_id: Any,
+    witness_pin: Any,
+    store_id: int | None = None,
+    drug_id: str | None = None,
+    audit_ctx: Mapping | None = None,
+) -> dict:
     """Open (or open again) the register from the stock on the shelf: one
     'opening' entry per controlled drug in each pharmacy store (or the one
     named) that holds it or already has register entries, at what the stock
@@ -1237,15 +1664,22 @@ def open_register(*, actor: Mapping, reason: Any, witness_id: Any, witness_pin: 
     _require_ndps(actor)
     _require_register_on()
     why = _text(reason, "the reason for opening the register", required=True)
-    witness = verify_witness(actor=actor, witness_id=witness_id, witness_pin=witness_pin,
-                             purpose="opening the NDPS register", target_type="ndps_register",
-                             target_id=str(store_id or "all"), audit_ctx=audit_ctx)
+    witness = verify_witness(
+        actor=actor,
+        witness_id=witness_id,
+        witness_pin=witness_pin,
+        purpose="opening the NDPS register",
+        target_type="ndps_register",
+        target_id=str(store_id or "all"),
+        audit_ctx=audit_ctx,
+    )
     lane = current_lane()
     occurred = utc_iso_now()
     with db_session(immediate=True) as conn:
         if store_id is not None:
-            row = conn.execute("SELECT id FROM stores WHERE id = ? AND pharmacy_kind IS NOT NULL",
-                               (store_id,)).fetchone()
+            row = conn.execute(
+                "SELECT id FROM stores WHERE id = ? AND pharmacy_kind IS NOT NULL", (store_id,)
+            ).fetchone()
             if row is None:
                 raise NdpsError(f"no pharmacy store {store_id}", code="not_found")
         report = balances(conn, store_id=store_id, drug_id=drug_id)
@@ -1257,39 +1691,76 @@ def open_register(*, actor: Mapping, reason: Any, witness_id: Any, witness_pin: 
             # writes over it (nothing for a register that matches or was
             # never opened).
             variance_id, raised = _variance_before_opening(
-                conn, r, raised_by=me, actor_role=actor.get("role"), opened_by="ndps_opening",
-                when="the register was opened again from the shelf", audit_ctx=audit_ctx)
+                conn,
+                r,
+                raised_by=me,
+                actor_role=actor.get("role"),
+                opened_by="ndps_opening",
+                when="the register was opened again from the shelf",
+                audit_ctx=audit_ctx,
+            )
             entry = _insert_entry(
-                conn, lane=lane, store_id=r["store_id"], drug_id=r["drug_id"],
-                entry_type="opening", quantity=max(int(r["shelf_units"]), 0),
-                balance_after=max(int(r["shelf_units"]), 0), actor_id=me,
-                occurred_at=occurred, counterparty_type="none", witness_id=witness,
-                document_ref="ndps_opening", remarks=why)
-            opened.append({"entry_id": entry["id"], "store_id": r["store_id"],
-                           "drug_id": r["drug_id"], "units": entry["balance_after_units"],
-                           "previous_register_units": r["register_units"],
-                           "previous_status": r["status"],
-                           "variance_id": variance_id, "variance_raised": raised})
+                conn,
+                lane=lane,
+                store_id=r["store_id"],
+                drug_id=r["drug_id"],
+                entry_type="opening",
+                quantity=max(int(r["shelf_units"]), 0),
+                balance_after=max(int(r["shelf_units"]), 0),
+                actor_id=me,
+                occurred_at=occurred,
+                counterparty_type="none",
+                witness_id=witness,
+                document_ref="ndps_opening",
+                remarks=why,
+            )
+            opened.append(
+                {
+                    "entry_id": entry["id"],
+                    "store_id": r["store_id"],
+                    "drug_id": r["drug_id"],
+                    "units": entry["balance_after_units"],
+                    "previous_register_units": r["register_units"],
+                    "previous_status": r["status"],
+                    "variance_id": variance_id,
+                    "variance_raised": raised,
+                }
+            )
         if not opened:
-            raise NdpsError("there is no controlled stock to open the register for",
-                            code="nothing_to_open")
+            raise NdpsError(
+                "there is no controlled stock to open the register for", code="nothing_to_open"
+            )
         raised_count = sum(1 for o in opened if o["variance_raised"])
-        _audit(conn, "ndps_register_opened",
-               summary=(f"NDPS register opened from the shelf for {len(opened)} drug and store "
-                        "pairs, witnessed"
-                        + (f"; {raised_count} differences raised as variances first"
-                           if raised_count else "")),
-               actor_id=me, actor_role=actor.get("role"), target_type="ndps_register",
-               target_id=str(store_id or "all"),
-               metadata={"lane": lane, "witness_id": witness, "reason": why,
-                         "openings": opened, "variances_raised": raised_count},
-               audit_ctx=audit_ctx)
+        _audit(
+            conn,
+            "ndps_register_opened",
+            summary=(
+                f"NDPS register opened from the shelf for {len(opened)} drug and store "
+                "pairs, witnessed"
+                + (
+                    f"; {raised_count} differences raised as variances first"
+                    if raised_count
+                    else ""
+                )
+            ),
+            actor_id=me,
+            actor_role=actor.get("role"),
+            target_type="ndps_register",
+            target_id=str(store_id or "all"),
+            metadata={
+                "lane": lane,
+                "witness_id": witness,
+                "reason": why,
+                "openings": opened,
+                "variances_raised": raised_count,
+            },
+            audit_ctx=audit_ctx,
+        )
         after = balances(conn, store_id=store_id, drug_id=drug_id)
     return {"opened": opened, "balances": after}
 
 
-def raise_reconciliation_variances(*, actor: Mapping,
-                                   audit_ctx: Optional[Mapping] = None) -> dict:
+def raise_reconciliation_variances(*, actor: Mapping, audit_ctx: Mapping | None = None) -> dict:
     """Run reconciliation: for every drug and store whose register differs
     from the shelf or whose running balance is broken, raise one
     'reconciliation_mismatch' variance for the part of the difference the
@@ -1306,27 +1777,49 @@ def raise_reconciliation_variances(*, actor: Mapping,
             variance_id, new = _reconciliation_variance(conn, r, raised_by=me)
             if not new:
                 continue
-            made = conn.execute("SELECT expected_units, found_units, variance_units FROM "
-                                "ndps_variances WHERE id = ?", (variance_id,)).fetchone()
-            raised.append({"variance_id": variance_id, "store_id": r["store_id"],
-                           "drug_id": r["drug_id"], "register_units": r["register_units"],
-                           "shelf_units": r["shelf_units"], "status": r["status"],
-                           "expected_units": made["expected_units"],
-                           "found_units": made["found_units"],
-                           "variance_units": made["variance_units"]})
+            made = conn.execute(
+                "SELECT expected_units, found_units, variance_units FROM "
+                "ndps_variances WHERE id = ?",
+                (variance_id,),
+            ).fetchone()
+            raised.append(
+                {
+                    "variance_id": variance_id,
+                    "store_id": r["store_id"],
+                    "drug_id": r["drug_id"],
+                    "register_units": r["register_units"],
+                    "shelf_units": r["shelf_units"],
+                    "status": r["status"],
+                    "expected_units": made["expected_units"],
+                    "found_units": made["found_units"],
+                    "variance_units": made["variance_units"],
+                }
+            )
         if raised:
-            _audit(conn, "ndps_variance_raised",
-                   summary=f"NDPS reconciliation raised {len(raised)} variances",
-                   actor_id=me, actor_role=actor.get("role"), target_type="ndps_register",
-                   target_id="reconciliation",
-                   metadata={"variances": raised, "lane": current_lane()},
-                   audit_ctx=audit_ctx)
+            _audit(
+                conn,
+                "ndps_variance_raised",
+                summary=f"NDPS reconciliation raised {len(raised)} variances",
+                actor_id=me,
+                actor_role=actor.get("role"),
+                target_type="ndps_register",
+                target_id="reconciliation",
+                metadata={"variances": raised, "lane": current_lane()},
+                audit_ctx=audit_ctx,
+            )
         report = balances(conn)
     return {"raised": raised, "balances": report}
 
 
-def reconcile_variance(variance_id: Any, *, actor: Mapping, note: Any, witness_id: Any,
-                       witness_pin: Any, audit_ctx: Optional[Mapping] = None) -> dict:
+def reconcile_variance(
+    variance_id: Any,
+    *,
+    actor: Mapping,
+    note: Any,
+    witness_id: Any,
+    witness_pin: Any,
+    audit_ctx: Mapping | None = None,
+) -> dict:
     """Close an open variance with what was found and done, witnessed. The
     register itself is never edited: a correction is a later entry (or a new
     witnessed opening)."""
@@ -1338,90 +1831,146 @@ def reconcile_variance(variance_id: Any, *, actor: Mapping, note: Any, witness_i
     except (TypeError, ValueError):
         raise NdpsError(f"no variance {variance_id}", code="not_found") from None
     with db_session() as conn:
-        row = conn.execute("SELECT * FROM ndps_variances WHERE id = ? AND lane = ?",
-                           (vid, current_lane())).fetchone()
+        row = conn.execute(
+            "SELECT * FROM ndps_variances WHERE id = ? AND lane = ?", (vid, current_lane())
+        ).fetchone()
         if row is None:
             raise NdpsError(f"no variance {vid}", code="not_found")
         if row["status"] != "open":
             raise NdpsError("this variance is already reconciled", code="already_reconciled")
-    witness = verify_witness(actor=actor, witness_id=witness_id, witness_pin=witness_pin,
-                             purpose="reconciling an NDPS variance", target_type="ndps_variance",
-                             target_id=vid, audit_ctx=audit_ctx)
+    witness = verify_witness(
+        actor=actor,
+        witness_id=witness_id,
+        witness_pin=witness_pin,
+        purpose="reconciling an NDPS variance",
+        target_type="ndps_variance",
+        target_id=vid,
+        audit_ctx=audit_ctx,
+    )
     with db_session(immediate=True) as conn:
         cur = conn.execute(
             "UPDATE ndps_variances SET status = 'reconciled', reconciled_by = ?, "
             "reconciled_at = ?, reconciliation_note = ? WHERE id = ? AND status = 'open'",
-            (me, utc_iso_now(), text, vid))
+            (me, utc_iso_now(), text, vid),
+        )
         if cur.rowcount != 1:
-            raise NdpsError("this variance changed while you were working on it. Nothing was "
-                            "changed.", code="already_reconciled")
-        _audit(conn, "ndps_variance_reconciled",
-               summary=f"NDPS variance {vid} reconciled, witnessed",
-               actor_id=me, actor_role=actor.get("role"), target_type="ndps_variance",
-               target_id=vid,
-               metadata={"variance_id": str(vid), "witness_id": witness, "note": text},
-               audit_ctx=audit_ctx)
-        fresh = dict(conn.execute("SELECT * FROM ndps_variances WHERE id = ?",
-                                  (vid,)).fetchone())
+            raise NdpsError(
+                "this variance changed while you were working on it. Nothing was changed.",
+                code="already_reconciled",
+            )
+        _audit(
+            conn,
+            "ndps_variance_reconciled",
+            summary=f"NDPS variance {vid} reconciled, witnessed",
+            actor_id=me,
+            actor_role=actor.get("role"),
+            target_type="ndps_variance",
+            target_id=vid,
+            metadata={"variance_id": str(vid), "witness_id": witness, "note": text},
+            audit_ctx=audit_ctx,
+        )
+        fresh = dict(conn.execute("SELECT * FROM ndps_variances WHERE id = ?", (vid,)).fetchone())
     return {"variance": fresh}
 
 
-def draft_incident(variance_id: Any, *, actor: Mapping,
-                   audit_ctx: Optional[Mapping] = None) -> dict:
+def draft_incident(variance_id: Any, *, actor: Mapping, audit_ctx: Mapping | None = None) -> dict:
     """Report a variance to the hospital's incident register (GRN-R14) as a
     'security' incident naming no patient, and link it to the variance. Needs
     the incident register on this site (ORB_NABH)."""
     me = _actor_id(actor)
     _require_ndps(actor)
     if not getattr(config, "NABH_ENABLED", False):
-        raise NdpsError("the incident register is switched off on this site, so report this "
-                        "variance on paper", code="incident_register_off")
+        raise NdpsError(
+            "the incident register is switched off on this site, so report this variance on paper",
+            code="incident_register_off",
+        )
     try:
         vid = int(variance_id)
     except (TypeError, ValueError):
         raise NdpsError(f"no variance {variance_id}", code="not_found") from None
     with db_session() as conn:
-        row = conn.execute("SELECT * FROM ndps_variances WHERE id = ? AND lane = ?",
-                           (vid, current_lane())).fetchone()
+        row = conn.execute(
+            "SELECT * FROM ndps_variances WHERE id = ? AND lane = ?", (vid, current_lane())
+        ).fetchone()
         if row is None:
             raise NdpsError(f"no variance {vid}", code="not_found")
         if row["incident_ref"]:
-            raise NdpsError(f"this variance is already reported as incident "
-                            f"{row['incident_ref']}", code="already_reported",
-                            detail={"incident_ref": row["incident_ref"]})
-        drug = conn.execute("SELECT name FROM helix_medication_master WHERE id = ?",
-                            (row["helix_medication_id"],)).fetchone()
-        store = conn.execute("SELECT name, code FROM stores WHERE id = ?",
-                             (row["store_id"],)).fetchone() if row["store_id"] is not None \
+            raise NdpsError(
+                f"this variance is already reported as incident {row['incident_ref']}",
+                code="already_reported",
+                detail={"incident_ref": row["incident_ref"]},
+            )
+        drug = conn.execute(
+            "SELECT name FROM helix_medication_master WHERE id = ?", (row["helix_medication_id"],)
+        ).fetchone()
+        store = (
+            conn.execute(
+                "SELECT name, code FROM stores WHERE id = ?", (row["store_id"],)
+            ).fetchone()
+            if row["store_id"] is not None
             else None
+        )
     from services import nabh_service
 
     drug_name = (drug["name"] if drug else None) or row["helix_medication_id"]
     store_name = ((store["name"] or store["code"]) if store else None) or "a pharmacy store"
     incident = nabh_service.report_incident(
-        incident_type="security", severity="no_harm",
+        incident_type="security",
+        severity="no_harm",
         title=f"Controlled drug discrepancy: {drug_name}",
-        description=(f"NDPS variance {vid} in {store_name}: "
-                     f"{VARIANCE_LABELS.get(row['variance_kind'], row['variance_kind'])}. "
-                     f"{row['detail'] or ''}").strip(),
-        location=store_name, reported_by=me, reporter_role=actor.get("role"))
+        description=(
+            f"NDPS variance {vid} in {store_name}: "
+            f"{VARIANCE_LABELS.get(row['variance_kind'], row['variance_kind'])}. "
+            f"{row['detail'] or ''}"
+        ).strip(),
+        location=store_name,
+        reported_by=me,
+        reporter_role=actor.get("role"),
+    )
     reference = incident.get("reference") or str(incident.get("id"))
     with db_session(immediate=True) as conn:
-        conn.execute("UPDATE ndps_variances SET incident_ref = ? WHERE id = ? AND "
-                     "incident_ref IS NULL", (reference, vid))
-        _audit(conn, "ndps_variance_incident_drafted",
-               summary=f"NDPS variance {vid} reported as incident {reference}",
-               actor_id=me, actor_role=actor.get("role"), target_type="ndps_variance",
-               target_id=vid,
-               metadata={"variance_id": str(vid), "incident_ref": reference,
-                         "incident_id": str(incident.get("id"))}, audit_ctx=audit_ctx)
+        conn.execute(
+            "UPDATE ndps_variances SET incident_ref = ? WHERE id = ? AND incident_ref IS NULL",
+            (reference, vid),
+        )
+        _audit(
+            conn,
+            "ndps_variance_incident_drafted",
+            summary=f"NDPS variance {vid} reported as incident {reference}",
+            actor_id=me,
+            actor_role=actor.get("role"),
+            target_type="ndps_variance",
+            target_id=vid,
+            metadata={
+                "variance_id": str(vid),
+                "incident_ref": reference,
+                "incident_id": str(incident.get("id")),
+            },
+            audit_ctx=audit_ctx,
+        )
     return {"incident_ref": reference, "incident_id": incident.get("id")}
 
 
 _CSV_COLUMNS = (
-    "Entry", "Time (UTC)", "Store", "Drug", "Strength", "Batch", "Entry type", "Quantity",
-    "Balance after", "From or to", "Patient", "Hospital number", "Order", "Prescriber",
-    "Document", "Made by", "Witness", "Register", "Remarks",
+    "Entry",
+    "Time (UTC)",
+    "Store",
+    "Drug",
+    "Strength",
+    "Batch",
+    "Entry type",
+    "Quantity",
+    "Balance after",
+    "From or to",
+    "Patient",
+    "Hospital number",
+    "Order",
+    "Prescriber",
+    "Document",
+    "Made by",
+    "Witness",
+    "Register",
+    "Remarks",
 )
 
 
@@ -1437,9 +1986,15 @@ def _csv_cell(value: Any) -> Any:
     return text
 
 
-def export_csv(*, actor: Mapping, store_id: Optional[int] = None,
-               drug_id: Optional[str] = None, date_from: Any = None, date_to: Any = None,
-               audit_ctx: Optional[Mapping] = None) -> tuple[str, str]:
+def export_csv(
+    *,
+    actor: Mapping,
+    store_id: int | None = None,
+    drug_id: str | None = None,
+    date_from: Any = None,
+    date_to: Any = None,
+    audit_ctx: Mapping | None = None,
+) -> tuple[str, str]:
     """The register in this lane as CSV, oldest first: (filename, text). The
     export is audited ('security', fail-closed) in the same session BEFORE the
     text is returned; no audit row, no file. A patient outside the caller's
@@ -1454,39 +2009,77 @@ def export_csv(*, actor: Mapping, store_id: Optional[int] = None,
     if start and end and start > end:
         raise NdpsError("the first date is after the last date", code="bad_date")
     lane = current_lane()
-    sql, params = _register_query(store_id=store_id, drug_id=drug_id, lane=lane,
-                                  date_from=start, date_to=end)
+    sql, params = _register_query(
+        store_id=store_id, drug_id=drug_id, lane=lane, date_from=start, date_to=end
+    )
     with db_session() as conn:
-        rows = [dict(r) for r in conn.execute(
-            f"SELECT * FROM ndps_register WHERE {sql} ORDER BY store_id, helix_medication_id, "
-            "seq LIMIT ?", (*params, MAX_EXPORT_ROWS + 1)).fetchall()]
+        rows = [
+            dict(r)
+            for r in conn.execute(
+                f"SELECT * FROM ndps_register WHERE {sql} ORDER BY store_id, helix_medication_id, "
+                "seq LIMIT ?",
+                (*params, MAX_EXPORT_ROWS + 1),
+            ).fetchall()
+        ]
         if len(rows) > MAX_EXPORT_ROWS:
-            raise NdpsError(f"more than {MAX_EXPORT_ROWS} entries: narrow the export by store, "
-                            "drug or dates", code="export_too_large")
+            raise NdpsError(
+                f"more than {MAX_EXPORT_ROWS} entries: narrow the export by store, drug or dates",
+                code="export_too_large",
+            )
         entries, disclosed = _decorate_entries(conn, rows, dept=department_scope(actor))
         buf = io.StringIO()
         writer = csv.writer(buf)
         writer.writerow(_CSV_COLUMNS)
         for e in entries:
-            writer.writerow([_csv_cell(v) for v in (
-                e["seq"], e["occurred_at"], e["store_name"], e["drug_name"], e["strength"],
-                e["batch_no"], e["entry_label"], e["quantity_units"], e["balance_after_units"],
-                e["counterparty"],
-                e["patient_name"] if e["patient_in_scope"] is not False else OUT_OF_SCOPE_PATIENT,
-                e["patient_mrn"], e["helix_order_id"], e["prescriber_name"], e["document_ref"],
-                e["actor_name"] or e["actor_id"], e["witness_name"] or e["witness_id"],
-                e["lane_label"], e["remarks"])])
-        _audit(conn, "ndps_register_exported",
-               summary=f"NDPS register exported: {len(entries)} entries naming "
-                       f"{len(disclosed)} patients",
-               actor_id=me, actor_role=actor.get("role"), target_type="ndps_register",
-               target_id=str(store_id or "all"),
-               patient_id=disclosed[0] if len(disclosed) == 1 else None,
-               metadata={"lane": lane, "entries": len(entries),
-                         "patient_count": len(disclosed),
-                         "patient_ids": disclosed[:MAX_AUDITED_PATIENT_IDS],
-                         "store_id": str(store_id) if store_id is not None else None,
-                         "drug_id": drug_id, "date_from": start, "date_to": end},
-               audit_ctx=audit_ctx)
+            writer.writerow(
+                [
+                    _csv_cell(v)
+                    for v in (
+                        e["seq"],
+                        e["occurred_at"],
+                        e["store_name"],
+                        e["drug_name"],
+                        e["strength"],
+                        e["batch_no"],
+                        e["entry_label"],
+                        e["quantity_units"],
+                        e["balance_after_units"],
+                        e["counterparty"],
+                        e["patient_name"]
+                        if e["patient_in_scope"] is not False
+                        else OUT_OF_SCOPE_PATIENT,
+                        e["patient_mrn"],
+                        e["helix_order_id"],
+                        e["prescriber_name"],
+                        e["document_ref"],
+                        e["actor_name"] or e["actor_id"],
+                        e["witness_name"] or e["witness_id"],
+                        e["lane_label"],
+                        e["remarks"],
+                    )
+                ]
+            )
+        _audit(
+            conn,
+            "ndps_register_exported",
+            summary=f"NDPS register exported: {len(entries)} entries naming "
+            f"{len(disclosed)} patients",
+            actor_id=me,
+            actor_role=actor.get("role"),
+            target_type="ndps_register",
+            target_id=str(store_id or "all"),
+            patient_id=disclosed[0] if len(disclosed) == 1 else None,
+            metadata={
+                "lane": lane,
+                "entries": len(entries),
+                "patient_count": len(disclosed),
+                "patient_ids": disclosed[:MAX_AUDITED_PATIENT_IDS],
+                "store_id": str(store_id) if store_id is not None else None,
+                "drug_id": drug_id,
+                "date_from": start,
+                "date_to": end,
+            },
+            audit_ctx=audit_ctx,
+        )
     stamp = utc_iso_now()[:10]
     return f"ndps-register-{lane.replace('_', '-')}-{stamp}.csv", buf.getvalue()

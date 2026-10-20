@@ -14,6 +14,7 @@ Usage:
   python convert_to_coreml.py --forecast-only        # Convert Forecast LSTM only
   python convert_to_coreml.py --output-dir ./models  # Custom output directory
 """
+
 import argparse
 import sys
 from pathlib import Path
@@ -30,8 +31,8 @@ def convert_vigil_cfc(checkpoint_path: str, output_dir: str) -> str:
     requires tracing with a fixed sequence length. We trace with seq_len=24
     (the maximum used in inference).
     """
-    import torch
     import coremltools as ct
+    import torch
     from models.vigil_cfc import OrbVigilCfC
 
     print("\n━━━ Converting Vigil CfC LNN ━━━")
@@ -45,7 +46,7 @@ def convert_vigil_cfc(checkpoint_path: str, output_dir: str) -> str:
     print(f"  Epoch: {checkpoint.get('epoch', '?')}, Val AUC: {checkpoint.get('val_auc', 0):.4f}")
 
     # Instantiate and load weights
-    model = OrbVigilCfC(input_dim=input_dim, hidden_dim=hidden_dim, output_dim=1)
+    model = OrbVigilCfC(input_dim=input_dim, hidden_dim=hidden_dim)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
 
@@ -83,9 +84,7 @@ def convert_vigil_cfc(checkpoint_path: str, output_dir: str) -> str:
         "Z-score normalized vitals sequence (1, 24, 7). "
         "Features: [HR, SpO2, Temp, SBP, MAP, DBP, RR]."
     )
-    mlmodel.input_description["dt"] = (
-        "Elapsed hours between observations (1, 24, 1)."
-    )
+    mlmodel.input_description["dt"] = "Elapsed hours between observations (1, 24, 1)."
     mlmodel.output_description["risk_probability"] = (
         "Deterioration probability (1, 1). Range: 0.0 (stable) to 1.0 (critical)."
     )
@@ -94,7 +93,9 @@ def convert_vigil_cfc(checkpoint_path: str, output_dir: str) -> str:
     output_path = Path(output_dir) / "vigil_cfc.mlpackage"
     mlmodel.save(str(output_path))
     print(f"  ✅ Saved to: {output_path}")
-    print(f"     Size: {sum(f.stat().st_size for f in output_path.rglob('*') if f.is_file()) / 1024:.1f} KB")
+    print(
+        f"     Size: {sum(f.stat().st_size for f in output_path.rglob('*') if f.is_file()) / 1024:.1f} KB"
+    )
 
     return str(output_path)
 
@@ -105,9 +106,9 @@ def convert_forecast_lstm(checkpoint_path: str, output_dir: str) -> str:
     The bidirectional LSTM with temporal attention is natively supported
     by CoreML. We trace with the fixed input shape (1, 48, 19).
     """
-    import torch
     import coremltools as ct
-    from models.forecast_lstm import OrbForecastLSTM, INPUT_DIM
+    import torch
+    from models.forecast_lstm import INPUT_DIM, OrbForecastLSTM
 
     print("\n━━━ Converting Forecast LSTM ━━━")
 
@@ -131,6 +132,7 @@ def convert_forecast_lstm(checkpoint_path: str, output_dir: str) -> str:
             out = self.model(x)
             # Apply softmax to acuity logits at export time
             import torch.nn.functional as F
+
             acuity_probs = F.softmax(out["acuity_logits"], dim=-1)
             return out["los"], out["discharge_prob"], acuity_probs
 
@@ -173,17 +175,20 @@ def convert_forecast_lstm(checkpoint_path: str, output_dir: str) -> str:
         "days since admission, medication count, risk score."
     )
     mlmodel.output_description["los_days"] = "Predicted remaining length-of-stay in days (1, 1)."
-    mlmodel.output_description["discharge_probability"] = "P(discharge within 24h) (1, 1). Range: 0.0-1.0."
+    mlmodel.output_description["discharge_probability"] = (
+        "P(discharge within 24h) (1, 1). Range: 0.0-1.0."
+    )
     mlmodel.output_description["acuity_probs"] = (
-        "Acuity trajectory probabilities (1, 3). "
-        "Indices: [0]=improving, [1]=stable, [2]=worsening."
+        "Acuity trajectory probabilities (1, 3). Indices: [0]=improving, [1]=stable, [2]=worsening."
     )
 
     # Save
     output_path = Path(output_dir) / "forecast_lstm.mlpackage"
     mlmodel.save(str(output_path))
     print(f"  ✅ Saved to: {output_path}")
-    print(f"     Size: {sum(f.stat().st_size for f in output_path.rglob('*') if f.is_file()) / 1024:.1f} KB")
+    print(
+        f"     Size: {sum(f.stat().st_size for f in output_path.rglob('*') if f.is_file()) / 1024:.1f} KB"
+    )
 
     return str(output_path)
 

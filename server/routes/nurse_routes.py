@@ -22,14 +22,12 @@ body, or header — can widen either. The per-patient guards were added
 2026-08-07: both routes previously checked only that the ACCOUNT held
 `vitals.read`/`vitals.write` and never that the PATIENT was hers.
 """
+
 from __future__ import annotations
 
 import uuid
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel
-
 from permissions import (
     VITALS_WRITE,
     department_scope,
@@ -39,33 +37,38 @@ from permissions import (
     require_patient_access,
     require_permission,
 )
-from services import nurse_shift_service
+from pydantic import BaseModel
 from services.audit_service import log_audit_event
+
+from services import nurse_shift_service
 
 router = APIRouter(prefix="/api/nurse", tags=["nurse"])
 
 
 class ObservationRequest(BaseModel):
-    heart_rate: Optional[float] = None
-    systolic_bp: Optional[float] = None
-    diastolic_bp: Optional[float] = None
-    respiratory_rate: Optional[float] = None
-    temperature: Optional[float] = None
-    spo2: Optional[float] = None
+    heart_rate: float | None = None
+    systolic_bp: float | None = None
+    diastolic_bp: float | None = None
+    respiratory_rate: float | None = None
+    temperature: float | None = None
+    spo2: float | None = None
     # ACVPU and air or oxygen. None means the box was left empty, never alert
     # and never on air (Orb Ward Record, 9 October 2026): a paper sheet can
     # leave either box blank, and the rounds file counts that as blank. A nurse
     # at the bedside must choose both (nurse_shift_service refuses her set
     # otherwise); the ward clerk may send None for a box the sheet left empty.
-    consciousness: Optional[str] = None
-    on_oxygen: Optional[bool] = None
+    consciousness: str | None = None
+    on_oxygen: bool | None = None
     # Stamped client-side when the nurse hits Save. Doubles as the dedupe key
     # for an offline replay — see nurse_shift_service.record_observation.
     # For the ward clerk it is the time written on the paper sheet.
-    taken_at: Optional[str] = None
+    taken_at: str | None = None
     # Readings the paper sheet showed but nobody could read (field names from
     # nurse_shift_service.ILLEGIBLE_FIELDS). Each is stored empty and named.
-    illegible: List[str] = []
+    illegible: list[str] = []
+
+
+_GET_BOARD_USER_DEFAULT = Depends(require_permission("patient.read_all", "vitals.read"))
 
 
 @router.get("/board")
@@ -73,7 +76,7 @@ class ObservationRequest(BaseModel):
 # run in FastAPI's threadpool rather than on the asyncio event loop.
 def get_board(
     request: Request,
-    user: dict = Depends(require_permission("patient.read_all", "vitals.read")),
+    user: dict = _GET_BOARD_USER_DEFAULT,
 ):
     """The shift board: every admitted patient the nurse covers, task-shaped.
 
@@ -101,7 +104,7 @@ def get_board(
 
     log_audit_event(
         correlation_id=str(uuid.uuid4()),
-        event_category="phi_access",          # fail-closed
+        event_category="phi_access",  # fail-closed
         action_type="nurse_board_viewed",
         outcome="success",
         summary_message=(
@@ -129,6 +132,9 @@ def get_board(
     return nurse_shift_service.build_board(department)
 
 
+_LIST_TRANSCRIBE_PATIENTS_USER_DEFAULT = Depends(require_permission("vitals.transcribe"))
+
+
 @router.get("/transcribe/patients")
 # Plain def: a database read, so it runs in the threadpool, off the event loop.
 def list_transcribe_patients(
@@ -136,7 +142,7 @@ def list_transcribe_patients(
     # vitals.transcribe only: the ward clerk (Orb Ward Record, 9 October 2026).
     # Her Observations screen used to read the bed board, which needs the beds
     # module (ORB_ADT) switched on; this list works without it.
-    user: dict = Depends(require_permission("vitals.transcribe")),
+    user: dict = _LIST_TRANSCRIBE_PATIENTS_USER_DEFAULT,
 ):
     """The admitted patients of the clerk's own department: name, hospital
     number, ward, bed and when the stay began. Nothing clinical.
@@ -149,7 +155,7 @@ def list_transcribe_patients(
     department = department_scope(user)
     log_audit_event(
         correlation_id=str(uuid.uuid4()),
-        event_category="phi_access",          # fail-closed
+        event_category="phi_access",  # fail-closed
         action_type="transcribe_patients_viewed",
         outcome="success",
         summary_message=(
@@ -176,14 +182,18 @@ def list_transcribe_patients(
     }
 
 
+_LIST_OWN_COPIES_USER_DEFAULT = Depends(
+    require_patient_access("vitals.transcribe", audit_action="transcribe_own_copies_viewed")
+)
+
+
 @router.get("/transcribe/patients/{patient_id}/my-copies")
 # Plain def: a database read, so it runs in the threadpool, off the event loop.
 def list_own_copies(
     patient_id: str,
     # vitals.transcribe, on a patient of her own department (the same scope,
     # 404 and denial row as every per-patient route), audited as a read.
-    user: dict = Depends(require_patient_access(
-        "vitals.transcribe", audit_action="transcribe_own_copies_viewed")),
+    user: dict = _LIST_OWN_COPIES_USER_DEFAULT,
 ):
     """The sets this ward clerk copied for this patient in the last 24 hours:
     the time on the sheet, the readings and whether each is struck out, so she
@@ -193,6 +203,9 @@ def list_own_copies(
         "patient_id": patient_id,
         "copies": nurse_shift_service.clerk_own_copies(patient_id, user["id"]),
     }
+
+
+_PREVIEW_NEWS2_USER_DEFAULT = Depends(require_patient_access("vitals.read"))
 
 
 @router.post("/patients/{patient_id}/news2-preview")
@@ -217,7 +230,7 @@ def preview_news2(
     # keystroke, and one encrypted-SQLite write per keystroke is exactly the
     # shape blamed for the 2026-07-30 loop stalls. The SCOPE check is the
     # control here and it still runs on every call — see require_patient_access.
-    user: dict = Depends(require_patient_access("vitals.read")),
+    user: dict = _PREVIEW_NEWS2_USER_DEFAULT,
 ):
     """Score a candidate observation set without persisting anything.
 
@@ -231,7 +244,13 @@ def preview_news2(
     try:
         return nurse_shift_service.score_observation(patient_id, req.model_dump())
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+_RECORD_OBSERVATIONS_USER_DEFAULT = Depends(
+    require_patient_access("vitals.write", "vitals.transcribe", any_of=True)
+)
+_RECORD_OBSERVATIONS_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempotency-Key")
 
 
 @router.post("/patients/{patient_id}/observations")
@@ -269,9 +288,8 @@ def record_observations(
     # 2026): the ward clerk copies the paper observation sheet under
     # vitals.transcribe, with exactly the same patient scope, 404 and denial row.
     # Which permission let the caller in decides the stored source below.
-    user: dict = Depends(require_patient_access("vitals.write", "vitals.transcribe",
-                                                any_of=True)),
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    user: dict = _RECORD_OBSERVATIONS_USER_DEFAULT,
+    idempotency_key: str | None = _RECORD_OBSERVATIONS_IDEMPOTENCY_KEY_DEFAULT,
 ):
     """Record a nurse-taken observation set and the NEWS2 it produces.
 
@@ -284,16 +302,19 @@ def record_observations(
     illegible = payload.pop("illegible", None) or []
     # A bedside account (vitals.write) charts as the nurse; an account that
     # only transcribes is the clerk copying the sheet, stored as such.
-    source = (nurse_shift_service.OBS_SOURCE
-              if has_permission(user.get("role", ""), VITALS_WRITE)
-              else nurse_shift_service.CLERK_SOURCE)
+    source = (
+        nurse_shift_service.OBS_SOURCE
+        if has_permission(user.get("role", ""), VITALS_WRITE)
+        else nurse_shift_service.CLERK_SOURCE
+    )
     try:
         # At the bedside both boxes are a choice the nurse must make: nothing
         # is preselected, and an empty one is refused in words she can act on.
         # The clerk may leave a box empty when the paper sheet did.
         if source == nurse_shift_service.OBS_SOURCE:
             nurse_shift_service.require_bedside_choices(
-                payload, nurse_shift_service.normalise_illegible(illegible))
+                payload, nurse_shift_service.normalise_illegible(illegible)
+            )
         return nurse_shift_service.record_observation(
             patient_id,
             user["id"],
@@ -306,13 +327,18 @@ def record_observations(
     except ValueError as e:
         # "patient not found" is a 404; everything else is a validation failure.
         if "not found" in str(e):
-            raise HTTPException(status_code=404, detail=str(e))
-        raise HTTPException(status_code=422, detail=str(e))
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        raise HTTPException(status_code=422, detail=str(e)) from e
 
 
 class VoidRequest(BaseModel):
     # Required: a set is never struck out without saying why.
     reason: str
+
+
+_VOID_OBSERVATION_USER_DEFAULT = Depends(
+    require_any_permission("vitals.write", "vitals.transcribe")
+)
 
 
 @router.post("/observations/{vitals_id}/void")
@@ -325,7 +351,7 @@ def void_observation(
     # out her OWN copies only, a set of source clerk_transcribed that her
     # account keyed (nurse_shift_service.void_observation own_copy_only), so a
     # wrong copy never needs a nurse to correct it. Anything else is a 403.
-    user: dict = Depends(require_any_permission("vitals.write", "vitals.transcribe")),
+    user: dict = _VOID_OBSERVATION_USER_DEFAULT,
 ):
     """Mark a recorded observation set as entered in error, with a reason.
 
@@ -347,9 +373,7 @@ def void_observation(
             event_category="authorization",
             action_type="patient_scope_denied",
             outcome="denied",
-            summary_message=(
-                f"Patient {patient_id} is outside the caller's department ({dept})"
-            ),
+            summary_message=(f"Patient {patient_id} is outside the caller's department ({dept})"),
             actor_user_id=user.get("id"),
             actor_role=user.get("role"),
             patient_id=patient_id,
@@ -357,19 +381,23 @@ def void_observation(
             http_method=request.method,
             ip_address=request.client.host if request.client else None,
             user_agent=request.headers.get("user-agent"),
-            metadata={"department": dept, "scope_source": "authenticated_user",
-                      "vitals_id": vitals_id},
+            metadata={
+                "department": dept,
+                "scope_source": "authenticated_user",
+                "vitals_id": vitals_id,
+            },
         )
         raise not_found
     own_copy_only = not has_permission(user.get("role", ""), VITALS_WRITE)
     try:
         return nurse_shift_service.void_observation(
-            vitals_id, user["id"], req.reason, own_copy_only=own_copy_only)
+            vitals_id, user["id"], req.reason, own_copy_only=own_copy_only
+        )
     except nurse_shift_service.ObservationNotFound:
-        raise not_found
+        raise not_found from None
     except nurse_shift_service.ObservationNotYours as e:
-        raise HTTPException(status_code=403, detail=str(e))
+        raise HTTPException(status_code=403, detail=str(e)) from e
     except nurse_shift_service.ObservationAlreadyVoided as e:
-        raise HTTPException(status_code=409, detail=str(e))
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e

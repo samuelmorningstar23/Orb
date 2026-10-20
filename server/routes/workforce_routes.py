@@ -50,20 +50,20 @@ All handlers are plain `def`, so FastAPI runs them in a threadpool: everything
 below opens SQLite, and blocking the event loop is the failure mode this repo
 has shipped three production freezes from.
 """
+
 from __future__ import annotations
 
 import logging
 import uuid
-from typing import Optional
-
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel, Field
 
 import config
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import PlainTextResponse
 from permissions import ADMIN_OVERVIEW, require_permission
-from services import workforce_service as svc
+from pydantic import BaseModel
 from services.audit_service import log_audit_event
+
+from services import workforce_service as svc
 
 logger = logging.getLogger("orb.workforce_routes")
 
@@ -71,6 +71,7 @@ router = APIRouter(prefix="/api/workforce", tags=["Workforce & Payroll Export"])
 
 
 # ── Module switch ────────────────────────────────────────────────────────────
+
 
 def require_module() -> None:
     """404 when the site has switched the workforce module off.
@@ -120,9 +121,16 @@ def _fail(exc: svc.WorkforceError) -> HTTPException:
     return HTTPException(status_code=status, detail=detail)
 
 
-def _audit(request: Request, user: dict, action: str, *, summary: str,
-           target_type: str, target_id: Optional[str] = None,
-           metadata: Optional[dict] = None) -> None:
+def _audit(
+    request: Request,
+    user: dict,
+    action: str,
+    *,
+    summary: str,
+    target_type: str,
+    target_id: str | int | None = None,
+    metadata: dict | None = None,
+) -> None:
     """Every workforce WRITE leaves a trail.
 
     Category is `security` rather than a clinical one: an attendance correction
@@ -151,23 +159,24 @@ def _audit(request: Request, user: dict, action: str, *, summary: str,
 #  Request models
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class EmployeeIn(BaseModel):
     employee_code: str
     full_name: str
-    department: Optional[str] = None
-    designation: Optional[str] = None
+    department: str | None = None
+    designation: str | None = None
     employment_type: str = "permanent"
     #: Optional link to an Orb login. Most of a hospital's payroll — housekeeping,
     #: security, kitchen, drivers — has no login and never will.
-    user_id: Optional[str] = None
-    date_of_joining: Optional[str] = None
-    date_of_exit: Optional[str] = None
+    user_id: str | None = None
+    date_of_joining: str | None = None
+    date_of_exit: str | None = None
     #: 0 = Monday … 6 = Sunday. NULL means the day off ROTATES with the roster,
     #: in which case it must be recorded as attendance, never inferred.
-    weekly_off_day: Optional[int] = None
-    payroll_bureau_ref: Optional[str] = None
+    weekly_off_day: int | None = None
+    payroll_bureau_ref: str | None = None
     is_active: bool = True
-    notes: Optional[str] = None
+    notes: str | None = None
     #: Set by the Add form: an existing code is refused (409), not overwritten.
     create_only: bool = False
 
@@ -179,7 +188,7 @@ class ShiftTypeIn(BaseModel):
     duration_minutes: int
     #: 'night' | 'evening' | null. Marks a shift a site's policy pays an
     #: allowance for. Orb COUNTS these; the amount is the bureau's.
-    allowance_code: Optional[str] = None
+    allowance_code: str | None = None
     is_active: bool = True
 
 
@@ -187,11 +196,11 @@ class RosterIn(BaseModel):
     roster_date: str
     shift_code: str
     employee_code: str
-    department: Optional[str] = None
-    ward: Optional[str] = None
-    assigned_role: Optional[str] = None
+    department: str | None = None
+    ward: str | None = None
+    assigned_role: str | None = None
     status: str = "planned"
-    notes: Optional[str] = None
+    notes: str | None = None
     #: Short rest and same-day double shifts come back as warnings by default.
     #: Set false to make the server refuse them outright — see MIN_REST_MINUTES.
     allow_short_rest: bool = True
@@ -201,14 +210,14 @@ class AttendanceIn(BaseModel):
     employee_code: str
     attendance_date: str
     status: str
-    shift_code: Optional[str] = None
+    shift_code: str | None = None
     #: FULL ISO timestamps with offset, not times-of-day: a night shift's in and
     #: out fall on two calendar dates and Orb will not guess which.
-    first_in_at: Optional[str] = None
-    last_out_at: Optional[str] = None
-    leave_type_code: Optional[str] = None
+    first_in_at: str | None = None
+    last_out_at: str | None = None
+    leave_type_code: str | None = None
     source: str = "manual"
-    remarks: Optional[str] = None
+    remarks: str | None = None
 
 
 class HolidayIn(BaseModel):
@@ -220,18 +229,23 @@ class HolidayIn(BaseModel):
 class ExportIn(BaseModel):
     year: int
     month: int
-    department: Optional[str] = None
-    notes: Optional[str] = None
+    department: str | None = None
+    notes: str | None = None
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  Meta
 # ═════════════════════════════════════════════════════════════════════════════
 
+
+_META_MODULE_DEFAULT = Depends(require_module)
+_META_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+
+
 @router.get("/meta")
 def meta(
-    _module=Depends(require_module),
-    user=Depends(require_permission(ADMIN_OVERVIEW)),
+    _module=_META_MODULE_DEFAULT,
+    user=_META_USER_DEFAULT,
 ):
     """The vocabulary a client needs to render forms without hard-coding it,
     plus the policy numbers and the statutory boundary in words — so the panel
@@ -259,45 +273,68 @@ def meta(
 #  Employees
 # ═════════════════════════════════════════════════════════════════════════════
 
+
+_LIST_EMPLOYEES_DEPARTMENT_DEFAULT = Query(None)
+_LIST_EMPLOYEES_INCLUDE_INACTIVE_DEFAULT = Query(False)
+_LIST_EMPLOYEES_SEARCH_DEFAULT = Query(None)
+_LIST_EMPLOYEES_MODULE_DEFAULT = Depends(require_module)
+_LIST_EMPLOYEES_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+
+
 @router.get("/employees")
 def list_employees(
-    department: Optional[str] = Query(None),
-    include_inactive: bool = Query(False),
-    search: Optional[str] = Query(None),
-    _module=Depends(require_module),
-    user=Depends(require_permission(ADMIN_OVERVIEW)),
+    department: str | None = _LIST_EMPLOYEES_DEPARTMENT_DEFAULT,
+    include_inactive: bool = _LIST_EMPLOYEES_INCLUDE_INACTIVE_DEFAULT,
+    search: str | None = _LIST_EMPLOYEES_SEARCH_DEFAULT,
+    _module=_LIST_EMPLOYEES_MODULE_DEFAULT,
+    user=_LIST_EMPLOYEES_USER_DEFAULT,
 ):
-    return {"employees": svc.list_employees(department=department,
-                                            include_inactive=include_inactive,
-                                            search=search)}
+    return {
+        "employees": svc.list_employees(
+            department=department, include_inactive=include_inactive, search=search
+        )
+    }
+
+
+_GET_EMPLOYEE_MODULE_DEFAULT = Depends(require_module)
+_GET_EMPLOYEE_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
 @router.get("/employees/{employee_code}")
 def get_employee(
     employee_code: str,
-    _module=Depends(require_module),
-    user=Depends(require_permission(ADMIN_OVERVIEW)),
+    _module=_GET_EMPLOYEE_MODULE_DEFAULT,
+    user=_GET_EMPLOYEE_USER_DEFAULT,
 ):
     try:
         return svc.get_employee(employee_code)
     except svc.WorkforceError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
+
+
+_UPSERT_EMPLOYEE_MODULE_DEFAULT = Depends(require_module)
+_UPSERT_EMPLOYEE_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
 @router.post("/employees")
 def upsert_employee(
     payload: EmployeeIn,
     request: Request,
-    _module=Depends(require_module),
-    user=Depends(require_permission(ADMIN_OVERVIEW)),
+    _module=_UPSERT_EMPLOYEE_MODULE_DEFAULT,
+    user=_UPSERT_EMPLOYEE_USER_DEFAULT,
 ):
     try:
         employee = svc.upsert_employee(**payload.model_dump(), created_by=user.get("id"))
     except svc.WorkforceError as exc:
-        raise _fail(exc)
-    _audit(request, user, "workforce_employee_upsert",
-           summary=f"Employment record saved for {employee['employee_code']}",
-           target_type="staff_employment", target_id=employee["employee_code"])
+        raise _fail(exc) from exc
+    _audit(
+        request,
+        user,
+        "workforce_employee_upsert",
+        summary=f"Employment record saved for {employee['employee_code']}",
+        target_type="staff_employment",
+        target_id=employee["employee_code"],
+    )
     return employee
 
 
@@ -305,82 +342,123 @@ def upsert_employee(
 #  Shift types & holidays
 # ═════════════════════════════════════════════════════════════════════════════
 
+
+_LIST_SHIFTS_INCLUDE_INACTIVE_DEFAULT = Query(False)
+_LIST_SHIFTS_MODULE_DEFAULT = Depends(require_module)
+_LIST_SHIFTS_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+
+
 @router.get("/shifts")
 def list_shifts(
-    include_inactive: bool = Query(False),
-    _module=Depends(require_module),
-    user=Depends(require_permission(ADMIN_OVERVIEW)),
+    include_inactive: bool = _LIST_SHIFTS_INCLUDE_INACTIVE_DEFAULT,
+    _module=_LIST_SHIFTS_MODULE_DEFAULT,
+    user=_LIST_SHIFTS_USER_DEFAULT,
 ):
     return {"shift_types": svc.list_shift_types(include_inactive=include_inactive)}
+
+
+_UPSERT_SHIFT_MODULE_DEFAULT = Depends(require_module)
+_UPSERT_SHIFT_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
 @router.post("/shifts")
 def upsert_shift(
     payload: ShiftTypeIn,
     request: Request,
-    _module=Depends(require_module),
-    user=Depends(require_permission(ADMIN_OVERVIEW)),
+    _module=_UPSERT_SHIFT_MODULE_DEFAULT,
+    user=_UPSERT_SHIFT_USER_DEFAULT,
 ):
     try:
         shift = svc.upsert_shift_type(**payload.model_dump())
     except svc.WorkforceError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     # Editing a shift's hours can create conflicts in a roster that was already
     # written against the old hours. GET /roster/conflicts is what finds them,
     # and this audit line is how somebody knows to look.
-    _audit(request, user, "workforce_shift_upsert",
-           summary=f"Shift {shift['code']} set to {shift['start_time']}-{shift['end_time']}",
-           target_type="duty_shift_type", target_id=shift["code"])
+    _audit(
+        request,
+        user,
+        "workforce_shift_upsert",
+        summary=f"Shift {shift['code']} set to {shift['start_time']}-{shift['end_time']}",
+        target_type="duty_shift_type",
+        target_id=shift["code"],
+    )
     return shift
+
+
+_LIST_HOLIDAYS_DATE_FROM_DEFAULT = Query(None)
+_LIST_HOLIDAYS_DATE_TO_DEFAULT = Query(None)
+_LIST_HOLIDAYS_MODULE_DEFAULT = Depends(require_module)
+_LIST_HOLIDAYS_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
 @router.get("/holidays")
 def list_holidays(
-    date_from: Optional[str] = Query(None),
-    date_to: Optional[str] = Query(None),
-    _module=Depends(require_module),
-    user=Depends(require_permission(ADMIN_OVERVIEW)),
+    date_from: str | None = _LIST_HOLIDAYS_DATE_FROM_DEFAULT,
+    date_to: str | None = _LIST_HOLIDAYS_DATE_TO_DEFAULT,
+    _module=_LIST_HOLIDAYS_MODULE_DEFAULT,
+    user=_LIST_HOLIDAYS_USER_DEFAULT,
 ):
     try:
         return {"holidays": svc.list_holidays(date_from=date_from, date_to=date_to)}
     except svc.WorkforceError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
+
+
+_UPSERT_HOLIDAY_MODULE_DEFAULT = Depends(require_module)
+_UPSERT_HOLIDAY_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
 @router.post("/holidays")
 def upsert_holiday(
     payload: HolidayIn,
     request: Request,
-    _module=Depends(require_module),
-    user=Depends(require_permission(ADMIN_OVERVIEW)),
+    _module=_UPSERT_HOLIDAY_MODULE_DEFAULT,
+    user=_UPSERT_HOLIDAY_USER_DEFAULT,
 ):
     try:
         holiday = svc.upsert_holiday(**payload.model_dump(), created_by=user.get("id"))
     except svc.WorkforceError as exc:
-        raise _fail(exc)
-    _audit(request, user, "workforce_holiday_upsert",
-           summary=f"Holiday {holiday['holiday_date']}: {holiday['name']}",
-           target_type="hospital_holiday", target_id=holiday["holiday_date"])
+        raise _fail(exc) from exc
+    _audit(
+        request,
+        user,
+        "workforce_holiday_upsert",
+        summary=f"Holiday {holiday['holiday_date']}: {holiday['name']}",
+        target_type="hospital_holiday",
+        target_id=holiday["holiday_date"],
+    )
     return holiday
+
+
+_DELETE_HOLIDAY_MODULE_DEFAULT = Depends(require_module)
+_DELETE_HOLIDAY_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
 @router.delete("/holidays/{holiday_date}")
 def delete_holiday(
     holiday_date: str,
     request: Request,
-    _module=Depends(require_module),
-    user=Depends(require_permission(ADMIN_OVERVIEW)),
+    _module=_DELETE_HOLIDAY_MODULE_DEFAULT,
+    user=_DELETE_HOLIDAY_USER_DEFAULT,
 ):
     try:
         removed = svc.delete_holiday(holiday_date)
     except svc.WorkforceError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     if not removed:
-        raise HTTPException(status_code=404, detail={
-            "error": "not_found", "message": f"No holiday on {holiday_date}"})
-    _audit(request, user, "workforce_holiday_delete",
-           summary=f"Holiday removed: {holiday_date}",
-           target_type="hospital_holiday", target_id=holiday_date)
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "not_found", "message": f"No holiday on {holiday_date}"},
+        )
+    _audit(
+        request,
+        user,
+        "workforce_holiday_delete",
+        summary=f"Holiday removed: {holiday_date}",
+        target_type="hospital_holiday",
+        target_id=holiday_date,
+    )
     return {"deleted": True, "holiday_date": holiday_date}
 
 
@@ -388,29 +466,43 @@ def delete_holiday(
 #  Duty roster
 # ═════════════════════════════════════════════════════════════════════════════
 
+
+_GET_ROSTER_DATE_FROM_DEFAULT = Query(...)
+_GET_ROSTER_DATE_TO_DEFAULT = Query(...)
+_GET_ROSTER_DEPARTMENT_DEFAULT = Query(None)
+_GET_ROSTER_MODULE_DEFAULT = Depends(require_module)
+_GET_ROSTER_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+
+
 @router.get("/roster")
 def get_roster(
-    date_from: str = Query(...),
-    date_to: str = Query(...),
-    department: Optional[str] = Query(None),
-    _module=Depends(require_module),
-    user=Depends(require_permission(ADMIN_OVERVIEW)),
+    date_from: str = _GET_ROSTER_DATE_FROM_DEFAULT,
+    date_to: str = _GET_ROSTER_DATE_TO_DEFAULT,
+    department: str | None = _GET_ROSTER_DEPARTMENT_DEFAULT,
+    _module=_GET_ROSTER_MODULE_DEFAULT,
+    user=_GET_ROSTER_USER_DEFAULT,
 ):
     """Who is on, by date and shift, with what actually happened beside it."""
     try:
-        return svc.get_roster(date_from=date_from, date_to=date_to,
-                              department=department)
+        return svc.get_roster(date_from=date_from, date_to=date_to, department=department)
     except svc.WorkforceError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
+
+
+_ROSTER_CONFLICTS_DATE_FROM_DEFAULT = Query(...)
+_ROSTER_CONFLICTS_DATE_TO_DEFAULT = Query(...)
+_ROSTER_CONFLICTS_DEPARTMENT_DEFAULT = Query(None)
+_ROSTER_CONFLICTS_MODULE_DEFAULT = Depends(require_module)
+_ROSTER_CONFLICTS_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
 @router.get("/roster/conflicts")
 def roster_conflicts(
-    date_from: str = Query(...),
-    date_to: str = Query(...),
-    department: Optional[str] = Query(None),
-    _module=Depends(require_module),
-    user=Depends(require_permission(ADMIN_OVERVIEW)),
+    date_from: str = _ROSTER_CONFLICTS_DATE_FROM_DEFAULT,
+    date_to: str = _ROSTER_CONFLICTS_DATE_TO_DEFAULT,
+    department: str | None = _ROSTER_CONFLICTS_DEPARTMENT_DEFAULT,
+    _module=_ROSTER_CONFLICTS_MODULE_DEFAULT,
+    user=_ROSTER_CONFLICTS_USER_DEFAULT,
 ):
     """Overlapping assignments already on the roster.
 
@@ -418,47 +510,66 @@ def roster_conflicts(
     written before this module existed, arrived by import, or a shift's hours
     were edited underneath existing assignments — the realistic case."""
     try:
-        conflicts = svc.find_conflicts(date_from=date_from, date_to=date_to,
-                                       department=department)
+        conflicts = svc.find_conflicts(date_from=date_from, date_to=date_to, department=department)
     except svc.WorkforceError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     return {"conflicts": conflicts, "conflict_count": len(conflicts)}
+
+
+_ASSIGN_ROSTER_MODULE_DEFAULT = Depends(require_module)
+_ASSIGN_ROSTER_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
 @router.post("/roster")
 def assign_roster(
     payload: RosterIn,
     request: Request,
-    _module=Depends(require_module),
-    user=Depends(require_permission(ADMIN_OVERVIEW)),
+    _module=_ASSIGN_ROSTER_MODULE_DEFAULT,
+    user=_ASSIGN_ROSTER_USER_DEFAULT,
 ):
     try:
         entry = svc.assign_roster(**payload.model_dump(), created_by=user.get("id"))
     except svc.WorkforceError as exc:
-        raise _fail(exc)
-    _audit(request, user, "workforce_roster_assign",
-           summary=(f"{entry['employee_code']} rostered on {entry['shift_code']} "
-                    f"for {entry['roster_date']}"),
-           target_type="duty_roster", target_id=str(entry["id"]),
-           metadata={"warnings": [w["kind"] for w in entry.get("warnings", [])]})
+        raise _fail(exc) from exc
+    _audit(
+        request,
+        user,
+        "workforce_roster_assign",
+        summary=(
+            f"{entry['employee_code']} rostered on {entry['shift_code']} for {entry['roster_date']}"
+        ),
+        target_type="duty_roster",
+        target_id=str(entry["id"]),
+        metadata={"warnings": [w["kind"] for w in entry.get("warnings", [])]},
+    )
     return entry
+
+
+_CANCEL_ROSTER_MODULE_DEFAULT = Depends(require_module)
+_CANCEL_ROSTER_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
 @router.post("/roster/{roster_id}/cancel")
 def cancel_roster(
     roster_id: int,
     request: Request,
-    _module=Depends(require_module),
-    user=Depends(require_permission(ADMIN_OVERVIEW)),
+    _module=_CANCEL_ROSTER_MODULE_DEFAULT,
+    user=_CANCEL_ROSTER_USER_DEFAULT,
 ):
     try:
         entry = svc.cancel_roster_entry(roster_id, actor=user.get("id"))
     except svc.WorkforceError as exc:
-        raise _fail(exc)
-    _audit(request, user, "workforce_roster_cancel",
-           summary=(f"Roster entry {roster_id} cancelled "
-                    f"({entry['employee_code']} / {entry['shift_code']})"),
-           target_type="duty_roster", target_id=str(roster_id))
+        raise _fail(exc) from exc
+    _audit(
+        request,
+        user,
+        "workforce_roster_cancel",
+        summary=(
+            f"Roster entry {roster_id} cancelled ({entry['employee_code']} / {entry['shift_code']})"
+        ),
+        target_type="duty_roster",
+        target_id=str(roster_id),
+    )
     return entry
 
 
@@ -466,29 +577,43 @@ def cancel_roster(
 #  Attendance
 # ═════════════════════════════════════════════════════════════════════════════
 
+
+_LIST_ATTENDANCE_DATE_FROM_DEFAULT = Query(...)
+_LIST_ATTENDANCE_DATE_TO_DEFAULT = Query(...)
+_LIST_ATTENDANCE_DEPARTMENT_DEFAULT = Query(None)
+_LIST_ATTENDANCE_EMPLOYEE_CODE_DEFAULT = Query(None)
+_LIST_ATTENDANCE_MODULE_DEFAULT = Depends(require_module)
+_LIST_ATTENDANCE_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+
+
 @router.get("/attendance")
 def list_attendance(
-    date_from: str = Query(...),
-    date_to: str = Query(...),
-    department: Optional[str] = Query(None),
-    employee_code: Optional[str] = Query(None),
-    _module=Depends(require_module),
-    user=Depends(require_permission(ADMIN_OVERVIEW)),
+    date_from: str = _LIST_ATTENDANCE_DATE_FROM_DEFAULT,
+    date_to: str = _LIST_ATTENDANCE_DATE_TO_DEFAULT,
+    department: str | None = _LIST_ATTENDANCE_DEPARTMENT_DEFAULT,
+    employee_code: str | None = _LIST_ATTENDANCE_EMPLOYEE_CODE_DEFAULT,
+    _module=_LIST_ATTENDANCE_MODULE_DEFAULT,
+    user=_LIST_ATTENDANCE_USER_DEFAULT,
 ):
     try:
-        rows = svc.list_attendance(date_from=date_from, date_to=date_to,
-                                   department=department, employee_code=employee_code)
+        rows = svc.list_attendance(
+            date_from=date_from, date_to=date_to, department=department, employee_code=employee_code
+        )
     except svc.WorkforceError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     return {"attendance": rows, "count": len(rows)}
+
+
+_RECORD_ATTENDANCE_MODULE_DEFAULT = Depends(require_module)
+_RECORD_ATTENDANCE_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
 @router.post("/attendance")
 def record_attendance(
     payload: AttendanceIn,
     request: Request,
-    _module=Depends(require_module),
-    user=Depends(require_permission(ADMIN_OVERVIEW)),
+    _module=_RECORD_ATTENDANCE_MODULE_DEFAULT,
+    user=_RECORD_ATTENDANCE_USER_DEFAULT,
 ):
     """Record or CORRECT one employee's one day.
 
@@ -499,25 +624,40 @@ def record_attendance(
     try:
         row = svc.record_attendance(**payload.model_dump(), recorded_by=user.get("id"))
     except svc.WorkforceError as exc:
-        raise _fail(exc)
-    _audit(request, user, "workforce_attendance_record",
-           summary=(f"{row['employee_code']} marked {row['status']} on "
-                    f"{row['attendance_date']}"),
-           target_type="attendance_day", target_id=str(row["id"]),
-           metadata={"status": row["status"], "worked_minutes": row["worked_minutes"],
-                     "overtime_minutes": row["overtime_minutes"],
-                     "source": row["source"]})
+        raise _fail(exc) from exc
+    _audit(
+        request,
+        user,
+        "workforce_attendance_record",
+        summary=(f"{row['employee_code']} marked {row['status']} on {row['attendance_date']}"),
+        target_type="attendance_day",
+        target_id=str(row["id"]),
+        metadata={
+            "status": row["status"],
+            "worked_minutes": row["worked_minutes"],
+            "overtime_minutes": row["overtime_minutes"],
+            "source": row["source"],
+        },
+    )
     return row
+
+
+_ATTENDANCE_SUMMARY_YEAR_DEFAULT = Query(...)
+_ATTENDANCE_SUMMARY_MONTH_DEFAULT = Query(...)
+_ATTENDANCE_SUMMARY_EMPLOYEE_CODE_DEFAULT = Query(None)
+_ATTENDANCE_SUMMARY_DEPARTMENT_DEFAULT = Query(None)
+_ATTENDANCE_SUMMARY_MODULE_DEFAULT = Depends(require_module)
+_ATTENDANCE_SUMMARY_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
 @router.get("/attendance/summary")
 def attendance_summary(
-    year: int = Query(...),
-    month: int = Query(...),
-    employee_code: Optional[str] = Query(None),
-    department: Optional[str] = Query(None),
-    _module=Depends(require_module),
-    user=Depends(require_permission(ADMIN_OVERVIEW)),
+    year: int = _ATTENDANCE_SUMMARY_YEAR_DEFAULT,
+    month: int = _ATTENDANCE_SUMMARY_MONTH_DEFAULT,
+    employee_code: str | None = _ATTENDANCE_SUMMARY_EMPLOYEE_CODE_DEFAULT,
+    department: str | None = _ATTENDANCE_SUMMARY_DEPARTMENT_DEFAULT,
+    _module=_ATTENDANCE_SUMMARY_MODULE_DEFAULT,
+    user=_ATTENDANCE_SUMMARY_USER_DEFAULT,
 ):
     """The monthly muster. One employee when `employee_code` is given, otherwise
     everybody (optionally in one department).
@@ -527,24 +667,35 @@ def attendance_summary(
     than asking anyone to assume it."""
     try:
         if employee_code:
-            return {"employees": [svc.monthly_summary(
-                employee_code=employee_code, year=year, month=month)]}
+            return {
+                "employees": [
+                    svc.monthly_summary(employee_code=employee_code, year=year, month=month)
+                ]
+            }
         return svc.period_summaries(year=year, month=month, department=department)
     except svc.WorkforceError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  Payroll export
 # ═════════════════════════════════════════════════════════════════════════════
 
+
+_PREVIEW_PAYROLL_EXPORT_YEAR_DEFAULT = Query(...)
+_PREVIEW_PAYROLL_EXPORT_MONTH_DEFAULT = Query(...)
+_PREVIEW_PAYROLL_EXPORT_DEPARTMENT_DEFAULT = Query(None)
+_PREVIEW_PAYROLL_EXPORT_MODULE_DEFAULT = Depends(require_module)
+_PREVIEW_PAYROLL_EXPORT_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+
+
 @router.get("/payroll-export")
 def preview_payroll_export(
-    year: int = Query(...),
-    month: int = Query(...),
-    department: Optional[str] = Query(None),
-    _module=Depends(require_module),
-    user=Depends(require_permission(ADMIN_OVERVIEW)),
+    year: int = _PREVIEW_PAYROLL_EXPORT_YEAR_DEFAULT,
+    month: int = _PREVIEW_PAYROLL_EXPORT_MONTH_DEFAULT,
+    department: str | None = _PREVIEW_PAYROLL_EXPORT_DEPARTMENT_DEFAULT,
+    _module=_PREVIEW_PAYROLL_EXPORT_MODULE_DEFAULT,
+    user=_PREVIEW_PAYROLL_EXPORT_USER_DEFAULT,
 ):
     """Preview the file WITHOUT recording a run.
 
@@ -554,15 +705,19 @@ def preview_payroll_export(
     try:
         return svc.build_payroll_export(year=year, month=month, department=department)
     except svc.WorkforceError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
+
+
+_GENERATE_PAYROLL_EXPORT_MODULE_DEFAULT = Depends(require_module)
+_GENERATE_PAYROLL_EXPORT_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
 
 
 @router.post("/payroll-export")
 def generate_payroll_export(
     payload: ExportIn,
     request: Request,
-    _module=Depends(require_module),
-    user=Depends(require_permission(ADMIN_OVERVIEW)),
+    _module=_GENERATE_PAYROLL_EXPORT_MODULE_DEFAULT,
+    user=_GENERATE_PAYROLL_EXPORT_USER_DEFAULT,
 ):
     """Generate the CSV and RECORD the run (checksum, header order, row count).
 
@@ -570,20 +725,32 @@ def generate_payroll_export(
     and the warnings in the same response it saves — a browser that downloaded
     a stream would have the file and no way to prove which run it was."""
     try:
-        export = svc.build_payroll_export(year=payload.year, month=payload.month,
-                                          department=payload.department)
+        export = svc.build_payroll_export(
+            year=payload.year, month=payload.month, department=payload.department
+        )
         csv_text = svc.render_payroll_csv(export)
-        run = svc.record_export_run(export, csv_text,
-                                    generated_by=user.get("id"), notes=payload.notes)
+        run = svc.record_export_run(
+            export, csv_text, generated_by=user.get("id"), notes=payload.notes
+        )
     except svc.WorkforceError as exc:
-        raise _fail(exc)
-    _audit(request, user, "workforce_payroll_export",
-           summary=(f"Payroll export {export['file_name']} generated "
-                    f"({export['employee_count']} employees, "
-                    f"{export['incomplete_employee_count']} with unrecorded days)"),
-           target_type="payroll_export_run", target_id=str(run["id"]),
-           metadata={"sha256": run["sha256"], "period_start": export["period_start"],
-                     "period_end": export["period_end"]})
+        raise _fail(exc) from exc
+    _audit(
+        request,
+        user,
+        "workforce_payroll_export",
+        summary=(
+            f"Payroll export {export['file_name']} generated "
+            f"({export['employee_count']} employees, "
+            f"{export['incomplete_employee_count']} with unrecorded days)"
+        ),
+        target_type="payroll_export_run",
+        target_id=str(run["id"]),
+        metadata={
+            "sha256": run["sha256"],
+            "period_start": export["period_start"],
+            "period_end": export["period_end"],
+        },
+    )
     return {
         "run": run,
         "file_name": export["file_name"],
@@ -597,24 +764,36 @@ def generate_payroll_export(
     }
 
 
+_PAYROLL_EXPORT_RUNS_LIMIT_DEFAULT = Query(25, ge=1, le=200)
+_PAYROLL_EXPORT_RUNS_MODULE_DEFAULT = Depends(require_module)
+_PAYROLL_EXPORT_RUNS_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+
+
 @router.get("/payroll-export/runs")
 def payroll_export_runs(
-    limit: int = Query(25, ge=1, le=200),
-    _module=Depends(require_module),
-    user=Depends(require_permission(ADMIN_OVERVIEW)),
+    limit: int = _PAYROLL_EXPORT_RUNS_LIMIT_DEFAULT,
+    _module=_PAYROLL_EXPORT_RUNS_MODULE_DEFAULT,
+    user=_PAYROLL_EXPORT_RUNS_USER_DEFAULT,
 ):
     """What has been sent, and the checksum of each file. A payroll dispute
     three months later is answered from here."""
     return {"runs": svc.list_export_runs(limit=limit)}
 
 
+_DOWNLOAD_PAYROLL_EXPORT_YEAR_DEFAULT = Query(...)
+_DOWNLOAD_PAYROLL_EXPORT_MONTH_DEFAULT = Query(...)
+_DOWNLOAD_PAYROLL_EXPORT_DEPARTMENT_DEFAULT = Query(None)
+_DOWNLOAD_PAYROLL_EXPORT_MODULE_DEFAULT = Depends(require_module)
+_DOWNLOAD_PAYROLL_EXPORT_USER_DEFAULT = Depends(require_permission(ADMIN_OVERVIEW))
+
+
 @router.get("/payroll-export.csv", response_class=PlainTextResponse)
 def download_payroll_export(
-    year: int = Query(...),
-    month: int = Query(...),
-    department: Optional[str] = Query(None),
-    _module=Depends(require_module),
-    user=Depends(require_permission(ADMIN_OVERVIEW)),
+    year: int = _DOWNLOAD_PAYROLL_EXPORT_YEAR_DEFAULT,
+    month: int = _DOWNLOAD_PAYROLL_EXPORT_MONTH_DEFAULT,
+    department: str | None = _DOWNLOAD_PAYROLL_EXPORT_DEPARTMENT_DEFAULT,
+    _module=_DOWNLOAD_PAYROLL_EXPORT_MODULE_DEFAULT,
+    user=_DOWNLOAD_PAYROLL_EXPORT_USER_DEFAULT,
 ):
     """The file, as a download, for an operator with curl and no browser.
 
@@ -625,7 +804,7 @@ def download_payroll_export(
         export = svc.build_payroll_export(year=year, month=month, department=department)
         csv_text = svc.render_payroll_csv(export)
     except svc.WorkforceError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     return PlainTextResponse(
         content=csv_text,
         media_type="text/csv; charset=utf-8",

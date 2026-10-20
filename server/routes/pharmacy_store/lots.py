@@ -9,6 +9,7 @@ Planned endpoints (docs/his_design/grn.json, section E):
 
 Releasing a quarantined lot needs a different pharmacist with a reason; recalled and NSQ are terminal (ruling GRN-RS2, held). The recall trace is a phi_access read.
 """
+
 from fastapi import APIRouter
 
 router = APIRouter()

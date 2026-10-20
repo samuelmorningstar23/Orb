@@ -21,15 +21,21 @@ the deferred whole-DB encryption gap for this NEW store. Reads decrypt
 transparently; with no key the value is cleartext, exactly as the rest of the DB
 today (see database.py encryption note).
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from database import db_session
-from services.field_crypto import decrypt_field, encrypt_field, is_field_encryption_enabled
+
+from services.field_crypto import (
+    decrypt_field,
+    encrypt_field,
+    is_field_encryption_enabled,
+)
 
 logger = logging.getLogger("orb.world_model")
 
@@ -74,7 +80,7 @@ _PRUNE_BATCH = _int_env("ORB_WORLD_MODEL_PRUNE_BATCH", 200, 1)
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _slope(values: list[float]) -> float:
@@ -125,11 +131,16 @@ def compute_patient_state(patient_id: str) -> dict | None:
         # band stored before the switch is read, so the state names no risk
         # level and no level history.
         from services.vigil_service import scoring_enabled
-        risk_rows = db.execute(
-            """SELECT score, level, timestamp FROM risk_scores
+
+        risk_rows = (
+            db.execute(
+                """SELECT score, level, timestamp FROM risk_scores
                WHERE patient_id = ? ORDER BY timestamp DESC, id DESC LIMIT 6""",
-            (patient_id,),
-        ).fetchall() if scoring_enabled() else []
+                (patient_id,),
+            ).fetchall()
+            if scoring_enabled()
+            else []
+        )
 
     vit_rows = list(reversed(vit_rows))  # oldest→newest
     trends = {}
@@ -158,7 +169,8 @@ def compute_patient_state(patient_id: str) -> dict | None:
             trajectory = "improving"
     # A physiologic worsening signal reinforces the label even without a risk flip.
     worsening_signals = sum(
-        1 for f, t in trends.items()
+        1
+        for f, t in trends.items()
         if (f == "spo2" and t["direction"] == "falling")
         or (f in ("heart_rate", "respiratory_rate", "temperature") and t["direction"] == "rising")
     )
@@ -207,9 +219,10 @@ def compute_ward_state() -> dict:
     across runs instead of varying with how the rows happen to be laid out.
     """
     with db_session() as db:
-        admitted = [r["id"] for r in db.execute(
-            "SELECT id FROM patients WHERE status = 'admitted'"
-        ).fetchall()]
+        admitted = [
+            r["id"]
+            for r in db.execute("SELECT id FROM patients WHERE status = 'admitted'").fetchall()
+        ]
     dist = {"critical": 0, "elevated": 0, "stable": 0, "unknown": 0}
     ranked = []
     for pid in admitted:
@@ -219,12 +232,14 @@ def compute_ward_state() -> dict:
         level = st["current_risk_level"]
         dist[level] = dist.get(level, 0) + 1
         if st["trajectory"] == "worsening":
-            ranked.append((
-                -_LEVEL_RANK.get(level, 0),
-                -st["worsening_signals"],
-                pid,
-                {"patient_id": pid, "name": st["name"], "bed": st["bed"], "level": level},
-            ))
+            ranked.append(
+                (
+                    -_LEVEL_RANK.get(level, 0),
+                    -st["worsening_signals"],
+                    pid,
+                    {"patient_id": pid, "name": st["name"], "bed": st["bed"], "level": level},
+                )
+            )
     ranked.sort(key=lambda r: (r[0], r[1], r[2]))
     worsening = [r[3] for r in ranked]
     return {
@@ -237,6 +252,7 @@ def compute_ward_state() -> dict:
 
 
 # ── Persistence (versioned + optionally field-encrypted) ──
+
 
 def _persist(entity_type: str, entity_id: str, state: dict, reason: str, summary: str) -> int:
     payload = json.dumps(state)
@@ -252,7 +268,16 @@ def _persist(entity_type: str, entity_id: str, state: dict, reason: str, summary
             """INSERT INTO world_model_state
                (entity_type, entity_id, version, state_json, encrypted, summary, updated_by, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (entity_type, entity_id, version, stored, 1 if enc else 0, summary[:200], reason, _now()),
+            (
+                entity_type,
+                entity_id,
+                version,
+                stored,
+                1 if enc else 0,
+                summary[:200],
+                reason,
+                _now(),
+            ),
         )
         _prune_versions(db, entity_type, entity_id, version)
     return version
@@ -288,9 +313,7 @@ def _prune_versions(db, entity_type: str, entity_id: str, newest_version: int) -
         )
         return cur.rowcount or 0
     except Exception as e:
-        logger.warning(
-            "world_model prune failed for %s/%s: %s", entity_type, entity_id, e
-        )
+        logger.warning("world_model prune failed for %s/%s: %s", entity_type, entity_id, e)
         return 0
 
 
@@ -339,6 +362,7 @@ def get_patient_state(patient_id: str, recompute_if_missing: bool = True) -> dic
     afresh and not persisted, because a state persisted before the switch names
     the band stored then."""
     from services.vigil_service import scoring_enabled
+
     if not scoring_enabled():
         return compute_patient_state(patient_id)
     st = _load_latest("patient", patient_id)
@@ -350,6 +374,7 @@ def get_patient_state(patient_id: str, recompute_if_missing: bool = True) -> dic
 def get_ward_state(recompute_if_missing: bool = True) -> dict | None:
     # Scoring switched off: computed afresh, as get_patient_state above.
     from services.vigil_service import scoring_enabled
+
     if not scoring_enabled():
         return compute_ward_state()
     st = _load_latest("ward", HOSPITAL_ID)

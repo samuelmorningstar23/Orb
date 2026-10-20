@@ -125,7 +125,7 @@ The module docstring (`:1-89`) is required reading and is not repeated here in f
 **Why it exists:** Ward geography decides timings. A 40-bed open ward with one registrar on site is not a 12-bed HDU, so the ladder is data, per site.
 **Breaks if you change it:** shortening tier 1's timeout makes every deterioration reach a registrar sooner and multiplies registrar-facing alerts; raising `entry_min_news2` on tier 2 means a NEWS2 7 patient starts at the nurse rung and loses up to ten minutes. Setting a `timeout_minutes` on the last tier does nothing, `tier_policy` overwrites it to `None` at `:180`.
 
-#### `tier_policy`: `escalation_service.py:146`
+#### `tier_policy`: `escalation_service.py:163`
 **Signature:** `() -> list[dict]`
 **Does:** Returns this site's ladder, parsed from the `ORB_ESCALATION_TIERS` environment variable (a JSON list), falling back to `_DEFAULT_TIER_POLICY`.
 **On screen:** the whole policy is returned in the board payload as `policy` (`vigil_routes.py:1100`), so a board could render "Ward nurse, 10 min → Duty registrar, 15 min → Consultant". Nothing consumes it today.
@@ -133,7 +133,7 @@ The module docstring (`:1-89`) is required reading and is not repeated here in f
 **Why it exists:** A malformed policy must not stop escalation. Refusing to escalate because someone fat-fingered a `.env` would turn a config typo into the exact clinical failure the module exists to prevent.
 **Breaks if you change it:** make the fallback raise instead of log and a bad `.env` silently disables deterioration alerting on the whole appliance. Move the `os.getenv` to module import and a site config change stops taking effect until restart, while tests that set the variable per-case start bleeding into each other.
 
-#### `news2_threshold`: `escalation_service.py:201`
+#### `news2_threshold`: `escalation_service.py:220`
 **Signature:** `() -> int`
 **Does:** The aggregate NEWS2 at or above which a chain is raised. Default `5`, overridable with `ORB_ESCALATION_NEWS2_THRESHOLD`.
 **On screen:** returned as `news2_threshold` in the board payload (`vigil_routes.py:1101`) so a UI can say "showing everything at or above 5". Unused today.
@@ -141,28 +141,28 @@ The module docstring (`:1-89`) is required reading and is not repeated here in f
 **Why it exists:** 5 is the RCP urgent-response threshold ("registered nurse to urgently inform the medical team"). A site that finds it noisy raises it.
 **Breaks if you change it:** raising the default silently reduces the number of chains raised across every ward and every test that asserts on a NEWS2-5 case; it does **not** affect the single-parameter rule, which is a separate flag.
 
-#### `_honour_single_param_3`: `escalation_service.py:216`
+#### `_honour_single_param_3`: `escalation_service.py:235`
 **Signature:** `() -> bool` (env `ORB_ESCALATION_ON_SINGLE_PARAM_3`, default `True`)
 **Does:** Whether one vital scoring 3 escalates on its own, even below the aggregate threshold.
 **On screen:** nothing. The consequence is visible only as a chain that exists.
 **Why it exists:** On by default because it is part of NEWS2, not an Orb embellishment.
 **Breaks if you turn it off:** a patient with a respiratory rate of 26 and everything else normal (aggregate 3, single-parameter 3) stops raising a chain. That is a clinically real presentation.
 
-#### `_lookback_minutes`: `escalation_service.py:223`
+#### `_lookback_minutes`: `escalation_service.py:242`
 **Signature:** `() -> int` (env `ORB_ESCALATION_SCAN_LOOKBACK_MINUTES`, default 120)
 **Does:** How far back `scan_new_observations` looks for an unescalated observation.
 **On screen:** nothing.
 **Why it exists:** Bounds the one-time catch-up on first deploy. An appliance switched on today raises chains for the last two hours of deterioration, not for every deterioration in the database's history.
 **Breaks if you change it:** set it to 43200 and the first board read after go-live opens a chain for every qualifying observation in the last month, all of them stale, all of them needing a human to resolve with a reason.
 
-#### `_now` / `_parse_ts`: `escalation_service.py:243` / `:254`
+#### `_now` / `_parse_ts`: `escalation_service.py:262` / `:254`
 **Signature:** `(datetime | None) -> datetime` / `(Any) -> datetime | None`
 **Does:** The injected clock, and a tolerant timestamp parser. Both always return **timezone-aware UTC**.
 **On screen:** nothing.
 **Why it exists:** This database stores two timestamp shapes, offset-aware ISO strings written by Python, and naive `CURRENT_TIMESTAMP` values written by SQLite. Comparing the two shapes raises `TypeError`, and inside the ladder that shows up as a chain that silently stops advancing. Every public function in this module takes `now: datetime | None` so tests can walk hours of the ladder in microseconds without a module-level mutable clock.
 **Breaks if you change it:** returning a naive datetime from `_now` makes every `tier_due_at` comparison in `advance_due` throw, which the sweep swallows per-chain, the ladder appears to work and never advances.
 
-#### `qualifies`: `escalation_service.py:269`
+#### `qualifies`: `escalation_service.py:288`
 **Signature:** `(news2: dict | None) -> bool`
 **Does:** Does this NEWS2 result cross the site's escalation threshold?
 **On screen:** nothing. It is the gate that decides whether a chain exists at all.
@@ -170,14 +170,14 @@ The module docstring (`:1-89`) is required reading and is not repeated here in f
 **Why it exists:** The moment this function inspects a heart rate, there are two scorers in the system, and a previewed score and a recorded score can diverge. That is how a ward stops trusting the number.
 **Breaks if you change it:** adding "or spo2 < 88" here creates a second scorer. The nurse's live NEWS2 preview (`/api/nurse/news2-preview`, guide 42) would show one thing and the escalation another.
 
-#### `_entry_tier` / `_tier_spec`: `escalation_service.py:286` / `:296`
+#### `_entry_tier` / `_tier_spec`: `escalation_service.py:305` / `:296`
 **Signature:** `(policy, raw_news2) -> int` / `(policy, tier) -> dict`
 **Does:** The tier a chain starts at, and the spec for a given tier number.
 **On screen:** decides the tier printed in the Relay message (`_notify`, `:733`).
 **How it works:** `_entry_tier` takes the **highest** tier whose `entry_min_news2` the score meets, clamped to the ladder length. `_tier_spec` falls back to the last tier for an unknown number rather than raising.
 **Breaks if you change it:** switching `max` to the first match would make a NEWS2 12 patient enter at tier 1 and waste both timeouts before a registrar is named.
 
-#### `_patient_context`: `escalation_service.py:309`
+#### `_patient_context`: `escalation_service.py:328`
 **Signature:** `(db, patient_id) -> dict`
 **Does:** Loads the patient's name, bed, ward, department, attending doctor, SpO2 scale and status in one query.
 **On screen:** `name` and `bed` end up on the board rows via `list_escalations`; `department` decides who the tier resolves to.
@@ -185,7 +185,7 @@ The module docstring (`:1-89`) is required reading and is not repeated here in f
 **Why it exists:** `ward` is a free-text bed prefix ("GM-1"); `department` is the clinical service ("General Medicine"). Confusing the two is how a scope stops scoping.
 **Breaks if you change it:** swap in `p.ward` and every ward-scoped read starts comparing "GM-1" against "General Medicine" and returns nothing, an escalation board that is silently always empty.
 
-#### `_user_with_role` / `_first_in_department`: `escalation_service.py:342` / `:353`
+#### `_user_with_role` / `_first_in_department`: `escalation_service.py:361` / `:353`
 **Signature:** `(db, user_id, roles) -> str | None` / `(db, roles, department, exclude=None) -> str | None`
 **Does:** Confirm a specific user holds one of the given roles; pick the first user with one of those roles in a department.
 **On screen:** the resulting user id becomes `target_user_id`, joined to `users.name` as `target_name` in `list_escalations` (`:1622`).
@@ -193,7 +193,7 @@ The module docstring (`:1-89`) is required reading and is not repeated here in f
 **Why it exists:** Stable and obviously not a rota, so nobody mistakes it for one. Paging a doctor who has never seen this ward is worse than addressing the role.
 **Breaks if you change it:** adding `ORDER BY RANDOM()` makes the same deterioration page a different person on each retry and makes every targeting test non-deterministic. Removing the department filter pages doctors across the hospital.
 
-#### `_derive_target`: `escalation_service.py:376`
+#### `_derive_target`: `escalation_service.py:396`
 **Signature:** `(db, ctx, role, label, charting_actor_id) -> tuple[str | None, str]`
 **Does:** Turns a tier's role into `(a user id or None, a human description)`.
 **On screen:** the second element is `target_description`, the sentence a board would print under the patient's name and the sentence `_notify` puts in the Relay message: `"Addressed to: Duty registrar on General Medicine (no grade in the roster, ward doctor who is not the attending)"`.
@@ -206,14 +206,14 @@ The module docstring (`:1-89`) is required reading and is not repeated here in f
 **Breaks if you change it:** returning `None` with an empty description silently targets nobody, which reads on a board as an escalation with no owner. If you ever add a `duty_assignments` table, this is the only function that changes.
 **Gotchas:** the `nurse` resolver prefers `charting_actor_id`, which only the manual entry lane knows. A monitor feed does not record a human, and the `vitals` table has no author column at all, the author is in the audit chain, keyed by `vitals_id`, and reaching into the hash chain to page someone would be worse than this.
 
-#### `_ESCALATION_FIELDS` / `_to_dict`: `escalation_service.py:431` / `:442`
+#### `_ESCALATION_FIELDS` / `_to_dict`: `escalation_service.py:455` / `:442`
 **Signature:** tuple of 32 column names / `(row, now=None) -> dict`
 **Does:** Converts a `clinical_escalations` row to the dict every route returns, adding three derived fields.
 **On screen:** this dict *is* the board row shape. `age_minutes` is what a board renders as "open 47 min"; `awaiting_acknowledgement` is the single boolean a board should sort and colour on; `minutes_to_acknowledge` is the pilot's response-time metric.
 **How it works:** parses `drivers_json` to a list, computes `age_minutes` from `raised_at`, `minutes_to_acknowledge` from `acknowledged_at - raised_at`, and sets `awaiting_acknowledgement = (status == "open")`.
 **Breaks if you change it:** dropping a name from `_ESCALATION_FIELDS` makes every route's response quietly lose that key, no error, just a missing field a UI would render as blank. Adding a column to the table without adding it here means the column is invisible to the API.
 
-#### `_record_event`: `escalation_service.py:498`
+#### `_record_event`: `escalation_service.py:553`
 **Signature:** `(db, escalation_id, event_type, occurred_at, *, tier, tier_role, target_user_id, target_description, actor_user_id, actor_role, news2, detail, metadata) -> int`
 **Does:** Appends one row to `escalation_events` and returns its `seq`.
 **On screen:** these rows are the timeline `GET /api/vigil/escalations/{id}` returns as `events` (`:1684`), the "raised → observation → tier advanced → acknowledged → resolved" list an incident review reads.
@@ -222,14 +222,14 @@ The module docstring (`:1-89`) is required reading and is not repeated here in f
 **Breaks if you change it:** giving it its own connection means an event can commit while the status update rolls back, producing a history that disagrees with the row. Making it `UPDATE` an existing row rather than insert destroys the append-only property the audit story depends on.
 **Gotchas:** `seq` is computed with a read-then-write, not a database sequence. Two concurrent writers on the same chain could in principle collide; in practice SQLite's connection-level write lock serialises them.
 
-#### `_audit`: `escalation_service.py:520`
+#### `_audit`: `escalation_service.py:599`
 **Signature:** `(db, action_type, summary, escalation_id, patient_id, *, actor_id, actor_role, metadata) -> None`
 **Does:** Writes a `clinical_access` audit row inside the caller's transaction.
 **On screen:** these rows appear in the Admin panel's Audit Logs tab (`src/pages/panels/AdminPanel.tsx`, guide 25) with action types `escalation_raised`, `escalation_reopened`, `escalation_tier_advanced`, `escalation_acknowledged`, `escalation_resolved`.
 **Why it exists:** `clinical_access` is one of the **fail-closed** audit categories (guide 05), so an escalation state change that cannot be audited does not commit. Same rule the eMAR and the observation write already hold.
 **Breaks if you change it:** wrapping the call in `try/except` turns a fail-closed audit into a best-effort one, and a clinical act with no trail is not a clinical act anyone can defend afterwards.
 
-#### `evaluate_observation`: `escalation_service.py:555`
+#### `evaluate_observation`: `escalation_service.py:644`
 **Signature:** `(patient_id, news2, *, vitals_id=None, source=None, actor_id=None, observed_at=None, now=None, notify=None) -> dict | None`
 **Does:** The entry point for any vitals path. Given the dict `compute_news2` returned, it raises a new chain, extends an existing one, or does nothing. Returns the chain or `None`.
 **On screen:** nothing today (no component calls the escalation API). Its **indirect** on-screen effect is real: the Relay case room gets a `🔺 ESCALATION [TIER n]` message, which appears in the Messages panel (`src/pages/panels/RelayPanel.tsx`) like any other message in that channel.
@@ -248,7 +248,7 @@ Every event detail, audit summary and Relay line names the observation with the 
 **Breaks if you change it:** the acknowledgement clear at `:589-590` is the subtle one. Leave the old acknowledgement on a chain that has just re-opened unanswered and a board prints "acknowledged by Dr X" next to a deterioration nobody has yet taken, misleading in exactly the direction that gets a patient missed. Making an improving observation close the chain would be worse: improving vitals are not evidence that a human answered the alert.
 **Gotchas:** an observation **below** threshold does nothing at all, it neither raises nor closes anything. `notify=False` suppresses the Relay post (used by tests and by any caller that wants the chain without the message).
 
-#### `_notify`: `escalation_service.py:778`
+#### `_notify`: `escalation_service.py:969`
 **Signature:** `(escalation_id, patient_id, raw, level, tier, tier_label, target_description, *, now=None, label=None, climbs=True) -> bool`
 **Does:** Posts the escalation into the patient's Relay case room and records a `notified` or `notify_failed` event.
 **On screen:** **this is the only thing in the whole feature a user actually sees today.** A message appears in the patient's case-room channel in the Messages panel (`src/pages/panels/RelayPanel.tsx:153` listens for `message:new`), reading:
@@ -267,7 +267,7 @@ On the last tier (`climbs=False`, no timeout) the fourth line reads "This alert 
 **Breaks if you change it:** call it inside the `db_session()` in `evaluate_observation` and every raise deadlocks against its own write lock. Let it raise and a Relay outage starts throwing away escalations.
 **Gotchas:** **this is not a page.** Orb has no bleep, pager, phone or push channel. If nobody has Orb open, the escalation is visible but not intrusive. A patient with no case room logs an ERROR (`:795-801`) and the escalation exists on the board only, which is why there needing to *be* a board matters.
 
-#### `advance_due`: `escalation_service.py:1288`
+#### `advance_due`: `escalation_service.py:1601`
 **Signature:** `(*, now=None, limit=500) -> list[dict]`
 **Does:** Advances every open chain whose current tier has timed out. Returns the chains that moved.
 **On screen:** nothing today. It is called on every `GET /api/vigil/escalations` (`vigil_routes.py:1071`), so once a board exists, simply looking at it ticks the clock. Each advance also posts a fresh Relay message.
@@ -280,19 +280,19 @@ Notifications are sent after the session closes (`:878`).
 **Breaks if you change it:** collapse phases 1–3 into a single loop that writes as it walks, and a chain acknowledged mid-sweep gets a permanent, false "escalated past you" entry in its append-only history. Add a department filter and unattended wards stop escalating.
 **Gotchas:** acknowledged chains are skipped entirely, acknowledgement is precisely the signal that a human has it.
 
-#### `_load_policy`: `escalation_service.py:1423`
+#### `_load_policy`: `escalation_service.py:1773`
 **Signature:** `(row) -> list[dict]`
 **Does:** Returns the ladder a given chain climbs, preferring the `policy_json` snapshot taken when it was raised.
 **On screen:** nothing.
 **Why it exists:** A site that edits its timings mid-shift must not retroactively change why an old escalation advanced when it did.
 **Breaks if you change it:** always using the live policy makes historical `tier_advanced` timings unexplainable after any config edit.
 
-#### `EscalationNotFound`: `escalation_service.py:1446`
+#### `EscalationNotFound`: `escalation_service.py:1797`
 **Signature:** `class EscalationNotFound(LookupError)`
 **Does:** Raised for an unknown chain id. Routes turn it into 404, never 403.
 **Breaks if you change it:** a 403 confirms the escalation exists, which is itself a disclosure about a patient the caller may not be entitled to know about.
 
-#### `acknowledge`: `escalation_service.py:1406`
+#### `acknowledge`: `escalation_service.py:1801`
 **Signature:** `(escalation_id, user, *, note=None, now=None) -> dict`
 **Does:** Records "I have seen this and I am dealing with it", who and when, and stops the tier ladder.
 **On screen:** would drive the acknowledged state on a board (`acknowledged_by_name` is joined in `list_escalations`, `:1622`). No component calls it today.
@@ -300,14 +300,14 @@ Notifications are sent after the session closes (`:878`).
 **Why it exists:** Acknowledged is not finished. The chain stays on the board until somebody says what was done.
 **Breaks if you change it:** make acknowledge also set `status='resolved'` and you have rebuilt the dismiss button this whole feature exists to abolish. Leave `tier_due_at` set and the ladder keeps climbing past a human who already took the alert.
 
-#### `RESOLUTION_CATEGORIES`: `escalation_service.py:1513`
+#### `RESOLUTION_CATEGORIES`: `escalation_service.py:1888`
 **Signature:** module-level tuple of seven strings
 **Does:** `reviewed_treated`, `reviewed_no_change`, `escalated_to_icu`, `artefact`, `patient_discharged` (closed from the discharge screen, with its reason), `patient_died`, `other`.
 **On screen:** would populate a dropdown in a resolve dialog.
 **Gotchas:** **unknown values are accepted and stored**, `resolve` does not validate against this tuple. Refusing a clinician's wording is how a resolution box fills with "other".
 **Breaks if you change it:** the pilot scorecard counts outcomes by category; renaming a member orphans historical rows.
 
-#### `resolve`: `escalation_service.py:1526`
+#### `resolve`: `escalation_service.py:1901`
 **Signature:** `(escalation_id, user, *, reason, category=None, now=None) -> dict`
 **Does:** Closes the chain, with a mandatory reason.
 **On screen:** would remove the chain from the default board view (`include_resolved=False`). No component calls it today.
@@ -315,7 +315,7 @@ Notifications are sent after the session closes (`:878`).
 **Why it exists:** A resolve button with no reason is a dismiss button, and a dismiss button is how a deterioration alert becomes noise a ward learns to clear without reading. The reason is also the only artefact telling the next reviewer whether the escalation worked.
 **Breaks if you change it:** drop the minimum-length check and the field fills with "." and "ok". Note a chain can be resolved **without** ever being acknowledged, the `was_acknowledged: False` metadata is how you find those afterwards.
 
-#### `list_escalations`: `escalation_service.py:1586`
+#### `list_escalations`: `escalation_service.py:1979`
 **Signature:** `(*, department=None, patient_id=None, include_resolved=False, limit=200, now=None) -> list[dict]`
 **Does:** The board query. Returns chains inside one department's ward boundary, joined to patient name/bed/ward/status, target name, and acknowledger name.
 **On screen:** this is exactly the payload a board would render, one row per chain with the patient's name and bed, the tier label, `target_description`, `age_minutes`, and a colour driven by `awaiting_acknowledgement`.
@@ -323,14 +323,14 @@ Notifications are sent after the session closes (`:878`).
 **Why it exists:** The board answers one question: "what has not been answered yet".
 **Breaks if you change it:** scope on `e.raised_in_department` instead and a patient who transfers ward mid-admission drops off the new ward's board while staying on the old one's, the chain becomes invisible to the people now caring for them. Default `include_resolved=True` and the board fills with closed chains.
 
-#### `get_escalation`: `escalation_service.py:1650`
+#### `get_escalation`: `escalation_service.py:2050`
 **Signature:** `(escalation_id, *, include_events=True, now=None) -> dict | None`
 **Does:** One chain plus its whole recorded history, oldest step first.
 **On screen:** would drive a detail drawer: the chain header plus a timeline of `raised → observation → tier_advanced → acknowledged → resolved` with actor names.
 **How it works:** one row query with three `LEFT JOIN`s for names, then `SELECT … FROM escalation_events … ORDER BY seq ASC` (`:1677-1683`) joined to `users.name` as `actor_name`. Each event's `metadata_json` is parsed back to a dict.
 **Breaks if you change it:** ordering events by `occurred_at` instead of `seq` reorders a multi-tier advance, because `advance_due` deliberately backdates each step's `occurred_at` to when that timeout actually passed (`:854`, `s_entered`). `seq` is the only stable order.
 
-#### `patient_escalations`: `escalation_service.py:1689`
+#### `patient_escalations`: `escalation_service.py:2092`
 **Signature:** `(patient_id, *, include_resolved=True, limit=50, now=None) -> list[dict]`
 **Does:** Every escalation for one patient, for the chart, not the board. Defaults to including resolved ones.
 **On screen:** would drive an "escalation history" section of the patient chart in `VigilPanel`'s detail view.
@@ -338,12 +338,12 @@ Notifications are sent after the session closes (`:878`).
 **Why it exists:** The caller owns the ward check (the route uses `require_patient_access`). Deliberately no department parameter, so there is no second, divergent scope derivation in the system.
 **Breaks if you change it:** add a department filter here and you now have two places that decide ward boundaries, which will drift.
 
-#### `_scan_max_rows`: `escalation_service.py:1704`
+#### `_scan_max_rows`: `escalation_service.py:2109`
 **Signature:** `() -> int` (env `ORB_ESCALATION_SCAN_MAX_ROWS`, default 1000, floor 1)
 **Does:** Hard cap on how many `vitals` rows one scan reads.
 **Breaks if you change it:** set it too low on a busy ward and the newest-first window never reaches a deteriorating patient whose last observation is older than the cap.
 
-#### `scan_new_observations`: `escalation_service.py:1711`
+#### `scan_new_observations`: `escalation_service.py:2116`
 **Signature:** `(*, department=None, now=None) -> list[dict]`
 **Does:** The safety net. Raises chains for qualifying observations that **nothing dispatched**, deriving them from the `vitals` table alone.
 **On screen:** nothing directly, but this is what makes a chain exist at all today. Its side effects (a Relay message per new chain) are visible in the Messages panel.
@@ -359,7 +359,7 @@ Notifications are sent after the session closes (`:878`).
 - Turn it back into a query per admitted patient and a 40-bed ward polled by a dozen tablets becomes thousands of SQLCipher round trips a minute for nothing.
 **Gotchas:** it is a **safety net, not the mechanism**. Latency is the gap between sweeps. It is bounded to the caller's department when given one, so a hospital-wide governance account reading a board does not manufacture clinical state across every ward it can see.
 
-#### `sweep`: `escalation_service.py:1890`
+#### `sweep`: `escalation_service.py:2315`
 **Signature:** `(*, department=None, now=None) -> dict`
 **Does:** One tick of the whole mechanism: `advance_due` then `scan_new_observations`. Returns `{advanced, raised, swept_at, department}`.
 **On screen:** nothing, it returns **counts only, no PHI**, which is what makes it safe to expose to an ops caller, safe to log, and safe to poll from a cron line.
@@ -373,19 +373,19 @@ The section header comment (`:952-975`) states two rules worth keeping. **Every 
 
 And the permission model: reading is `alert.read`; acknowledging and resolving require `alert.read` **and** `vitals.write`, which resolves to `{doctor, clinician, nurse}`. An administrator can see an unanswered deterioration and cannot silently clear it. The header is honest that this combination stands in for a dedicated `escalation.acknowledge` permission that does not exist yet.
 
-#### `EscalationAcknowledgeIn`: `vigil_routes.py:1222`
+#### `EscalationAcknowledgeIn`: `vigil_routes.py:1396`
 **Signature:** `class EscalationAcknowledgeIn(BaseModel)`, one optional field, `note: str | None`
 **Does:** The acknowledge request body.
 **On screen:** would be a free-text "note" box in an acknowledge dialog.
 **Why it exists:** It deliberately carries **no patient id**. The chain names the patient; letting a request name one is the caller-named-scope hole `server/tests/test_caller_named_patient_scope.py` exists to catch.
 **Breaks if you add a `patient_id`:** you have reintroduced a class of bug the test suite specifically hunts.
 
-#### `EscalationResolveIn`: `vigil_routes.py:1229`
+#### `EscalationResolveIn`: `vigil_routes.py:1404`
 **Signature:** `class EscalationResolveIn(BaseModel)`, `reason: str` (required), `category: str | None`
 **Does:** The resolve request body. `reason` being required at the Pydantic layer means a missing reason is a 422 before the handler runs; a *blank* reason is a 400 from the service.
 **Breaks if you make `reason` optional:** the dismiss button returns.
 
-#### `_escalation_or_404`: `vigil_routes.py:1234`
+#### `_escalation_or_404`: `vigil_routes.py:1409`
 **Signature:** `(escalation_id, user, include_events=True) -> dict`
 **Does:** Loads a chain and proves the caller's ward owns its patient.
 **On screen:** the difference between a detail drawer opening and a "not found" state.
@@ -440,7 +440,7 @@ And the permission model: reading is `alert.read`; acknowledging and resolving r
 
 ### File: `server/migrations.py`: migration 11
 
-#### `_m11_escalation_chain`: `migrations.py:598`
+#### `_m11_escalation_chain`: `migrations.py:622`
 **Signature:** `(conn) -> None`; registered as `Migration(11, "escalation_chain", …)` in the `MIGRATIONS` list at `:1620`
 **Does:** Creates both tables and four indexes.
 **On screen:** nothing. A migration that has not run means every escalation route returns a 500 on a missing table.

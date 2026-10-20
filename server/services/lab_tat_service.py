@@ -53,19 +53,27 @@ and a department account sees only its own department's patients.
 
 Every function takes the caller's open connection and never commits.
 """
+
 from __future__ import annotations
 
 import csv
 import io
 import json
 import math
-from datetime import date, datetime, timedelta, timezone
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
 from permissions import scope_patient_ids_sql
+
 from services import lab_master_service as lm
 from services.clinical_time import parse_to_utc
-from services.hospital_time import hospital_now, hospital_today, local_day_bounds_utc, to_hospital
+from services.hospital_time import (
+    hospital_now,
+    hospital_today,
+    local_day_bounds_utc,
+    to_hospital,
+)
 
 #: The longest period one read covers.
 MAX_PERIOD_DAYS = 92
@@ -84,8 +92,7 @@ _TABLES = ("lab_order_items", "lab_results", "lab_specimens", "lab_tests")
 
 PRIORITIES = ("stat", "urgent", "routine")
 PRIORITY_WORDS = {"stat": "STAT", "urgent": "Urgent", "routine": "Routine"}
-_TARGET_COLUMN = {"stat": "tat_stat_min", "urgent": "tat_urgent_min",
-                  "routine": "tat_routine_min"}
+_TARGET_COLUMN = {"stat": "tat_stat_min", "urgent": "tat_urgent_min", "routine": "tat_routine_min"}
 
 #: (key, words, start instant, end instant). The receipt-to-report interval is
 #: the one a target applies to.
@@ -131,11 +138,12 @@ class LabTatError(Exception):
 #  Pure helpers
 # ════════════════════════════════════════════════════════════════════════════
 
+
 def tables_present(conn) -> bool:
     return lm.tables_present(conn, _TABLES)
 
 
-def _instant(value: Any) -> Optional[datetime]:
+def _instant(value: Any) -> datetime | None:
     if not value:
         return None
     try:
@@ -144,7 +152,7 @@ def _instant(value: Any) -> Optional[datetime]:
         return None
 
 
-def median(values: list[float]) -> Optional[float]:
+def median(values: list[float]) -> float | None:
     """The middle value, or the mean of the two middle values. None for none."""
     if not values:
         return None
@@ -155,7 +163,7 @@ def median(values: list[float]) -> Optional[float]:
     return (ordered[mid - 1] + ordered[mid]) / 2
 
 
-def percentile(values: list[float], pct: float) -> Optional[float]:
+def percentile(values: list[float], pct: float) -> float | None:
     """Nearest rank: the smallest value with at least `pct` percent of the
     values at or below it. None for none."""
     if not values:
@@ -165,11 +173,11 @@ def percentile(values: list[float], pct: float) -> Optional[float]:
     return ordered[rank - 1]
 
 
-def _minutes(value: Optional[float]) -> Optional[float]:
+def _minutes(value: float | None) -> float | None:
     return None if value is None else round(value, 1)
 
 
-def target_minutes(row: dict, priority: Optional[str]) -> Optional[int]:
+def target_minutes(row: dict, priority: str | None) -> int | None:
     """The test's receipt-to-report target for this priority, or None."""
     value = row.get(_TARGET_COLUMN.get(priority or "routine", "tat_routine_min"))
     try:
@@ -179,26 +187,27 @@ def target_minutes(row: dict, priority: Optional[str]) -> Optional[int]:
     return value if value and value > 0 else None
 
 
-def hospital_day_of(value: Any) -> Optional[str]:
+def hospital_day_of(value: Any) -> str | None:
     local = to_hospital(value)
     return local.date().isoformat() if local else None
 
 
-def resolve_period(start: Optional[str], end: Optional[str], *,
-                   today: Optional[date] = None) -> tuple[date, date]:
+def resolve_period(
+    start: str | None, end: str | None, *, today: date | None = None
+) -> tuple[date, date]:
     """(first day, last day), hospital-local, both included. Defaults to the
     last DEFAULT_PERIOD_DAYS days, today included. Raises LabTatError 422
     'bad_period' for an unreadable day, a start after the end, an end after
     today or a period longer than MAX_PERIOD_DAYS."""
     today = today or hospital_today()
 
-    def _day(text: Optional[str], field: str) -> Optional[date]:
+    def _day(text: str | None, field: str) -> date | None:
         if not text:
             return None
         try:
             return date.fromisoformat(str(text).strip())
         except ValueError:
-            raise LabTatError("bad_period", f"Give the {field} day as YYYY-MM-DD.")
+            raise LabTatError("bad_period", f"Give the {field} day as YYYY-MM-DD.") from None
 
     last = _day(end, "last") or today
     first = _day(start, "first") or (last - timedelta(days=DEFAULT_PERIOD_DAYS - 1))
@@ -207,8 +216,7 @@ def resolve_period(start: Optional[str], end: Optional[str], *,
     if last > today:
         raise LabTatError("bad_period", "The last day cannot be after today.")
     if (last - first).days + 1 > MAX_PERIOD_DAYS:
-        raise LabTatError("bad_period",
-                          f"Choose a period of at most {MAX_PERIOD_DAYS} days.")
+        raise LabTatError("bad_period", f"Choose a period of at most {MAX_PERIOD_DAYS} days.")
     return first, last
 
 
@@ -220,33 +228,37 @@ def period_bounds(first: date, last: date) -> tuple[datetime, datetime]:
 def _chunks(values: Iterable[Any]) -> Iterable[list]:
     items = list(dict.fromkeys(v for v in values if v is not None))
     for start in range(0, len(items), _CHUNK):
-        yield items[start:start + _CHUNK]
+        yield items[start : start + _CHUNK]
 
 
 def _marks(values) -> str:
     return ", ".join("?" for _ in values)
 
 
-def _scope_clause(column: str, dept: Optional[str]) -> tuple[str, tuple]:
+def _scope_clause(column: str, dept: str | None) -> tuple[str, tuple]:
     if dept is None:
         return "", ()
     sql, params = scope_patient_ids_sql(dept)
     return f" AND {column} IN ({sql})", tuple(params)
 
 
-def _ward_clause(column: str, ward_key: Optional[str]) -> tuple[str, tuple]:
+def _ward_clause(column: str, ward_key: str | None) -> tuple[str, tuple]:
     if not ward_key:
         return "", ()
-    return (f" AND {column} IN (SELECT id FROM patients WHERE UPPER(TRIM(ward)) = ?)",
-            (str(ward_key).strip().upper(),))
+    return (
+        f" AND {column} IN (SELECT id FROM patients WHERE UPPER(TRIM(ward)) = ?)",
+        (str(ward_key).strip().upper(),),
+    )
 
 
 # ════════════════════════════════════════════════════════════════════════════
 #  The reported tests of a period
 # ════════════════════════════════════════════════════════════════════════════
 
-def reported_tests(conn, start: datetime, end: datetime, *, dept: Optional[str] = None,
-                   ward_key: Optional[str] = None) -> list[dict]:
+
+def reported_tests(
+    conn, start: datetime, end: datetime, *, dept: str | None = None, ward_key: str | None = None
+) -> list[dict]:
     """One dict per test first reported in [start, end): its instants, its
     four intervals in minutes (None where unreadable or out of order), its
     target and whether it was within it. Oldest report first."""
@@ -258,20 +270,26 @@ def reported_tests(conn, start: datetime, end: datetime, *, dept: Optional[str] 
     # every spelling Orb writes). Its FIRST release is decided below in Python,
     # so a test first reported before the window and amended inside it is not
     # counted again.
-    candidates = [r[0] for r in conn.execute(
-        "SELECT DISTINCT r.order_item_id FROM lab_results r WHERE r.released_at IS NOT NULL "
-        "AND julianday(r.released_at) >= julianday(?) AND julianday(r.released_at) < julianday(?)"
-        + scope_sql + ward_sql,
-        (start.isoformat(), end.isoformat(), *scope_params, *ward_params)).fetchall()]
+    candidates = [
+        r[0]
+        for r in conn.execute(
+            "SELECT DISTINCT r.order_item_id FROM lab_results r WHERE r.released_at IS NOT NULL "
+            "AND julianday(r.released_at) >= julianday(?) AND julianday(r.released_at) < julianday(?)"
+            + scope_sql
+            + ward_sql,
+            (start.isoformat(), end.isoformat(), *scope_params, *ward_params),
+        ).fetchall()
+    ]
     if not candidates:
         return []
     first_release: dict[int, tuple[datetime, str]] = {}
     simulated_items: set[int] = set()
     for chunk in _chunks(candidates):
         for r in conn.execute(
-                f"SELECT order_item_id, released_at, source FROM lab_results "
-                f"WHERE released_at IS NOT NULL AND order_item_id IN ({_marks(chunk)})",
-                tuple(chunk)).fetchall():
+            f"SELECT order_item_id, released_at, source FROM lab_results "
+            f"WHERE released_at IS NOT NULL AND order_item_id IN ({_marks(chunk)})",
+            tuple(chunk),
+        ).fetchall():
             key = int(r["order_item_id"])
             if r["source"] == "simulated":
                 simulated_items.add(key)
@@ -286,8 +304,10 @@ def reported_tests(conn, start: datetime, end: datetime, *, dept: Optional[str] 
         return []
     items: list[dict] = []
     for chunk in _chunks(wanted):
-        items.extend(dict(r) for r in conn.execute(
-            f"""SELECT i.id AS item_id, i.order_id, i.specimen_id, i.section_id, i.priority,
+        items.extend(
+            dict(r)
+            for r in conn.execute(
+                f"""SELECT i.id AS item_id, i.order_id, i.specimen_id, i.section_id, i.priority,
                        i.test_id, i.patient_id, t.name AS test_name, t.short_name,
                        t.tat_routine_min, t.tat_urgent_min, t.tat_stat_min,
                        sec.name AS section_name, sec.sort_order AS section_order,
@@ -297,12 +317,17 @@ def reported_tests(conn, start: datetime, end: datetime, *, dept: Optional[str] 
                 LEFT JOIN lab_sections sec ON sec.id = i.section_id
                 LEFT JOIN lab_specimens s ON s.id = i.specimen_id
                 LEFT JOIN orders o ON o.id = i.order_id
-                WHERE i.id IN ({_marks(chunk)})""", tuple(chunk)).fetchall())
+                WHERE i.id IN ({_marks(chunk)})""",
+                tuple(chunk),
+            ).fetchall()
+        )
     activation: dict[str, str] = {}
     for chunk in _chunks(i["order_id"] for i in items):
         for r in conn.execute(
-                f"SELECT order_id, created_at FROM order_events WHERE new_status = 'active' "
-                f"AND order_id IN ({_marks(chunk)}) ORDER BY id ASC", tuple(chunk)).fetchall():
+            f"SELECT order_id, created_at FROM order_events WHERE new_status = 'active' "
+            f"AND order_id IN ({_marks(chunk)}) ORDER BY id ASC",
+            tuple(chunk),
+        ).fetchall():
             activation.setdefault(r["order_id"], r["created_at"])
     out = []
     for item in items:
@@ -314,43 +339,47 @@ def reported_tests(conn, start: datetime, end: datetime, *, dept: Optional[str] 
             "received_at": item.get("received_at"),
             "reported_at": raw,
         }
-        intervals: dict[str, Optional[float]] = {}
+        intervals: dict[str, float | None] = {}
         out_of_order: list[str] = []
-        for key, _, a, b in INTERVALS:
+        for interval_key, _interval_label, a, b in INTERVALS:
             ta, tb = _instant(instants[a]), _instant(instants[b])
             if ta is None or tb is None:
-                intervals[key] = None
+                intervals[interval_key] = None
             elif tb < ta:
-                intervals[key] = None
-                out_of_order.append(key)
+                intervals[interval_key] = None
+                out_of_order.append(interval_key)
             else:
-                intervals[key] = (tb - ta).total_seconds() / 60.0
+                intervals[interval_key] = (tb - ta).total_seconds() / 60.0
         priority = item.get("priority") or "routine"
         target = target_minutes(item, priority)
         tat = intervals[TARGET_INTERVAL]
-        within: Optional[bool] = None
+        within: bool | None = None
         if target is not None and tat is not None:
             within = tat <= target
-        out.append({
-            "item_id": int(item["item_id"]),
-            "order_id": item["order_id"],
-            "specimen_id": item.get("specimen_id"),
-            "patient_id": item.get("patient_id"),
-            "test_id": item["test_id"],
-            "test_name": item.get("test_name") or item["test_id"],
-            "short_name": item.get("short_name") or item.get("test_name") or item["test_id"],
-            "section_id": item.get("section_id"),
-            "section_name": item.get("section_name") or item.get("section_id") or "No section",
-            "section_order": int(item.get("section_order") or 0),
-            "priority": priority,
-            "instants": instants,
-            "reported_day": to_hospital(at).date().isoformat(),
-            "intervals": intervals,
-            "out_of_order": out_of_order,
-            "target_minutes": target,
-            "within_target": within,
-            "simulated": simulated,
-        })
+        out.append(
+            {
+                "item_id": int(item["item_id"]),
+                "order_id": item["order_id"],
+                "specimen_id": item.get("specimen_id"),
+                "patient_id": item.get("patient_id"),
+                "test_id": item["test_id"],
+                "test_name": item.get("test_name") or item["test_id"],
+                "short_name": item.get("short_name") or item.get("test_name") or item["test_id"],
+                "section_id": item.get("section_id"),
+                "section_name": item.get("section_name") or item.get("section_id") or "No section",
+                "section_order": int(item.get("section_order") or 0),
+                "priority": priority,
+                "instants": instants,
+                "reported_day": hospital_at.date().isoformat()
+                if (hospital_at := to_hospital(at)) is not None
+                else None,
+                "intervals": intervals,
+                "out_of_order": out_of_order,
+                "target_minutes": target,
+                "within_target": within,
+                "simulated": simulated,
+            }
+        )
     out.sort(key=lambda r: (_instant(r["instants"]["reported_at"]), r["item_id"]))
     return out
 
@@ -359,28 +388,38 @@ def reported_tests(conn, start: datetime, end: datetime, *, dept: Optional[str] 
 #  Aggregates
 # ════════════════════════════════════════════════════════════════════════════
 
+
 def _figures(rows: list[dict]) -> dict:
     """Count, median and 90th percentile of every interval, and the target
     figures, for real (not simulated) rows."""
     out: dict[str, Any] = {"count": len(rows), "intervals": {}}
     for key, _, _, _ in INTERVALS:
         values = [r["intervals"][key] for r in rows if r["intervals"][key] is not None]
-        out["intervals"][key] = {"n": len(values), "median": _minutes(median(values)),
-                                 "p90": _minutes(percentile(values, 90))}
-    with_target = [r for r in rows if r["target_minutes"] is not None
-                   and r["intervals"][TARGET_INTERVAL] is not None]
+        out["intervals"][key] = {
+            "n": len(values),
+            "median": _minutes(median(values)),
+            "p90": _minutes(percentile(values, 90)),
+        }
+    with_target = [
+        r
+        for r in rows
+        if r["target_minutes"] is not None and r["intervals"][TARGET_INTERVAL] is not None
+    ]
     within = sum(1 for r in with_target if r["within_target"])
     no_target = sum(1 for r in rows if r["target_minutes"] is None)
     target: dict[str, Any] = {
         "with_target": len(with_target),
         "within": within,
         "no_target": no_target,
-        "unreadable": sum(1 for r in rows if r["target_minutes"] is not None
-                          and r["intervals"][TARGET_INTERVAL] is None),
+        "unreadable": sum(
+            1
+            for r in rows
+            if r["target_minutes"] is not None and r["intervals"][TARGET_INTERVAL] is None
+        ),
         "percent": round(100.0 * within / len(with_target), 1) if with_target else None,
     }
     target["state"] = "reported" if with_target else "no_target"
-    target["text"] = (f"{target['percent']:.1f}%" if with_target else NO_TARGET_TEXT)
+    target["text"] = f"{target['percent']:.1f}%" if with_target else NO_TARGET_TEXT
     out["target"] = target
     out["out_of_order"] = sum(1 for r in rows if r["out_of_order"])
     return out
@@ -396,31 +435,44 @@ def aggregate(rows: list[dict], first: date, last: date) -> dict:
     real = [r for r in rows if not r["simulated"]]
     groups: dict[tuple, list[dict]] = {}
     for r in real:
-        groups.setdefault((r["section_order"], r["section_name"], r["section_id"],
-                           r["priority"]), []).append(r)
+        groups.setdefault(
+            (r["section_order"], r["section_name"], r["section_id"], r["priority"]), []
+        ).append(r)
     by_group = []
-    for (order, name, section_id, priority), members in sorted(
-            groups.items(), key=lambda kv: (kv[0][0], kv[0][1], _priority_rank(kv[0][3]))):
-        by_group.append({"section_id": section_id, "section_name": name,
-                         "priority": priority,
-                         "priority_text": PRIORITY_WORDS.get(priority, priority),
-                         **_figures(members)})
+    for (_order, name, section_id, priority), members in sorted(
+        groups.items(), key=lambda kv: (kv[0][0], kv[0][1], _priority_rank(kv[0][3]))
+    ):
+        by_group.append(
+            {
+                "section_id": section_id,
+                "section_name": name,
+                "priority": priority,
+                "priority_text": PRIORITY_WORDS.get(priority, priority),
+                **_figures(members),
+            }
+        )
     by_day = []
     day = first
     while day <= last:
         key = day.isoformat()
         by_day.append({"day": key, **_figures([r for r in real if r["reported_day"] == key])})
         day += timedelta(days=1)
-    return {"overall": _figures(real), "by_section_priority": by_group, "by_day": by_day,
-            "simulated_excluded": len(rows) - len(real)}
+    return {
+        "overall": _figures(real),
+        "by_section_priority": by_group,
+        "by_day": by_day,
+        "simulated_excluded": len(rows) - len(real),
+    }
 
 
 # ════════════════════════════════════════════════════════════════════════════
 #  Critical acknowledgement
 # ════════════════════════════════════════════════════════════════════════════
 
-def critical_times(conn, start: datetime, end: datetime, *, dept: Optional[str] = None,
-                   ward_key: Optional[str] = None) -> list[dict]:
+
+def critical_times(
+    conn, start: datetime, end: datetime, *, dept: str | None = None, ward_key: str | None = None
+) -> list[dict]:
     """One dict per critical result raised in [start, end): raised_at, the
     first 'acknowledged' event after it, how it was closed ('phone_log' for
     the laboratory's callback with a read-back, 'ward_read_back' otherwise)
@@ -432,12 +484,18 @@ def critical_times(conn, start: datetime, end: datetime, *, dept: Optional[str] 
         return []
     scope_sql, scope_params = _scope_clause("e.patient_id", dept)
     ward_sql, ward_params = _ward_clause("e.patient_id", ward_key)
-    raised = [dict(r) for r in conn.execute(
-        "SELECT e.notification_id, e.patient_id, e.occurred_at FROM lab_critical_events e "
-        "WHERE e.event_type = 'raised' AND julianday(e.occurred_at) >= julianday(?) "
-        "AND julianday(e.occurred_at) < julianday(?)" + scope_sql + ward_sql
-        + " ORDER BY e.id ASC",
-        (start.isoformat(), end.isoformat(), *scope_params, *ward_params)).fetchall()]
+    raised = [
+        dict(r)
+        for r in conn.execute(
+            "SELECT e.notification_id, e.patient_id, e.occurred_at FROM lab_critical_events e "
+            "WHERE e.event_type = 'raised' AND julianday(e.occurred_at) >= julianday(?) "
+            "AND julianday(e.occurred_at) < julianday(?)"
+            + scope_sql
+            + ward_sql
+            + " ORDER BY e.id ASC",
+            (start.isoformat(), end.isoformat(), *scope_params, *ward_params),
+        ).fetchall()
+    ]
     first_raised: dict[str, dict] = {}
     for r in raised:
         at = _instant(r["occurred_at"])
@@ -449,26 +507,31 @@ def critical_times(conn, start: datetime, end: datetime, *, dept: Optional[str] 
     closing: dict[str, list[tuple[datetime, str]]] = {}
     for chunk in _chunks(first_raised):
         for r in conn.execute(
-                f"SELECT notification_id, event_type, occurred_at, metadata_json "
-                f"FROM lab_critical_events "
-                f"WHERE notification_id IN ({_marks(chunk)}) AND event_type IN "
-                f"({_marks(CRITICAL_CLOSING_EVENTS)}) ORDER BY id ASC",
-                (*chunk, *CRITICAL_CLOSING_EVENTS)).fetchall():
+            f"SELECT notification_id, event_type, occurred_at, metadata_json "
+            f"FROM lab_critical_events "
+            f"WHERE notification_id IN ({_marks(chunk)}) AND event_type IN "
+            f"({_marks(CRITICAL_CLOSING_EVENTS)}) ORDER BY id ASC",
+            (*chunk, *CRITICAL_CLOSING_EVENTS),
+        ).fetchall():
             at = _instant(r["occurred_at"])
             if at is not None:
                 closing.setdefault(r["notification_id"], []).append(
-                    (at, _closure_kind(r["metadata_json"])))
+                    (at, _closure_kind(r["metadata_json"]))
+                )
     out = []
     for nid, row in first_raised.items():
-        after = sorted((c for c in closing.get(nid, []) if c[0] >= row["at"]),
-                       key=lambda c: c[0])
+        after = sorted((c for c in closing.get(nid, []) if c[0] >= row["at"]), key=lambda c: c[0])
         ack_at, how = after[0] if after else (None, None)
-        out.append({"notification_id": nid, "patient_id": row["patient_id"],
-                    "raised_at": row["occurred_at"],
-                    "acknowledged_at": ack_at.isoformat() if ack_at else None,
-                    "closed_by": how,
-                    "minutes": ((ack_at - row["at"]).total_seconds() / 60.0
-                                if ack_at else None)})
+        out.append(
+            {
+                "notification_id": nid,
+                "patient_id": row["patient_id"],
+                "raised_at": row["occurred_at"],
+                "acknowledged_at": ack_at.isoformat() if ack_at else None,
+                "closed_by": how,
+                "minutes": ((ack_at - row["at"]).total_seconds() / 60.0 if ack_at else None),
+            }
+        )
     return out
 
 
@@ -481,8 +544,8 @@ def _closure_kind(metadata_json: Any) -> str:
     return "phone_log" if closure == LABORATORY_CALLBACK_CLOSURE else "ward_read_back"
 
 
-def critical_summary(rows: list[dict], *, now: Optional[datetime] = None) -> dict:
-    now = now or datetime.now(timezone.utc)
+def critical_summary(rows: list[dict], *, now: datetime | None = None) -> dict:
+    now = now or datetime.now(UTC)
     done = [r["minutes"] for r in rows if r["minutes"] is not None]
     open_rows = [r for r in rows if r["minutes"] is None]
     oldest = None
@@ -508,17 +571,21 @@ def critical_summary(rows: list[dict], *, now: Optional[datetime] = None) -> dic
 #  Live lists
 # ════════════════════════════════════════════════════════════════════════════
 
-def overdue_tests(conn, *, dept: Optional[str], now: Optional[datetime] = None,
-                  limit: int = OVERDUE_CAP) -> dict:
+
+def overdue_tests(
+    conn, *, dept: str | None, now: datetime | None = None, limit: int = OVERDUE_CAP
+) -> dict:
     """Tests in the laboratory (received, not released) whose receipt-to-report
     target has passed, STAT first, then the most overdue. Also counts the
     tests in the laboratory that have no target, which can never be overdue."""
     if not tables_present(conn):
         return {"items": [], "total": 0, "in_lab": 0, "in_lab_without_target": 0}
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     scope_sql, scope_params = _scope_clause("i.patient_id", dept)
-    rows = [dict(r) for r in conn.execute(
-        f"""SELECT i.id AS item_id, i.order_id, i.specimen_id, i.priority, i.status,
+    rows = [
+        dict(r)
+        for r in conn.execute(
+            f"""SELECT i.id AS item_id, i.order_id, i.specimen_id, i.priority, i.status,
                    i.test_id, i.section_id, i.patient_id,
                    t.name AS test_name, t.short_name, t.tat_routine_min, t.tat_urgent_min,
                    t.tat_stat_min, sec.name AS section_name,
@@ -530,7 +597,10 @@ def overdue_tests(conn, *, dept: Optional[str], now: Optional[datetime] = None,
             LEFT JOIN lab_sections sec ON sec.id = i.section_id
             LEFT JOIN patients p ON p.id = i.patient_id
             WHERE i.status IN ({_marks(_IN_LAB_STATUSES)}) AND s.received_at IS NOT NULL"""
-        + scope_sql, (*_IN_LAB_STATUSES, *scope_params)).fetchall()]
+            + scope_sql,
+            (*_IN_LAB_STATUSES, *scope_params),
+        ).fetchall()
+    ]
     overdue = []
     without_target = 0
     for r in rows:
@@ -544,31 +614,44 @@ def overdue_tests(conn, *, dept: Optional[str], now: Optional[datetime] = None,
         waited = (now - received).total_seconds() / 60.0
         if waited <= target:
             continue
-        overdue.append({
-            "item_id": int(r["item_id"]),
-            "specimen_id": r["specimen_id"],
-            "order_id": r["order_id"],
-            "priority": r.get("priority") or "routine",
-            "priority_text": PRIORITY_WORDS.get(r.get("priority") or "routine", "Routine"),
-            "status": r["status"],
-            "test": {"id": r["test_id"], "name": r.get("test_name") or r["test_id"],
-                     "short_name": r.get("short_name") or r.get("test_name") or r["test_id"]},
-            "section_name": r.get("section_name") or r.get("section_id") or "No section",
-            "patient": {"id": r["patient_id"], "name": r.get("patient_name"),
-                        "mrn": r.get("mrn"), "ward": r.get("ward"), "bed": r.get("bed")},
-            "received_at": r.get("received_at"),
-            "target_minutes": target,
-            "waiting_minutes": int(waited),
-            "over_by_minutes": int(waited - target),
-        })
-    overdue.sort(key=lambda o: (_priority_rank(o["priority"]), -o["over_by_minutes"],
-                                o["item_id"]))
+        overdue.append(
+            {
+                "item_id": int(r["item_id"]),
+                "specimen_id": r["specimen_id"],
+                "order_id": r["order_id"],
+                "priority": r.get("priority") or "routine",
+                "priority_text": PRIORITY_WORDS.get(r.get("priority") or "routine", "Routine"),
+                "status": r["status"],
+                "test": {
+                    "id": r["test_id"],
+                    "name": r.get("test_name") or r["test_id"],
+                    "short_name": r.get("short_name") or r.get("test_name") or r["test_id"],
+                },
+                "section_name": r.get("section_name") or r.get("section_id") or "No section",
+                "patient": {
+                    "id": r["patient_id"],
+                    "name": r.get("patient_name"),
+                    "mrn": r.get("mrn"),
+                    "ward": r.get("ward"),
+                    "bed": r.get("bed"),
+                },
+                "received_at": r.get("received_at"),
+                "target_minutes": target,
+                "waiting_minutes": int(waited),
+                "over_by_minutes": int(waited - target),
+            }
+        )
+    overdue.sort(key=lambda o: (_priority_rank(o["priority"]), -o["over_by_minutes"], o["item_id"]))
     cap = max(1, min(int(limit or OVERDUE_CAP), OVERDUE_CAP))
-    return {"items": overdue[:cap], "total": len(overdue), "in_lab": len(rows),
-            "in_lab_without_target": without_target}
+    return {
+        "items": overdue[:cap],
+        "total": len(overdue),
+        "in_lab": len(rows),
+        "in_lab_without_target": without_target,
+    }
 
 
-def open_exception_counts(conn, *, dept: Optional[str]) -> dict:
+def open_exception_counts(conn, *, dept: str | None) -> dict:
     """Open laboratory exceptions by kind, counts only. A department account
     counts only rows whose order's patient is in its department, by the same
     predicate as the exceptions list (lab_order_service.list_open_exceptions):
@@ -587,9 +670,16 @@ def open_exception_counts(conn, *, dept: Optional[str]) -> dict:
     rows = conn.execute(
         f"SELECT x.kind, COUNT(*) AS n FROM lab_exceptions x "
         f"LEFT JOIN orders o ON o.id = x.order_id WHERE {where} GROUP BY x.kind",
-        params).fetchall()
-    by_kind = [{"kind": r["kind"], "label": EXCEPTION_WORDS.get(r["kind"], "Exception"),
-                "count": int(r["n"])} for r in rows]
+        params,
+    ).fetchall()
+    by_kind = [
+        {
+            "kind": r["kind"],
+            "label": EXCEPTION_WORDS.get(r["kind"], "Exception"),
+            "count": int(r["n"]),
+        }
+        for r in rows
+    ]
     by_kind.sort(key=lambda k: k["label"])
     return {"open": sum(k["count"] for k in by_kind), "by_kind": by_kind}
 
@@ -598,18 +688,24 @@ def open_exception_counts(conn, *, dept: Optional[str]) -> dict:
 #  The dashboard and the export
 # ════════════════════════════════════════════════════════════════════════════
 
-def dashboard(conn, *, first: date, last: date, dept: Optional[str],
-              now: Optional[datetime] = None) -> dict:
+
+def dashboard(
+    conn, *, first: date, last: date, dept: str | None, now: datetime | None = None
+) -> dict:
     start, end = period_bounds(first, last)
     rows = reported_tests(conn, start, end, dept=dept)
     figures = aggregate(rows, first, last)
     crit = critical_times(conn, start, end, dept=dept)
     local_now = hospital_now()
     return {
-        "period": {"first_day": first.isoformat(), "last_day": last.isoformat(),
-                   "days": (last - first).days + 1, "start": start.isoformat(),
-                   "end": end.isoformat(),
-                   "timezone": local_now.tzname() or str(local_now.tzinfo)},
+        "period": {
+            "first_day": first.isoformat(),
+            "last_day": last.isoformat(),
+            "days": (last - first).days + 1,
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "timezone": local_now.tzname() or str(local_now.tzinfo),
+        },
         "intervals": [{"key": key, "label": label} for key, label, _, _ in INTERVALS],
         "target_interval": TARGET_INTERVAL,
         **figures,
@@ -621,11 +717,22 @@ def dashboard(conn, *, first: date, last: date, dept: Optional[str],
 
 
 EXPORT_COLUMNS = (
-    "Hospital day", "Accession", "Test", "Section", "Priority",
-    "Ordered (hospital time)", "Collected (hospital time)", "Received (hospital time)",
+    "Hospital day",
+    "Accession",
+    "Test",
+    "Section",
+    "Priority",
+    "Ordered (hospital time)",
+    "Collected (hospital time)",
+    "Received (hospital time)",
     "Reported (hospital time)",
-    "Order to collection (min)", "Collection to receipt (min)", "Receipt to report (min)",
-    "Order to report (min)", "Target receipt to report (min)", "Within target", "Simulated",
+    "Order to collection (min)",
+    "Collection to receipt (min)",
+    "Receipt to report (min)",
+    "Order to report (min)",
+    "Target receipt to report (min)",
+    "Within target",
+    "Simulated",
 )
 
 #: A cell a spreadsheet would read as a formula is written with a leading
@@ -645,11 +752,11 @@ def _local_text(value: Any) -> str:
     return local.strftime("%Y-%m-%d %H:%M") if local else ""
 
 
-def _num(value: Optional[float]) -> str:
+def _num(value: float | None) -> str:
     return "" if value is None else f"{value:.1f}"
 
 
-def export_csv(conn, *, first: date, last: date, dept: Optional[str]) -> dict:
+def export_csv(conn, *, first: date, last: date, dept: str | None) -> dict:
     """Every test first reported in the period, one CSV row each, oldest
     first. No patient name or UHID: the accession links a row to the record
     for anyone entitled to open it."""
@@ -659,23 +766,39 @@ def export_csv(conn, *, first: date, last: date, dept: Optional[str]) -> dict:
     writer = csv.writer(buffer, lineterminator="\r\n")
     writer.writerow(EXPORT_COLUMNS)
     for r in rows:
-        within = ("No target" if r["target_minutes"] is None
-                  else ("" if r["within_target"] is None
-                        else ("Yes" if r["within_target"] else "No")))
-        writer.writerow([_cell(v) for v in (
-            r["reported_day"], r["specimen_id"], r["test_name"], r["section_name"],
-            PRIORITY_WORDS.get(r["priority"], r["priority"]),
-            _local_text(r["instants"]["ordered_at"]), _local_text(r["instants"]["collected_at"]),
-            _local_text(r["instants"]["received_at"]), _local_text(r["instants"]["reported_at"]),
-            _num(r["intervals"]["order_to_collection"]),
-            _num(r["intervals"]["collection_to_receipt"]),
-            _num(r["intervals"]["receipt_to_report"]),
-            _num(r["intervals"]["order_to_report"]),
-            r["target_minutes"] if r["target_minutes"] is not None else "",
-            within, "Yes" if r["simulated"] else "No")])
-    return {"filename": f"lab-turnaround-{first.isoformat()}-to-{last.isoformat()}.csv",
-            "content_type": "text/csv",
-            "rows": len(rows),
-            "specimen_ids": sorted({r["specimen_id"] for r in rows if r["specimen_id"]}),
-            "patient_ids": sorted({r["patient_id"] for r in rows if r["patient_id"]}),
-            "csv": buffer.getvalue()}
+        within = (
+            "No target"
+            if r["target_minutes"] is None
+            else ("" if r["within_target"] is None else ("Yes" if r["within_target"] else "No"))
+        )
+        writer.writerow(
+            [
+                _cell(v)
+                for v in (
+                    r["reported_day"],
+                    r["specimen_id"],
+                    r["test_name"],
+                    r["section_name"],
+                    PRIORITY_WORDS.get(r["priority"], r["priority"]),
+                    _local_text(r["instants"]["ordered_at"]),
+                    _local_text(r["instants"]["collected_at"]),
+                    _local_text(r["instants"]["received_at"]),
+                    _local_text(r["instants"]["reported_at"]),
+                    _num(r["intervals"]["order_to_collection"]),
+                    _num(r["intervals"]["collection_to_receipt"]),
+                    _num(r["intervals"]["receipt_to_report"]),
+                    _num(r["intervals"]["order_to_report"]),
+                    r["target_minutes"] if r["target_minutes"] is not None else "",
+                    within,
+                    "Yes" if r["simulated"] else "No",
+                )
+            ]
+        )
+    return {
+        "filename": f"lab-turnaround-{first.isoformat()}-to-{last.isoformat()}.csv",
+        "content_type": "text/csv",
+        "rows": len(rows),
+        "specimen_ids": sorted({r["specimen_id"] for r in rows if r["specimen_id"]}),
+        "patient_ids": sorted({r["patient_id"] for r in rows if r["patient_id"]}),
+        "csv": buffer.getvalue(),
+    }

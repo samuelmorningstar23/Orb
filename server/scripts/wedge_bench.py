@@ -62,6 +62,7 @@ USAGE (no server needed):
 Writes docs/perf/wedge-<UTC timestamp>.json and a dated Markdown report
 alongside it.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -75,20 +76,38 @@ import sys
 import tempfile
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import TypedDict
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = SERVER_DIR.parent
+
 
 # NEWS2 19 — the dry run's peri-arrest picture: RR 32 (3), SpO2 86 (3), on O2
 # (2), Temp 39.4 (2), SBP 78 (3), HR 138 (3), ACVPU voice (3). Deliberately the
 # same clinical picture the wedge tests use, so a number here and an assertion
 # there are about the same event.
-PERI_ARREST = {
-    "heart_rate": 138, "systolic_bp": 78, "diastolic_bp": 44,
-    "respiratory_rate": 32, "temperature": 39.4, "spo2": 86,
-    "consciousness": "voice", "on_oxygen": True,
+class _BenchVitals(TypedDict):
+    heart_rate: float
+    systolic_bp: float
+    diastolic_bp: float
+    respiratory_rate: float
+    temperature: float
+    spo2: float
+    consciousness: str
+    on_oxygen: bool
+
+
+PERI_ARREST: _BenchVitals = {
+    "heart_rate": 138,
+    "systolic_bp": 78,
+    "diastolic_bp": 44,
+    "respiratory_rate": 32,
+    "temperature": 39.4,
+    "spo2": 86,
+    "consciousness": "voice",
+    "on_oxygen": True,
 }
 
 DEPARTMENT = "Wedge Bench Medicine"
@@ -142,8 +161,10 @@ def prepare_database(mode: str) -> tuple[Path, str]:
     target = tmp_dir / "orb.db"
     if mode == "fresh":
         os.environ["ORB_DB_PATH"] = str(target)
-        return target, ("EMPTY schema, guideline retrieval finds no corpus, so the "
-                        "retrieval component of assessment latency is UNDERSTATED")
+        return target, (
+            "EMPTY schema, guideline retrieval finds no corpus, so the "
+            "retrieval component of assessment latency is UNDERSTATED"
+        )
 
     source = SERVER_DIR / "orb.db"
     if not source.exists():
@@ -158,8 +179,10 @@ def prepare_database(mode: str) -> tuple[Path, str]:
             shutil.copy2(side, str(target) + suffix)
     os.environ["ORB_DB_PATH"] = str(target)
     size_mb = target.stat().st_size / (1024 * 1024)
-    return target, (f"throwaway COPY of the dev database ({size_mb:.0f} MB), real "
-                    f"corpus, real retrieval cost, nothing written back")
+    return target, (
+        f"throwaway COPY of the dev database ({size_mb:.0f} MB), real "
+        f"corpus, real retrieval cost, nothing written back"
+    )
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -175,8 +198,9 @@ def hardware() -> dict:
         "memory_gb": None,
     }
     try:
-        out = subprocess.run(["system_profiler", "SPHardwareDataType"],
-                             capture_output=True, text=True, timeout=20).stdout
+        out = subprocess.run(
+            ["system_profiler", "SPHardwareDataType"], capture_output=True, text=True, timeout=20
+        ).stdout
         for line in out.splitlines():
             if "Chip:" in line:
                 info["chip"] = line.split(":", 1)[1].strip()
@@ -193,13 +217,18 @@ def ollama_resident() -> list[dict]:
     the runtime rather than asserted in a report footnote."""
     try:
         import httpx
+
         base = os.getenv("ORB_OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
         r = httpx.get(f"{base}/api/ps", timeout=5, trust_env=False)
         r.raise_for_status()
-        return [{"model": m.get("name") or m.get("model"),
-                 "size_vram": m.get("size_vram"),
-                 "expires_at": m.get("expires_at")}
-                for m in (r.json().get("models") or [])]
+        return [
+            {
+                "model": m.get("name") or m.get("model"),
+                "size_vram": m.get("size_vram"),
+                "expires_at": m.get("expires_at"),
+            }
+            for m in (r.json().get("models") or [])
+        ]
     except Exception as e:  # noqa: BLE001
         return [{"error": f"{type(e).__name__}: {e}"}]
 
@@ -223,40 +252,54 @@ def make_app():
 
 def auth(uid: str, role: str) -> dict:
     from auth import create_token
+
     return {"Authorization": f"Bearer {create_token(uid, role)}"}
 
 
 def seed_staff() -> tuple[str, dict]:
     from database import db_session
+
     nurse = f"{BENCH_TAG}N{uuid.uuid4().hex[:8].upper()}"
     doctor = f"{BENCH_TAG}D{uuid.uuid4().hex[:8].upper()}"
     with db_session() as db:
-        db.execute("INSERT INTO users (id, name, role, password_hash, department) "
-                   "VALUES (?, 'Bench Nurse', 'nurse', 'x', ?)", (nurse, DEPARTMENT))
-        db.execute("INSERT INTO users (id, name, role, password_hash, department) "
-                   "VALUES (?, 'Bench Registrar', 'doctor', 'x', ?)", (doctor, DEPARTMENT))
+        db.execute(
+            "INSERT INTO users (id, name, role, password_hash, department) "
+            "VALUES (?, 'Bench Nurse', 'nurse', 'x', ?)",
+            (nurse, DEPARTMENT),
+        )
+        db.execute(
+            "INSERT INTO users (id, name, role, password_hash, department) "
+            "VALUES (?, 'Bench Registrar', 'doctor', 'x', ?)",
+            (doctor, DEPARTMENT),
+        )
     return nurse, {"id": doctor, "role": "doctor"}
 
 
 def seed_patient() -> tuple[str, str]:
     """An admitted, deteriorating patient with a case room. Returns (id, room)."""
     from database import db_session
+
     pid = f"{BENCH_TAG}P{uuid.uuid4().hex[:10].upper()}"
     room = f"wedge-bench-room-{pid}"
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with db_session() as db:
-        db.execute("INSERT OR IGNORE INTO users (id, name, role, password_hash) "
-                   "VALUES (?, 'Bench Admitter', 'doctor', 'x')", (f"{BENCH_TAG}ADM",))
+        db.execute(
+            "INSERT OR IGNORE INTO users (id, name, role, password_hash) "
+            "VALUES (?, 'Bench Admitter', 'doctor', 'x')",
+            (f"{BENCH_TAG}ADM",),
+        )
         db.execute(
             """INSERT INTO patients (id, name, mrn, bed, ward, age, sex, diagnosis,
                                      status, admission_date)
                VALUES (?, ?, ?, 'B-1', 'WB-1', 71, 'F', 'Community acquired pneumonia',
                        'admitted', ?)""",
-            (pid, f"Bench {pid}", f"MRN-{uuid.uuid4().hex[:8].upper()}", now.isoformat()))
+            (pid, f"Bench {pid}", f"MRN-{uuid.uuid4().hex[:8].upper()}", now.isoformat()),
+        )
         db.execute(
             "INSERT INTO admissions (patient_id, department, ward, bed, status, admitted_by) "
             "VALUES (?, ?, 'WB-1', 'B-1', 'active', ?)",
-            (pid, DEPARTMENT, f"{BENCH_TAG}ADM"))
+            (pid, DEPARTMENT, f"{BENCH_TAG}ADM"),
+        )
         # A worsening series, oldest first, so the prompt carries a real trend
         # rather than four copies of one snapshot — the trend is part of what the
         # model has to read, and therefore part of what it costs.
@@ -267,26 +310,39 @@ def seed_patient() -> tuple[str, str]:
                                        diastolic_bp, spo2, temperature, respiratory_rate,
                                        consciousness, on_oxygen)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (pid, (now - timedelta(minutes=5 * (drift + 1))).isoformat(),
-                 PERI_ARREST["heart_rate"] - 4 * drift,
-                 PERI_ARREST["systolic_bp"] + 6 * drift,
-                 PERI_ARREST["diastolic_bp"],
-                 PERI_ARREST["spo2"] + 2 * drift,
-                 PERI_ARREST["temperature"],
-                 PERI_ARREST["respiratory_rate"] - 2 * drift,
-                 PERI_ARREST["consciousness"], 1))
-        db.execute("INSERT OR REPLACE INTO channels (id, name, type, patient_id) "
-                   "VALUES (?, ?, 'case_room', ?)", (room, f"Bench Case Room {pid}", pid))
+                (
+                    pid,
+                    (now - timedelta(minutes=5 * (drift + 1))).isoformat(),
+                    PERI_ARREST["heart_rate"] - 4 * drift,
+                    PERI_ARREST["systolic_bp"] + 6 * drift,
+                    PERI_ARREST["diastolic_bp"],
+                    PERI_ARREST["spo2"] + 2 * drift,
+                    PERI_ARREST["temperature"],
+                    PERI_ARREST["respiratory_rate"] - 2 * drift,
+                    PERI_ARREST["consciousness"],
+                    1,
+                ),
+            )
+        db.execute(
+            "INSERT OR REPLACE INTO channels (id, name, type, patient_id) "
+            "VALUES (?, ?, 'case_room', ?)",
+            (room, f"Bench Case Room {pid}", pid),
+        )
     return pid, room
 
 
 def engine_news2() -> int:
     from services.vigil_service import compute_news2
+
     return compute_news2(
-        PERI_ARREST["heart_rate"], PERI_ARREST["systolic_bp"],
-        PERI_ARREST["respiratory_rate"], PERI_ARREST["temperature"],
-        PERI_ARREST["spo2"], PERI_ARREST["consciousness"],
-        PERI_ARREST["on_oxygen"])["raw_news2"]
+        PERI_ARREST["heart_rate"],
+        PERI_ARREST["systolic_bp"],
+        PERI_ARREST["respiratory_rate"],
+        PERI_ARREST["temperature"],
+        PERI_ARREST["spo2"],
+        PERI_ARREST["consciousness"],
+        PERI_ARREST["on_oxygen"],
+    )["raw_news2"]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -302,17 +358,21 @@ def chart_and_read(client, nurse: str, doctor: dict, patient: str, room: str) ->
     rec: dict = {"patient_id": patient, "error": None}
 
     t0 = time.perf_counter()
-    posted = client.post(f"/api/nurse/patients/{patient}/observations",
-                         json=dict(PERI_ARREST), headers=auth(nurse, "nurse"),
-                         timeout=120)
+    posted = client.post(
+        f"/api/nurse/patients/{patient}/observations",
+        json=dict(PERI_ARREST),
+        headers=auth(nurse, "nurse"),
+        timeout=120,
+    )
     t_alert = time.perf_counter()
     if posted.status_code != 200:
         rec["error"] = f"observation POST {posted.status_code}: {posted.text[:200]}"
         return rec
     rec["news2_engine"] = posted.json().get("news2", {}).get("raw_news2")
 
-    read = client.get(f"/api/relay/channels/{room}/messages", headers=auth(doctor["id"], "doctor"),
-                      timeout=120)
+    read = client.get(
+        f"/api/relay/channels/{room}/messages", headers=auth(doctor["id"], "doctor"), timeout=120
+    )
     t_read = time.perf_counter()
     if read.status_code != 200:
         rec["error"] = f"messages GET {read.status_code}"
@@ -329,7 +389,7 @@ def chart_and_read(client, nurse: str, doctor: dict, patient: str, room: str) ->
     # would report run 3 as slower than it was. The row's own `updated_at` is
     # when the draft actually resolved, and it needs a wall-clock origin to be
     # subtracted from.
-    rec["t0_wall"] = datetime.now(timezone.utc)
+    rec["t0_wall"] = datetime.now(UTC)
     rec["alert_message_id"] = alerts[-1]["id"]
     rec["vitals_to_alert_ms"] = round((t_alert - t0) * 1000, 1)
     rec["alert_read_ms"] = round((t_read - t_alert) * 1000, 1)
@@ -345,6 +405,7 @@ def await_assessment(patient: str, timeout: float) -> dict | None:
     implementation Orb deliberately does not have.
     """
     from database import db_session
+
     from services import sage_assessment_service as sas
 
     deadline = time.monotonic() + timeout
@@ -352,7 +413,9 @@ def await_assessment(patient: str, timeout: float) -> dict | None:
         with db_session() as db:
             row = db.execute(
                 "SELECT * FROM sage_assessments WHERE patient_id = ? "
-                "ORDER BY created_at DESC LIMIT 1", (patient,)).fetchone()
+                "ORDER BY created_at DESC LIMIT 1",
+                (patient,),
+            ).fetchone()
         if row is not None:
             state, reason = sas._derive_state(dict(row))
             if state != sas.STATE_GENERATING:
@@ -384,7 +447,7 @@ def finish_run(client, doctor: dict, room: str, rec: dict, timeout: float) -> di
     rec["citation_basis"] = row["citation_basis"]
     rec["confidence"] = row["confidence"]
     rec["news2_stored"] = row["news2"]
-    rec["news2_matches_engine"] = (row["news2"] == rec.get("news2_engine"))
+    rec["news2_matches_engine"] = row["news2"] == rec.get("news2_engine")
     rec["alert_to_observed_ms"] = round((t_ready - rec["t0"]) * 1000 - rec["alert_visible_ms"], 1)
     # THE HEADLINE FIGURE, taken from the row rather than from the poll — see
     # the note on `t0_wall`. Falls back to the poll when the timestamp cannot be
@@ -394,7 +457,7 @@ def finish_run(client, doctor: dict, room: str, rec: dict, timeout: float) -> di
     try:
         resolved = datetime.fromisoformat(row["updated_at"])
         if resolved.tzinfo is None:
-            resolved = resolved.replace(tzinfo=timezone.utc)
+            resolved = resolved.replace(tzinfo=UTC)
         elapsed = (resolved - rec["t0_wall"]).total_seconds() * 1000 - rec["alert_visible_ms"]
         if elapsed > 0:
             rec["alert_to_ready_ms"] = round(elapsed, 1)
@@ -407,20 +470,25 @@ def finish_run(client, doctor: dict, room: str, rec: dict, timeout: float) -> di
         rec["total_to_actionable_ms"] = None
         return rec
 
-    fetched = client.get(f"/api/relay/channels/{room}/sage_assessments",
-                         params={"message_id": rec["alert_message_id"]},
-                         headers=auth(doctor["id"], "doctor"), timeout=120)
+    fetched = client.get(
+        f"/api/relay/channels/{room}/sage_assessments",
+        params={"message_id": rec["alert_message_id"]},
+        headers=auth(doctor["id"], "doctor"),
+        timeout=120,
+    )
     t_fetched = time.perf_counter()
     rec["assessment_fetch_ms"] = round((t_fetched - t_ready) * 1000, 1)
     # Composed from the three measured stages rather than from one wall-clock
     # span, so it inherits the row-derived resolution time and is not distorted
     # by the harness polling a storm batch in order.
     rec["total_to_actionable_ms"] = round(
-        rec["alert_visible_ms"] + rec["alert_to_ready_ms"] + rec["assessment_fetch_ms"], 1)
+        rec["alert_visible_ms"] + rec["alert_to_ready_ms"] + rec["assessment_fetch_ms"], 1
+    )
     payload = fetched.json()[0] if fetched.status_code == 200 and fetched.json() else {}
-    rec["sections_present"] = sum(bool(payload.get(k)) for k in
-                                  ("whats_happening", "considerations", "citation_basis",
-                                   "watch_items"))
+    rec["sections_present"] = sum(
+        bool(payload.get(k))
+        for k in ("whats_happening", "considerations", "citation_basis", "watch_items")
+    )
 
     # WHY THERE ARE OR ARE NOT CARDS. A latency figure for a draft with nothing
     # to approve would describe a different product from the one being sold, so
@@ -428,8 +496,9 @@ def finish_run(client, doctor: dict, room: str, rec: dict, timeout: float) -> di
     considerations = payload.get("considerations") or []
     rec["considerations_n"] = len(considerations)
     rec["cardable_steps"] = sum(1 for c in considerations if c.get("action_type"))
-    rec["advice_only_reasons"] = [c["advice_only_reason"] for c in considerations
-                                  if c.get("advice_only_reason")]
+    rec["advice_only_reasons"] = [
+        c["advice_only_reason"] for c in considerations if c.get("advice_only_reason")
+    ]
     rec["step_texts"] = [(c.get("step") or "")[:140] for c in considerations]
     rec["watch_items_n"] = len(payload.get("watch_items") or [])
     rec["evidence_n"] = len(payload.get("evidence") or [])
@@ -437,14 +506,16 @@ def finish_run(client, doctor: dict, room: str, rec: dict, timeout: float) -> di
 
     with db_session() as db:
         rec["cards"] = db.execute(
-            "SELECT COUNT(*) AS n FROM sage_actions WHERE patient_id = ?",
-            (patient,)).fetchone()["n"]
+            "SELECT COUNT(*) AS n FROM sage_actions WHERE patient_id = ?", (patient,)
+        ).fetchone()["n"]
         # Guideline retrieval, from the instrument rather than from a second
         # clock: it is the component of the generator's total that is NOT model
         # time, and under contention it is the part that serialises first.
         row = db.execute(
             "SELECT payload_json FROM shadow_events_current WHERE patient_id = ? "
-            "AND kind = 'sage.drafted' ORDER BY id DESC LIMIT 1", (patient,)).fetchone()
+            "AND kind = 'sage.drafted' ORDER BY id DESC LIMIT 1",
+            (patient,),
+        ).fetchone()
     try:
         rec["retrieval_ms"] = (json.loads(row["payload_json"]) or {}).get("retrieval_ms")
     except Exception:
@@ -457,6 +528,7 @@ def cleanup(patients: list[str]) -> None:
     if not patients:
         return
     from database import db_session
+
     marks = ",".join("?" * len(patients))
     for sql in (
         f"DELETE FROM sage_assessment_actions WHERE assessment_id IN (SELECT id FROM sage_assessments WHERE patient_id IN ({marks}))",
@@ -478,8 +550,7 @@ def cleanup(patients: list[str]) -> None:
             pass
     try:
         with db_session() as db:
-            db.execute(f"UPDATE patients SET status = 'discharged' WHERE id IN ({marks})",
-                       patients)
+            db.execute(f"UPDATE patients SET status = 'discharged' WHERE id IN ({marks})", patients)
     except Exception:
         pass
 
@@ -487,14 +558,20 @@ def cleanup(patients: list[str]) -> None:
 # ═════════════════════════════════════════════════════════════════════════════
 #  Summary — median and RANGE, never a single flattering figure
 # ═════════════════════════════════════════════════════════════════════════════
-TIMING_KEYS = ("vitals_to_alert_ms", "alert_read_ms", "alert_visible_ms",
-               "retrieval_ms", "assessment_ttft_ms", "assessment_total_ms",
-               "alert_to_ready_ms", "total_to_actionable_ms")
+TIMING_KEYS = (
+    "vitals_to_alert_ms",
+    "alert_read_ms",
+    "alert_visible_ms",
+    "retrieval_ms",
+    "assessment_ttft_ms",
+    "assessment_total_ms",
+    "alert_to_ready_ms",
+    "total_to_actionable_ms",
+)
 
 
 def stat(records: list[dict], key: str) -> dict | None:
-    vals = sorted(float(r[key]) for r in records
-                  if isinstance(r.get(key), (int, float)))
+    vals = sorted(float(r[key]) for r in records if isinstance(r.get(key), (int, float)))
     if not vals:
         return None
     return {
@@ -524,8 +601,9 @@ def summarize(records: list[dict]) -> dict:
         # THE SHED/FAILURE RATE, split, because "the GPU was busy" and "the model
         # broke" are different operational facts with different fixes.
         "shed_rate": round(sum(reasons.get(k, 0) for k in ("shed", "queue_timeout")) / n, 3),
-        "failure_rate": round(sum(v for k, v in reasons.items()
-                                  if k not in ("shed", "queue_timeout")) / n, 3),
+        "failure_rate": round(
+            sum(v for k, v in reasons.items() if k not in ("shed", "queue_timeout")) / n, 3
+        ),
         "unavailable_reasons": reasons,
         "news2_agreed": sum(1 for r in records if r.get("news2_matches_engine")),
         "news2_checked": sum(1 for r in records if r.get("news2_stored") is not None),
@@ -538,18 +616,26 @@ def summarize(records: list[dict]) -> dict:
         # latency, not buried in the per-run table.
         "cards_total": sum(int(r.get("cards") or 0) for r in ready),
         "runs_with_a_card": sum(1 for r in ready if int(r.get("cards") or 0) > 0),
-        "actionable_rate": (round(sum(1 for r in ready if int(r.get("cards") or 0) > 0)
-                                  / len(ready), 3) if ready else None),
-        "considerations_p50": (statistics.median(
-            [r["considerations_n"] for r in ready if r.get("considerations_n") is not None])
-            if any(r.get("considerations_n") is not None for r in ready) else None),
+        "actionable_rate": (
+            round(sum(1 for r in ready if int(r.get("cards") or 0) > 0) / len(ready), 3)
+            if ready
+            else None
+        ),
+        "considerations_p50": (
+            statistics.median(
+                [r["considerations_n"] for r in ready if r.get("considerations_n") is not None]
+            )
+            if any(r.get("considerations_n") is not None for r in ready)
+            else None
+        ),
         "cardable_steps_total": sum(int(r.get("cardable_steps") or 0) for r in ready),
         "timings": {k: stat(records, k) for k in TIMING_KEYS},
         "timings_note": (
             "Each timing summary reports its own n. `alert_visible_ms` is over "
             "EVERY run that raised an alert; the assessment timings are over the "
             "runs that produced one, which is the only population they can "
-            "honestly describe."),
+            "honestly describe."
+        ),
     }
 
 
@@ -557,8 +643,10 @@ def fmt(s: dict | None, unit: str = "ms") -> str:
     if not s:
         return "not measured"
     if unit == "s":
-        return (f"{s['p50'] / 1000:.1f} s median (range {s['min'] / 1000:.1f}–"
-                f"{s['max'] / 1000:.1f} s, n={s['n']})")
+        return (
+            f"{s['p50'] / 1000:.1f} s median (range {s['min'] / 1000:.1f}–"
+            f"{s['max'] / 1000:.1f} s, n={s['n']})"
+        )
     return f"{s['p50']:.0f} ms median (range {s['min']:.0f}–{s['max']:.0f} ms, n={s['n']})"
 
 
@@ -567,8 +655,10 @@ def write_report(out: dict, path: Path) -> Path:
     t = s["timings"]
     md = path.with_suffix(".md")
     warm = out["environment"]["ollama_resident"]
-    warm_line = ", ".join(
-        f"{m.get('model')} resident" for m in warm if m.get("model")) or "NO model resident"
+    warm_line = (
+        ", ".join(f"{m.get('model')} resident" for m in warm if m.get("model"))
+        or "NO model resident"
+    )
     lines = [
         f"# Orb wedge benchmark: {out['run_at'][:10]}",
         "",
@@ -651,13 +741,16 @@ def write_report(out: dict, path: Path) -> Path:
         "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for i, r in enumerate(out["records"], 1):
-        def _s(key):
+
+        def _s(key: str, r: dict = r) -> str:
             v = r.get(key)
             return f"{v / 1000:.1f}" if isinstance(v, (int, float)) else "—"
+
         lines.append(
             f"| {i} | {r.get('alert_visible_ms', '—')} | {_s('alert_to_ready_ms')} | "
             f"{_s('total_to_actionable_ms')} | {r.get('outcome') or r.get('error')} | "
-            f"{r.get('cards', '—')} | {r.get('news2_stored', '—')} |")
+            f"{r.get('cards', '—')} | {r.get('news2_stored', '—')} |"
+        )
     md.write_text("\n".join(lines) + "\n")
     return md
 
@@ -666,19 +759,33 @@ def write_report(out: dict, path: Path) -> Path:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--runs", type=int, default=6, help="timed runs (default 6)")
-    ap.add_argument("--storm", type=int, default=0,
-                    help="alerts fired back-to-back per batch, to measure shed under "
-                         "contention (default 0 = one at a time)")
-    ap.add_argument("--db", default="copy", choices=None,
-                    help="'copy' (default, throwaway copy of the dev DB), 'fresh', "
-                         "or a path")
-    ap.add_argument("--timeout", type=float, default=300.0,
-                    help="seconds to wait for one assessment to resolve")
-    ap.add_argument("--no-warmup", action="store_true",
-                    help="skip the untimed warmup run (its cost lands in run 1)")
-    ap.add_argument("--keep", action="store_true",
-                    help="leave the bench patients and their drafts in the bench DB "
-                         "so the generated text can be read afterwards")
+    ap.add_argument(
+        "--storm",
+        type=int,
+        default=0,
+        help="alerts fired back-to-back per batch, to measure shed under "
+        "contention (default 0 = one at a time)",
+    )
+    ap.add_argument(
+        "--db",
+        default="copy",
+        choices=None,
+        help="'copy' (default, throwaway copy of the dev DB), 'fresh', or a path",
+    )
+    ap.add_argument(
+        "--timeout", type=float, default=300.0, help="seconds to wait for one assessment to resolve"
+    )
+    ap.add_argument(
+        "--no-warmup",
+        action="store_true",
+        help="skip the untimed warmup run (its cost lands in run 1)",
+    )
+    ap.add_argument(
+        "--keep",
+        action="store_true",
+        help="leave the bench patients and their drafts in the bench DB "
+        "so the generated text can be read afterwards",
+    )
     ap.add_argument("--label", default="")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
@@ -687,8 +794,10 @@ def main() -> int:
     if os.environ.get("ORB_DEPLOYMENT_PROFILE", "dev").strip().lower() == "prod":
         # Booting the dev database under the prod profile deactivates every
         # seeded login; a benchmark is never worth that.
-        print("REFUSING: ORB_DEPLOYMENT_PROFILE=prod. Run the bench under the dev "
-              "profile.", file=sys.stderr)
+        print(
+            "REFUSING: ORB_DEPLOYMENT_PROFILE=prod. Run the bench under the dev profile.",
+            file=sys.stderr,
+        )
         return 2
     os.environ.setdefault("ORB_SHADOW_ENABLED", "true")
     os.environ.setdefault("ORB_SAGE_ASSESSMENT_ENABLED", "true")
@@ -704,6 +813,7 @@ def main() -> int:
 
     from config import AMBIENT_LLM_MODEL, LLM_MODEL
     from database import init_db
+
     init_db()  # brings a copied database up to the current migration set
 
     from fastapi.testclient import TestClient
@@ -729,8 +839,10 @@ def main() -> int:
                 if not rec.get("error"):
                     finish_run(client, doctor, room, rec, args.timeout)
                 warmed = True
-                print(f"[wedge_bench] warmup outcome: {rec.get('outcome') or rec.get('error')}",
-                      flush=True)
+                print(
+                    f"[wedge_bench] warmup outcome: {rec.get('outcome') or rec.get('error')}",
+                    flush=True,
+                )
 
             done = 0
             while done < args.runs:
@@ -749,10 +861,13 @@ def main() -> int:
                         records.append(finish_run(client, doctor, room, rec, args.timeout))
                     done += 1
                     r = records[-1]
-                    print(f"[{done}/{args.runs}] alert_visible={r.get('alert_visible_ms')}ms "
-                          f"assessment={r.get('alert_to_ready_ms')}ms "
-                          f"outcome={r.get('outcome') or r.get('error')} "
-                          f"cards={r.get('cards')}", flush=True)
+                    print(
+                        f"[{done}/{args.runs}] alert_visible={r.get('alert_visible_ms')}ms "
+                        f"assessment={r.get('alert_to_ready_ms')}ms "
+                        f"outcome={r.get('outcome') or r.get('error')} "
+                        f"cards={r.get('cards')}",
+                        flush=True,
+                    )
     finally:
         if not args.keep:
             try:
@@ -762,12 +877,12 @@ def main() -> int:
 
     for rec in records:
         rec.pop("t0", None)
-        rec["t0_wall"] = (rec["t0_wall"].isoformat() if rec.get("t0_wall") else None)
+        rec["t0_wall"] = rec["t0_wall"].isoformat() if rec.get("t0_wall") else None
 
     out = {
         "benchmark": "wedge",
         "label": args.label,
-        "run_at": datetime.now(timezone.utc).isoformat(),
+        "run_at": datetime.now(UTC).isoformat(),
         "environment": {
             "hardware": hardware(),
             "ollama_resident": resident,
@@ -783,7 +898,7 @@ def main() -> int:
         "records": records,
     }
 
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     path = Path(args.out) if args.out else (REPO_ROOT / "docs" / "perf" / f"wedge-{stamp}.json")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(out, indent=2))
@@ -797,9 +912,11 @@ def main() -> int:
     if _SCRATCH is not None and not args.keep:
         shutil.rmtree(_SCRATCH, ignore_errors=True)
     elif _SCRATCH is not None:
-        print(f"[wedge_bench] --keep: bench database left at {_SCRATCH} "
-              f"({_SCRATCH.stat().st_size if _SCRATCH.is_file() else '430 MB'}) — "
-              f"delete it when you are done")
+        print(
+            f"[wedge_bench] --keep: bench database left at {_SCRATCH} "
+            f"({_SCRATCH.stat().st_size if _SCRATCH.is_file() else '430 MB'}) — "
+            f"delete it when you are done"
+        )
     return 0
 
 

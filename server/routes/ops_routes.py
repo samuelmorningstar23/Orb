@@ -35,6 +35,7 @@ status page is the surface most likely to be screenshotted into a WhatsApp
 group. That is also why there is no per-patient or per-ward variant of it and no
 scoping parameter — there is nothing here to scope.
 """
+
 from __future__ import annotations
 
 import logging
@@ -42,10 +43,10 @@ import uuid
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import PlainTextResponse
-
 from permissions import require_permission
-from services import ops_health_service
 from services.audit_service import log_audit_event
+
+from services import ops_health_service
 
 logger = logging.getLogger("orb.ops_routes")
 
@@ -77,9 +78,11 @@ def _audit_deep_read(request: Request, user: dict, surface: str) -> None:
         logger.warning("could not audit deep ops status read", exc_info=True)
 
 
+_OPS_STATUS_USER_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.get("/status")
-def ops_status(request: Request, deep: bool = False,
-               user: dict = Depends(require_permission("admin.overview"))):
+def ops_status(request: Request, deep: bool = False, user: dict = _OPS_STATUS_USER_DEFAULT):
     """The appliance's own health, in a shape a screen can render.
 
     ``deep=true`` adds the checks that cost something to run (an integrity read
@@ -91,9 +94,13 @@ def ops_status(request: Request, deep: bool = False,
     return payload
 
 
+_OPS_STATUS_TEXT_USER_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.get("/status.txt", response_class=PlainTextResponse)
-def ops_status_text(request: Request, deep: bool = False,
-                    user: dict = Depends(require_permission("admin.overview"))):
+def ops_status_text(
+    request: Request, deep: bool = False, user: dict = _OPS_STATUS_TEXT_USER_DEFAULT
+):
     """The same answer as plain text.
 
     This exists because the moment somebody needs it most is the moment the
@@ -103,5 +110,6 @@ def ops_status_text(request: Request, deep: bool = False,
     payload = ops_health_service.build_status(deep=deep)
     if deep:
         _audit_deep_read(request, user, "text")
-    return PlainTextResponse(ops_health_service.render_text(payload),
-                             media_type="text/plain; charset=utf-8")
+    return PlainTextResponse(
+        ops_health_service.render_text(payload), media_type="text/plain; charset=utf-8"
+    )

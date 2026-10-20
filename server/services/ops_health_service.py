@@ -56,6 +56,7 @@ NEVER RAISES. A status page that can throw is a status page that goes blank
 during the incident it exists for. Every collector converts its own failure into
 a check that says, in words, that it could not find out.
 """
+
 from __future__ import annotations
 
 import json
@@ -165,8 +166,13 @@ def _age_human(seconds: float | None) -> str:
 
 
 def _check(
-    key: str, title: str, status: str, summary: str,
-    *, what_to_do: str | None = None, detail: dict | None = None,
+    key: str,
+    title: str,
+    status: str,
+    summary: str,
+    *,
+    what_to_do: str | None = None,
+    detail: dict | None = None,
     notes: list[str] | None = None,
 ) -> dict:
     return {
@@ -189,9 +195,10 @@ def _broken(key: str, title: str, exc: Exception) -> dict:
     """
     logger.warning("ops status collector %s failed: %s", key, exc, exc_info=True)
     return _check(
-        key, title, ATTENTION,
-        "Orb could not check this. That does not mean it is broken. It means "
-        "nobody knows.",
+        key,
+        title,
+        ATTENTION,
+        "Orb could not check this. That does not mean it is broken. It means nobody knows.",
         what_to_do=(
             "Run the on-site check from a terminal for the full reason:\n"
             "    ./scripts/orb.sh status"
@@ -223,6 +230,7 @@ def _check_server() -> dict:
     posture: dict = {}
     try:
         from services.compliance_service import effective_deployment_posture
+
         posture = effective_deployment_posture()
     except Exception as exc:  # pragma: no cover - defensive; this page never raises
         logger.warning("ops status: deployment posture probe failed: %s", exc)
@@ -244,7 +252,9 @@ def _check_server() -> dict:
         # happening is that a vitals simulator is filling charts with fiction.
         reasons = "\n".join(f"  · {s.get('detail', '')}" for s in signals)
         return _check(
-            "server", "Orb server", ATTENTION,
+            "server",
+            "Orb server",
+            ATTENTION,
             f"Orb is running (started {_age_human(uptime)} ago) but it is in "
             f"DEVELOPER mode, not hospital mode.",
             what_to_do=(
@@ -258,7 +268,9 @@ def _check_server() -> dict:
             detail=detail,
         )
     return _check(
-        "server", "Orb server", OK,
+        "server",
+        "Orb server",
+        OK,
         f"Orb is running and answering. It has been up for {_age_human(uptime)}.",
         detail=detail,
     )
@@ -274,7 +286,9 @@ def _check_database(deep: bool) -> dict:
 
     if not path.is_file():
         return _check(
-            "database", "Patient database", URGENT,
+            "database",
+            "Patient database",
+            URGENT,
             "The patient database file is missing. Orb cannot store or retrieve "
             "any patient information.",
             what_to_do=(
@@ -301,11 +315,11 @@ def _check_database(deep: bool) -> dict:
     counts: dict[str, int] = {}
     try:
         from database import db_session
+
         with db_session() as db:
             for table in ("patients", "admissions", "users", "audit_logs"):
                 try:
-                    counts[table] = db.execute(
-                        f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                    counts[table] = db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
                 except Exception:
                     counts[table] = -1
             if deep:
@@ -322,7 +336,9 @@ def _check_database(deep: bool) -> dict:
 
     if not readable:
         return _check(
-            "database", "Patient database", URGENT,
+            "database",
+            "Patient database",
+            URGENT,
             "The patient database exists but Orb cannot open it.",
             what_to_do=(
                 "The usual cause is a missing or changed encryption key. Check "
@@ -336,7 +352,9 @@ def _check_database(deep: bool) -> dict:
 
     if detail.get("structure_check") not in (None, "ok"):
         return _check(
-            "database", "Patient database", URGENT,
+            "database",
+            "Patient database",
+            URGENT,
             "The patient database opens, but its internal structure check "
             "failed. Some records may be damaged.",
             what_to_do=(
@@ -350,7 +368,9 @@ def _check_database(deep: bool) -> dict:
 
     if not encrypted:
         return _check(
-            "database", "Patient database", URGENT,
+            "database",
+            "Patient database",
+            URGENT,
             "The patient database is readable, but it is NOT encrypted on disk. "
             "Anyone who takes this machine can read every patient record on it.",
             what_to_do=(
@@ -370,10 +390,13 @@ def _check_database(deep: bool) -> dict:
 
     patients = counts.get("patients", 0)
     return _check(
-        "database", "Patient database", OK,
+        "database",
+        "Patient database",
+        OK,
         f"The database is open and healthy, holding {patients} patient "
         f"record(s) in {detail['size']}. It is encrypted on disk.",
-        detail=detail, notes=notes,
+        detail=detail,
+        notes=notes,
     )
 
 
@@ -411,13 +434,16 @@ def _check_backups() -> dict:
     if directory.is_dir():
         files = sorted(
             directory.glob(f"{_BACKUP_PREFIX}*{_BACKUP_SUFFIX}"),
-            key=lambda p: p.stat().st_mtime, reverse=True,
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
         )
     detail["count"] = len(files)
 
     if not files:
         return _check(
-            "backups", "Backups", URGENT,
+            "backups",
+            "Backups",
+            URGENT,
             "There is no backup of this hospital's data at all. If this machine "
             "fails right now, everything on it is gone.",
             what_to_do=(
@@ -434,16 +460,19 @@ def _check_backups() -> dict:
     receipt = _read_receipt(newest)
     verified = bool(receipt and receipt.get("ok") is True)
 
-    detail.update({
-        "newest_file": newest.name,
-        "newest_age_seconds": int(age_s),
-        "newest_size": _bytes_human(stat.st_size),
-        "newest_size_bytes": stat.st_size,
-        "newest_verified": verified,
-        "has_receipt": receipt is not None,
-        "media_archive_present": newest.with_name(
-            newest.name[: -len(_BACKUP_SUFFIX)] + "-uploads.tar").exists(),
-    })
+    detail.update(
+        {
+            "newest_file": newest.name,
+            "newest_age_seconds": int(age_s),
+            "newest_size": _bytes_human(stat.st_size),
+            "newest_size_bytes": stat.st_size,
+            "newest_verified": verified,
+            "has_receipt": receipt is not None,
+            "media_archive_present": newest.with_name(
+                newest.name[: -len(_BACKUP_SUFFIX)] + "-uploads.tar"
+            ).exists(),
+        }
+    )
     if receipt:
         detail["verification"] = {
             "passed": bool(receipt.get("ok")),
@@ -459,7 +488,9 @@ def _check_backups() -> dict:
     # because a scheduled job is running and reporting into the void.
     if receipt is not None and not verified:
         return _check(
-            "backups", "Backups", URGENT,
+            "backups",
+            "Backups",
+            URGENT,
             f"{age_phrase}, and it FAILED its check: Orb opened it and found it "
             f"unusable. Treat this appliance as having no usable backup.",
             what_to_do=(
@@ -469,7 +500,8 @@ def _check_backups() -> dict:
                 "this machine for new patients until it succeeds. There is "
                 "nothing to fall back to."
             ),
-            detail=detail, notes=notes,
+            detail=detail,
+            notes=notes,
         )
 
     if not verified:
@@ -483,7 +515,10 @@ def _check_backups() -> dict:
                 f"allows, and Orb has no record that it was checked."
             )
         return _check(
-            "backups", "Backups", ATTENTION, summary,
+            "backups",
+            "Backups",
+            ATTENTION,
+            summary,
             what_to_do=(
                 "Run the backup command, which checks its own work and leaves a "
                 "dated receipt beside the file:\n"
@@ -491,12 +526,15 @@ def _check_backups() -> dict:
                 "Backups taken from the admin screen do not leave a receipt. "
                 "That is why this says 'unchecked' rather than 'broken'."
             ),
-            detail=detail, notes=notes,
+            detail=detail,
+            notes=notes,
         )
 
     if stale:
         return _check(
-            "backups", "Backups", ATTENTION,
+            "backups",
+            "Backups",
+            ATTENTION,
             f"{age_phrase}, which is older than the {max_age_h:.0f} hours this "
             f"site allows. It was checked successfully when it was made, so it "
             f"is usable. It is just out of date.",
@@ -506,7 +544,8 @@ def _check_backups() -> dict:
                 "    ./scripts/orb.sh backup\n"
                 "    ./scripts/orb.sh install-backup-schedule"
             ),
-            detail=detail, notes=notes,
+            detail=detail,
+            notes=notes,
         )
 
     offsite = _env("ORB_BACKUP_OFFSITE_DIR")
@@ -527,13 +566,18 @@ def _check_backups() -> dict:
     rows = (receipt or {}).get("row_counts") or {}
     proof = ""
     if rows:
-        proof = (f" It contains {rows.get('patients', '?')} patient record(s) "
-                 f"and {rows.get('audit_logs', '?')} history entries.")
+        proof = (
+            f" It contains {rows.get('patients', '?')} patient record(s) "
+            f"and {rows.get('audit_logs', '?')} history entries."
+        )
     return _check(
-        "backups", "Backups", OK,
+        "backups",
+        "Backups",
+        OK,
         f"{age_phrase} ({detail['newest_size']}) and was checked successfully: "
         f"it opens and holds real records.{proof}",
-        detail=detail, notes=notes,
+        detail=detail,
+        notes=notes,
     )
 
 
@@ -551,7 +595,10 @@ def _probe_models(timeout: float = 1.5) -> dict:
     base = (_env("ORB_OLLAMA_BASE_URL", "http://localhost:11434")).rstrip("/")
     configured = _configured_models()
     out: dict[str, Any] = {
-        "reachable": False, "configured": configured, "loaded": [], "not_loaded": configured,
+        "reachable": False,
+        "configured": configured,
+        "loaded": [],
+        "not_loaded": configured,
     }
     try:
         # An explicitly empty proxy handler: the default opener asks the
@@ -582,11 +629,15 @@ def _configured_models() -> list[str]:
     """
     try:
         import config  # lazy: this module also runs standalone
+
         models = [config.LLM_MODEL, config.AMBIENT_LLM_MODEL, config.THINKING_FAST_MODEL]
     except Exception:
         primary = _env("ORB_LLM_MODEL", "medgemma:27b")
-        models = [primary, _env("ORB_AMBIENT_LLM_MODEL") or primary,
-                  _env("ORB_FAST_MODEL", "medgemma:4b")]
+        models = [
+            primary,
+            _env("ORB_AMBIENT_LLM_MODEL") or primary,
+            _env("ORB_FAST_MODEL", "medgemma:4b"),
+        ]
     return [m for m in dict.fromkeys(models) if m]
 
 
@@ -597,11 +648,14 @@ def _models_switched_off() -> bool:
     module runs standalone and the server cannot be imported."""
     try:
         from services.model_switch import models_enabled
+
         return not models_enabled()
     except Exception:
         on = ("1", "true", "yes", "on")
-        return (_env("ORB_WARD_RECORD", "false").lower() in on
-                or _env("ORB_MODELS_ENABLED", "true").lower() not in on)
+        return (
+            _env("ORB_WARD_RECORD", "false").lower() in on
+            or _env("ORB_MODELS_ENABLED", "true").lower() not in on
+        )
 
 
 def _check_models() -> dict:
@@ -609,19 +663,28 @@ def _check_models() -> dict:
     # that is not running is the expected state, not a fault.
     if _models_switched_off():
         return _check(
-            "models", "Medical AI", OK,
+            "models",
+            "Medical AI",
+            OK,
             "The medical AI is switched off on this computer. Nothing is sent "
             "to it and nothing is loaded. Charts, observations and the rest of "
             "Orb work normally.",
-            detail={"models_enabled": False, "reachable": None,
-                    "configured": [], "loaded": [], "not_loaded": []},
+            detail={
+                "models_enabled": False,
+                "reachable": None,
+                "configured": [],
+                "loaded": [],
+                "not_loaded": [],
+            },
         )
     info = _probe_models()
     detail = dict(info)
 
     if not info["reachable"]:
         return _check(
-            "models", "Medical AI", URGENT,
+            "models",
+            "Medical AI",
+            URGENT,
             "The medical AI engine is not answering. Sage, dictation and image "
             "reading will all fail; the rest of Orb (charts, observations, "
             "medications, alerts) keeps working normally.",
@@ -636,7 +699,9 @@ def _check_models() -> dict:
 
     if not info["loaded"]:
         return _check(
-            "models", "Medical AI", ATTENTION,
+            "models",
+            "Medical AI",
+            ATTENTION,
             "The AI engine is running but no model is loaded into memory. The "
             "first question a doctor asks will take about a minute to answer; "
             "everything after that will be fast.",
@@ -649,7 +714,9 @@ def _check_models() -> dict:
         )
 
     return _check(
-        "models", "Medical AI", OK,
+        "models",
+        "Medical AI",
+        OK,
         f"The medical AI is loaded and warm ({len(info['loaded'])} of "
         f"{len(info['configured'])} model(s) in memory). Answers will be prompt.",
         detail=detail,
@@ -668,6 +735,7 @@ def _check_integrations() -> dict:
     sources: list[dict] = []
     try:
         from services.vitals_source.registry import registry
+
         status = registry.status()
         sources = status.get("sources", []) or []
         detail["feed_count"] = status.get("count", 0)
@@ -677,7 +745,9 @@ def _check_integrations() -> dict:
 
     if mode == "simulation":
         return _check(
-            "integrations", "Bedside data feeds", ATTENTION,
+            "integrations",
+            "Bedside data feeds",
+            ATTENTION,
             "Orb is generating FAKE observations for demonstration. Nothing on "
             "screen came from a real patient.",
             what_to_do=(
@@ -689,13 +759,17 @@ def _check_integrations() -> dict:
 
     if not monitor_on and not sources:
         return _check(
-            "integrations", "Bedside data feeds", OK,
+            "integrations",
+            "Bedside data feeds",
+            OK,
             "No bedside monitor feed is connected, so observations are the ones "
             "nurses type in. That is a supported way to run Orb.",
             what_to_do=None,
             detail=detail,
-            notes=["Connecting the ward monitors removes the typing step and "
-                   "lets Orb notice a deterioration between rounds."],
+            notes=[
+                "Connecting the ward monitors removes the typing step and "
+                "lets Orb notice a deterioration between rounds."
+            ],
         )
 
     running = [s for s in sources if s.get("running")]
@@ -714,7 +788,9 @@ def _check_integrations() -> dict:
 
     if sources and not running:
         return _check(
-            "integrations", "Bedside data feeds", URGENT,
+            "integrations",
+            "Bedside data feeds",
+            URGENT,
             f"{len(sources)} bedside feed(s) are configured but none is running. "
             f"Observations are NOT arriving from the monitors, and staff may not "
             f"realise they now have to enter them by hand.",
@@ -730,7 +806,9 @@ def _check_integrations() -> dict:
 
     if errored:
         return _check(
-            "integrations", "Bedside data feeds", ATTENTION,
+            "integrations",
+            "Bedside data feeds",
+            ATTENTION,
             f"{len(running)} bedside feed(s) are running, but {len(errored)} "
             f"reported an error recently. Some readings may be missing.",
             what_to_do=(
@@ -749,20 +827,23 @@ def _check_integrations() -> dict:
 
     if monitor_on and not sources:
         return _check(
-            "integrations", "Bedside data feeds", ATTENTION,
-            "Bedside monitors are switched on in the settings, but no feed has "
-            "started.",
+            "integrations",
+            "Bedside data feeds",
+            ATTENTION,
+            "Bedside monitors are switched on in the settings, but no feed has started.",
             what_to_do=(
-                "Restart Orb and watch the start-up messages:\n"
-                "    ./scripts/orb.sh restart"
+                "Restart Orb and watch the start-up messages:\n    ./scripts/orb.sh restart"
             ),
             detail=detail,
         )
 
     return _check(
-        "integrations", "Bedside data feeds", OK,
+        "integrations",
+        "Bedside data feeds",
+        OK,
         f"{len(running)} bedside feed(s) are connected and delivering readings.",
-        detail=detail, notes=notes,
+        detail=detail,
+        notes=notes,
     )
 
 
@@ -796,15 +877,16 @@ def _check_disk() -> dict:
     def _pct(vol: dict) -> float:
         return 100.0 if vol["free_percent"] is None else float(vol["free_percent"])
 
-    worst_name, worst = min(
-        volumes.items(), key=lambda kv: (_pct(kv[1]), kv[1]["free_bytes"]))
+    worst_name, worst = min(volumes.items(), key=lambda kv: (_pct(kv[1]), kv[1]["free_bytes"]))
     pct = _pct(worst)
 
     # Below a quarter of the warning level, or under 2 GB, writes start failing
     # outright — including the audit trail, which must never fail to record.
-    if pct < min_pct / 4 or worst["free_bytes"] < 2 * 1024 ** 3:
+    if pct < min_pct / 4 or worst["free_bytes"] < 2 * 1024**3:
         return _check(
-            "disk", "Storage space", URGENT,
+            "disk",
+            "Storage space",
+            URGENT,
             f"The disk holding the {worst_name} is almost full, only "
             f"{worst['free']} left ({pct:.0f}%). Orb is close to being unable to "
             f"save new records.",
@@ -820,7 +902,9 @@ def _check_disk() -> dict:
 
     if pct < min_pct:
         return _check(
-            "disk", "Storage space", ATTENTION,
+            "disk",
+            "Storage space",
+            ATTENTION,
             f"The disk holding the {worst_name} has {worst['free']} free "
             f"({pct:.0f}%), below the {min_pct:.0f}% this site expects.",
             what_to_do=(
@@ -832,7 +916,9 @@ def _check_disk() -> dict:
         )
 
     return _check(
-        "disk", "Storage space", OK,
+        "disk",
+        "Storage space",
+        OK,
         f"There is plenty of room: {volumes['database']['free']} free on the "
         f"database disk, {volumes['backups']['free']} on the backup disk.",
         detail=detail,
@@ -852,7 +938,9 @@ def _check_site_config(deep: bool) -> dict:
 
     if not snapshot["present"]:
         return _check(
-            "site_config", "Site settings", ATTENTION,
+            "site_config",
+            "Site settings",
+            ATTENTION,
             "This appliance has no site settings file, so it is running on the "
             "defaults Orb ships with, including the standard escalation "
             "timings, which may not match this hospital.",
@@ -863,7 +951,8 @@ def _check_site_config(deep: bool) -> dict:
                 "Then edit the departments, wards and escalation timings to "
                 "match this hospital."
             ),
-            detail=detail, notes=notes,
+            detail=detail,
+            notes=notes,
         )
 
     conflicts = snapshot.get("env_conflicts") or []
@@ -882,6 +971,7 @@ def _check_site_config(deep: bool) -> dict:
     if deep and cfg.departments:
         try:
             from database import db_session
+
             declared = {d["name"].strip().lower() for d in cfg.departments}
             with db_session() as db:
                 rows = db.execute(
@@ -900,7 +990,9 @@ def _check_site_config(deep: bool) -> dict:
     if unknown:
         listed = ", ".join(f"{k} ({v} patient(s))" for k, v in sorted(unknown.items()))
         return _check(
-            "site_config", "Site settings", ATTENTION,
+            "site_config",
+            "Site settings",
+            ATTENTION,
             f"Patients are admitted under department names this hospital's "
             f"settings file does not list: {listed}. Staff recorded under the "
             f"listed spelling will not see those patients.",
@@ -909,17 +1001,21 @@ def _check_site_config(deep: bool) -> dict:
                 "the spelling on the admissions. Department names must match "
                 "exactly, including capital letters."
             ),
-            detail=detail, notes=notes,
+            detail=detail,
+            notes=notes,
         )
 
     tiers = snapshot.get("escalation_tiers") or []
     ladder = " → ".join(t["label"] for t in tiers) if tiers else "Orb's default ladder"
     return _check(
-        "site_config", "Site settings", OK,
+        "site_config",
+        "Site settings",
+        OK,
         f"Settings loaded for {snapshot['site_name']}: "
         f"{snapshot['department_count']} department(s), "
         f"{len(snapshot.get('wards') or [])} ward(s). Alerts escalate {ladder}.",
-        detail=detail, notes=notes,
+        detail=detail,
+        notes=notes,
     )
 
 
@@ -943,7 +1039,9 @@ def _check_access() -> dict:
 
     if weak_count:
         return _check(
-            "access", "Sign-in and administrators", URGENT,
+            "access",
+            "Sign-in and administrators",
+            URGENT,
             f"{weak_count} staff account(s) still use one of the passwords Orb "
             f"ships with. Anyone who has read the manual can sign in as them "
             f"and open patient records.",
@@ -957,7 +1055,9 @@ def _check_access() -> dict:
 
     if admins == 0:
         return _check(
-            "access", "Sign-in and administrators", URGENT,
+            "access",
+            "Sign-in and administrators",
+            URGENT,
             "There is no administrator account on this appliance. Nobody can "
             "add staff, reset a password, or change any setting from the screen.",
             what_to_do=(
@@ -970,7 +1070,9 @@ def _check_access() -> dict:
 
     if admins and not with_mfa:
         return _check(
-            "access", "Sign-in and administrators", ATTENTION,
+            "access",
+            "Sign-in and administrators",
+            ATTENTION,
             f"{admins} administrator account(s) exist, but none uses a second "
             f"step at sign-in. A guessed password is enough to reach every "
             f"patient record.",
@@ -983,14 +1085,18 @@ def _check_access() -> dict:
 
     if admins is None:
         return _check(
-            "access", "Sign-in and administrators", ATTENTION,
+            "access",
+            "Sign-in and administrators",
+            ATTENTION,
             "Orb has not finished checking the staff accounts yet.",
             what_to_do="Refresh this page in a minute.",
             detail=detail,
         )
 
     return _check(
-        "access", "Sign-in and administrators", OK,
+        "access",
+        "Sign-in and administrators",
+        OK,
         f"{admins} administrator account(s), all using a second step at "
         f"sign-in. No account is using a password Orb ships with.",
         detail=detail,
@@ -1001,8 +1107,10 @@ def _check_access() -> dict:
 #  9. Which hospital sites does this appliance hold? (multi-site, multisite-1)
 # ═════════════════════════════════════════════════════════════════════════════
 def _spellings(items: list[dict], limit: int = 4) -> str:
-    shown = [f"'{v['spelling']}' on {v['rows']} {v['where']} (listed as "
-             f"'{v['master_spelling']}')" for v in items[:limit]]
+    shown = [
+        f"'{v['spelling']}' on {v['rows']} {v['where']} (listed as '{v['master_spelling']}')"
+        for v in items[:limit]
+    ]
     more = len(items) - limit
     return "; ".join(shown) + (f"; and {more} more" if more > 0 else "")
 
@@ -1016,6 +1124,7 @@ def _check_facilities() -> dict:
     import config
     import facility_fence
     from database import db_session
+
     from services import facility_service, ingestion_service
 
     with db_session() as db:
@@ -1045,104 +1154,132 @@ def _check_facilities() -> dict:
 
     problems: list[tuple[str, str, str]] = []
     if report["facility_one_problem"]:
-        problems.append((
-            URGENT,
-            "This hospital's own facility record (facility 1) is missing or marked "
-            "inactive. Orb is running now, but it will refuse to start after the "
-            "next restart.",
-            "The database was changed by hand. Restore the most recent verified "
-            "backup before restarting Orb:\n    ./scripts/orb.sh restore --list",
-        ))
+        problems.append(
+            (
+                URGENT,
+                "This hospital's own facility record (facility 1) is missing or marked "
+                "inactive. Orb is running now, but it will refuse to start after the "
+                "next restart.",
+                "The database was changed by hand. Restore the most recent verified "
+                "backup before restarting Orb:\n    ./scripts/orb.sh restore --list",
+            )
+        )
     if several:
-        problems.append((
-            URGENT,
-            f"{several} patient record(s) have admissions at more than one facility. "
-            f"Orb works out which facility a chart belongs to from its admissions, "
-            f"so these charts cannot be kept to one facility.",
-            "Do not admit these patients at another facility again. Ask the person "
-            "who installed Orb to review them before any further facility is set up.",
-        ))
+        problems.append(
+            (
+                URGENT,
+                f"{several} patient record(s) have admissions at more than one facility. "
+                f"Orb works out which facility a chart belongs to from its admissions, "
+                f"so these charts cannot be kept to one facility.",
+                "Do not admit these patients at another facility again. Ask the person "
+                "who installed Orb to review them before any further facility is set up.",
+            )
+        )
     if unknown:
         listed = ", ".join(f"{n} {label}" for label, n in sorted(unknown.items()))
-        problems.append((
-            ATTENTION,
-            f"Some records name a facility that is not on record: {listed}.",
-            "These records were changed by hand or came back from a damaged "
-            "restore. Restore the most recent verified backup, or ask the person "
-            "who installed Orb to correct them.",
-        ))
+        problems.append(
+            (
+                ATTENTION,
+                f"Some records name a facility that is not on record: {listed}.",
+                "These records were changed by hand or came back from a damaged "
+                "restore. Restore the most recent verified backup, or ask the person "
+                "who installed Orb to correct them.",
+            )
+        )
     if multi:
-        problems.append((
-            ATTENTION,
-            f"{report['facilities']} facilities are on record, so Orb keeps each "
-            f"facility's patients apart. Screens not yet ready for that answer "
-            f"\"not available yet\" instead of showing every facility's patients.",
-            "This is expected until every screen has been prepared for more than one "
-            "facility. If the extra facility was added by mistake, restore the backup "
-            "taken before it was added, from this machine's keyboard (a facility is "
-            "never deleted from a screen):\n    ./scripts/orb.sh restore --list",
-        ))
+        problems.append(
+            (
+                ATTENTION,
+                f"{report['facilities']} facilities are on record, so Orb keeps each "
+                f"facility's patients apart. Screens not yet ready for that answer "
+                f'"not available yet" instead of showing every facility\'s patients.',
+                "This is expected until every screen has been prepared for more than one "
+                "facility. If the extra facility was added by mistake, restore the backup "
+                "taken before it was added, from this machine's keyboard (a facility is "
+                "never deleted from a screen):\n    ./scripts/orb.sh restore --list",
+            )
+        )
     if variants:
-        problems.append((
-            ATTENTION,
-            f"Some records spell a department differently from the departments "
-            f"list: {_spellings(variants)}. Staff see patients by the exact "
-            f"spelling, so these patients may be missing from their ward's screens.",
-            "Correct the spelling on those records to match the departments list "
-            "exactly, including capital letters.",
-        ))
+        problems.append(
+            (
+                ATTENTION,
+                f"Some records spell a department differently from the departments "
+                f"list: {_spellings(variants)}. Staff see patients by the exact "
+                f"spelling, so these patients may be missing from their ward's screens.",
+                "Correct the spelling on those records to match the departments list "
+                "exactly, including capital letters.",
+            )
+        )
     if unmastered and multi:
         names = ", ".join(sorted({u["name"] for u in unmastered})[:6])
-        problems.append((
-            ATTENTION,
-            f"{len(unmastered)} department name(s) in use are not in the departments "
-            f"list ({names}), so Orb cannot tell which facility they belong to.",
-            "Add each one to the departments list of the right facility, or correct "
-            "the spelling to a listed department.",
-        ))
+        problems.append(
+            (
+                ATTENTION,
+                f"{len(unmastered)} department name(s) in use are not in the departments "
+                f"list ({names}), so Orb cannot tell which facility they belong to.",
+                "Add each one to the departments list of the right facility, or correct "
+                "the spelling to a listed department.",
+            )
+        )
     if multi and (sources["unbound"] or sources["refused"]):
         # multisite-16, ruling MS-R14 (a): such readings were filed to no patient.
         told = sources["unbound"] + [
             f"'{r['source_name'] or 'unnamed'}' was refused {r['refusals']} time(s): {r['words']}"
-            for r in sources["refused"]]
-        problems.append((
-            ATTENTION,
-            f"Some bedside or laboratory feeds are not filing to any patient, because more "
-            f"than one facility is on record and each feed files only to its own "
-            f"facility's patients: {'; '.join(told[:4])}"
-            + (f"; and {len(told) - 4} more." if len(told) > 4 else "."),
-            "Bind each feed to its facility. A bedside monitor feed: list its source name "
-            "under that facility in the site settings file, for example\n"
-            "    [[facilities]]\n    code = \"MAIN\"\n    ingestion_sources = [\"monitor_hl7\"]\n"
-            "then restart Orb. A laboratory or gateway that sends over the network: give it "
-            "its facility's own key, ORB_INGESTION_API_KEY_<facility code>, in the machine "
-            "settings file. Readings refused so far were put on no patient's chart; each "
-            "message is kept in the ingestion record, and laboratory results wait as "
-            "unmatched where that list is switched on.",
-        ))
+            for r in sources["refused"]
+        ]
+        problems.append(
+            (
+                ATTENTION,
+                f"Some bedside or laboratory feeds are not filing to any patient, because more "
+                f"than one facility is on record and each feed files only to its own "
+                f"facility's patients: {'; '.join(told[:4])}"
+                + (f"; and {len(told) - 4} more." if len(told) > 4 else "."),
+                "Bind each feed to its facility. A bedside monitor feed: list its source name "
+                "under that facility in the site settings file, for example\n"
+                '    [[facilities]]\n    code = "MAIN"\n    ingestion_sources = ["monitor_hl7"]\n'
+                "then restart Orb. A laboratory or gateway that sends over the network: give it "
+                "its facility's own key, ORB_INGESTION_API_KEY_<facility code>, in the machine "
+                "settings file. Readings refused so far were put on no patient's chart; each "
+                "message is kept in the ingestion record, and laboratory results wait as "
+                "unmatched where that list is switched on.",
+            )
+        )
 
     notes: list[str] = []
     if unmastered and not multi:
         notes.append(
             f"{len(unmastered)} department name(s) in use are not in the departments "
             f"list yet. That matters only once a second facility is set up, because "
-            f"the list says which facility each department belongs to.")
+            f"the list says which facility each department belongs to."
+        )
     if switch_on and not multi:
-        notes.append("ORB_MULTI_SITE is on. Only one facility is on record, so nothing "
-                     "changes until a second one is set up.")
+        notes.append(
+            "ORB_MULTI_SITE is on. Only one facility is on record, so nothing "
+            "changes until a second one is set up."
+        )
 
     if problems:
         rank = max(_RANK[p[0]] for p in problems)
         first = next(p for p in problems if _RANK[p[0]] == rank)
         notes = [p[1] for p in problems if p is not first] + notes
-        return _check("facilities", "Facilities", first[0], first[1],
-                      what_to_do=first[2], detail=detail, notes=notes)
+        return _check(
+            "facilities",
+            "Facilities",
+            first[0],
+            first[1],
+            what_to_do=first[2],
+            detail=detail,
+            notes=notes,
+        )
     return _check(
-        "facilities", "Facilities", OK,
+        "facilities",
+        "Facilities",
+        OK,
         f"One facility is on record ({main_name}, code "
         f"{facility_service.MAIN_FACILITY_CODE}), with "
         f"{report['department_master']} department(s) in the departments list.",
-        detail=detail, notes=notes,
+        detail=detail,
+        notes=notes,
     )
 
 
@@ -1185,9 +1322,8 @@ def build_status(deep: bool = False) -> dict:
     urgent = [c for c in checks if c["status"] == URGENT]
     attention = [c for c in checks if c["status"] == ATTENTION]
     if urgent:
-        headline = (
-            f"{len(urgent)} thing(s) need dealing with now"
-            + (f", and {len(attention)} more need attention soon." if attention else ".")
+        headline = f"{len(urgent)} thing(s) need dealing with now" + (
+            f", and {len(attention)} more need attention soon." if attention else "."
         )
     elif attention:
         headline = f"Orb is working. {len(attention)} thing(s) need attention soon."
@@ -1195,6 +1331,7 @@ def build_status(deep: bool = False) -> dict:
         headline = "Orb is working normally. Nothing needs attention."
 
     from services.site_config_service import current_site_config
+
     site = current_site_config().site_name
 
     return {

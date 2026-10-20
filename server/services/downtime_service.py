@@ -16,6 +16,7 @@ Design contract — EVERYTHING here must work with NO Ollama and NO network:
     optional torch/CfC overlay — so a snapshot can always be taken, even on a
     box with no models and no connectivity. That is the whole point.
 """
+
 from __future__ import annotations
 
 import atexit
@@ -26,18 +27,20 @@ import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from database import db_session
+
+from services import lab_observations
+from services.drug_chart import drug_chart_enabled
+from services.hospital_time import hospital_stamp
+from services.news2_text import news2_description, news2_qualifiers
+
 # NEWS2 is a pure, rule-based function (no network, no LLM, no torch). We call it
 # directly rather than vigil_service.get_patient_risk() so capture never pulls in
 # the optional CfC/torch overlay or any I/O beyond the DB.
 from services.vigil_service import compute_news2, scoring_enabled
-from services.drug_chart import drug_chart_enabled
-from services.news2_text import news2_description, news2_qualifiers
-from services.hospital_time import hospital_stamp
 from services.vital_charting import charted_text
-from services import lab_observations
 
 logger = logging.getLogger("orb.downtime")
 
@@ -58,16 +61,21 @@ _RECENT_LAB_RESULTS = 20
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _row_to_dict(row) -> dict:
     return dict(row) if row is not None else {}
 
 
-def _build_summary(demo: dict, allergies: list, problems: list,
-                   medications: list, news2: dict | None,
-                   has_vitals: bool = False) -> str:
+def _build_summary(
+    demo: dict,
+    allergies: list,
+    problems: list,
+    medications: list,
+    news2: dict | None,
+    has_vitals: bool = False,
+) -> str:
     """One-line, human-readable summary for the snapshot list / banner."""
     name = demo.get("name") or "Unknown patient"
     mrn = demo.get("mrn") or "—"
@@ -82,7 +90,8 @@ def _build_summary(demo: dict, allergies: list, problems: list,
     # Never "NKDA": an empty list is also a patient nobody has asked yet.
     allergy_note = (
         f"{len(allergies)} active allerg{'y' if len(allergies) == 1 else 'ies'}"
-        if allergies else "No allergies recorded"
+        if allergies
+        else "No allergies recorded"
     )
     parts = [
         f"{name} (MRN {mrn}{age_sex}){loc}",
@@ -163,17 +172,21 @@ def capture_snapshot(patient_id: str, created_by: str = "auto") -> dict:
         # AI-extracted drugs no pharmacist has checked; without it they print
         # like prescriptions. None on an Orb Ward Record computer, whose drug
         # chart stays on paper (services/drug_chart).
-        medications = [
-            _row_to_dict(r)
-            for r in db.execute(
-                """SELECT drug_name, dosage, route, frequency, status, source, notes,
+        medications = (
+            [
+                _row_to_dict(r)
+                for r in db.execute(
+                    """SELECT drug_name, dosage, route, frequency, status, source, notes,
                           verified_by
                    FROM medications
                    WHERE patient_id = ? AND status IN ('active','prn')
                    ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'prn' THEN 1 ELSE 2 END, drug_name""",
-                (patient_id,),
-            ).fetchall()
-        ] if drug_chart_enabled() else []
+                    (patient_id,),
+                ).fetchall()
+            ]
+            if drug_chart_enabled()
+            else []
+        )
 
         # Latest vitals row (full row so the printout shows exactly what was recorded).
         # id DESC: on a same-timestamp tie the later write (a correction) is the latest.
@@ -272,8 +285,7 @@ def capture_snapshot(patient_id: str, created_by: str = "auto") -> dict:
         # lane shares (void and superseded rows left out, julianday order).
         lab_results = [
             _row_to_dict(r)
-            for r in lab_observations.latest_per_analyte(
-                db, patient_id, limit=_RECENT_LAB_RESULTS)
+            for r in lab_observations.latest_per_analyte(db, patient_id, limit=_RECENT_LAB_RESULTS)
         ]
 
     # Scoring switched off (ORB_SCORING_ENABLED off, the Orb Ward Record): no
@@ -296,8 +308,11 @@ def capture_snapshot(patient_id: str, created_by: str = "auto") -> dict:
             # Unassessed values pass THROUGH as None: the same points, and
             # `complete` then tells the pack's reader the score is a minimum.
             consciousness=latest_vitals.get("consciousness"),
-            on_oxygen=(None if latest_vitals.get("on_oxygen") is None
-                       else bool(latest_vitals.get("on_oxygen"))),
+            on_oxygen=(
+                None
+                if latest_vitals.get("on_oxygen") is None
+                else bool(latest_vitals.get("on_oxygen"))
+            ),
             on_scale_2=on_scale_2,
         )
 
@@ -339,8 +354,9 @@ def capture_snapshot(patient_id: str, created_by: str = "auto") -> dict:
     }
     if not drug_chart_enabled():
         snapshot = _without_drug_chart(snapshot)
-    summary = _build_summary(demo, allergies, problems, medications, news2,
-                             has_vitals=latest_vitals is not None)
+    summary = _build_summary(
+        demo, allergies, problems, medications, news2, has_vitals=latest_vitals is not None
+    )
 
     with db_session() as db:
         cur = db.execute(
@@ -353,7 +369,10 @@ def capture_snapshot(patient_id: str, created_by: str = "auto") -> dict:
 
     logger.info(
         "[Downtime] Captured snapshot #%s for %s by %s (%s)",
-        snapshot_id, patient_id, created_by, summary,
+        snapshot_id,
+        patient_id,
+        created_by,
+        summary,
     )
     return {
         "id": snapshot_id,
@@ -395,7 +414,7 @@ def capture_all_admitted(created_by: str = "auto") -> dict:
     }
 
 
-def fhir_self_export_dir() -> "os.PathLike":
+def fhir_self_export_dir() -> str | os.PathLike:
     """Directory where nightly FHIR $everything self-exports are written.
 
     Created 0o700 (user-only) — the filenames themselves encode patient ids, so
@@ -414,7 +433,9 @@ def fhir_self_export_dir() -> "os.PathLike":
     PHI export root to the process CWD.
     """
     import os
+
     from config import BASE_DIR
+
     override = os.getenv("ORB_FHIR_EXPORT_DIR", "").strip()
     d = override or os.path.join(str(BASE_DIR), "downtime_exports")
     os.makedirs(d, mode=0o700, exist_ok=True)
@@ -544,13 +565,15 @@ def _bundle_path(out_dir, pid: str) -> str:
     collide and overwrite each other's bundle.
     """
     import hashlib as _hl
+
     safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in str(pid))
     digest = _hl.sha256(str(pid).encode("utf-8")).hexdigest()[:8]
     return os.path.join(str(out_dir), f"{safe}.{digest}.fhir.json")
 
 
-def _write_bundle_throttled(bundle: dict, final: str,
-                            chunk_bytes: int, chunk_sleep_s: float) -> int:
+def _write_bundle_throttled(
+    bundle: dict, final: str, chunk_bytes: int, chunk_sleep_s: float
+) -> int:
     """Serialise `bundle` to `final` atomically, in bounded chunks, yielding the
     GIL between them. Returns bytes written.
 
@@ -603,17 +626,18 @@ def _write_bundle_throttled(bundle: dict, final: str,
     return written
 
 
-def _export_one_patient(pid: str, out_dir, chunk_bytes: int,
-                        chunk_sleep_s: float, since: str | None) -> int:
+def _export_one_patient(
+    pid: str, out_dir, chunk_bytes: int, chunk_sleep_s: float, since: str | None
+) -> int:
     """Build and write one patient's bundle. Returns bytes written (0 if the
     patient produced no bundle). The unit of work — this is the seam if this job
     ever moves to a child process."""
     from services.fhir_export_service import patient_bundle
+
     bundle = patient_bundle(pid, since=since)
     if not bundle:
         return 0
-    return _write_bundle_throttled(bundle, _bundle_path(out_dir, pid),
-                                   chunk_bytes, chunk_sleep_s)
+    return _write_bundle_throttled(bundle, _bundle_path(out_dir, pid), chunk_bytes, chunk_sleep_s)
 
 
 def prune_fhir_self_exports(out_dir=None, retention_days: float | None = None) -> dict:
@@ -661,16 +685,23 @@ def prune_fhir_self_exports(out_dir=None, retention_days: float | None = None) -
             logger.warning("[Downtime] prune failed for %s: %s", name, e)
 
     if removed or tmp_removed:
-        logger.info("[Downtime] FHIR export prune: removed %s stale bundle(s) (%.1f MB) "
-                    "and %s orphaned .tmp file(s)", removed, freed / 1e6, tmp_removed)
+        logger.info(
+            "[Downtime] FHIR export prune: removed %s stale bundle(s) (%.1f MB) "
+            "and %s orphaned .tmp file(s)",
+            removed,
+            freed / 1e6,
+            tmp_removed,
+        )
     return {"removed": removed, "bytes_freed": freed, "tmp_removed": tmp_removed}
 
 
-def run_nightly_fhir_self_export(created_by: str = "auto",
-                                 min_interval_hours: float | None = 24.0,
-                                 chunk_bytes: int | None = None,
-                                 chunk_sleep_s: float | None = None,
-                                 patient_sleep_s: float | None = None) -> dict:
+def run_nightly_fhir_self_export(
+    created_by: str = "auto",
+    min_interval_hours: float | None = 24.0,
+    chunk_bytes: int | None = None,
+    chunk_sleep_s: float | None = None,
+    patient_sleep_s: float | None = None,
+) -> dict:
     """Export a FHIR $everything Bundle for every admitted patient to a durable
     LOCAL directory, THROTTLED so it cannot starve the event loop.
 
@@ -692,17 +723,33 @@ def run_nightly_fhir_self_export(created_by: str = "auto",
 
     if not _EXPORT_LOCK.acquire(blocking=False):
         logger.info("[Downtime] FHIR self-export already running — skipping this trigger")
-        return {"skipped": "already_running", "count": 0, "total_admitted": 0,
-                "failed": [], "directory": str(out_dir), "exported_at": _now_iso()}
+        return {
+            "skipped": "already_running",
+            "count": 0,
+            "total_admitted": 0,
+            "failed": [],
+            "directory": str(out_dir),
+            "exported_at": _now_iso(),
+        }
     try:
         if min_interval_hours:
             age = _last_run_age_hours(out_dir)
             if age is not None and age < min_interval_hours:
-                logger.info("[Downtime] FHIR self-export skipped — last run %.1f h ago "
-                            "(min interval %.1f h)", age, min_interval_hours)
-                return {"skipped": "too_soon", "last_run_age_hours": round(age, 2),
-                        "count": 0, "total_admitted": 0, "failed": [],
-                        "directory": str(out_dir), "exported_at": _now_iso()}
+                logger.info(
+                    "[Downtime] FHIR self-export skipped — last run %.1f h ago "
+                    "(min interval %.1f h)",
+                    age,
+                    min_interval_hours,
+                )
+                return {
+                    "skipped": "too_soon",
+                    "last_run_age_hours": round(age, 2),
+                    "count": 0,
+                    "total_admitted": 0,
+                    "failed": [],
+                    "directory": str(out_dir),
+                    "exported_at": _now_iso(),
+                }
 
         cb = _CHUNK_BYTES if chunk_bytes is None else chunk_bytes
         cs = _CHUNK_SLEEP_S if chunk_sleep_s is None else chunk_sleep_s
@@ -711,11 +758,12 @@ def run_nightly_fhir_self_export(created_by: str = "auto",
         since = None
         if _SINCE_DAYS:
             try:
-                since = (datetime.now(timezone.utc)
-                         - timedelta(days=float(_SINCE_DAYS))).isoformat()
+                since = (datetime.now(UTC) - timedelta(days=float(_SINCE_DAYS))).isoformat()
             except ValueError:
-                logger.warning("[Downtime] bad ORB_FHIR_EXPORT_SINCE_DAYS=%r — exporting full history",
-                               _SINCE_DAYS)
+                logger.warning(
+                    "[Downtime] bad ORB_FHIR_EXPORT_SINCE_DAYS=%r — exporting full history",
+                    _SINCE_DAYS,
+                )
 
         with db_session() as db:
             rows = db.execute(
@@ -746,8 +794,14 @@ def run_nightly_fhir_self_export(created_by: str = "auto",
         pruned = prune_fhir_self_exports(out_dir)
         _touch_marker(out_dir)
 
-        logger.info("[Downtime] FHIR self-export: %s/%s exported, %.1f MB in %.1fs to %s",
-                    exported, len(patient_ids), total_bytes / 1e6, duration, out_dir)
+        logger.info(
+            "[Downtime] FHIR self-export: %s/%s exported, %.1f MB in %.1fs to %s",
+            exported,
+            len(patient_ids),
+            total_bytes / 1e6,
+            duration,
+            out_dir,
+        )
         return {
             "count": exported,
             "total_admitted": len(patient_ids),
@@ -762,8 +816,9 @@ def run_nightly_fhir_self_export(created_by: str = "auto",
         _EXPORT_LOCK.release()
 
 
-async def run_nightly_fhir_self_export_async(created_by: str = "auto",
-                                             min_interval_hours: float | None = 24.0) -> dict:
+async def run_nightly_fhir_self_export_async(
+    created_by: str = "auto", min_interval_hours: float | None = 24.0
+) -> dict:
     """Loop-safe entry point. Runs the export on this module's PRIVATE
     single-thread executor.
 
@@ -774,11 +829,13 @@ async def run_nightly_fhir_self_export_async(created_by: str = "auto",
     """
     import asyncio as _aio
     import functools as _ft
+
     loop = _aio.get_running_loop()
     return await loop.run_in_executor(
         _EXPORT_EXECUTOR,
-        _ft.partial(run_nightly_fhir_self_export, created_by,
-                    min_interval_hours=min_interval_hours),
+        _ft.partial(
+            run_nightly_fhir_self_export, created_by, min_interval_hours=min_interval_hours
+        ),
     )
 
 
@@ -810,9 +867,14 @@ def _envelope(row) -> dict:
         # holds the drug chart. While it is on nothing reads one back.
         parsed = _without_drug_chart(parsed)
     if isinstance(parsed, dict) and (not scoring_enabled() or not drug_chart_enabled()):
-        summary = _build_summary(parsed.get("demographics") or {}, parsed.get("allergies") or [],
-                                 parsed.get("problems") or [], parsed.get("medications") or [],
-                                 parsed.get("news2"), has_vitals=bool(parsed.get("latest_vitals")))
+        summary = _build_summary(
+            parsed.get("demographics") or {},
+            parsed.get("allergies") or [],
+            parsed.get("problems") or [],
+            parsed.get("medications") or [],
+            parsed.get("news2"),
+            has_vitals=bool(parsed.get("latest_vitals")),
+        )
     return {
         "id": d.get("id"),
         "patient_id": d.get("patient_id"),
@@ -934,6 +996,7 @@ def _ward_pack_path(out_dir, ward: str, stamp: str) -> str:
     string (same collision-proofing as _bundle_path) + a UTC timestamp, or the
     stable 'latest' stamp the route and the on-disk fallback both read."""
     import hashlib as _hl
+
     safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in str(ward)) or "ward"
     digest = _hl.sha256(str(ward).encode("utf-8")).hexdigest()[:8]
     return os.path.join(str(out_dir), f"{_WARD_PACK_PREFIX}.{safe}.{digest}.{stamp}.html")
@@ -1027,8 +1090,9 @@ def _staff_names(items: list[dict]) -> dict:
         return {}
     marks = ",".join("?" * len(ids))
     with db_session() as db:
-        rows = db.execute(f"SELECT id, name FROM users WHERE id IN ({marks})",
-                          tuple(ids)).fetchall()
+        rows = db.execute(
+            f"SELECT id, name FROM users WHERE id IN ({marks})", tuple(ids)
+        ).fetchall()
     return {r["id"]: r["name"] for r in rows if r["name"]}
 
 
@@ -1096,6 +1160,7 @@ _AI_MED_SOURCES = ("llm_extracted", "agentic")
 def _away_words(away: dict) -> str:
     """'on leave' or 'absconded' (adt-11): the one helper's words."""
     from services.adt.clinical_pause import AWAY_WORDS
+
     return AWAY_WORDS.get(away.get("presence_status") or "", "off the ward")
 
 
@@ -1109,6 +1174,7 @@ def _away_html(item: dict) -> str:
     if not away:
         return ""
     from services.adt.clinical_pause import pause_reason
+
     words = _away_words(away)
     since = _when(away.get("presence_since"))
     when = f" since {_e(since)}" if since else ""
@@ -1126,7 +1192,9 @@ def _med_verification_html(m: dict) -> str:
     if str(m.get("source") or "").lower() not in _AI_MED_SOURCES:
         return ""
     if "verified_by" not in m:  # a snapshot from before verified_by was kept
-        return "<br><small>AI-extracted, verification not shown in this copy: check the chart</small>"
+        return (
+            "<br><small>AI-extracted, verification not shown in this copy: check the chart</small>"
+        )
     if m.get("verified_by"):
         return "<br><small>AI-extracted, verified by a pharmacist</small>"
     return "<br><small><b>AI-extracted, not verified by a pharmacist</b></small>"
@@ -1160,8 +1228,10 @@ def _render_labs(snap: dict) -> str:
                 f"<td>{_e(r.get('abnormal_flag'), dash='')}</td>"
                 f"<td>{_e(_when(r.get('observed_at')), dash='Not recorded')}</td></tr>"
             )
-        out += ("<table><thead><tr><th>Test</th><th>Result</th><th>Range</th>"
-                f"<th>Flag</th><th>Taken</th></tr></thead><tbody>{rows}</tbody></table>")
+        out += (
+            "<table><thead><tr><th>Test</th><th>Result</th><th>Range</th>"
+            f"<th>Flag</th><th>Taken</th></tr></thead><tbody>{rows}</tbody></table>"
+        )
     for rep in reports:
         body, truncated = _clip(rep.get("content"))
         out += (
@@ -1207,13 +1277,15 @@ def _render_vitals_news2(snap: dict) -> str:
     news2 = (snap.get("news2") or {}) if scoring else {}
     band = (
         f"{_e(news2.get('raw_news2'))} ({_e(news2.get('level'))})"
-        if news2.get("raw_news2") is not None else "—"
+        if news2.get("raw_news2") is not None
+        else "—"
     )
     scale_2 = news2.get("spo2_scale") == 2
     if scale_2 and news2.get("raw_news2") is not None:
         band += _SCALE_2_BAND
     if news2.get("raw_news2") is not None:
         band += _band_qualifiers_html(news2)
+
     # AS CHARTED (services/vital_charting.py): the numbers the NEWS2 in the
     # last column was scored on. A raw "28.2" is not a value on the paper
     # chart a nurse re-scores from during downtime; "28" is.
@@ -1241,8 +1313,9 @@ def _render_vitals_news2(snap: dict) -> str:
     )
 
 
-def _render_patient_page(item: dict, index: int, total: int,
-                         ward: str, generated_at: str, names: dict | None = None) -> str:
+def _render_patient_page(
+    item: dict, index: int, total: int, ward: str, generated_at: str, names: dict | None = None
+) -> str:
     """One admitted patient as one printed page. `item` carries the patients row
     (identity), the snapshot envelope (or None), code_status and escalation.
     `names` maps staff ids to names (_staff_names)."""
@@ -1278,8 +1351,8 @@ def _render_patient_page(item: dict, index: int, total: int,
     if allergies:
         allergy_html = "".join(
             f'<div class="wp-allergy">{_e(a.get("substance"))}'
-            f'{", " + _e(a.get("severity")) if a.get("severity") else ""}'
-            f'{", " + _e(a.get("reaction")) if a.get("reaction") else ""}</div>'
+            f"{', ' + _e(a.get('severity')) if a.get('severity') else ''}"
+            f"{', ' + _e(a.get('reaction')) if a.get('reaction') else ''}</div>"
             for a in allergies
         )
     else:
@@ -1319,7 +1392,8 @@ def _render_patient_page(item: dict, index: int, total: int,
             _e(p.get("problem")) + (f" [{_e(p.get('icd10_code'))}]" if p.get("icd10_code") else "")
             for p in problems
         )
-        if problems else "<i>No active problems recorded.</i>"
+        if problems
+        else "<i>No active problems recorded.</i>"
     )
 
     if notes:
@@ -1384,10 +1458,12 @@ def _missing_from_pack(doc: str, admitted: list[dict]) -> list[dict]:
     if "<!-- orb-pack-patient:" not in doc:
         # A pack written before the markers existed: its identity grid (or
         # its SNAPSHOT UNAVAILABLE heading) still prints the MRN.
-        return [p for p in admitted
-                if not p.get("mrn")
-                or (f"<b>MRN</b>{_e(p['mrn'])}<" not in doc
-                    and f"MRN {_e(p['mrn'])} ·" not in doc)]
+        return [
+            p
+            for p in admitted
+            if not p.get("mrn")
+            or (f"<b>MRN</b>{_e(p['mrn'])}<" not in doc and f"MRN {_e(p['mrn'])} ·" not in doc)
+        ]
     return [p for p in admitted if _pack_patient_marker(p.get("id")) not in doc]
 
 
@@ -1417,8 +1493,9 @@ def _with_missing_banner(doc: str, missing: list[dict]) -> str:
     return doc.replace("<body>", "<body>" + banner, 1)
 
 
-def _render_ward_pack(ward: str, items: list[dict], generated_at: str,
-                      names: dict | None = None) -> str:
+def _render_ward_pack(
+    ward: str, items: list[dict], generated_at: str, names: dict | None = None
+) -> str:
     """The full self-contained pack document for one ward: census index page,
     then one page per admitted patient. Staff are named from `names`, or
     looked up here when the caller did not."""
@@ -1437,7 +1514,8 @@ def _render_ward_pack(ward: str, items: list[dict], generated_at: str,
         news2 = (snap.get("news2") or {}) if scoring else {}
         band = (
             f"{_e(news2.get('raw_news2'))} ({_e(news2.get('level'))})"
-            if news2.get("raw_news2") is not None else "—"
+            if news2.get("raw_news2") is not None
+            else "—"
         )
         if news2.get("spo2_scale") == 2 and news2.get("raw_news2") is not None:
             band += _SCALE_2_BAND
@@ -1450,8 +1528,7 @@ def _render_ward_pack(ward: str, items: list[dict], generated_at: str,
             f"<tr><td>{_e(item.get('bed'))}</td><td>{_e(item.get('name'))}{away_note}</td>"
             f"<td>{_e(item.get('mrn'))}</td>"
             + (f"<td>{band}</td>" if scoring else "")
-            + 
-            f"<td>{_e(_when((env or {}).get('created_at')), dash='NO SNAPSHOT')}</td></tr>"
+            + f"<td>{_e(_when((env or {}).get('created_at')), dash='NO SNAPSHOT')}</td></tr>"
         )
 
     pages = "".join(
@@ -1511,13 +1588,15 @@ def prune_ward_packs(out_dir=None, retention_days: float | None = None) -> dict:
         except OSError as e:
             logger.warning("[Downtime] ward pack prune failed for %s: %s", name, e)
     if removed:
-        logger.info("[Downtime] ward pack prune: removed %s stale pack(s) (%.1f MB)",
-                    removed, freed / 1e6)
+        logger.info(
+            "[Downtime] ward pack prune: removed %s stale pack(s) (%.1f MB)", removed, freed / 1e6
+        )
     return {"removed": removed, "bytes_freed": freed}
 
 
-def build_ward_print_packs(created_by: str = "auto", out_dir=None,
-                           retention_days: float | None = None) -> dict:
+def build_ward_print_packs(
+    created_by: str = "auto", out_dir=None, retention_days: float | None = None
+) -> dict:
     """Render one printable HTML pack per ward to durable local disk.
 
     Called by the hourly downtime sweep right after capture_all_admitted, so the
@@ -1530,7 +1609,7 @@ def build_ward_print_packs(created_by: str = "auto", out_dir=None,
     out_dir = out_dir if out_dir is not None else fhir_self_export_dir()
     mirror = ward_pack_mirror_dir()
     generated_at = _now_iso()
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
 
     files: list[str] = []
     mirrored: list[str] = []
@@ -1540,8 +1619,9 @@ def build_ward_print_packs(created_by: str = "auto", out_dir=None,
         by_ward, _captured = _pack_items(rows, escalations, created_by)
         for ward, items in by_ward.items():
             try:
-                written, copied = _write_ward_pack(out_dir, ward, items,
-                                                   generated_at, stamp, mirror)
+                written, copied = _write_ward_pack(
+                    out_dir, ward, items, generated_at, stamp, mirror
+                )
                 files.extend(written)
                 mirrored.extend(copied)
                 patients += len(items)
@@ -1553,8 +1633,9 @@ def build_ward_print_packs(created_by: str = "auto", out_dir=None,
         # Same retention in the mirror, so a ward that has emptied ages out
         # there too instead of leaving its last census on a share forever.
         prune_ward_packs(mirror, retention_days)
-    logger.info("[Downtime] ward packs: %s ward(s), %s patient(s) -> %s",
-                len(by_ward), patients, out_dir)
+    logger.info(
+        "[Downtime] ward packs: %s ward(s), %s patient(s) -> %s", len(by_ward), patients, out_dir
+    )
     return {
         "wards": len(by_ward),
         "patients": patients,
@@ -1588,6 +1669,7 @@ def _admitted_for_packs(ward: str | None = None) -> tuple[list[dict], dict]:
         # Only while ORB_ADT is on: with it off no row gains the key and the
         # pack is exactly as before.
         from services.adt.clinical_pause import away_by_patient
+
         away = away_by_patient([r["id"] for r in rows], db=db)
         if away is not None:
             for r in rows:
@@ -1613,12 +1695,13 @@ def _snapshot_age_s(env: dict | None) -> float | None:
     except ValueError:
         return None
     if when.tzinfo is None:
-        when = when.replace(tzinfo=timezone.utc)
-    return (datetime.now(timezone.utc) - when).total_seconds()
+        when = when.replace(tzinfo=UTC)
+    return (datetime.now(UTC) - when).total_seconds()
 
 
-def _pack_items(rows: list[dict], escalations: dict, created_by: str,
-                refresh_older_than_s: float | None = None) -> tuple[dict, int]:
+def _pack_items(
+    rows: list[dict], escalations: dict, created_by: str, refresh_older_than_s: float | None = None
+) -> tuple[dict, int]:
     """Group admitted patients by ward with the snapshot each page prints.
 
     A patient with no snapshot is captured on the fly. With
@@ -1640,8 +1723,7 @@ def _pack_items(rows: list[dict], escalations: dict, created_by: str,
                 env = capture_snapshot(item["id"], created_by=created_by)
                 captured += 1
             except Exception as e:
-                logger.warning("[Downtime] ward pack capture failed for %s: %s",
-                               item["id"], e)
+                logger.warning("[Downtime] ward pack capture failed for %s: %s", item["id"], e)
                 if not stale:
                     env = None
         item["envelope"] = env
@@ -1649,8 +1731,9 @@ def _pack_items(rows: list[dict], escalations: dict, created_by: str,
     return by_ward, captured
 
 
-def _write_ward_pack(out_dir, ward: str, items: list[dict], generated_at: str,
-                     stamp: str, mirror: str | None) -> tuple[list[str], list[str]]:
+def _write_ward_pack(
+    out_dir, ward: str, items: list[dict], generated_at: str, stamp: str, mirror: str | None
+) -> tuple[list[str], list[str]]:
     """Render one ward's pack and write it (timestamped + latest), then copy
     the latest to the mirror. Returns (files written, mirror copies)."""
     doc = _render_ward_pack(ward, items, generated_at)
@@ -1667,14 +1750,19 @@ def _write_ward_pack(out_dir, ward: str, items: list[dict], generated_at: str,
                 _write_private(target, doc)
                 copied.append(target)
         except Exception as e:  # the local pack is written; a dead share must not cost it
-            logger.warning("[Downtime] ward pack mirror to %s failed for ward %r: %s",
-                           mirror, ward, e)
+            logger.warning(
+                "[Downtime] ward pack mirror to %s failed for ward %r: %s", mirror, ward, e
+            )
     return [timestamped, latest], copied
 
 
-def rebuild_ward_pack(ward: str, created_by: str = "auto", out_dir=None,
-                      refresh_older_than_s: float | None = None,
-                      lock_wait_s: float = _WARD_PACK_LOCK_WAIT_S) -> dict | None:
+def rebuild_ward_pack(
+    ward: str,
+    created_by: str = "auto",
+    out_dir=None,
+    refresh_older_than_s: float | None = None,
+    lock_wait_s: float = _WARD_PACK_LOCK_WAIT_S,
+) -> dict | None:
     """Rebuild one ward's pack now, from snapshots no older than
     refresh_older_than_s (older ones are re-captured; pure SQLite, no model).
 
@@ -1687,17 +1775,24 @@ def rebuild_ward_pack(ward: str, created_by: str = "auto", out_dir=None,
         return None
     try:
         generated_at = _now_iso()
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
         rows, escalations = _admitted_for_packs(ward)
         by_ward, captured = _pack_items(rows, escalations, created_by, refresh_older_than_s)
         items = by_ward.get(ward) or []
         files: list[str] = []
         mirrored: list[str] = []
         if items:
-            files, mirrored = _write_ward_pack(out_dir, ward, items, generated_at,
-                                               stamp, ward_pack_mirror_dir())
-        return {"ward": ward, "patients": len(items), "captured": captured,
-                "files": files, "mirrored": mirrored, "generated_at": generated_at}
+            files, mirrored = _write_ward_pack(
+                out_dir, ward, items, generated_at, stamp, ward_pack_mirror_dir()
+            )
+        return {
+            "ward": ward,
+            "patients": len(items),
+            "captured": captured,
+            "files": files,
+            "mirrored": mirrored,
+            "generated_at": generated_at,
+        }
     finally:
         _WARD_PACK_LOCK.release()
 
@@ -1708,22 +1803,25 @@ def read_latest_ward_pack(patient_id: str) -> tuple[str, str | None]:
     unknown patient id: the route maps that to the same 404 the scope
     refusal produces."""
     with db_session() as db:
-        row = db.execute(
-            "SELECT ward FROM patients WHERE id = ?", (patient_id,)
-        ).fetchone()
+        row = db.execute("SELECT ward FROM patients WHERE id = ?", (patient_id,)).fetchone()
     if row is None:
         raise ValueError(f"Patient not found: {patient_id}")
     ward = row["ward"] or _UNASSIGNED_WARD
     path = _ward_pack_path(fhir_self_export_dir(), ward, "latest")
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             return ward, f.read()
     except OSError:
         return ward, None
 
 
-def serve_ward_pack(patient_id: str, created_by: str = "auto",
-                    max_age_s: float | None = None, *, user: dict | None = None) -> dict:
+def serve_ward_pack(
+    patient_id: str,
+    created_by: str = "auto",
+    max_age_s: float | None = None,
+    *,
+    user: dict | None = None,
+) -> dict:
     """The ward pack for this patient's ward, current enough to print.
 
     The file on disk is served as it is only when it is younger than
@@ -1738,6 +1836,7 @@ def serve_ward_pack(patient_id: str, created_by: str = "auto",
     if user is not None:
         from fastapi import HTTPException
         from permissions import enforce_patient_scope
+
         enforce_patient_scope(user, patient_id)
         with db_session() as db:
             anchor = db.execute("SELECT ward FROM patients WHERE id = ?", (patient_id,)).fetchone()
@@ -1754,14 +1853,23 @@ def serve_ward_pack(patient_id: str, created_by: str = "auto",
                     raise
             else:
                 allowed.append(row)
-        groups, captured = _pack_items(allowed, escalations, created_by,
-                                       _WARD_PACK_MAX_AGE_S if max_age_s is None else max_age_s)
+        groups, captured = _pack_items(
+            allowed,
+            escalations,
+            created_by,
+            _WARD_PACK_MAX_AGE_S if max_age_s is None else max_age_s,
+        )
         items = groups.get(ward, [])
         # No disk cache shared across users. Existing durable packs stay for
         # the explicitly offline operator workflow, never this authenticated read.
         doc = _render_ward_pack(ward, items, _now_iso()) if items else None
-        return {"ward": ward, "html": doc, "rebuilt": bool(items),
-                "captured": captured, "missing": []}
+        return {
+            "ward": ward,
+            "html": doc,
+            "rebuilt": bool(items),
+            "captured": captured,
+            "missing": [],
+        }
     max_age = _WARD_PACK_MAX_AGE_S if max_age_s is None else max_age_s
     ward, doc = read_latest_ward_pack(patient_id)
     path = _ward_pack_path(fhir_self_export_dir(), ward, "latest")
@@ -1771,15 +1879,15 @@ def serve_ward_pack(patient_id: str, created_by: str = "auto",
         age = time.time() - os.path.getmtime(path)
     except OSError:
         age = None
-    needs_rebuild = (doc is None or age is None or age > max_age
-                     or bool(_missing_from_pack(doc, admitted)))
+    needs_rebuild = (
+        doc is None or age is None or age > max_age or bool(_missing_from_pack(doc, admitted))
+    )
 
     rebuilt = False
     captured = 0
     if needs_rebuild:
         try:
-            result = rebuild_ward_pack(ward, created_by=created_by,
-                                       refresh_older_than_s=max_age)
+            result = rebuild_ward_pack(ward, created_by=created_by, refresh_older_than_s=max_age)
         except Exception as e:  # the file on disk is still worth serving
             logger.warning("[Downtime] ward pack rebuild failed for %r: %s", ward, e)
             result = None
@@ -1790,8 +1898,12 @@ def serve_ward_pack(patient_id: str, created_by: str = "auto",
             admitted, _ = _admitted_for_packs(ward)
 
     if doc is None:
-        return {"ward": ward, "html": None, "rebuilt": rebuilt,
-                "captured": captured, "missing": []}
+        return {"ward": ward, "html": None, "rebuilt": rebuilt, "captured": captured, "missing": []}
     missing = _missing_from_pack(doc, admitted)
-    return {"ward": ward, "html": _with_missing_banner(doc, missing),
-            "rebuilt": rebuilt, "captured": captured, "missing": missing}
+    return {
+        "ward": ward,
+        "html": _with_missing_banner(doc, missing),
+        "rebuilt": rebuilt,
+        "captured": captured,
+        "missing": missing,
+    }

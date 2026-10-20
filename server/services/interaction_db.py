@@ -26,6 +26,7 @@ trailing comment (BNF / Stockley's / FDA labelling / DDInter). This is a
 starter clinical set, NOT a comprehensive database; production deployments
 should additionally bulk-load a licensed/maintained source.
 """
+
 from __future__ import annotations
 
 import logging
@@ -39,137 +40,378 @@ logger = logging.getLogger("orb.interaction_db")
 # Ordered roughly by drug family. Sources noted inline.
 _BUILTIN: list[tuple[str, str, str, str, str]] = [
     # ── Anticoagulants / antiplatelets — bleeding ───────────────────────────
-    ("anticoagulants", "nsaids", "class", "severe",
-     "Additive bleeding risk (GI/intracranial)."),                       # BNF: warfarin + NSAID
-    ("anticoagulants", "anticoagulants", "class", "severe",
-     "Compounded anticoagulation, major bleeding risk."),               # BNF
-    ("warfarin", "nsaids", "ingredient", "severe",
-     "Displacement + antiplatelet effect markedly raises bleeding risk."),  # Stockley's
-    ("warfarin", "aspirin", "ingredient", "severe",
-     "Additive antiplatelet + anticoagulant effect, major bleeding."),  # Stockley's
-    ("warfarin", "azoles", "ingredient", "severe",
-     "CYP2C9 inhibition (fluconazole/miconazole) raises INR, bleeding."),  # BNF
-    ("warfarin", "macrolides", "ingredient", "severe",
-     "CYP3A4 inhibition raises warfarin effect, raised INR."),          # Stockley's
-    ("warfarin", "amiodarone", "ingredient", "severe",
-     "CYP2C9/3A4 inhibition raises INR over days–weeks."),               # BNF
-    ("warfarin", "metronidazole", "ingredient", "severe",
-     "Inhibits warfarin metabolism, markedly raised INR."),             # Stockley's
-    ("warfarin", "trimethoprim", "ingredient", "severe",
-     "Co-trimoxazole inhibits CYP2C9 and displaces warfarin, raised INR."),  # BNF
-    ("anticoagulants", "ssri", "class", "moderate",
-     "Impaired platelet function adds to anticoagulation, GI bleed."),  # BNF
+    (
+        "anticoagulants",
+        "nsaids",
+        "class",
+        "severe",
+        "Additive bleeding risk (GI/intracranial).",
+    ),  # BNF: warfarin + NSAID
+    (
+        "anticoagulants",
+        "anticoagulants",
+        "class",
+        "severe",
+        "Compounded anticoagulation, major bleeding risk.",
+    ),  # BNF
+    (
+        "warfarin",
+        "nsaids",
+        "ingredient",
+        "severe",
+        "Displacement + antiplatelet effect markedly raises bleeding risk.",
+    ),  # Stockley's
+    (
+        "warfarin",
+        "aspirin",
+        "ingredient",
+        "severe",
+        "Additive antiplatelet + anticoagulant effect, major bleeding.",
+    ),  # Stockley's
+    (
+        "warfarin",
+        "azoles",
+        "ingredient",
+        "severe",
+        "CYP2C9 inhibition (fluconazole/miconazole) raises INR, bleeding.",
+    ),  # BNF
+    (
+        "warfarin",
+        "macrolides",
+        "ingredient",
+        "severe",
+        "CYP3A4 inhibition raises warfarin effect, raised INR.",
+    ),  # Stockley's
+    (
+        "warfarin",
+        "amiodarone",
+        "ingredient",
+        "severe",
+        "CYP2C9/3A4 inhibition raises INR over days–weeks.",
+    ),  # BNF
+    (
+        "warfarin",
+        "metronidazole",
+        "ingredient",
+        "severe",
+        "Inhibits warfarin metabolism, markedly raised INR.",
+    ),  # Stockley's
+    (
+        "warfarin",
+        "trimethoprim",
+        "ingredient",
+        "severe",
+        "Co-trimoxazole inhibits CYP2C9 and displaces warfarin, raised INR.",
+    ),  # BNF
+    (
+        "anticoagulants",
+        "ssri",
+        "class",
+        "moderate",
+        "Impaired platelet function adds to anticoagulation, GI bleed.",
+    ),  # BNF
     # Omeprazole and esomeprazole only: pantoprazole is the usual alternative.
-    ("clopidogrel", "cyp2c19_inhibiting_ppis", "ingredient", "moderate",
-     "Omeprazole/esomeprazole inhibit CYP2C19 → reduced clopidogrel activation."),  # FDA
-
+    (
+        "clopidogrel",
+        "cyp2c19_inhibiting_ppis",
+        "ingredient",
+        "moderate",
+        "Omeprazole/esomeprazole inhibit CYP2C19 → reduced clopidogrel activation.",
+    ),  # FDA
     # ── ACE inhibitors / ARBs / potassium — hyperkalaemia & renal ───────────
-    ("ace_inhibitors", "potassium", "class", "moderate",
-     "Hyperkalaemia risk."),                                             # BNF
-    ("ace_inhibitors", "nsaids", "class", "moderate",
-     "Reduced renal function; hyperkalaemia; blunted antihypertensive effect."),  # BNF
-    ("ace_inhibitors", "potassium_sparing_diuretics", "class", "moderate",
-     "Additive hyperkalaemia."),                                         # BNF
-    ("potassium", "potassium_sparing_diuretics", "class", "severe",
-     "Additive potassium load, dangerous hyperkalaemia."),              # BNF
-    ("potassium_sparing_diuretics", "nsaids", "class", "moderate",
-     "Reduced renal excretion of potassium, hyperkalaemia."),           # BNF
-    ("spironolactone", "potassium", "ingredient", "severe",
-     "Potassium-sparing diuretic + potassium, severe hyperkalaemia."),  # BNF
-
+    ("ace_inhibitors", "potassium", "class", "moderate", "Hyperkalaemia risk."),  # BNF
+    (
+        "ace_inhibitors",
+        "nsaids",
+        "class",
+        "moderate",
+        "Reduced renal function; hyperkalaemia; blunted antihypertensive effect.",
+    ),  # BNF
+    (
+        "ace_inhibitors",
+        "potassium_sparing_diuretics",
+        "class",
+        "moderate",
+        "Additive hyperkalaemia.",
+    ),  # BNF
+    (
+        "potassium",
+        "potassium_sparing_diuretics",
+        "class",
+        "severe",
+        "Additive potassium load, dangerous hyperkalaemia.",
+    ),  # BNF
+    (
+        "potassium_sparing_diuretics",
+        "nsaids",
+        "class",
+        "moderate",
+        "Reduced renal excretion of potassium, hyperkalaemia.",
+    ),  # BNF
+    (
+        "spironolactone",
+        "potassium",
+        "ingredient",
+        "severe",
+        "Potassium-sparing diuretic + potassium, severe hyperkalaemia.",
+    ),  # BNF
     # ── Statins — myopathy / rhabdomyolysis ─────────────────────────────────
-    ("statins", "macrolides", "class", "moderate",
-     "Increased statin levels → myopathy/rhabdomyolysis risk."),         # BNF (simvastatin)
-    ("statins", "azoles", "class", "moderate",
-     "CYP3A4 inhibition raises statin levels, myopathy."),              # BNF
-    ("statins", "fibrates", "class", "moderate",
-     "Additive muscle toxicity, rhabdomyolysis."),                      # BNF
-    ("statins", "amiodarone", "class", "moderate",
-     "Raised simvastatin levels, dose-related myopathy."),              # FDA labelling
-    ("statins", "verapamil", "class", "moderate",
-     "CYP3A4 inhibition raises simvastatin, myopathy."),                # BNF
-    ("statins", "ciclosporin", "ingredient", "severe",
-     "Markedly raised statin exposure, rhabdomyolysis."),               # BNF
-
+    (
+        "statins",
+        "macrolides",
+        "class",
+        "moderate",
+        "Increased statin levels → myopathy/rhabdomyolysis risk.",
+    ),  # BNF (simvastatin)
+    (
+        "statins",
+        "azoles",
+        "class",
+        "moderate",
+        "CYP3A4 inhibition raises statin levels, myopathy.",
+    ),  # BNF
+    (
+        "statins",
+        "fibrates",
+        "class",
+        "moderate",
+        "Additive muscle toxicity, rhabdomyolysis.",
+    ),  # BNF
+    (
+        "statins",
+        "amiodarone",
+        "class",
+        "moderate",
+        "Raised simvastatin levels, dose-related myopathy.",
+    ),  # FDA labelling
+    (
+        "statins",
+        "verapamil",
+        "class",
+        "moderate",
+        "CYP3A4 inhibition raises simvastatin, myopathy.",
+    ),  # BNF
+    (
+        "statins",
+        "ciclosporin",
+        "ingredient",
+        "severe",
+        "Markedly raised statin exposure, rhabdomyolysis.",
+    ),  # BNF
     # ── SSRIs / MAOIs / serotonergics — serotonin syndrome ──────────────────
-    ("ssri", "maoi", "class", "severe",
-     "Serotonin syndrome, contraindicated; observe washout period."),  # BNF (contraindicated)
-    ("ssri", "nsaids", "class", "moderate",
-     "Impaired platelet aggregation + GI irritation, GI bleeding."),    # BNF
-    ("ssri", "triptans", "class", "moderate",
-     "Additive serotonergic effect, serotonin syndrome."),             # FDA
-    ("ssri", "tramadol", "ingredient", "moderate",
-     "Additive serotonergic + seizure risk, serotonin syndrome."),     # BNF
-    ("maoi", "opioids", "class", "severe",
-     "Pethidine/tramadol + MAOI, serotonin syndrome / CNS excitation."),  # BNF
-    ("maoi", "sympathomimetics", "class", "severe",
-     "Hypertensive crisis."),                                            # BNF
-
+    (
+        "ssri",
+        "maoi",
+        "class",
+        "severe",
+        "Serotonin syndrome, contraindicated; observe washout period.",
+    ),  # BNF (contraindicated)
+    (
+        "ssri",
+        "nsaids",
+        "class",
+        "moderate",
+        "Impaired platelet aggregation + GI irritation, GI bleeding.",
+    ),  # BNF
+    (
+        "ssri",
+        "triptans",
+        "class",
+        "moderate",
+        "Additive serotonergic effect, serotonin syndrome.",
+    ),  # FDA
+    (
+        "ssri",
+        "tramadol",
+        "ingredient",
+        "moderate",
+        "Additive serotonergic + seizure risk, serotonin syndrome.",
+    ),  # BNF
+    (
+        "maoi",
+        "opioids",
+        "class",
+        "severe",
+        "Pethidine/tramadol + MAOI, serotonin syndrome / CNS excitation.",
+    ),  # BNF
+    ("maoi", "sympathomimetics", "class", "severe", "Hypertensive crisis."),  # BNF
     # ── Digoxin — raised levels / toxicity ──────────────────────────────────
-    ("digoxin", "amiodarone", "ingredient", "severe",
-     "Amiodarone raises digoxin levels, toxicity; halve digoxin dose."),  # BNF
-    ("digoxin", "verapamil", "ingredient", "moderate",
-     "Reduced digoxin clearance, raised levels."),                      # BNF
-    ("digoxin", "macrolides", "ingredient", "moderate",
-     "Raised digoxin absorption/levels, toxicity."),                    # Stockley's
-    ("digoxin", "diuretics", "ingredient", "moderate",
-     "Diuretic-induced hypokalaemia potentiates digoxin toxicity."),     # BNF
-
+    (
+        "digoxin",
+        "amiodarone",
+        "ingredient",
+        "severe",
+        "Amiodarone raises digoxin levels, toxicity; halve digoxin dose.",
+    ),  # BNF
+    (
+        "digoxin",
+        "verapamil",
+        "ingredient",
+        "moderate",
+        "Reduced digoxin clearance, raised levels.",
+    ),  # BNF
+    (
+        "digoxin",
+        "macrolides",
+        "ingredient",
+        "moderate",
+        "Raised digoxin absorption/levels, toxicity.",
+    ),  # Stockley's
+    (
+        "digoxin",
+        "diuretics",
+        "ingredient",
+        "moderate",
+        "Diuretic-induced hypokalaemia potentiates digoxin toxicity.",
+    ),  # BNF
     # ── Methotrexate — antifolate toxicity ──────────────────────────────────
-    ("methotrexate", "nsaids", "ingredient", "severe",
-     "Reduced renal clearance of methotrexate, myelosuppression."),     # BNF
-    ("methotrexate", "trimethoprim", "ingredient", "severe",
-     "Additive antifolate effect, severe myelosuppression."),           # BNF (avoid)
-    ("methotrexate", "penicillins", "ingredient", "moderate",
-     "Reduced renal excretion of methotrexate, raised levels."),        # Stockley's
-    ("methotrexate", "proton_pump_inhibitors", "ingredient", "moderate",
-     "Reduced clearance of high-dose methotrexate."),                    # FDA
-
+    (
+        "methotrexate",
+        "nsaids",
+        "ingredient",
+        "severe",
+        "Reduced renal clearance of methotrexate, myelosuppression.",
+    ),  # BNF
+    (
+        "methotrexate",
+        "trimethoprim",
+        "ingredient",
+        "severe",
+        "Additive antifolate effect, severe myelosuppression.",
+    ),  # BNF (avoid)
+    (
+        "methotrexate",
+        "penicillins",
+        "ingredient",
+        "moderate",
+        "Reduced renal excretion of methotrexate, raised levels.",
+    ),  # Stockley's
+    (
+        "methotrexate",
+        "proton_pump_inhibitors",
+        "ingredient",
+        "moderate",
+        "Reduced clearance of high-dose methotrexate.",
+    ),  # FDA
     # ── QT prolongation — torsades ──────────────────────────────────────────
-    ("qt_prolonging", "qt_prolonging", "class", "severe",
-     "Additive QT prolongation, torsades de pointes."),                 # CredibleMeds
-    ("macrolides", "qt_prolonging", "class", "moderate",
-     "Additive QT prolongation."),                                       # CredibleMeds
-    ("antipsychotics", "qt_prolonging", "class", "severe",
-     "Additive QT prolongation, torsades."),                            # CredibleMeds
-    ("fluoroquinolones", "qt_prolonging", "class", "moderate",
-     "Additive QT prolongation."),                                       # CredibleMeds
-
+    (
+        "qt_prolonging",
+        "qt_prolonging",
+        "class",
+        "severe",
+        "Additive QT prolongation, torsades de pointes.",
+    ),  # CredibleMeds
+    (
+        "macrolides",
+        "qt_prolonging",
+        "class",
+        "moderate",
+        "Additive QT prolongation.",
+    ),  # CredibleMeds
+    (
+        "antipsychotics",
+        "qt_prolonging",
+        "class",
+        "severe",
+        "Additive QT prolongation, torsades.",
+    ),  # CredibleMeds
+    (
+        "fluoroquinolones",
+        "qt_prolonging",
+        "class",
+        "moderate",
+        "Additive QT prolongation.",
+    ),  # CredibleMeds
     # ── CNS / respiratory depression ────────────────────────────────────────
-    ("opioids", "opioids", "class", "moderate",
-     "Additive sedation / respiratory depression."),                     # BNF
-    ("opioids", "benzodiazepines", "class", "severe",
-     "Profound sedation, respiratory depression, coma and death."),      # FDA black box
-    ("opioids", "gabapentinoids", "class", "moderate",
-     "Additive CNS/respiratory depression."),                           # MHRA
-
+    (
+        "opioids",
+        "opioids",
+        "class",
+        "moderate",
+        "Additive sedation / respiratory depression.",
+    ),  # BNF
+    (
+        "opioids",
+        "benzodiazepines",
+        "class",
+        "severe",
+        "Profound sedation, respiratory depression, coma and death.",
+    ),  # FDA black box
+    (
+        "opioids",
+        "gabapentinoids",
+        "class",
+        "moderate",
+        "Additive CNS/respiratory depression.",
+    ),  # MHRA
     # ── Lithium — narrow therapeutic index ──────────────────────────────────
-    ("lithium", "nsaids", "ingredient", "severe",
-     "Reduced renal lithium clearance, toxicity."),                     # BNF
-    ("lithium", "thiazides", "ingredient", "severe",
-     "Reduced lithium excretion, toxicity."),                           # BNF
-    ("lithium", "ace_inhibitors", "ingredient", "moderate",
-     "Reduced lithium clearance, raised levels."),                      # BNF
-    ("lithium", "diuretics", "ingredient", "moderate",
-     "Sodium depletion reduces lithium clearance, toxicity."),          # BNF
-
+    (
+        "lithium",
+        "nsaids",
+        "ingredient",
+        "severe",
+        "Reduced renal lithium clearance, toxicity.",
+    ),  # BNF
+    ("lithium", "thiazides", "ingredient", "severe", "Reduced lithium excretion, toxicity."),  # BNF
+    (
+        "lithium",
+        "ace_inhibitors",
+        "ingredient",
+        "moderate",
+        "Reduced lithium clearance, raised levels.",
+    ),  # BNF
+    (
+        "lithium",
+        "diuretics",
+        "ingredient",
+        "moderate",
+        "Sodium depletion reduces lithium clearance, toxicity.",
+    ),  # BNF
     # ── Theophylline — narrow therapeutic index ─────────────────────────────
-    ("theophylline", "fluoroquinolones", "ingredient", "severe",
-     "Ciprofloxacin inhibits CYP1A2, theophylline toxicity/seizures."),  # BNF
-    ("theophylline", "macrolides", "ingredient", "moderate",
-     "Reduced theophylline clearance, raised levels."),                 # Stockley's
-
+    (
+        "theophylline",
+        "fluoroquinolones",
+        "ingredient",
+        "severe",
+        "Ciprofloxacin inhibits CYP1A2, theophylline toxicity/seizures.",
+    ),  # BNF
+    (
+        "theophylline",
+        "macrolides",
+        "ingredient",
+        "moderate",
+        "Reduced theophylline clearance, raised levels.",
+    ),  # Stockley's
     # ── Cardiovascular / miscellaneous high-consequence ─────────────────────
-    ("beta_blockers", "verapamil", "class", "severe",
-     "Additive negative chronotropy, bradycardia, AV block, asystole."),  # BNF (IV avoid)
-    ("nitrates", "sildenafil", "ingredient", "severe",
-     "PDE5 inhibitor + nitrate, profound hypotension; contraindicated."),  # FDA
-    ("allopurinol", "azathioprine", "ingredient", "severe",
-     "Xanthine-oxidase inhibition raises 6-MP, life-threatening myelosuppression."),  # BNF
-    ("metformin", "iodinated_contrast", "ingredient", "moderate",
-     "Contrast nephrotoxicity + metformin, lactic acidosis risk; withhold."),  # BNF
-    ("nsaids", "nsaids", "class", "moderate",
-     "Additive GI/renal toxicity."),                                     # BNF
+    (
+        "beta_blockers",
+        "verapamil",
+        "class",
+        "severe",
+        "Additive negative chronotropy, bradycardia, AV block, asystole.",
+    ),  # BNF (IV avoid)
+    (
+        "nitrates",
+        "sildenafil",
+        "ingredient",
+        "severe",
+        "PDE5 inhibitor + nitrate, profound hypotension; contraindicated.",
+    ),  # FDA
+    (
+        "allopurinol",
+        "azathioprine",
+        "ingredient",
+        "severe",
+        "Xanthine-oxidase inhibition raises 6-MP, life-threatening myelosuppression.",
+    ),  # BNF
+    (
+        "metformin",
+        "iodinated_contrast",
+        "ingredient",
+        "moderate",
+        "Contrast nephrotoxicity + metformin, lactic acidosis risk; withhold.",
+    ),  # BNF
+    ("nsaids", "nsaids", "class", "moderate", "Additive GI/renal toxicity."),  # BNF
 ]
 
 
@@ -198,8 +440,7 @@ def seed_builtin_interactions() -> int:
                        severity=excluded.severity,
                        mechanism=excluded.mechanism,
                        source=excluded.source""",
-                (term_a.lower().strip(), term_b.lower().strip(),
-                 match_type, severity, mechanism),
+                (term_a.lower().strip(), term_b.lower().strip(), match_type, severity, mechanism),
             )
     logger.info("Seeded %d builtin drug interactions", len(_BUILTIN))
     return len(_BUILTIN)

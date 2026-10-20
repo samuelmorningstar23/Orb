@@ -49,19 +49,22 @@ long ago — the rest of the sheet is current and this section is a snapshot. A
 supplement that reads as though a clinician wrote it, or as though it describes
 the patient now, is worse than no supplement at all.
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone, timedelta, date
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
 from database import db_session, run_db
-from services.vigil_service import get_vitals_trend, risk_for_row, scoring_enabled
+
 from services.hospital_time import hospital_stamp
 from services.medorders import held as held_labels
-from services.vital_charting import charted_text
 from services.news2_text import news2_qualifiers
+from services.vigil_service import get_vitals_trend, risk_for_row, scoring_enabled
+from services.vital_charting import charted_text
 
 logger = logging.getLogger("orb.ipass")
 
@@ -86,7 +89,7 @@ _SEVERITY_MAP = {
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _iso(dt: datetime) -> str:
@@ -124,9 +127,21 @@ def _num(v, digits: int = 0):
 
 #: Tokens that must keep their conventional casing when humanised generically.
 _ACRONYMS: dict[str, str] = {
-    "news2": "NEWS2", "spo2": "SpO2", "bp": "BP", "hr": "HR", "rr": "RR",
-    "acvpu": "ACVPU", "iv": "IV", "icu": "ICU", "prn": "PRN", "nkda": "NKDA",
-    "ai": "AI", "mrn": "MRN", "ipass": "I-PASS", "od": "OD", "gcs": "GCS",
+    "news2": "NEWS2",
+    "spo2": "SpO2",
+    "bp": "BP",
+    "hr": "HR",
+    "rr": "RR",
+    "acvpu": "ACVPU",
+    "iv": "IV",
+    "icu": "ICU",
+    "prn": "PRN",
+    "nkda": "NKDA",
+    "ai": "AI",
+    "mrn": "MRN",
+    "ipass": "I-PASS",
+    "od": "OD",
+    "gcs": "GCS",
 }
 
 
@@ -190,12 +205,14 @@ _ASSESSMENT_STATE_PHRASES: dict[str, str] = {
 #: are not the same statement about where the reasoning came from.
 _CITATION_PHRASES: dict[str, str] = {
     "model_cited": "Sage cited the guideline(s) listed below",
-    "system_attributed": ("Sage cited nothing; Orb matched its wording to the "
-                          "guideline(s) listed below"),
-    "retrieved": ("guidelines were retrieved but the wording could not be tied "
-                  "to any of them"),
-    "none": ("no guideline in Orb's corpus matched this alert. This is model "
-             "reasoning over the chart alone"),
+    "system_attributed": (
+        "Sage cited nothing; Orb matched its wording to the guideline(s) listed below"
+    ),
+    "retrieved": ("guidelines were retrieved but the wording could not be tied to any of them"),
+    "none": (
+        "no guideline in Orb's corpus matched this alert. This is model "
+        "reasoning over the chart alone"
+    ),
 }
 
 #: `confidence` from `sage_service.classify_answer_confidence`.
@@ -207,13 +224,13 @@ _CONFIDENCE_PHRASES: dict[str, str] = {
 
 
 def _trend_phrase(trend_label) -> str:
-    return _TREND_PHRASES.get(str(trend_label or "").lower(),
-                              humanise_enum(trend_label, "trend not assessed"))
+    return _TREND_PHRASES.get(
+        str(trend_label or "").lower(), humanise_enum(trend_label, "trend not assessed")
+    )
 
 
 def _level_phrase(level) -> str:
-    return _LEVEL_PHRASES.get(str(level or "").lower(),
-                              humanise_enum(level, "band not assessed"))
+    return _LEVEL_PHRASES.get(str(level or "").lower(), humanise_enum(level, "band not assessed"))
 
 
 def _bundle_label(bundle_type) -> str:
@@ -225,18 +242,20 @@ def _bundle_label(bundle_type) -> str:
 
 def _assessment_state_phrase(state) -> str:
     return _ASSESSMENT_STATE_PHRASES.get(
-        str(state or "").lower(), humanise_enum(state, "review status not recorded"))
+        str(state or "").lower(), humanise_enum(state, "review status not recorded")
+    )
 
 
 def _citation_phrase(basis) -> str:
     return _CITATION_PHRASES.get(
-        str(basis or "").lower(), humanise_enum(basis, "evidence basis not recorded"))
+        str(basis or "").lower(), humanise_enum(basis, "evidence basis not recorded")
+    )
 
 
 def _confidence_phrase(confidence) -> str:
     return _CONFIDENCE_PHRASES.get(
-        str(confidence or "").lower(),
-        humanise_enum(confidence, "confidence not recorded"))
+        str(confidence or "").lower(), humanise_enum(confidence, "confidence not recorded")
+    )
 
 
 def _stamp_phrase(created_at) -> str:
@@ -249,7 +268,7 @@ def _stamp_phrase(created_at) -> str:
     return hospital_stamp(created_at)
 
 
-def _ago_phrase(minutes: int) -> str:
+def _ago_phrase(minutes: int | None) -> str:
     """'2 hours ago' / '40 minutes ago'. Never a bare number and never `None`."""
     if minutes is None:
         return "at an unrecorded time"
@@ -412,11 +431,14 @@ AI_SUPPLEMENT_HEADING = "SUPPLEMENT: AI-DRAFTED ASSESSMENT (NOT WRITTEN BY A CLI
 AI_DRAFTED_LABEL = "AI-drafted by Orb Sage, not written by a clinician"
 AI_SUPPLEMENT_DISCLAIMER = (
     "Nothing in this section has been ordered, charted or administered. "
-    "It is machine-generated decision support and carries no clinical authority.")
+    "It is machine-generated decision support and carries no clinical authority."
+)
 AI_SUPPLEMENT_END = "-- end of AI-drafted supplement --"
 
-def _get_reusable_assessment_rows(db, patient_id: str, states, depth: str,
-                                  limit: int = 5) -> list[dict]:
+
+def _get_reusable_assessment_rows(
+    db, patient_id: str, states, depth: str, limit: int = 5
+) -> list[dict]:
     """Candidate assessments, newest first. Age is filtered in PYTHON, not SQL.
 
     `sage_assessments.created_at` is a Python `isoformat()` string carrying a
@@ -494,7 +516,7 @@ def _age_seconds(created_at, now: datetime) -> float | None:
     except (TypeError, ValueError):
         return None
     if stamp.tzinfo is None:
-        stamp = stamp.replace(tzinfo=timezone.utc)
+        stamp = stamp.replace(tzinfo=UTC)
     return max(0.0, (now - stamp).total_seconds())
 
 
@@ -503,8 +525,9 @@ def _age_minutes(created_at, now: datetime) -> int | None:
     return None if seconds is None else int(seconds // 60)
 
 
-def get_reasoned_assessment(patient_id: str,
-                            max_age_hours: int = HANDOFF_WINDOW_HOURS) -> dict | None:
+def get_reasoned_assessment(
+    patient_id: str, max_age_hours: int = HANDOFF_WINDOW_HOURS
+) -> dict | None:
     """Sage's full reasoned assessment for this patient, or None.
 
     REUSE ONLY — see the rule above this function. Returns None whenever there
@@ -519,6 +542,7 @@ def get_reasoned_assessment(patient_id: str,
     """
     try:
         from services import sage_assessment_service as sas
+
         carriable = (sas.STATE_READY, sas.STATE_APPROVED)
         # `declined` is fetched but never carried — see rule 2b.
         considered = carriable + (sas.STATE_DECLINED,)
@@ -542,8 +566,10 @@ def get_reasoned_assessment(patient_id: str,
                     # THE VETO (rule 2b). The most recent verdict on this
                     # patient is a clinician saying no. Stop — do not reach past
                     # it for an older draft they have effectively superseded.
-                    logger.info("[I-PASS] %s: newest Sage assessment was declined "
-                                "— no supplement carried", patient_id)
+                    logger.info(
+                        "[I-PASS] %s: newest Sage assessment was declined — no supplement carried",
+                        patient_id,
+                    )
                     return None
                 if not (row.get("summary") or "").strip():
                     # Nothing to carry. Rule 3: never invent prose for a heading.
@@ -552,12 +578,16 @@ def get_reasoned_assessment(patient_id: str,
                 break
             if not chosen:
                 return None
-            endorsement = _get_endorsement(db, chosen["id"]) if (
-                chosen.get("state") == sas.STATE_APPROVED) else None
+            endorsement = (
+                _get_endorsement(db, chosen["id"])
+                if (chosen.get("state") == sas.STATE_APPROVED)
+                else None
+            )
         payload = sas.render(chosen)
     except Exception:
-        logger.warning("[I-PASS] could not read a Sage assessment for %s",
-                       patient_id, exc_info=True)
+        logger.warning(
+            "[I-PASS] could not read a Sage assessment for %s", patient_id, exc_info=True
+        )
         return None
 
     # `render` re-derives state on read (a row abandoned mid-generation reports
@@ -577,8 +607,9 @@ def get_reasoned_assessment(patient_id: str,
         f"NEWS2 {news2} ({_level_phrase(payload.get('news2_level'))})"
         + ("".join(f" · {q}" for q in quals) + "," if quals else "")
         + " as scored when this was written"
-        if news2 is not None else
-        "Orb had no NEWS2 on file when this was written")
+        if news2 is not None
+        else "Orb had no NEWS2 on file when this was written"
+    )
 
     endorsed_by = None
     if endorsement:
@@ -607,11 +638,14 @@ def get_reasoned_assessment(patient_id: str,
         # Printing "when Vigil paged" over an assessment nobody was paged about
         # would be a false statement about a clinical event, on a medico-legal
         # sheet, which is exactly the class of thing this section must not do.
-        "reuse_basis": ("drafted_for_vigil_alert" if payload.get("message_id")
-                        else "drafted_for_review"),
-        "reuse_basis_display": ("when Vigil paged for this patient"
-                                if payload.get("message_id")
-                                else "when this patient was prepared for review"),
+        "reuse_basis": (
+            "drafted_for_vigil_alert" if payload.get("message_id") else "drafted_for_review"
+        ),
+        "reuse_basis_display": (
+            "when Vigil paged for this patient"
+            if payload.get("message_id")
+            else "when this patient was prepared for review"
+        ),
         "drafted_at": payload.get("created_at"),
         "drafted_at_display": _stamp_phrase(payload.get("created_at")),
         "age_minutes": age,
@@ -639,7 +673,7 @@ def get_reasoned_assessment(patient_id: str,
     }
 
 
-def _render_assessment_lines(block: dict, indent: str = "   ") -> list[str]:
+def _render_assessment_lines(block: dict | None, indent: str = "   ") -> list[str]:
     """The supplement as printed text. Called by the handover sheet AND returned
     on its own for the ward round, so the two can never word it differently.
 
@@ -664,16 +698,20 @@ def _render_assessment_lines(block: dict, indent: str = "   ") -> list[str]:
         written += f" ({stamp})"
     # "for this handover" would be a lie on the ward round, which is served
     # these same lines standalone.
-    lines.append(f"{indent}{written}, {block['reuse_basis_display']}. "
-                 f"Reproduced here exactly as it was written; it has not been "
-                 f"re-run.")
+    lines.append(
+        f"{indent}{written}, {block['reuse_basis_display']}. "
+        f"Reproduced here exactly as it was written; it has not been "
+        f"re-run."
+    )
     # NOT "see the illness-severity line above": these same lines are served
     # standalone to the ward round, where there is no line above. A
     # cross-reference that is only true on one of the two surfaces is a false
     # statement on the other.
-    lines.append(f"{indent}It describes that moment, not the patient's state now: "
-                 f"{block['news2_context']}. Check Orb's current score before "
-                 f"acting on anything here.")
+    lines.append(
+        f"{indent}It describes that moment, not the patient's state now: "
+        f"{block['news2_context']}. Check Orb's current score before "
+        f"acting on anything here."
+    )
     if block.get("endorsed_by"):
         lines.append(f"{indent}Reviewed and endorsed by {block['endorsed_by']}.")
     else:
@@ -695,8 +733,10 @@ def _render_assessment_lines(block: dict, indent: str = "   ") -> list[str]:
             why = (item.get("why") or "").strip()
             lines.append(f"{indent}  {n}. {step}" + (f", {why}" if why else ""))
             if item.get("orb_can_act"):
-                lines.append(f"{indent}     Orb has a one-click card ready for this; "
-                             f"it does nothing until a clinician approves it.")
+                lines.append(
+                    f"{indent}     Orb has a one-click card ready for this; "
+                    f"it does nothing until a clinician approves it."
+                )
 
     watch_items = block.get("watch_items") or []
     if watch_items:
@@ -708,9 +748,11 @@ def _render_assessment_lines(block: dict, indent: str = "   ") -> list[str]:
                 lines.append(f"{indent}  - {text}")
 
     lines.append("")
-    lines.append(f"{indent}Evidence: {block['citation_display']}. "
-                 f"Sage's own confidence: {block['confidence_display']}.")
-    for source in (block.get("evidence") or []):
+    lines.append(
+        f"{indent}Evidence: {block['citation_display']}. "
+        f"Sage's own confidence: {block['confidence_display']}."
+    )
+    for source in block.get("evidence") or []:
         title = str(source.get("title") or "").strip()
         origin = str(source.get("source") or "").strip()
         lines.append(f"{indent}  - {title}" + (f" ({origin})" if origin else ""))
@@ -790,19 +832,22 @@ def _shadow_safe_lane(lane: str) -> str:
     """
     try:
         from services.shadow_service import LANES
-    except Exception:                                       # pragma: no cover
+    except Exception:  # pragma: no cover
         return PREPARE_LANE_FALLBACK
     if lane in LANES:
         return lane
-    logger.warning("[I-PASS] shadow lane %r is not in the instrument's vocabulary "
-                   "— recording this assessment under %r instead",
-                   lane, PREPARE_LANE_FALLBACK)
+    logger.warning(
+        "[I-PASS] shadow lane %r is not in the instrument's vocabulary "
+        "— recording this assessment under %r instead",
+        lane,
+        PREPARE_LANE_FALLBACK,
+    )
     return PREPARE_LANE_FALLBACK if PREPARE_LANE_FALLBACK in LANES else next(iter(LANES))
 
 
-async def prepare_reasoned_assessment(patient_id: str,
-                                      max_age_hours: int = HANDOFF_WINDOW_HOURS,
-                                      *, lane: str = PREPARE_LANE) -> dict:
+async def prepare_reasoned_assessment(
+    patient_id: str, max_age_hours: int = HANDOFF_WINDOW_HOURS, *, lane: str = PREPARE_LANE
+) -> dict:
     """Reuse a full assessment, or start one — for a surface that is early.
 
     RETURNS IMMEDIATELY. It never awaits the generation; the caller gets
@@ -823,9 +868,13 @@ async def prepare_reasoned_assessment(patient_id: str,
     """
     block = await run_db(get_reasoned_assessment, patient_id, max_age_hours)
     if block:
-        return {"status": "ready", "assessment": block,
-                "stale_after_hours": int(max_age_hours),
-                "reason": None, "message": None}
+        return {
+            "status": "ready",
+            "assessment": block,
+            "stale_after_hours": int(max_age_hours),
+            "reason": None,
+            "message": None,
+        }
 
     try:
         from services import sage_assessment_service as sas
@@ -840,14 +889,15 @@ async def prepare_reasoned_assessment(patient_id: str,
     if not sas._enabled():
         return _preparing_failure("disabled", max_age_hours)
 
-    in_flight = await run_db(_full_draft_in_flight, patient_id, sas.DEPTH_FULL,
-                             sas._stale_generating_seconds())
+    in_flight = await run_db(
+        _full_draft_in_flight, patient_id, sas.DEPTH_FULL, sas._stale_generating_seconds()
+    )
     if in_flight:
         return _preparing(max_age_hours)
 
     try:
         loop = asyncio.get_running_loop()
-    except RuntimeError:                                   # pragma: no cover
+    except RuntimeError:  # pragma: no cover
         return _preparing_failure("no_event_loop", max_age_hours)
     if len(_PREPARE_INFLIGHT) >= _MAX_PREPARE_INFLIGHT:
         logger.warning("[I-PASS] backpressure — no assessment prepared for %s", patient_id)
@@ -859,16 +909,13 @@ async def prepare_reasoned_assessment(patient_id: str,
     # behind.
     safe_lane = _shadow_safe_lane(lane)
     try:
-        task = loop.create_task(
-            sas.generate_full_assessment(patient_id, lane=safe_lane))
+        task = loop.create_task(sas.generate_full_assessment(patient_id, lane=safe_lane))
     except Exception:
-        logger.warning("[I-PASS] could not start an assessment for %s",
-                       patient_id, exc_info=True)
+        logger.warning("[I-PASS] could not start an assessment for %s", patient_id, exc_info=True)
         return _preparing_failure("could_not_start", max_age_hours)
     _PREPARE_INFLIGHT.add(task)
     task.add_done_callback(_PREPARE_INFLIGHT.discard)
-    logger.info("[I-PASS] preparing a full Sage assessment for %s (lane=%s)",
-                patient_id, safe_lane)
+    logger.info("[I-PASS] preparing a full Sage assessment for %s (lane=%s)", patient_id, safe_lane)
     return _preparing(max_age_hours)
 
 
@@ -876,29 +923,41 @@ async def prepare_reasoned_assessment(patient_id: str,
 #: client for the same reason `sage_assessment_service.UNAVAILABLE_MESSAGES` is:
 #: two surfaces must not invent two different stories about one fact.
 PREPARE_MESSAGES: dict[str, str] = {
-    "preparing": ("Orb Sage is writing a reasoned assessment for this patient. "
-                  "It takes about a minute; reopen this sheet to see it."),
+    "preparing": (
+        "Orb Sage is writing a reasoned assessment for this patient. "
+        "It takes about a minute; reopen this sheet to see it."
+    ),
     "disabled": "Sage assessments are switched off on this appliance.",
     "service_unavailable": "Orb could not reach Sage, so no assessment was started.",
-    "busy": ("Sage is already writing as many assessments as this appliance will "
-             "run at once. Nothing was started for this patient."),
+    "busy": (
+        "Sage is already writing as many assessments as this appliance will "
+        "run at once. Nothing was started for this patient."
+    ),
     "could_not_start": "Orb could not start an assessment for this patient.",
     "no_event_loop": "Orb could not start an assessment for this patient.",
 }
 
 
 def _preparing(max_age_hours) -> dict:
-    return {"status": "preparing", "assessment": None,
-            "stale_after_hours": int(max_age_hours),
-            "reason": None, "message": PREPARE_MESSAGES["preparing"]}
+    return {
+        "status": "preparing",
+        "assessment": None,
+        "stale_after_hours": int(max_age_hours),
+        "reason": None,
+        "message": PREPARE_MESSAGES["preparing"],
+    }
 
 
 def _preparing_failure(reason: str, max_age_hours) -> dict:
-    return {"status": "unavailable", "assessment": None,
-            "stale_after_hours": int(max_age_hours),
-            "reason": reason,
-            "message": PREPARE_MESSAGES.get(
-                reason, "Orb could not start an assessment for this patient.")}
+    return {
+        "status": "unavailable",
+        "assessment": None,
+        "stale_after_hours": int(max_age_hours),
+        "reason": reason,
+        "message": PREPARE_MESSAGES.get(
+            reason, "Orb could not start an assessment for this patient."
+        ),
+    }
 
 
 def render_assessment_text(block: dict | None) -> str:
@@ -915,9 +974,16 @@ def _build_illness_severity(risk: dict | None) -> dict:
     if risk is None:
         # Scoring switched off: no severity is drafted. Every key stays on the
         # wire, empty, so the screen tests one value and prints no line.
-        return {"severity": None, "news2": None, "news2_level": None,
-                "scoring_model": None, "spo2_scale": None, "drivers": [],
-                "text": None, "scoring_enabled": False}
+        return {
+            "severity": None,
+            "news2": None,
+            "news2_level": None,
+            "scoring_model": None,
+            "spo2_scale": None,
+            "drivers": [],
+            "text": None,
+            "scoring_enabled": False,
+        }
     level = str(risk.get("level", "stable")).lower()
     severity = _SEVERITY_MAP.get(level, "Watcher")
     raw_news2 = risk.get("raw_news2", risk.get("raw_mews"))
@@ -954,7 +1020,8 @@ def _build_patient_summary(patient: dict, problems: list[dict], allergies: list[
     problem_labels = [p["problem"] for p in problems if p.get("problem")]
     allergy_labels = [
         (f"{a['substance']} ({a['reaction']})" if a.get("reaction") else a["substance"])
-        for a in allergies if a.get("substance")
+        for a in allergies
+        if a.get("substance")
     ]
     demo = f"{age if age is not None else '?'}y {patient.get('sex') or ''}".strip()
     # Never "NKDA" from an empty list. NKDA is a clinician's assertion that the
@@ -965,8 +1032,11 @@ def _build_patient_summary(patient: dict, problems: list[dict], allergies: list[
         f"{patient.get('ward') or 'ward ?'} bed {patient.get('bed') or '?'}. "
         f"Primary diagnosis: {patient.get('diagnosis') or 'not documented'}. "
         f"Active problems: {', '.join(problem_labels) if problem_labels else 'none recorded'}. "
-        + (f"Allergies: {', '.join(allergy_labels)}." if allergy_labels
-           else f"Allergies: {NO_ALLERGIES_RECORDED}")
+        + (
+            f"Allergies: {', '.join(allergy_labels)}."
+            if allergy_labels
+            else f"Allergies: {NO_ALLERGIES_RECORDED}"
+        )
     )
     return {
         "name": patient.get("name"),
@@ -996,8 +1066,12 @@ def _held_fields(m: dict) -> dict:
     a drug that is not held, so its entry is exactly as before."""
     if not held_labels.is_held(m):
         return {}
-    return {"on_hold": True, "hold_label": held_labels.hold_phrase(m),
-            "held_at": m.get("held_at"), "hold_reason": m.get("hold_reason")}
+    return {
+        "on_hold": True,
+        "hold_label": held_labels.hold_phrase(m),
+        "held_at": m.get("held_at"),
+        "hold_reason": m.get("hold_reason"),
+    }
 
 
 def _build_action_list(meds: list[dict], bundles: list[dict], risk: dict | None) -> dict:
@@ -1023,13 +1097,15 @@ def _build_action_list(meds: list[dict], bundles: list[dict], risk: dict | None)
         # `bundle_type` is the machine key ('sepsis6'); `bundle_label` is what the
         # printed sheet says. Both travel, so nothing downstream has to parse prose.
         label_for_bundle = _bundle_label(b.get("bundle_type"))
-        open_bundles.append({
-            "bundle_type": b.get("bundle_type"),
-            "bundle_label": label_for_bundle,
-            "compliance_pct": b.get("compliance_pct"),
-            "completion_pct": b.get("completion_pct"),
-            "outstanding": overdue + pending,
-        })
+        open_bundles.append(
+            {
+                "bundle_type": b.get("bundle_type"),
+                "bundle_label": label_for_bundle,
+                "compliance_pct": b.get("compliance_pct"),
+                "completion_pct": b.get("completion_pct"),
+                "outstanding": overdue + pending,
+            }
+        )
         for label in overdue:
             outstanding_items.append(f"OVERDUE ({label_for_bundle}): {label}")
         for label in pending:
@@ -1039,11 +1115,17 @@ def _build_action_list(meds: list[dict], bundles: list[dict], risk: dict | None)
     # patient. None while scoring is switched off: no line from a score.
     level = str(risk.get("level", "stable")).lower() if risk is not None else None
     if level == "critical":
-        outstanding_items.append("Repeat a full set of observations now and keep continuous monitoring.")
+        outstanding_items.append(
+            "Repeat a full set of observations now and keep continuous monitoring."
+        )
     elif level == "elevated":
-        outstanding_items.append("Recheck observations within the hour and review response to treatment.")
+        outstanding_items.append(
+            "Recheck observations within the hour and review response to treatment."
+        )
     if not active_meds and not open_bundles and not outstanding_items:
-        outstanding_items.append("Continue routine observations; no outstanding actions handed over.")
+        outstanding_items.append(
+            "Continue routine observations; no outstanding actions handed over."
+        )
 
     return {
         "active_medications": active_meds,
@@ -1088,23 +1170,41 @@ _ZERO_BAND = {
 
 #: (breakdown parameter, side of normal) -> the handover line.
 _VITAL_LINES = {
-    ("SpO2", "low"): ("If SpO2 is 91% or below (NEWS2 3 points) or oxygen requirement "
-                      "rises, titrate O2 to target and call the covering doctor."),
-    ("Systolic BP", "low"): ("If systolic BP is 90 mmHg or below (NEWS2 3 points), give a "
-                             "fluid bolus per protocol and escalate to the registrar."),
-    ("Systolic BP", "high"): f"If systolic BP is 220 mmHg or above (NEWS2 3 points), {_URGENT_REVIEW}",
+    ("SpO2", "low"): (
+        "If SpO2 is 91% or below (NEWS2 3 points) or oxygen requirement "
+        "rises, titrate O2 to target and call the covering doctor."
+    ),
+    ("Systolic BP", "low"): (
+        "If systolic BP is 90 mmHg or below (NEWS2 3 points), give a "
+        "fluid bolus per protocol and escalate to the registrar."
+    ),
+    (
+        "Systolic BP",
+        "high",
+    ): f"If systolic BP is 220 mmHg or above (NEWS2 3 points), {_URGENT_REVIEW}",
     ("Heart rate", "low"): f"If heart rate is 40 or below (NEWS2 3 points), {_URGENT_REVIEW}",
-    ("Heart rate", "high"): ("If heart rate is 131 or above (NEWS2 3 points) or a new "
-                             "arrhythmia appears, obtain a 12-lead ECG and review."),
+    ("Heart rate", "high"): (
+        "If heart rate is 131 or above (NEWS2 3 points) or a new "
+        "arrhythmia appears, obtain a 12-lead ECG and review."
+    ),
     ("Temperature", "low"): f"If temperature is 35.0°C or below (NEWS2 3 points), {_URGENT_REVIEW}",
-    ("Temperature", "high"): ("If febrile with a rising NEWS2, start the Sepsis Six bundle "
-                              "and send blood cultures + lactate."),
-    ("Respiratory rate", "low"): f"If respiratory rate is 8 or below (NEWS2 3 points), {_URGENT_REVIEW}",
-    ("Respiratory rate", "high"): ("If respiratory rate is 25 or above (NEWS2 3 points) or work "
-                                   "of breathing worsens, reassess the airway and escalate."),
+    ("Temperature", "high"): (
+        "If febrile with a rising NEWS2, start the Sepsis Six bundle "
+        "and send blood cultures + lactate."
+    ),
+    (
+        "Respiratory rate",
+        "low",
+    ): f"If respiratory rate is 8 or below (NEWS2 3 points), {_URGENT_REVIEW}",
+    ("Respiratory rate", "high"): (
+        "If respiratory rate is 25 or above (NEWS2 3 points) or work "
+        "of breathing worsens, reassess the airway and escalate."
+    ),
 }
-_ACVPU_LINE = ("If new confusion or a drop in ACVPU, check glucose, do a neuro assessment "
-               "and escalate urgently.")
+_ACVPU_LINE = (
+    "If new confusion or a drop in ACVPU, check glucose, do a neuro assessment "
+    "and escalate urgently."
+)
 
 
 def _vital_line(row: dict | None) -> str | None:
@@ -1123,8 +1223,9 @@ def _contingencies(risk: dict) -> list[str]:
     dict with no breakdown (nothing charted) gets the level line only.
     """
     level = str(risk.get("level", "stable")).lower()
-    scored = {b.get("parameter"): b for b in (risk.get("breakdown") or [])
-              if (b.get("points") or 0) > 0}
+    scored = {
+        b.get("parameter"): b for b in (risk.get("breakdown") or []) if (b.get("points") or 0) > 0
+    }
     out: list[str] = []
 
     # Oxygenation first: the saturation, or the oxygen it takes to hold it.
@@ -1138,10 +1239,14 @@ def _contingencies(risk: dict) -> list[str]:
             # scoring value above 92 is over-target, read off the row itself
             # (a 1-point over-target SpO2 is often cut from the drivers).
             if spo2_row and spo2_row.get("value") is not None and spo2_row["value"] > 92:
-                out.append("If SpO2 stays above this patient's 88-92% target on oxygen (SpO2 Scale 2), "
-                           "reduce O2 to target and call the covering doctor.")
-            out.append("If SpO2 falls below 88% or oxygen requirement rises, titrate O2 to this "
-                       "patient's 88-92% target (SpO2 Scale 2) and call the covering doctor.")
+                out.append(
+                    "If SpO2 stays above this patient's 88-92% target on oxygen (SpO2 Scale 2), "
+                    "reduce O2 to target and call the covering doctor."
+                )
+            out.append(
+                "If SpO2 falls below 88% or oxygen requirement rises, titrate O2 to this "
+                "patient's 88-92% target (SpO2 Scale 2) and call the covering doctor."
+            )
         else:
             out.append(_VITAL_LINES[("SpO2", "low")])
     for parameter in ("Systolic BP", "Heart rate", "Temperature"):
@@ -1156,11 +1261,17 @@ def _contingencies(risk: dict) -> list[str]:
 
     if not out:
         if level == "critical":
-            out.append("If any vital sign deteriorates further, escalate immediately to the medical emergency team.")
+            out.append(
+                "If any vital sign deteriorates further, escalate immediately to the medical emergency team."
+            )
         elif level == "elevated":
-            out.append("If NEWS2 rises, increase monitoring frequency and inform the covering doctor.")
+            out.append(
+                "If NEWS2 rises, increase monitoring frequency and inform the covering doctor."
+            )
         else:
-            out.append("If new abnormal vitals develop, repeat a full set of observations and reassess.")
+            out.append(
+                "If new abnormal vitals develop, repeat a full set of observations and reassess."
+            )
     return out
 
 
@@ -1172,7 +1283,8 @@ def _build_situation_awareness(vitals: list[dict], trend: dict, risk: dict | Non
     # not even from the trend. It is a warning Orb works out, and with scoring
     # off Orb raises none.
     active_deterioration = risk is not None and (
-        level in ("critical", "elevated") or trend_label == "deteriorating")
+        level in ("critical", "elevated") or trend_label == "deteriorating"
+    )
 
     latest_vitals = {
         "timestamp": latest.get("timestamp"),
@@ -1230,7 +1342,7 @@ def _build_situation_awareness(vitals: list[dict], trend: dict, risk: dict | Non
 
 
 def _build_synthesis(patient: dict, severity: str | None) -> dict:
-    who = patient.get('name', 'the patient') + (f" ({severity})" if severity else "")
+    who = patient.get("name", "the patient") + (f" ({severity})" if severity else "")
     text = (
         f"Read-back required: receiving clinician to confirm understanding of "
         f"{who}, the action list and the "
@@ -1259,8 +1371,10 @@ def _render_plain_text(sections: dict, patient: dict, generated_at: str) -> str:
     lines.append("I-PASS SHIFT HANDOFF")
     lines.append(f"Patient: {patient.get('name', 'Unknown')}  (MRN {patient.get('mrn', '--')})")
     # The wire keeps the ISO instant; the sheet prints the ward's clock.
-    lines.append(f"Auto-drafted: {hospital_stamp(generated_at) or generated_at}  |  "
-                 f"Window: last {HANDOFF_WINDOW_HOURS}h")
+    lines.append(
+        f"Auto-drafted: {hospital_stamp(generated_at) or generated_at}  |  "
+        f"Window: last {HANDOFF_WINDOW_HOURS}h"
+    )
     lines.append("=" * 60)
 
     # No severity line at all while scoring is switched off (severity None).
@@ -1279,8 +1393,10 @@ def _render_plain_text(sections: dict, patient: dict, generated_at: str) -> str:
         lines.append("   Active medications:")
         for m in al["active_medications"]:
             lines.append(
-                (f"     - {m.get('drug_name')} {m.get('dosage') or ''} "
-                 f"{m.get('route') or ''} {m.get('frequency') or ''}").rstrip()
+                (
+                    f"     - {m.get('drug_name')} {m.get('dosage') or ''} "
+                    f"{m.get('route') or ''} {m.get('frequency') or ''}"
+                ).rstrip()
                 + (f" ({UNVERIFIED_MED_LABEL})" if m.get("unverified") else "")
                 + (f" ({m['hold_label']})" if m.get("hold_label") else "")
             )
@@ -1328,8 +1444,9 @@ def _render_plain_text(sections: dict, patient: dict, generated_at: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
-def build_ipass(patient_id: str, window_hours: int = HANDOFF_WINDOW_HOURS,
-                *, include_assessment: bool = True) -> dict:
+def build_ipass(
+    patient_id: str, window_hours: int = HANDOFF_WINDOW_HOURS, *, include_assessment: bool = True
+) -> dict:
     """Assemble a structured I-PASS handoff draft from the last ~12h of data.
 
     Returns a dict with the 5 I-PASS sections, a `source_summary`, and a
@@ -1361,9 +1478,15 @@ def build_ipass(patient_id: str, window_hours: int = HANDOFF_WINDOW_HOURS,
     # severity for a set the handoff did not show.
     # Scoring switched off (ORB_SCORING_ENABLED off): risk is None and the
     # draft carries no severity line and no NEWS2 contingency line.
-    risk = (risk_for_row(vitals[-1] if vitals else None, patient_id=patient_id,
-                         on_scale_2=bool(patient.get("on_scale_2") or 0))
-            if scoring_enabled() else None)
+    risk = (
+        risk_for_row(
+            vitals[-1] if vitals else None,
+            patient_id=patient_id,
+            on_scale_2=bool(patient.get("on_scale_2") or 0),
+        )
+        if scoring_enabled()
+        else None
+    )
     try:
         trend = get_vitals_trend(patient_id, hours=max(1, window_hours // 2))
     except Exception as e:  # pragma: no cover - defensive
@@ -1373,6 +1496,7 @@ def build_ipass(patient_id: str, window_hours: int = HANDOFF_WINDOW_HOURS,
     # Open care bundles (active only), with per-element compliance decoration.
     try:
         from services.sepsis_bundle_service import get_bundles_for_patient
+
         bundles = get_bundles_for_patient(patient_id, active_only=True)
     except Exception as e:  # pragma: no cover - defensive
         logger.warning("[I-PASS] bundle lookup failed for %s: %s", patient_id, e)
@@ -1384,7 +1508,7 @@ def build_ipass(patient_id: str, window_hours: int = HANDOFF_WINDOW_HOURS,
     # transaction. Staleness bound = this handover's own window (rule 4).
     assessment = get_reasoned_assessment(patient_id, window_hours) if include_assessment else None
 
-    sections = {
+    sections: dict[str, Any] = {
         "illness_severity": _build_illness_severity(risk),
         "patient_summary": _build_patient_summary(patient, problems, allergies),
         "action_list": _build_action_list(meds, bundles, risk),
@@ -1399,9 +1523,12 @@ def build_ipass(patient_id: str, window_hours: int = HANDOFF_WINDOW_HOURS,
         f"from the last {window_hours}h: {len(vitals)} vitals reading(s), {len(meds)} active "
         f"medication(s), {len(problems)} active problem(s), {len(allergies)} allergy record(s), "
         f"{len(bundles)} open care bundle(s), {len(recent_notes)} recent note(s)."
-        + (f" Illness severity {sections['illness_severity']['severity']} "
-           f"({sections['illness_severity']['text']})."
-           if sections['illness_severity']['severity'] is not None else "")
+        + (
+            f" Illness severity {sections['illness_severity']['severity']} "
+            f"({sections['illness_severity']['text']})."
+            if sections["illness_severity"]["severity"] is not None
+            else ""
+        )
     )
     if assessment:
         # The summary is stored as the note's `raw_transcript` and is read by a
@@ -1458,7 +1585,9 @@ def save_ipass_handoff(patient_id: str, author_id: str, content) -> int:
         status="draft",
         ai_generated=True,
     )
-    logger.info("[I-PASS] saved handoff note %s for patient %s by %s", note_id, patient_id, author_id)
+    logger.info(
+        "[I-PASS] saved handoff note %s for patient %s by %s", note_id, patient_id, author_id
+    )
     return note_id
 
 

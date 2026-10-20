@@ -58,14 +58,17 @@ services/lab_observations.py). Every function takes the caller's open
 connection; release_in_txn writes inside the caller's immediate transaction
 and audits there, fail-closed.
 """
+
 from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import config
+
 from services import lab_master_service as lm
 from services import lab_order_service as los
 from services import lab_report_service as lrep
@@ -88,8 +91,9 @@ _CHUNK = 400
 # not do.
 SIMULATED_TEXT = "Simulated result, not from your care"
 NOT_AVAILABLE_TEXT = "Not available here yet"
-CORRECTED_WAITING_TEXT = ("The laboratory corrected this result. The corrected result is "
-                          "not available here yet.")
+CORRECTED_WAITING_TEXT = (
+    "The laboratory corrected this result. The corrected result is not available here yet."
+)
 CORRECTED_TEXT = "Corrected by the laboratory"
 WITHDRAWN_TEXT = "Withdrawn by the laboratory. There is no result to show."
 CANCELLED_TEXT = "Cancelled"
@@ -108,7 +112,7 @@ STAFF_STATE_WORDS = {
     "shown": "Shown to the patient",
     "partly_shown": "Partly shown to the patient: some results are not shown yet",
     "waiting": "Not shown to the patient yet: shown after the site's delay, or sooner "
-               "when a doctor releases it",
+    "when a doctor releases it",
     "needs_release": "Not shown to the patient: waits for a doctor's release",
     "nothing_released": "Nothing on this sample is reported yet",
 }
@@ -133,12 +137,13 @@ def _not_found(**extra: Any) -> PortalReportError:
 #  Small helpers
 # ════════════════════════════════════════════════════════════════════════════
 
+
 def _now() -> datetime:
     """Now, aware UTC. Its own name so a test can pin it."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
-def delay_hours() -> Optional[int]:
+def delay_hours() -> int | None:
     """The site's delay in hours, read at call time, or None (never by itself)."""
     value = getattr(config, "LAB_PORTAL_DELAY_HOURS", None)
     if isinstance(value, bool) or not isinstance(value, int):
@@ -148,18 +153,19 @@ def delay_hours() -> Optional[int]:
     return value
 
 
-def portal_note(delay: Optional[int] = None) -> str:
+def portal_note(delay: int | None = None) -> str:
     """The one line the patient reads above their laboratory reports."""
     if delay is None:
-        return ("Laboratory reports appear here after your doctor has released them "
-                "to you.")
+        return "Laboratory reports appear here after your doctor has released them to you."
     unit = "hour" if delay == 1 else "hours"
-    return (f"Laboratory reports appear here {delay} {unit} after the laboratory reports "
-            "them, or sooner when your doctor releases them. Some results appear only "
-            "after your doctor has released them.")
+    return (
+        f"Laboratory reports appear here {delay} {unit} after the laboratory reports "
+        "them, or sooner when your doctor releases them. Some results appear only "
+        "after your doctor has released them."
+    )
 
 
-def _instant(value: Any) -> Optional[datetime]:
+def _instant(value: Any) -> datetime | None:
     if not value:
         return None
     try:
@@ -168,7 +174,7 @@ def _instant(value: Any) -> Optional[datetime]:
         return None
 
 
-def _latest(values: Iterable[Any]) -> Optional[str]:
+def _latest(values: Iterable[Any]) -> str | None:
     best, best_at = None, None
     for value in values:
         at = _instant(value)
@@ -177,7 +183,7 @@ def _latest(values: Iterable[Any]) -> Optional[str]:
     return best
 
 
-def _earliest(values: Iterable[Any]) -> Optional[datetime]:
+def _earliest(values: Iterable[Any]) -> datetime | None:
     """The earliest readable instant among these values, aware UTC, or None."""
     best = None
     for value in values:
@@ -190,7 +196,7 @@ def _earliest(values: Iterable[Any]) -> Optional[datetime]:
 def _chunks(values: Iterable[Any]) -> Iterable[list]:
     items = list(dict.fromkeys(v for v in values if v is not None))
     for start in range(0, len(items), _CHUNK):
-        yield items[start:start + _CHUNK]
+        yield items[start : start + _CHUNK]
 
 
 def _tables_present(conn) -> bool:
@@ -199,8 +205,10 @@ def _tables_present(conn) -> bool:
 
 def is_critical(version: dict) -> bool:
     """A critical value: flagged critical at entry, or HH or LL."""
-    return (int(version.get("is_critical") or 0) == 1
-            or (version.get("abnormal_flag") or "") in CRITICAL_FLAGS)
+    return (
+        int(version.get("is_critical") or 0) == 1
+        or (version.get("abnormal_flag") or "") in CRITICAL_FLAGS
+    )
 
 
 def _int_ids(values: Iterable[Any]) -> set[int]:
@@ -237,7 +245,9 @@ def _versions(conn, specimen_ids: list[str]) -> dict[int, list[dict]]:
             "r.superseded_by_result_id "
             "FROM lab_results r JOIN lab_order_items i ON i.id = r.order_item_id "
             f"WHERE i.specimen_id IN ({marks}) AND r.released_at IS NOT NULL "
-            "ORDER BY r.order_item_id, r.version, r.id", tuple(chunk)).fetchall()
+            "ORDER BY r.order_item_id, r.version, r.id",
+            tuple(chunk),
+        ).fetchall()
         for row in rows:
             out.setdefault(int(row["order_item_id"]), []).append(dict(row))
     _mark_ends(conn, out)
@@ -260,7 +270,9 @@ def _mark_ends(conn, versions_by_item: dict[int, list[dict]]) -> None:
         rows = conn.execute(
             "SELECT result_id, occurred_at FROM lab_result_events "
             f"WHERE event_type IN ({', '.join('?' for _ in _END_EVENTS)}) "
-            f"AND result_id IN ({marks})", (*_END_EVENTS, *chunk)).fetchall()
+            f"AND result_id IN ({marks})",
+            (*_END_EVENTS, *chunk),
+        ).fetchall()
         for row in rows:
             stamps.setdefault(int(row["result_id"]), []).append(row["occurred_at"])
     for version in ended:
@@ -282,18 +294,21 @@ def _releases(conn, specimen_ids: list[str]) -> dict[str, list[dict]]:
             "u.name AS actor_name FROM lab_specimen_events e "
             "LEFT JOIN users u ON u.id = e.actor_user_id "
             f"WHERE e.event_type = ? AND e.specimen_id IN ({marks}) ORDER BY e.id",
-            (PORTAL_RELEASE_EVENT, *chunk)).fetchall()
+            (PORTAL_RELEASE_EVENT, *chunk),
+        ).fetchall()
         for row in rows:
             try:
                 meta = json.loads(row["metadata_json"] or "{}")
             except ValueError:
                 meta = {}
-            ids = _int_ids(meta.get("result_ids") if isinstance(meta, dict) else ())
-            out.setdefault(row["specimen_id"], []).append({
-                "result_ids": sorted(ids),
-                "at": row["occurred_at"],
-                "by": {"name": row["actor_name"] or "Name not on file"},
-            })
+            ids = _int_ids((meta.get("result_ids") or ()) if isinstance(meta, dict) else ())
+            out.setdefault(row["specimen_id"], []).append(
+                {
+                    "result_ids": sorted(ids),
+                    "at": row["occurred_at"],
+                    "by": {"name": row["actor_name"] or "Name not on file"},
+                }
+            )
     return out
 
 
@@ -308,7 +323,8 @@ def _released_ids(releases: list[dict]) -> set[int]:
 #  When one version reaches the portal
 # ════════════════════════════════════════════════════════════════════════════
 
-def delay_due_at(version: dict, delay: Optional[int]) -> Optional[datetime]:
+
+def delay_due_at(version: dict, delay: int | None) -> datetime | None:
     """When the delay alone puts this version in the portal, or None when it
     never does: no delay set, a critical value, no readable release time, or
     a version that stopped being live (amended or withdrawn) before its delay
@@ -328,8 +344,7 @@ def delay_due_at(version: dict, delay: Optional[int]) -> Optional[datetime]:
     return due
 
 
-def version_out(version: dict, released: set[int], now: datetime,
-                delay: Optional[int]) -> bool:
+def version_out(version: dict, released: set[int], now: datetime, delay: int | None) -> bool:
     """Has this released version reached the patient's portal?"""
     if int(version["id"]) in released:
         return True
@@ -341,8 +356,10 @@ def version_out(version: dict, released: set[int], now: datetime,
 #  The patient's view
 # ════════════════════════════════════════════════════════════════════════════
 
-def _patient_test(entry: dict, versions: list[dict], released: set[int], now: datetime,
-                  delay: Optional[int]) -> tuple[dict, bool, Optional[int]]:
+
+def _patient_test(
+    entry: dict, versions: list[dict], released: set[int], now: datetime, delay: int | None
+) -> tuple[dict, bool, int | None]:
     """One test as the patient sees it. Returns (test, any version out, the
     id of the shown version or None)."""
     out_ids = {int(v["id"]) for v in versions if version_out(v, released, now, delay)}
@@ -376,27 +393,32 @@ def _patient_test(entry: dict, versions: list[dict], released: set[int], now: da
                 if int(version["id"]) == shown_id or int(version["id"]) not in out_ids:
                     continue
                 successor = versions[index + 1] if index + 1 < len(versions) else None
-                earlier.append({
-                    "value_text": version.get("value_text"),
-                    "unit": version.get("unit") or None,
-                    "replaced_at": successor.get("released_at") if successor else None,
-                })
+                earlier.append(
+                    {
+                        "value_text": version.get("value_text"),
+                        "unit": version.get("unit") or None,
+                        "replaced_at": successor.get("released_at") if successor else None,
+                    }
+                )
         corrected = int(live.get("version") or 1) > 1
-        test.update({
-            "state": "shown",
-            "state_text": "",
-            "value_text": live.get("value_text"),
-            "unit": live.get("unit") or None,
-            "flag_text": live.get("flag_text") or "",
-            "reference_range_text": (live.get("reference_range_text")
-                                     if live.get("range_applies") else None),
-            "comment": live.get("comment") or None,
-            "reported_at": live.get("reported_at"),
-            "corrected": corrected,
-            "corrected_text": CORRECTED_TEXT if corrected else None,
-            "earlier": earlier,
-            "simulated": bool(live.get("simulated")),
-        })
+        test.update(
+            {
+                "state": "shown",
+                "state_text": "",
+                "value_text": live.get("value_text"),
+                "unit": live.get("unit") or None,
+                "flag_text": live.get("flag_text") or "",
+                "reference_range_text": (
+                    live.get("reference_range_text") if live.get("range_applies") else None
+                ),
+                "comment": live.get("comment") or None,
+                "reported_at": live.get("reported_at"),
+                "corrected": corrected,
+                "corrected_text": CORRECTED_TEXT if corrected else None,
+                "earlier": earlier,
+                "simulated": bool(live.get("simulated")),
+            }
+        )
     elif state == "reported" and out_ids:
         test.update({"state": "corrected_waiting", "state_text": CORRECTED_WAITING_TEXT})
     elif state == "withdrawn":
@@ -406,9 +428,13 @@ def _patient_test(entry: dict, versions: list[dict], released: set[int], now: da
     return test, bool(out_ids), shown_id
 
 
-def _patient_report(report: dict, versions_by_item: dict[int, list[dict]],
-                    released: set[int], now: datetime,
-                    delay: Optional[int]) -> tuple[Optional[dict], list[int]]:
+def _patient_report(
+    report: dict,
+    versions_by_item: dict[int, list[dict]],
+    released: set[int],
+    now: datetime,
+    delay: int | None,
+) -> tuple[dict | None, list[int]]:
     """The report as the patient sees it and the ids of the values shown, or
     (None, []) when nothing on it has reached the portal."""
     tests, shown_ids, listed = [], [], False
@@ -422,8 +448,10 @@ def _patient_report(report: dict, versions_by_item: dict[int, list[dict]],
             shown_ids.append(shown_id)
             signer = (entry.get("result") or {}).get("authorised_by")
             if signer:
-                person = {"name": signer.get("name"),
-                          "registration_text": signer.get("registration_text")}
+                person = {
+                    "name": signer.get("name"),
+                    "registration_text": signer.get("registration_text"),
+                }
                 if person not in signatories:
                     signatories.append(person)
     if not listed:
@@ -462,15 +490,15 @@ def _line(view: dict) -> dict:
     }
 
 
-def _views(conn, patient_id: str, specimen_ids: list[str], now: datetime,
-           delay: Optional[int]) -> list[tuple[dict, list[int]]]:
+def _views(
+    conn, patient_id: str, specimen_ids: list[str], now: datetime, delay: int | None
+) -> list[tuple[dict, list[int]]]:
     """The patient views of these samples that are listed, in the order the
     report service returns them (newest collection first). A sample recorded
     against any other patient is dropped, whatever its results say."""
     if not specimen_ids:
         return []
-    reports = [r for r in lrep._reports(conn, specimen_ids)
-               if r["patient"]["id"] == patient_id]
+    reports = [r for r in lrep._reports(conn, specimen_ids) if r["patient"]["id"] == patient_id]
     versions = _versions(conn, [r["accession"] for r in reports])
     releases = _releases(conn, [r["accession"] for r in reports])
     out = []
@@ -482,15 +510,15 @@ def _views(conn, patient_id: str, specimen_ids: list[str], now: datetime,
     return out
 
 
-def patient_reports(conn, patient_id: str, *, now: Optional[datetime] = None) -> list[dict]:
+def patient_reports(conn, patient_id: str, *, now: datetime | None = None) -> list[dict]:
     """The patient's own reports that have reached the portal, newest
     collection first, as list lines with no values."""
     if not patient_id or not _tables_present(conn):
         return []
-    ids = lrep._released_specimen_ids(conn, "r.patient_id = ?", (patient_id,),
-                                      lrep.REPORT_LIST_CAP)
-    return [_line(view) for view, _shown in
-            _views(conn, patient_id, ids, now or _now(), delay_hours())]
+    ids = lrep._released_specimen_ids(conn, "r.patient_id = ?", (patient_id,), lrep.REPORT_LIST_CAP)
+    return [
+        _line(view) for view, _shown in _views(conn, patient_id, ids, now or _now(), delay_hours())
+    ]
 
 
 def _own_specimen(conn, patient_id: str, accession: Any) -> str:
@@ -500,11 +528,10 @@ def _own_specimen(conn, patient_id: str, accession: Any) -> str:
     try:
         accession = los.checked_accession(accession)
     except los.LabOrderError:
-        raise _not_found()
+        raise _not_found() from None
     if not _tables_present(conn):
         raise _not_found()
-    row = conn.execute("SELECT patient_id FROM lab_specimens WHERE id = ?",
-                       (accession,)).fetchone()
+    row = conn.execute("SELECT patient_id FROM lab_specimens WHERE id = ?", (accession,)).fetchone()
     if row is None:
         raise _not_found()
     if row["patient_id"] != patient_id:
@@ -512,8 +539,9 @@ def _own_specimen(conn, patient_id: str, accession: Any) -> str:
     return accession
 
 
-def patient_report(conn, patient_id: str, accession: Any, *,
-                   now: Optional[datetime] = None) -> tuple[dict, list[int]]:
+def patient_report(
+    conn, patient_id: str, accession: Any, *, now: datetime | None = None
+) -> tuple[dict, list[int]]:
     """One of the patient's own reports as they see it, with the ids of the
     values shown. Raises PortalReportError 'not_found' (404) for an unknown
     sample, another patient's sample, or one with nothing in the portal yet."""
@@ -528,8 +556,14 @@ def patient_report(conn, patient_id: str, accession: Any, *,
 #  The staff view and the doctor's release
 # ════════════════════════════════════════════════════════════════════════════
 
-def _staff_state(report: dict, versions_by_item: dict[int, list[dict]],
-                 releases: list[dict], now: datetime, delay: Optional[int]) -> dict:
+
+def _staff_state(
+    report: dict,
+    versions_by_item: dict[int, list[dict]],
+    releases: list[dict],
+    now: datetime,
+    delay: int | None,
+) -> dict:
     released = _released_ids(releases)
     live_ids, shown, held, needs_doctor, due_times = [], [], [], False, []
     for entry in report["items"]:
@@ -538,8 +572,10 @@ def _staff_state(report: dict, versions_by_item: dict[int, list[dict]],
             continue
         live_id = int(live["id"])
         live_ids.append(live_id)
-        version = next((v for v in versions_by_item.get(int(entry["item_id"]), [])
-                        if int(v["id"]) == live_id), None)
+        version = next(
+            (v for v in versions_by_item.get(int(entry["item_id"]), []) if int(v["id"]) == live_id),
+            None,
+        )
         if version is None:
             continue
         if version_out(version, released, now, delay):
@@ -568,13 +604,14 @@ def _staff_state(report: dict, versions_by_item: dict[int, list[dict]],
         "shown_result_ids": sorted(shown),
         "held_result_ids": sorted(held),
         "needs_doctor_release": needs_doctor,
-        "shown_by_delay_from": (format_utc(max(due_times)) if due_times and not needs_doctor
-                                else None),
+        "shown_by_delay_from": (
+            format_utc(max(due_times)) if due_times and not needs_doctor else None
+        ),
         "releases": releases,
     }
 
 
-def portal_states(conn, patient_id: str, *, now: Optional[datetime] = None) -> list[dict]:
+def portal_states(conn, patient_id: str, *, now: datetime | None = None) -> list[dict]:
     """Every laboratory report of one patient with what of it the patient's
     portal shows, newest collection first. For the ward: the caller has
     already checked the patient is in scope (require_patient_access)."""
@@ -582,8 +619,7 @@ def portal_states(conn, patient_id: str, *, now: Optional[datetime] = None) -> l
         return []
     now = now or _now()
     delay = delay_hours()
-    ids = lrep._released_specimen_ids(conn, "r.patient_id = ?", (patient_id,),
-                                      lrep.REPORT_LIST_CAP)
+    ids = lrep._released_specimen_ids(conn, "r.patient_id = ?", (patient_id,), lrep.REPORT_LIST_CAP)
     if not ids:
         return []
     reports = [r for r in lrep._reports(conn, ids) if r["patient"]["id"] == patient_id]
@@ -592,16 +628,19 @@ def portal_states(conn, patient_id: str, *, now: Optional[datetime] = None) -> l
     releases = _releases(conn, accessions)
     out = []
     for report in reports:
-        out.append({
-            "accession": report["accession"],
-            "specimen_type": report["specimen"]["type"],
-            "collected_at": report["specimen"]["collected_at"],
-            "last_reported_at": report["last_reported_at"],
-            "status_text": report["status_text"],
-            "tests": [i["test"]["short_name"] for i in report["items"]],
-            "portal": _staff_state(report, versions, releases.get(report["accession"], []),
-                                   now, delay),
-        })
+        out.append(
+            {
+                "accession": report["accession"],
+                "specimen_type": report["specimen"]["type"],
+                "collected_at": report["specimen"]["collected_at"],
+                "last_reported_at": report["last_reported_at"],
+                "status_text": report["status_text"],
+                "tests": [i["test"]["short_name"] for i in report["items"]],
+                "portal": _staff_state(
+                    report, versions, releases.get(report["accession"], []), now, delay
+                ),
+            }
+        )
     return out
 
 
@@ -611,20 +650,31 @@ def parse_seen_ids(value: Any) -> list[int]:
     if not isinstance(value, list) or not value or len(value) > SEEN_IDS_MAX:
         raise PortalReportError(
             "seen_result_ids_required",
-            "Name the results on the report you read (seen_result_ids).", status=422)
+            "Name the results on the report you read (seen_result_ids).",
+            status=422,
+        )
     ids = []
     for item in value:
         if isinstance(item, bool) or not isinstance(item, int):
             raise PortalReportError(
                 "seen_result_ids_required",
-                "Name the results on the report you read (seen_result_ids).", status=422)
+                "Name the results on the report you read (seen_result_ids).",
+                status=422,
+            )
         ids.append(item)
     return sorted(set(ids))
 
 
-def release_in_txn(conn, patient_id: str, accession: Any, *, seen_result_ids: Any,
-                   actor: dict, now: Optional[datetime] = None,
-                   request_meta: Optional[dict] = None) -> dict:
+def release_in_txn(
+    conn,
+    patient_id: str,
+    accession: Any,
+    *,
+    seen_result_ids: Any,
+    actor: dict,
+    now: datetime | None = None,
+    request_meta: dict | None = None,
+) -> dict:
     """A doctor releases a report, as they read it, to the patient's portal.
 
     Runs inside the caller's IMMEDIATE transaction, so no result can be
@@ -639,24 +689,28 @@ def release_in_txn(conn, patient_id: str, accession: Any, *, seen_result_ids: An
     try:
         accession = los.checked_accession(accession)
     except los.LabOrderError as err:
-        raise PortalReportError(err.code, err.message, status=err.status)
+        raise PortalReportError(err.code, err.message, status=err.status) from err
     if not _tables_present(conn):
         raise _not_found()
-    row = conn.execute("SELECT patient_id FROM lab_specimens WHERE id = ?",
-                       (accession,)).fetchone()
+    row = conn.execute("SELECT patient_id FROM lab_specimens WHERE id = ?", (accession,)).fetchone()
     if row is None or row["patient_id"] != patient_id:
         raise _not_found()
     versions = _versions(conn, [accession])
     live = [v for rows in versions.values() for v in rows if v["status"] == "released"]
     if not live:
         raise PortalReportError(
-            "not_reported", "No result on this sample has been reported yet, so there is "
-            "nothing to release.", status=409)
+            "not_reported",
+            "No result on this sample has been reported yet, so there is nothing to release.",
+            status=409,
+        )
     live_ids = sorted(int(v["id"]) for v in live)
     if seen != live_ids:
         raise PortalReportError(
-            "report_changed", "The report changed since you opened it. Open it again "
-            "and read it before releasing it to the patient.", status=409)
+            "report_changed",
+            "The report changed since you opened it. Open it again "
+            "and read it before releasing it to the patient.",
+            status=409,
+        )
     releases = _releases(conn, [accession]).get(accession, [])
     new = sorted(set(live_ids) - _released_ids(releases))
     if not new:
@@ -665,11 +719,16 @@ def release_in_txn(conn, patient_id: str, accession: Any, *, seen_result_ids: An
     actor = actor or {}
     critical = sorted(int(v["id"]) for v in live if int(v["id"]) in new and is_critical(v))
     los._specimen_event(
-        conn, accession, patient_id, PORTAL_RELEASE_EVENT,
-        actor_id=actor.get("id"), actor_role=actor.get("role"), now=at,
+        conn,
+        accession,
+        patient_id,
+        PORTAL_RELEASE_EVENT,
+        actor_id=actor.get("id"),
+        actor_role=actor.get("role"),
+        now=at,
         detail="Released to the patient portal by a doctor",
-        metadata={"result_ids": new, "seen_result_ids": seen,
-                  "critical_result_ids": critical})
+        metadata={"result_ids": new, "seen_result_ids": seen, "critical_result_ids": critical},
+    )
     meta = dict(request_meta or {})
     log_audit_event(
         correlation_id=str(uuid.uuid4()),
@@ -687,8 +746,6 @@ def release_in_txn(conn, patient_id: str, accession: Any, *, seen_result_ids: An
         http_method=meta.get("http_method"),
         ip_address=meta.get("ip_address"),
         user_agent=meta.get("user_agent"),
-        metadata={"result_ids": new, "critical_result_ids": critical,
-                  "delay_hours": delay_hours()},
+        metadata={"result_ids": new, "critical_result_ids": critical, "delay_hours": delay_hours()},
     )
-    return {"accession": accession, "released_result_ids": new, "already": False,
-            "released_at": at}
+    return {"accession": accession, "released_result_ids": new, "already": False, "released_at": at}

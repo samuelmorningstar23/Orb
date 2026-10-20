@@ -18,11 +18,12 @@ Each job is an async callable that performs its own model call; the coordinator
 only owns the queue lifecycle and result fan-out. A job that raises has its
 exception delivered to its own awaiter — one bad job never sinks the batch.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger("orb.batch")
 
@@ -87,14 +88,14 @@ class MicroBatchCoordinator:
             # job loop), where CancelledError slipped past `except Exception`
             # and stranded every batch future — callers then awaited forever.
             current = asyncio.current_task()
-            if (self._flush_task and self._flush_task is not current
-                    and not self._flush_task.done()):
+            if self._flush_task and self._flush_task is not current and not self._flush_task.done():
                 self._flush_task.cancel()
             self._flush_task = None
         if not batch:
             return
 
         from services.llm_queue_service import BackgroundAdmissionRejected, llm_queue
+
         acquired = False
         try:
             await llm_queue.acquire(priority=self._priority, timeout=self._timeout)
@@ -123,9 +124,10 @@ class MicroBatchCoordinator:
                     # task was not cancelled, and awaiting a future that raises
                     # one makes them look cancelled to everything above them.
                     fut.set_exception(
-                        TimeoutError("ambient batch cancelled while acquiring LLM slot"))
+                        TimeoutError("ambient batch cancelled while acquiring LLM slot")
+                    )
             raise
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # Couldn't get the slot in time — fail every job in the batch (they
             # are background work; the caller decides what to do with None).
             for _, fut in batch:
@@ -142,7 +144,8 @@ class MicroBatchCoordinator:
             for _, fut in batch:
                 if not fut.done():
                     fut.set_exception(
-                        e if isinstance(e, Exception)
+                        e
+                        if isinstance(e, Exception)
                         else RuntimeError(f"ambient batch aborted: {type(e).__name__}")
                     )
             raise
@@ -172,7 +175,8 @@ class MicroBatchCoordinator:
             for _, fut in batch:
                 if not fut.done():
                     fut.set_exception(
-                        e if isinstance(e, Exception)
+                        e
+                        if isinstance(e, Exception)
                         else TimeoutError("ambient batch flush was cancelled")
                     )
             raise
@@ -182,6 +186,7 @@ class MicroBatchCoordinator:
 
     async def _run_solo(self, job: Callable[[], Awaitable]):
         from services.llm_queue_service import llm_queue
+
         await llm_queue.acquire(priority=self._priority, timeout=self._timeout)
         try:
             return await job()
@@ -198,7 +203,9 @@ def ambient_coordinator() -> MicroBatchCoordinator:
     global _ambient_coordinator
     if _ambient_coordinator is None:
         from config import AMBIENT_BATCH_MAX, AMBIENT_BATCH_WINDOW_MS
+
         from services.gpu_coordinator import PRIORITY_BACKGROUND
+
         _ambient_coordinator = MicroBatchCoordinator(
             priority=PRIORITY_BACKGROUND,
             window_ms=AMBIENT_BATCH_WINDOW_MS,

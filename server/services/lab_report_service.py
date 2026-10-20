@@ -57,13 +57,16 @@ writes nothing to the chart.
 Every function here takes the caller's open connection and never commits or
 writes; the routes audit each read and each print (phi_access, fail-closed).
 """
+
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from datetime import date, datetime
-from typing import Any, Iterable, Optional
+from typing import Any
 
 from permissions import PATIENT_DEPARTMENT_SQL, patient_in_scope, scope_patient_ids_sql
+
 from services import lab_master_service as lm
 from services import lab_order_service as los
 from services.clinical_time import parse_to_utc
@@ -76,8 +79,7 @@ REPORT_LIST_CAP = 200
 #: Values a SQL IN (...) list carries at once.
 _CHUNK = 400
 
-_TABLES = ("lab_specimens", "lab_order_items", "lab_results", "lab_result_events",
-           "lab_tests")
+_TABLES = ("lab_specimens", "lab_order_items", "lab_results", "lab_result_events", "lab_tests")
 
 #: The flags a report prints in words; anything else prints no flag (ruling
 #: LIS-R2: no H or L without an approved range).
@@ -128,6 +130,7 @@ class LabReportError(Exception):
 #  Small pure helpers
 # ════════════════════════════════════════════════════════════════════════════
 
+
 def tables_present(conn) -> bool:
     return lm.tables_present(conn, _TABLES)
 
@@ -135,7 +138,7 @@ def tables_present(conn) -> bool:
 def _chunks(values: Iterable[Any]) -> Iterable[list]:
     items = list(dict.fromkeys(v for v in values if v is not None))
     for start in range(0, len(items), _CHUNK):
-        yield items[start:start + _CHUNK]
+        yield items[start : start + _CHUNK]
 
 
 def _marks(values) -> str:
@@ -146,12 +149,14 @@ def _rows(conn, sql: str, values: Iterable[Any], extra: tuple = ()) -> list[dict
     """Run `sql` (which holds one '{marks}') over `values` in chunks."""
     out: list[dict] = []
     for chunk in _chunks(values):
-        out.extend(dict(r) for r in conn.execute(sql.format(marks=_marks(chunk)),
-                                                 tuple(chunk) + extra).fetchall())
+        out.extend(
+            dict(r)
+            for r in conn.execute(sql.format(marks=_marks(chunk)), tuple(chunk) + extra).fetchall()
+        )
     return out
 
 
-def _instant(value: Any) -> Optional[datetime]:
+def _instant(value: Any) -> datetime | None:
     """A stored instant as an aware UTC datetime, or None when unreadable."""
     if not value:
         return None
@@ -161,7 +166,7 @@ def _instant(value: Any) -> Optional[datetime]:
         return None
 
 
-def _earliest(values: Iterable[Any]) -> Optional[str]:
+def _earliest(values: Iterable[Any]) -> str | None:
     best, best_at = None, None
     for value in values:
         at = _instant(value)
@@ -170,7 +175,7 @@ def _earliest(values: Iterable[Any]) -> Optional[str]:
     return best
 
 
-def _latest(values: Iterable[Any]) -> Optional[str]:
+def _latest(values: Iterable[Any]) -> str | None:
     best, best_at = None, None
     for value in values:
         at = _instant(value)
@@ -179,7 +184,7 @@ def _latest(values: Iterable[Any]) -> Optional[str]:
     return best
 
 
-def _dob(value: Any) -> Optional[date]:
+def _dob(value: Any) -> date | None:
     text = str(value or "").strip()
     if len(text) < 10:
         return None
@@ -189,7 +194,7 @@ def _dob(value: Any) -> Optional[date]:
         return None
 
 
-def age_text(date_of_birth: Any, at: Any) -> Optional[str]:
+def age_text(date_of_birth: Any, at: Any) -> str | None:
     """The age on the hospital-local day of `at` (the collection), in words:
     years from 2 years, months under that, days under a month. None when the
     date of birth is missing, unreadable or after `at` (ruling LIS-R7: an age
@@ -211,7 +216,7 @@ def age_text(date_of_birth: Any, at: Any) -> Optional[str]:
     return f"{days} day{'s' if days != 1 else ''}"
 
 
-def sex_text(value: Any) -> Optional[str]:
+def sex_text(value: Any) -> str | None:
     """The sex as recorded, in sentence case; None when blank. Pure."""
     text = str(value or "").strip()
     if not text:
@@ -222,7 +227,7 @@ def sex_text(value: Any) -> Optional[str]:
     return text[:1].upper() + text[1:].lower()
 
 
-def _person(users: dict, user_id: Optional[str], *, registration: bool = False) -> Optional[dict]:
+def _person(users: dict, user_id: str | None, *, registration: bool = False) -> dict | None:
     if not user_id:
         return None
     row = users.get(user_id) or {}
@@ -241,7 +246,7 @@ def _flag_words(result: dict, result_type: str) -> str:
     return flag_text({**result, "result_type": result_type})
 
 
-def _reason_from(raw: Any) -> Optional[str]:
+def _reason_from(raw: Any) -> str | None:
     if not raw:
         return None
     try:
@@ -257,49 +262,84 @@ def _reason_from(raw: Any) -> Optional[str]:
 #  Loading
 # ════════════════════════════════════════════════════════════════════════════
 
+
 def _load(conn, specimen_ids: list[str]) -> dict:
     """Everything the reports of these samples need, read in a few batched
     queries."""
-    specimens = {r["id"]: r for r in _rows(conn, (
-        "SELECT s.id, s.patient_id, s.specimen_type_code, s.container, s.priority, s.status, "
-        "s.collected_at, s.collected_by, s.collection_location, s.received_at, s.received_by, "
-        "s.rejected_at, s.recollect_of, st.display AS specimen_display "
-        "FROM lab_specimens s LEFT JOIN lab_specimen_types st ON st.code = s.specimen_type_code "
-        "WHERE s.id IN ({marks})"), specimen_ids)}
-    patients = {r["id"]: r for r in _rows(conn, (
-        "SELECT p.id, p.name, p.mrn, p.ward, p.bed, p.date_of_birth, p.sex, p.status, "
-        f"{PATIENT_DEPARTMENT_SQL} AS department FROM patients p WHERE p.id IN ({{marks}})"),
-        [s["patient_id"] for s in specimens.values()])}
-    items = _rows(conn, (
-        "SELECT i.id, i.order_id, i.specimen_id, i.test_id, i.panel_test_id, i.section_id, "
-        "i.priority, i.status, i.cancelled_reason, i.cancelled_by, i.updated_at, "
-        "t.name AS test_name, t.short_name, t.result_type, t.unit AS test_unit, "
-        "pt.name AS panel_name, sec.name AS section_name, sec.sort_order AS section_order, "
-        "pc.sort_order AS component_order "
-        "FROM lab_order_items i "
-        "LEFT JOIN lab_tests t ON t.id = i.test_id "
-        "LEFT JOIN lab_tests pt ON pt.id = i.panel_test_id "
-        "LEFT JOIN lab_sections sec ON sec.id = i.section_id "
-        "LEFT JOIN lab_panel_components pc ON pc.panel_test_id = i.panel_test_id "
-        "     AND pc.component_test_id = i.test_id "
-        "WHERE i.specimen_id IN ({marks})"), specimen_ids)
-    results = _rows(conn, (
-        "SELECT r.id, r.order_item_id, r.order_id, r.specimen_id, r.patient_id, r.test_id, "
-        "r.version, r.value_milli, r.comparator, r.value_text, r.unit, r.decimal_places, "
-        "r.comment, r.reference_range_id, r.reference_range_text, r.abnormal_flag, "
-        "r.is_critical, r.critical_limit_id, r.entered_by, r.entered_at, r.tech_validated_by, "
-        "r.tech_validated_at, r.released_by, r.released_at, r.status, r.amend_reason, "
-        "r.superseded_by_result_id, r.source "
-        "FROM lab_results r WHERE r.order_item_id IN ({marks}) "
-        "ORDER BY r.order_item_id, r.version, r.id"), [i["id"] for i in items])
-    events = _rows(conn, (
-        "SELECT id, result_id, event_type, actor, occurred_at, after_json "
-        "FROM lab_result_events WHERE result_id IN ({marks}) "
-        "AND event_type IN ('withdrawn', 'amended', 'superseded') ORDER BY id"),
-        [r["id"] for r in results])
-    orders = {r["id"]: r for r in _rows(
-        conn, "SELECT id, ordered_by FROM orders WHERE id IN ({marks})",
-        [i["order_id"] for i in items])}
+    specimens = {
+        r["id"]: r
+        for r in _rows(
+            conn,
+            (
+                "SELECT s.id, s.patient_id, s.specimen_type_code, s.container, s.priority, s.status, "
+                "s.collected_at, s.collected_by, s.collection_location, s.received_at, s.received_by, "
+                "s.rejected_at, s.recollect_of, st.display AS specimen_display "
+                "FROM lab_specimens s LEFT JOIN lab_specimen_types st ON st.code = s.specimen_type_code "
+                "WHERE s.id IN ({marks})"
+            ),
+            specimen_ids,
+        )
+    }
+    patients = {
+        r["id"]: r
+        for r in _rows(
+            conn,
+            (
+                "SELECT p.id, p.name, p.mrn, p.ward, p.bed, p.date_of_birth, p.sex, p.status, "
+                f"{PATIENT_DEPARTMENT_SQL} AS department FROM patients p WHERE p.id IN ({{marks}})"
+            ),
+            [s["patient_id"] for s in specimens.values()],
+        )
+    }
+    items = _rows(
+        conn,
+        (
+            "SELECT i.id, i.order_id, i.specimen_id, i.test_id, i.panel_test_id, i.section_id, "
+            "i.priority, i.status, i.cancelled_reason, i.cancelled_by, i.updated_at, "
+            "t.name AS test_name, t.short_name, t.result_type, t.unit AS test_unit, "
+            "pt.name AS panel_name, sec.name AS section_name, sec.sort_order AS section_order, "
+            "pc.sort_order AS component_order "
+            "FROM lab_order_items i "
+            "LEFT JOIN lab_tests t ON t.id = i.test_id "
+            "LEFT JOIN lab_tests pt ON pt.id = i.panel_test_id "
+            "LEFT JOIN lab_sections sec ON sec.id = i.section_id "
+            "LEFT JOIN lab_panel_components pc ON pc.panel_test_id = i.panel_test_id "
+            "     AND pc.component_test_id = i.test_id "
+            "WHERE i.specimen_id IN ({marks})"
+        ),
+        specimen_ids,
+    )
+    results = _rows(
+        conn,
+        (
+            "SELECT r.id, r.order_item_id, r.order_id, r.specimen_id, r.patient_id, r.test_id, "
+            "r.version, r.value_milli, r.comparator, r.value_text, r.unit, r.decimal_places, "
+            "r.comment, r.reference_range_id, r.reference_range_text, r.abnormal_flag, "
+            "r.is_critical, r.critical_limit_id, r.entered_by, r.entered_at, r.tech_validated_by, "
+            "r.tech_validated_at, r.released_by, r.released_at, r.status, r.amend_reason, "
+            "r.superseded_by_result_id, r.source "
+            "FROM lab_results r WHERE r.order_item_id IN ({marks}) "
+            "ORDER BY r.order_item_id, r.version, r.id"
+        ),
+        [i["id"] for i in items],
+    )
+    events = _rows(
+        conn,
+        (
+            "SELECT id, result_id, event_type, actor, occurred_at, after_json "
+            "FROM lab_result_events WHERE result_id IN ({marks}) "
+            "AND event_type IN ('withdrawn', 'amended', 'superseded') ORDER BY id"
+        ),
+        [r["id"] for r in results],
+    )
+    orders = {
+        r["id"]: r
+        for r in _rows(
+            conn,
+            "SELECT id, ordered_by FROM orders WHERE id IN ({marks})",
+            [i["order_id"] for i in items],
+        )
+    }
     user_ids: set = set()
     for s in specimens.values():
         user_ids.update((s.get("collected_by"), s.get("received_by")))
@@ -311,25 +351,51 @@ def _load(conn, specimen_ids: list[str]) -> dict:
         user_ids.add(i.get("cancelled_by"))
     for o in orders.values():
         user_ids.add(o.get("ordered_by"))
-    users = {r["id"]: r for r in _rows(
-        conn, "SELECT id, name, registration_number FROM users WHERE id IN ({marks})",
-        [u for u in user_ids if u])}
-    return {"specimens": specimens, "patients": patients, "items": items,
-            "results": results, "events": events, "orders": orders, "users": users}
+    users = {
+        r["id"]: r
+        for r in _rows(
+            conn,
+            "SELECT id, name, registration_number FROM users WHERE id IN ({marks})",
+            [u for u in user_ids if u],
+        )
+    }
+    return {
+        "specimens": specimens,
+        "patients": patients,
+        "items": items,
+        "results": results,
+        "events": events,
+        "orders": orders,
+        "users": users,
+    }
 
 
 # ════════════════════════════════════════════════════════════════════════════
 #  Building one report
 # ════════════════════════════════════════════════════════════════════════════
 
-def _last_event(events: list[dict], result_id: Any, event_type: str) -> Optional[dict]:
+
+def _last_event(events: list[dict], result_id: Any, event_type: str) -> dict | None:
     """The latest event of one type on one result, or None."""
-    return next((e for e in reversed(events)
-                 if e["result_id"] == result_id and e["event_type"] == event_type), None)
+    return next(
+        (
+            e
+            for e in reversed(events)
+            if e["result_id"] == result_id and e["event_type"] == event_type
+        ),
+        None,
+    )
 
 
-def _version_entry(row: dict, *, successor: Optional[dict], events: list[dict],
-                   users: dict, result_type: str, withhold: bool = False) -> dict:
+def _version_entry(
+    row: dict,
+    *,
+    successor: dict | None,
+    events: list[dict],
+    users: dict,
+    result_type: str,
+    withhold: bool = False,
+) -> dict:
     """One earlier released version of a result: replaced by an amendment, or
     withdrawn. A withdrawn value is never repeated.
 
@@ -364,12 +430,14 @@ def _version_entry(row: dict, *, successor: Optional[dict], events: list[dict],
         event = _last_event(events, row["id"], "withdrawn")
         entry["ended_at"] = event["occurred_at"] if event else None
         entry["ended_by"] = _person(users, event["actor"]) if event else None
-        entry["reason"] = ((_reason_from(event["after_json"]) if event else None)
-                           or (row.get("amend_reason") or "").strip() or None)
+        entry["reason"] = (
+            (_reason_from(event["after_json"]) if event else None)
+            or (row.get("amend_reason") or "").strip()
+            or None
+        )
         return entry
     own = _last_event(events, row["id"], "superseded")
-    created = (_last_event(events, successor["id"], "amended")
-               if successor is not None else None)
+    created = _last_event(events, successor["id"], "amended") if successor is not None else None
     if successor is not None:
         entry["ended_at"] = successor.get("released_at")
         entry["ended_by"] = _person(users, successor.get("released_by"))
@@ -382,9 +450,11 @@ def _version_entry(row: dict, *, successor: Optional[dict], events: list[dict],
     successor_reason = None
     if successor is not None and successor.get("status") != "withdrawn":
         successor_reason = (successor.get("amend_reason") or "").strip() or None
-    entry["reason"] = ((_reason_from(own["after_json"]) if own else None)
-                       or (_reason_from(created["after_json"]) if created else None)
-                       or successor_reason)
+    entry["reason"] = (
+        (_reason_from(own["after_json"]) if own else None)
+        or (_reason_from(created["after_json"]) if created else None)
+        or successor_reason
+    )
     return entry
 
 
@@ -414,16 +484,27 @@ def _item_entry(item: dict, rows: list[dict], events: list[dict], users: dict) -
     for index, row in enumerate(earlier):
         successor = by_id.get(row.get("superseded_by_result_id"))
         if successor is None and row["status"] != "withdrawn":
-            later = earlier[index + 1:] + ([live] if live is not None else [])
+            later = earlier[index + 1 :] + ([live] if live is not None else [])
             successor = later[0] if later else None
-        history.append(_version_entry(row, successor=successor, events=events, users=users,
-                                      result_type=result_type, withhold=withhold))
+        history.append(
+            _version_entry(
+                row,
+                successor=successor,
+                events=events,
+                users=users,
+                result_type=result_type,
+                withhold=withhold,
+            )
+        )
     entry = {
         "item_id": item["id"],
         "order_id": item["order_id"],
-        "test": {"id": item["test_id"], "name": item.get("test_name") or item["test_id"],
-                 "short_name": item.get("short_name") or item.get("test_name") or item["test_id"],
-                 "result_type": result_type},
+        "test": {
+            "id": item["test_id"],
+            "name": item.get("test_name") or item["test_id"],
+            "short_name": item.get("short_name") or item.get("test_name") or item["test_id"],
+            "result_type": result_type,
+        },
         "panel_name": item.get("panel_name"),
         "section_id": item.get("section_id"),
         "section_name": item.get("section_name") or item.get("section_id"),
@@ -435,9 +516,11 @@ def _item_entry(item: dict, rows: list[dict], events: list[dict], users: dict) -
         "cancelled": None,
     }
     if state == "cancelled":
-        entry["cancelled"] = {"reason": item.get("cancelled_reason"),
-                              "by": _person(users, item.get("cancelled_by")),
-                              "at": item.get("updated_at")}
+        entry["cancelled"] = {
+            "reason": item.get("cancelled_reason"),
+            "by": _person(users, item.get("cancelled_by")),
+            "at": item.get("updated_at"),
+        }
     if live is not None:
         entry["result"] = {
             "id": live["id"],
@@ -463,12 +546,17 @@ def _item_entry(item: dict, rows: list[dict], events: list[dict], users: dict) -
 
 def _sort_key(item: dict) -> tuple:
     order = item.get("component_order")
-    return (int(item.get("section_order") or 0), item.get("section_name") or "",
-            item.get("panel_name") or "", 9999 if order is None else int(order),
-            item.get("test_name") or "", int(item["id"]))
+    return (
+        int(item.get("section_order") or 0),
+        item.get("section_name") or "",
+        item.get("panel_name") or "",
+        9999 if order is None else int(order),
+        item.get("test_name") or "",
+        int(item["id"]),
+    )
 
 
-def _build(specimen: dict, patient: dict, items: list[dict], data: dict) -> Optional[dict]:
+def _build(specimen: dict, patient: dict, items: list[dict], data: dict) -> dict | None:
     """The report of one sample, or None when nothing on it was ever released."""
     users = data["users"]
     results_by_item: dict[int, list[dict]] = {}
@@ -491,16 +579,17 @@ def _build(specimen: dict, patient: dict, items: list[dict], data: dict) -> Opti
     status = "interim" if pending else ("amended" if amended else "final")
     status_text = STATUS_WORDS[status]
     if pending:
-        status_text += (f": {pending} test{'s' if pending != 1 else ''} "
-                        f"not yet reported")
+        status_text += f": {pending} test{'s' if pending != 1 else ''} not yet reported"
     signatories: list[dict] = []
     technologists: list[dict] = []
     for entry in entries:
         result = entry.get("result")
         if not result:
             continue
-        for bucket, person in ((signatories, result.get("authorised_by")),
-                               (technologists, result.get("checked_by"))):
+        for bucket, person in (
+            (signatories, result.get("authorised_by")),
+            (technologists, result.get("checked_by")),
+        ):
             if person and person not in bucket:
                 bucket.append(person)
     requested_by = []
@@ -591,11 +680,10 @@ def _reports(conn, specimen_ids: list[str]) -> list[dict]:
         report = _build(specimen, patient, items_by_specimen.get(sid, []), data)
         if report is not None:
             out.append(report)
+
     def newest_first(report: dict) -> tuple:
-        at = (_instant(report["specimen"]["collected_at"])
-              or _instant(report["reported_at"]))
-        return (at is not None, at.timestamp() if at is not None else 0.0,
-                report["accession"])
+        at = _instant(report["specimen"]["collected_at"]) or _instant(report["reported_at"])
+        return (at is not None, at.timestamp() if at is not None else 0.0, report["accession"])
 
     out.sort(key=newest_first, reverse=True)
     return out
@@ -605,7 +693,8 @@ def _reports(conn, specimen_ids: list[str]) -> list[dict]:
 #  Public reads
 # ════════════════════════════════════════════════════════════════════════════
 
-def report_for(conn, accession: Any, *, dept: Optional[str]) -> dict:
+
+def report_for(conn, accession: Any, *, dept: str | None) -> dict:
     """The report of one sample. Raises LabReportError: 'bad_accession' (422)
     for a number whose check digit is wrong (a misread digit is never looked
     up), 'not_found' (404) for an unknown sample or one outside the caller's
@@ -614,21 +703,23 @@ def report_for(conn, accession: Any, *, dept: Optional[str]) -> dict:
     try:
         accession = los.checked_accession(accession)
     except los.LabOrderError as err:
-        raise LabReportError(err.code, err.message, status=err.status)
+        raise LabReportError(err.code, err.message, status=err.status) from err
     if not tables_present(conn):
         raise LabReportError("not_found", "Sample not found", status=404)
-    row = conn.execute("SELECT patient_id FROM lab_specimens WHERE id = ?",
-                       (accession,)).fetchone()
+    row = conn.execute("SELECT patient_id FROM lab_specimens WHERE id = ?", (accession,)).fetchone()
     if row is None:
         raise LabReportError("not_found", "Sample not found", status=404)
     if not patient_in_scope(conn, row["patient_id"], dept):
-        raise LabReportError("not_found", "Sample not found", status=404,
-                             out_of_scope_patient_id=row["patient_id"])
+        raise LabReportError(
+            "not_found", "Sample not found", status=404, out_of_scope_patient_id=row["patient_id"]
+        )
     reports = _reports(conn, [accession])
     if not reports:
-        raise LabReportError("not_reported",
-                             "No result on this sample has been reported yet, so it has no "
-                             "report.", status=409)
+        raise LabReportError(
+            "not_reported",
+            "No result on this sample has been reported yet, so it has no report.",
+            status=409,
+        )
     return reports[0]
 
 
@@ -643,7 +734,9 @@ def _released_specimen_ids(conn, where: str, params: tuple, limit: int) -> list[
         f"WHERE r.released_at IS NOT NULL AND i.specimen_id IS NOT NULL AND {where} "
         "GROUP BY i.specimen_id "
         "ORDER BY MAX(julianday(COALESCE(s.collected_at, r.released_at))) DESC, i.specimen_id DESC "
-        "LIMIT ?", params + (limit,)).fetchall()
+        "LIMIT ?",
+        params + (limit,),
+    ).fetchall()
     return [r[0] for r in rows]
 
 
@@ -661,8 +754,9 @@ def reports_for_patient(conn, patient_id: str, *, limit: int = REPORT_LIST_CAP) 
     return [_summary(r) for r in _reports(conn, ids)]
 
 
-def reports_for_day(conn, day: date, *, dept: Optional[str],
-                    limit: int = REPORT_LIST_CAP) -> list[dict]:
+def reports_for_day(
+    conn, day: date, *, dept: str | None, limit: int = REPORT_LIST_CAP
+) -> list[dict]:
     """The reports with any result released (or amended) on one hospital-local
     day, newest collection first (at most REPORT_LIST_CAP), inside the caller's
     department (None is the laboratory's hospital-wide list)."""
@@ -679,14 +773,15 @@ def reports_for_day(conn, day: date, *, dept: Optional[str],
     return [_summary(r) for r in _reports(conn, ids)]
 
 
-def patient_by_uhid(conn, uhid: str, *, dept: Optional[str]) -> Optional[dict]:
+def patient_by_uhid(conn, uhid: str, *, dept: str | None) -> dict | None:
     """The one patient whose UHID is exactly `uhid` (spaces and case ignored),
     inside the caller's department, or None."""
     text = str(uhid or "").strip()
     if not text:
         return None
-    rows = conn.execute("SELECT id FROM patients WHERE UPPER(TRIM(mrn)) = UPPER(?) LIMIT 2",
-                        (text,)).fetchall()
+    rows = conn.execute(
+        "SELECT id FROM patients WHERE UPPER(TRIM(mrn)) = UPPER(?) LIMIT 2", (text,)
+    ).fetchall()
     if len(rows) != 1:
         return None
     pid = rows[0][0]

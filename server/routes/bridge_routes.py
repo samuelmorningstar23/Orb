@@ -10,47 +10,58 @@ one appointment store staff surfaces read (forecast_service merges its booked
 rows into the Appointments panel), tagged origin='patient' so an ASK is never
 displayed as an agreed slot. Migration 28 carries the stranded rows across.
 """
-from fastapi import APIRouter, Depends, Request, HTTPException
+
+import json
+
+# Laboratory reports in the portal (lis-29), the section at the end of this file.
+import uuid
+from datetime import datetime
+from typing import TypedDict
+
+from database import db_session, run_db
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from services.model_switch import require_models_on as _require_models_on
-from permissions import require_patient_self
+from permissions import (
+    DISCHARGE_PUBLISH,
+    LAB_READ,
+    ORDER_READ,
+    require_patient_access,
+    require_patient_self,
+)
+from pydantic import BaseModel, ConfigDict, StrictInt
+from services.audit_service import AuditWriteError, log_audit_event
 from services.bridge_service import (
     answer_patient_question,
     get_patient_status_simple,
     patient_ask_context,
 )
-from services.audit_service import log_audit_event
-from routes.appointments_routes import (
-    ORIGIN_PATIENT,
-    PATIENT_REQUEST_TYPE,
-    _MAX_REASON_LEN,
-    _serialize as _serialize_appointment,
-    _validate_date_only,
-    _validate_slot,
-    default_slot_for,
-    persist_appointment,
-)
-from database import db_session, run_db
 from services.discharge_service import (
     PENDING_REVIEW_MESSAGE,
     REVIEW_DRAFT,
     REVIEW_REVIEWED,
     is_reviewed,
 )
-from services.vital_charting import as_charted
-from services.lens_service import REVIEWED_IMAGING_SQL
 from services.drug_chart import drug_chart_enabled, require_drug_chart
+from services.lens_service import REVIEWED_IMAGING_SQL
 from services.medorders import held as held_labels
+from services.model_switch import require_models_on as _require_models_on
 from services.stay_times import latest_admission, summary_less_ends
-from datetime import datetime
-import json
-# Laboratory reports in the portal (lis-29), the section at the end of this file.
-import uuid
-from pydantic import BaseModel, ConfigDict, StrictInt
-from permissions import DISCHARGE_PUBLISH, LAB_READ, ORDER_READ, require_patient_access
+from services.vital_charting import as_charted
+
+from routes.appointments_routes import (
+    _MAX_REASON_LEN,
+    ORIGIN_PATIENT,
+    PATIENT_REQUEST_TYPE,
+    _validate_date_only,
+    _validate_slot,
+    default_slot_for,
+    persist_appointment,
+)
+from routes.appointments_routes import (
+    _serialize as _serialize_appointment,
+)
 from routes.opt_in_gates import feature_gate
 from services import lab_portal_service as lab_portal
-from services.audit_service import AuditWriteError
 
 router = APIRouter(prefix="/api/bridge", tags=["bridge"])
 
@@ -68,6 +79,7 @@ def _portal_medication(row) -> dict:
         med["status"] = held_labels.PORTAL_STATUS
     return med
 
+
 # The vitals a patient sees, and the chart precision each is printed at.
 #
 # NO VERDICT (ruled 2026-10-03). This table used to carry "normal" bands and the
@@ -79,7 +91,13 @@ def _portal_medication(row) -> dict:
 # needs the patient's SpO2 scale and oxygen status and still misses risk that
 # only shows in the aggregate. So the patient gets the number as charted, when
 # it was measured and its trend, and the card says the care team reviews them.
-_PORTAL_VITALS = {
+class _PortalVital(TypedDict):
+    unit: str
+    label: str
+    dp: int
+
+
+_PORTAL_VITALS: dict[str, _PortalVital] = {
     "heart_rate": {"unit": "bpm", "label": "Heart rate", "dp": 0},
     "systolic_bp": {"unit": "mmHg", "label": "Systolic BP", "dp": 0},
     "spo2": {"unit": "%", "label": "Oxygen (SpO₂)", "dp": 0},
@@ -145,8 +163,7 @@ def _patient_view(row) -> dict:
         )
     else:
         note = (
-            f"Scheduled by the care team for {appt['scheduled_date']} at "
-            f"{appt['scheduled_time']}."
+            f"Scheduled by the care team for {appt['scheduled_date']} at {appt['scheduled_time']}."
         )
     return {
         "id": appt["id"],
@@ -186,18 +203,19 @@ def _resolve_patient_id(user_id: str) -> str:
     in its own worker thread. Async callers must go through run_db().
     """
     with db_session() as db:
-        row = db.execute(
-            "SELECT id FROM patients WHERE user_id = ?", (user_id,)
-        ).fetchone()
+        row = db.execute("SELECT id FROM patients WHERE user_id = ?", (user_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="No patient record found for your account")
     return row["id"]
 
 
+_PATIENT_STATUS_USER_DEFAULT = Depends(require_patient_self())
+
+
 @router.get("/status")
-def patient_status(user: dict = Depends(require_patient_self())):
+def patient_status(user: dict = _PATIENT_STATUS_USER_DEFAULT):
     """Get current patient status in simple language.
-    
+
     Route-level ownership: only the patient themselves can access this.
     Service layer additionally scopes data by user.id.
     """
@@ -205,10 +223,13 @@ def patient_status(user: dict = Depends(require_patient_self())):
     return status
 
 
+_PATIENT_VITALS_USER_DEFAULT = Depends(require_patient_self())
+
+
 @router.get("/vitals")
-def patient_vitals(user: dict = Depends(require_patient_self())):
+def patient_vitals(user: dict = _PATIENT_VITALS_USER_DEFAULT):
     """Get simplified vitals for patient view.
-    
+
     Route-level ownership: only the patient themselves can access this.
     """
     status = get_patient_status_simple(user["id"])
@@ -217,10 +238,13 @@ def patient_vitals(user: dict = Depends(require_patient_self())):
 
 # The patient's questions are answered by a model: 404 "Switched off on this
 # computer" while the models are off (ORB_MODELS_ENABLED, or the Orb Ward Record).
+_PATIENT_ASK_USER_DEFAULT = Depends(require_patient_self())
+
+
 @router.post("/ask", dependencies=[Depends(_require_models_on)])
-async def patient_ask(request: Request, user: dict = Depends(require_patient_self())):
+async def patient_ask(request: Request, user: dict = _PATIENT_ASK_USER_DEFAULT):
     """Patient asks a question — responds in simple language.
-    
+
     Route-level ownership: only the patient themselves can access this.
     """
     body = _require_object_body(await request.json())
@@ -253,10 +277,13 @@ async def patient_ask(request: Request, user: dict = Depends(require_patient_sel
 # All endpoints below resolve patient_id from user_id (ownership enforced).
 
 
+_PATIENT_REPORTS_USER_DEFAULT = Depends(require_patient_self())
+
+
 @router.get("/reports")
-def patient_reports(user: dict = Depends(require_patient_self())):
+def patient_reports(user: dict = _PATIENT_REPORTS_USER_DEFAULT):
     """Get all reports for the logged-in patient — aggregated view.
-    
+
     Returns medications, clinical documents, lab results, discharge summary,
     and diagnostic imaging reports, all scoped to this patient only. Every
     document carries ``type_label``, its type in the patient's words.
@@ -267,13 +294,17 @@ def patient_reports(user: dict = Depends(require_patient_self())):
     with db_session() as db:
         # Active medications. None on an Orb Ward Record computer, whose drug
         # chart stays on paper (services/drug_chart).
-        meds = db.execute(
-            """SELECT drug_name, dosage, route, frequency, status, started_at,
+        meds = (
+            db.execute(
+                """SELECT drug_name, dosage, route, frequency, status, started_at,
                       held_at, hold_reason
                FROM medications WHERE patient_id = ?
                ORDER BY started_at DESC""",
-            (patient_id,),
-        ).fetchall() if drug_chart else []
+                (patient_id,),
+            ).fetchall()
+            if drug_chart
+            else []
+        )
 
         # Clinical documents (notes, ward rounds, etc.), lab results apart. The
         # portal built Lab History from imaging alone, so a patient whose
@@ -375,8 +406,11 @@ def _patient_discharge_view(row) -> dict | None:
     }
 
 
+_PATIENT_MEDICATIONS_USER_DEFAULT = Depends(require_patient_self())
+
+
 @router.get("/medications", dependencies=[Depends(require_drug_chart)])
-def patient_medications(user: dict = Depends(require_patient_self())):
+def patient_medications(user: dict = _PATIENT_MEDICATIONS_USER_DEFAULT):
     """Get medications for the logged-in patient only."""
     patient_id = _resolve_patient_id(user["id"])
 
@@ -393,8 +427,11 @@ def patient_medications(user: dict = Depends(require_patient_self())):
     return {"medications": [_portal_medication(m) for m in meds]}
 
 
+_PATIENT_DISCHARGE_USER_DEFAULT = Depends(require_patient_self())
+
+
 @router.get("/discharge")
-def patient_discharge(user: dict = Depends(require_patient_self())):
+def patient_discharge(user: dict = _PATIENT_DISCHARGE_USER_DEFAULT):
     """Get discharge summary for the logged-in patient only."""
     patient_id = _resolve_patient_id(user["id"])
 
@@ -413,15 +450,22 @@ def patient_discharge(user: dict = Depends(require_patient_self())):
             latest = latest_admission(db, patient_id)
             if latest is not None and latest.get("status") != "active":
                 ended_without_summary = next(
-                    (e for e in summary_less_ends(db, patient_id=patient_id)
-                     if e["admission_id"] == latest["id"]), None)
+                    (
+                        e
+                        for e in summary_less_ends(db, patient_id=patient_id)
+                        if e["admission_id"] == latest["id"]
+                    ),
+                    None,
+                )
 
     if not summary:
         if ended_without_summary:
             return {
                 "discharge_summary": None,
-                "message": ("Your hospital stay has ended. No discharge summary was written for "
-                            "it in Orb. Ask the hospital for a copy of your discharge papers."),
+                "message": (
+                    "Your hospital stay has ended. No discharge summary was written for "
+                    "it in Orb. Ask the hospital for a copy of your discharge papers."
+                ),
                 "discharged_at": ended_without_summary["ended_at"],
             }
         return {"discharge_summary": None, "message": "No discharge summary available yet."}
@@ -434,6 +478,7 @@ def patient_discharge(user: dict = Depends(require_patient_self())):
             timeline = None
 
     view = _patient_discharge_view(summary)
+    assert view is not None
     return {
         # None until reviewed; the message says why (see _patient_discharge_view).
         "discharge_summary": view["summary"],
@@ -444,8 +489,11 @@ def patient_discharge(user: dict = Depends(require_patient_self())):
     }
 
 
+_PATIENT_DOCUMENTS_USER_DEFAULT = Depends(require_patient_self())
+
+
 @router.get("/documents")
-def patient_documents(user: dict = Depends(require_patient_self())):
+def patient_documents(user: dict = _PATIENT_DOCUMENTS_USER_DEFAULT):
     """Get clinical documents for the logged-in patient only."""
     patient_id = _resolve_patient_id(user["id"])
 
@@ -463,8 +511,11 @@ def patient_documents(user: dict = Depends(require_patient_self())):
 # ─── Care Team ───────────────────────────────────────────────
 
 
+_PATIENT_CARE_TEAM_USER_DEFAULT = Depends(require_patient_self())
+
+
 @router.get("/care-team")
-def patient_care_team(user: dict = Depends(require_patient_self())):
+def patient_care_team(user: dict = _PATIENT_CARE_TEAM_USER_DEFAULT):
     """Who is looking after me: attending physician, care unit, and the ward's
     nursing team.
 
@@ -489,9 +540,15 @@ def patient_care_team(user: dict = Depends(require_patient_self())):
                 (row["attending_doctor_id"],),
             ).fetchone()
             if doc:
-                attending = {"name": doc["name"], "role": "Attending Physician", "department": doc["department"]}
+                attending = {
+                    "name": doc["name"],
+                    "role": "Attending Physician",
+                    "department": doc["department"],
+                }
 
-        department = (row["admission_department"] if row else None) or (attending["department"] if attending else None)
+        department = (row["admission_department"] if row else None) or (
+            attending["department"] if attending else None
+        )
 
     # The nursing team, never a named nurse. Orb records no nurse-to-patient
     # assignment, and this used to name the first nurse in the department (else
@@ -522,8 +579,11 @@ def patient_care_team(user: dict = Depends(require_patient_self())):
 # ─── Vitals Trends (for patient-facing sparklines) ───────────
 
 
+_PATIENT_VITALS_TRENDS_USER_DEFAULT = Depends(require_patient_self())
+
+
 @router.get("/vitals-trends")
-def patient_vitals_trends(user: dict = Depends(require_patient_self())):
+def patient_vitals_trends(user: dict = _PATIENT_VITALS_TRENDS_USER_DEFAULT):
     """Recent vitals as short time-series: the number as charted, when it was
     measured and its trend. No status and no normal range (see _PORTAL_VITALS)."""
     patient_id = _resolve_patient_id(user["id"])
@@ -545,8 +605,9 @@ def patient_vitals_trends(user: dict = Depends(require_patient_self())):
         # Charted precision (services/vital_charting): whole numbers, tenths for
         # temperature, half-up. The same number the ward prints and NEWS2
         # scores; the raw float went out as "73.9 bpm".
-        readings = [(r["timestamp"], as_charted(r[key], meta["dp"]))
-                    for r in rows if r.get(key) is not None]
+        readings = [
+            (r["timestamp"], as_charted(r[key], meta["dp"])) for r in rows if r.get(key) is not None
+        ]
         series = [v for _, v in readings]
         current = series[-1] if series else None
         # Timestamp of the row that supplied `current` — vitals rows can be
@@ -566,16 +627,22 @@ def patient_vitals_trends(user: dict = Depends(require_patient_self())):
 # ─── Appointment Requests (written where staff read) ─────────
 
 
+_PATIENT_APPOINTMENTS_USER_DEFAULT = Depends(require_patient_self())
+
+
 @router.get("/appointments")
-async def patient_appointments(user: dict = Depends(require_patient_self())):
+async def patient_appointments(user: dict = _PATIENT_APPOINTMENTS_USER_DEFAULT):
     """List the patient's own appointments — requests and staff-booked alike."""
     patient_id = await run_db(_resolve_patient_id, user["id"])
     appointments = await run_db(_patient_appointments, patient_id)
     return {"appointments": appointments}
 
 
+_REQUEST_APPOINTMENT_USER_DEFAULT = Depends(require_patient_self())
+
+
 @router.post("/appointments")
-async def request_appointment(request: Request, user: dict = Depends(require_patient_self())):
+async def request_appointment(request: Request, user: dict = _REQUEST_APPOINTMENT_USER_DEFAULT):
     """Ask for a follow-up. The request lands on the staff appointment list.
 
     Written through routes.appointments_routes.persist_appointment with
@@ -596,14 +663,16 @@ async def request_appointment(request: Request, user: dict = Depends(require_pat
     try:
         datetime.strptime(requested_date, "%Y-%m-%d").date()
     except ValueError:
-        raise HTTPException(status_code=400, detail="requested_date must be a valid date (YYYY-MM-DD)")
+        raise HTTPException(
+            status_code=400, detail="requested_date must be a valid date (YYYY-MM-DD)"
+        ) from None
 
     requested_time = _str_field(body, "requested_time") or None
     if requested_time is not None:
         try:
             datetime.strptime(requested_time, "%H:%M")
         except ValueError:
-            raise HTTPException(status_code=400, detail="requested_time must be HH:MM")
+            raise HTTPException(status_code=400, detail="requested_time must be HH:MM") from None
 
     # Same slot rules as a staff booking (past date, earlier today, horizon) —
     # one table, one set of rules, so a patient cannot park a row in a year no
@@ -612,6 +681,7 @@ async def request_appointment(request: Request, user: dict = Depends(require_pat
     try:
         if requested_time:
             _validate_slot(requested_date, requested_time)
+            slot: str | None
             slot = requested_time
             unspecified_time = False
         else:
@@ -619,19 +689,19 @@ async def request_appointment(request: Request, user: dict = Depends(require_pat
             slot = default_slot_for(parsed)
             unspecified_time = True
     except HTTPException as exc:
-        raise HTTPException(status_code=400, detail=exc.detail)
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
     if not slot:
         raise HTTPException(
             status_code=400,
             detail="It is too late in the day to add a request for today. "
-                   "Please choose a date from tomorrow onwards, or call the ward.",
+            "Please choose a date from tomorrow onwards, or call the ward.",
         )
 
     # Cap free-text so a client can't store multi-KB blobs.
-    department = (_str_field(body, "department") or None)
+    department = _str_field(body, "department") or None
     if department is not None:
         department = department[:80]
-    reason = (_str_field(body, "reason") or None)
+    reason = _str_field(body, "reason") or None
     if reason is not None:
         reason = reason[:1000]
 
@@ -666,8 +736,7 @@ async def request_appointment(request: Request, user: dict = Depends(require_pat
             action_type="appointment_booked",
             outcome="success",
             summary_message=(
-                f"Patient-requested follow-up for {patient_id} on "
-                f"{requested_date} {slot}"
+                f"Patient-requested follow-up for {patient_id} on {requested_date} {slot}"
             ),
             actor_user_id=user["id"],
             actor_role=user.get("role", "patient"),
@@ -728,8 +797,11 @@ async def request_appointment(request: Request, user: dict = Depends(require_pat
     }
 
 
+_CANCEL_APPOINTMENT_USER_DEFAULT = Depends(require_patient_self())
+
+
 @router.delete("/appointments/{appointment_id}")
-def cancel_appointment(appointment_id: str, user: dict = Depends(require_patient_self())):
+def cancel_appointment(appointment_id: str, user: dict = _CANCEL_APPOINTMENT_USER_DEFAULT):
     """Cancel one of the patient's own appointments (ownership enforced).
 
     The cancellation lands on the row staff read, so the slot leaves the ward's
@@ -773,15 +845,19 @@ _lab_portal_gate = feature_gate("lab_portal_reports")
 
 
 def _lab_portal_refusal(err: "lab_portal.PortalReportError") -> HTTPException:
-    return HTTPException(status_code=err.status,
-                         detail={"error": err.code, "message": err.message})
+    return HTTPException(status_code=err.status, detail={"error": err.code, "message": err.message})
 
 
 def _lab_portal_audit_unavailable() -> HTTPException:
-    return HTTPException(status_code=503, detail={
-        "error": "audit_unavailable",
-        "message": ("Your laboratory reports cannot be shown just now. "
-                    "Please try again in a moment.")})
+    return HTTPException(
+        status_code=503,
+        detail={
+            "error": "audit_unavailable",
+            "message": (
+                "Your laboratory reports cannot be shown just now. Please try again in a moment."
+            ),
+        },
+    )
 
 
 def _request_meta(request: Request) -> dict:
@@ -793,9 +869,17 @@ def _request_meta(request: Request) -> dict:
     }
 
 
-def _audit_own_lab_read(request: Request, user: dict, patient_id: str, *, action: str,
-                        summary: str, target_type: str, target_id: str,
-                        metadata: dict) -> None:
+def _audit_own_lab_read(
+    request: Request,
+    user: dict,
+    patient_id: str,
+    *,
+    action: str,
+    summary: str,
+    target_type: str,
+    target_id: str,
+    metadata: dict,
+) -> None:
     """A patient reading their own laboratory report: phi_access, fail-closed
     (log_audit_event raises AuditWriteError and the answer is not sent)."""
     meta = _request_meta(request)
@@ -809,14 +893,15 @@ def _audit_own_lab_read(request: Request, user: dict, patient_id: str, *, action
         actor_role=user.get("role"),
         patient_id=patient_id,
         target_type=target_type,
-        target_id=target_id,
+        target_id=str(target_id) if target_id is not None else None,
         metadata={"self_access": True, **metadata},
         **meta,
     )
 
 
-def _audit_other_patients_sample(request: Request, user: dict, patient_id: str,
-                                 other_patient_id: str, accession: str) -> None:
+def _audit_other_patients_sample(
+    request: Request, user: dict, patient_id: str, other_patient_id: str, accession: str
+) -> None:
     """A patient login asked for a sample recorded against someone else. The
     answer is the plain 404; the trail records the attempt on the other
     patient's record."""
@@ -836,8 +921,11 @@ def _audit_other_patients_sample(request: Request, user: dict, patient_id: str,
     )
 
 
+_PATIENT_LAB_REPORTS_USER_DEFAULT = Depends(require_patient_self())
+
+
 @router.get("/lab-reports", dependencies=[Depends(_lab_portal_gate)])
-def patient_lab_reports(request: Request, user: dict = Depends(require_patient_self())):
+def patient_lab_reports(request: Request, user: dict = _PATIENT_LAB_REPORTS_USER_DEFAULT):
     """The patient's own laboratory reports that have reached the portal,
     newest collection first, as list lines with no values, and the one line
     that says when reports appear here."""
@@ -847,19 +935,27 @@ def patient_lab_reports(request: Request, user: dict = Depends(require_patient_s
     if lines:
         try:
             _audit_own_lab_read(
-                request, user, patient_id, action="portal_lab_reports_listed",
+                request,
+                user,
+                patient_id,
+                action="portal_lab_reports_listed",
                 summary=f"Patient portal: own laboratory reports listed ({len(lines)})",
-                target_type="lab_reports", target_id=patient_id,
-                metadata={"count": len(lines),
-                          "accessions": [line["accession"] for line in lines]})
+                target_type="lab_reports",
+                target_id=patient_id,
+                metadata={"count": len(lines), "accessions": [line["accession"] for line in lines]},
+            )
         except AuditWriteError:
-            raise _lab_portal_audit_unavailable()
+            raise _lab_portal_audit_unavailable() from None
     return {"reports": lines, "note": lab_portal.portal_note(lab_portal.delay_hours())}
 
 
+_PATIENT_LAB_REPORT_USER_DEFAULT = Depends(require_patient_self())
+
+
 @router.get("/lab-reports/{accession}", dependencies=[Depends(_lab_portal_gate)])
-def patient_lab_report(accession: str, request: Request,
-                       user: dict = Depends(require_patient_self())):
+def patient_lab_report(
+    accession: str, request: Request, user: dict = _PATIENT_LAB_REPORT_USER_DEFAULT
+):
     """One of the patient's own reports as they see it. An unknown sample,
     another patient's sample and a report with nothing in the portal yet are
     the same 404."""
@@ -870,26 +966,38 @@ def patient_lab_report(accession: str, request: Request,
     except lab_portal.PortalReportError as err:
         other = err.extra.get("other_patient_id")
         if other:
-            _audit_other_patients_sample(request, user, patient_id, other,
-                                         err.extra.get("accession") or str(accession)[:64])
-        raise _lab_portal_refusal(err)
+            _audit_other_patients_sample(
+                request, user, patient_id, other, err.extra.get("accession") or str(accession)[:64]
+            )
+        raise _lab_portal_refusal(err) from err
     try:
         _audit_own_lab_read(
-            request, user, patient_id, action="portal_lab_report_viewed",
+            request,
+            user,
+            patient_id,
+            action="portal_lab_report_viewed",
             summary=f"Patient portal: own laboratory report {report['accession']} viewed",
-            target_type="lab_report", target_id=report["accession"],
-            metadata={"result_ids": shown_ids, "complete": report["complete"]})
+            target_type="lab_report",
+            target_id=report["accession"],
+            metadata={"result_ids": shown_ids, "complete": report["complete"]},
+        )
     except AuditWriteError:
-        raise _lab_portal_audit_unavailable()
+        raise _lab_portal_audit_unavailable() from None
     return {"report": report}
+
+
+_WARD_PORTAL_LAB_REPORTS_USER_DEFAULT = Depends(
+    require_patient_access(
+        LAB_READ, ORDER_READ, any_of=True, audit_action="portal_lab_reports_state_viewed"
+    )
+)
 
 
 @router.get("/patients/{patient_id}/lab-reports", dependencies=[Depends(_lab_portal_gate)])
 def ward_portal_lab_reports(
-        patient_id: str,
-        user: dict = Depends(require_patient_access(
-            LAB_READ, ORDER_READ, any_of=True,
-            audit_action="portal_lab_reports_state_viewed"))):
+    patient_id: str,
+    user: dict = _WARD_PORTAL_LAB_REPORTS_USER_DEFAULT,
+):
     """For the ward: each laboratory report of one patient and what of it the
     patient's portal shows (shown, partly shown, waiting for the delay, or
     waiting for a doctor's release), with the result ids a doctor names when
@@ -900,43 +1008,68 @@ def ward_portal_lab_reports(
         if exists is None:
             raise HTTPException(status_code=404, detail="Patient not found")
         reports = lab_portal.portal_states(db, patient_id)
-    return {"patient_id": patient_id, "delay_hours": lab_portal.delay_hours(),
-            "reports": reports}
+    return {"patient_id": patient_id, "delay_hours": lab_portal.delay_hours(), "reports": reports}
 
 
 class PortalReleaseIn(BaseModel):
     """The released results on the report the doctor read, by id (the
     'live_result_ids' of the ward answer above, or the result ids of the
     laboratory report). Anything else in the body is refused."""
+
     model_config = ConfigDict(extra="forbid")
     seen_result_ids: list[StrictInt]
 
 
-@router.post("/patients/{patient_id}/lab-reports/{accession}/release",
-             dependencies=[Depends(_lab_portal_gate)])
+_RELEASE_LAB_REPORT_TO_PORTAL_USER_DEFAULT = Depends(require_patient_access(DISCHARGE_PUBLISH))
+
+
+@router.post(
+    "/patients/{patient_id}/lab-reports/{accession}/release",
+    dependencies=[Depends(_lab_portal_gate)],
+)
 def release_lab_report_to_portal(
-        patient_id: str, accession: str, body: PortalReleaseIn, request: Request,
-        # discharge.publish: the doctor's permission that already releases a
-        # reviewed discharge summary to the portal. Ward-scoped like every
-        # other {patient_id} write.
-        user: dict = Depends(require_patient_access(DISCHARGE_PUBLISH))):
+    patient_id: str,
+    accession: str,
+    body: PortalReleaseIn,
+    request: Request,
+    # discharge.publish: the doctor's permission that already releases a
+    # reviewed discharge summary to the portal. Ward-scoped like every
+    # other {patient_id} write.
+    user: dict = _RELEASE_LAB_REPORT_TO_PORTAL_USER_DEFAULT,
+):
     """A doctor releases one laboratory report, as they read it, to the
     patient's portal. 409 report_changed (nothing written) when a result was
     released, amended or withdrawn since the doctor's screen loaded."""
     try:
         with db_session(immediate=True) as db:
             result = lab_portal.release_in_txn(
-                db, patient_id, accession, seen_result_ids=body.seen_result_ids,
-                actor=user, request_meta=_request_meta(request))
+                db,
+                patient_id,
+                accession,
+                seen_result_ids=body.seen_result_ids,
+                actor=user,
+                request_meta=_request_meta(request),
+            )
     except lab_portal.PortalReportError as err:
-        raise _lab_portal_refusal(err)
+        raise _lab_portal_refusal(err) from err
     except AuditWriteError:
-        raise HTTPException(status_code=503, detail={
-            "error": "audit_unavailable",
-            "message": ("The report was not released because the audit trail is not "
-                        "available. Try again in a moment.")})
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "audit_unavailable",
+                "message": (
+                    "The report was not released because the audit trail is not "
+                    "available. Try again in a moment."
+                ),
+            },
+        ) from None
     with db_session() as db:
-        portal = next((r["portal"] for r in lab_portal.portal_states(db, patient_id)
-                       if r["accession"] == result["accession"]), None)
+        portal = next(
+            (
+                r["portal"]
+                for r in lab_portal.portal_states(db, patient_id)
+                if r["accession"] == result["accession"]
+            ),
+            None,
+        )
     return {**result, "portal": portal}
-

@@ -59,13 +59,15 @@ is genuinely new to us is a reading we have never seen — alerting on it once i
 the safe direction to fail. Persisting the high-water marks across restarts is
 the real fix for the residual case and is noted as follow-up work.
 """
+
 from __future__ import annotations
 
 import logging
 from collections import OrderedDict
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Iterable, Optional, Protocol, Sequence
+from datetime import UTC, datetime, timedelta
+from typing import Protocol
 
 from services.ingestion_adapters import IngestionAdapter, JSONAdapter
 from services.ingestion_service import IngestionResult, ingest_payload
@@ -98,7 +100,7 @@ _MAX_TRACKED_PATIENTS = 4096
 _MAX_TRACKED_CLOCKS = 256
 
 
-def _parse_iso(value: Optional[str]) -> Optional[datetime]:
+def _parse_iso(value: str | None) -> datetime | None:
     """Tolerant ISO-8601 → aware UTC datetime. Never raises.
 
     A naive timestamp (no offset) is read in the appliance's configured zone,
@@ -118,12 +120,13 @@ def _parse_iso(value: Optional[str]) -> Optional[datetime]:
         return None
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=hl7v2.appliance_timezone())
-    return dt.astimezone(timezone.utc)
+    return dt.astimezone(UTC)
 
 
 # ════════════════════════════════════════════
 #  Clock skew — a wrong clock is a ward fault, not a muted patient
 # ════════════════════════════════════════════
+
 
 @dataclass
 class ClockSkewRecord:
@@ -132,20 +135,21 @@ class ClockSkewRecord:
     Keyed by (source, device) and holding no patient identifier, because this
     record is rendered on the admin surface.
     """
+
     device_id: str
     readings: int = 0
     readings_out_of_tolerance: int = 0
-    faults: int = 0                                  # transitions into "skewed"
-    last_skew_seconds: float = 0.0                   # + = device ahead of us
+    faults: int = 0  # transitions into "skewed"
+    last_skew_seconds: float = 0.0  # + = device ahead of us
     max_abs_skew_seconds: float = 0.0
-    state: str = "ok"                                # ok | skewed
+    state: str = "ok"  # ok | skewed
     # Whether the device stated its own UTC offset. False means we supplied the
     # zone, so an operator reading a skew here has to consider "the timezone I
     # configured for this device is wrong" alongside "its clock is wrong".
-    device_states_offset: Optional[bool] = None
-    first_seen_at: Optional[str] = None
-    last_seen_at: Optional[str] = None
-    last_fault_at: Optional[str] = None
+    device_states_offset: bool | None = None
+    first_seen_at: str | None = None
+    last_seen_at: str | None = None
+    last_fault_at: str | None = None
 
     def as_dict(self) -> dict:
         return dict(self.__dict__)
@@ -154,11 +158,12 @@ class ClockSkewRecord:
 @dataclass
 class LivenessDecision:
     """The sink's verdict on one payload: ordering and clock, kept separate."""
-    backfill: bool = False                  # device dates it before one we hold
-    skew_seconds: Optional[float] = None    # device time − receipt time
-    skew_state: str = "unknown"             # ok | skewed | unknown
-    device_id: Optional[str] = None
-    device_states_offset: Optional[bool] = None
+
+    backfill: bool = False  # device dates it before one we hold
+    skew_seconds: float | None = None  # device time − receipt time
+    skew_state: str = "unknown"  # ok | skewed | unknown
+    device_id: str | None = None
+    device_states_offset: bool | None = None
     reason: str = ""
 
     @property
@@ -170,25 +175,35 @@ class VitalsSink(Protocol):
     """What a `VitalsSource` is allowed to assume about its destination."""
 
     async def submit_payload(
-        self, raw_payload: str, *, source: VitalsSource,
-        correlation_id: Optional[str] = None,
-        external_message_id: Optional[str] = None,
-        adapter: Optional[IngestionAdapter] = None,
+        self,
+        raw_payload: str,
+        *,
+        source: VitalsSource,
+        correlation_id: str | None = None,
+        external_message_id: str | None = None,
+        adapter: IngestionAdapter | None = None,
         hints: Sequence[ReadingHint] = (),
     ) -> IngestionResult: ...
 
     async def submit_readings(
-        self, readings: Sequence[VitalsReading], *, source: VitalsSource,
-        correlation_id: Optional[str] = None,
+        self,
+        readings: Sequence[VitalsReading],
+        *,
+        source: VitalsSource,
+        correlation_id: str | None = None,
     ) -> IngestionResult: ...
 
 
 class IngestionSink:
     """Production sink: everything goes through `ingestion_service`."""
 
-    def __init__(self, *, sio=None,
-                 skew_tolerance_seconds: Optional[int] = None,
-                 live_window_seconds: Optional[int] = None):
+    def __init__(
+        self,
+        *,
+        sio=None,
+        skew_tolerance_seconds: int | None = None,
+        live_window_seconds: int | None = None,
+    ):
         """`live_window_seconds` is the pre-fix name for `skew_tolerance_seconds`.
 
         Kept accepted so existing configuration keeps loading, but it no longer
@@ -197,18 +212,27 @@ class IngestionSink:
         self._sio = sio
         tolerance = skew_tolerance_seconds
         if tolerance is None:
-            tolerance = (live_window_seconds if live_window_seconds is not None
-                         else DEFAULT_CLOCK_SKEW_TOLERANCE_SECONDS)
+            tolerance = (
+                live_window_seconds
+                if live_window_seconds is not None
+                else DEFAULT_CLOCK_SKEW_TOLERANCE_SECONDS
+            )
         self._skew_tolerance = timedelta(seconds=max(0, int(tolerance)))
         # (source_id, patient_identifier) -> newest DEVICE time seen so far.
-        self._high_water: "OrderedDict[tuple[str, str], datetime]" = OrderedDict()
+        self._high_water: OrderedDict[tuple[str, str], datetime] = OrderedDict()
         # (source_id, device_id) -> what we know about that device's clock.
-        self._clocks: "OrderedDict[tuple[str, str], ClockSkewRecord]" = OrderedDict()
+        self._clocks: OrderedDict[tuple[str, str], ClockSkewRecord] = OrderedDict()
 
     # ── ordering + clock ──
 
-    def classify(self, source_id: str, hints: Iterable[ReadingHint], *,
-                 stats=None, now: Optional[datetime] = None) -> LivenessDecision:
+    def classify(
+        self,
+        source_id: str,
+        hints: Iterable[ReadingHint],
+        *,
+        stats=None,
+        now: datetime | None = None,
+    ) -> LivenessDecision:
         """Judge one payload's ordering and its device's clock, separately.
 
         Ordering (the `backfill` flag) compares DEVICE time to DEVICE time and
@@ -221,11 +245,11 @@ class IngestionSink:
         Clock skew compares device time to RECEIPT time. It never suppresses
         anything. It raises a counted, visible fault about the device.
         """
-        receipt = now or datetime.now(timezone.utc)
+        receipt = now or datetime.now(UTC)
         decision = LivenessDecision()
         saw_any = False
         all_stale = True
-        worst_skew: Optional[float] = None
+        worst_skew: float | None = None
 
         for hint in hints:
             if not hint.patient_identifier:
@@ -282,15 +306,17 @@ class IngestionSink:
         """
         return self.classify(source_id, hints).backfill
 
-    def _record_clock(self, source_id: str, decision: LivenessDecision, *,
-                      in_tolerance: bool) -> None:
+    def _record_clock(
+        self, source_id: str, decision: LivenessDecision, *, in_tolerance: bool
+    ) -> None:
         """Update the per-device clock record and shout once when it goes bad."""
         device_id = decision.device_id or "unidentified-device"
         key = (source_id, device_id)
         record = self._clocks.get(key)
         if record is None:
-            record = ClockSkewRecord(device_id=device_id,
-                                     first_seen_at=datetime.now(timezone.utc).isoformat())
+            record = ClockSkewRecord(
+                device_id=device_id, first_seen_at=datetime.now(UTC).isoformat()
+            )
             self._clocks[key] = record
             while len(self._clocks) > _MAX_TRACKED_CLOCKS:
                 self._clocks.popitem(last=False)
@@ -300,14 +326,17 @@ class IngestionSink:
         record.readings += 1
         record.last_skew_seconds = skew
         record.max_abs_skew_seconds = max(record.max_abs_skew_seconds, round(abs(skew), 3))
-        record.last_seen_at = datetime.now(timezone.utc).isoformat()
+        record.last_seen_at = datetime.now(UTC).isoformat()
         record.device_states_offset = decision.device_states_offset
 
         if in_tolerance:
             if record.state == "skewed":
                 logger.warning(
                     "[%s] device %s clock is back within tolerance (skew %+.1fs)",
-                    source_id, device_id, skew)
+                    source_id,
+                    device_id,
+                    skew,
+                )
             record.state = "ok"
             return
 
@@ -324,15 +353,18 @@ class IngestionSink:
                 "(tolerance %.0f min, device %s its UTC offset). Readings are still "
                 "being scored and alerted on using RECEIPT time — but this device's "
                 "recorded observation times are wrong and its clock needs setting.",
-                source_id, device_id, skew / 60.0,
+                source_id,
+                device_id,
+                skew / 60.0,
                 self._skew_tolerance.total_seconds() / 60.0,
                 "stated" if decision.device_states_offset else "did NOT state",
             )
 
-    def clock_skew_report(self, source_id: Optional[str] = None) -> dict:
+    def clock_skew_report(self, source_id: str | None = None) -> dict:
         """PHI-free clock health, for `status()` and the admin surface."""
-        records = [r for (sid, _), r in self._clocks.items()
-                   if source_id is None or sid == source_id]
+        records = [
+            r for (sid, _), r in self._clocks.items() if source_id is None or sid == source_id
+        ]
         skewed = [r for r in records if r.state == "skewed"]
         return {
             "state": "skewed" if skewed else "ok",
@@ -341,8 +373,9 @@ class IngestionSink:
             # reports its own zone as `assumed_timezone` in `describe()`; these
             # are deliberately named differently so a mismatch between them is
             # readable rather than hidden behind one ambiguous key.
-            "appliance_timezone": str(getattr(hl7v2.appliance_timezone(), "key", None)
-                                      or hl7v2.appliance_timezone()),
+            "appliance_timezone": str(
+                getattr(hl7v2.appliance_timezone(), "key", None) or hl7v2.appliance_timezone()
+            ),
             "devices_tracked": len(records),
             "devices_skewed": len(skewed),
             "devices": [r.as_dict() for r in records],
@@ -361,10 +394,13 @@ class IngestionSink:
     # ── submission ──
 
     async def submit_payload(
-        self, raw_payload: str, *, source: VitalsSource,
-        correlation_id: Optional[str] = None,
-        external_message_id: Optional[str] = None,
-        adapter: Optional[IngestionAdapter] = None,
+        self,
+        raw_payload: str,
+        *,
+        source: VitalsSource,
+        correlation_id: str | None = None,
+        external_message_id: str | None = None,
+        adapter: IngestionAdapter | None = None,
         hints: Sequence[ReadingHint] = (),
     ) -> IngestionResult:
         """Ingest a raw wire payload (e.g. the HL7 message a monitor sent).
@@ -389,8 +425,11 @@ class IngestionSink:
         )
 
     async def submit_readings(
-        self, readings: Sequence[VitalsReading], *, source: VitalsSource,
-        correlation_id: Optional[str] = None,
+        self,
+        readings: Sequence[VitalsReading],
+        *,
+        source: VitalsSource,
+        correlation_id: str | None = None,
     ) -> IngestionResult:
         """Ingest structured readings (manual entry, or any non-wire source).
 
@@ -403,17 +442,21 @@ class IngestionSink:
         if not usable:
             return IngestionResult(correlation_id=correlation_id, parse_status="empty")
 
-        hints = [ReadingHint(r.patient_identifier, r.observed_at,
-                             device_id=r.device_id or source.source_id)
-                 for r in usable]
+        hints = [
+            ReadingHint(
+                r.patient_identifier, r.observed_at, device_id=r.device_id or source.source_id
+            )
+            for r in usable
+        ]
         decision = self.classify(source.source_id, hints, stats=source.stats)
         backfill = decision.backfill
 
         # One payload per patient: ingest_payload's dedup fingerprint and its
         # ingestion_events row are both per-message, and a mixed-patient blob
         # would make a single duplicate poison the whole batch.
-        result = IngestionResult(correlation_id=correlation_id, parse_status="parsed",
-                                 backfill=backfill)
+        result = IngestionResult(
+            correlation_id=correlation_id, parse_status="parsed", backfill=backfill
+        )
         for reading in usable:
             payload = json.dumps(reading.to_json_payload(), sort_keys=True)
             single = await ingest_payload(
@@ -445,45 +488,69 @@ class RecordingSink:
     that asserts backfill behaviour is asserting the production rule.
     """
 
-    def __init__(self, *, skew_tolerance_seconds: Optional[int] = None,
-                 live_window_seconds: Optional[int] = None):
-        self._order = IngestionSink(skew_tolerance_seconds=skew_tolerance_seconds,
-                                    live_window_seconds=live_window_seconds)
+    def __init__(
+        self, *, skew_tolerance_seconds: int | None = None, live_window_seconds: int | None = None
+    ):
+        self._order = IngestionSink(
+            skew_tolerance_seconds=skew_tolerance_seconds, live_window_seconds=live_window_seconds
+        )
         self.payloads: list[dict] = []
         self.readings: list[VitalsReading] = []
 
-    async def submit_payload(self, raw_payload, *, source, correlation_id=None,
-                             external_message_id=None, adapter=None, hints=()):
+    async def submit_payload(
+        self,
+        raw_payload,
+        *,
+        source,
+        correlation_id=None,
+        external_message_id=None,
+        adapter=None,
+        hints=(),
+    ):
         decision = self._order.classify(source.source_id, hints, stats=source.stats)
-        self.payloads.append({
-            "raw": raw_payload,
-            "source_id": source.source_id,
-            "provenance_label": source.provenance_label,
-            "correlation_id": correlation_id,
-            "external_message_id": external_message_id,
-            "backfill": decision.backfill,
-            # Recorded alongside so a bench run can show what the device's clock
-            # was doing without the skew having changed the clinical outcome.
-            "skew_seconds": decision.skew_seconds,
-            "skew_state": decision.skew_state,
-        })
-        return IngestionResult(correlation_id=correlation_id, parse_status="parsed",
-                               received=1, inserted_vitals=1, backfill=decision.backfill)
+        self.payloads.append(
+            {
+                "raw": raw_payload,
+                "source_id": source.source_id,
+                "provenance_label": source.provenance_label,
+                "correlation_id": correlation_id,
+                "external_message_id": external_message_id,
+                "backfill": decision.backfill,
+                # Recorded alongside so a bench run can show what the device's clock
+                # was doing without the skew having changed the clinical outcome.
+                "skew_seconds": decision.skew_seconds,
+                "skew_state": decision.skew_state,
+            }
+        )
+        return IngestionResult(
+            correlation_id=correlation_id,
+            parse_status="parsed",
+            received=1,
+            inserted_vitals=1,
+            backfill=decision.backfill,
+        )
 
     async def submit_readings(self, readings, *, source, correlation_id=None):
         usable = [r for r in readings if r and not r.is_empty and r.patient_identifier]
-        hints = [ReadingHint(r.patient_identifier, r.observed_at,
-                             device_id=r.device_id or source.source_id)
-                 for r in usable]
+        hints = [
+            ReadingHint(
+                r.patient_identifier, r.observed_at, device_id=r.device_id or source.source_id
+            )
+            for r in usable
+        ]
         decision = self._order.classify(source.source_id, hints, stats=source.stats)
         for reading in usable:
             reading.notes = "backfill" if decision.backfill else reading.notes
             self.readings.append(reading)
-        return IngestionResult(correlation_id=correlation_id, parse_status="parsed",
-                               received=len(usable), inserted_vitals=len(usable),
-                               backfill=decision.backfill)
+        return IngestionResult(
+            correlation_id=correlation_id,
+            parse_status="parsed",
+            received=len(usable),
+            inserted_vitals=len(usable),
+            backfill=decision.backfill,
+        )
 
-    def clock_skew_report(self, source_id: Optional[str] = None) -> dict:
+    def clock_skew_report(self, source_id: str | None = None) -> dict:
         return self._order.clock_skew_report(source_id)
 
     def forget(self, source_id: str) -> None:
@@ -491,7 +558,11 @@ class RecordingSink:
 
 
 __all__ = [
-    "VitalsSink", "IngestionSink", "RecordingSink",
-    "ClockSkewRecord", "LivenessDecision",
-    "DEFAULT_CLOCK_SKEW_TOLERANCE_SECONDS", "DEFAULT_LIVE_WINDOW_SECONDS",
+    "VitalsSink",
+    "IngestionSink",
+    "RecordingSink",
+    "ClockSkewRecord",
+    "LivenessDecision",
+    "DEFAULT_CLOCK_SKEW_TOLERANCE_SECONDS",
+    "DEFAULT_LIVE_WINDOW_SECONDS",
 ]

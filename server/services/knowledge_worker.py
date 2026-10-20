@@ -36,6 +36,7 @@ Contract:
 The module top stays import-light: the spawn child imports this module, and
 anything imported here runs in both processes.
 """
+
 from __future__ import annotations
 
 import atexit
@@ -43,8 +44,10 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
+from typing import Literal
 
 # Strictly offline (standing rule, 4 October 2026): the same guard as config.py,
 # repeated because this child never imports server app modules. A missing model
@@ -74,7 +77,9 @@ def isolation_enabled() -> bool:
 # ─────────────────────────────────────────────────────────────────
 
 _w_embedder = None
-_w_reranker = None  # callable(pairs) -> list[float], or the sentinel False when unavailable
+_w_reranker: Callable[[list[tuple[str, str]]], list[float]] | Literal[False] | None = (
+    None  # callable(pairs) -> list[float], or the sentinel False when unavailable
+)
 
 
 _WATCHDOG_POLL_S = 1.0
@@ -126,6 +131,7 @@ def _start_parent_watchdog() -> None:
         if sentinel is not None:
             try:
                 from multiprocessing.connection import wait
+
                 if wait([sentinel], timeout=timeout):
                     return True
             except Exception:
@@ -137,10 +143,12 @@ def _start_parent_watchdog() -> None:
 
     def _exit_now() -> None:
         try:
-            os.write(2, (
-                f"knowledge worker {os.getpid()}: pool owner {parent_pid} is gone, "
-                "exiting\n"
-            ).encode())
+            os.write(
+                2,
+                (
+                    f"knowledge worker {os.getpid()}: pool owner {parent_pid} is gone, exiting\n"
+                ).encode(),
+            )
         except Exception:
             pass
         os._exit(0)
@@ -173,6 +181,7 @@ def _worker_init() -> None:
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     try:
         import torch
+
         torch.set_num_threads(int(os.environ["OMP_NUM_THREADS"]))
     except Exception:
         pass
@@ -188,6 +197,7 @@ def _local_snapshot_or_name(model_name: str) -> str:
     """
     try:
         from huggingface_hub import snapshot_download
+
         return snapshot_download(model_name, local_files_only=True)
     except Exception:
         return model_name
@@ -197,6 +207,7 @@ def _worker_get_embedder():
     global _w_embedder
     if _w_embedder is None:
         from FlagEmbedding import BGEM3FlagModel
+
         model_name = os.getenv("ORB_EMBEDDING_MODEL", "BAAI/bge-m3")
         resolved = _local_snapshot_or_name(model_name)
         try:
@@ -214,6 +225,7 @@ def _worker_get_reranker():
         model_name = os.getenv("SAGE_RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
         try:
             from FlagEmbedding import FlagReranker
+
             resolved = _local_snapshot_or_name(model_name)
             try:
                 rr = FlagReranker(resolved, use_fp16=True)
@@ -230,6 +242,7 @@ def _worker_get_reranker():
         except Exception:
             try:
                 from sentence_transformers import CrossEncoder
+
                 ce = CrossEncoder(_local_snapshot_or_name(model_name))
 
                 def _score(pairs):
@@ -244,6 +257,7 @@ def _worker_get_reranker():
 def _worker_embed(texts: list, model_name: str, batch_size: int, max_length: int) -> list:
     """Embed `texts`; returns a list of float32 byte blobs (sqlite-vec format)."""
     import numpy as np
+
     os.environ["ORB_EMBEDDING_MODEL"] = model_name
     model = _worker_get_embedder()
     vecs = model.encode(texts, batch_size=batch_size, max_length=max_length)["dense_vecs"]
@@ -279,6 +293,7 @@ def _ensure_pool() -> ProcessPoolExecutor:
     # worker starts. KnowledgeWorkerError, so every caller takes its lexical
     # fallback as it does for any worker failure.
     from services.model_switch import models_enabled
+
     if not models_enabled():
         raise KnowledgeWorkerError("the knowledge workers are switched off on this computer")
     if _pool is not None:
@@ -286,12 +301,11 @@ def _ensure_pool() -> ProcessPoolExecutor:
     with _pool_lock:
         if _pool is None:
             import multiprocessing as mp
+
             # spawn, never fork: the API process runs an event loop + threads,
             # and forking that is undefined behaviour city.
             ctx = mp.get_context("spawn")
-            _pool = ProcessPoolExecutor(
-                max_workers=1, mp_context=ctx, initializer=_worker_init
-            )
+            _pool = ProcessPoolExecutor(max_workers=1, mp_context=ctx, initializer=_worker_init)
             logger.info("knowledge worker pool started (1 spawn worker)")
     return _pool
 
@@ -362,7 +376,9 @@ def _submit(fn, *args, timeout: float):
         _shutdown_pool()
         logger.error(
             "knowledge worker died (%s) — restart budget %d/%d used",
-            e, _pool_failures, _MAX_POOL_RESTARTS + 1,
+            e,
+            _pool_failures,
+            _MAX_POOL_RESTARTS + 1,
         )
         raise KnowledgeWorkerError(f"knowledge worker crashed: {e}") from e
     except KnowledgeWorkerError:
@@ -376,7 +392,11 @@ def embed_texts_isolated(
 ) -> list:
     """Embed in the isolated worker; list of float32 byte blobs."""
     return _submit(
-        _worker_embed, list(texts), model_name, batch_size, max_length,
+        _worker_embed,
+        list(texts),
+        model_name,
+        batch_size,
+        max_length,
         timeout=EMBED_TIMEOUT_S,
     )
 

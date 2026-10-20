@@ -200,6 +200,7 @@ HOUSE RULES OBSERVED HERE
 * Ollama calls pass ``keep_alive`` and ``num_ctx`` (through
   ``llm_providers.provider_for_model``, which owns both).
 """
+
 import asyncio
 import atexit
 import json
@@ -209,18 +210,20 @@ import re
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from database import db_session, run_db
-# Top-level, not deferred: pure, dependency-free, and it is on the path of every
-# draft. See services/retrieval_query.py for what it fixes.
-from services.retrieval_query import build_guideline_query
+
 # STEP A. Top-level for the same reason: it runs on every single alert, before
 # anything else, and it is what decides whether this draft costs a GPU at all.
 from services import patient_specific_screen as pss
-from services.vital_charting import charted_text
 from services.news2_text import news2_description
+
+# Top-level, not deferred: pure, dependency-free, and it is on the path of every
+# draft. See services/retrieval_query.py for what it fixes.
+from services.retrieval_query import build_guideline_query
+from services.vital_charting import charted_text
 
 logger = logging.getLogger("orb.sage_assessment")
 
@@ -239,8 +242,8 @@ STATE_DECLINED = "declined"
 #: so rather than letting a surface conclude there is no assessment.
 
 #: How much the model was asked to write.
-DEPTH_BRIEF = "brief"   # Tier 2 — the alert lane. Next steps only.
-DEPTH_FULL = "full"     # Tier 3 — handover / ward round. Four sections.
+DEPTH_BRIEF = "brief"  # Tier 2 — the alert lane. Next steps only.
+DEPTH_FULL = "full"  # Tier 3 — handover / ward round. Four sections.
 
 #: The only transitions the API will perform. A clinician may resolve a draft
 #: they can read; they may not approve one that does not exist yet, and they may
@@ -253,16 +256,16 @@ CLINICIAN_TRANSITIONS: dict[str, frozenset[str]] = {
 #: Reasons an assessment can be unavailable. Each one is a DIFFERENT operational
 #: fact and the surface is expected to word them differently — "the GPU was
 #: busy" and "the model is not loaded" are not the same message to a ward.
-REASON_QUEUE_TIMEOUT = "queue_timeout"          # never got the model slot in time
-REASON_SHED = "shed"                            # governor rejected admission
-REASON_MODEL_EVICTED = "model_evicted"          # careful tier not resident
+REASON_QUEUE_TIMEOUT = "queue_timeout"  # never got the model slot in time
+REASON_SHED = "shed"  # governor rejected admission
+REASON_MODEL_EVICTED = "model_evicted"  # careful tier not resident
 REASON_GENERATION_TIMEOUT = "generation_timeout"
 REASON_MODEL_ERROR = "model_error"
 REASON_EMPTY_OUTPUT = "empty_output"
 REASON_UNPARSEABLE = "unparseable_output"
 REASON_NO_CONTEXT = "no_patient_context"
 REASON_SANITIZER_UNAVAILABLE = "sanitizer_unavailable"
-REASON_ABANDONED = "abandoned"                  # derived: process died mid-generation
+REASON_ABANDONED = "abandoned"  # derived: process died mid-generation
 #: EVERY LINE THE MODEL WROTE WAS DELETED by the generic filter or the
 #: fabrication guard. Distinct from "nothing was found" on purpose: the
 #: deterministic screen DID hand the model real candidate facts, so this is a
@@ -303,20 +306,22 @@ UNAVAILABLE_MESSAGES: dict[str, str] = {
     REASON_ALL_LINES_FILTERED: (
         "Sage was given this patient's own chart facts and wrote nothing specific "
         "to them, every line was generic or named something the chart does not "
-        "contain, so none were shown."),
+        "contain, so none were shown."
+    ),
 }
 
 #: Appended to every unavailable message when Tier 1 IS present. The clinician
 #: has not lost the assessment — they have lost the model's opinion about what
 #: to do next, which is a much smaller and much more honest claim.
-TIER1_STANDS = ("The score breakdown and trend above are Orb's own arithmetic and are "
-                "unaffected.")
+TIER1_STANDS = "The score breakdown and trend above are Orb's own arithmetic and are unaffected."
 
 #: For a draft that is READY but was cut short by the generation budget. The
 #: steps shown are whole and were screened normally; there were going to be
 #: more.
-ADVICE_TRUNCATED_NOTE = ("Sage ran out of time. These are the steps that had been "
-                         "written when it stopped. There may have been more.")
+ADVICE_TRUNCATED_NOTE = (
+    "Sage ran out of time. These are the steps that had been "
+    "written when it stopped. There may have been more."
+)
 
 #: THE HONEST EMPTY ANSWER, and the most common one this tier will give.
 #:
@@ -341,14 +346,16 @@ NO_FACTORS_NOTES: dict[str, str] = {
     NO_FACTORS_SCREEN_CLEAN: (
         "No patient-specific factors identified. Orb checked this patient's own "
         "medications, allergies, problem list and recent labs against this "
-        "deterioration and found nothing the score above does not already say."),
+        "deterioration and found nothing the score above does not already say."
+    ),
     # A FAILED SCREEN IS NOT A CLEAN SCREEN — the distinction
     # `check_medication_safety.interaction_screened` draws, one module over. The
     # last sentence is the load-bearing one: it forbids the reading that would
     # otherwise be natural and wrong.
     NO_FACTORS_SCREEN_FAILED: (
         "Orb could not check this patient's chart for patient-specific factors, "
-        "so none are shown. Do not read this as 'there are none'."),
+        "so none are shown. Do not read this as 'there are none'."
+    ),
     # THE SCREEN FOUND CANDIDATES AND THE MODEL DISMISSED THEM ALL. Named
     # separately because it is the only one of the three where there IS something
     # on the chart a clinician might want to look at themselves, and because a
@@ -358,7 +365,8 @@ NO_FACTORS_NOTES: dict[str, str] = {
     NO_FACTORS_MODEL_NONE: (
         "No patient-specific factors identified. Orb found chart facts worth "
         "checking and Sage judged that none of them change what happens next for "
-        "this deterioration."),
+        "this deterioration."
+    ),
 }
 
 #: What these flags are attributed TO. They are not model reasoning over a
@@ -375,7 +383,8 @@ CITATION_CHART_DERIVED = "chart_derived"
 #: this tier never asks for a guideline.
 CHART_EVIDENCE_NOTE = (
     "These flags come from this patient's own chart, the drug, lab value or "
-    "allergy named in each line, and not from a retrieved guideline.")
+    "allergy named in each line, and not from a retrieved guideline."
+)
 
 #: WHY AN ALERT DID OR DID NOT GET ITS OWN GENERATION. Every one of these is a
 #: distinct operational fact and they are logged by name, so "why is there no
@@ -421,8 +430,9 @@ REDRAFT_REASONS: dict[str, str] = {
     REDRAFT_NEW_DRIVER: "a parameter that was not scoring has started to score",
     REDRAFT_RED_SCORE: "a single parameter has reached 3",
     REDRAFT_CHART_FACTS_CHANGED: "this patient's chart facts have changed",
-    REUSE_SAME_CHART_FACTS: ("the same chart facts are already drafted and awaiting "
-                             "review, and only the score has moved"),
+    REUSE_SAME_CHART_FACTS: (
+        "the same chart facts are already drafted and awaiting review, and only the score has moved"
+    ),
 }
 
 #: Action verbs a card may carry. Deliberately SHORT and deliberately limited to
@@ -476,7 +486,11 @@ METRIC_DRAFTS_REUSED = "orb_sage_drafts_reused_total"
 # ── Configuration, read per call so an operator or a test can move it ────────
 def _enabled() -> bool:
     return os.getenv("ORB_SAGE_ASSESSMENT_ENABLED", "true").strip().lower() not in (
-        "0", "false", "no", "off")
+        "0",
+        "false",
+        "no",
+        "off",
+    )
 
 
 def _queue_wait_seconds(depth: str = DEPTH_FULL) -> float:
@@ -657,7 +671,7 @@ def _env_float(name: str, default: float) -> float:
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -683,12 +697,16 @@ TIER1_NOTHING_MEASURED = "nothing_measured"
 TIER1_ERROR = "engine_error"
 
 TIER1_MESSAGES: dict[str, str] = {
-    TIER1_NO_OBSERVATION: ("No observation is on file for this patient, so Orb has "
-                           "nothing to break down."),
-    TIER1_NOTHING_MEASURED: ("The latest observation has no measured parameter, so "
-                             "there is nothing for Orb to score."),
-    TIER1_ERROR: ("Orb could not assemble the score breakdown for this alert. The "
-                  "alert itself and its NEWS2 are unaffected."),
+    TIER1_NO_OBSERVATION: (
+        "No observation is on file for this patient, so Orb has nothing to break down."
+    ),
+    TIER1_NOTHING_MEASURED: (
+        "The latest observation has no measured parameter, so there is nothing for Orb to score."
+    ),
+    TIER1_ERROR: (
+        "Orb could not assemble the score breakdown for this alert. The "
+        "alert itself and its NEWS2 are unaffected."
+    ),
 }
 
 #: The two NEWS2 parameters the engine only puts in the breakdown WHEN THEY
@@ -755,8 +773,7 @@ def _compute_tier1(db, patient_id: str) -> dict:
         return _tier1(db, patient_id)
     except Exception:
         logger.exception("[SageAssessment] Tier 1 could not be computed for %s", patient_id)
-        return {"available": False, "reason": TIER1_ERROR,
-                "message": TIER1_MESSAGES[TIER1_ERROR]}
+        return {"available": False, "reason": TIER1_ERROR, "message": TIER1_MESSAGES[TIER1_ERROR]}
 
 
 def _tier1(db, patient_id: str) -> dict:
@@ -778,8 +795,11 @@ def _tier1(db, patient_id: str) -> dict:
         (patient_id, _tier1_window()),
     ).fetchall()
     if not rows:
-        return {"available": False, "reason": TIER1_NO_OBSERVATION,
-                "message": TIER1_MESSAGES[TIER1_NO_OBSERVATION]}
+        return {
+            "available": False,
+            "reason": TIER1_NO_OBSERVATION,
+            "message": TIER1_MESSAGES[TIER1_NO_OBSERVATION],
+        }
 
     prow = db.execute("SELECT on_scale_2 FROM patients WHERE id = ?", (patient_id,)).fetchone()
     scale2 = bool(prow["on_scale_2"]) if prow and prow["on_scale_2"] is not None else False
@@ -788,12 +808,17 @@ def _tier1(db, patient_id: str) -> dict:
     # self-deadlock from inside a caller's session) and would in any case be
     # scoring six historical rows as if each were current. Tier 1 is the NEWS2
     # decomposition; the overlay's escalation is the alert's business.
-    scored = [(row, score_vitals_row(row, patient_id=None, on_scale_2=scale2, overlay=False))
-              for row in rows]
-    scored = [(row, s) for row, s in scored if s]
+    scored_candidates = [
+        (row, score_vitals_row(row, patient_id=None, on_scale_2=scale2, overlay=False))
+        for row in rows
+    ]
+    scored = [(row, s) for row, s in scored_candidates if s is not None]
     if not scored:
-        return {"available": False, "reason": TIER1_NO_OBSERVATION,
-                "message": TIER1_MESSAGES[TIER1_NO_OBSERVATION]}
+        return {
+            "available": False,
+            "reason": TIER1_NO_OBSERVATION,
+            "message": TIER1_MESSAGES[TIER1_NO_OBSERVATION],
+        }
 
     latest_row, latest = scored[0]
     breakdown = list(latest.get("breakdown") or [])
@@ -801,9 +826,12 @@ def _tier1(db, patient_id: str) -> dict:
         # Every parameter absent. A NEWS2 of 0 over nothing measured is not a
         # finding, and presenting it as one is the failure `coverage_note`
         # exists to prevent.
-        return {"available": False, "reason": TIER1_NOTHING_MEASURED,
-                "message": TIER1_MESSAGES[TIER1_NOTHING_MEASURED],
-                "missing_parameters": latest.get("missing_parameters") or []}
+        return {
+            "available": False,
+            "reason": TIER1_NOTHING_MEASURED,
+            "message": TIER1_MESSAGES[TIER1_NOTHING_MEASURED],
+            "missing_parameters": latest.get("missing_parameters") or [],
+        }
 
     def _index(scored_obs):
         return {b["parameter"]: b for b in (scored_obs.get("breakdown") or [])}
@@ -812,6 +840,8 @@ def _tier1(db, patient_id: str) -> dict:
     earliest = _index(scored[-1][1]) if len(scored) > 1 else {}
     n_obs = len(scored)
 
+    parameters: list[dict]
+    non_scoring: list[dict]
     parameters, non_scoring = [], []
     for b in breakdown:
         entry = _tier1_parameter(b, previous, earliest, n_obs)
@@ -823,8 +853,7 @@ def _tier1(db, patient_id: str) -> dict:
         trend, total_delta = "insufficient_history", None
     else:
         total_delta = total - earliest_total
-        trend = ("worsening" if total_delta > 0 else
-                 "improving" if total_delta < 0 else "unchanged")
+        trend = "worsening" if total_delta > 0 else "improving" if total_delta < 0 else "unchanged"
 
     most_abnormal, tied_with = _most_abnormal(parameters)
     block = {
@@ -861,7 +890,7 @@ def _tier1(db, patient_id: str) -> dict:
 def _row_get(row, key, default=None):
     try:
         return row[key] if key in row.keys() else default
-    except Exception:      # pragma: no cover — defensive on exotic row types
+    except Exception:  # pragma: no cover — defensive on exotic row types
         return default
 
 
@@ -880,19 +909,26 @@ def _tier1_parameter(b: dict, previous: dict, earliest: dict, n_obs: int) -> dic
         # "not measured earlier" about a patient whose first set was charted two
         # minutes ago invents a gap in the record; "unknown" is the true state.
         points_direction, value_direction, value_delta, points_delta = (
-            "unknown", "unknown", None, None)
+            "unknown",
+            "unknown",
+            None,
+            None,
+        )
     elif first is None:
         points_direction, value_direction, value_delta, points_delta = "new", "unknown", None, None
     else:
         points_delta = (points or 0) - (first.get("points") or 0)
-        points_direction = ("worsening" if points_delta > 0 else
-                            "improving" if points_delta < 0 else "unchanged")
+        points_direction = (
+            "worsening" if points_delta > 0 else "improving" if points_delta < 0 else "unchanged"
+        )
         if now_n is None or first_n is None:
-            value_direction, value_delta = ("unknown" if value != first.get("value") else "flat"), None
+            value_direction, value_delta = (
+                ("unknown" if value != first.get("value") else "flat"),
+                None,
+            )
         else:
             value_delta = round(now_n - first_n, 1)
-            value_direction = ("up" if value_delta > 0 else
-                               "down" if value_delta < 0 else "flat")
+            value_direction = "up" if value_delta > 0 else "down" if value_delta < 0 else "flat"
 
     entry = {
         # ── straight from the engine, byte for byte ──
@@ -901,8 +937,8 @@ def _tier1_parameter(b: dict, previous: dict, earliest: dict, n_obs: int) -> dic
         "points": points,
         "note": b.get("note"),
         # ── rendering and movement, computed here ──
-        "display": _display_value(name, value),
-        "unit": _PARAM_UNITS.get(name),
+        "display": _display_value(name or "", value),
+        "unit": _PARAM_UNITS.get(name or ""),
         "previous_value": (prev or {}).get("value") if prev else None,
         "previous_points": (prev or {}).get("points") if prev else None,
         "first_value": (first or {}).get("value") if first else None,
@@ -926,13 +962,18 @@ def _movement_sentence(entry: dict, n_obs: int) -> str:
     if entry["points_direction"] == "unknown":
         parts.append("the only observation on file")
     elif entry["points_direction"] == "new":
-        parts.append("not scoring earlier in this window" if name in _CONDITIONAL_PARAMS
-                     else "not measured earlier in this window")
+        parts.append(
+            "not scoring earlier in this window"
+            if name in _CONDITIONAL_PARAMS
+            else "not measured earlier in this window"
+        )
     elif entry["value_direction"] == "flat":
         parts.append(f"unchanged across the last {n_obs} observations")
     elif entry["value_direction"] in ("up", "down"):
         first = _display_value(name, entry["first_value"])
-        parts.append(f"{entry['value_direction']} from {first} across the last {n_obs} observations")
+        parts.append(
+            f"{entry['value_direction']} from {first} across the last {n_obs} observations"
+        )
     else:
         first = _display_value(name, entry["first_value"])
         parts.append(f"was {first} across the last {n_obs} observations")
@@ -943,7 +984,7 @@ def _movement_sentence(entry: dict, n_obs: int) -> str:
     return ", ".join(parts)
 
 
-def _most_abnormal(parameters: list[dict]) -> tuple[Optional[dict], list[str]]:
+def _most_abnormal(parameters: list[dict]) -> tuple[dict | None, list[str]]:
     """The single worst parameter, and everything level with it.
 
     THE TIE IS REPORTED RATHER THAN HIDDEN. A peri-arrest patient can have five
@@ -961,7 +1002,7 @@ def _most_abnormal(parameters: list[dict]) -> tuple[Optional[dict], list[str]]:
     tied = [p for p in parameters if (p.get("points") or 0) == top]
     # `max` returns the FIRST maximal element, so engine order is the final
     # tiebreak by construction.
-    pick = max(tied, key=lambda p: (p.get("points_delta") or 0))
+    pick = max(tied, key=lambda p: p.get("points_delta") or 0)
     return pick, [p["parameter"] for p in tied if p is not pick]
 
 
@@ -985,23 +1026,28 @@ def _tier1_headline(block: dict) -> str:
     # news2_text's label (2026-10-03), the sentence every other surface uses,
     # so the headline also names a single parameter scoring 3, Scale 2 and an
     # incomplete set. The coverage note below still says WHICH were missing.
-    label = news2_description({
-        "raw_news2": total, "level": band,
-        "single_param_3": block.get("single_param_3"),
-        "spo2_scale": block.get("spo2_scale"),
-        "complete": block.get("complete"),
-    })
+    label = news2_description(
+        {
+            "raw_news2": total,
+            "level": band,
+            "single_param_3": block.get("single_param_3"),
+            "spo2_scale": block.get("spo2_scale"),
+            "complete": block.get("complete"),
+        }
+    )
     sentences = [f"{label}, {movement}."]
     scoring = block.get("parameters") or []
     if scoring:
-        sentences.append("Driven by " + "; ".join(
-            f"{p['parameter']} {p['display']} ({p['points']})" for p in scoring) + ".")
+        sentences.append(
+            "Driven by "
+            + "; ".join(f"{p['parameter']} {p['display']} ({p['points']})" for p in scoring)
+            + "."
+        )
     worst = block.get("most_abnormal")
     if worst:
         tied = block.get("most_abnormal_tied_with") or []
         also = f", level with {', '.join(tied)}" if tied else ""
-        sentences.append(
-            f"Most abnormal: {worst['parameter']} at {worst['points']} points{also}.")
+        sentences.append(f"Most abnormal: {worst['parameter']} at {worst['points']} points{also}.")
     if block.get("coverage_note"):
         sentences.append(block["coverage_note"])
     return " ".join(sentences)
@@ -1031,8 +1077,16 @@ _inflight: set = set()
 _MAX_INFLIGHT = 64
 
 
-def schedule_for_alert(patient_id: str, *, level: str, score=None, drivers=None,
-                       message_id=None, raw_news2=None, lane: str = "simulator") -> bool:
+def schedule_for_alert(
+    patient_id: str,
+    *,
+    level: str,
+    score=None,
+    drivers=None,
+    message_id=None,
+    raw_news2=None,
+    lane: str = "simulator",
+) -> bool:
     """Schedule an assessment for an alert that is ALREADY on a clinician's screen.
 
     Returns True when a task was created. MUST be called from the event loop
@@ -1058,9 +1112,17 @@ def schedule_for_alert(patient_id: str, *, level: str, score=None, drivers=None,
         logger.warning("[SageAssessment] backpressure — draft dropped for %s", patient_id)
         return False
     try:
-        task = loop.create_task(generate_for_alert(
-            patient_id, level=level, score=score, drivers=drivers,
-            message_id=message_id, raw_news2=raw_news2, lane=lane))
+        task = loop.create_task(
+            generate_for_alert(
+                patient_id,
+                level=level,
+                score=score,
+                drivers=drivers,
+                message_id=message_id,
+                raw_news2=raw_news2,
+                lane=lane,
+            )
+        )
     except Exception as e:
         logger.warning("[SageAssessment] could not schedule draft for %s: %s", patient_id, e)
         return False
@@ -1133,8 +1195,7 @@ def schedule_for_alert(patient_id: str, *, level: str, score=None, drivers=None,
 #   * `declined` — a clinician has already rejected this reasoning for this
 #     picture. Redrafting would re-propose what they just refused. Same rule
 #     `ipass_service` applies to the handover supplement, for the same reason.
-def _alert_draft_decision(patient_id: str, depth: str = DEPTH_BRIEF,
-                          message_id=None) -> dict:
+def _alert_draft_decision(patient_id: str, depth: str = DEPTH_BRIEF, message_id=None) -> dict:
     """Does this alert need its OWN generation, or does an existing draft cover it?
 
     Blocking — dispatch via ``run_db()``. Two or three indexed reads and some
@@ -1167,14 +1228,18 @@ def _alert_draft_decision(patient_id: str, depth: str = DEPTH_BRIEF,
         with db_session() as db:
             if message_id is not None:
                 dup = db.execute(
-                    "SELECT id FROM sage_assessments WHERE message_id = ?",
-                    (message_id,)).fetchone()
+                    "SELECT id FROM sage_assessments WHERE message_id = ?", (message_id,)
+                ).fetchone()
                 if dup:
-                    logger.info("[SageAssessment] alert message %s already has a draft",
-                                message_id)
-                    return {"redraft": False, "reason": None, "duplicate_alert": True,
-                            "assessment_id": dup["id"], "state": None,
-                            "age_seconds": None}
+                    logger.info("[SageAssessment] alert message %s already has a draft", message_id)
+                    return {
+                        "redraft": False,
+                        "reason": None,
+                        "duplicate_alert": True,
+                        "assessment_id": dup["id"],
+                        "state": None,
+                        "age_seconds": None,
+                    }
             row = db.execute(
                 """SELECT id, state, created_at, tier1, unavailable_reason,
                           screen_signature
@@ -1197,8 +1262,11 @@ def _alert_draft_decision(patient_id: str, depth: str = DEPTH_BRIEF,
             # tell a repeated permanent fact from a new one. `pss.screen` never
             # raises; a failed screen yields a None signature, which is
             # not-comparable and drafts.
-            signature = (pss.flag_signature(pss.screen(db, patient_id, current))
-                         if depth == DEPTH_BRIEF else None)
+            signature = (
+                pss.flag_signature(pss.screen(db, patient_id, current))
+                if depth == DEPTH_BRIEF
+                else None
+            )
 
         state, _reason = _derive_state(row)
         if state == STATE_UNAVAILABLE:
@@ -1218,29 +1286,36 @@ def _alert_draft_decision(patient_id: str, depth: str = DEPTH_BRIEF,
         # written before this column existed, or a screen that could not run)
         # means there is no comparison to make, and this rule stays out of it.
         prior_signature = row.get("screen_signature")
-        if (signature is not None and prior_signature is not None
-                and signature != prior_signature):
+        if signature is not None and prior_signature is not None and signature != prior_signature:
             return _redraft(REDRAFT_CHART_FACTS_CHANGED, row, state, age)
 
         changed = _material_change(_loads(row.get("tier1"), {}) or {}, current)
         if changed and not _repeat_of_a_standing_draft(
-                changed, row, state, signature, prior_signature, current):
+            changed, row, state, signature, prior_signature, current
+        ):
             return _redraft(changed, row, state, age)
 
-        return {"redraft": False,
-                "reason": REUSE_SAME_CHART_FACTS if changed else None,
-                "duplicate_alert": False,
-                "assessment_id": row["id"], "state": state, "age_seconds": age}
+        return {
+            "redraft": False,
+            "reason": REUSE_SAME_CHART_FACTS if changed else None,
+            "duplicate_alert": False,
+            "assessment_id": row["id"],
+            "state": state,
+            "age_seconds": age,
+        }
     except Exception:
-        logger.exception("[SageAssessment] redraft decision failed for %s — drafting",
-                         patient_id)
+        logger.exception("[SageAssessment] redraft decision failed for %s — drafting", patient_id)
         return _redraft(REDRAFT_PICTURE_UNKNOWN)
 
 
-def _repeat_of_a_standing_draft(changed: str, row: dict, state: Optional[str],
-                                signature: Optional[str],
-                                prior_signature: Optional[str],
-                                current: dict) -> bool:
+def _repeat_of_a_standing_draft(
+    changed: str,
+    row: dict,
+    state: str | None,
+    signature: str | None,
+    prior_signature: str | None,
+    current: dict,
+) -> bool:
     """Would this draft say EXACTLY what the standing one already says?
 
     THE MEASUREMENT THIS EXISTS FOR. Suresh Reddy, 2026-08-15, 01:57-02:18: fifteen
@@ -1293,14 +1368,20 @@ def _repeat_of_a_standing_draft(changed: str, row: dict, state: Optional[str],
     return True
 
 
-def _redraft(reason: str, row: Optional[dict] = None, state: Optional[str] = None,
-             age: Optional[float] = None) -> dict:
-    return {"redraft": True, "reason": reason, "duplicate_alert": False,
-            "assessment_id": (row or {}).get("id"), "state": state,
-            "age_seconds": age}
+def _redraft(
+    reason: str, row: dict | None = None, state: str | None = None, age: float | None = None
+) -> dict:
+    return {
+        "redraft": True,
+        "reason": reason,
+        "duplicate_alert": False,
+        "assessment_id": (row or {}).get("id"),
+        "state": state,
+        "age_seconds": age,
+    }
 
 
-def _row_age_seconds(created_at) -> Optional[float]:
+def _row_age_seconds(created_at) -> float | None:
     """Seconds since an isoformat stamp, or None if it cannot be read.
 
     None is NOT treated as fresh anywhere: an unreadable timestamp means the
@@ -1313,8 +1394,8 @@ def _row_age_seconds(created_at) -> Optional[float]:
     except (TypeError, ValueError):
         return None
     if stamp.tzinfo is None:
-        stamp = stamp.replace(tzinfo=timezone.utc)
-    return max(0.0, (datetime.now(timezone.utc) - stamp).total_seconds())
+        stamp = stamp.replace(tzinfo=UTC)
+    return max(0.0, (datetime.now(UTC) - stamp).total_seconds())
 
 
 def _scoring_parameters(block: dict) -> frozenset:
@@ -1325,11 +1406,11 @@ def _scoring_parameters(block: dict) -> frozenset:
     threshold rule — the definition of "a driver" stays in one place.
     """
     return frozenset(
-        str(p.get("parameter")) for p in (block.get("parameters") or [])
-        if p.get("parameter"))
+        str(p.get("parameter")) for p in (block.get("parameters") or []) if p.get("parameter")
+    )
 
 
-def _material_change(before: dict, now: dict) -> Optional[str]:
+def _material_change(before: dict, now: dict) -> str | None:
     """Has the clinical picture moved enough to be worth another 13-36 s?
 
     Returns the REDRAFT_* reason, or None when the earlier draft still describes
@@ -1363,8 +1444,9 @@ def _material_change(before: dict, now: dict) -> Optional[str]:
     return None
 
 
-def _open_assessment(patient_id: str, message_id, lane: str,
-                     depth: str = DEPTH_BRIEF) -> Optional[dict]:
+def _open_assessment(
+    patient_id: str, message_id, lane: str, depth: str = DEPTH_BRIEF
+) -> dict | None:
     """Claim the draft for this alert and assemble everything the prompt needs.
 
     ONE transaction, and it is the transaction that makes the draft exist. The
@@ -1385,9 +1467,12 @@ def _open_assessment(patient_id: str, message_id, lane: str,
     if the answer is "Orb could not assemble this chart".
     """
     from services import shadow_service
-    from services.sage_service import (_assemble_patient_context,
-                                       _authoritative_news2_line, _fresh_risk_block,
-                                       format_patient_channel_a)
+    from services.sage_service import (
+        _assemble_patient_context,
+        _authoritative_news2_line,
+        _fresh_risk_block,
+        format_patient_channel_a,
+    )
 
     with db_session() as db:
         channel = db.execute(
@@ -1425,12 +1510,18 @@ def _open_assessment(patient_id: str, message_id, lane: str,
         # every observation set that does not contain two rows charted at the
         # same instant, and this line is how we would find out if one ever did,
         # instead of a clinician finding out from two different numbers.
-        if (tier1.get("available") and risk.get("news2") is not None
-                and tier1.get("news2") != risk.get("news2")):
+        if (
+            tier1.get("available")
+            and risk.get("news2") is not None
+            and tier1.get("news2") != risk.get("news2")
+        ):
             logger.warning(
                 "[SageAssessment] NEWS2 disagreement for %s: tier1 %s vs chart block %s "
                 "— tied observation timestamps; tier1 (id-tiebroken) is used",
-                patient_id, tier1.get("news2"), risk.get("news2"))
+                patient_id,
+                tier1.get("news2"),
+                risk.get("news2"),
+            )
 
         # Recent observations, oldest-first, so "the trend across recent
         # observations" is something the model READS rather than infers from one
@@ -1460,8 +1551,11 @@ def _open_assessment(patient_id: str, message_id, lane: str,
         # rather than a reactor; it keeps the chart, the guidelines and the prose
         # it always had, and nothing in this re-shape touches it.
         t_screen = time.monotonic()
-        screen = (pss.screen(db, patient_id, tier1, facts=facts)
-                  if depth == DEPTH_BRIEF and not no_chart else None)
+        screen = (
+            pss.screen(db, patient_id, tier1, facts=facts)
+            if depth == DEPTH_BRIEF and not no_chart
+            else None
+        )
         # WHAT THE DETERMINISTIC HALF COSTS, measured rather than asserted. The
         # whole throughput case for this tier is that most alerts never touch a
         # GPU, and that case is only as good as the price of finding out.
@@ -1480,7 +1574,11 @@ def _open_assessment(patient_id: str, message_id, lane: str,
     # function is about to write on — the self-deadlock shape shadow_service
     # documents. Splitting the reads from the write also shrinks the write
     # transaction to two statements, which is what an alert storm needs.
-    chart_block = "" if no_chart else "\n".join(format_patient_channel_a(facts, patient_id))
+    if no_chart:
+        chart_block = ""
+    else:
+        assert facts is not None
+        chart_block = "\n".join(format_patient_channel_a(facts, patient_id))
 
     with db_session() as db:
         # The alert's episode. open_episode RESOLVES before it mints, so this
@@ -1494,9 +1592,11 @@ def _open_assessment(patient_id: str, message_id, lane: str,
         # that "news2_threshold" would put a clinician-initiated review in the
         # denominator of the alert metrics.
         episode_id, _ = shadow_service.open_episode(
-            patient_id, lane,
+            patient_id,
+            lane,
             trigger=("news2_threshold" if depth == DEPTH_BRIEF else "clinician_review"),
-            db=db)
+            db=db,
+        )
 
         assessment_id = str(uuid.uuid4())
         # ONE conversation id, minted once and used by both the row and the
@@ -1528,12 +1628,23 @@ def _open_assessment(patient_id: str, message_id, lane: str,
                     depth, tier1, news2, news2_level, news2_drivers, screen_signature,
                     conversation_id, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, 'generating', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (assessment_id, patient_id, channel_id, message_id, episode_id, lane,
-             depth, json.dumps(tier1),
-             pinned_news2, pinned_level,
-             json.dumps(list(risk.get("drivers") or [])[:8]),
-             signature,
-             conversation_id, now, now),
+            (
+                assessment_id,
+                patient_id,
+                channel_id,
+                message_id,
+                episode_id,
+                lane,
+                depth,
+                json.dumps(tier1),
+                pinned_news2,
+                pinned_level,
+                json.dumps(list(risk.get("drivers") or [])[:8]),
+                signature,
+                conversation_id,
+                now,
+                now,
+            ),
         )
         if (cur.rowcount or 0) == 0:
             # The unique index refused it: this alert already has a draft.
@@ -1549,13 +1660,15 @@ def _open_assessment(patient_id: str, message_id, lane: str,
             db.execute(
                 "UPDATE sage_assessments SET state = 'unavailable', "
                 "unavailable_reason = ?, fallback_text = ?, updated_at = ? WHERE id = ?",
-                (REASON_NO_CONTEXT, _fallback_sentence(), now, assessment_id))
+                (REASON_NO_CONTEXT, _fallback_sentence(), now, assessment_id),
+            )
             db.execute(
                 """INSERT INTO sage_assessment_events
                        (assessment_id, prior_state, new_state, actor_id, actor_name,
                         actor_role, reason, source, created_at)
                    VALUES (?, 'generating', 'unavailable', 'system', 'Orb Sage', 'AI', ?, 'system', ?)""",
-                (assessment_id, REASON_NO_CONTEXT, now))
+                (assessment_id, REASON_NO_CONTEXT, now),
+            )
             logger.warning("[SageAssessment] no chart could be assembled for %s", patient_id)
             return None
 
@@ -1604,12 +1717,14 @@ def _format_observation(row) -> str:
         o2 = " on O2" if row["on_oxygen"] else ""
     except (KeyError, IndexError, TypeError):
         o2 = ""
-    return (f"{row['timestamp']}: HR {_n('heart_rate')} · BP {_n('systolic_bp')} · "
-            f"RR {_n('respiratory_rate')} · SpO2 {_n('spo2')}% · "
-            f"Temp {_n('temperature', 1)}°C · ACVPU {cons}{o2}")
+    return (
+        f"{row['timestamp']}: HR {_n('heart_rate')} · BP {_n('systolic_bp')} · "
+        f"RR {_n('respiratory_rate')} · SpO2 {_n('spo2')}% · "
+        f"Temp {_n('temperature', 1)}°C · ACVPU {cons}{o2}"
+    )
 
 
-def _load_warm_candidates(patient_id: str) -> Optional[list]:
+def _load_warm_candidates(patient_id: str) -> list | None:
     """The prefetched guideline pool `on_critical_vigil_alert` warms on this very
     event, if it has landed yet. Blocking — via run_db()."""
     with db_session() as db:
@@ -1620,17 +1735,18 @@ def _load_warm_candidates(patient_id: str) -> Optional[list]:
     if not row or not row["compiled_context"]:
         return None
     try:
-        if row["expires_at"] and datetime.fromisoformat(row["expires_at"]) <= datetime.now(timezone.utc):
+        if row["expires_at"] and datetime.fromisoformat(row["expires_at"]) <= datetime.now(UTC):
             return None
         return (json.loads(row["compiled_context"]) or {}).get("channel_b_c_candidates") or None
     except Exception:
         return None
 
 
-def _retrieve(query_hint: str, warm_candidates: Optional[list]):
+def _retrieve(query_hint: str, warm_candidates: list | None):
     """Guideline retrieval. Blocking on the knowledge child — dispatch via
     _RETRIEVAL_EXECUTOR, never run_db."""
     from services.sage_service import _get_guideline_context
+
     try:
         return _get_guideline_context(query_hint, warm_candidates=warm_candidates)
     except Exception:
@@ -1649,9 +1765,12 @@ def _screen_medications(patient_id: str, candidates: list[dict]) -> dict[str, di
     screen that could not run at all — RAISES, and the caller demotes the
     proposal to advice. An assessment-proposed drug is not a privileged drug.
     """
-    from services.medication_safety_gate import (MedicationSafetyBlocked,
-                                                 enforce_medication_safety)
+    from services.medication_safety_gate import (
+        MedicationSafetyBlocked,
+        enforce_medication_safety,
+    )
     from services.rxnorm_reconciler import reconcile_medication
+
     out: dict[str, dict] = {}
     for cand in candidates:
         drug = (cand.get("target") or "").strip()
@@ -1679,8 +1798,8 @@ def _screen_medications(patient_id: str, candidates: list[dict]) -> dict[str, di
             continue
         try:
             safety = enforce_medication_safety(
-                patient_id, drug,
-                actor_id=None, entry_point="sage_assessment", interactive=False)
+                patient_id, drug, actor_id=None, entry_point="sage_assessment", interactive=False
+            )
             out[cand["key"]] = {"allowed": True, "safety": safety}
         except MedicationSafetyBlocked as blocked:
             out[cand["key"]] = {
@@ -1724,7 +1843,8 @@ def _finalise_ready(prep: dict, parsed: dict, cards: list[dict], timing: dict) -
             # same identity/columns are used so nothing can drift from the seed.
             db.execute(
                 "INSERT OR IGNORE INTO users (id, name, role, department, password_hash) "
-                "VALUES ('system', 'Orb Sage', 'admin', NULL, 'system_hash')")
+                "VALUES ('system', 'Orb Sage', 'admin', NULL, 'system_hash')"
+            )
         for card in cards:
             action_id = str(uuid.uuid4())
             db.execute(
@@ -1732,9 +1852,18 @@ def _finalise_ready(prep: dict, parsed: dict, cards: list[dict], timing: dict) -
                        (id, room_id, patient_id, action_type, target, rationale,
                         confidence, source_msg_id, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (action_id, prep["channel_id"], prep["patient_id"], card["action_type"],
-                 card["target"], card["rationale"], card.get("confidence", 0.5),
-                 prep.get("message_id"), now, now),
+                (
+                    action_id,
+                    prep["channel_id"],
+                    prep["patient_id"],
+                    card["action_type"],
+                    card["target"],
+                    card["rationale"],
+                    card.get("confidence", 0.5),
+                    prep.get("message_id"),
+                    now,
+                    now,
+                ),
             )
             db.execute(
                 """INSERT INTO sage_action_events
@@ -1763,56 +1892,73 @@ def _finalise_ready(prep: dict, parsed: dict, cards: list[dict], timing: dict) -
                       ttft_ms = ?, first_step_ms = ?, total_ms = ?,
                       version = version + 1, updated_at = ?
                 WHERE id = ? AND state = 'generating'""",
-            (parsed["summary"], json.dumps(considerations), json.dumps(parsed["evidence"]),
-             json.dumps(parsed["watch_items"]), parsed["citation_basis"],
-             parsed["confidence"], parsed.get("model"), parsed.get("fallback_text"),
-             parsed.get("advice_note"),
-             # NULL on the full tier, which runs no pre-screen — and NULL is the
-             # honest value there. `render` turns it into an absent key and the
-             # surface renders nothing, rather than claiming a negative finding.
-             (json.dumps(parsed["patient_specific"])
-              if parsed.get("patient_specific") else None),
-             timing.get("ttft_ms"), timing.get("first_step_ms"), timing.get("total_ms"),
-             now, prep["assessment_id"]),
+            (
+                parsed["summary"],
+                json.dumps(considerations),
+                json.dumps(parsed["evidence"]),
+                json.dumps(parsed["watch_items"]),
+                parsed["citation_basis"],
+                parsed["confidence"],
+                parsed.get("model"),
+                parsed.get("fallback_text"),
+                parsed.get("advice_note"),
+                # NULL on the full tier, which runs no pre-screen — and NULL is the
+                # honest value there. `render` turns it into an absent key and the
+                # surface renders nothing, rather than claiming a negative finding.
+                (
+                    json.dumps(parsed["patient_specific"])
+                    if parsed.get("patient_specific")
+                    else None
+                ),
+                timing.get("ttft_ms"),
+                timing.get("first_step_ms"),
+                timing.get("total_ms"),
+                now,
+                prep["assessment_id"],
+            ),
         )
 
         episode_id = prep.get("episode_id")
         if episode_id:
-            events = [shadow_service.build(
-                "sage.drafted", episode_id, prep["lane"],
-                patient_id=prep["patient_id"],
-                subject_type="sage_assessments", subject_id=prep["assessment_id"],
-                payload={
-                    "conversation_id": prep.get("conversation_id"),
-                    "citation_basis": parsed["citation_basis"],
-                    "confidence": parsed["confidence"],
-                    "retrieved_doc_ids": parsed["retrieved_doc_ids"],
-                    "cited_doc_ids": parsed["cited_doc_ids"],
-                    "trust_tiers": parsed["trust_tiers"],
-                    "ttft_ms": timing.get("ttft_ms"),
-                    # The number that actually matters at a bedside: when the
-                    # clinician could READ the first suggestion, not when the
-                    # first token existed. ttft_ms is kept beside it because the
-                    # gap between them is a decode-rate measurement.
-                    "first_step_ms": timing.get("first_step_ms"),
-                    "retrieval_ms": timing.get("retrieval_ms"),
-                    "total_ms": timing.get("total_ms"),
-                    # A 12-second next-steps draft and a 46-second four-section
-                    # assessment must not be pooled into one p50 — that is the
-                    # same argument that gave alert assessments their own class
-                    # in the first place, one level finer.
-                    # A THIRD CLASS FOR THE DRAFT THAT NEVER TOUCHED A GPU:
-                    # `_finalise_no_factors` sets `query_class` on prep, and it
-                    # wins. Pooling a 40 ms no-model draft with a real
-                    # generation would corrupt exactly the p50 this class split
-                    # exists to protect.
-                    "query_class": prep.get("query_class") or (
-                        QUERY_CLASS_BRIEF if prep.get("depth") == DEPTH_BRIEF
-                        else QUERY_CLASS),
-                    "depth": prep.get("depth"),
-                    "cancelled": False,
-                },
-            )]
+            events = [
+                shadow_service.build(
+                    "sage.drafted",
+                    episode_id,
+                    prep["lane"],
+                    patient_id=prep["patient_id"],
+                    subject_type="sage_assessments",
+                    subject_id=prep["assessment_id"],
+                    payload={
+                        "conversation_id": prep.get("conversation_id"),
+                        "citation_basis": parsed["citation_basis"],
+                        "confidence": parsed["confidence"],
+                        "retrieved_doc_ids": parsed["retrieved_doc_ids"],
+                        "cited_doc_ids": parsed["cited_doc_ids"],
+                        "trust_tiers": parsed["trust_tiers"],
+                        "ttft_ms": timing.get("ttft_ms"),
+                        # The number that actually matters at a bedside: when the
+                        # clinician could READ the first suggestion, not when the
+                        # first token existed. ttft_ms is kept beside it because the
+                        # gap between them is a decode-rate measurement.
+                        "first_step_ms": timing.get("first_step_ms"),
+                        "retrieval_ms": timing.get("retrieval_ms"),
+                        "total_ms": timing.get("total_ms"),
+                        # A 12-second next-steps draft and a 46-second four-section
+                        # assessment must not be pooled into one p50 — that is the
+                        # same argument that gave alert assessments their own class
+                        # in the first place, one level finer.
+                        # A THIRD CLASS FOR THE DRAFT THAT NEVER TOUCHED A GPU:
+                        # `_finalise_no_factors` sets `query_class` on prep, and it
+                        # wins. Pooling a 40 ms no-model draft with a real
+                        # generation would corrupt exactly the p50 this class split
+                        # exists to protect.
+                        "query_class": prep.get("query_class")
+                        or (QUERY_CLASS_BRIEF if prep.get("depth") == DEPTH_BRIEF else QUERY_CLASS),
+                        "depth": prep.get("depth"),
+                        "cancelled": False,
+                    },
+                )
+            ]
             for card in created:
                 # `action.proposed` on the ALERT episode, carrying the same
                 # (subject_type, subject_id) the transition route writes on
@@ -1820,20 +1966,25 @@ def _finalise_ready(prep: dict, parsed: dict, cards: list[dict], timing: dict) -
                 # of the decision — it is how the scorecard's `agreement` metric
                 # matches a proposal to what the clinician did next, and without
                 # it a resolution is an orphan.
-                events.append(shadow_service.build(
-                    "action.proposed", episode_id, prep["lane"],
-                    patient_id=prep["patient_id"],
-                    subject_type="sage_actions", subject_id=card["action_id"],
-                    payload={
-                        "action_class": card["action_type"],
-                        "status_code": "suggested",
-                        "supported": True,
-                        "gate": "clinician_confirmation",
-                        "target_patient_present": True,
-                        "dose_present": bool(card.get("dose")),
-                        "conversation_id": prep.get("conversation_id"),
-                    },
-                ))
+                events.append(
+                    shadow_service.build(
+                        "action.proposed",
+                        episode_id,
+                        prep["lane"],
+                        patient_id=prep["patient_id"],
+                        subject_type="sage_actions",
+                        subject_id=card["action_id"],
+                        payload={
+                            "action_class": card["action_type"],
+                            "status_code": "suggested",
+                            "supported": True,
+                            "gate": "clinician_confirmation",
+                            "target_patient_present": True,
+                            "dose_present": bool(card.get("dose")),
+                            "conversation_id": prep.get("conversation_id"),
+                        },
+                    )
+                )
             shadow_service.emit_many(events, db=db)
 
     return {"assessment_id": prep["assessment_id"], "actions": created}
@@ -1854,8 +2005,9 @@ def _attach_action_ids(considerations: list[dict], created: list[dict]) -> list[
     return out
 
 
-def _finalise_unavailable(assessment_id: str, reason: str, fallback_text: Optional[str],
-                          prep: Optional[dict] = None) -> None:
+def _finalise_unavailable(
+    assessment_id: str, reason: str, fallback_text: str | None, prep: dict | None = None
+) -> None:
     """Mark the draft unavailable WITH ITS REASON, and say so in the instrument.
 
     `sage.failed` rather than `sage.drafted`: nothing was drafted. Counting a
@@ -1882,12 +2034,20 @@ def _finalise_unavailable(assessment_id: str, reason: str, fallback_text: Option
             (assessment_id, reason, now),
         )
         if prep and prep.get("episode_id"):
-            shadow_service.emit_many([shadow_service.build(
-                "sage.failed", prep["episode_id"], prep["lane"],
-                patient_id=prep["patient_id"],
-                subject_type="sage_assessments", subject_id=assessment_id,
-                payload={"failure": reason},
-            )], db=db)
+            shadow_service.emit_many(
+                [
+                    shadow_service.build(
+                        "sage.failed",
+                        prep["episode_id"],
+                        prep["lane"],
+                        patient_id=prep["patient_id"],
+                        subject_type="sage_assessments",
+                        subject_id=assessment_id,
+                        payload={"failure": reason},
+                    )
+                ],
+                db=db,
+            )
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -2091,34 +2251,39 @@ def _tier1_prompt_block(prep: dict) -> list[str]:
     if not tier1.get("available"):
         if prep.get("news2_line"):
             return [prep["news2_line"]]
-        return ["NEWS2: not computable, no scoreable observation is on file. "
-                "Do not estimate one."]
+        return ["NEWS2: not computable, no scoreable observation is on file. Do not estimate one."]
     # COMPACT, because this block is prefill on the critical path to the first
     # word a clinician reads. The payload keeps the full prose `movement`
     # sentence for the UI; the model gets the same facts in a third of the
     # tokens. Nothing is withheld from it — every scoring parameter, its points,
     # its value and its movement are all here.
     # news2_text's label, scale left to this line's own "(SpO2 Scale n)".
-    _label = news2_description({
-        "raw_news2": tier1.get("news2"), "level": tier1.get("news2_band"),
-        "single_param_3": tier1.get("single_param_3"),
-        "complete": tier1.get("complete"),
-    }, scale=False)
+    _label = news2_description(
+        {
+            "raw_news2": tier1.get("news2"),
+            "level": tier1.get("news2_band"),
+            "single_param_3": tier1.get("single_param_3"),
+            "complete": tier1.get("complete"),
+        },
+        scale=False,
+    )
     lines = [
         f"{_label}, {tier1.get('trend')} "
         f"across the last {tier1.get('observations_used')} observations "
         f"(SpO2 Scale {tier1.get('spo2_scale', 1)}). Per-parameter points sum to "
         f"{tier1.get('news2')}; 3 is the maximum for any one parameter:",
     ]
-    for p in (tier1.get("parameters") or []):
-        was = ("" if p.get("first_value") is None
-               else f", was {_display_value(p['parameter'], p['first_value'])}"
-                    f"/{p.get('first_points')}pt")
+    for p in tier1.get("parameters") or []:
+        was = (
+            ""
+            if p.get("first_value") is None
+            else f", was {_display_value(p['parameter'], p['first_value'])}"
+            f"/{p.get('first_points')}pt"
+        )
         lines.append(f"  {p['parameter']} {p['display']} = {p['points']}pt{was}")
     steady = tier1.get("non_scoring") or []
     if steady:
-        lines.append("  0pt: " + "; ".join(
-            f"{p['parameter']} {p['display']}" for p in steady))
+        lines.append("  0pt: " + "; ".join(f"{p['parameter']} {p['display']}" for p in steady))
     if tier1.get("coverage_note"):
         lines.append(f"  {tier1['coverage_note']}")
     return lines
@@ -2152,7 +2317,8 @@ def _build_prompt_brief(prep: dict) -> str:
     screen = prep.get("screen") or {}
     parts: list[str] = [
         "ORB'S DETERMINISTIC SCORING (AUTHORITATIVE, already on the clinician's "
-        "screen; do not repeat it back):"]
+        "screen; do not repeat it back):"
+    ]
     parts += _tier1_prompt_block(prep)
     parts += [
         "",
@@ -2180,12 +2346,14 @@ def _build_prompt(prep: dict, guideline_text: str, sources: list) -> str:
     if prep.get("news2_line"):
         parts.append(prep["news2_line"])
     else:
-        parts.append("NEWS2: not computable, no scoreable observation is on file. "
-                     "Do not estimate one.")
+        parts.append(
+            "NEWS2: not computable, no scoreable observation is on file. Do not estimate one."
+        )
     drivers = prep.get("news2_drivers") or []
     if drivers:
-        parts.append("NEWS2 DRIVERS (same engine: AUTHORITATIVE): "
-                     + "; ".join(str(d) for d in drivers[:8]))
+        parts.append(
+            "NEWS2 DRIVERS (same engine: AUTHORITATIVE): " + "; ".join(str(d) for d in drivers[:8])
+        )
     parts += [
         "",
         "<<<BEGIN_CHART>>>",
@@ -2199,9 +2367,11 @@ def _build_prompt(prep: dict, guideline_text: str, sources: list) -> str:
         parts.append("RETRIEVED GUIDELINES (cite by the document id shown in each header):")
         parts.append(_fence(guideline_text))
     else:
-        parts.append("RETRIEVED GUIDELINES: none. No guideline in Orb's corpus matched "
-                     "this presentation. Say so in your assessment rather than implying "
-                     "guideline backing, and return an empty cited_sources list.")
+        parts.append(
+            "RETRIEVED GUIDELINES: none. No guideline in Orb's corpus matched "
+            "this presentation. Say so in your assessment rather than implying "
+            "guideline backing, and return an empty cited_sources list."
+        )
     parts.append("<<<END_CHART>>>")
     parts.append("")
     parts.append("Write the draft assessment for this alert now, as JSON.")
@@ -2219,7 +2389,8 @@ _JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 #: sentence and replace an unrelated number.
 _NEWS2_IN_PROSE = re.compile(
     r"(?i)\bNEWS\s?2\b(?P<gap>(?:\s+(?:score|aggregate|total))?(?:\s+(?:of|is|was|at))?\s*[:=]?\s*)"
-    r"(?P<value>\d{1,2})\b")
+    r"(?P<value>\d{1,2})\b"
+)
 
 
 def _pin_news2(text: str, authoritative) -> str:
@@ -2251,8 +2422,12 @@ def _pin_news2(text: str, authoritative) -> str:
     def _sub(match):
         if int(match.group("value")) == authoritative:
             return match.group(0)
-        logger.warning("[SageAssessment] model stated NEWS2 %s against the engine's %s "
-                       "— substituting the engine value", match.group("value"), authoritative)
+        logger.warning(
+            "[SageAssessment] model stated NEWS2 %s against the engine's %s "
+            "— substituting the engine value",
+            match.group("value"),
+            authoritative,
+        )
         return f"NEWS2{match.group('gap')}{authoritative}"
 
     return _NEWS2_IN_PROSE.sub(_sub, text)
@@ -2271,6 +2446,7 @@ def _load_sanitizer():
     stop, so a missing sanitizer makes the draft UNAVAILABLE rather than unsafe.
     """
     from routes.sage_routes import _strip_forbidden
+
     return _strip_forbidden
 
 
@@ -2300,9 +2476,13 @@ def _ids_to_titles(text: str, sources: list) -> str:
         ident = rf"(?:DOC:\s*)?(?<![\w-]){re.escape(doc_id)}(?![\w-])"
         # A function replacement, so a backslash in a title is never read as a
         # group reference.
-        text = re.sub(rf"[(\[]\s*{ident}\s*[)\]]", lambda _m: f"({title})", text,
-                      flags=re.IGNORECASE)
-        text = re.sub(ident, lambda _m: title, text, flags=re.IGNORECASE)
+        text = re.sub(
+            rf"[(\[]\s*{ident}\s*[)\]]",
+            f"({title})".replace("\\", "\\\\"),
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(ident, title.replace("\\", "\\\\"), text, flags=re.IGNORECASE)
     text = _LEFTOVER_DOC_REF.sub("", text)
     if text == original:
         return text
@@ -2310,7 +2490,7 @@ def _ids_to_titles(text: str, sources: list) -> str:
     return re.sub(r"[ \t]+([.,;:])", r"\1", re.sub(r"[ \t]{2,}", " ", text)).strip()
 
 
-def _parse_assessment(raw: str, prep: dict, sources: list, strip) -> Optional[dict]:
+def _parse_assessment(raw: str, prep: dict, sources: list, strip) -> dict | None:
     """Turn model output into the stored assessment, or None if it is not one.
 
     Everything a clinician will read passes through `strip` (the forbidden-phrase
@@ -2358,24 +2538,26 @@ def _parse_assessment(raw: str, prep: dict, sources: list, strip) -> Optional[di
         # The model's own `orb_can_act` is ADVISORY and is discarded here. The
         # stored value is set in `_attach_action_ids` from whether a card really
         # got created, so the label can never over-promise.
-        considerations.append({
-            "key": f"c{idx}",
-            "step": step,
-            "why": prose(item.get("why")) or None,
-            "proposed_action_type": action_type if action_type in CARDABLE_ACTIONS else None,
-            "proposed_target": target if action_type in CARDABLE_ACTIONS else None,
-            "orb_can_act": False,
-            "action_id": None,
-            "action_type": None,
-            "advice_only_reason": None,
-        })
+        considerations.append(
+            {
+                "key": f"c{idx}",
+                "step": step,
+                "why": prose(item.get("why")) or None,
+                "proposed_action_type": action_type if action_type in CARDABLE_ACTIONS else None,
+                "proposed_target": target if action_type in CARDABLE_ACTIONS else None,
+                "orb_can_act": False,
+                "action_id": None,
+                "action_type": None,
+                "advice_only_reason": None,
+            }
+        )
         if len(considerations) >= 4:
             break
     if not considerations:
         return None
 
     watch_items = []
-    for item in (data.get("watch_items") or []):
+    for item in data.get("watch_items") or []:
         cleaned = strip(_ids_to_titles(str(item or "").strip(), sources))
         if cleaned:
             watch_items.append(cleaned)
@@ -2385,11 +2567,11 @@ def _parse_assessment(raw: str, prep: dict, sources: list, strip) -> Optional[di
         watch_items = _default_watch_items(prep)
 
     named = [str(s) for s in (data.get("cited_sources") or []) if s]
-    body = " ".join([summary] + [c["step"] for c in considerations]
-                    + [c["why"] or "" for c in considerations])
+    body = " ".join(
+        [summary] + [c["step"] for c in considerations] + [c["why"] or "" for c in considerations]
+    )
     out = _attribute(body, named, prep, sources)
-    out.update({"summary": summary, "considerations": considerations,
-                "watch_items": watch_items})
+    out.update({"summary": summary, "considerations": considerations, "watch_items": watch_items})
     return out
 
 
@@ -2406,9 +2588,10 @@ def _attribute(body: str, named: list, prep: dict, sources: list) -> dict:
     cited = [doc_id for doc_id in named if doc_id in retrieved_ids]
 
     from services.sage_service import assess_answer_grounding
+
     grounding = assess_answer_grounding(
-        answer=body, sources=sources or [], query="",
-        patient_context=prep.get("facts"))
+        answer=body, sources=sources or [], query="", patient_context=prep.get("facts")
+    )
     attributed = [] if cited else list(grounding.get("attributed") or [])
 
     if cited:
@@ -2425,23 +2608,30 @@ def _attribute(body: str, named: list, prep: dict, sources: list) -> dict:
     # client two rows with one key). First chunk wins: sources arrive best first.
     evidence = []
     seen_docs: set = set()
-    for s in (sources or []):
+    for s in sources or []:
         doc_id = s.get("document_id")
         if doc_id:
             if doc_id in seen_docs:
                 continue
             seen_docs.add(doc_id)
-        evidence.append({
-            "document_id": doc_id,
-            "title": s.get("title"),
-            "source": s.get("source"),
-            "trust_tier": s.get("trust_tier"),
-            "attribution": ("model_cited" if doc_id in cited
-                            else "system_attributed" if doc_id in attributed
-                            else "context_only"),
-        })
+        evidence.append(
+            {
+                "document_id": doc_id,
+                "title": s.get("title"),
+                "source": s.get("source"),
+                "trust_tier": s.get("trust_tier"),
+                "attribution": (
+                    "model_cited"
+                    if doc_id in cited
+                    else "system_attributed"
+                    if doc_id in attributed
+                    else "context_only"
+                ),
+            }
+        )
 
     from services.sage_service import classify_answer_confidence
+
     confidence, _basis = classify_answer_confidence(
         retrieval_confidence=prep.get("retrieval_confidence", "low"),
         source_count=len(sources or []),
@@ -2450,7 +2640,8 @@ def _attribute(body: str, named: list, prep: dict, sources: list) -> dict:
         degraded=False,
         fabricated_citation=bool(named) and not cited,
         missing_critical_context=bool(
-            (prep.get("facts") or {}).get("completeness", {}).get("missing")),
+            (prep.get("facts") or {}).get("completeness", {}).get("missing")
+        ),
     )
 
     return {
@@ -2459,7 +2650,9 @@ def _attribute(body: str, named: list, prep: dict, sources: list) -> dict:
         "confidence": confidence,
         "retrieved_doc_ids": retrieved_ids,
         "cited_doc_ids": cited or attributed,
-        "trust_tiers": [s.get("trust_tier") for s in (sources or []) if s.get("trust_tier") is not None],
+        "trust_tiers": [
+            s.get("trust_tier") for s in (sources or []) if s.get("trust_tier") is not None
+        ],
     }
 
 
@@ -2502,12 +2695,12 @@ _FACT_ID_FIELD = re.compile(r"^\(?f\s*\d{1,2}\)?[.:)\]]?$", re.IGNORECASE)
 _CHARS_PER_TOKEN = 4
 
 
-def _clean_field(value: str) -> Optional[str]:
+def _clean_field(value: str) -> str | None:
     text = (value or "").strip().strip("*").strip()
     return None if text.lower() in _EMPTY_FIELDS else text
 
 
-def _parse_step_line(line: str, index: int, strip, news2) -> Optional[dict]:
+def _parse_step_line(line: str, index: int, strip, news2) -> dict | None:
     """One `STEP | WHY | ACTION | TARGET` line → one consideration, or None.
 
     TOLERANT ON SHAPE, STRICT ON CONTENT. A model that returns three fields
@@ -2540,8 +2733,9 @@ def _parse_step_line(line: str, index: int, strip, news2) -> Optional[dict]:
     if not fields or not fields[0]:
         return None
     if {f.lower().strip() for f in fields if f} <= _HEADER_FIELDS and len(fields) >= 3:
-        return None                      # the format line, echoed back
-    def _safe(raw: Optional[str]) -> str:
+        return None  # the format line, echoed back
+
+    def _safe(raw: str | None) -> str:
         return (strip(_pin_news2(raw or "", news2)) or "").strip()
 
     step = _safe(_clean_field(fields[0]))
@@ -2581,8 +2775,17 @@ def _parse_cite_line(line: str) -> list[str]:
 _NONE_RE = re.compile(r"^\W*none\b", re.IGNORECASE)
 
 
-async def _stream_steps(provider, messages: list[dict], options: dict, *,
-                        strip, news2, on_step, sink: dict, line_filter=None) -> dict:
+async def _stream_steps(
+    provider,
+    messages: list[dict],
+    options: dict,
+    *,
+    strip,
+    news2,
+    on_step,
+    sink: dict,
+    line_filter=None,
+) -> dict:
     """Stream the fast lane and surface each COMPLETE flag as it lands.
 
     ``line_filter`` is the patient-specific screen's three output filters, run
@@ -2622,7 +2825,7 @@ async def _stream_steps(provider, messages: list[dict], options: dict, *,
     buf = ""
     produced = 0
     t0 = time.monotonic()
-    first_step_ms: Optional[int] = None
+    first_step_ms: int | None = None
     complete = False
 
     async def _line(text: str) -> bool:
@@ -2662,8 +2865,7 @@ async def _stream_steps(provider, messages: list[dict], options: dict, *,
             drop = line_filter(f"{step['step']}\n{step.get('why') or ''}")
             if drop:
                 dropped[drop] = dropped.get(drop, 0) + 1
-                logger.warning("[SageAssessment] dropped a %s line: %r", drop,
-                               step["step"][:160])
+                logger.warning("[SageAssessment] dropped a %s line: %r", drop, step["step"][:160])
                 return False
         steps.append(step)
         if first_step_ms is None:
@@ -2692,8 +2894,11 @@ async def _stream_steps(provider, messages: list[dict], options: dict, *,
                 break
             if produced >= budget:
                 sink["capped"] = "token_cap"
-                logger.warning("[SageAssessment] fast-lane output hit the client-side "
-                               "cap at ~%d tokens — stream closed", produced // _CHARS_PER_TOKEN)
+                logger.warning(
+                    "[SageAssessment] fast-lane output hit the client-side "
+                    "cap at ~%d tokens — stream closed",
+                    produced // _CHARS_PER_TOKEN,
+                )
                 break
         else:
             complete = True
@@ -2718,7 +2923,7 @@ async def _stream_steps(provider, messages: list[dict], options: dict, *,
     return sink
 
 
-def _assemble_brief(result: dict, prep: dict) -> Optional[dict]:
+def _assemble_brief(result: dict, prep: dict) -> dict | None:
     """The stored draft for the fast lane.
 
     `summary` is deliberately NULL. Tier 1 carries the interpretation, and a
@@ -2734,29 +2939,32 @@ def _assemble_brief(result: dict, prep: dict) -> Optional[dict]:
     if not steps:
         return None
     out = _attribute_chart_derived(prep, steps)
-    out.update({
-        "summary": None,
-        "considerations": steps,
-        # THE DESIGNED BLOCK, at last. `considerations` is kept beside it and
-        # unchanged: the action-card machinery (`_shortlist`, `_select_cards`,
-        # the medication safety gate, `_attach_action_ids`) is keyed to it, and
-        # so is the approve/decline record. What changes is that the surface no
-        # longer has to reconstruct the fact/judgement split out of a sentence.
-        "patient_specific": _patient_specific_block(
-            prep, outcome=PS_OUTCOME_FLAGS, steps=steps,
-            dropped=result.get("dropped")),
-        # Deterministic, model-free, and therefore free in latency terms: these
-        # are statements about Orb's own data coverage, not authored advice. The
-        # fast lane never spends output tokens on them.
-        "watch_items": _default_watch_items(prep),
-        # Only a TIMEOUT gets a note. Hitting the flag count or the token cap is
-        # the design working — the list was meant to stop there and saying so
-        # would read as an apology for being brief. Running out of time is
-        # different: the clinician is looking at a list that was going to be
-        # longer, and nothing else on the payload would tell them.
-        "advice_note": (ADVICE_TRUNCATED_NOTE
-                        if result.get("capped") == "generation_timeout" else None),
-    })
+    out.update(
+        {
+            "summary": None,
+            "considerations": steps,
+            # THE DESIGNED BLOCK, at last. `considerations` is kept beside it and
+            # unchanged: the action-card machinery (`_shortlist`, `_select_cards`,
+            # the medication safety gate, `_attach_action_ids`) is keyed to it, and
+            # so is the approve/decline record. What changes is that the surface no
+            # longer has to reconstruct the fact/judgement split out of a sentence.
+            "patient_specific": _patient_specific_block(
+                prep, outcome=PS_OUTCOME_FLAGS, steps=steps, dropped=result.get("dropped")
+            ),
+            # Deterministic, model-free, and therefore free in latency terms: these
+            # are statements about Orb's own data coverage, not authored advice. The
+            # fast lane never spends output tokens on them.
+            "watch_items": _default_watch_items(prep),
+            # Only a TIMEOUT gets a note. Hitting the flag count or the token cap is
+            # the design working — the list was meant to stop there and saying so
+            # would read as an apology for being brief. Running out of time is
+            # different: the clinician is looking at a list that was going to be
+            # longer, and nothing else on the payload would tell them.
+            "advice_note": (
+                ADVICE_TRUNCATED_NOTE if result.get("capped") == "generation_timeout" else None
+            ),
+        }
+    )
     return out
 
 
@@ -2789,9 +2997,10 @@ def _no_factors_draft(prep: dict, reason: str) -> dict:
         # reasons map to three different outcomes here, so "could not look" can
         # never render with the calm wording that "looked and found nothing" gets.
         "patient_specific": _patient_specific_block(
-            prep, outcome=_PS_OUTCOME_FOR_REASON.get(reason, PS_OUTCOME_FAILED),
-            message=(NO_FACTORS_NOTES[reason]
-                     if reason == NO_FACTORS_SCREEN_FAILED else None)),
+            prep,
+            outcome=_PS_OUTCOME_FOR_REASON.get(reason, PS_OUTCOME_FAILED),
+            message=(NO_FACTORS_NOTES[reason] if reason == NO_FACTORS_SCREEN_FAILED else None),
+        ),
         "retrieved_doc_ids": [],
         "cited_doc_ids": [],
         "trust_tiers": [],
@@ -2803,7 +3012,7 @@ def _no_factors_draft(prep: dict, reason: str) -> dict:
     }
 
 
-async def _finalise_no_factors(prep: dict, t_start: float, *, reason: str) -> Optional[str]:
+async def _finalise_no_factors(prep: dict, t_start: float, *, reason: str) -> str | None:
     """Publish the empty answer as a READY draft, with no model in the path.
 
     THE TIMING IS DELIBERATELY NOT RECORDED. `total_ms` stays NULL and the shadow
@@ -2820,19 +3029,28 @@ async def _finalise_no_factors(prep: dict, t_start: float, *, reason: str) -> Op
     prep["query_class"] = QUERY_CLASS_NO_FACTORS
     elapsed_ms = round((time.monotonic() - t_start) * 1000)
     try:
-        result = await run_db(_finalise_ready, prep, _no_factors_draft(prep, reason),
-                              [], {"ttft_ms": None, "retrieval_ms": None,
-                                   "first_step_ms": None, "total_ms": None})
+        result = await run_db(
+            _finalise_ready,
+            prep,
+            _no_factors_draft(prep, reason),
+            [],
+            {"ttft_ms": None, "retrieval_ms": None, "first_step_ms": None, "total_ms": None},
+        )
     except asyncio.CancelledError:
         raise
     except Exception:
-        logger.exception("[SageAssessment] could not record the empty answer for %s",
-                         prep["patient_id"])
+        logger.exception(
+            "[SageAssessment] could not record the empty answer for %s", prep["patient_id"]
+        )
         await _mark_unavailable(prep, REASON_MODEL_ERROR)
         return None
     _count_flags(reason)
-    logger.info("[SageAssessment] %s: no patient-specific factors (%s) — no model "
-                "call, resolved in %d ms", prep["patient_id"], reason, elapsed_ms)
+    logger.info(
+        "[SageAssessment] %s: no patient-specific factors (%s) — no model call, resolved in %d ms",
+        prep["patient_id"],
+        reason,
+        elapsed_ms,
+    )
     await _notify(prep, STATE_READY)
     return result["assessment_id"]
 
@@ -2843,10 +3061,14 @@ def _count_drops(dropped: dict) -> None:
     emit takes one function down."""
     try:
         from services import metrics_service
+
         for reason, count in (dropped or {}).items():
             metrics_service.inc(
-                METRIC_LINES_DROPPED, count, labels={"reason": str(reason)},
-                help_text="Sage patient-specific flags deleted before display, by reason")
+                METRIC_LINES_DROPPED,
+                count,
+                labels={"reason": str(reason)},
+                help_text="Sage patient-specific flags deleted before display, by reason",
+            )
     except Exception:
         logger.debug("[SageAssessment] drop metric skipped", exc_info=True)
 
@@ -2864,9 +3086,12 @@ def _count_reuse(reason: str) -> None:
     """
     try:
         from services import metrics_service
+
         metrics_service.inc(
-            METRIC_DRAFTS_REUSED, labels={"reason": str(reason)},
-            help_text="Vigil alerts answered by an existing Sage draft, by reason")
+            METRIC_DRAFTS_REUSED,
+            labels={"reason": str(reason)},
+            help_text="Vigil alerts answered by an existing Sage draft, by reason",
+        )
     except Exception:
         logger.debug("[SageAssessment] reuse metric skipped", exc_info=True)
 
@@ -2879,9 +3104,12 @@ def _count_flags(outcome: str) -> None:
     earning its place. Neither is knowable from a log, so it is a counter."""
     try:
         from services import metrics_service
+
         metrics_service.inc(
-            METRIC_FLAGS, labels={"outcome": str(outcome)},
-            help_text="Sage patient-specific draft outcomes (flagged vs silent)")
+            METRIC_FLAGS,
+            labels={"outcome": str(outcome)},
+            help_text="Sage patient-specific draft outcomes (flagged vs silent)",
+        )
     except Exception:
         logger.debug("[SageAssessment] flag metric skipped", exc_info=True)
 
@@ -2989,9 +3217,14 @@ _PS_OUTCOME_FOR_REASON: dict[str, str] = {
 }
 
 
-def _patient_specific_block(prep: dict, *, outcome: str, steps: Optional[list] = None,
-                            dropped: Optional[dict] = None,
-                            message: Optional[str] = None) -> Optional[dict]:
+def _patient_specific_block(
+    prep: dict,
+    *,
+    outcome: str,
+    steps: list | None = None,
+    dropped: dict | None = None,
+    message: str | None = None,
+) -> dict | None:
     """The `patient_specific` payload for one draft, or None on the full tier.
 
     NONE ON TIER 3 BY CONSTRUCTION. The four-section handover assessment runs no
@@ -3020,9 +3253,11 @@ def _patient_specific_block(prep: dict, *, outcome: str, steps: Optional[list] =
         # on purpose — different confidences, and only the second can plausibly
         # delete a true sentence. To a clinician they are one sentence: "a line
         # was dropped for naming something that is not on this chart."
-        "dropped_unsourced": int(dropped.get(pss.DROP_UNSOURCED, 0)
-                                 + dropped.get(pss.DROP_FABRICATED, 0)
-                                 + dropped.get(pss.DROP_UNKNOWN_TERM, 0)),
+        "dropped_unsourced": int(
+            dropped.get(pss.DROP_UNSOURCED, 0)
+            + dropped.get(pss.DROP_FABRICATED, 0)
+            + dropped.get(pss.DROP_UNKNOWN_TERM, 0)
+        ),
         "screen_ms": prep.get("screen_ms"),
         # Server-authored wording, rendered verbatim. Same rule as
         # `unavailable_message`: one failure, one sentence, everywhere.
@@ -3046,25 +3281,28 @@ def _patient_specific_flags(steps: list[dict], screen: dict) -> list[dict]:
     client applies the same rule for the same reason.
     """
     candidates = screen.get("candidates") or []
+    out: list[dict]
     out = []
     for step in steps:
         cand = _fact_behind(step, candidates)
         if cand is None:
             continue
-        out.append({
-            "key": step.get("key") or f"f{len(out)}",
-            # ── SAGE'S JUDGEMENT ──
-            "caution": step["step"],
-            # ── ORB'S FACT, and everything needed to go and check it ──
-            "fact": cand["fact"],
-            "fact_source": cand.get("source"),
-            "fact_recorded": cand.get("recorded"),
-            "relates_to": cand.get("relates_to"),
-        })
+        out.append(
+            {
+                "key": step.get("key") or f"f{len(out)}",
+                # ── SAGE'S JUDGEMENT ──
+                "caution": step["step"],
+                # ── ORB'S FACT, and everything needed to go and check it ──
+                "fact": cand["fact"],
+                "fact_source": cand.get("source"),
+                "fact_recorded": cand.get("recorded"),
+                "relates_to": cand.get("relates_to"),
+            }
+        )
     return out
 
 
-def _fact_behind(step: dict, candidates: list[dict]) -> Optional[dict]:
+def _fact_behind(step: dict, candidates: list[dict]) -> dict | None:
     """The ONE candidate fact this flag is about.
 
     Scored rather than first-match: on a patient carrying both an anticoagulant
@@ -3092,8 +3330,10 @@ def _default_watch_items(prep: dict) -> list[str]:
     """
     missing = ((prep.get("facts") or {}).get("completeness") or {}).get("missing") or []
     items = [f"Orb has nothing on file here: {m.lower()}." for m in missing[:3]]
-    items.append("Orb sees charted data only, the bedside examination, the airway, "
-                 "and the patient's own account are not in this draft.")
+    items.append(
+        "Orb sees charted data only, the bedside examination, the airway, "
+        "and the patient's own account are not in this draft."
+    )
     return items
 
 
@@ -3114,11 +3354,13 @@ def _shortlist(considerations: list[dict], channel_id, limit: int) -> list[dict]
             continue
         if not channel_id:
             item["advice_only_reason"] = (
-                "This patient has no Relay case room, so Orb cannot raise a card.")
+                "This patient has no Relay case room, so Orb cannot raise a card."
+            )
             continue
         if len(chosen) >= limit:
             item["advice_only_reason"] = (
-                f"Orb raises at most {limit} action cards per assessment; this one is advice.")
+                f"Orb raises at most {limit} action cards per assessment; this one is advice."
+            )
             continue
         chosen.append(item)
     return chosen
@@ -3150,25 +3392,35 @@ def _select_cards(shortlist: list[dict], screen: dict) -> list[dict]:
                 item["advice_only_reason"] = (
                     "Orb cannot raise a card: no specific medication was named."
                     if reason == "no drug named"
-                    else "Blocked by the drug-safety gate: " + reason)
+                    else "Blocked by the drug-safety gate: " + reason
+                )
                 continue
-        cards.append({
-            "key": item["key"],
-            "action_type": action_type,
-            "target": item.get("proposed_target") or item["step"][:120],
-            "rationale": item["step"][:400],
-            "confidence": 0.5,
-        })
+        cards.append(
+            {
+                "key": item["key"],
+                "action_type": action_type,
+                "target": item.get("proposed_target") or item["step"][:120],
+                "rationale": item["step"][:400],
+                "confidence": 0.5,
+            }
+        )
     return cards
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  THE GENERATOR
 # ═════════════════════════════════════════════════════════════════════════════
-async def generate_for_alert(patient_id: str, *, level: str, score=None, drivers=None,
-                             message_id=None, raw_news2=None,
-                             lane: str = "simulator",
-                             depth: str = DEPTH_BRIEF) -> Optional[str]:
+async def generate_for_alert(
+    patient_id: str,
+    *,
+    level: str,
+    score=None,
+    drivers=None,
+    message_id=None,
+    raw_news2=None,
+    lane: str = "simulator",
+    depth: str = DEPTH_BRIEF,
+) -> str | None:
     """Produce the assessment for one critical alert. Returns the assessment id.
 
     Never called from the alert path synchronously — see `schedule_for_alert`.
@@ -3216,16 +3468,22 @@ async def generate_for_alert(patient_id: str, *, level: str, score=None, drivers
             logger.info(
                 "[SageAssessment] %s: reusing draft %s (%s, %ss old) — %s, no new "
                 "generation scheduled",
-                patient_id, decision.get("assessment_id"), decision.get("state"),
+                patient_id,
+                decision.get("assessment_id"),
+                decision.get("state"),
                 int(decision.get("age_seconds") or 0),
-                REDRAFT_REASONS.get(decision.get("reason"), "picture unchanged"))
+                REDRAFT_REASONS.get(decision.get("reason"), "picture unchanged"),
+            )
             return decision.get("assessment_id")
         # WHY THIS ONE COSTS GPU, in words, at INFO. On a ward alerting three
         # times a minute the difference between "Sage is drafting too often" and
         # "the pictures really are moving" is a question someone will ask of the
         # logs, and it should be answerable from them.
-        logger.info("[SageAssessment] %s: drafting — %s", patient_id,
-                    REDRAFT_REASONS.get(decision.get("reason"), decision.get("reason")))
+        logger.info(
+            "[SageAssessment] %s: drafting — %s",
+            patient_id,
+            REDRAFT_REASONS.get(decision.get("reason"), decision.get("reason")),
+        )
 
         prep = await run_db(_open_assessment, patient_id, message_id, lane, depth)
         if not prep:
@@ -3249,8 +3507,9 @@ async def generate_for_alert(patient_id: str, *, level: str, score=None, drivers
         return None
 
 
-async def generate_full_assessment(patient_id: str, *, lane: str = "handover",
-                                   message_id=None) -> Optional[str]:
+async def generate_full_assessment(
+    patient_id: str, *, lane: str = "handover", message_id=None
+) -> str | None:
     """TIER 3 — the four-section reasoned assessment, for a reader not a reactor.
 
     THE SAME MACHINERY THE ALERT LANE USED TO RUN, kept whole: the four-section
@@ -3287,9 +3546,9 @@ async def generate_full_assessment(patient_id: str, *, lane: str = "handover",
         return None
 
 
-async def _generate(prep: dict, t_start: float) -> Optional[str]:
-    from services.llm_queue_service import BackgroundAdmissionRejected, llm_queue
+async def _generate(prep: dict, t_start: float) -> str | None:
     from services.gpu_coordinator import PRIORITY_SCRIBE
+    from services.llm_queue_service import BackgroundAdmissionRejected, llm_queue
 
     brief = prep.get("depth") == DEPTH_BRIEF
 
@@ -3318,9 +3577,13 @@ async def _generate(prep: dict, t_start: float) -> Optional[str]:
         # say. Wording the most common and most truthful output of this tier as
         # an outage is exactly how "no patient-specific factors identified"
         # would decay back into the padding this re-shape exists to delete.
-        return await _finalise_no_factors(prep, t_start, reason=(
-            NO_FACTORS_SCREEN_CLEAN if screen.get("screened")
-            else NO_FACTORS_SCREEN_FAILED))
+        return await _finalise_no_factors(
+            prep,
+            t_start,
+            reason=(
+                NO_FACTORS_SCREEN_CLEAN if screen.get("screened") else NO_FACTORS_SCREEN_FAILED
+            ),
+        )
 
     # The sanitizer is a PRECONDITION, checked before a token is generated: if
     # the guardrail cannot be loaded there is no safe way to show model output.
@@ -3353,20 +3616,25 @@ async def _generate(prep: dict, t_start: float) -> Optional[str]:
         hint = build_guideline_query(prep.get("facts"), prep.get("news2_drivers"))
         loop = asyncio.get_running_loop()
         guideline_text, sources, retrieval_confidence = await loop.run_in_executor(
-            _RETRIEVAL_EXECUTOR, _retrieve, hint, warm)
+            _RETRIEVAL_EXECUTOR, _retrieve, hint, warm
+        )
         prep["retrieval_confidence"] = retrieval_confidence
         retrieval_ms = round((time.monotonic() - t_retr) * 1000)
 
     # ── The careful tier, or nothing ──
-    from services.model_router import select_chat_model
     from services.llm_providers import provider_for_model
+    from services.model_router import select_chat_model
+
     choice = await select_chat_model()
     if choice.downgraded:
         # `select_chat_model` would answer on the ambient 4B. The 4B was measured
         # wrong on 8 of 20 single-fact recall questions; it does not author a
         # clinical assessment, and it certainly does not do so silently.
-        logger.info("[SageAssessment] careful tier '%s' evicted — no draft for %s",
-                    choice.preferred, prep["patient_id"])
+        logger.info(
+            "[SageAssessment] careful tier '%s' evicted — no draft for %s",
+            choice.preferred,
+            prep["patient_id"],
+        )
         await _mark_unavailable(prep, REASON_MODEL_EVICTED)
         return None
 
@@ -3378,25 +3646,34 @@ async def _generate(prep: dict, t_start: float) -> Optional[str]:
         # `num_predict` IS THE LATENCY BUDGET, written as a number. At the
         # measured 10-15 tok/s this is 9-14 s of decode in the worst case, and
         # the client-side stops in `_stream_steps` usually end it well before.
-        options = {"temperature": 0.2, "num_predict": _max_advice_tokens(),
-                   "num_ctx": _num_ctx(), "repeat_penalty": 1.1}
+        options = {
+            "temperature": 0.2,
+            "num_predict": _max_advice_tokens(),
+            "num_ctx": _num_ctx(),
+            "repeat_penalty": 1.1,
+        }
     else:
         messages = [
             {"role": "system", "content": _SYSTEM},
             {"role": "user", "content": _build_prompt(prep, guideline_text, sources)},
         ]
-        options = {"temperature": 0.2, "num_predict": 900, "num_ctx": _num_ctx(),
-                   "repeat_penalty": 1.1}
+        options = {
+            "temperature": 0.2,
+            "num_predict": 900,
+            "num_ctx": _num_ctx(),
+            "repeat_penalty": 1.1,
+        }
 
     try:
-        await llm_queue.acquire(priority=PRIORITY_SCRIBE,
-                                timeout=_queue_wait_seconds(prep.get("depth", DEPTH_FULL)))
+        await llm_queue.acquire(
+            priority=PRIORITY_SCRIBE, timeout=_queue_wait_seconds(prep.get("depth", DEPTH_FULL))
+        )
     except asyncio.CancelledError:
         raise
     except BackgroundAdmissionRejected:
         await _mark_unavailable(prep, REASON_SHED)
         return None
-    except asyncio.TimeoutError:
+    except TimeoutError:
         await _mark_unavailable(prep, REASON_QUEUE_TIMEOUT)
         return None
 
@@ -3417,32 +3694,40 @@ async def _generate(prep: dict, t_start: float) -> Optional[str]:
         budget = _generation_timeout_seconds(prep.get("depth", DEPTH_FULL))
         if brief:
             await asyncio.wait_for(
-                _stream_steps(provider, messages, options, strip=strip,
-                              news2=prep.get("news2"), sink=stream,
-                              on_step=lambda step, idx: _emit_step(prep, step, idx),
-                              # RULES 2 AND 3, ENFORCED IN CODE. The generic
-                              # post-filter, the "every flag names its fact"
-                              # rule and the fabrication guard, all closed over
-                              # the SAME screen result the prompt was built
-                              # from — so what the model was allowed to name and
-                              # what it is checked against are one object and
-                              # cannot drift. Passed HERE rather than applied to
-                              # the finished draft because each flag is pushed
-                              # to the case room the moment it parses, and a
-                              # line filtered afterwards is a line retracted
-                              # from under someone already reading it.
-                              line_filter=lambda text: pss.verify_line(text, screen)),
-                timeout=budget)
+                _stream_steps(
+                    provider,
+                    messages,
+                    options,
+                    strip=strip,
+                    news2=prep.get("news2"),
+                    sink=stream,
+                    on_step=lambda step, idx: _emit_step(prep, step, idx),
+                    # RULES 2 AND 3, ENFORCED IN CODE. The generic
+                    # post-filter, the "every flag names its fact"
+                    # rule and the fabrication guard, all closed over
+                    # the SAME screen result the prompt was built
+                    # from — so what the model was allowed to name and
+                    # what it is checked against are one object and
+                    # cannot drift. Passed HERE rather than applied to
+                    # the finished draft because each flag is pushed
+                    # to the case room the moment it parses, and a
+                    # line filtered afterwards is a line retracted
+                    # from under someone already reading it.
+                    line_filter=lambda text: pss.verify_line(text, screen or {}),
+                ),
+                timeout=budget,
+            )
             ttft_ms = stream.get("ttft_ms")
         else:
             raw, ttft_ms = await asyncio.wait_for(
-                _stream(provider, messages, options), timeout=budget)
+                _stream(provider, messages, options), timeout=budget
+            )
     except asyncio.CancelledError:
         # The model may already have read the chart, so the pass is audited
         # even when cancelled; scheduled, not awaited, as the cancel stands.
         _schedule_tier2_audit(prep, choice.model, messages, t_gen, "error", "cancelled")
         raise
-    except asyncio.TimeoutError:
+    except TimeoutError:
         # A TIMEOUT WITH STEPS ALREADY ON SCREEN IS NOT A FAILURE. Each step
         # that landed is whole: parsed on its terminating newline, sanitized,
         # NEWS2-pinned, and already pushed to the case room. Discarding it
@@ -3453,9 +3738,12 @@ async def _generate(prep: dict, t_start: float) -> Optional[str]:
         if brief and stream.get("steps"):
             stream["capped"] = "generation_timeout"
             ttft_ms = stream.get("ttft_ms")
-            logger.info("[SageAssessment] fast lane timed out for %s with %d step(s) "
-                        "already delivered — keeping them",
-                        prep["patient_id"], len(stream["steps"]))
+            logger.info(
+                "[SageAssessment] fast lane timed out for %s with %d step(s) "
+                "already delivered — keeping them",
+                prep["patient_id"],
+                len(stream["steps"]),
+            )
         else:
             failure = REASON_GENERATION_TIMEOUT
     except Exception as e:
@@ -3466,8 +3754,14 @@ async def _generate(prep: dict, t_start: float) -> Optional[str]:
 
     # One audit row per pass, after the lane is released (the same reason the
     # failure handling below sits outside it).
-    await _audit_tier2(prep, choice.model, messages, t_gen,
-                       "error" if failure else "served", failure or stream.get("capped"))
+    await _audit_tier2(
+        prep,
+        choice.model,
+        messages,
+        t_gen,
+        "error" if failure else "served",
+        failure or stream.get("capped"),
+    )
 
     # NOTHING SAID and SAID SOMETHING UNREADABLE are different operational facts
     # and get different reasons — a ward reading "Sage returned nothing" wants to
@@ -3495,8 +3789,7 @@ async def _generate(prep: dict, t_start: float) -> Optional[str]:
             # nothing in the chart" and "Orb found these things and Sage judged
             # they do not change this" are different claims and only the second
             # one leaves a clinician something they might want to look at.
-            return await _finalise_no_factors(prep, t_start,
-                                              reason=NO_FACTORS_MODEL_NONE)
+            return await _finalise_no_factors(prep, t_start, reason=NO_FACTORS_MODEL_NONE)
 
         if not stream.get("steps") and (stream.get("dropped") or {}):
             # EVERY LINE THE MODEL WROTE WAS DELETED. Deliberately NOT reported as
@@ -3506,13 +3799,17 @@ async def _generate(prep: dict, t_start: float) -> Optional[str]:
             # that into a clean screen would tell a clinician Orb checked and
             # found nothing, when what actually happened is that Orb checked,
             # found something, and could not get a usable sentence about it.
-            logger.warning("[SageAssessment] every fast-lane line was filtered for "
-                           "%s (%s)", prep["patient_id"], stream["dropped"])
+            logger.warning(
+                "[SageAssessment] every fast-lane line was filtered for %s (%s)",
+                prep["patient_id"],
+                stream["dropped"],
+            )
             await _mark_unavailable(prep, REASON_ALL_LINES_FILTERED)
             return None
 
-    parsed = (_assemble_brief(stream, prep) if brief
-              else _parse_assessment(raw, prep, sources, strip))
+    parsed = (
+        _assemble_brief(stream, prep) if brief else _parse_assessment(raw, prep, sources, strip)
+    )
     if not parsed:
         # A DISCARD, NOT A REPAIR. Half-parsed model output shown as a clinical
         # assessment is the fabrication this whole design forbids.
@@ -3527,7 +3824,8 @@ async def _generate(prep: dict, t_start: float) -> Optional[str]:
     shortlist = _shortlist(parsed["considerations"], prep.get("channel_id"), _max_actions())
     med_candidates = [
         {"key": c["key"], "target": c.get("proposed_target")}
-        for c in shortlist if c["proposed_action_type"] in MEDICATION_ACTIONS
+        for c in shortlist
+        if c["proposed_action_type"] in MEDICATION_ACTIONS
     ]
     # `med_screen`, NOT `screen`. The pre-screen result is still live in this
     # frame — `line_filter` closes over it — and reusing the name here worked
@@ -3535,22 +3833,37 @@ async def _generate(prep: dict, t_start: float) -> Optional[str]:
     # ordering, not a guarantee, and the day someone moves the safety gate above
     # the generation the fabrication guard would start checking flags against a
     # dict of drug verdicts and silently pass everything.
-    med_screen = await run_db(_screen_medications, prep["patient_id"], med_candidates) if med_candidates else {}
+    med_screen = (
+        await run_db(_screen_medications, prep["patient_id"], med_candidates)
+        if med_candidates
+        else {}
+    )
     cards = _select_cards(shortlist, med_screen)
 
-    timing = {"ttft_ms": ttft_ms, "retrieval_ms": retrieval_ms,
-              "first_step_ms": stream.get("first_step_ms") if brief else None,
-              "total_ms": round((time.monotonic() - t_start) * 1000)}
+    timing = {
+        "ttft_ms": ttft_ms,
+        "retrieval_ms": retrieval_ms,
+        "first_step_ms": stream.get("first_step_ms") if brief else None,
+        "total_ms": round((time.monotonic() - t_start) * 1000),
+    }
     result = await run_db(_finalise_ready, prep, parsed, cards, timing)
 
     if brief:
         _count_flags("flagged")
-    logger.info("[SageAssessment] %s ready for %s (%s, %d card(s), ttft=%sms "
-                "first_step=%sms retrieval=%sms total=%sms, %s%s)",
-                prep["assessment_id"], prep["patient_id"], prep.get("depth"),
-                len(result["actions"]), timing["ttft_ms"], timing["first_step_ms"],
-                timing["retrieval_ms"], timing["total_ms"], parsed["citation_basis"],
-                f", capped={stream['capped']}" if stream.get("capped") else "")
+    logger.info(
+        "[SageAssessment] %s ready for %s (%s, %d card(s), ttft=%sms "
+        "first_step=%sms retrieval=%sms total=%sms, %s%s)",
+        prep["assessment_id"],
+        prep["patient_id"],
+        prep.get("depth"),
+        len(result["actions"]),
+        timing["ttft_ms"],
+        timing["first_step_ms"],
+        timing["retrieval_ms"],
+        timing["total_ms"],
+        parsed["citation_basis"],
+        f", capped={stream['capped']}" if stream.get("capped") else "",
+    )
     await _notify(prep, STATE_READY)
     return prep["assessment_id"]
 
@@ -3569,20 +3882,25 @@ async def _emit_step(prep: dict, step: dict, index: int) -> None:
         return
     try:
         from ws.realtime import sio
-        await sio.emit("sage:assessment_step", {
-            "channel_id": prep["channel_id"],
-            "patient_id": prep["patient_id"],
-            "assessment_id": prep["assessment_id"],
-            "index": index,
-            "step": step.get("step"),
-            "why": step.get("why"),
-            "provisional": True,
-        }, room=prep["channel_id"])
+
+        await sio.emit(
+            "sage:assessment_step",
+            {
+                "channel_id": prep["channel_id"],
+                "patient_id": prep["patient_id"],
+                "assessment_id": prep["assessment_id"],
+                "index": index,
+                "step": step.get("step"),
+                "why": step.get("why"),
+                "provisional": True,
+            },
+            room=prep["channel_id"],
+        )
     except Exception:
         logger.debug("[SageAssessment] step emit skipped", exc_info=True)
 
 
-async def _stream(provider, messages: list[dict], options: dict) -> tuple[str, Optional[int]]:
+async def _stream(provider, messages: list[dict], options: dict) -> tuple[str, int | None]:
     """Collect the stream, measuring time-to-first-token honestly.
 
     Streamed rather than buffered ONLY so ttft_ms is a measurement instead of a
@@ -3599,8 +3917,9 @@ async def _stream(provider, messages: list[dict], options: dict) -> tuple[str, O
     return "".join(chunks), ttft_ms
 
 
-def _tier2_record(prep: dict, model: str, messages: list[dict], t0: float,
-                  outcome: str, detail: Optional[str]) -> dict:
+def _tier2_record(
+    prep: dict, model: str, messages: list[dict], t0: float, outcome: str, detail: str | None
+) -> dict:
     """The Tier 2 pass's row on the audit hash chain, with the prompt's hash.
 
     Written here, not by the provider: llm_providers is shared with Sage chat,
@@ -3609,17 +3928,23 @@ def _tier2_record(prep: dict, model: str, messages: list[dict], t0: float,
     open 2026-09-04 ruling.
     """
     from services.ai_governance import hash_prompt
+
     return dict(
-        provider="ollama", model=model, purpose="sage_alert_assessment",
-        outcome=outcome, patient_id=prep.get("patient_id"),
+        provider="ollama",
+        model=model,
+        purpose="sage_alert_assessment",
+        outcome=outcome,
+        patient_id=prep.get("patient_id"),
         timing_ms={"total": round((time.monotonic() - t0) * 1000)},
-        detail=detail, prompt_sha256=hash_prompt({"messages": messages}),
+        detail=detail,
+        prompt_sha256=hash_prompt({"messages": messages}),
     )
 
 
 async def _audit_tier2(*args) -> None:
     """Write the pass's row on the DB lane (off the loop) and wait for it."""
     from services.ai_governance import record_inference_async
+
     try:
         record = _tier2_record(*args)
     except Exception:
@@ -3632,6 +3957,7 @@ def _schedule_tier2_audit(*args) -> None:
     """Start the row's write without waiting: for a cancelled pass, which must
     not await anything before its cancel propagates."""
     from services.ai_governance import record_inference_soon
+
     try:
         record_inference_soon(**_tier2_record(*args))
     except Exception:
@@ -3646,6 +3972,7 @@ def _fallback_sentence() -> str:
     """
     try:
         from services.vigil_service import _FALLBACK_RECOMMENDATION
+
         return _FALLBACK_RECOMMENDATION
     except Exception:
         return "Ensure continuous monitoring and prepare for possible intervention."
@@ -3653,8 +3980,9 @@ def _fallback_sentence() -> str:
 
 async def _mark_unavailable(prep: dict, reason: str) -> None:
     try:
-        await run_db(_finalise_unavailable, prep["assessment_id"], reason,
-                     _fallback_sentence(), prep)
+        await run_db(
+            _finalise_unavailable, prep["assessment_id"], reason, _fallback_sentence(), prep
+        )
     except asyncio.CancelledError:
         raise
     except Exception:
@@ -3669,12 +3997,17 @@ async def _notify(prep: dict, state: str) -> None:
         return
     try:
         from ws.realtime import sio
-        await sio.emit("sage:assessment_update", {
-            "channel_id": prep["channel_id"],
-            "patient_id": prep["patient_id"],
-            "assessment_id": prep["assessment_id"],
-            "state": state,
-        }, room=prep["channel_id"])
+
+        await sio.emit(
+            "sage:assessment_update",
+            {
+                "channel_id": prep["channel_id"],
+                "patient_id": prep["patient_id"],
+                "assessment_id": prep["assessment_id"],
+                "state": state,
+            },
+            room=prep["channel_id"],
+        )
     except Exception:
         logger.debug("[SageAssessment] socket notify skipped", exc_info=True)
 
@@ -3682,7 +4015,7 @@ async def _notify(prep: dict, state: str) -> None:
 # ═════════════════════════════════════════════════════════════════════════════
 #  READ SIDE — what the UI renders
 # ═════════════════════════════════════════════════════════════════════════════
-def _derive_state(row: dict) -> tuple[str, Optional[str]]:
+def _derive_state(row: dict) -> tuple[str, str | None]:
     """The state a reader should BELIEVE, which is not always the stored one.
 
     A row stuck in `generating` past the stale window is reported as
@@ -3691,12 +4024,12 @@ def _derive_state(row: dict) -> tuple[str, Optional[str]]:
     point no sweeper of ours ran either. Without it, a killed appliance leaves a
     permanent spinner implying an assessment is on its way when nothing is.
     """
-    state = row.get("state")
+    state = row["state"]
     if state != STATE_GENERATING:
         return state, row.get("unavailable_reason")
-    started = row.get("created_at")
+    started = row["created_at"]
     try:
-        age = (datetime.now(timezone.utc) - datetime.fromisoformat(started)).total_seconds()
+        age = (datetime.now(UTC) - datetime.fromisoformat(started)).total_seconds()
     except Exception:
         return state, None
     if age > _stale_generating_seconds():
@@ -3735,7 +4068,7 @@ def render(row) -> dict:
     patient_specific = _loads(row.get("patient_specific"), None)
     has_tier1 = bool(tier1.get("available"))
     unavailable = state == STATE_UNAVAILABLE
-    message = UNAVAILABLE_MESSAGES.get(reason) if unavailable else None
+    message = UNAVAILABLE_MESSAGES.get(reason or "") if unavailable else None
     if message and has_tier1:
         message = f"{message} {TIER1_STANDS}"
     return {
@@ -3749,8 +4082,7 @@ def render(row) -> dict:
         # it always meant. `advice_state` is its plain-English alias for a
         # surface that only wants to know whether the next steps have landed.
         "state": state,
-        "advice_state": (STATE_READY if state in (STATE_APPROVED, STATE_DECLINED)
-                         else state),
+        "advice_state": (STATE_READY if state in (STATE_APPROVED, STATE_DECLINED) else state),
         "version": row.get("version"),
         "unavailable_reason": reason,
         # Never make the client invent this wording — see UNAVAILABLE_MESSAGES.
@@ -3785,7 +4117,9 @@ def render(row) -> dict:
         "evidence_note": (
             "No guideline in Orb's corpus matched this alert. These next steps are "
             "model reasoning over the chart alone."
-            if state == STATE_READY and not evidence else None),
+            if state == STATE_READY and not evidence
+            else None
+        ),
         "watch_items": _loads(row.get("watch_items"), []),
         "confidence": row.get("confidence"),
         "model": row.get("model"),
@@ -3798,8 +4132,10 @@ def render(row) -> dict:
         "updated_at": row.get("updated_at"),
         # A constant, on every payload, because it is the regulatory posture and
         # not a UI choice: nothing here has happened.
-        "disclaimer": ("Draft decision support. Nothing here has been ordered, charted or "
-                       "administered. Every action requires a clinician's explicit approval."),
+        "disclaimer": (
+            "Draft decision support. Nothing here has been ordered, charted or "
+            "administered. Every action requires a clinician's explicit approval."
+        ),
     }
 
 
@@ -3816,17 +4152,22 @@ def list_for_channel(channel_id: str, message_id=None, limit: int = 20) -> list[
         return [render(r) for r in db.execute(sql, tuple(params)).fetchall()]
 
 
-def get_assessment(assessment_id: str) -> Optional[dict]:
+def get_assessment(assessment_id: str) -> dict | None:
     """Blocking — dispatch via run_db(). Returns the RAW row dict (the caller
     needs channel_id for the access check before anything is rendered)."""
     with db_session() as db:
-        row = db.execute("SELECT * FROM sage_assessments WHERE id = ?",
-                         (assessment_id,)).fetchone()
+        row = db.execute("SELECT * FROM sage_assessments WHERE id = ?", (assessment_id,)).fetchone()
     return dict(row) if row else None
 
 
-def transition(assessment_id: str, channel_id: str, new_state: str, version: int,
-               reason: Optional[str], user: dict) -> dict:
+def transition(
+    assessment_id: str,
+    channel_id: str,
+    new_state: str,
+    version: int,
+    reason: str | None,
+    user: dict,
+) -> dict:
     """Record a clinician's verdict on a DRAFT. Blocking — dispatch via run_db().
 
     THIS EXECUTES NOTHING. Approving an assessment records that a clinician read
@@ -3858,7 +4199,8 @@ def transition(assessment_id: str, channel_id: str, new_state: str, version: int
         if new_state not in allowed:
             raise HTTPException(
                 status_code=400,
-                detail=f"Cannot move an assessment from '{current}' to '{new_state}'")
+                detail=f"Cannot move an assessment from '{current}' to '{new_state}'",
+            )
 
         res = db.execute(
             "UPDATE sage_assessments SET state = ?, version = version + 1, updated_at = ? "
@@ -3866,16 +4208,25 @@ def transition(assessment_id: str, channel_id: str, new_state: str, version: int
             (new_state, now, assessment_id, version, STATE_READY),
         )
         if (res.rowcount or 0) == 0:
-            raise HTTPException(status_code=409,
-                                detail="Assessment was modified concurrently. Please refresh.")
+            raise HTTPException(
+                status_code=409, detail="Assessment was modified concurrently. Please refresh."
+            )
 
         db.execute(
             """INSERT INTO sage_assessment_events
                    (assessment_id, prior_state, new_state, actor_id, actor_name,
                     actor_role, reason, source, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, 'ui', ?)""",
-            (assessment_id, current, new_state, user.get("id"), user.get("name"),
-             user.get("role"), reason, now),
+            (
+                assessment_id,
+                current,
+                new_state,
+                user.get("id"),
+                user.get("name"),
+                user.get("role"),
+                reason,
+                now,
+            ),
         )
 
         # ON THE TAMPER-EVIDENT CHAIN, in THIS transaction (`db=db`).
@@ -3887,6 +4238,7 @@ def transition(assessment_id: str, channel_id: str, new_state: str, version: int
         # migration could rewrite. A raw INSERT would leave the row without
         # prev_hash/row_hash and therefore invisible to verify_audit_chain().
         from services.audit_service import log_audit_event
+
         log_audit_event(
             correlation_id=str(uuid.uuid4()),
             event_category="clinical_safety",
@@ -3895,7 +4247,8 @@ def transition(assessment_id: str, channel_id: str, new_state: str, version: int
             db=db,
             summary_message=(
                 f"Clinician {new_state} Sage's drafted assessment {assessment_id} "
-                f"for a critical Vigil alert."),
+                f"for a critical Vigil alert."
+            ),
             actor_user_id=user.get("id"),
             actor_role=user.get("role"),
             target_type="sage_assessment",
@@ -3914,6 +4267,7 @@ def transition(assessment_id: str, channel_id: str, new_state: str, version: int
             },
         )
 
-        updated = db.execute("SELECT * FROM sage_assessments WHERE id = ?",
-                             (assessment_id,)).fetchone()
+        updated = db.execute(
+            "SELECT * FROM sage_assessments WHERE id = ?", (assessment_id,)
+        ).fetchone()
         return render(updated)

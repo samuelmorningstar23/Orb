@@ -19,6 +19,7 @@ audit hash chain, vector search, and full-text search.
 Key material comes from ORB_DB_ENCRYPTION_KEY and is derived to a 32-byte raw
 key by database._sqlcipher_key_hex, so this script and the app agree byte-for-byte.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -45,9 +46,20 @@ SQLITE_PLAINTEXT_MAGIC = b"SQLite format 3\x00"
 # encryption copy lose any rows"). Those three now share
 # scripts/lib/verify_restore.py and the stale claim is gone.
 VERIFY_TABLES = [
-    "patients", "vitals", "risk_scores", "medications", "messages", "channels",
-    "users", "audit_logs", "scribe_notes", "clinical_documents", "orders",
-    "admissions", "sage_insights", "clinical_knowledge",
+    "patients",
+    "vitals",
+    "risk_scores",
+    "medications",
+    "messages",
+    "channels",
+    "users",
+    "audit_logs",
+    "scribe_notes",
+    "clinical_documents",
+    "orders",
+    "admissions",
+    "sage_insights",
+    "clinical_knowledge",
 ]
 
 
@@ -70,7 +82,9 @@ def _with_migrated_tables(tables: list[str]) -> list[str]:
     try:
         import importlib.util
 
-        manifest_path = Path(__file__).resolve().parents[2] / "scripts" / "lib" / "verify_restore.py"
+        manifest_path = (
+            Path(__file__).resolve().parents[2] / "scripts" / "lib" / "verify_restore.py"
+        )
         spec = importlib.util.spec_from_file_location("orb_restore_manifest", manifest_path)
         if spec is None or spec.loader is None:
             return tables
@@ -79,8 +93,10 @@ def _with_migrated_tables(tables: list[str]) -> list[str]:
         known = set(tables)
         return tables + [t for t in module.ALL_MIGRATED_TABLES if t not in known]
     except Exception as exc:  # noqa: BLE001 - never block the migration on this
-        print(f"  (note) could not load the restore manifest ({exc}); "
-              f"verifying the {len(tables)} baseline tables only")
+        print(
+            f"  (note) could not load the restore manifest ({exc}); "
+            f"verifying the {len(tables)} baseline tables only"
+        )
         return tables
 
 
@@ -106,10 +122,12 @@ def _server_running(port: int = 8000) -> bool:
 def _driver():
     try:
         from pysqlcipher3 import dbapi2 as drv  # type: ignore
+
         return drv, "pysqlcipher3"
     except Exception:
         try:
             import sqlcipher3 as drv  # type: ignore
+
             return drv, "sqlcipher3"
         except Exception:
             return None, None
@@ -145,6 +163,7 @@ def _verify(conn, expected: dict) -> list[str]:
     # they are the parts most likely to survive a naive copy in name only.
     try:
         import sqlite_vec
+
         conn.enable_load_extension(True)
         sqlite_vec.load(conn)
         conn.enable_load_extension(False)
@@ -154,7 +173,9 @@ def _verify(conn, expected: dict) -> list[str]:
         problems.append(f"vector index unusable: {e}")
 
     try:
-        conn.execute("SELECT rowid FROM clinical_knowledge_fts WHERE clinical_knowledge_fts MATCH 'sepsis' LIMIT 1").fetchall()
+        conn.execute(
+            "SELECT rowid FROM clinical_knowledge_fts WHERE clinical_knowledge_fts MATCH 'sepsis' LIMIT 1"
+        ).fetchall()
         print("  FTS5 query: OK")
     except Exception as e:
         problems.append(f"FTS5 unusable: {e}")
@@ -164,13 +185,11 @@ def _verify(conn, expected: dict) -> list[str]:
     # (each row's prev_hash == the previous row's row_hash), not just that the
     # rows are readable.
     try:
-        rows = conn.execute(
-            "SELECT id, prev_hash, row_hash FROM audit_logs ORDER BY id"
-        ).fetchall()
+        rows = conn.execute("SELECT id, prev_hash, row_hash FROM audit_logs ORDER BY id").fetchall()
         breaks = 0
         prev = None
         for r in rows:
-            rid, prev_hash, row_hash = r[0], r[1], r[2]
+            _rid, prev_hash, row_hash = r[0], r[1], r[2]
             if prev is not None and prev_hash != prev:
                 breaks += 1
             prev = row_hash
@@ -185,11 +204,16 @@ def _verify(conn, expected: dict) -> list[str]:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--migrate", action="store_true", help="perform the migration")
     ap.add_argument("--check", action="store_true", help="report state only, change nothing")
-    ap.add_argument("--no-keep-plaintext", action="store_true",
-                    help="delete the plaintext backup after successful verification")
+    ap.add_argument(
+        "--no-keep-plaintext",
+        action="store_true",
+        help="delete the plaintext backup after successful verification",
+    )
     args = ap.parse_args()
     if not (args.migrate or args.check):
         ap.error("pass --check or --migrate")
@@ -201,7 +225,11 @@ def main() -> int:
     drv, drv_name = _driver()
 
     print(f"database:        {db}")
-    print(f"exists:          {db.exists()} ({db.stat().st_size/1048576:.1f} MB)" if db.exists() else "exists:          False")
+    print(
+        f"exists:          {db.exists()} ({db.stat().st_size / 1048576:.1f} MB)"
+        if db.exists()
+        else "exists:          False"
+    )
     print(f"on-disk state:   {'PLAINTEXT' if _is_plaintext(db) else 'encrypted or unknown'}")
     print(f"sqlcipher driver:{' ' + drv_name if drv_name else ' NOT INSTALLED'}")
     print(f"key configured:  {bool(DB_ENCRYPTION_KEY)}")
@@ -211,7 +239,9 @@ def main() -> int:
             print("\n→ ORB_DB_ENCRYPTION_KEY is unset; the app will run PLAINTEXT.")
         elif drv is None:
             print("\n→ Key set but no driver: the app falls back to PLAINTEXT with a warning.")
-            print("  Install with: uv pip install --python server/.venv/bin/python sqlcipher3-wheels")
+            print(
+                "  Install with: uv pip install --python server/.venv/bin/python sqlcipher3-wheels"
+            )
         elif _is_plaintext(db):
             print("\n→ Key + driver present but the FILE IS STILL PLAINTEXT.")
             print("  The app cannot open it with SQLCipher. Run: --migrate")
@@ -227,14 +257,19 @@ def main() -> int:
         print("\nREFUSING: no SQLCipher driver installed.", file=sys.stderr)
         return 2
     if not db.exists():
-        print("\nNothing to migrate — no database file. A fresh DB is created encrypted automatically.")
+        print(
+            "\nNothing to migrate — no database file. A fresh DB is created encrypted automatically."
+        )
         return 0
     if not _is_plaintext(db):
         print("\nAlready encrypted (or not a plaintext SQLite file). Nothing to do.")
         return 0
     if _server_running():
-        print("\nREFUSING: something is listening on :8000 — stop the server first.\n"
-              "  Migrating under a live server corrupts both copies.", file=sys.stderr)
+        print(
+            "\nREFUSING: something is listening on :8000 — stop the server first.\n"
+            "  Migrating under a live server corrupts both copies.",
+            file=sys.stderr,
+        )
         return 2
 
     key_hex = _sqlcipher_key_hex(DB_ENCRYPTION_KEY)
@@ -248,6 +283,7 @@ def main() -> int:
     print(f"\n1/5 backing up plaintext → {backup.name}")
     # Checkpoint WAL into the main file first so the backup is self-contained.
     import sqlite3
+
     src = sqlite3.connect(str(db), timeout=30)
     src.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     expected = _counts(src, VERIFY_TABLES)
@@ -289,6 +325,7 @@ def main() -> int:
     print("5/5 confirming the app's own connection path opens it")
     try:
         from database import _build_connection
+
         c = _build_connection()
         n = c.execute("SELECT COUNT(*) FROM patients").fetchone()[0]
         c.close()

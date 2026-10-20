@@ -16,6 +16,7 @@ note, or from a note before this migration). Idempotent through PRAGMA
 introspection. No foreign key: scribe_notes is never an FK parent here, and an
 ALTER cannot add one in SQLite anyway. No index: the queue reads these by row.
 """
+
 from __future__ import annotations
 
 from migrations import Migration

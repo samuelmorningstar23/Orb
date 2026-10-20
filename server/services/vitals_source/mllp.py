@@ -51,6 +51,7 @@ The correct consumer shape, for anyone writing one:
                 can_ack = False          # stop ACKing, keep persisting
     # ...and only leave the loop when the socket is actually done.
 """
+
 from __future__ import annotations
 
 import logging
@@ -75,6 +76,7 @@ DEFAULT_MAX_MESSAGE_BYTES = 1024 * 1024
 @dataclass
 class FramerStats:
     """Everything the framer threw away, so it is observable rather than silent."""
+
     messages: int = 0
     bytes_discarded_before_start: int = 0
     oversize_messages: int = 0
@@ -190,8 +192,7 @@ class MllpFramer:
 
     __slots__ = ("_batch", "_buf", "_in_message", "max_message_bytes", "name", "stats")
 
-    def __init__(self, max_message_bytes: int = DEFAULT_MAX_MESSAGE_BYTES,
-                 *, name: str = "mllp"):
+    def __init__(self, max_message_bytes: int = DEFAULT_MAX_MESSAGE_BYTES, *, name: str = "mllp"):
         self.max_message_bytes = max(512, int(max_message_bytes))
         # Identifies the connection in the loss log. Never PHI — a peer address
         # or a source id, supplied by the caller.
@@ -234,7 +235,11 @@ class MllpFramer:
             "abandoned on this connection so far). The consumer stopped "
             "iterating a feed() batch early; it must finish the batch even when "
             "it can no longer ACK.",
-            self.name, lost, taken, len(batch), self.stats.messages_abandoned,
+            self.name,
+            lost,
+            taken,
+            len(batch),
+            self.stats.messages_abandoned,
         )
 
     @property

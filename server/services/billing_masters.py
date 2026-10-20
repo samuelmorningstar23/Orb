@@ -34,6 +34,7 @@ CONVENTIONS THIS FILE FOLLOWS (from the rest of server/services)
   * No foreign keys exist on these tables (see migration 20): a bad id yields an
     empty result, never a failed clinical write.
 """
+
 from __future__ import annotations
 
 import logging
@@ -41,9 +42,10 @@ import re
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any, Optional
+from typing import Any, TypedDict
 
 from database import db_session
+
 from services.money import (
     GST_EXEMPT,
     GST_TREATMENTS,
@@ -65,10 +67,23 @@ logger = logging.getLogger("orb.billing_masters")
 #: pathology item is "lab"; the schema's word is "investigation", and nothing
 #: told anyone. Validating here turns that into the same 422 + "expected one of
 #: …" every other master-data mistake gets, so the clerk can correct it.
-SERVICE_CATEGORIES = frozenset({
-    "consultation", "procedure", "investigation", "imaging", "bed", "nursing",
-    "ot", "pharmacy", "consumable", "implant", "ambulance", "package", "other",
-})
+SERVICE_CATEGORIES = frozenset(
+    {
+        "consultation",
+        "procedure",
+        "investigation",
+        "imaging",
+        "bed",
+        "nursing",
+        "ot",
+        "pharmacy",
+        "consumable",
+        "implant",
+        "ambulance",
+        "package",
+        "other",
+    }
+)
 
 __all__ = [
     "RateResolution",
@@ -111,6 +126,19 @@ __all__ = [
 ]
 
 
+class _RateContext(TypedDict):
+    service_code: str
+    tariff_plan_id: int | None
+    tariff_plan_code: str | None
+    ward_class: str | None
+    gst_treatment: str
+    gst_rate_bp: int
+    service_item_id: int | None
+    description: str | None
+    hsn_sac: str | None
+    uom: str | None
+
+
 class MasterDataError(ValueError):
     """Bad reference data supplied by a caller (unknown treatment, blank code)."""
 
@@ -150,8 +178,14 @@ class SeriesEditError(MasterDataError):
     """A refused change to a document series, with per-field reasons for the
     Facilities screen: `errors` is [{field, code, message}]."""
 
-    def __init__(self, message: str, *, code: str = "invalid_series", status: int = 400,
-                 errors: Optional[list] = None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "invalid_series",
+        status: int = 400,
+        errors: list | None = None,
+    ):
         super().__init__(message)
         self.code = code
         self.status = status
@@ -163,6 +197,7 @@ class SeriesEditError(MasterDataError):
 
 # ── Resolution results ───────────────────────────────────────────────────────
 
+
 @dataclass(frozen=True)
 class RateResolution:
     """What one service costs under one tariff — and WHERE that came from.
@@ -170,19 +205,20 @@ class RateResolution:
     `configured` False means nobody has priced this item. `rate_paise` is then
     None, and the UI must say "Not configured" rather than "₹0.00".
     """
+
     service_code: str
-    rate_paise: Optional[int]
+    rate_paise: int | None
     configured: bool
-    source: str                     # 'tariff_rate' | 'service_default' | 'unconfigured' | 'unknown_item'
-    tariff_plan_id: Optional[int]
-    tariff_plan_code: Optional[str]
-    ward_class: Optional[str]
+    source: str  # 'tariff_rate' | 'service_default' | 'unconfigured' | 'unknown_item'
+    tariff_plan_id: int | None
+    tariff_plan_code: str | None
+    ward_class: str | None
     gst_treatment: str
     gst_rate_bp: int
-    service_item_id: Optional[int]
-    description: Optional[str]
-    hsn_sac: Optional[str] = None
-    uom: Optional[str] = None
+    service_item_id: int | None
+    description: str | None
+    hsn_sac: str | None = None
+    uom: str | None = None
 
     @property
     def display(self) -> str:
@@ -211,19 +247,20 @@ class RateResolution:
 @dataclass(frozen=True)
 class PayerResolution:
     """Who is paying for this encounter, and under which price list."""
-    payer_id: Optional[int]
-    payer_code: Optional[str]
-    payer_name: Optional[str]
+
+    payer_id: int | None
+    payer_code: str | None
+    payer_name: str | None
     payer_type: str
-    policy_id: Optional[int]
-    policy_number: Optional[str]
-    tariff_plan_id: Optional[int]
-    tariff_plan_code: Optional[str]
+    policy_id: int | None
+    policy_number: str | None
+    tariff_plan_id: int | None
+    tariff_plan_code: str | None
     copay_percent_bp: int
     preauth_required: bool
-    sum_insured_paise: Optional[int]
+    sum_insured_paise: int | None
     sum_insured_configured: bool
-    source: str                     # 'policy' | 'default_self_pay' | 'none'
+    source: str  # 'policy' | 'default_self_pay' | 'none'
 
     def as_dict(self) -> dict:
         return {
@@ -238,9 +275,7 @@ class PayerResolution:
             "copay_percent_bp": self.copay_percent_bp,
             "preauth_required": self.preauth_required,
             "sum_insured_paise": self.sum_insured_paise,
-            "sum_insured_display": format_inr_or_unset(
-                self.sum_insured_paise, unset="Not known"
-            ),
+            "sum_insured_display": format_inr_or_unset(self.sum_insured_paise, unset="Not known"),
             "sum_insured_is_configured": self.sum_insured_configured,
             "source": self.source,
         }
@@ -248,15 +283,16 @@ class PayerResolution:
 
 # ── Service items ────────────────────────────────────────────────────────────
 
+
 def _row_to_dict(row) -> dict:
     return {k: row[k] for k in row.keys()}
 
 
 def list_service_items(
     *,
-    category: Optional[str] = None,
+    category: str | None = None,
     active_only: bool = True,
-    search: Optional[str] = None,
+    search: str | None = None,
     limit: int = 500,
 ) -> list[dict]:
     sql = "SELECT * FROM service_items WHERE 1=1"
@@ -275,11 +311,9 @@ def list_service_items(
         return [_row_to_dict(r) for r in db.execute(sql, params).fetchall()]
 
 
-def get_service_item(code: str) -> Optional[dict]:
+def get_service_item(code: str) -> dict | None:
     with db_session() as db:
-        row = db.execute(
-            "SELECT * FROM service_items WHERE code = ?", (code,)
-        ).fetchone()
+        row = db.execute("SELECT * FROM service_items WHERE code = ?", (code,)).fetchone()
     return _row_to_dict(row) if row else None
 
 
@@ -288,15 +322,15 @@ def upsert_service_item(
     code: str,
     name: str,
     category: str = "other",
-    department: Optional[str] = None,
+    department: str | None = None,
     uom: str = "each",
     gst_treatment: str = GST_EXEMPT,
     gst_rate_bp: int = 0,
-    hsn_sac: Optional[str] = None,
-    default_rate_paise: Optional[int] = None,
+    hsn_sac: str | None = None,
+    default_rate_paise: int | None = None,
     is_active: bool = True,
-    notes: Optional[str] = None,
-    created_by: Optional[str] = None,
+    notes: str | None = None,
+    created_by: str | None = None,
 ) -> dict:
     """Create or update one chargeable item.
 
@@ -343,8 +377,18 @@ def upsert_service_item(
                  is_active=excluded.is_active, notes=excluded.notes,
                  updated_at=CURRENT_TIMESTAMP""",
             (
-                code, name, category, department, uom, gst_treatment, int(gst_rate_bp),
-                hsn_sac, rate, 1 if configured else 0, 1 if is_active else 0, notes,
+                code,
+                name,
+                category,
+                department,
+                uom,
+                gst_treatment,
+                int(gst_rate_bp),
+                hsn_sac,
+                rate,
+                1 if configured else 0,
+                1 if is_active else 0,
+                notes,
                 created_by,
             ),
         )
@@ -353,6 +397,7 @@ def upsert_service_item(
 
 
 # ── Tariffs ──────────────────────────────────────────────────────────────────
+
 
 def list_tariff_plans(*, active_only: bool = True) -> list[dict]:
     sql = "SELECT * FROM tariff_plans"
@@ -363,7 +408,7 @@ def list_tariff_plans(*, active_only: bool = True) -> list[dict]:
         return [_row_to_dict(r) for r in db.execute(sql).fetchall()]
 
 
-def default_tariff_plan() -> Optional[dict]:
+def default_tariff_plan() -> dict | None:
     """The plan a self-pay patient is priced on. Migration 20 seeds 'SELFPAY'."""
     with db_session() as db:
         row = db.execute(
@@ -378,9 +423,9 @@ def set_tariff_rate(
     tariff_plan_id: int,
     service_code: str,
     rate_paise: int,
-    ward_class: Optional[str] = None,
-    effective_from: Optional[str] = None,
-    created_by: Optional[str] = None,
+    ward_class: str | None = None,
+    effective_from: str | None = None,
+    created_by: str | None = None,
 ) -> dict:
     """Price one service under one plan (optionally per bed class).
 
@@ -393,9 +438,7 @@ def set_tariff_rate(
     rate = assert_paise(rate_paise)
     eff = effective_from or date.today().isoformat()
     with db_session() as db:
-        item = db.execute(
-            "SELECT id FROM service_items WHERE code = ?", (service_code,)
-        ).fetchone()
+        item = db.execute("SELECT id FROM service_items WHERE code = ?", (service_code,)).fetchone()
         db.execute(
             """INSERT INTO tariff_rates
                  (tariff_plan_id, service_item_id, service_code, ward_class,
@@ -405,8 +448,13 @@ def set_tariff_rate(
                DO UPDATE SET rate_paise=excluded.rate_paise, is_active=1,
                              service_item_id=excluded.service_item_id""",
             (
-                int(tariff_plan_id), item["id"] if item else None, service_code,
-                ward_class, rate, eff, created_by,
+                int(tariff_plan_id),
+                item["id"] if item else None,
+                service_code,
+                ward_class,
+                rate,
+                eff,
+                created_by,
             ),
         )
         row = db.execute(
@@ -420,9 +468,9 @@ def set_tariff_rate(
 def resolve_rate(
     service_code: str,
     *,
-    tariff_plan_id: Optional[int] = None,
-    ward_class: Optional[str] = None,
-    on_date: Optional[str] = None,
+    tariff_plan_id: int | None = None,
+    ward_class: str | None = None,
+    on_date: str | None = None,
 ) -> RateResolution:
     """What does this service cost, under this plan, on this date?
 
@@ -443,7 +491,10 @@ def resolve_rate(
     """
     with db_session() as db:
         return resolve_rate_on(
-            db, service_code, tariff_plan_id=tariff_plan_id, ward_class=ward_class,
+            db,
+            service_code,
+            tariff_plan_id=tariff_plan_id,
+            ward_class=ward_class,
             on_date=on_date,
         )
 
@@ -452,18 +503,16 @@ def resolve_rate_on(
     db,
     service_code: str,
     *,
-    tariff_plan_id: Optional[int] = None,
-    ward_class: Optional[str] = None,
-    on_date: Optional[str] = None,
+    tariff_plan_id: int | None = None,
+    ward_class: str | None = None,
+    on_date: str | None = None,
 ) -> RateResolution:
     """resolve_rate on the caller's connection (opd-13): the outpatient charge
     writers price a line inside the transaction that raises it, so the rate
     and the row are read and written under one lock. Same precedence, same
     answer, no commit."""
     day = on_date or date.today().isoformat()
-    item = db.execute(
-        "SELECT * FROM service_items WHERE code = ?", (service_code,)
-    ).fetchone()
+    item = db.execute("SELECT * FROM service_items WHERE code = ?", (service_code,)).fetchone()
     plan_row = None
     if tariff_plan_id is not None:
         plan_row = db.execute(
@@ -492,7 +541,7 @@ def resolve_rate_on(
     plan_code = plan_row["code"] if plan_row is not None else None
     treatment = item["gst_treatment"] if item is not None else GST_EXEMPT
     rate_bp = int(item["gst_rate_bp"]) if item is not None else 0
-    common = {
+    common: _RateContext = {
         "service_code": service_code,
         "tariff_plan_id": plan_id,
         "tariff_plan_code": plan_code,
@@ -507,30 +556,30 @@ def resolve_rate_on(
 
     if rate_row is not None:
         return RateResolution(
-            rate_paise=int(rate_row["rate_paise"]), configured=True,
-            source="tariff_rate", **common,
+            rate_paise=int(rate_row["rate_paise"]),
+            configured=True,
+            source="tariff_rate",
+            **common,
         )
     if item is None:
-        return RateResolution(
-            rate_paise=None, configured=False, source="unknown_item", **common
-        )
+        return RateResolution(rate_paise=None, configured=False, source="unknown_item", **common)
     if int(item["rate_is_configured"] or 0) == 1:
         return RateResolution(
-            rate_paise=int(item["default_rate_paise"]), configured=True,
-            source="service_default", **common,
+            rate_paise=int(item["default_rate_paise"]),
+            configured=True,
+            source="service_default",
+            **common,
         )
-    return RateResolution(
-        rate_paise=None, configured=False, source="unconfigured", **common
-    )
+    return RateResolution(rate_paise=None, configured=False, source="unconfigured", **common)
 
 
 def resolve_package_rate(
     package_code: str,
     *,
-    tariff_plan_id: Optional[int] = None,
-    ward_class: Optional[str] = None,
-    on_date: Optional[str] = None,
-) -> Optional[dict]:
+    tariff_plan_id: int | None = None,
+    ward_class: str | None = None,
+    on_date: str | None = None,
+) -> dict | None:
     """The bundled price for a package (surgery package, PM-JAY HBP), or None.
 
     None means "this plan does not have that package", which is a real answer a
@@ -561,7 +610,8 @@ def resolve_package_rate(
 
 # ── Payers ───────────────────────────────────────────────────────────────────
 
-def list_payers(*, active_only: bool = True, payer_type: Optional[str] = None) -> list[dict]:
+
+def list_payers(*, active_only: bool = True, payer_type: str | None = None) -> list[dict]:
     sql = "SELECT * FROM payers WHERE 1=1"
     params: list[Any] = []
     if active_only:
@@ -574,7 +624,7 @@ def list_payers(*, active_only: bool = True, payer_type: Optional[str] = None) -
         return [_row_to_dict(r) for r in db.execute(sql, params).fetchall()]
 
 
-def get_payer(code: str) -> Optional[dict]:
+def get_payer(code: str) -> dict | None:
     with db_session() as db:
         row = db.execute("SELECT * FROM payers WHERE code = ?", (code,)).fetchone()
     return _row_to_dict(row) if row else None
@@ -585,17 +635,17 @@ def upsert_payer(
     code: str,
     name: str,
     payer_type: str = "self_pay",
-    tariff_plan_id: Optional[int] = None,
-    gstin: Optional[str] = None,
-    state_code: Optional[str] = None,
-    contact_name: Optional[str] = None,
-    contact_phone: Optional[str] = None,
-    contact_email: Optional[str] = None,
-    claim_submission_mode: Optional[str] = None,
-    credit_days: Optional[int] = None,
+    tariff_plan_id: int | None = None,
+    gstin: str | None = None,
+    state_code: str | None = None,
+    contact_name: str | None = None,
+    contact_phone: str | None = None,
+    contact_email: str | None = None,
+    claim_submission_mode: str | None = None,
+    credit_days: int | None = None,
     preauth_required: bool = False,
     is_active: bool = True,
-    notes: Optional[str] = None,
+    notes: str | None = None,
 ) -> dict:
     code = (code or "").strip()
     if not code:
@@ -618,9 +668,20 @@ def upsert_payer(
                  is_active=excluded.is_active, notes=excluded.notes,
                  updated_at=CURRENT_TIMESTAMP""",
             (
-                code, name, payer_type, tariff_plan_id, gstin, state_code,
-                contact_name, contact_phone, contact_email, claim_submission_mode,
-                credit_days, 1 if preauth_required else 0, 1 if is_active else 0, notes,
+                code,
+                name,
+                payer_type,
+                tariff_plan_id,
+                gstin,
+                state_code,
+                contact_name,
+                contact_phone,
+                contact_email,
+                claim_submission_mode,
+                credit_days,
+                1 if preauth_required else 0,
+                1 if is_active else 0,
+                notes,
             ),
         )
         row = db.execute("SELECT * FROM payers WHERE code = ?", (code,)).fetchone()
@@ -630,7 +691,7 @@ def upsert_payer(
 def resolve_patient_payer(
     patient_id: str,
     *,
-    admission_id: Optional[str] = None,
+    admission_id: str | None = None,
 ) -> PayerResolution:
     """Who pays for this encounter, and on which tariff.
 
@@ -647,7 +708,7 @@ def resolve_patient_payer_on(
     db,
     patient_id: str,
     *,
-    admission_id: Optional[str] = None,
+    admission_id: str | None = None,
 ) -> PayerResolution:
     """resolve_patient_payer on the caller's connection (opd-13), so a payer
     recorded earlier in the same transaction (the registration desk's payer
@@ -687,9 +748,7 @@ def resolve_patient_payer_on(
     plan_code = None
     if row is not None and row["payer_plan_id"] is not None:
         plan_id = int(row["payer_plan_id"])
-        plan = db.execute(
-            "SELECT code FROM tariff_plans WHERE id = ?", (plan_id,)
-        ).fetchone()
+        plan = db.execute("SELECT code FROM tariff_plans WHERE id = ?", (plan_id,)).fetchone()
         plan_code = plan["code"] if plan else None
     elif default_plan is not None:
         plan_id = int(default_plan["id"])
@@ -743,9 +802,9 @@ def record_patient_payer_on(
     *,
     patient_id: str,
     payer_code: str,
-    policy_number: Optional[str] = None,
-    member_id: Optional[str] = None,
-    created_by: Optional[str] = None,
+    policy_number: str | None = None,
+    member_id: str | None = None,
+    created_by: str | None = None,
 ) -> dict:
     """Record who pays for a patient's outpatient care (opd-13): one active
     patient_payer_policies row with NO admission, so resolve_patient_payer
@@ -768,7 +827,7 @@ def record_patient_payer_on(
     if payer is None or not int(payer["is_active"] or 0):
         raise MasterDataError(f"{code!r} is not an active payer on this site")
 
-    def _text(value: Optional[str], what: str) -> Optional[str]:
+    def _text(value: str | None, what: str) -> str | None:
         text = (value or "").strip() or None
         if text is not None and len(text) > MAX_POLICY_TEXT:
             raise MasterDataError(f"the {what} is longer than {MAX_POLICY_TEXT} characters")
@@ -779,8 +838,13 @@ def record_patient_payer_on(
                (patient_id, admission_id, payer_id, policy_number, member_id,
                 is_primary, status, created_by)
            VALUES (?, NULL, ?, ?, ?, 1, 'active', ?)""",
-        (patient_id, int(payer["id"]), _text(policy_number, "policy number"),
-         _text(member_id, "member id"), created_by),
+        (
+            patient_id,
+            int(payer["id"]),
+            _text(policy_number, "policy number"),
+            _text(member_id, "member id"),
+            created_by,
+        ),
     )
     return {
         "policy_id": int(cursor.lastrowid),
@@ -799,7 +863,7 @@ def register_unpriced_item_on(
     code: str,
     name: str,
     category: str = "consultation",
-    notes: Optional[str] = None,
+    notes: str | None = None,
 ) -> bool:
     """Put a service code on the price list UNPRICED (rate_is_configured 0),
     so the billing counter sees it and prices it; never over a row a site has
@@ -820,7 +884,8 @@ def register_unpriced_item_on(
 
 # ── Document numbering ───────────────────────────────────────────────────────
 
-def financial_year_for(when: Optional[date | datetime | str] = None) -> str:
+
+def financial_year_for(when: date | datetime | str | None = None) -> str:
     """India's financial year label for a date: 1 April – 31 March. April 2026
     through March 2027 is '2026-27'. Invoice series reset on it."""
     if when is None:
@@ -852,16 +917,16 @@ def _missing_series(series_code: str, facility_id: int, message: str) -> MasterD
     return SeriesNotSetUp(series_code, facility_id)
 
 
-def series_is_configured(db, series_code: str, *,
-                         facility_id: int = MAIN_FACILITY_ID) -> bool:
+def series_is_configured(db, series_code: str, *, facility_id: int = MAIN_FACILITY_ID) -> bool:
     """Whether a facility's series is the site's real one (is_configured),
     False when the facility has no such series. On the caller's connection."""
     row = _series_row(db, series_code, facility_id)
     return bool(row is not None and int(row["is_configured"] or 0))
 
 
-def next_document_number(series_code: str, *, when: Optional[date | str] = None,
-                         facility_id: int = MAIN_FACILITY_ID) -> dict:
+def next_document_number(
+    series_code: str, *, when: date | str | None = None, facility_id: int = MAIN_FACILITY_ID
+) -> dict:
     """Allocate the next number in a series. ONE implementation, for everybody.
 
     Returns `{"number": "INV-2026-27-000001", "sequence": 1, "is_configured": 0}`.
@@ -890,7 +955,8 @@ def next_document_number(series_code: str, *, when: Optional[date | str] = None,
         row = _series_row(db, series_code, facility_id)
         if row is None:
             raise _missing_series(
-                series_code, facility_id,
+                series_code,
+                facility_id,
                 f"unknown document series {series_code!r}; migration 20 seeds "
                 "INV, RCPT, REF, CLM, IND, PO and GRN",
             )
@@ -986,9 +1052,14 @@ def verhoeff_valid(number: str) -> bool:
 _CHECK_DIGIT_SCHEMES = {"verhoeff": verhoeff_check_digit}
 
 
-def allocate_series_number(db, series_code: str, *, when: Optional[date | str] = None,
-                           require_configured: bool = False,
-                           facility_id: int = MAIN_FACILITY_ID) -> dict:
+def allocate_series_number(
+    db,
+    series_code: str,
+    *,
+    when: date | str | None = None,
+    require_configured: bool = False,
+    facility_id: int = MAIN_FACILITY_ID,
+) -> dict:
     """Allocate the next number in a series on the CALLER'S connection.
 
     The connection must already hold a write transaction (the caller opened
@@ -1021,13 +1092,16 @@ def allocate_series_number(db, series_code: str, *, when: Optional[date | str] =
         )
     row = _series_row(db, series_code, facility_id)
     if row is None:
-        raise _missing_series(series_code, facility_id,
-                              f"unknown document series {series_code!r}")
+        raise _missing_series(series_code, facility_id, f"unknown document series {series_code!r}")
     keys = set(row.keys())
     configured = int(row["is_configured"] or 0)
     if require_configured and not configured:
         raise SeriesNotConfigured(series_code)
-    resets_yearly = int(row["resets_yearly"]) if "resets_yearly" in keys and row["resets_yearly"] is not None else 1
+    resets_yearly = (
+        int(row["resets_yearly"])
+        if "resets_yearly" in keys and row["resets_yearly"] is not None
+        else 1
+    )
     scheme = (row["check_digit"] or None) if "check_digit" in keys else None
     if scheme is not None and scheme not in _CHECK_DIGIT_SCHEMES:
         # Fail closed: a number issued without the check digit the series
@@ -1145,7 +1219,7 @@ _SUFFIX_RE = re.compile(r"^[A-Za-z0-9/._-]{0,8}$")
 PAD_WIDTH_MIN, PAD_WIDTH_MAX = 1, 12
 
 
-def series_label(series_code: str, document_type: Optional[str] = None) -> str:
+def series_label(series_code: str, document_type: str | None = None) -> str:
     """The words for what a series numbers."""
     label = SERIES_LABELS.get(series_code)
     if label:
@@ -1154,13 +1228,17 @@ def series_label(series_code: str, document_type: Optional[str] = None) -> str:
     return (words[:1].upper() + words[1:]) if words else str(series_code)
 
 
-def preview_series_number(row, *, when: Optional[date | str] = None) -> str:
+def preview_series_number(row, *, when: date | str | None = None) -> str:
     """The number a series would hand out next, as it would print. Allocates
     nothing; follows allocate_series_number's rules (a yearly series restarts
     at 1 in a new financial year; a check digit is appended)."""
     keys = set(row.keys())
     width = int(row["pad_width"] or 6)
-    resets = int(row["resets_yearly"]) if "resets_yearly" in keys and row["resets_yearly"] is not None else 1
+    resets = (
+        int(row["resets_yearly"])
+        if "resets_yearly" in keys and row["resets_yearly"] is not None
+        else 1
+    )
     scheme = (row["check_digit"] or None) if "check_digit" in keys else None
     if resets:
         fy = financial_year_for(when)
@@ -1179,7 +1257,9 @@ def _series_view(row) -> dict:
     out["facility_id"] = int(out.get("facility_id") or MAIN_FACILITY_ID)
     out["label"] = series_label(out["series_code"], out.get("document_type"))
     out["is_configured"] = bool(int(out.get("is_configured") or 0))
-    out["resets_yearly"] = bool(int(out["resets_yearly"])) if out.get("resets_yearly") is not None else True
+    out["resets_yearly"] = (
+        bool(int(out["resets_yearly"])) if out.get("resets_yearly") is not None else True
+    )
     out["group_wide"] = out["series_code"] in GROUP_WIDE_SERIES
     out["next_number_preview"] = preview_series_number(row)
     return out
@@ -1201,8 +1281,9 @@ def _register_codes(series_code: str) -> set:
     return codes
 
 
-def _prefix_problems(db, *, facility_id: int, series_code: str, prefix: str,
-                     exclude_id: Optional[int]) -> list:
+def _prefix_problems(
+    db, *, facility_id: int, series_code: str, prefix: str, exclude_id: int | None
+) -> list:
     """Why `prefix` may not number this series at this facility, as field errors.
 
     THE RULE. Two series writing one register (the same series at another
@@ -1216,9 +1297,12 @@ def _prefix_problems(db, *, facility_id: int, series_code: str, prefix: str,
     errors = []
     codes = sorted(_register_codes(series_code))
     marks = ",".join("?" for _ in codes)
-    has_facilities = db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'facilities'"
-    ).fetchone() is not None
+    has_facilities = (
+        db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'facilities'"
+        ).fetchone()
+        is not None
+    )
     facility_code = "f.code" if has_facilities else "NULL"
     join = "LEFT JOIN facilities f ON f.id = d.facility_id" if has_facilities else ""
     others = db.execute(
@@ -1235,13 +1319,17 @@ def _prefix_problems(db, *, facility_id: int, series_code: str, prefix: str,
         what = series_label(other["series_code"], other["document_type"]).lower()
         shown = theirs if theirs else "no prefix at all"
         if other["series_code"] == series_code:
-            message = (f"Facility {where} numbers its {what} with {shown}. Two facilities' "
-                       "prefixes may not be the same, and neither may begin with the other, "
-                       "or their numbers could collide.")
+            message = (
+                f"Facility {where} numbers its {what} with {shown}. Two facilities' "
+                "prefixes may not be the same, and neither may begin with the other, "
+                "or their numbers could collide."
+            )
         else:
-            message = (f"{series_label(other['series_code'], other['document_type'])} at "
-                       f"{where} are numbered with {shown} in the same register. The two "
-                       "prefixes may not be the same, and neither may begin with the other.")
+            message = (
+                f"{series_label(other['series_code'], other['document_type'])} at "
+                f"{where} are numbered with {shown} in the same register. The two "
+                "prefixes may not be the same, and neither may begin with the other."
+            )
         errors.append({"field": "prefix", "code": "prefix_clash", "message": message})
         break
     for table, column in ISSUED_NUMBER_COLUMNS.get(series_code, ()):
@@ -1253,25 +1341,37 @@ def _prefix_problems(db, *, facility_id: int, series_code: str, prefix: str,
             (len(prefix), prefix),
         ).fetchone()
         if hit is not None:
-            errors.append({
-                "field": "prefix", "code": "prefix_matches_issued",
-                "message": (f"A number already issued, {hit['n']}, begins with "
-                            f"{prefix if prefix else 'no prefix at all'}. Choose a prefix "
-                            "that no issued number begins with, so no number can be "
-                            "handed out twice."),
-            })
+            errors.append(
+                {
+                    "field": "prefix",
+                    "code": "prefix_matches_issued",
+                    "message": (
+                        f"A number already issued, {hit['n']}, begins with "
+                        f"{prefix if prefix else 'no prefix at all'}. Choose a prefix "
+                        "that no issued number begins with, so no number can be "
+                        "handed out twice."
+                    ),
+                }
+            )
             break
     return errors
 
 
-def _facility_on_record(db, facility_id: int) -> Optional[dict]:
-    if db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'facilities'"
-    ).fetchone() is None:
-        return {"id": MAIN_FACILITY_ID, "code": "MAIN", "is_active": 1} \
-            if int(facility_id) == MAIN_FACILITY_ID else None
-    row = db.execute("SELECT id, code, is_active FROM facilities WHERE id = ?",
-                     (int(facility_id),)).fetchone()
+def _facility_on_record(db, facility_id: int) -> dict | None:
+    if (
+        db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'facilities'"
+        ).fetchone()
+        is None
+    ):
+        return (
+            {"id": MAIN_FACILITY_ID, "code": "MAIN", "is_active": 1}
+            if int(facility_id) == MAIN_FACILITY_ID
+            else None
+        )
+    row = db.execute(
+        "SELECT id, code, is_active FROM facilities WHERE id = ?", (int(facility_id),)
+    ).fetchone()
     return _row_to_dict(row) if row is not None else None
 
 
@@ -1294,13 +1394,19 @@ def list_document_series(facility_id: int) -> dict:
             have = {r["series_code"] for r in rows}
             for main in db.execute(
                 "SELECT series_code, document_type FROM document_number_series "
-                "WHERE facility_id = ? ORDER BY series_code", (MAIN_FACILITY_ID,),
+                "WHERE facility_id = ? ORDER BY series_code",
+                (MAIN_FACILITY_ID,),
             ).fetchall():
                 code = main["series_code"]
                 if code in have or code in GROUP_WIDE_SERIES:
                     continue
-                can_add.append({"series_code": code, "document_type": main["document_type"],
-                                "label": series_label(code, main["document_type"])})
+                can_add.append(
+                    {
+                        "series_code": code,
+                        "document_type": main["document_type"],
+                        "label": series_label(code, main["document_type"]),
+                    }
+                )
     return {"facility_id": fid, "series": series, "can_add": can_add}
 
 
@@ -1311,43 +1417,74 @@ def _validated_series_fields(changes: Any) -> tuple[dict, list]:
     errors: list = []
     for field, value in changes.items():
         if field not in EDITABLE_SERIES_FIELDS:
-            errors.append({"field": field, "code": "not_editable",
-                           "message": "This part of a number series cannot be changed here."})
+            errors.append(
+                {
+                    "field": field,
+                    "code": "not_editable",
+                    "message": "This part of a number series cannot be changed here.",
+                }
+            )
             continue
         if field == "prefix":
             if not isinstance(value, str) or not _PREFIX_RE.match(value):
-                errors.append({"field": field, "code": "bad_prefix",
-                               "message": "Use up to 16 letters, digits or the characters "
-                                          "/ . _ -, with no spaces."})
+                errors.append(
+                    {
+                        "field": field,
+                        "code": "bad_prefix",
+                        "message": "Use up to 16 letters, digits or the characters "
+                        "/ . _ -, with no spaces.",
+                    }
+                )
                 continue
         elif field == "suffix":
             if not isinstance(value, str) or not _SUFFIX_RE.match(value):
-                errors.append({"field": field, "code": "bad_suffix",
-                               "message": "Use up to 8 letters, digits or the characters "
-                                          "/ . _ -, with no spaces."})
+                errors.append(
+                    {
+                        "field": field,
+                        "code": "bad_suffix",
+                        "message": "Use up to 8 letters, digits or the characters "
+                        "/ . _ -, with no spaces.",
+                    }
+                )
                 continue
         elif field == "pad_width":
-            if isinstance(value, bool) or not isinstance(value, int) \
-                    or not PAD_WIDTH_MIN <= value <= PAD_WIDTH_MAX:
-                errors.append({"field": field, "code": "bad_pad_width",
-                               "message": f"Give a whole number of digits from "
-                                          f"{PAD_WIDTH_MIN} to {PAD_WIDTH_MAX}."})
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not PAD_WIDTH_MIN <= value <= PAD_WIDTH_MAX
+            ):
+                errors.append(
+                    {
+                        "field": field,
+                        "code": "bad_pad_width",
+                        "message": f"Give a whole number of digits from "
+                        f"{PAD_WIDTH_MIN} to {PAD_WIDTH_MAX}.",
+                    }
+                )
                 continue
         elif field == "is_configured":
             if not isinstance(value, bool):
-                errors.append({"field": field, "code": "bad_value",
-                               "message": "Say yes or no."})
+                errors.append({"field": field, "code": "bad_value", "message": "Say yes or no."})
                 continue
             value = 1 if value else 0
         out[field] = value
     return out, errors
 
 
-def _audit_series(db, *, action: str, actor: Optional[dict], facility: dict,
-                  series_code: str, summary: str, changes: dict) -> None:
+def _audit_series(
+    db,
+    *,
+    action: str,
+    actor: dict | None,
+    facility: dict,
+    series_code: str,
+    summary: str,
+    changes: dict,
+) -> None:
     """site_admin, in the writing transaction (fail-soft category, as every
     facility identity edit is)."""
     from services.audit_service import log_audit_event
+
     log_audit_event(
         correlation_id=str(uuid.uuid4()),
         event_category="site_admin",
@@ -1359,13 +1496,18 @@ def _audit_series(db, *, action: str, actor: Optional[dict], facility: dict,
         actor_role=(actor or {}).get("role"),
         target_type="document_series",
         target_id=f"{int(facility['id'])}:{series_code}",
-        metadata={"facility_id": int(facility["id"]), "facility_code": facility.get("code"),
-                  "series_code": series_code, "changes": changes},
+        metadata={
+            "facility_id": int(facility["id"]),
+            "facility_code": facility.get("code"),
+            "series_code": series_code,
+            "changes": changes,
+        },
     )
 
 
-def save_document_series(facility_id: int, series_code: str, changes: dict, *,
-                         actor: Optional[dict] = None) -> dict:
+def save_document_series(
+    facility_id: int, series_code: str, changes: dict, *, actor: dict | None = None
+) -> dict:
     """Set up or edit one facility's series. Returns {series, created, changed}.
 
     EDIT (the facility has the series): only EDITABLE_SERIES_FIELDS; a changed
@@ -1384,8 +1526,9 @@ def save_document_series(facility_id: int, series_code: str, changes: dict, *,
     code = (series_code or "").strip()
     fields, errors = _validated_series_fields(changes)
     if errors:
-        raise SeriesEditError("Some details need correcting before they can be saved.",
-                              errors=errors)
+        raise SeriesEditError(
+            "Some details need correcting before they can be saved.", errors=errors
+        )
     with db_session(immediate=True) as db:
         facility = _facility_on_record(db, fid)
         if facility is None:
@@ -1393,27 +1536,43 @@ def save_document_series(facility_id: int, series_code: str, changes: dict, *,
         row = _series_row(db, code, fid)
         if row is None:
             if fid == MAIN_FACILITY_ID:
-                raise SeriesEditError("Facility 1 has no series with that code.",
-                                      code="series_not_found", status=404)
+                raise SeriesEditError(
+                    "Facility 1 has no series with that code.", code="series_not_found", status=404
+                )
             if code in GROUP_WIDE_SERIES:
                 raise SeriesEditError(
                     f"{series_label(code)} are one series for the whole group, kept at "
                     "facility 1, so a patient keeps one number at every facility.",
-                    code="group_wide_series", status=409)
+                    code="group_wide_series",
+                    status=409,
+                )
             template = _series_row(db, code, MAIN_FACILITY_ID)
             if template is None:
-                raise SeriesEditError("No series with that code exists to set up.",
-                                      code="series_not_found", status=404)
+                raise SeriesEditError(
+                    "No series with that code exists to set up.",
+                    code="series_not_found",
+                    status=404,
+                )
             if not int(facility.get("is_active") or 0):
-                raise SeriesEditError("This facility is closed; its numbering cannot be set up.",
-                                      code="facility_inactive", status=409)
+                raise SeriesEditError(
+                    "This facility is closed; its numbering cannot be set up.",
+                    code="facility_inactive",
+                    status=409,
+                )
             if "prefix" not in fields:
                 raise SeriesEditError(
                     "Give the prefix this facility's numbers start with.",
-                    errors=[{"field": "prefix", "code": "prefix_required",
-                             "message": "A facility's own series needs its own prefix."}])
-            problems = _prefix_problems(db, facility_id=fid, series_code=code,
-                                        prefix=fields["prefix"], exclude_id=None)
+                    errors=[
+                        {
+                            "field": "prefix",
+                            "code": "prefix_required",
+                            "message": "A facility's own series needs its own prefix.",
+                        }
+                    ],
+                )
+            problems = _prefix_problems(
+                db, facility_id=fid, series_code=code, prefix=fields["prefix"], exclude_id=None
+            )
             if problems:
                 raise SeriesEditError("That prefix could repeat a number.", errors=problems)
             t = _row_to_dict(template)
@@ -1427,28 +1586,45 @@ def save_document_series(facility_id: int, series_code: str, changes: dict, *,
                 "INSERT INTO document_number_series (facility_id, series_code, document_type, "
                 "prefix, suffix, pad_width, next_number, is_configured, resets_yearly, "
                 "check_digit) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
-                (fid, code, t["document_type"], values["prefix"], values["suffix"],
-                 values["pad_width"], values["is_configured"],
-                 int(t["resets_yearly"]) if t.get("resets_yearly") is not None else 1,
-                 t.get("check_digit")),
+                (
+                    fid,
+                    code,
+                    t["document_type"],
+                    values["prefix"],
+                    values["suffix"],
+                    values["pad_width"],
+                    values["is_configured"],
+                    int(t["resets_yearly"]) if t.get("resets_yearly") is not None else 1,
+                    t.get("check_digit"),
+                ),
             )
             fresh = _series_row(db, code, fid)
-            _audit_series(db, action="document_series_created", actor=actor, facility=facility,
-                          series_code=code,
-                          summary=f"Numbering for {series_label(code).lower()} set up at "
-                                  f"{facility.get('code') or fid}",
-                          changes={k: {"from": None, "to": v} for k, v in values.items()})
-            return {"series": _series_view(fresh), "created": True,
-                    "changed": sorted(values)}
+            _audit_series(
+                db,
+                action="document_series_created",
+                actor=actor,
+                facility=facility,
+                series_code=code,
+                summary=f"Numbering for {series_label(code).lower()} set up at "
+                f"{facility.get('code') or fid}",
+                changes={k: {"from": None, "to": v} for k, v in values.items()},
+            )
+            return {"series": _series_view(fresh), "created": True, "changed": sorted(values)}
 
         current = _row_to_dict(row)
-        diff = {k: {"from": current.get(k), "to": v} for k, v in fields.items()
-                if current.get(k) != v}
+        diff = {
+            k: {"from": current.get(k), "to": v} for k, v in fields.items() if current.get(k) != v
+        }
         if not diff:
             return {"series": _series_view(row), "created": False, "changed": []}
         if "prefix" in diff:
-            problems = _prefix_problems(db, facility_id=fid, series_code=code,
-                                        prefix=fields["prefix"], exclude_id=int(current["id"]))
+            problems = _prefix_problems(
+                db,
+                facility_id=fid,
+                series_code=code,
+                prefix=fields["prefix"],
+                exclude_id=int(current["id"]),
+            )
             if problems:
                 raise SeriesEditError("That prefix could repeat a number.", errors=problems)
         sets = ", ".join(f"{k} = ?" for k in diff)
@@ -1458,15 +1634,21 @@ def save_document_series(facility_id: int, series_code: str, changes: dict, *,
             (*(fields[k] for k in diff), int(current["id"])),
         )
         fresh = _series_row(db, code, fid)
-        _audit_series(db, action="document_series_updated", actor=actor, facility=facility,
-                      series_code=code,
-                      summary=f"Numbering for {series_label(code, current.get('document_type')).lower()} "
-                              f"changed at {facility.get('code') or fid}",
-                      changes=diff)
+        _audit_series(
+            db,
+            action="document_series_updated",
+            actor=actor,
+            facility=facility,
+            series_code=code,
+            summary=f"Numbering for {series_label(code, current.get('document_type')).lower()} "
+            f"changed at {facility.get('code') or fid}",
+            changes=diff,
+        )
         return {"series": _series_view(fresh), "created": False, "changed": sorted(diff)}
 
 
 # ── Bootstrap ────────────────────────────────────────────────────────────────
+
 
 def ensure_default_masters() -> dict:
     """Idempotently re-assert the STRUCTURAL defaults migration 20 seeds.

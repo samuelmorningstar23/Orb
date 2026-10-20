@@ -35,14 +35,17 @@ restart can find the same callback. Redelivery is at-least-once, so subscribers
 should be idempotent (the existing ones are: they use INSERT OR REPLACE / dedup
 keys / idempotent upserts).
 """
+
 import asyncio
 import atexit
 import json
-import uuid
 import logging
+import uuid
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Callable, Awaitable, Any, Optional
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
+
 from database import db_session
 
 logger = logging.getLogger(__name__)
@@ -65,6 +68,7 @@ async def _in_db_thread(fn, *args):
     """Run a blocking event-bus DB write off the event loop."""
     return await asyncio.get_running_loop().run_in_executor(_DB_EXECUTOR, fn, *args)
 
+
 # Upper bound on concurrent subscriber dispatch tasks. Without this, an alert
 # burst spawns one unbounded create_task per (event x subscriber), which can
 # pile thousands of coroutines into the single-slot LLM queue and starve
@@ -85,7 +89,7 @@ _IN_FLIGHT: set[tuple[str, str]] = set()
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def subscriber_id(callback: Callable) -> str:
@@ -96,10 +100,17 @@ def subscriber_id(callback: Callable) -> str:
 
 
 class StateEvent:
-    def __init__(self, topic: str, source_node: str, event_type: str,
-                 patient_id: Optional[str], payload: Dict[str, Any],
-                 correlation_id: Optional[str] = None, event_id: Optional[str] = None,
-                 timestamp: Optional[str] = None):
+    def __init__(
+        self,
+        topic: str,
+        source_node: str,
+        event_type: str,
+        patient_id: str | None,
+        payload: dict[str, Any],
+        correlation_id: str | None = None,
+        event_id: str | None = None,
+        timestamp: str | None = None,
+    ):
         self.event_id = event_id or str(uuid.uuid4())
         self.topic = topic
         self.source_node = source_node
@@ -109,7 +120,7 @@ class StateEvent:
         self.timestamp = timestamp or _now()
         self.correlation_id = correlation_id or f"corr-{uuid.uuid4().hex[:12]}"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "event_id": self.event_id,
             "topic": self.topic,
@@ -130,19 +141,23 @@ class StateEvent:
         except (TypeError, ValueError, json.JSONDecodeError):
             payload = {}
         return cls(
-            topic=row["topic"], source_node=row["source_node"],
-            event_type=row["event_type"], patient_id=row["patient_id"],
-            payload=payload, correlation_id=row["correlation_id"],
-            event_id=row["event_id"], timestamp=row["timestamp"],
+            topic=row["topic"],
+            source_node=row["source_node"],
+            event_type=row["event_type"],
+            patient_id=row["patient_id"],
+            payload=payload,
+            correlation_id=row["correlation_id"],
+            event_id=row["event_id"],
+            timestamp=row["timestamp"],
         )
 
 
 class LocalEventBus:
     def __init__(self):
-        self._subscribers: Dict[str, List[Callable[[StateEvent], Awaitable[None]]]] = {}
+        self._subscribers: dict[str, list[Callable[[StateEvent], Awaitable[None]]]] = {}
         self._lock = asyncio.Lock()
-        self._dispatch_sem: Optional[asyncio.Semaphore] = None
-        self._poller_task: Optional[asyncio.Task] = None
+        self._dispatch_sem: asyncio.Semaphore | None = None
+        self._poller_task: asyncio.Task | None = None
         # One-shot warning about pending rows whose subscriber this build does
         # not register (they are excluded from replay, so they'd be silent).
         self._orphans_logged = False
@@ -162,7 +177,9 @@ class LocalEventBus:
             self._subscribers[topic].append(callback)
             logger.info(
                 "[EventBus] Registered subscription: %s (%s) for topic '%s'",
-                getattr(callback, "__name__", repr(callback)), subscriber_id(callback), topic,
+                getattr(callback, "__name__", repr(callback)),
+                subscriber_id(callback),
+                topic,
             )
 
     def _matched_callbacks(self, topic: str) -> list:
@@ -179,16 +196,17 @@ class LocalEventBus:
                     return cb
         return None
 
-    def _registered_subscriber_ids(self) -> List[str]:
+    def _registered_subscriber_ids(self) -> list[str]:
         """Every subscriber id registered in THIS process (deduped)."""
-        seen: Dict[str, None] = {}
+        seen: dict[str, None] = {}
         for callbacks in self._subscribers.values():
             for cb in callbacks:
                 seen.setdefault(subscriber_id(cb), None)
         return list(seen)
 
-    def _spawn_dispatch(self, callback: Callable, event: StateEvent, sid: str,
-                        attempt_recorded: bool = False) -> bool:
+    def _spawn_dispatch(
+        self, callback: Callable, event: StateEvent, sid: str, attempt_recorded: bool = False
+    ) -> bool:
         """Create the dispatch task unless this (event, subscriber) is already in
         flight. Returns True when a task was actually created."""
         key = (event.event_id, sid)
@@ -196,10 +214,14 @@ class LocalEventBus:
             return False
         _IN_FLIGHT.add(key)
         task = asyncio.create_task(self._safe_dispatch(callback, event, attempt_recorded))
+
         # A task cancelled before its first step never runs the coroutine body,
         # so its finally-clause release would never fire and the key would block
         # this delivery from ever being replayed again.
-        task.add_done_callback(lambda _t, k=key: _IN_FLIGHT.discard(k))
+        def _finished(_task: asyncio.Task, k: tuple[str, str] = key) -> None:
+            _IN_FLIGHT.discard(k)
+
+        task.add_done_callback(_finished)
         return True
 
     async def publish(self, event: StateEvent):
@@ -231,12 +253,10 @@ class LocalEventBus:
 
         sub_ids = [subscriber_id(cb) for cb in matched]
         if sub_ids:
-            await _in_db_thread(
-                self._record_delivery_intents, event.event_id, event.topic, sub_ids
-            )
+            await _in_db_thread(self._record_delivery_intents, event.event_id, event.topic, sub_ids)
 
         # 3. Dispatch (bounded). Each dispatch acks/nacks its delivery row.
-        for cb, sid in zip(matched, sub_ids):
+        for cb, sid in zip(matched, sub_ids, strict=False):
             self._spawn_dispatch(cb, event, sid)
 
     def _persist_event(self, event: StateEvent):
@@ -246,14 +266,25 @@ class LocalEventBus:
                 db.execute(
                     """INSERT OR IGNORE INTO event_log (event_id, topic, source_node, event_type, patient_id, payload, timestamp, correlation_id)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (event.event_id, event.topic, event.source_node, event.event_type,
-                     event.patient_id, json.dumps(event.payload), event.timestamp, event.correlation_id)
+                    (
+                        event.event_id,
+                        event.topic,
+                        event.source_node,
+                        event.event_type,
+                        event.patient_id,
+                        json.dumps(event.payload),
+                        event.timestamp,
+                        event.correlation_id,
+                    ),
                 )
         except Exception:
             logger.error(
                 "[EventBus] Failed to persist event %s (topic=%s, corr=%s) to event_log; "
                 "WAL durability NOT guaranteed for this event",
-                event.event_id, event.topic, event.correlation_id, exc_info=True,
+                event.event_id,
+                event.topic,
+                event.correlation_id,
+                exc_info=True,
             )
 
     def _record_delivery_intents(self, event_id: str, topic: str, sub_ids: list):
@@ -267,7 +298,9 @@ class LocalEventBus:
                         (event_id, sid, topic, _now(), _now()),
                     )
         except Exception:
-            logger.error("[EventBus] Failed to record delivery intents for %s", event_id, exc_info=True)
+            logger.error(
+                "[EventBus] Failed to record delivery intents for %s", event_id, exc_info=True
+            )
 
     def _mark_delivered(self, event_id: str, sub_id: str):
         try:
@@ -277,7 +310,9 @@ class LocalEventBus:
                     (_now(), event_id, sub_id),
                 )
         except Exception:
-            logger.error("[EventBus] Failed to mark delivered %s/%s", event_id, sub_id, exc_info=True)
+            logger.error(
+                "[EventBus] Failed to mark delivered %s/%s", event_id, sub_id, exc_info=True
+            )
 
     def _mark_attempt(self, event_id: str, sub_id: str) -> int:
         """Count a replay re-dispatch as an attempt and return the new count.
@@ -325,11 +360,15 @@ class LocalEventBus:
                     logger.error(
                         "[EventBus] Delivery %s/%s parked as DEAD after %s attempts "
                         "(never acked — subscriber hung or persistently failing)",
-                        event_id, sub_id, row["attempts"],
+                        event_id,
+                        sub_id,
+                        row["attempts"],
                     )
                 return row["attempts"]
         except Exception:
-            logger.error("[EventBus] Failed to count attempt %s/%s", event_id, sub_id, exc_info=True)
+            logger.error(
+                "[EventBus] Failed to count attempt %s/%s", event_id, sub_id, exc_info=True
+            )
             return 0
 
     def _mark_failed(self, event_id: str, sub_id: str, error: str, count_attempt: bool = True):
@@ -358,7 +397,10 @@ class LocalEventBus:
                 if row is not None and row["status"] == "dead":
                     logger.error(
                         "[EventBus] Delivery %s/%s parked as DEAD after %s attempts: %s",
-                        event_id, sub_id, row["attempts"], error,
+                        event_id,
+                        sub_id,
+                        row["attempts"],
+                        error,
                     )
         except Exception:
             logger.error("[EventBus] Failed to mark failed %s/%s", event_id, sub_id, exc_info=True)
@@ -371,8 +413,12 @@ class LocalEventBus:
             return topic.startswith(prefix)
         return False
 
-    async def _safe_dispatch(self, callback: Callable[[StateEvent], Awaitable[None]], event: StateEvent,
-                             attempt_recorded: bool = False):
+    async def _safe_dispatch(
+        self,
+        callback: Callable[[StateEvent], Awaitable[None]],
+        event: StateEvent,
+        attempt_recorded: bool = False,
+    ):
         cb_name = getattr(callback, "__name__", repr(callback))
         sid = subscriber_id(callback)
         try:
@@ -388,10 +434,16 @@ class LocalEventBus:
                     logger.error(
                         "[EventBus] Error in subscriber %s processing '%s' (corr=%s); "
                         "delivery marked for replay",
-                        cb_name, event.topic, event.correlation_id, exc_info=True,
+                        cb_name,
+                        event.topic,
+                        event.correlation_id,
+                        exc_info=True,
                     )
                     await _in_db_thread(
-                        self._mark_failed, event.event_id, sid, str(e),
+                        self._mark_failed,
+                        event.event_id,
+                        sid,
+                        str(e),
                         not attempt_recorded,
                     )
         finally:
@@ -479,7 +531,8 @@ class LocalEventBus:
         if redispatched or skipped_in_flight:
             logger.info(
                 "[EventBus] Replayed %s undelivered event(s) (%s still in flight, skipped)",
-                redispatched, skipped_in_flight,
+                redispatched,
+                skipped_in_flight,
             )
         return redispatched
 

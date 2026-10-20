@@ -32,18 +32,26 @@ cancelled and their unreleased results withdrawn; released results stay; the
 order becomes cancelled (never billed) or resulted. Audited as clinical_access
 'lab_order_cancelled' in the same transaction.
 """
-import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+import uuid
 
 from auth import get_current_user
 from database import db_session, run_db
-from permissions import (LAB_READ, LAB_RECEIVE, ORDER_WRITE, department_scope, has_permission,
-                         log_phi_read, require_permission)
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from permissions import (
+    LAB_READ,
+    LAB_RECEIVE,
+    ORDER_WRITE,
+    department_scope,
+    has_permission,
+    log_phi_read,
+    require_permission,
+)
+from pydantic import BaseModel, ConfigDict, Field
+from services.audit_service import AuditWriteError, log_audit_event
+
 from routes.opt_in_gates import require_lab_module
 from services import lab_order_service
-from services.audit_service import AuditWriteError, log_audit_event
 
 router = APIRouter(dependencies=[Depends(require_lab_module(allow_draining=True))])
 
@@ -55,9 +63,16 @@ _KIND_TEXT = {
 }
 
 
+_LIST_LAB_EXCEPTIONS_LIMIT_DEFAULT = Query(200, ge=1, le=500)
+_LIST_LAB_EXCEPTIONS_USER_DEFAULT = Depends(require_permission(LAB_READ))
+
+
 @router.get("/exceptions")
-def list_lab_exceptions(request: Request, limit: int = Query(200, ge=1, le=500),
-                        user: dict = Depends(require_permission(LAB_READ))):
+def list_lab_exceptions(
+    request: Request,
+    limit: int = _LIST_LAB_EXCEPTIONS_LIMIT_DEFAULT,
+    user: dict = _LIST_LAB_EXCEPTIONS_USER_DEFAULT,
+):
     """Open laboratory exceptions, oldest first, with the order and patient
     each concerns. A department account sees only its own department's
     patients (department_scope, never a request parameter). The audit row is
@@ -68,27 +83,35 @@ def list_lab_exceptions(request: Request, limit: int = Query(200, ge=1, le=500),
     with db_session() as db:
         rows = lab_order_service.list_open_exceptions(db, dept=dept, limit=limit)
     for row in rows:
-        row["kind_label"] = _KIND_TEXT.get(row.get("kind"), "Exception")
+        row["kind_label"] = _KIND_TEXT.get((row.get("kind") or ""), "Exception")
     patient_ids = sorted({r["patient_id"] for r in rows if r.get("patient_id")})
     log_phi_read(
-        request=request, user=user,
+        request=request,
+        user=user,
         action_type="lab_exceptions_viewed",
         summary_message=f"Laboratory exceptions list viewed ({len(rows)} open)",
         target_type="lab_exceptions",
         target_id="open",
-        metadata={"count": len(rows), "patient_count": len(patient_ids),
-                  "patient_ids": patient_ids[:200]},
+        metadata={
+            "count": len(rows),
+            "patient_count": len(patient_ids),
+            "patient_ids": patient_ids[:200],
+        },
     )
     return {"exceptions": rows}
 
 
 # ── lis-7: the laboratory-mediated cancel ────────────────────────────────────
 
+
 def _require_any_permission(*permissions: str):
     """Like require_permission, but ANY one of `permissions` will do (the
     ward cancels with order.write, the laboratory with lab.receive). A denial
     is audited exactly as require_permission audits one."""
-    async def _checker(request: Request, user: dict = Depends(get_current_user)) -> dict:
+
+    _CHECKER_USER_DEFAULT = Depends(get_current_user)
+
+    async def _checker(request: Request, user: dict = _CHECKER_USER_DEFAULT) -> dict:
         role = user.get("role", "")
         if any(has_permission(role, p) for p in permissions):
             return user
@@ -107,30 +130,46 @@ def _require_any_permission(*permissions: str):
             user_agent=request.headers.get("user-agent"),
             metadata={"required_any": list(permissions), "user_role": role},
         )
-        raise HTTPException(status_code=403, detail={
-            "error": "permission_denied", "message": "Insufficient permissions",
-            "required_any": list(permissions)})
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "permission_denied",
+                "message": "Insufficient permissions",
+                "required_any": list(permissions),
+            },
+        )
+
     _checker.__name__ = "require_any_permission"
     return _checker
 
 
 def request_meta(request: Request) -> dict:
     """What the audit row records about the request."""
-    return {"request_path": request.url.path, "http_method": request.method,
-            "ip_address": request.client.host if request.client else None,
-            "user_agent": request.headers.get("user-agent")}
+    return {
+        "request_path": request.url.path,
+        "http_method": request.method,
+        "ip_address": request.client.host if request.client else None,
+        "user_agent": request.headers.get("user-agent"),
+    }
 
 
 def lab_refusal(err: lab_order_service.LabOrderError) -> HTTPException:
-    return HTTPException(status_code=err.status,
-                         detail={"error": err.code, "message": err.message, **err.extra})
+    return HTTPException(
+        status_code=err.status, detail={"error": err.code, "message": err.message, **err.extra}
+    )
 
 
 def audit_unavailable() -> HTTPException:
-    return HTTPException(status_code=503, detail={
-        "error": "audit_unavailable",
-        "message": ("This could not be recorded because the audit trail is not available. "
-                    "Nothing was changed. Try again in a moment.")})
+    return HTTPException(
+        status_code=503,
+        detail={
+            "error": "audit_unavailable",
+            "message": (
+                "This could not be recorded because the audit trail is not available. "
+                "Nothing was changed. Try again in a moment."
+            ),
+        },
+    )
 
 
 class CancelBody(BaseModel):
@@ -138,17 +177,28 @@ class CancelBody(BaseModel):
     reason: str = Field(..., max_length=500)
 
 
+_CANCEL_LAB_ORDER_USER_DEFAULT = Depends(_require_any_permission(ORDER_WRITE, LAB_RECEIVE))
+
+
 @router.post("/orders/{order_id}/cancel")
-def cancel_lab_order(order_id: str, body: CancelBody, request: Request,
-                     user: dict = Depends(_require_any_permission(ORDER_WRITE, LAB_RECEIVE))):
+def cancel_lab_order(
+    order_id: str,
+    body: CancelBody,
+    request: Request,
+    user: dict = _CANCEL_LAB_ORDER_USER_DEFAULT,
+):
     """Cancel an order the laboratory manages. The order must be inside the
     caller's department (department_scope, never a request parameter); out of
     scope and unknown are the same 404."""
     try:
         return lab_order_service.cancel_order(
-            order_id, actor=user, reason=body.reason, dept=department_scope(user),
-            request_meta=request_meta(request))
+            order_id,
+            actor=user,
+            reason=body.reason,
+            dept=department_scope(user),
+            request_meta=request_meta(request),
+        )
     except lab_order_service.LabOrderError as err:
-        raise lab_refusal(err)
+        raise lab_refusal(err) from err
     except AuditWriteError:
-        raise audit_unavailable()
+        raise audit_unavailable() from None

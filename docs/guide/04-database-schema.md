@@ -104,7 +104,7 @@ erDiagram
     patients ||--o{ patient_snapshots : "patient_id (convention)"
 ```
 
-#### `users`: `server/database.py:39`
+#### `users`: `server/database.py:52`
 Every account: clinicians, admins, pharmacists, and patient portal logins. Consumed by the auth subsystem (guide 03-auth-rbac).
 
 | Column | Type | Meaning |
@@ -123,7 +123,7 @@ Every account: clinicians, admins, pharmacists, and patient portal logins. Consu
 
 A special row `('system', 'Orb Sage', 'admin', 'IT', 'system_hash')` is upserted on every boot so AI/bot writes satisfy `sender_id` FKs (`server/database.py:1892-1893`).
 
-#### `patients`: `server/database.py:38`
+#### `patients`: `server/database.py:64`
 The live patient census, one row per person, mutated in place on transfer/discharge.
 
 | Column | Type | Meaning |
@@ -143,22 +143,22 @@ The live patient census, one row per person, mutated in place on transfer/discha
 | `created_at` | TIMESTAMP default now | n/a |
 | `on_scale_2` | INTEGER default 0 (migration only, `server/database.py:1790`) | NEWS2 "Scale 2" flag for COPD patients, changes how Vigil scores SpO2 |
 
-#### `admissions`: `server/database.py:73`
+#### `admissions`: `server/database.py:86`
 One row per admission episode with the full intake record (who admitted, triage, initial vitals). FKs to `patients` and `users` (enforced on `get_db` connections). Columns: `id` (TEXT PK), `patient_id`*, `admitted_by`*, `admission_source`, `admission_type`, `department`, `ward`, `bed`, `attending_doctor_id` (REF users), `referring_clinician`, `chief_complaint`, `initial_diagnosis`, `triage_severity` (INTEGER, 1=emergency…3=standard per `seed_clinical_data.py:32`), `admitting_notes`, `nursing_notes`, `isolation_precautions`, `code_status` (default `full_code`), `initial_vitals_json` (JSON blob of first vitals), `status` (CHECK `active`/`discharged`/`transferred`), `created_at`. (* = NOT NULL + REFERENCES.)
 
-#### `patient_profiles`: `server/database.py:97`
+#### `patient_profiles`: `server/database.py:110`
 Longitudinal narrative per patient, keyed 1:1 on `patient_id` (PK + REF patients). Columns `comorbidities`, `past_medical_history`, `past_surgical_history`, `allergies`, `current_medications`, `family_history`, `social_history` are free-text/JSON strings, plus `updated_at`. Note the comment at `server/database.py:590-592`: the free-text `allergies` here is *narrative*; the coded source of truth for safety checks is `patient_allergies`.
 
-#### `patient_allergies`: `server/database.py:718`
+#### `patient_allergies`: `server/database.py:731`
 Structured, coded allergies, one row per (patient, substance), `UNIQUE(patient_id, substance)` (`server/database.py:604`). Columns: `id` (INTEGER PK AUTOINCREMENT), `patient_id`* REF patients, `substance` (normalized lowercase), `substance_class`, `reaction`, `severity` (CHECK `mild`/`moderate`/`severe`/`unknown`), `status` (CHECK `active`/`inactive`/`resolved`), `source` (default `clinician`; also `llm_extracted`/`ingested_fhir`, provenance for AI-written rows), `recorded_by` REF users, `recorded_at`. Index `idx_allergies_patient (patient_id, status)` (`server/database.py:731`). Used for order-time allergy checking in Helix.
 
-#### `problem_list`: `server/database.py:734`
+#### `problem_list`: `server/database.py:747`
 Active/resolved coded clinical problems. Columns: `id`, `patient_id`* REF patients, `problem`, `icd10_code`, `snomed_code` (ICD-10 and SNOMED are standard clinical coding systems), `status` (CHECK `active`/`resolved`/`inactive`), `onset_date`, `source` (provenance as above), `recorded_by` REF users, `recorded_at`, `resolved_at`. Index `idx_problems_patient` (`server/database.py:747`).
 
-#### `medications`: `server/database.py:233`
+#### `medications`: `server/database.py:246`
 Prescriptions. Columns: `id`, `patient_id`* REF patients, `drug_name`, `dosage`, `route` (default `Oral`), `frequency`, `status` (CHECK `active`/`discontinued`/`prn`), `prescribed_by` REF users, `notes`, `started_at`. Migration-added provenance: `source` (default `clinician`, an `llm_extracted`/`agentic` med is not trusted until verified), `verified_by`, `verified_at` (`server/database.py:1181-1188`). Index `idx_meds_patient` (`server/database.py:484`).
 
-#### `patient_snapshots`: `server/database.py:776`
+#### `patient_snapshots`: `server/database.py:789`
 Durable read-only copies of the essential clinical picture for downtime resilience (the local-first flagship, comment at `server/database.py:647-650`). Columns: `id`, `patient_id`* REF patients, `snapshot_json` (full serialized snapshot), `summary`, `created_by` (user id or `'auto'`), `created_at`. Index `idx_snapshots_patient (patient_id, created_at DESC)` (`server/database.py:784`).
 
 ### Domain B: Monitoring, ingestion, and forecasting
@@ -176,31 +176,31 @@ erDiagram
     event_log }o..o{ patients : "patient_id (convention)"
 ```
 
-#### `vitals`: `server/database.py:110`
+#### `vitals`: `server/database.py:123`
 Time-series vital signs, the highest-volume table. Columns: `id` (INTEGER PK AUTOINCREMENT), `patient_id`* REF patients, `timestamp`* (caller-supplied, NOT defaulted), `heart_rate`, `systolic_bp`, `diastolic_bp`, `spo2`, `temperature`, `respiratory_rate` (all REAL), `consciousness` (TEXT default `alert`). Migration-added: `source` (default `simulated`, `server/database.py:1045-1047`), `source_event_id` REF ingestion_events (`server/database.py:1048-1050`), `on_oxygen` (INTEGER default 0, so NEWS2 scores supplemental O2 from recorded data, `server/database.py:1171-1176`). Index `idx_vitals_patient (patient_id, timestamp DESC)` (`server/database.py:476`).
 
-#### `risk_scores`: `server/database.py:124`
+#### `risk_scores`: `server/database.py:137`
 Vigil's computed deterioration scores. Columns: `id`, `patient_id`* REF patients, `timestamp` (default now), `score` (REAL NOT NULL), `level` (CHECK `critical`/`elevated`/`stable`), `drivers` (JSON array of top risk drivers). Index `idx_risk_patient` (`server/database.py:478`).
 
-#### `ingestion_events`: `server/database.py:380`
+#### `ingestion_events`: `server/database.py:393`
 Raw provenance / dead-letter table for external data feeds (a *dead-letter* table keeps every inbound payload, including failures, so nothing is silently lost). Columns: `id`, `received_at`, `source_type`* (`hl7`/`json`/`csv_replay`/`simulated`, HL7 is the hospital-integration messaging standard), `source_name`, `external_message_id` (sender dedup key), `patient_identifier_raw`, `encounter_identifier_raw`, `raw_payload` (full original payload), `payload_format`, `parse_status` (CHECK `received`/`parsed`/`partially_parsed`/`failed`/`duplicate`), `parse_error`, `fingerprint` (SHA-256 for dedup), `correlation_id`, `processed_at`, `adapter_name`, `vitals_inserted`, `observations_inserted`. Indexes on `fingerprint` and `(parse_status, received_at DESC)` (`server/database.py:491-492`). No FKs, this table exists *before* patient resolution.
 
-#### `observations`: `server/database.py:402`
+#### `observations`: `server/database.py:415`
 Structured lab/OBX results. Columns: `id`, `patient_id` REF patients (**nullable** until identity resolution), `encounter_id`, `source` (default `unknown`), `source_event_id` REF ingestion_events, `observation_code` + `observation_code_system` (LOINC, the standard lab-test coding system, or local), `observation_name`*, `value_text`, `value_numeric`, `unit`, `reference_range`, `abnormal_flag`, `status` (default `final`), `observed_at`, `recorded_at`, `panel_name`, `obr_group_id`, `raw_segment_ref`, `created_at`. Indexes `idx_observations_patient (patient_id, observed_at DESC)` and `idx_observations_source` (`server/database.py:493-494`).
 
-#### `care_bundles`: `server/database.py:752`
+#### `care_bundles`: `server/database.py:765`
 Sepsis/deterioration bundle timers: a Vigil critical alert or manual start opens a bundle; each element column records completion against 1 h/3 h targets (comment `server/database.py:624-626`). Columns: `id`, `patient_id`* REF patients, `bundle_type` (default `sepsis6`), `triggered_at`, `triggered_by` (user id or `'vigil_auto'`), `trigger_reason`, six element timestamps (`lactate_at`, `cultures_at`, `antibiotics_at`, `fluids_at`, `oxygen_at`, `urine_output_at`; NULL = outstanding), `status` (CHECK `active`/`completed`/`cancelled`/`expired`), `completed_at`, `source`. Index `idx_bundles_patient` (`server/database.py:770`).
 
-#### `forecast_predictions`: `server/database.py:274`
+#### `forecast_predictions`: `server/database.py:287`
 Cached per-patient LSTM output (an LSTM is a recurrent neural network for sequences). Columns: `id`, `patient_id`* REF patients, `predicted_los_days`* (length of stay), `discharge_probability`*, `acuity_trajectory`* (CHECK `improving`/`stable`/`worsening`), `confidence`*, `feature_snapshot`, `created_at`. Index `idx_forecast_patient` (`server/database.py:485`).
 
-#### `hospital_forecasts`: `server/database.py:286`
+#### `hospital_forecasts`: `server/database.py:299`
 Hospital-level daily forecasts. Columns: `id`, `forecast_date`* , `hour` (default 0), `predicted_admissions`, `predicted_discharges`, `predicted_occupancy`, `ward_breakdown`, `created_at`. Index on `forecast_date` (`server/database.py:486`). No FKs.
 
-#### `admission_history`: `server/database.py:298`
+#### `admission_history`: `server/database.py:311`
 Last-30-days admission facts for Poisson model fitting (comment `server/database.py:251`). Columns: `id`, `admission_date`*, `patient_name`*, `age`, `sex`, `ward`, `diagnosis`, `severity` (CHECK `critical`/`elevated`/`stable`), `length_of_stay_days`, `discharged` (INTEGER 0/1), `discharge_date`, `created_at`. Index on `admission_date` (`server/database.py:487`). No FKs, deliberately denormalized training data.
 
-#### `event_log`: `server/database.py:619`
+#### `event_log`: `server/database.py:632`
 Persistent log of all state transitions for the "Hospital Nervous System" event bus (see the realtime/event-bus guide, e.g. guide 06-realtime). Columns: `event_id` (TEXT PK), `topic`*, `source_node`* (`vigil`/`relay`/`sage`/`scribe`), `event_type`*, `patient_id` (nullable, by convention), `payload`* (JSON), `timestamp`* (ISO-8601 UTC), `correlation_id`* (traces one clinical workflow across nodes). Indexes on `(topic, timestamp)`, `patient_id`, `correlation_id` (`server/database.py:630-632`).
 
 ### Domain C: Relay messaging and Sage AI
@@ -221,37 +221,37 @@ erDiagram
     patients ||--o{ sage_insights : "patient_id (convention)"
 ```
 
-#### `channels`: `server/database.py:134`
+#### `channels`: `server/database.py:147`
 Relay chat channels. Columns: `id` (TEXT PK, e.g. `dept-cardiology` or `chan_<12 hex>`), `name`*, `type`* (CHECK `case_room`/`department`/`direct`), `patient_id` REF patients (set for case rooms), `created_at`.
 
-#### `messages`: `server/database.py:143`
+#### `messages`: `server/database.py:156`
 Chat messages. Columns: `id` (AUTOINCREMENT), `channel_id`* REF channels, `sender_id`* REF users, `sender_name`*, `sender_role`* (denormalized so history renders without joins), `content`*, `message_type` (CHECK `text`/`alert`/`system`/`ambient_action`/`surgical_alert`), `timestamp` (default now), `read_by` (JSON array of user IDs, default `[]`). Migration-added: `source` (default `clinician`) and `is_bot` (default 0) distinguishing bot posts (`server/database.py:1869-1871`). Index `idx_messages_channel (channel_id, timestamp DESC)` (`server/database.py:477`). This table has the schema's most elaborate migration (the CHECK-widening rebuild, below).
 
-#### `sage_conversations`: `server/database.py:156`
+#### `sage_conversations`: `server/database.py:169`
 Per-user Sage chat history. Columns: `id`, `user_id`* REF users, `role`* (CHECK `user`/`assistant`), `content`*, `sources` (JSON array of RAG source references), `timestamp`. Index `idx_sage_user (user_id, timestamp)` (`server/database.py:481`).
 
-#### `sage_room_memory`: `server/database.py:497`
+#### `sage_room_memory`: `server/database.py:510`
 One bounded row per case room: Sage Ambient's rolling understanding of the conversation. Columns: `room_id` (TEXT PK), `patient_id`*, `patient_summary`, `discussion_summary`, `current_concern`, `likely_next_steps`, `unresolved_questions`, `active_intents`, `risk_flags`, `participants` (JSON), `last_processed_msg_id`, `last_processed_at`, `message_count`, `llm_call_count`, `created_at`, `updated_at`. **No FKs**, room/patient links are by convention.
 
-#### `sage_observations`: `server/database.py:517`
+#### `sage_observations`: `server/database.py:530`
 Append-only clinically-meaningful observations extracted by Sage Ambient. Columns: `id`, `room_id`*, `patient_id`*, `source_message_id`, `observation_type`*, `content`*, `confidence` (REAL), `created_at`. Index `idx_sage_obs_type` (`server/database.py:528`). No FKs.
 
-#### `sage_actions`: `server/database.py:531`
+#### `sage_actions`: `server/database.py:544`
 Durable suggested actions (Sage Ambient Stage 3). Columns: `id` (TEXT PK), `room_id`*, `patient_id`*, `action_type`*, `target`*, `rationale`, `confidence`, `state` (CHECK `suggested`/`acknowledged`/`dismissed`/`confirmed`/`failed`/`superseded`), `version` (default 1), `source_msg_id`, `created_at`, `updated_at`. Index `idx_sage_actions_room` (`server/database.py:546`). No FKs.
 
-#### `sage_action_events`: `server/database.py:568`
+#### `sage_action_events`: `server/database.py:581`
 Audit trail for action state transitions. Columns: `id`, `action_id`* REF sage_actions, `prior_state`, `new_state`*, `actor_id`* REF users, `actor_name`*, `actor_role`, `reason`, `source` (CHECK `ui`/`system`), `created_at`. Index `idx_sage_action_events_action` (`server/database.py:581`).
 
-#### `sage_insights`: `server/database.py:549`
+#### `sage_insights`: `server/database.py:562`
 Proactive surveillance insights ("Sage noticed X") pushed to the attending. Columns: `id` (TEXT PK), `patient_id`*, `insight_type`*, `severity` (CHECK `critical`/`warning`/`info`), `title`*, `detail`, `suggested_action_type`, `suggested_action_target`, `target_user_id`, `dedup_key`, `state` (CHECK `active`/`dismissed`/`acted`), `created_at`, `updated_at`. Indexes `idx_sage_insights_active` and `idx_sage_insights_dedup` (`server/database.py:564-565`). No FKs.
 
-#### `sage_handoffs`: `server/database.py:584`
+#### `sage_handoffs`: `server/database.py:597`
 Stage-4 handoffs from a confirmed Sage action into a downstream module (e.g. create an order). Columns: `id` (TEXT PK), `source_action_id`* REF sage_actions, `room_id`*, `patient_id`*, `target_module`*, `handoff_type`*, `payload_json`*, `status` (CHECK `pending`/`accepted`/`failed`/`unsupported`), `downstream_ref_id`, `error_summary`, `created_by`* REF users, `last_attempted_at`, `created_at`, `updated_at`. Index at `server/database.py:602`.
 
-#### `sage_handoff_events`: `server/database.py:605`
+#### `sage_handoff_events`: `server/database.py:618`
 Audit trail for handoff status changes. Columns: `id`, `handoff_id`* REF sage_handoffs, `prior_status`, `new_status`*, `actor_id`, `source` (CHECK `system`/`user`/`module_callback`), `reason`, `created_at`. Index at `server/database.py:616`.
 
-#### `sage_decision_cache`: `server/database.py:706`
+#### `sage_decision_cache`: `server/database.py:719`
 Pre-assembled per-patient context so Sage answers fast for high-risk patients. Columns: `patient_id` (TEXT PK), `mews_score`* (MEWS, Modified Early Warning Score), `compiled_context`* (pre-assembled JSON of Channel A/B/C data), `preloaded_at`*, `expires_at`*. Notably this is the **only table in the schema with `ON DELETE CASCADE`** (`FOREIGN KEY(patient_id) REFERENCES patients(id) ON DELETE CASCADE`, `server/database.py:587`).
 
 ### Domain D: Clinical documentation and discharge
@@ -267,19 +267,19 @@ erDiagram
     users ||--o{ discharge_access_tokens : "created_by_user_id"
 ```
 
-#### `clinical_documents`: `server/database.py:169`
+#### `clinical_documents`: `server/database.py:182`
 General documents (labs, progress notes) that also feed the RAG index. Columns: `id`, `patient_id`* REF patients, `doc_type`* (e.g. `lab_result`, `note` per the backfiller `reset_db_and_seed.py:138,144`), `title`*, `content`*, `author_id` REF users, `created_at`. Index `idx_docs_patient` (`server/database.py:479`).
 
-#### `scribe_notes`: `server/database.py:180`
+#### `scribe_notes`: `server/database.py:193`
 AI-transcribed clinical notes. Base columns: `id`, `patient_id` REF patients (nullable), `author_id`* REF users, `raw_transcript`*, `structured_note` (JSON), `note_format` (CHECK `soap`/`discharge`/`handoff`/`raw`, SOAP is the Subjective/Objective/Assessment/Plan note format), `audio_path`, `verification_json`, `pipeline_meta_json`, `created_at`. Migration-added lifecycle columns (`server/database.py:1064-1077`): `status` (default `draft`), `version` (default 1), `supersedes_note_id`, `signed_by`, `signed_at`, `finalized_at`, `rejected_by`, `rejected_at`, `rejection_reason`, `last_edited_by`, `last_edited_at`, `ai_generated` (default 1). Legacy pre-lifecycle rows are force-migrated to `status='signed'` so old notes cannot be edited as drafts (`server/database.py:1715-1718`). Index `idx_scribe_patient` (`server/database.py:480`).
 
-#### `discharge_summaries`: `server/database.py:194`
+#### `discharge_summaries`: `server/database.py:207`
 Columns: `id`, `patient_id`* REF patients, `author_id`* REF users, `summary`*, `timeline_json` (chronological events), `qr_code_path`, `discharged_at`. Index `idx_discharge_patient` (`server/database.py:482`).
 
-#### `discharge_access_tokens`: `server/database.py:205`
+#### `discharge_access_tokens`: `server/database.py:218`
 Patient-facing time-limited access tokens (for the QR-code discharge portal). Columns: `token_id` (TEXT PK), `token_hash`* (only the hash is stored), `patient_id`* REF patients, `expires_at`*, `failed_attempts` (default 0), `locked_until`, `verified_at`, `last_accessed_at`, `revoked_at`, `created_by_user_id` REF users, `created_at`. TTL/lockout knobs live in `server/config.py:409-411`.
 
-#### `lens_analyses`: `server/database.py:220`
+#### `lens_analyses`: `server/database.py:233`
 Medical-image interpretations from the Lens module. Columns: `id`, `patient_id` REF patients (nullable), `author_id`* REF users, `image_path`*, `image_type` (`xray`/`ecg`/`ct`/`mri`/`photo`/`other`, comment only, no CHECK), `clinical_context`, `analysis`*, `findings_json`, `created_at`. Index `idx_lens_patient` (`server/database.py:483`).
 
 ### Domain E: Surgery
@@ -294,13 +294,13 @@ erDiagram
     surgeries ||--o{ surgery_prep_requests : "surgery_id"
 ```
 
-#### `surgeries`: `server/database.py:314`
+#### `surgeries`: `server/database.py:327`
 Scheduled and emergency procedures. Columns: `id` (TEXT PK), `patient_id`* REF patients, `surgeon_id`* REF users, `procedure_name`*, `diagnosis`*, `scheduled_date`*, `scheduled_time`*, `estimated_duration_min`, `operating_room`, `status` (CHECK includes `scheduled`,`in_progress`,`completed`,`cancelled` plus five `emergency_*` states, `server/database.py:278`), `co_morbidities`, `surgical_checklist`, `instruments_required`, `staff_required`, `risk_assessment`, `possible_complications` (JSON-ish TEXT), `success_probability` (REAL), `notes`, `created_at`, and from migrations `started_at`, `completed_at` and `who_checklist` (migration 76: the WHO checklist state, kept out of `surgical_checklist`, which holds only the prep steps). Indexes on `(surgeon_id, scheduled_date)`, `patient_id`, `scheduled_date` (`server/database.py:488-490`).
 
-#### `surgery_team_assignments`: `server/database.py:337`
+#### `surgery_team_assignments`: `server/database.py:350`
 Per-surgery staffing. Columns: `id`, `surgery_id`* REF surgeries, `user_id`* REF users, `role_name`*, `status` (CHECK `pending`/`alerted`/`confirmed`/`declined`), `updated_at`.
 
-#### `surgery_prep_requests`: `server/database.py:361`
+#### `surgery_prep_requests`: `server/database.py:374`
 Escalations from Relay into the surgical suite. Columns: `id`, `patient_id`* REF patients, `channel_id` REF channels, `requested_by`*, `requested_by_name`*, `procedure_name`, `indication`, `urgency` (default `emergency`), `clinical_context`, `state` (CHECK `drafted`/`resolved`), `idempotency_key` (UNIQUE, lets a retried request be deduplicated), `surgery_id` REF surgeries, `resolved_by`, `resolved_at`, `created_at`.
 
 ### Domain F: Orders, safety reference data, and governance
@@ -317,25 +317,25 @@ erDiagram
     model_registry ||..|| schema_version : "standalone"
 ```
 
-#### `orders`: `server/database.py:809`
+#### `orders`: `server/database.py:822`
 CPOE-lite (*Computerized Provider Order Entry*, the digital form for ordering labs, imaging, drugs). Columns: `id` (TEXT PK), `patient_id`* REF patients, `order_type` (CHECK `lab`/`imaging`/`medication`/`procedure`/`nursing`/`other`), `code` + `code_system` (validated against `terminology` on write, comment `server/database.py:682-683`), `description`*, `priority` (CHECK `stat`/`urgent`/`routine`), `status` (CHECK `draft`/`active`/`in_progress`/`completed`/`resulted`/`cancelled`), `ordered_by` REF users, `source` (default `clinician`), `detail_json`, `result_text`, `result_at`, `created_at`, `updated_at`. Index `idx_orders_patient` (`server/database.py:826`).
 
-#### `order_events`: `server/database.py:828`
+#### `order_events`: `server/database.py:841`
 Order status audit trail: `id`, `order_id`* REF orders, `prior_status`, `new_status`*, `actor_id`, `reason`, `created_at`.
 
-#### `terminology`: `server/database.py:843`
+#### `terminology`: `server/database.py:856`
 Local subset of LOINC/ICD10/SNOMED used to validate codes on write (unknown codes are flagged, not silently accepted, comment `server/database.py:714-717`). Columns: `id`, `code_system`*, `code`*, `display`*, `is_active` (default 1); `UNIQUE(code_system, code)`; index `idx_terminology_lookup` (`server/database.py:851`). Seeded at boot by `services/terminology_service.seed_terminology` (`server/main.py:150-154`).
 
-#### `drug_interactions`: `server/database.py:857`
+#### `drug_interactions`: `server/database.py:870`
 Data-backed drug-drug interaction pairs replacing a hardcoded list (comment `server/database.py:728-731`). Columns: `id`, `term_a`*, `term_b`* (lowercased class or ingredient), `match_type` (CHECK `class`/`ingredient`), `severity` (CHECK `mild`/`moderate`/`severe`), `mechanism`, `source` (default `builtin`); `UNIQUE(term_a, term_b, match_type)`; indexes on `term_a` and `term_b` (`server/database.py:867-868`). Symmetric lookups are the caller's job. Seeded at boot by `services/interaction_db.ensure_seeded` (`server/main.py:156-161`).
 
-#### `audit_logs`: `server/database.py:426`
+#### `audit_logs`: `server/database.py:439`
 Healthcare-grade append-only audit trail. Columns: `id`, `timestamp`* (TEXT), `correlation_id`, `event_category`*, `actor_user_id`, `actor_role`, `target_type`, `target_id`, `patient_id`, `encounter_id`, `source_type`, `source_event_id`, `request_path`, `http_method`, `ip_address`, `user_agent`, `session_id`, `outcome` (CHECK `success`/`failure`/`partial_success`/`denied`), `action_type`*, `summary_message`, `metadata_json`, `prev_hash`, `row_hash`. The last two implement a **per-row SHA-256 hash chain**: `row_hash = SHA256(prev_hash || canonical(row))`, so any altered or deleted row breaks the chain (`server/database.py:448-451`). Two `BEFORE UPDATE`/`BEFORE DELETE` triggers `RAISE(ABORT, ...)` making the table genuinely append-only at the DB layer, explicitly citing HIPAA §164.312(b)/(c) (`server/database.py:460-473`; HIPAA is the US health-privacy law, and a *trigger* is SQL that runs automatically on a table event). Five indexes (`server/database.py:454-458`). No FKs, audit rows must persist even if the referenced entity is deleted.
 
-#### `schema_version`: `server/database.py:699`
+#### `schema_version`: `server/database.py:712`
 The migration ledger: `version` (INTEGER PK), `applied_at` (default now), `note`. Read by `migrate.py`, written once per `SCHEMA_VERSION` value by `init_db()`.
 
-#### `model_registry`: `server/database.py:789`
+#### `model_registry`: `server/database.py:802`
 Governance/"honesty layer" for every ML surface: `id`, `model_key`* (`vigil_cfc`/`forecast_lstm`/`sage_llm`…), `version`*, `task`, `training_data` (lineage), `validated` (0/1, externally validated?), `validation_metrics` (JSON), `calibration_stats` (JSON), `is_active`, `checkpoint_present` (is a trained checkpoint actually on disk?), `notes`, `registered_at`; `UNIQUE(model_key, version)` (`server/database.py:802`).
 
 > **Tables NOT owned by this file:** the six `helix_*` pharmacy tables are created in `server/services/helix_db.py:9-68` (Helix guide) and the `clinical_knowledge_vec` vector virtual table in `server/services/clinical_knowledge.py:636` (Sage/RAG guide), all inside the same `orb.db` file.

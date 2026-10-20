@@ -34,11 +34,10 @@ approval without the approve tier, is 403; a move the order's status does not
 allow is 409; anything the request must correct is 422; an audit outage is
 503 audit_unavailable, and nothing was changed.
 """
-from typing import Any, List, Optional
+
+from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from pydantic import BaseModel, Field
-
 from permissions import (
     PHARMACY_STORE_APPROVE,
     PHARMACY_STORE_READ,
@@ -46,8 +45,10 @@ from permissions import (
     has_permission,
     require_permission,
 )
-from services import pharmacy_purchasing_service as purchasing
+from pydantic import BaseModel, Field
 from services.audit_service import AuditWriteError
+
+from services import pharmacy_purchasing_service as purchasing
 
 router = APIRouter()
 
@@ -81,18 +82,28 @@ def _fail(exc: purchasing.PurchasingError) -> HTTPException:
 
 
 def _audit_unavailable() -> HTTPException:
-    return HTTPException(status_code=503, detail={
-        "error": "audit_unavailable",
-        "message": "The audit record could not be written, so nothing was changed. "
-                   "Try again shortly."})
+    return HTTPException(
+        status_code=503,
+        detail={
+            "error": "audit_unavailable",
+            "message": "The audit record could not be written, so nothing was changed. "
+            "Try again shortly.",
+        },
+    )
 
 
 def _ctx(request: Request) -> dict:
-    return {"request_path": request.url.path, "http_method": request.method,
-            "ip_address": request.client.host if request.client else None}
+    return {
+        "request_path": request.url.path,
+        "http_method": request.method,
+        "ip_address": request.client.host if request.client else None,
+    }
 
 
-def _cancel_tier(request: Request, user: dict = Depends(_PS_READ)) -> dict:
+_CANCEL_TIER_USER_DEFAULT = Depends(_PS_READ)
+
+
+def _cancel_tier(request: Request, user: dict = _CANCEL_TIER_USER_DEFAULT) -> dict:
     """Read plus write or approve. Which of the two the order needs is the
     service's call, by its status. A denial is audited as require_permission
     audits one."""
@@ -104,97 +115,148 @@ def _cancel_tier(request: Request, user: dict = Depends(_PS_READ)) -> dict:
     from services.audit_service import log_audit_event
 
     log_audit_event(
-        correlation_id=str(uuid.uuid4()), event_category="authorization",
-        action_type="permission_denied", outcome="denied",
+        correlation_id=str(uuid.uuid4()),
+        event_category="authorization",
+        action_type="permission_denied",
+        outcome="denied",
         summary_message=f"Missing permissions: {PHARMACY_STORE_WRITE} or {PHARMACY_STORE_APPROVE}",
-        actor_user_id=user.get("id"), actor_role=role, request_path=request.url.path,
+        actor_user_id=user.get("id"),
+        actor_role=role,
+        request_path=request.url.path,
         http_method=request.method,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
-        metadata={"required_permissions": [PHARMACY_STORE_READ, PHARMACY_STORE_WRITE,
-                                           PHARMACY_STORE_APPROVE],
-                  "missing_permissions": [PHARMACY_STORE_WRITE, PHARMACY_STORE_APPROVE],
-                  "user_role": role})
-    raise HTTPException(status_code=403, detail={
-        "error": "permission_denied", "message": "Insufficient permissions",
-        "required": [PHARMACY_STORE_READ, f"{PHARMACY_STORE_WRITE} or {PHARMACY_STORE_APPROVE}"],
-        "missing": [PHARMACY_STORE_WRITE, PHARMACY_STORE_APPROVE]})
+        metadata={
+            "required_permissions": [
+                PHARMACY_STORE_READ,
+                PHARMACY_STORE_WRITE,
+                PHARMACY_STORE_APPROVE,
+            ],
+            "missing_permissions": [PHARMACY_STORE_WRITE, PHARMACY_STORE_APPROVE],
+            "user_role": role,
+        },
+    )
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "error": "permission_denied",
+            "message": "Insufficient permissions",
+            "required": [
+                PHARMACY_STORE_READ,
+                f"{PHARMACY_STORE_WRITE} or {PHARMACY_STORE_APPROVE}",
+            ],
+            "missing": [PHARMACY_STORE_WRITE, PHARMACY_STORE_APPROVE],
+        },
+    )
 
 
 # ── Reads ─────────────────────────────────────────────────────────────────────
 
+
+_LIST_PURCHASE_ORDERS_STATUS_DEFAULT = Query(None, max_length=40)
+_LIST_PURCHASE_ORDERS_LIMIT_DEFAULT = Query(100, ge=1, le=500)
+_LIST_PURCHASE_ORDERS_USER_DEFAULT = Depends(_PS_READ)
+
+
 @router.get("/purchase-orders")
-def list_purchase_orders(status: Optional[str] = Query(None, max_length=40),
-                         limit: int = Query(100, ge=1, le=500),
-                         user: dict = Depends(_PS_READ)):
+def list_purchase_orders(
+    status: str | None = _LIST_PURCHASE_ORDERS_STATUS_DEFAULT,
+    limit: int = _LIST_PURCHASE_ORDERS_LIMIT_DEFAULT,
+    user: dict = _LIST_PURCHASE_ORDERS_USER_DEFAULT,
+):
     try:
         return {"purchase_orders": purchasing.list_purchase_orders(status=status, limit=limit)}
     except purchasing.PurchasingError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
+
+
+_PURCHASE_ORDER_OPTIONS_USER_DEFAULT = Depends(_PS_READ)
 
 
 @router.get("/purchase-orders/options")
-def purchase_order_options(user: dict = Depends(_PS_READ)):
+def purchase_order_options(user: dict = _PURCHASE_ORDER_OPTIONS_USER_DEFAULT):
     """Vendors with their drug licence state, the stores an order may go to,
     and every active drug with whether it can be ordered, and why not."""
     return purchasing.options()
 
 
+_REORDER_SUGGESTIONS_STORE_ID_DEFAULT = Query(None, ge=1)
+_REORDER_SUGGESTIONS_USER_DEFAULT = Depends(_PS_READ)
+
+
 @router.get("/purchase-orders/reorder-suggestions")
-def reorder_suggestions(store_id: Optional[int] = Query(None, ge=1),
-                        user: dict = Depends(_PS_READ)):
+def reorder_suggestions(
+    store_id: int | None = _REORDER_SUGGESTIONS_STORE_ID_DEFAULT,
+    user: dict = _REORDER_SUGGESTIONS_USER_DEFAULT,
+):
     """Drugs at or below their reorder level, with the suggested packs, the
     last rate paid and whether each can be ordered."""
     return {"suggestions": purchasing.reorder_suggestions(store_id=store_id)}
 
 
+_GET_PURCHASE_ORDER_USER_DEFAULT = Depends(_PS_READ)
+
+
 @router.get("/purchase-orders/{po_id}")
-def get_purchase_order(po_id: int, user: dict = Depends(_PS_READ)):
+def get_purchase_order(po_id: int, user: dict = _GET_PURCHASE_ORDER_USER_DEFAULT):
     doc = purchasing.get_purchase_order(po_id)
     if doc is None:
-        raise HTTPException(status_code=404, detail={
-            "error": "not_found", "message": f"No purchase order {po_id}"})
+        raise HTTPException(
+            status_code=404, detail={"error": "not_found", "message": f"No purchase order {po_id}"}
+        )
     return {"purchase_order": doc}
 
 
 # ── Writes ────────────────────────────────────────────────────────────────────
+
 
 class POLineIn(BaseModel):
     helix_medication_id: str = Field(..., min_length=1, max_length=80)
     packs: Any = None
     unit_rate_paise: Any = None
     discount_bp: Any = 0
-    remarks: Optional[str] = Field(None, max_length=500)
+    remarks: str | None = Field(None, max_length=500)
 
 
 class PurchaseOrderIn(BaseModel):
     vendor_code: str = Field(..., min_length=1, max_length=40)
     store_code: str = Field(..., min_length=1, max_length=40)
-    lines: List[POLineIn] = Field(..., min_length=1, max_length=purchasing.MAX_LINES)
-    expected_date: Optional[str] = Field(None, max_length=10)
+    lines: list[POLineIn] = Field(..., min_length=1, max_length=purchasing.MAX_LINES)
+    expected_date: str | None = Field(None, max_length=10)
     is_interstate: bool = False
-    place_of_supply: Optional[str] = Field(None, max_length=40)
+    place_of_supply: str | None = Field(None, max_length=40)
     other_charges_paise: Any = 0
-    terms: Optional[str] = Field(None, max_length=2000)
-    remarks: Optional[str] = Field(None, max_length=2000)
+    terms: str | None = Field(None, max_length=2000)
+    remarks: str | None = Field(None, max_length=2000)
+
+
+_CREATE_PURCHASE_ORDER_USER_DEFAULT = Depends(_PS_WRITE)
 
 
 @router.post("/purchase-orders")
-def create_purchase_order(body: PurchaseOrderIn, request: Request,
-                          user: dict = Depends(_PS_WRITE)):
+def create_purchase_order(
+    body: PurchaseOrderIn, request: Request, user: dict = _CREATE_PURCHASE_ORDER_USER_DEFAULT
+):
     """Raise a draft. Refused for an unlicensed vendor, an unclassified drug,
     a drug with no pack size or GST rate, or an NDPS drug outside the vault."""
     try:
         return purchasing.create_purchase_order(
-            vendor_code=body.vendor_code, store_code=body.store_code,
-            lines=[line.model_dump() for line in body.lines], actor=user,
-            expected_date=body.expected_date, is_interstate=body.is_interstate,
-            place_of_supply=body.place_of_supply, other_charges_paise=body.other_charges_paise,
-            terms=body.terms, remarks=body.remarks, audit_ctx=_ctx(request))
+            vendor_code=body.vendor_code,
+            store_code=body.store_code,
+            lines=[line.model_dump() for line in body.lines],
+            actor=user,
+            expected_date=body.expected_date,
+            is_interstate=body.is_interstate,
+            place_of_supply=body.place_of_supply,
+            other_charges_paise=body.other_charges_paise,
+            terms=body.terms,
+            remarks=body.remarks,
+            audit_ctx=_ctx(request),
+        )
     except purchasing.PurchasingError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
 
 
 class SuggestionItemIn(BaseModel):
@@ -202,112 +264,162 @@ class SuggestionItemIn(BaseModel):
     unit_rate_paise: Any = None
     packs: Any = None
     discount_bp: Any = 0
-    remarks: Optional[str] = Field(None, max_length=500)
+    remarks: str | None = Field(None, max_length=500)
 
 
 class FromSuggestionsIn(BaseModel):
     vendor_code: str = Field(..., min_length=1, max_length=40)
     store_code: str = Field(..., min_length=1, max_length=40)
-    items: List[SuggestionItemIn] = Field(..., min_length=1, max_length=purchasing.MAX_LINES)
-    expected_date: Optional[str] = Field(None, max_length=10)
+    items: list[SuggestionItemIn] = Field(..., min_length=1, max_length=purchasing.MAX_LINES)
+    expected_date: str | None = Field(None, max_length=10)
     is_interstate: bool = False
-    remarks: Optional[str] = Field(None, max_length=2000)
+    remarks: str | None = Field(None, max_length=2000)
+
+
+_CREATE_FROM_SUGGESTIONS_USER_DEFAULT = Depends(_PS_WRITE)
 
 
 @router.post("/purchase-orders/from-suggestions")
-def create_from_suggestions(body: FromSuggestionsIn, request: Request,
-                            user: dict = Depends(_PS_WRITE)):
+def create_from_suggestions(
+    body: FromSuggestionsIn, request: Request, user: dict = _CREATE_FROM_SUGGESTIONS_USER_DEFAULT
+):
     """Turn reorder suggestions into a draft. The quantity is the server's
     current suggestion unless packs are given; the rate is always typed."""
     try:
         return purchasing.create_from_suggestions(
-            vendor_code=body.vendor_code, store_code=body.store_code,
-            items=[item.model_dump() for item in body.items], actor=user,
-            is_interstate=body.is_interstate, expected_date=body.expected_date,
-            remarks=body.remarks, audit_ctx=_ctx(request))
+            vendor_code=body.vendor_code,
+            store_code=body.store_code,
+            items=[item.model_dump() for item in body.items],
+            actor=user,
+            is_interstate=body.is_interstate,
+            expected_date=body.expected_date,
+            remarks=body.remarks,
+            audit_ctx=_ctx(request),
+        )
     except purchasing.PurchasingError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
+
+
+_SUBMIT_PURCHASE_ORDER_USER_DEFAULT = Depends(_PS_WRITE)
 
 
 @router.post("/purchase-orders/{po_id}/submit")
-def submit_purchase_order(po_id: int, request: Request, user: dict = Depends(_PS_WRITE)):
+def submit_purchase_order(
+    po_id: int, request: Request, user: dict = _SUBMIT_PURCHASE_ORDER_USER_DEFAULT
+):
     try:
         return purchasing.submit_purchase_order(po_id, actor=user, audit_ctx=_ctx(request))
     except purchasing.PurchasingError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
+
+
+_APPROVE_PURCHASE_ORDER_USER_DEFAULT = Depends(_PS_APPROVE)
 
 
 @router.post("/purchase-orders/{po_id}/approve")
-def approve_purchase_order(po_id: int, request: Request, user: dict = Depends(_PS_APPROVE)):
+def approve_purchase_order(
+    po_id: int, request: Request, user: dict = _APPROVE_PURCHASE_ORDER_USER_DEFAULT
+):
     """Never by the person who raised the order (403 same_person)."""
     try:
         return purchasing.approve_purchase_order(po_id, actor=user, audit_ctx=_ctx(request))
     except purchasing.PurchasingError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
+
+
+_ISSUE_PURCHASE_ORDER_USER_DEFAULT = Depends(_PS_APPROVE)
 
 
 @router.post("/purchase-orders/{po_id}/issue")
-def issue_purchase_order(po_id: int, request: Request, user: dict = Depends(_PS_APPROVE)):
+def issue_purchase_order(
+    po_id: int, request: Request, user: dict = _ISSUE_PURCHASE_ORDER_USER_DEFAULT
+):
     """Send the order to the vendor. Its PHPO number is drawn after commit."""
     try:
         return purchasing.issue_purchase_order(po_id, actor=user, audit_ctx=_ctx(request))
     except purchasing.PurchasingError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
 
 
 class CancelIn(BaseModel):
-    reason: Optional[str] = Field(None, max_length=1000)
+    reason: str | None = Field(None, max_length=1000)
+
+
+_CANCEL_PURCHASE_ORDER_USER_DEFAULT = Depends(_cancel_tier)
 
 
 @router.post("/purchase-orders/{po_id}/cancel")
-def cancel_purchase_order(po_id: int, body: CancelIn, request: Request,
-                          user: dict = Depends(_cancel_tier)):
+def cancel_purchase_order(
+    po_id: int, body: CancelIn, request: Request, user: dict = _CANCEL_PURCHASE_ORDER_USER_DEFAULT
+):
     try:
         return purchasing.cancel_purchase_order(
-            po_id, reason=body.reason, actor=user,
+            po_id,
+            reason=body.reason,
+            actor=user,
             may_approve=has_permission(user.get("role", ""), PHARMACY_STORE_APPROVE),
-            audit_ctx=_ctx(request))
+            audit_ctx=_ctx(request),
+        )
     except purchasing.PurchasingError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
 
 
 # ── Goods receipts (grn-8) ────────────────────────────────────────────────────
 
+
+_LIST_GOODS_RECEIPTS_STATUS_DEFAULT = Query(None, max_length=40)
+_LIST_GOODS_RECEIPTS_PURCHASE_ORDER_ID_DEFAULT = Query(None, ge=1)
+_LIST_GOODS_RECEIPTS_LIMIT_DEFAULT = Query(100, ge=1, le=500)
+_LIST_GOODS_RECEIPTS_USER_DEFAULT = Depends(_PS_READ)
+
+
 @router.get("/goods-receipts")
-def list_goods_receipts(status: Optional[str] = Query(None, max_length=40),
-                        purchase_order_id: Optional[int] = Query(None, ge=1),
-                        limit: int = Query(100, ge=1, le=500),
-                        user: dict = Depends(_PS_READ)):
+def list_goods_receipts(
+    status: str | None = _LIST_GOODS_RECEIPTS_STATUS_DEFAULT,
+    purchase_order_id: int | None = _LIST_GOODS_RECEIPTS_PURCHASE_ORDER_ID_DEFAULT,
+    limit: int = _LIST_GOODS_RECEIPTS_LIMIT_DEFAULT,
+    user: dict = _LIST_GOODS_RECEIPTS_USER_DEFAULT,
+):
     try:
-        return {"goods_receipts": purchasing.list_goods_receipts(
-            status=status, purchase_order_id=purchase_order_id, limit=limit)}
+        return {
+            "goods_receipts": purchasing.list_goods_receipts(
+                status=status, purchase_order_id=purchase_order_id, limit=limit
+            )
+        }
     except purchasing.PurchasingError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
+
+
+_RECEIVABLE_ORDERS_USER_DEFAULT = Depends(_PS_READ)
 
 
 @router.get("/goods-receipts/receivable")
-def receivable_orders(user: dict = Depends(_PS_READ)):
+def receivable_orders(user: dict = _RECEIVABLE_ORDERS_USER_DEFAULT):
     """Orders sent to a vendor with packs still to come, line by line, and
     the hospital's minimum shelf life at receipt."""
     return purchasing.receivable_orders()
 
 
+_GET_GOODS_RECEIPT_USER_DEFAULT = Depends(_PS_READ)
+
+
 @router.get("/goods-receipts/{grn_id}")
-def get_goods_receipt(grn_id: int, user: dict = Depends(_PS_READ)):
+def get_goods_receipt(grn_id: int, user: dict = _GET_GOODS_RECEIPT_USER_DEFAULT):
     doc = purchasing.get_goods_receipt(grn_id)
     if doc is None:
-        raise HTTPException(status_code=404, detail={
-            "error": "not_found", "message": f"No goods receipt {grn_id}"})
+        raise HTTPException(
+            status_code=404, detail={"error": "not_found", "message": f"No goods receipt {grn_id}"}
+        )
     return {"goods_receipt": doc}
 
 
@@ -316,32 +428,40 @@ class GRNLineIn(BaseModel):
     packs: Any = 0
     free_packs: Any = 0
     rejected_packs: Any = 0
-    rejection_reason: Optional[str] = Field(None, max_length=500)
-    batch_no: Optional[str] = Field(None, max_length=80)
-    expiry_date: Optional[str] = Field(None, max_length=10)
-    expiry_date_confirm: Optional[str] = Field(None, max_length=10)
+    rejection_reason: str | None = Field(None, max_length=500)
+    batch_no: str | None = Field(None, max_length=80)
+    expiry_date: str | None = Field(None, max_length=10)
+    expiry_date_confirm: str | None = Field(None, max_length=10)
     mrp_pack_paise: Any = None
-    mfg_date: Optional[str] = Field(None, max_length=10)
+    mfg_date: str | None = Field(None, max_length=10)
     unit_rate_paise: Any = None
-    remarks: Optional[str] = Field(None, max_length=500)
+    remarks: str | None = Field(None, max_length=500)
 
 
 class GoodsReceiptIn(BaseModel):
     purchase_order_id: Any = None
-    lines: List[GRNLineIn] = Field(..., min_length=1, max_length=purchasing.MAX_LINES)
-    vendor_invoice_number: Optional[str] = Field(None, max_length=80)
-    vendor_invoice_date: Optional[str] = Field(None, max_length=10)
+    lines: list[GRNLineIn] = Field(..., min_length=1, max_length=purchasing.MAX_LINES)
+    vendor_invoice_number: str | None = Field(None, max_length=80)
+    vendor_invoice_date: str | None = Field(None, max_length=10)
     vendor_invoice_total_paise: Any = None
-    store_code: Optional[str] = Field(None, max_length=40)
-    remarks: Optional[str] = Field(None, max_length=2000)
-    idempotency_key: Optional[str] = Field(None, max_length=200)
+    store_code: str | None = Field(None, max_length=40)
+    remarks: str | None = Field(None, max_length=2000)
+    idempotency_key: str | None = Field(None, max_length=200)
+
+
+_CREATE_GOODS_RECEIPT_IDEMPOTENCY_KEY_DEFAULT = Header(
+    None, alias="Idempotency-Key", max_length=200
+)
+_CREATE_GOODS_RECEIPT_USER_DEFAULT = Depends(_PS_WRITE)
 
 
 @router.post("/goods-receipts")
-def create_goods_receipt(body: GoodsReceiptIn, request: Request,
-                         idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key",
-                                                                 max_length=200),
-                         user: dict = Depends(_PS_WRITE)):
+def create_goods_receipt(
+    body: GoodsReceiptIn,
+    request: Request,
+    idempotency_key: str | None = _CREATE_GOODS_RECEIPT_IDEMPOTENCY_KEY_DEFAULT,
+    user: dict = _CREATE_GOODS_RECEIPT_USER_DEFAULT,
+):
     """Record a delivery as a draft. Batch, MRP and an expiry typed twice on
     every line received; nothing moves into stock until it is posted. The
     Idempotency-Key header (or body field) makes a retry return the same
@@ -349,49 +469,68 @@ def create_goods_receipt(body: GoodsReceiptIn, request: Request,
     try:
         return purchasing.create_goods_receipt(
             purchase_order_id=body.purchase_order_id,
-            lines=[line.model_dump() for line in body.lines], actor=user,
+            lines=[line.model_dump() for line in body.lines],
+            actor=user,
             vendor_invoice_number=body.vendor_invoice_number,
             vendor_invoice_date=body.vendor_invoice_date,
             vendor_invoice_total_paise=body.vendor_invoice_total_paise,
-            store_code=body.store_code, remarks=body.remarks,
+            store_code=body.store_code,
+            remarks=body.remarks,
             idempotency_key=idempotency_key or body.idempotency_key,
-            audit_ctx=_ctx(request))
+            audit_ctx=_ctx(request),
+        )
     except purchasing.PurchasingError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
 
 
 class PostReceiptIn(BaseModel):
-    short_expiry_reason: Optional[str] = Field(None, max_length=1000)
+    short_expiry_reason: str | None = Field(None, max_length=1000)
+
+
+_POST_GOODS_RECEIPT_USER_DEFAULT = Depends(_cancel_tier)
 
 
 @router.post("/goods-receipts/{grn_id}/post")
-def post_goods_receipt(grn_id: int, body: PostReceiptIn, request: Request,
-                       user: dict = Depends(_cancel_tier)):
+def post_goods_receipt(
+    grn_id: int,
+    body: PostReceiptIn,
+    request: Request,
+    user: dict = _POST_GOODS_RECEIPT_USER_DEFAULT,
+):
     """Put the receipt on the shelf in one transaction. A short-dated batch
     needs the approve tier, someone other than the receiver, and a reason.
     Posting twice answers the posted receipt and moves nothing again."""
     role = user.get("role", "")
     try:
         return purchasing.post_goods_receipt(
-            grn_id, actor=user, may_write=has_permission(role, PHARMACY_STORE_WRITE),
+            grn_id,
+            actor=user,
+            may_write=has_permission(role, PHARMACY_STORE_WRITE),
             may_approve=has_permission(role, PHARMACY_STORE_APPROVE),
-            short_expiry_reason=body.short_expiry_reason, audit_ctx=_ctx(request))
+            short_expiry_reason=body.short_expiry_reason,
+            audit_ctx=_ctx(request),
+        )
     except purchasing.PurchasingError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None
+
+
+_CANCEL_GOODS_RECEIPT_USER_DEFAULT = Depends(_PS_WRITE)
 
 
 @router.post("/goods-receipts/{grn_id}/cancel")
-def cancel_goods_receipt(grn_id: int, body: CancelIn, request: Request,
-                         user: dict = Depends(_PS_WRITE)):
+def cancel_goods_receipt(
+    grn_id: int, body: CancelIn, request: Request, user: dict = _CANCEL_GOODS_RECEIPT_USER_DEFAULT
+):
     """Cancel a draft, with a reason. A posted receipt is never cancelled."""
     try:
-        return purchasing.cancel_goods_receipt(grn_id, reason=body.reason, actor=user,
-                                               audit_ctx=_ctx(request))
+        return purchasing.cancel_goods_receipt(
+            grn_id, reason=body.reason, actor=user, audit_ctx=_ctx(request)
+        )
     except purchasing.PurchasingError as exc:
-        raise _fail(exc)
+        raise _fail(exc) from exc
     except AuditWriteError:
-        raise _audit_unavailable()
+        raise _audit_unavailable() from None

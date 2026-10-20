@@ -1,0 +1,10 @@
+Collected 16784 tests in 501 files; 6 isolated shards started: [2798, 2798, 2797, 2797, 2797, 2797]
+Shard 5 exited 0 after 290.71s
+Shard 3 exited 0 after 331.78s
+Shard 1 exited 0 after 352.92s
+Shard 2 exited 0 after 352.32s
+Shard 6 exited 0 after 370.17s
+Shard 4 exited 0 after 411.3s
+Combined 6 files
+Wrote JSON report to /private/tmp/orb-legacy-final-accepted/coverage.json
+{"collected": 16784, "elapsed_seconds": 438.55, "passed": true}

@@ -45,14 +45,15 @@ CITATIONS / references for the illustrative model
   * CDI concepts (query for specificity, CC/MCC capture): ACDIS / AHIMA CDI
     practice briefs (general professional guidance, not a rate source).
 """
+
 from __future__ import annotations
 
-import json
 import re
+from typing import Any
 
 from database import db_session
-from services import terminology_service
 
+from services import terminology_service
 
 # ══════════════════════════════════════════════════════════════════════════
 #  TERM → CODE MAP  (curated, validated at emit time against `terminology`)
@@ -68,62 +69,232 @@ from services import terminology_service
 
 _CONCEPTS: list[dict] = [
     # ── Conditions (reimbursement-relevant) ──────────────────────────────────
-    {"label": "Sepsis", "terms": ["sepsis", "septic", "septicaemia", "septicemia", "bacteremia", "bacteraemia"],
-     "icd10": "A41.9"},
-    {"label": "Pneumonia", "terms": ["pneumonia", "cap", "hap", "lower respiratory tract infection", "lrti", "chest infection"],
-     "icd10": "J18.9", "snomed": "233604007"},
-    {"label": "Type 2 diabetes mellitus", "terms": ["diabetes", "diabetic", "diabetes mellitus", "t2dm", "dm2", "niddm", "hyperglycemia", "hyperglycaemia"],
-     "icd10": "E11.9", "snomed": "73211009"},
-    {"label": "Essential hypertension", "terms": ["hypertension", "hypertensive", "htn", "high blood pressure", "elevated blood pressure"],
-     "icd10": "I10", "snomed": "38341003"},
-    {"label": "Heart failure", "terms": ["heart failure", "chf", "congestive heart failure", "cardiac failure", "hfref", "hfpef", "decompensated heart failure"],
-     "icd10": "I50.9"},
-    {"label": "COPD", "terms": ["copd", "chronic obstructive pulmonary disease", "emphysema", "chronic bronchitis", "aecopd"],
-     "icd10": "J44.9"},
-    {"label": "Asthma", "terms": ["asthma", "asthmatic", "reactive airway disease", "bronchospasm"],
-     "icd10": "J45.909", "snomed": "195967001"},
-    {"label": "Acute kidney injury", "terms": ["acute kidney injury", "aki", "acute renal failure", "arf", "acute kidney failure"],
-     "icd10": "N17.9"},
-    {"label": "Acute myocardial infarction", "terms": ["myocardial infarction", "mi", "nstemi", "stemi", "heart attack", "acute coronary syndrome", "acs"],
-     "icd10": "I21.9", "snomed": "22298006"},
-    {"label": "Atrial fibrillation", "terms": ["atrial fibrillation", "afib", "a-fib", "af", "atrial flutter"],
-     "icd10": "I48.91"},
-    {"label": "Urinary tract infection", "terms": ["urinary tract infection", "uti", "cystitis", "urosepsis", "pyelonephritis"],
-     "icd10": "N39.0"},
-    {"label": "Hyperlipidemia", "terms": ["hyperlipidemia", "hyperlipidaemia", "dyslipidemia", "dyslipidaemia", "hypercholesterolemia", "high cholesterol"],
-     "icd10": "E78.5"},
-    {"label": "Anemia", "terms": ["anemia", "anaemia", "anemic", "low haemoglobin", "low hemoglobin"],
-     "icd10": "D64.9", "snomed": "271737000"},
-    {"label": "GERD", "terms": ["gerd", "gord", "gastro-esophageal reflux", "gastroesophageal reflux", "acid reflux", "reflux disease"],
-     "icd10": "K21.9"},
-    {"label": "Cerebral infarction (stroke)", "terms": ["stroke", "cva", "cerebral infarction", "ischemic stroke", "ischaemic stroke", "cerebrovascular accident"],
-     "icd10": "I63.9"},
-    {"label": "Epilepsy", "terms": ["epilepsy", "seizure disorder", "epileptic"],
-     "icd10": "G40.909"},
-    {"label": "Major depressive disorder", "terms": ["depression", "major depressive disorder", "mdd", "depressive episode"],
-     "icd10": "F32.9"},
-    {"label": "Dehydration", "terms": ["dehydration", "dehydrated", "volume depletion", "hypovolemia", "hypovolaemia"],
-     "icd10": "E86.0"},
-
+    {
+        "label": "Sepsis",
+        "terms": ["sepsis", "septic", "septicaemia", "septicemia", "bacteremia", "bacteraemia"],
+        "icd10": "A41.9",
+    },
+    {
+        "label": "Pneumonia",
+        "terms": [
+            "pneumonia",
+            "cap",
+            "hap",
+            "lower respiratory tract infection",
+            "lrti",
+            "chest infection",
+        ],
+        "icd10": "J18.9",
+        "snomed": "233604007",
+    },
+    {
+        "label": "Type 2 diabetes mellitus",
+        "terms": [
+            "diabetes",
+            "diabetic",
+            "diabetes mellitus",
+            "t2dm",
+            "dm2",
+            "niddm",
+            "hyperglycemia",
+            "hyperglycaemia",
+        ],
+        "icd10": "E11.9",
+        "snomed": "73211009",
+    },
+    {
+        "label": "Essential hypertension",
+        "terms": [
+            "hypertension",
+            "hypertensive",
+            "htn",
+            "high blood pressure",
+            "elevated blood pressure",
+        ],
+        "icd10": "I10",
+        "snomed": "38341003",
+    },
+    {
+        "label": "Heart failure",
+        "terms": [
+            "heart failure",
+            "chf",
+            "congestive heart failure",
+            "cardiac failure",
+            "hfref",
+            "hfpef",
+            "decompensated heart failure",
+        ],
+        "icd10": "I50.9",
+    },
+    {
+        "label": "COPD",
+        "terms": [
+            "copd",
+            "chronic obstructive pulmonary disease",
+            "emphysema",
+            "chronic bronchitis",
+            "aecopd",
+        ],
+        "icd10": "J44.9",
+    },
+    {
+        "label": "Asthma",
+        "terms": ["asthma", "asthmatic", "reactive airway disease", "bronchospasm"],
+        "icd10": "J45.909",
+        "snomed": "195967001",
+    },
+    {
+        "label": "Acute kidney injury",
+        "terms": [
+            "acute kidney injury",
+            "aki",
+            "acute renal failure",
+            "arf",
+            "acute kidney failure",
+        ],
+        "icd10": "N17.9",
+    },
+    {
+        "label": "Acute myocardial infarction",
+        "terms": [
+            "myocardial infarction",
+            "mi",
+            "nstemi",
+            "stemi",
+            "heart attack",
+            "acute coronary syndrome",
+            "acs",
+        ],
+        "icd10": "I21.9",
+        "snomed": "22298006",
+    },
+    {
+        "label": "Atrial fibrillation",
+        "terms": ["atrial fibrillation", "afib", "a-fib", "af", "atrial flutter"],
+        "icd10": "I48.91",
+    },
+    {
+        "label": "Urinary tract infection",
+        "terms": ["urinary tract infection", "uti", "cystitis", "urosepsis", "pyelonephritis"],
+        "icd10": "N39.0",
+    },
+    {
+        "label": "Hyperlipidemia",
+        "terms": [
+            "hyperlipidemia",
+            "hyperlipidaemia",
+            "dyslipidemia",
+            "dyslipidaemia",
+            "hypercholesterolemia",
+            "high cholesterol",
+        ],
+        "icd10": "E78.5",
+    },
+    {
+        "label": "Anemia",
+        "terms": ["anemia", "anaemia", "anemic", "low haemoglobin", "low hemoglobin"],
+        "icd10": "D64.9",
+        "snomed": "271737000",
+    },
+    {
+        "label": "GERD",
+        "terms": [
+            "gerd",
+            "gord",
+            "gastro-esophageal reflux",
+            "gastroesophageal reflux",
+            "acid reflux",
+            "reflux disease",
+        ],
+        "icd10": "K21.9",
+    },
+    {
+        "label": "Cerebral infarction (stroke)",
+        "terms": [
+            "stroke",
+            "cva",
+            "cerebral infarction",
+            "ischemic stroke",
+            "ischaemic stroke",
+            "cerebrovascular accident",
+        ],
+        "icd10": "I63.9",
+    },
+    {
+        "label": "Epilepsy",
+        "terms": ["epilepsy", "seizure disorder", "epileptic"],
+        "icd10": "G40.909",
+    },
+    {
+        "label": "Major depressive disorder",
+        "terms": ["depression", "major depressive disorder", "mdd", "depressive episode"],
+        "icd10": "F32.9",
+    },
+    {
+        "label": "Dehydration",
+        "terms": ["dehydration", "dehydrated", "volume depletion", "hypovolemia", "hypovolaemia"],
+        "icd10": "E86.0",
+    },
     # ── Symptoms / findings (documented but not independently reimbursable) ──
-    {"label": "Chest pain", "terms": ["chest pain", "chest discomfort", "chest tightness"],
-     "icd10": "R07.9", "snomed": "29857009", "symptom": True},
-    {"label": "Headache", "terms": ["headache", "cephalgia"],
-     "icd10": "R51.9", "snomed": "25064002", "symptom": True},
-    {"label": "Abdominal pain", "terms": ["abdominal pain", "abdo pain", "stomach pain", "belly pain"],
-     "icd10": "R10.9", "snomed": "21522001", "symptom": True},
-    {"label": "Fever", "terms": ["fever", "pyrexia", "febrile"],
-     "icd10": "R50.9", "snomed": "386661006", "symptom": True},
-    {"label": "Dyspnea", "terms": ["dyspnea", "dyspnoea", "shortness of breath", "sob", "breathlessness"],
-     "snomed": "267036007", "symptom": True},
-    {"label": "Cough", "terms": ["cough", "productive cough", "dry cough"],
-     "snomed": "49727002", "symptom": True},
-    {"label": "Nausea", "terms": ["nausea", "nauseated", "nauseous"],
-     "snomed": "422587007", "symptom": True},
-    {"label": "Diarrhea", "terms": ["diarrhea", "diarrhoea", "loose stools"],
-     "snomed": "62315008", "symptom": True},
-    {"label": "Dizziness", "terms": ["dizziness", "dizzy", "lightheadedness", "vertigo"],
-     "snomed": "404640003", "symptom": True},
+    {
+        "label": "Chest pain",
+        "terms": ["chest pain", "chest discomfort", "chest tightness"],
+        "icd10": "R07.9",
+        "snomed": "29857009",
+        "symptom": True,
+    },
+    {
+        "label": "Headache",
+        "terms": ["headache", "cephalgia"],
+        "icd10": "R51.9",
+        "snomed": "25064002",
+        "symptom": True,
+    },
+    {
+        "label": "Abdominal pain",
+        "terms": ["abdominal pain", "abdo pain", "stomach pain", "belly pain"],
+        "icd10": "R10.9",
+        "snomed": "21522001",
+        "symptom": True,
+    },
+    {
+        "label": "Fever",
+        "terms": ["fever", "pyrexia", "febrile"],
+        "icd10": "R50.9",
+        "snomed": "386661006",
+        "symptom": True,
+    },
+    {
+        "label": "Dyspnea",
+        "terms": ["dyspnea", "dyspnoea", "shortness of breath", "sob", "breathlessness"],
+        "snomed": "267036007",
+        "symptom": True,
+    },
+    {
+        "label": "Cough",
+        "terms": ["cough", "productive cough", "dry cough"],
+        "snomed": "49727002",
+        "symptom": True,
+    },
+    {
+        "label": "Nausea",
+        "terms": ["nausea", "nauseated", "nauseous"],
+        "snomed": "422587007",
+        "symptom": True,
+    },
+    {
+        "label": "Diarrhea",
+        "terms": ["diarrhea", "diarrhoea", "loose stools"],
+        "snomed": "62315008",
+        "symptom": True,
+    },
+    {
+        "label": "Dizziness",
+        "terms": ["dizziness", "dizzy", "lightheadedness", "vertigo"],
+        "snomed": "404640003",
+        "symptom": True,
+    },
 ]
 
 
@@ -135,22 +306,92 @@ _CONCEPTS: list[dict] = [
 # coded, so its reimbursement weight is being left on the table. Only rules
 # whose target code exists in `terminology` fire.
 _MED_CONDITION_RULES: list[dict] = [
-    {"drugs": ["metformin", "glipizide", "glimepiride", "gliclazide", "insulin", "sitagliptin", "empagliflozin", "dapagliflozin"],
-     "icd10": "E11.9", "label": "Type 2 diabetes mellitus"},
-    {"drugs": ["atorvastatin", "simvastatin", "rosuvastatin", "pravastatin", "lovastatin"],
-     "icd10": "E78.5", "label": "Hyperlipidemia"},
-    {"drugs": ["lisinopril", "ramipril", "amlodipine", "losartan", "valsartan", "hydrochlorothiazide", "enalapril"],
-     "icd10": "I10", "label": "Essential hypertension"},
-    {"drugs": ["furosemide", "lasix", "bumetanide", "sacubitril", "spironolactone", "carvedilol", "bisoprolol"],
-     "icd10": "I50.9", "label": "Heart failure"},
-    {"drugs": ["tiotropium", "ipratropium", "salbutamol", "albuterol", "budesonide/formoterol", "roflumilast"],
-     "icd10": "J44.9", "label": "COPD"},
-    {"drugs": ["warfarin", "apixaban", "rivaroxaban", "dabigatran", "edoxaban"],
-     "icd10": "I48.91", "label": "Atrial fibrillation"},
-    {"drugs": ["levetiracetam", "keppra", "phenytoin", "valproate", "lamotrigine", "carbamazepine"],
-     "icd10": "G40.909", "label": "Epilepsy"},
-    {"drugs": ["sertraline", "fluoxetine", "citalopram", "escitalopram", "mirtazapine", "venlafaxine"],
-     "icd10": "F32.9", "label": "Major depressive disorder"},
+    {
+        "drugs": [
+            "metformin",
+            "glipizide",
+            "glimepiride",
+            "gliclazide",
+            "insulin",
+            "sitagliptin",
+            "empagliflozin",
+            "dapagliflozin",
+        ],
+        "icd10": "E11.9",
+        "label": "Type 2 diabetes mellitus",
+    },
+    {
+        "drugs": ["atorvastatin", "simvastatin", "rosuvastatin", "pravastatin", "lovastatin"],
+        "icd10": "E78.5",
+        "label": "Hyperlipidemia",
+    },
+    {
+        "drugs": [
+            "lisinopril",
+            "ramipril",
+            "amlodipine",
+            "losartan",
+            "valsartan",
+            "hydrochlorothiazide",
+            "enalapril",
+        ],
+        "icd10": "I10",
+        "label": "Essential hypertension",
+    },
+    {
+        "drugs": [
+            "furosemide",
+            "lasix",
+            "bumetanide",
+            "sacubitril",
+            "spironolactone",
+            "carvedilol",
+            "bisoprolol",
+        ],
+        "icd10": "I50.9",
+        "label": "Heart failure",
+    },
+    {
+        "drugs": [
+            "tiotropium",
+            "ipratropium",
+            "salbutamol",
+            "albuterol",
+            "budesonide/formoterol",
+            "roflumilast",
+        ],
+        "icd10": "J44.9",
+        "label": "COPD",
+    },
+    {
+        "drugs": ["warfarin", "apixaban", "rivaroxaban", "dabigatran", "edoxaban"],
+        "icd10": "I48.91",
+        "label": "Atrial fibrillation",
+    },
+    {
+        "drugs": [
+            "levetiracetam",
+            "keppra",
+            "phenytoin",
+            "valproate",
+            "lamotrigine",
+            "carbamazepine",
+        ],
+        "icd10": "G40.909",
+        "label": "Epilepsy",
+    },
+    {
+        "drugs": [
+            "sertraline",
+            "fluoxetine",
+            "citalopram",
+            "escitalopram",
+            "mirtazapine",
+            "venlafaxine",
+        ],
+        "icd10": "F32.9",
+        "label": "Major depressive disorder",
+    },
 ]
 
 
@@ -169,27 +410,30 @@ BASE_RATE_INR: float = 50000.0
 # inpatient DRG. EDIT THESE to your contracted case-mix — they are placeholders.
 DEFAULT_CODE_WEIGHTS: dict[str, float] = {
     # higher-acuity conditions
-    "A41.9": 1.80,   # sepsis
-    "I21.9": 1.60,   # acute MI
-    "I63.9": 1.40,   # stroke
-    "I50.9": 1.20,   # heart failure
-    "J18.9": 1.00,   # pneumonia
-    "N17.9": 1.00,   # acute kidney injury
-    "J44.9": 0.90,   # COPD
-    "G40.909": 0.60, # epilepsy
-    "N39.0": 0.50,   # UTI
-    "J45.909": 0.40, # asthma
+    "A41.9": 1.80,  # sepsis
+    "I21.9": 1.60,  # acute MI
+    "I63.9": 1.40,  # stroke
+    "I50.9": 1.20,  # heart failure
+    "J18.9": 1.00,  # pneumonia
+    "N17.9": 1.00,  # acute kidney injury
+    "J44.9": 0.90,  # COPD
+    "G40.909": 0.60,  # epilepsy
+    "N39.0": 0.50,  # UTI
+    "J45.909": 0.40,  # asthma
     "I48.91": 0.40,  # atrial fibrillation
-    "E86.0": 0.40,   # dehydration
+    "E86.0": 0.40,  # dehydration
     # chronic comorbidities (CC-type capture)
-    "E11.9": 0.35,   # diabetes
-    "D64.9": 0.35,   # anemia
-    "F32.9": 0.30,   # depression
-    "I10": 0.15,     # hypertension
-    "E78.5": 0.10,   # hyperlipidemia
-    "K21.9": 0.10,   # GERD
+    "E11.9": 0.35,  # diabetes
+    "D64.9": 0.35,  # anemia
+    "F32.9": 0.30,  # depression
+    "I10": 0.15,  # hypertension
+    "E78.5": 0.10,  # hyperlipidemia
+    "K21.9": 0.10,  # GERD
     # symptoms / findings — no independent reimbursement weight
-    "R07.9": 0.0, "R51.9": 0.0, "R10.9": 0.0, "R50.9": 0.0,
+    "R07.9": 0.0,
+    "R51.9": 0.0,
+    "R10.9": 0.0,
+    "R50.9": 0.0,
 }
 
 # Illustrative uplift attributed to sharpening a single low-specificity
@@ -207,22 +451,23 @@ def _code_value_inr(code: str) -> float:
 #  DB READS  (pure reads — this service never writes)
 # ══════════════════════════════════════════════════════════════════════════
 
+
 def _load_patient_context(patient_id: str) -> dict:
     """Gather every free-text + coded source we scan, in one place.
 
     Returns dict with: diagnosis, comorbidities, note_text, coded_problems
     (list of {code, system}), and medications (list of drug names).
     """
-    ctx = {
+    ctx: dict[str, Any] = {
         "exists": False,
         "diagnosis": "",
         "comorbidities": "",
-        "notes": [],           # (label, text)
+        "notes": [],  # (label, text)
         # The same notes with where they came from, for the evidence sentence:
         # {label, text, note_id, note_type, author_id, author}
         "note_sources": [],
         "coded_problems": [],  # {"code","system"}
-        "medications": [],     # drug name strings
+        "medications": [],  # drug name strings
     }
     with db_session() as conn:
         prow = conn.execute(
@@ -260,10 +505,16 @@ def _load_patient_context(patient_id: str) -> dict:
         ).fetchall():
             if r["content"]:
                 ctx["notes"].append(("clinical note", r["content"]))
-                ctx["note_sources"].append({
-                    "label": "clinical note", "text": r["content"], "note_id": r["id"],
-                    "note_type": "clinical_document", "author_id": r["author_id"],
-                    "author": r["author_name"]})
+                ctx["note_sources"].append(
+                    {
+                        "label": "clinical note",
+                        "text": r["content"],
+                        "note_id": r["id"],
+                        "note_type": "clinical_document",
+                        "author_id": r["author_id"],
+                        "author": r["author_name"],
+                    }
+                )
         for r in conn.execute(
             "SELECT s.id, s.raw_transcript, s.structured_note, s.author_id, u.name AS author_name "
             "FROM scribe_notes s LEFT JOIN users u ON u.id = s.author_id "
@@ -277,12 +528,21 @@ def _load_patient_context(patient_id: str) -> dict:
                 # coder is read from its words, never from the JSON around
                 # them ('{"assessment": "COPD ...').
                 from services.note_text import note_plain_text
-                plain = "\n".join(t for t in (r["raw_transcript"],
-                                               note_plain_text(r["structured_note"])) if t)
-                ctx["note_sources"].append({
-                    "label": "scribe note", "text": text, "note_id": r["id"],
-                    "note_type": "scribe_note", "author_id": r["author_id"],
-                    "author": r["author_name"], "evidence_text": plain})
+
+                plain = "\n".join(
+                    t for t in (r["raw_transcript"], note_plain_text(r["structured_note"])) if t
+                )
+                ctx["note_sources"].append(
+                    {
+                        "label": "scribe note",
+                        "text": text,
+                        "note_id": r["id"],
+                        "note_type": "scribe_note",
+                        "author_id": r["author_id"],
+                        "author": r["author_name"],
+                        "evidence_text": plain,
+                    }
+                )
 
         # Active medications — drive med→condition CDI inference.
         # `status != 'discontinued'` alone drops rows whose status is NULL
@@ -293,11 +553,16 @@ def _load_patient_context(patient_id: str) -> dict:
         # None on an Orb Ward Record computer, whose drug chart stays on
         # paper (services/drug_chart): no drug is named as evidence.
         from services.drug_chart import drug_chart_enabled
-        for r in conn.execute(
-            "SELECT drug_name FROM medications "
-            "WHERE patient_id = ? AND (status IS NULL OR status != 'discontinued')",
-            (patient_id,),
-        ).fetchall() if drug_chart_enabled() else []:
+
+        for r in (
+            conn.execute(
+                "SELECT drug_name FROM medications "
+                "WHERE patient_id = ? AND (status IS NULL OR status != 'discontinued')",
+                (patient_id,),
+            ).fetchall()
+            if drug_chart_enabled()
+            else []
+        ):
             if r["drug_name"]:
                 ctx["medications"].append(r["drug_name"])
 
@@ -307,6 +572,7 @@ def _load_patient_context(patient_id: str) -> dict:
 # ══════════════════════════════════════════════════════════════════════════
 #  LEXICAL MATCHING
 # ══════════════════════════════════════════════════════════════════════════
+
 
 def _term_matches(term: str, text: str) -> bool:
     """Whole-token, case-insensitive match so short abbreviations (MI, AKI, AF)
@@ -343,7 +609,7 @@ def evidence_sentence(term: str, text: str) -> str | None:
         body = EVIDENCE_SENTENCE_MAX - 6
         at = sentence.lower().find(term.lower())
         start = max(0, min(at - body // 3, len(sentence) - body))
-        cut = sentence[start:start + body].strip()
+        cut = sentence[start : start + body].strip()
         return ("..." if start > 0 else "") + cut + "..."
     return None
 
@@ -364,6 +630,7 @@ def _emit_code(system: str, code: str, display_fallback: str) -> dict | None:
 # ══════════════════════════════════════════════════════════════════════════
 #  PUBLIC API
 # ══════════════════════════════════════════════════════════════════════════
+
 
 def suggest_codes(patient_id: str, use_llm: bool = False) -> dict:
     """Suggest codes, flag CDI gaps and estimate reimbursement for a patient.
@@ -426,8 +693,11 @@ def suggest_codes(patient_id: str, use_llm: bool = False) -> dict:
             evidence = f"Matched “{matched_term}” in {src_label}"
             where = {
                 "evidence_sentence": (
-                    evidence_sentence(matched_term, (note or {}).get("evidence_text") or "")
-                    or evidence_sentence(matched_term, src_text)),
+                    evidence_sentence(
+                        matched_term, note.get("evidence_text") if note is not None else "" or ""
+                    )
+                    or evidence_sentence(matched_term, src_text)
+                ),
                 "evidence_source": src_label,
                 "evidence_note_id": note["note_id"] if note else None,
                 "evidence_note_type": note["note_type"] if note else None,
@@ -437,7 +707,9 @@ def suggest_codes(patient_id: str, use_llm: bool = False) -> dict:
             if concept.get("icd10"):
                 _add_suggestion("ICD10", concept["icd10"], concept["label"], evidence, tier, where)
             if concept.get("snomed"):
-                _add_suggestion("SNOMED", concept["snomed"], concept["label"], evidence, tier, where)
+                _add_suggestion(
+                    "SNOMED", concept["snomed"], concept["label"], evidence, tier, where
+                )
             break  # first (highest-priority) source wins for this concept
 
     # ── 2. Documentation queries: a drug treats a condition nobody wrote ─────
@@ -460,14 +732,16 @@ def suggest_codes(patient_id: str, use_llm: bool = False) -> dict:
         if not emitted:
             continue
         medication = next((m for m in ctx["medications"] if _term_matches(drug, m)), drug)
-        documentation_queries.append({
-            "condition": rule["label"],
-            "medication": medication,
-            "code": code,
-            "system": "ICD10",
-            "display": emitted["display"],
-            "message": DOCUMENTATION_QUERY_TEXT,
-        })
+        documentation_queries.append(
+            {
+                "condition": rule["label"],
+                "medication": medication,
+                "code": code,
+                "system": "ICD10",
+                "display": emitted["display"],
+                "message": DOCUMENTATION_QUERY_TEXT,
+            }
+        )
 
     suggested_codes = sorted(
         suggestions.values(),
@@ -495,24 +769,28 @@ def suggest_codes(patient_id: str, use_llm: bool = False) -> dict:
         if value <= 0:
             continue  # symptoms / zero-weight → not a capture gap
         flagged_codes.add(code)
-        cdi_flags.append({
-            "type": "documented_not_coded",
-            "message": f"{s['display']} ({code}) appears in documentation but is not on the coded problem list.",
-            "rationale": f"Evidence: {s['evidence']}. Documented conditions that are not coded are not reimbursed. Review and add to the coded problem list if supported.",
-            "est_impact_inr": value,
-        })
+        cdi_flags.append(
+            {
+                "type": "documented_not_coded",
+                "message": f"{s['display']} ({code}) appears in documentation but is not on the coded problem list.",
+                "rationale": f"Evidence: {s['evidence']}. Documented conditions that are not coded are not reimbursed. Review and add to the coded problem list if supported.",
+                "est_impact_inr": value,
+            }
+        )
 
     # (c) Low-specificity ("unspecified") codes that could be sharpened.
     for s in suggested_codes:
         display = s["display"].lower()
         if "unspecified" not in display and "not specified" not in display:
             continue
-        cdi_flags.append({
-            "type": "nonspecific_code",
-            "message": f"{s['display']} ({s['code']}) is a low-specificity code: a more specific code may capture additional acuity.",
-            "rationale": "Unspecified codes frequently under-capture CC/MCC severity. A documentation query for laterality/organism/acuity/type can support a more specific code.",
-            "est_impact_inr": NONSPECIFIC_SPECIFICITY_UPLIFT_INR,
-        })
+        cdi_flags.append(
+            {
+                "type": "nonspecific_code",
+                "message": f"{s['display']} ({s['code']}) is a low-specificity code: a more specific code may capture additional acuity.",
+                "rationale": "Unspecified codes frequently under-capture CC/MCC severity. A documentation query for laterality/organism/acuity/type can support a more specific code.",
+                "est_impact_inr": NONSPECIFIC_SPECIFICITY_UPLIFT_INR,
+            }
+        )
 
     # ── 4. Illustrative reimbursement estimate ───────────────────────────────
     # captured = value of codes ALREADY on the coded problem list.
@@ -531,7 +809,8 @@ def suggest_codes(patient_id: str, use_llm: bool = False) -> dict:
     # listed with "+₹2,000" each but left out of the total, so the headline
     # read ₹4,000 short of the flags printed under it.
     specificity_uplift = round(
-        sum(f["est_impact_inr"] for f in cdi_flags if f["type"] == "nonspecific_code"), 2)
+        sum(f["est_impact_inr"] for f in cdi_flags if f["type"] == "nonspecific_code"), 2
+    )
     potential = round(sum(_code_value_inr(c) for c in all_potential) + specificity_uplift, 2)
     uplift = round(max(potential - captured, 0.0), 2)
 
@@ -581,6 +860,7 @@ def suggest_codes(patient_id: str, use_llm: bool = False) -> dict:
 #  OPTIONAL LLM REFINEMENT  (stub — deterministic path is what runs)
 # ══════════════════════════════════════════════════════════════════════════
 
+
 def _llm_available() -> bool:
     """Whether a local LLM (Ollama/MedGemma) is reachable. In this environment
     it is not, so this returns False and the deterministic result stands."""
@@ -604,7 +884,9 @@ def _llm_refine(patient_id: str, ctx: dict, result: dict) -> dict:
     LLM) behaves identically with or without `use_llm=True`.
     """
     if not _llm_available():
-        result.setdefault("meta", {})["llm"] = "unavailable, deterministic result returned unchanged"
+        result.setdefault("meta", {})["llm"] = (
+            "unavailable, deterministic result returned unchanged"
+        )
         return result
     # (Unreached here.) Real refinement would go here and must still only emit
     # codes validated via terminology_service.validate_code.

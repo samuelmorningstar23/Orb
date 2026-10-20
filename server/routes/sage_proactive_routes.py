@@ -1,42 +1,61 @@
 """Orb Sage — Proactive surveillance routes (insights feed + one-click into agentic)."""
+
 import uuid
-from fastapi import APIRouter, Depends, Request, HTTPException
-from permissions import require_permission
+
 from database import db_session, run_db
+from fastapi import APIRouter, Depends, HTTPException, Request
+from permissions import require_permission
 from services.sage_proactive_service import (
-    NON_ACTIONABLE_ACTION_TYPES, get_active_insights, transition_insight, evaluate_patient,
+    NON_ACTIONABLE_ACTION_TYPES,
     evaluate_all_admitted,
+    evaluate_patient,
+    get_active_insights,
+    transition_insight,
 )
 from ws.realtime import sio
 
 router = APIRouter(prefix="/api/sage", tags=["sage-proactive"])
 
 
+_LIST_INSIGHTS_USER_DEFAULT = Depends(require_permission("sage.query"))
+
+
 @router.get("/insights")
-async def list_insights(user: dict = Depends(require_permission("sage.query"))):
+async def list_insights(user: dict = _LIST_INSIGHTS_USER_DEFAULT):
     # Off the loop: this is a 50-row join over sage_insights x patients, and since
     # encryption at rest every page it touches costs HMAC-SHA512 + AES.
     return {"insights": await run_db(get_active_insights, user["id"], user["role"])}
 
 
+_INSIGHT_FEEDBACK_USER_DEFAULT = Depends(require_permission("sage.query"))
+
+
 @router.get("/insights/feedback")
-async def insight_feedback(user: dict = Depends(require_permission("sage.query"))):
+async def insight_feedback(user: dict = _INSIGHT_FEEDBACK_USER_DEFAULT):
     """Per-pattern acceptance rates (acted vs dismissed) + which patterns are
     currently suppressed — the 'is Sage's advice actually useful?' trust surface.
     This is the labelled dataset the app generates every shift, made visible."""
     from services.sage_feedback_service import (
-        MIN_SAMPLES, SUPPRESS_ACCEPT_FLOOR, acceptance_overview,
+        MIN_SAMPLES,
+        SUPPRESS_ACCEPT_FLOOR,
+        acceptance_overview,
     )
+
     return {
         "patterns": await run_db(acceptance_overview),
-        "policy": {"min_samples": MIN_SAMPLES, "suppress_accept_floor": SUPPRESS_ACCEPT_FLOOR,
-                   "never_suppress": ["critical"]},
+        "policy": {
+            "min_samples": MIN_SAMPLES,
+            "suppress_accept_floor": SUPPRESS_ACCEPT_FLOOR,
+            "never_suppress": ["critical"],
+        },
     }
 
 
+_TRANSITION_USER_DEFAULT = Depends(require_permission("sage.query"))
+
+
 @router.post("/insights/{insight_id}/transition")
-async def transition(insight_id: str, request: Request,
-                     user: dict = Depends(require_permission("sage.query"))):
+async def transition(insight_id: str, request: Request, user: dict = _TRANSITION_USER_DEFAULT):
     body = await request.json()
     state = body.get("state", "")
     try:
@@ -47,9 +66,9 @@ async def transition(insight_id: str, request: Request,
         # function keeps that sequence exactly as atomic as it was.
         result = await run_db(transition_insight, insight_id, state, user["id"], user["role"])
     except PermissionError:
-        raise HTTPException(status_code=403, detail="Not authorized for this insight")
+        raise HTTPException(status_code=403, detail="Not authorized for this insight") from None
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid state")
+        raise HTTPException(status_code=400, detail="Invalid state") from None
     if not result:
         raise HTTPException(status_code=404, detail="Insight not found")
     await sio.emit("sage:insight", {"event": "transition", "id": insight_id})
@@ -88,8 +107,15 @@ def _create_action_card(insight_id, user):
         db.execute(
             """INSERT INTO sage_actions (id, room_id, patient_id, action_type, target, rationale, confidence, state, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, 'suggested', datetime('now'), datetime('now'))""",
-            (action_id, channel_id, ins["patient_id"], ins["suggested_action_type"],
-             ins["suggested_action_target"] or "", f"Drafted from Sage insight: {ins['title']}", 0.7),
+            (
+                action_id,
+                channel_id,
+                ins["patient_id"],
+                ins["suggested_action_type"],
+                ins["suggested_action_target"] or "",
+                f"Drafted from Sage insight: {ins['title']}",
+                0.7,
+            ),
         )
         db.execute(
             """INSERT INTO sage_action_events (action_id, prior_state, new_state, actor_id, actor_name, actor_role, reason, source, created_at)
@@ -122,18 +148,25 @@ def _create_action_card(insight_id, user):
         # record it (this path bypasses transition_insight). Same transaction.
         try:
             from services.sage_feedback_service import pattern_of, record_feedback
+
             record_feedback(
                 pattern_of(ins["insight_type"], ins["severity"]),
-                "acted", insight_id=insight_id, patient_id=ins["patient_id"],
-                actor_user_id=user["id"], db=db,
+                "acted",
+                insight_id=insight_id,
+                patient_id=ins["patient_id"],
+                actor_user_id=user["id"],
+                db=db,
             )
         except Exception:
             pass
         return channel_id, action_id
 
 
+_ACT_ON_INSIGHT_USER_DEFAULT = Depends(require_permission("sage.query"))
+
+
 @router.post("/insights/{insight_id}/act")
-async def act_on_insight(insight_id: str, user: dict = Depends(require_permission("sage.query"))):
+async def act_on_insight(insight_id: str, user: dict = _ACT_ON_INSIGHT_USER_DEFAULT):
     """One-click: turn the insight's suggested action into an agentic Sage action card
     in the patient's case room (Confirm there executes it), then mark the insight 'acted'."""
     # The state=='active' guard and the UPDATE that consumes it stay in one sync
@@ -144,8 +177,11 @@ async def act_on_insight(insight_id: str, user: dict = Depends(require_permissio
     return {"status": "ok", "action_id": action_id, "channel_id": channel_id}
 
 
+_EVALUATE_USER_DEFAULT = Depends(require_permission("sage.query"))
+
+
 @router.post("/insights/evaluate")
-async def evaluate(request: Request, user: dict = Depends(require_permission("sage.query"))):
+async def evaluate(request: Request, user: dict = _EVALUATE_USER_DEFAULT):
     """Run the surveillance sweep now, instead of waiting for the next scheduled
     pass. Optional patient_id, else every admitted patient.
 
@@ -165,9 +201,13 @@ async def evaluate(request: Request, user: dict = Depends(require_permission("sa
     # sweeps still cannot produce duplicate insights.
     # `raised_again`: stood-down cards put back up, same id, pushed all the same.
     raised_again: list = []
-    ids = (await run_db(evaluate_patient, pid, raised_again) if pid
-           else await run_db(evaluate_all_admitted, raised_again))
+    ids = (
+        await run_db(evaluate_patient, pid, raised_again)
+        if pid
+        else await run_db(evaluate_all_admitted, raised_again)
+    )
     if ids or raised_again:
-        await sio.emit("sage:insight", {"event": "new", "count": len(ids),
-                                        "raised_again": len(raised_again)})
+        await sio.emit(
+            "sage:insight", {"event": "new", "count": len(ids), "raised_again": len(raised_again)}
+        )
     return {"created": len(ids), "ids": ids, "raised_again": raised_again}

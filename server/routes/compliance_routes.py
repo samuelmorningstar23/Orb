@@ -18,18 +18,23 @@ exists, which is itself a disclosure. The data-principal export is the largest
 PHI disclosure Orb can perform, so it carries an explicit, fail-closed
 ``phi_access`` audit row naming the sections and row counts it produced.
 """
+
 from __future__ import annotations
 
 import uuid
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from permissions import (
+    CONSENT_RECORD,
+    department_scope,
+    enforce_patient_scope,
+    require_patient_access,
+    require_permission,
+)
 from pydantic import BaseModel, Field
-
-from permissions import (require_permission, require_patient_access,
-                         enforce_patient_scope, department_scope, CONSENT_RECORD)
 from services.audit_service import log_audit_event
 from services.compliance_service import compliance_report
+
 from services import consent_service as consent
 
 router = APIRouter(prefix="/api/admin/compliance", tags=["compliance"])
@@ -40,60 +45,72 @@ consent_router = APIRouter(prefix="/api/consent", tags=["consent"])
 #  Request bodies
 # ════════════════════════════════════════════════════════════════
 
+
 class ConsentRequest(BaseModel):
     purpose: str
     method: str
-    scope_detail: Optional[str] = None
-    notice_version: Optional[str] = None
-    notice_language: Optional[str] = None
-    granted_at: Optional[str] = None
-    expires_at: Optional[str] = None
+    scope_detail: str | None = None
+    notice_version: str | None = None
+    notice_language: str | None = None
+    granted_at: str | None = None
+    expires_at: str | None = None
     given_by: str = "patient"
-    proxy_name: Optional[str] = None
-    proxy_relationship: Optional[str] = None
-    evidence_ref: Optional[str] = None
+    proxy_name: str | None = None
+    proxy_relationship: str | None = None
+    evidence_ref: str | None = None
 
 
 class WithdrawalRequest(BaseModel):
     method: str
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 class ErasureRequestBody(BaseModel):
     patient_id: str
-    categories: Optional[list[str]] = None
+    categories: list[str] | None = None
     requester_identity: str = "patient"
     channel: str = "in_person"
-    note: Optional[str] = None
+    note: str | None = None
 
 
 class BreachBody(BaseModel):
     nature: str
     description: str
-    discovered_at: Optional[str] = None
-    occurred_at: Optional[str] = None
-    exposed_to: Optional[str] = None
-    data_categories: Optional[list[str]] = None
-    records_affected: Optional[int] = None
-    principals_affected: Optional[int] = None
-    affected_patient_ids: Optional[list[str]] = None
-    containment_at: Optional[str] = None
-    containment_actions: Optional[str] = None
+    discovered_at: str | None = None
+    occurred_at: str | None = None
+    exposed_to: str | None = None
+    data_categories: list[str] | None = None
+    records_affected: int | None = None
+    principals_affected: int | None = None
+    affected_patient_ids: list[str] | None = None
+    containment_at: str | None = None
+    containment_actions: str | None = None
 
 
 class BreachNotificationBody(BaseModel):
-    party_type: str = Field(..., description="board | data_principal | regulator | internal | other")
+    party_type: str = Field(
+        ..., description="board | data_principal | regulator | internal | other"
+    )
     notified_party: str
-    method: Optional[str] = None
-    reference: Optional[str] = None
-    content_summary: Optional[str] = None
-    notified_at: Optional[str] = None
+    method: str | None = None
+    reference: str | None = None
+    content_summary: str | None = None
+    notified_at: str | None = None
 
 
-def _audit(request: Request, user: dict, *, action_type: str, summary: str,
-           category: str = "compliance", patient_id: str | None = None,
-           target_type: str | None = None, target_id: str | None = None,
-           metadata: dict | None = None, outcome: str = "success") -> None:
+def _audit(
+    request: Request,
+    user: dict,
+    *,
+    action_type: str,
+    summary: str,
+    category: str = "compliance",
+    patient_id: str | None = None,
+    target_type: str | None = None,
+    target_id: str | int | None = None,
+    metadata: dict | None = None,
+    outcome: str = "success",
+) -> None:
     """One audit row for a compliance action. BLOCKING — every route here is a
     sync `def`, which FastAPI runs in a threadpool, so this stays off the loop."""
     meta = {"department": department_scope(user), "scope_source": "authenticated_user"}
@@ -109,7 +126,7 @@ def _audit(request: Request, user: dict, *, action_type: str, summary: str,
         actor_role=(user or {}).get("role"),
         patient_id=patient_id,
         target_type=target_type,
-        target_id=target_id,
+        target_id=str(target_id) if target_id is not None else None,
         request_path=request.url.path,
         http_method=request.method,
         ip_address=request.client.host if request.client else None,
@@ -122,8 +139,12 @@ def _audit(request: Request, user: dict, *, action_type: str, summary: str,
 #  Trust Center posture (unchanged contract)
 # ════════════════════════════════════════════════════════════════
 
+
+_GET_COMPLIANCE_REPORT_USER_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.get("/")
-def get_compliance_report(user: dict = Depends(require_permission("admin.overview"))):
+def get_compliance_report(user: dict = _GET_COMPLIANCE_REPORT_USER_DEFAULT):
     """Return the aggregated, live compliance posture report."""
     return compliance_report()
 
@@ -132,10 +153,14 @@ def get_compliance_report(user: dict = Depends(require_permission("admin.overvie
 #  Consent — bedside
 # ════════════════════════════════════════════════════════════════
 
+
 # ORDER MATTERS: this literal path must stay ABOVE `/{patient_id}` or FastAPI
 # will match "vocabulary" as a patient id and 404 the whole vocabulary lookup.
+_CONSENT_VOCABULARY_USER_DEFAULT = Depends(require_permission("patient.read_all"))
+
+
 @consent_router.get("/vocabulary")
-def consent_vocabulary(user: dict = Depends(require_permission("patient.read_all"))):
+def consent_vocabulary(user: dict = _CONSENT_VOCABULARY_USER_DEFAULT):
     """The closed sets a consent form may use. Lets the UI render the same
     options the server will accept instead of guessing."""
     return {
@@ -145,14 +170,21 @@ def consent_vocabulary(user: dict = Depends(require_permission("patient.read_all
     }
 
 
+_LIST_PATIENT_CONSENTS_USER_DEFAULT = Depends(
+    require_patient_access("patient.read_all", audit_action="consent_register_read")
+)
+
+
 @consent_router.get("/{patient_id}")
 def list_patient_consents(
     patient_id: str,
-    user: dict = Depends(require_patient_access("patient.read_all",
-                                                audit_action="consent_register_read")),
+    user: dict = _LIST_PATIENT_CONSENTS_USER_DEFAULT,
 ):
     """Every consent this patient gave, with withdrawals and effective status."""
     return {"patient_id": patient_id, "consents": consent.list_consents(patient_id)}
+
+
+_CREATE_CONSENT_USER_DEFAULT = Depends(require_patient_access(CONSENT_RECORD))
 
 
 @consent_router.post("/{patient_id}")
@@ -160,7 +192,7 @@ def create_consent(
     patient_id: str,
     body: ConsentRequest,
     request: Request,
-    user: dict = Depends(require_patient_access(CONSENT_RECORD)),
+    user: dict = _CREATE_CONSENT_USER_DEFAULT,
 ):
     """Record one consent. Immutable once written — see migration 14.
 
@@ -188,13 +220,25 @@ def create_consent(
             evidence_ref=body.evidence_ref,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    _audit(request, user, action_type="consent_recorded",
-           summary=f"Consent recorded for {patient_id}: {body.purpose} via {body.method}",
-           patient_id=patient_id, target_type="consent_record", target_id=rec["id"],
-           metadata={"purpose": body.purpose, "method": body.method,
-                     "notice_version": body.notice_version})
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _audit(
+        request,
+        user,
+        action_type="consent_recorded",
+        summary=f"Consent recorded for {patient_id}: {body.purpose} via {body.method}",
+        patient_id=patient_id,
+        target_type="consent_record",
+        target_id=rec["id"],
+        metadata={
+            "purpose": body.purpose,
+            "method": body.method,
+            "notice_version": body.notice_version,
+        },
+    )
     return rec
+
+
+_WITHDRAW_PATIENT_CONSENT_USER_DEFAULT = Depends(require_patient_access(CONSENT_RECORD))
 
 
 @consent_router.post("/{patient_id}/{consent_id}/withdraw")
@@ -203,7 +247,7 @@ def withdraw_patient_consent(
     consent_id: str,
     body: WithdrawalRequest,
     request: Request,
-    user: dict = Depends(require_patient_access(CONSENT_RECORD)),
+    user: dict = _WITHDRAW_PATIENT_CONSENT_USER_DEFAULT,
 ):
     """Withdraw a consent. Writes a NEW row; the original is never edited."""
     existing = consent.get_consent(consent_id)
@@ -221,18 +265,27 @@ def withdraw_patient_consent(
             reason=body.reason,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
-    _audit(request, user, action_type="consent_withdrawn",
-           summary=f"Consent {consent_id} withdrawn for {patient_id}",
-           patient_id=patient_id, target_type="consent_record", target_id=consent_id,
-           metadata={"purpose": wd["purpose"],
-                     "categories_for_review": wd["categories_for_review"]})
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    _audit(
+        request,
+        user,
+        action_type="consent_withdrawn",
+        summary=f"Consent {consent_id} withdrawn for {patient_id}",
+        patient_id=patient_id,
+        target_type="consent_record",
+        target_id=consent_id,
+        metadata={"purpose": wd["purpose"], "categories_for_review": wd["categories_for_review"]},
+    )
     return {"withdrawal": wd, "consent": consent.get_consent(consent_id)}
 
 
 # ════════════════════════════════════════════════════════════════
 #  Data-principal rights — the export
 # ════════════════════════════════════════════════════════════════
+
+
+_EXPORT_DATA_PRINCIPAL_USER_DEFAULT = Depends(require_patient_access("admin.overview"))
+
 
 @router.get("/data-principal/{patient_id}/export")
 def export_data_principal(
@@ -251,7 +304,7 @@ def export_data_principal(
     #
     # No `audit_action=` — the explicit phi_access row below carries the section
     # and row counts, which a generic read audit cannot.
-    user: dict = Depends(require_patient_access("admin.overview")),
+    user: dict = _EXPORT_DATA_PRINCIPAL_USER_DEFAULT,
 ):
     """Everything Orb holds about one patient (DPDP s.11).
 
@@ -265,19 +318,28 @@ def export_data_principal(
     except ValueError:
         # Same 404 as an out-of-scope patient: an admin probing ids learns
         # nothing from the difference.
-        raise HTTPException(status_code=404, detail="Patient not found")
+        raise HTTPException(status_code=404, detail="Patient not found") from None
 
-    _audit(request, user, category="phi_access", action_type="data_principal_export",
-           summary=(f"DPDP data-principal export for {patient_id}: "
-                    f"{payload['record_count']} records across "
-                    f"{payload['section_count']} sections"),
-           patient_id=patient_id, target_type="patient", target_id=patient_id,
-           metadata={
-               "record_count": payload["record_count"],
-               "section_count": payload["section_count"],
-               "sections": {k: v["row_count"] for k, v in payload["sections"].items()},
-               "basis": "DPDP Act 2023 s.11",
-           })
+    _audit(
+        request,
+        user,
+        category="phi_access",
+        action_type="data_principal_export",
+        summary=(
+            f"DPDP data-principal export for {patient_id}: "
+            f"{payload['record_count']} records across "
+            f"{payload['section_count']} sections"
+        ),
+        patient_id=patient_id,
+        target_type="patient",
+        target_id=patient_id,
+        metadata={
+            "record_count": payload["record_count"],
+            "section_count": payload["section_count"],
+            "sections": {k: v["row_count"] for k, v in payload["sections"].items()},
+            "basis": "DPDP Act 2023 s.11",
+        },
+    )
     return payload
 
 
@@ -285,11 +347,15 @@ def export_data_principal(
 #  Retention
 # ════════════════════════════════════════════════════════════════
 
+
+_GET_RETENTION_USER_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.get("/retention")
 def get_retention(
     request: Request,
-    patient_id: Optional[str] = None,
-    user: dict = Depends(require_permission("admin.overview")),
+    patient_id: str | None = None,
+    user: dict = _GET_RETENTION_USER_DEFAULT,
 ):
     """The retention matrix plus what is past it. Deletes nothing, ever."""
     if patient_id:
@@ -304,11 +370,15 @@ def get_retention(
 #  Erasure
 # ════════════════════════════════════════════════════════════════
 
+
+_CREATE_ERASURE_REQUEST_USER_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.post("/erasure")
 def create_erasure_request(
     body: ErasureRequestBody,
     request: Request,
-    user: dict = Depends(require_permission("admin.overview")),
+    user: dict = _CREATE_ERASURE_REQUEST_USER_DEFAULT,
 ):
     """Record a right-to-erasure request. Decides nothing, deletes nothing."""
     enforce_patient_scope(user, body.patient_id)
@@ -322,82 +392,112 @@ def create_erasure_request(
             note=body.note,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    _audit(request, user, action_type="erasure_request_recorded",
-           summary=f"Erasure request recorded for {body.patient_id}",
-           patient_id=body.patient_id, target_type="erasure_request",
-           target_id=req["id"], metadata={"categories": body.categories})
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _audit(
+        request,
+        user,
+        action_type="erasure_request_recorded",
+        summary=f"Erasure request recorded for {body.patient_id}",
+        patient_id=body.patient_id,
+        target_type="erasure_request",
+        target_id=req["id"],
+        metadata={"categories": body.categories},
+    )
     return req
+
+
+_LIST_ERASURE_USER_DEFAULT = Depends(require_permission("admin.overview"))
 
 
 @router.get("/erasure")
 def list_erasure(
-    patient_id: Optional[str] = None,
-    status: Optional[str] = None,
-    user: dict = Depends(require_permission("admin.overview")),
+    patient_id: str | None = None,
+    status: str | None = None,
+    user: dict = _LIST_ERASURE_USER_DEFAULT,
 ):
     if patient_id:
         enforce_patient_scope(user, patient_id)
     # Every row names a patient, so the LISTING is ward-scoped too — not just
     # the by-id lookups. department_scope() returns None for a genuinely
     # unscoped governance account, which the service reads as "no filter".
-    return {"requests": consent.list_erasure_requests(
-        patient_id=patient_id, status=status, department=department_scope(user))}
+    return {
+        "requests": consent.list_erasure_requests(
+            patient_id=patient_id, status=status, department=department_scope(user)
+        )
+    }
+
+
+_GET_ERASURE_USER_DEFAULT = Depends(require_permission("admin.overview"))
 
 
 @router.get("/erasure/{request_id}")
 def get_erasure(
     request_id: str,
-    user: dict = Depends(require_permission("admin.overview")),
+    user: dict = _GET_ERASURE_USER_DEFAULT,
 ):
     try:
         detail = consent.get_erasure_request(request_id)
     except ValueError:
-        raise HTTPException(status_code=404, detail="Erasure request not found")
+        raise HTTPException(status_code=404, detail="Erasure request not found") from None
     enforce_patient_scope(user, detail["request"]["patient_id"])
     return detail
+
+
+_ADJUDICATE_ERASURE_USER_DEFAULT = Depends(require_permission("admin.overview"))
 
 
 @router.post("/erasure/{request_id}/adjudicate")
 def adjudicate_erasure(
     request_id: str,
     request: Request,
-    user: dict = Depends(require_permission("admin.overview")),
+    user: dict = _ADJUDICATE_ERASURE_USER_DEFAULT,
 ):
     """Apply the retention matrix: honour what may be erased, refuse the rest
     with a stated reason and the authority that compels retention."""
     try:
         detail = consent.get_erasure_request(request_id)
     except ValueError:
-        raise HTTPException(status_code=404, detail="Erasure request not found")
+        raise HTTPException(status_code=404, detail="Erasure request not found") from None
     enforce_patient_scope(user, detail["request"]["patient_id"])
     try:
         result = consent.adjudicate_erasure_request(request_id, decided_by=user["id"])
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
-    _audit(request, user, action_type="erasure_request_adjudicated",
-           summary=(f"Erasure request {request_id} decided: "
-                    f"{result['honoured_count']} honoured, "
-                    f"{result['refused_count']} refused"),
-           patient_id=result["patient_id"], target_type="erasure_request",
-           target_id=request_id,
-           metadata={"honoured": result["honoured_count"],
-                     "refused": result["refused_count"],
-                     "executable": result["executable_count"]})
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    _audit(
+        request,
+        user,
+        action_type="erasure_request_adjudicated",
+        summary=(
+            f"Erasure request {request_id} decided: "
+            f"{result['honoured_count']} honoured, "
+            f"{result['refused_count']} refused"
+        ),
+        patient_id=result["patient_id"],
+        target_type="erasure_request",
+        target_id=request_id,
+        metadata={
+            "honoured": result["honoured_count"],
+            "refused": result["refused_count"],
+            "executable": result["executable_count"],
+        },
+    )
     return result
+
+
+_EXECUTE_ERASURE_USER_DEFAULT = Depends(require_permission("admin.overview"))
 
 
 @router.post("/erasure/{request_id}/execute")
 def execute_erasure(
     request_id: str,
     request: Request,
-    user: dict = Depends(require_permission("admin.overview")),
+    user: dict = _EXECUTE_ERASURE_USER_DEFAULT,
 ):
     """Carry out only what was adjudicated honourable AND executable."""
     try:
         detail = consent.get_erasure_request(request_id)
     except ValueError:
-        raise HTTPException(status_code=404, detail="Erasure request not found")
+        raise HTTPException(status_code=404, detail="Erasure request not found") from None
     enforce_patient_scope(user, detail["request"]["patient_id"])
 
     # INTENT FIRST, and this ordering is the point. Erasure is irreversible, and
@@ -406,33 +506,56 @@ def execute_erasure(
     # nothing destroyed. Auditing only afterwards would put the one case that
     # matters (audit unavailable) on the wrong side of the line: data gone, no
     # record that anyone asked for it.
-    _audit(request, user, category="phi_access", action_type="erasure_execution_started",
-           summary=(f"About to execute erasure request {request_id} for patient "
-                    f"{detail['request']['patient_id']}"),
-           patient_id=detail["request"]["patient_id"], target_type="erasure_request",
-           target_id=request_id,
-           metadata={"categories": [d["category"] for d in detail["decisions"]
-                                    if d["disposition"] == "honoured" and d["executable"]]})
+    _audit(
+        request,
+        user,
+        category="phi_access",
+        action_type="erasure_execution_started",
+        summary=(
+            f"About to execute erasure request {request_id} for patient "
+            f"{detail['request']['patient_id']}"
+        ),
+        patient_id=detail["request"]["patient_id"],
+        target_type="erasure_request",
+        target_id=request_id,
+        metadata={
+            "categories": [
+                d["category"]
+                for d in detail["decisions"]
+                if d["disposition"] == "honoured" and d["executable"]
+            ]
+        },
+    )
 
     try:
         result = consent.execute_erasure_request(request_id, executed_by=user["id"])
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     # And the outcome row, also fail-closed: what was actually destroyed. Audio
     # files are removed after the commit, so one that would not go is named
     # here and the row says partial rather than success.
     left = result.get("files_not_removed") or []
-    _audit(request, user, category="phi_access", action_type="erasure_executed",
-           outcome="partial_success" if left else "success",
-           summary=(f"Erasure request {request_id} executed: "
-                    f"{result['rows_erased']} rows erased"
-                    + (f"; {len(left)} audio file(s) could not be removed" if left else "")),
-           patient_id=result["patient_id"], target_type="erasure_request",
-           target_id=request_id,
-           metadata={"rows_erased": result["rows_erased"],
-                     "categories": [c["category"] for c in result["categories"]],
-                     "files_not_removed": left,
-                     "retained": [t["table"] for t in result.get("retained") or []]})
+    _audit(
+        request,
+        user,
+        category="phi_access",
+        action_type="erasure_executed",
+        outcome="partial_success" if left else "success",
+        summary=(
+            f"Erasure request {request_id} executed: "
+            f"{result['rows_erased']} rows erased"
+            + (f"; {len(left)} audio file(s) could not be removed" if left else "")
+        ),
+        patient_id=result["patient_id"],
+        target_type="erasure_request",
+        target_id=request_id,
+        metadata={
+            "rows_erased": result["rows_erased"],
+            "categories": [c["category"] for c in result["categories"]],
+            "files_not_removed": left,
+            "retained": [t["table"] for t in result.get("retained") or []],
+        },
+    )
     return result
 
 
@@ -440,11 +563,15 @@ def execute_erasure(
 #  Breach register
 # ════════════════════════════════════════════════════════════════
 
+
+_CREATE_BREACH_USER_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.post("/breaches")
 def create_breach(
     body: BreachBody,
     request: Request,
-    user: dict = Depends(require_permission("admin.overview")),
+    user: dict = _CREATE_BREACH_USER_DEFAULT,
 ):
     try:
         rec = consent.record_breach(
@@ -462,29 +589,42 @@ def create_breach(
             containment_actions=body.containment_actions,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    _audit(request, user, category="security", action_type="breach_recorded",
-           summary=f"Personal data breach recorded: {body.nature}",
-           target_type="breach_record", target_id=rec["id"],
-           metadata={"nature": body.nature,
-                     "principals_affected": body.principals_affected})
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _audit(
+        request,
+        user,
+        category="security",
+        action_type="breach_recorded",
+        summary=f"Personal data breach recorded: {body.nature}",
+        target_type="breach_record",
+        target_id=rec["id"],
+        metadata={"nature": body.nature, "principals_affected": body.principals_affected},
+    )
     return rec
 
 
+_GET_BREACHES_USER_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.get("/breaches")
-def get_breaches(user: dict = Depends(require_permission("admin.overview"))):
+def get_breaches(user: dict = _GET_BREACHES_USER_DEFAULT):
     return {"breaches": consent.list_breaches()}
 
 
+_GET_BREACH_DETAIL_USER_DEFAULT = Depends(require_permission("admin.overview"))
+
+
 @router.get("/breaches/{breach_id}")
-def get_breach_detail(breach_id: str,
-                      user: dict = Depends(require_permission("admin.overview"))):
+def get_breach_detail(breach_id: str, user: dict = _GET_BREACH_DETAIL_USER_DEFAULT):
     """One breach. The incident is visible hospital-wide; the list of affected
     PATIENTS is filtered to the caller's ward, with the withheld count stated."""
     try:
         return consent.get_breach(breach_id, department=department_scope(user))
     except ValueError:
-        raise HTTPException(status_code=404, detail="Breach record not found")
+        raise HTTPException(status_code=404, detail="Breach record not found") from None
+
+
+_CREATE_BREACH_NOTIFICATION_USER_DEFAULT = Depends(require_permission("admin.overview"))
 
 
 @router.post("/breaches/{breach_id}/notifications")
@@ -492,7 +632,7 @@ def create_breach_notification(
     breach_id: str,
     body: BreachNotificationBody,
     request: Request,
-    user: dict = Depends(require_permission("admin.overview")),
+    user: dict = _CREATE_BREACH_NOTIFICATION_USER_DEFAULT,
 ):
     """Record that the Board, or the affected people, were told — and when."""
     try:
@@ -507,10 +647,15 @@ def create_breach_notification(
             recorded_by=user["id"],
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    _audit(request, user, category="security", action_type="breach_notification_recorded",
-           summary=(f"Breach {breach_id} notification to {body.party_type}: "
-                    f"{body.notified_party}"),
-           target_type="breach_record", target_id=breach_id,
-           metadata={"party_type": body.party_type, "reference": body.reference})
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _audit(
+        request,
+        user,
+        category="security",
+        action_type="breach_notification_recorded",
+        summary=(f"Breach {breach_id} notification to {body.party_type}: {body.notified_party}"),
+        target_type="breach_record",
+        target_id=breach_id,
+        metadata={"party_type": body.party_type, "reference": body.reference},
+    )
     return notif

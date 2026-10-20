@@ -26,6 +26,7 @@ The template id is written out here rather than imported from
 services/who_checklist: a migration must keep doing exactly what it did when it
 shipped, whatever the service later calls its template.
 """
+
 from __future__ import annotations
 
 import json

@@ -81,18 +81,20 @@ This module never reads the observations table itself: the writes go through
 services/ingestion_service.py and the reads through services/lab_observations.py,
 as tests/test_lab_observation_readers.py requires of every lane.
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import re
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
-from typing import Any, Optional
+from typing import Any
 
 import config
 from database import db_session
+
 from services.audit_service import log_audit_event
 from services.clinical_time import utc_iso_now
 
@@ -161,6 +163,7 @@ class QuarantineInvalid(QuarantineError):
 #  Switch and reachability
 # ════════════════════════════════════════════════════════════════════════════
 
+
 def queue_on() -> bool:
     """ORB_RESULT_QUARANTINE, read at call time."""
     return bool(config.feature_enabled(FEATURE_ID))
@@ -191,7 +194,8 @@ def queue_reachable(db) -> bool:
 #  Writing a result into the queue (called by the ingestion lane)
 # ════════════════════════════════════════════════════════════════════════════
 
-def _clean(value: Any) -> Optional[str]:
+
+def _clean(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
@@ -210,9 +214,12 @@ def device_source_labels() -> frozenset[str]:
     ingested_json, ingested_fhir, csv_replay) is UNKNOWN there, so it stays a
     result feed."""
     from services.vitals_source import base
+
     return frozenset(
-        label.strip().lower() for label in base._LABEL_KIND
-        if base.classify_source_label(label) is not base.SourceKind.UNKNOWN)
+        label.strip().lower()
+        for label in base._LABEL_KIND
+        if base.classify_source_label(label) is not base.SourceKind.UNKNOWN
+    )
 
 
 @lru_cache(maxsize=1)
@@ -220,9 +227,13 @@ def device_code_systems() -> frozenset[str]:
     """OBX-3.3 coding systems only a bedside monitor writes (IEEE 11073 MDC
     and the vendor systems in vitals_source/vendor_profiles.py), upper case."""
     from services.vitals_source import vendor_profiles
+
     return frozenset(
-        system.strip().upper() for profile in vendor_profiles.all_profiles()
-        for system in profile.coding_systems if system and system.strip())
+        system.strip().upper()
+        for profile in vendor_profiles.all_profiles()
+        for system in profile.coding_systems
+        if system and system.strip()
+    )
 
 
 def takes_result(source_label: Any, code_system: Any) -> bool:
@@ -242,8 +253,15 @@ def takes_result(source_label: Any, code_system: Any) -> bool:
     return True
 
 
-def enqueue_in_txn(db, evt, *, event_id: Optional[int], source_label: str,
-                   lane: str = "ingestion", reason: str = "unmatched_patient") -> int:
+def enqueue_in_txn(
+    db,
+    evt,
+    *,
+    event_id: int | None,
+    source_label: str,
+    lane: str = "ingestion",
+    reason: str = "unmatched_patient",
+) -> int:
     """Insert one unmatched result on the caller's open transaction and return
     its queue id. `evt` is a services.ingestion_adapters.CanonicalEvent."""
     if lane not in LANES:
@@ -258,10 +276,20 @@ def enqueue_in_txn(db, evt, *, event_id: Optional[int], source_label: str,
             raw_patient_identifier, raw_patient_name, raw_patient_dob,
             observation_code, observation_name, observed_at, status, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)""",
-        (lane, reason, json.dumps(payload, default=str), source_label, event_id,
-         raw_id, _clean(evt.patient_name), _clean(evt.patient_dob),
-         _clean(evt.observation_code), _clean(evt.observation_name) or "Unknown",
-         _clean(evt.observed_at), utc_iso_now()),
+        (
+            lane,
+            reason,
+            json.dumps(payload, default=str),
+            source_label,
+            event_id,
+            raw_id,
+            _clean(evt.patient_name),
+            _clean(evt.patient_dob),
+            _clean(evt.observation_code),
+            _clean(evt.observation_name) or "Unknown",
+            _clean(evt.observed_at),
+            utc_iso_now(),
+        ),
     )
     return int(cursor.lastrowid)
 
@@ -270,14 +298,16 @@ def enqueue_in_txn(db, evt, *, event_id: Optional[int], source_label: str,
 #  The one-time sweep of results stored with no patient
 # ════════════════════════════════════════════════════════════════════════════
 
-def _identity_from_raw_event(db, event_id: Optional[int]) -> dict:
+
+def _identity_from_raw_event(db, event_id: int | None) -> dict:
     """What the original message said about the patient, for a swept row."""
+    out: dict[str, Any]
     out = {"identifiers": [], "name": None, "dob": None, "sex": None}
     if not event_id:
         return out
     row = db.execute(
-        "SELECT patient_identifier_raw, raw_payload FROM ingestion_events WHERE id = ?",
-        (event_id,)).fetchone()
+        "SELECT patient_identifier_raw, raw_payload FROM ingestion_events WHERE id = ?", (event_id,)
+    ).fetchone()
     if row is None:
         return out
     raw = (row["raw_payload"] or "").strip()
@@ -285,6 +315,7 @@ def _identity_from_raw_event(db, event_id: Optional[int]) -> dict:
         if raw.startswith("MSH|"):
             from services.ingestion_adapters import hl7_patient_identity
             from services.vitals_source import hl7v2
+
             out = hl7_patient_identity(hl7v2.parse(raw).first("PID"))
         elif raw.startswith("{"):
             data = json.loads(raw)
@@ -311,21 +342,27 @@ def sweep_unlinked(*, batch: int = 500) -> int:
     if not queue_on():
         return 0
     from services import ingestion_service
+
     copied = 0
     identities: dict = {}  # one parse per raw message, however many results it held
     while True:
         copied_now = 0
         with db_session(immediate=True) as db:
             rows = ingestion_service.unlinked_observations_not_queued(
-                db, limit=batch, exclude_sources=device_source_labels(),
-                exclude_code_systems=device_code_systems())
+                db,
+                limit=batch,
+                exclude_sources=device_source_labels(),
+                exclude_code_systems=device_code_systems(),
+            )
             for ob in rows:
                 event_id = ob["source_event_id"]
                 if event_id not in identities:
                     identities[event_id] = _identity_from_raw_event(db, event_id)
                 identity = identities[event_id]
                 payload = {
-                    "patient_identifier": identity["identifiers"][0] if identity["identifiers"] else "",
+                    "patient_identifier": identity["identifiers"][0]
+                    if identity["identifiers"]
+                    else "",
                     "patient_identifiers": identity["identifiers"],
                     "patient_name": identity["name"],
                     "patient_dob": identity["dob"],
@@ -333,8 +370,9 @@ def sweep_unlinked(*, batch: int = 500) -> int:
                     "observation_name": ob["observation_name"],
                     "observation_code": ob["observation_code"],
                     "observation_code_system": ob["observation_code_system"],
-                    "value": ob["value_text"] if ob["value_text"] is not None else (
-                        "" if ob["value_numeric"] is None else str(ob["value_numeric"])),
+                    "value": ob["value_text"]
+                    if ob["value_text"] is not None
+                    else ("" if ob["value_numeric"] is None else str(ob["value_numeric"])),
                     "value_numeric": ob["value_numeric"],
                     "unit": ob["unit"],
                     "reference_range": ob["reference_range"],
@@ -354,10 +392,19 @@ def sweep_unlinked(*, batch: int = 500) -> int:
                         status, created_at)
                        VALUES ('ingestion', 'unmatched_patient', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                                'open', ?)""",
-                    (json.dumps(payload, default=str), ob["source"], ob["source_event_id"],
-                     ob["id"], payload["patient_identifier"] or None, identity["name"],
-                     identity["dob"], ob["observation_code"], ob["observation_name"],
-                     ob["observed_at"], utc_iso_now()),
+                    (
+                        json.dumps(payload, default=str),
+                        ob["source"],
+                        ob["source_event_id"],
+                        ob["id"],
+                        payload["patient_identifier"] or None,
+                        identity["name"],
+                        identity["dob"],
+                        ob["observation_code"],
+                        ob["observation_name"],
+                        ob["observed_at"],
+                        utc_iso_now(),
+                    ),
                 )
                 copied_now += cur.rowcount or 0
         copied += copied_now
@@ -366,8 +413,11 @@ def sweep_unlinked(*, batch: int = 500) -> int:
         if len(rows) < batch or not copied_now:
             break
     if copied:
-        logger.warning("Unmatched results queue: %d result(s) stored with no patient before the "
-                       "queue was switched on are now in the queue for laboratory staff", copied)
+        logger.warning(
+            "Unmatched results queue: %d result(s) stored with no patient before the "
+            "queue was switched on are now in the queue for laboratory staff",
+            copied,
+        )
     return copied
 
 
@@ -375,10 +425,12 @@ def sweep_unlinked(*, batch: int = 500) -> int:
 #  Who can work the queue
 # ════════════════════════════════════════════════════════════════════════════
 
+
 def reconciler_roles() -> list[str]:
     """Roles holding ingest.reconcile whose part of Orb is switched on."""
     import roles as roles_mod
     from permissions import INGEST_RECONCILE, ROLE_PERMISSIONS
+
     out = []
     for role, perms in ROLE_PERMISSIONS.items():
         if role == "clinician" or INGEST_RECONCILE not in perms:
@@ -396,9 +448,12 @@ def active_reconciler_count(db) -> int:
     if not roles:
         return 0
     marks = ", ".join("?" for _ in roles)
-    return int(db.execute(
-        f"SELECT COUNT(*) FROM users WHERE role IN ({marks}) AND COALESCE(is_active, 1) = 1",
-        tuple(roles)).fetchone()[0])
+    return int(
+        db.execute(
+            f"SELECT COUNT(*) FROM users WHERE role IN ({marks}) AND COALESCE(is_active, 1) = 1",
+            tuple(roles),
+        ).fetchone()[0]
+    )
 
 
 def _counts(db) -> dict:
@@ -406,7 +461,8 @@ def _counts(db) -> dict:
     for row in db.execute("SELECT status, COUNT(*) AS n FROM result_quarantine GROUP BY status"):
         out[row["status"]] = int(row["n"])
     oldest = db.execute(
-        "SELECT MIN(created_at) FROM result_quarantine WHERE status = 'open'").fetchone()[0]
+        "SELECT MIN(created_at) FROM result_quarantine WHERE status = 'open'"
+    ).fetchone()[0]
     out["oldest_open_at"] = oldest
     return out
 
@@ -420,8 +476,9 @@ def boot_check() -> dict:
     try:
         summary["swept"] = sweep_unlinked()
     except Exception:
-        logger.error("Unmatched results queue: the sweep of results with no patient failed",
-                     exc_info=True)
+        logger.error(
+            "Unmatched results queue: the sweep of results with no patient failed", exc_info=True
+        )
     try:
         with db_session() as db:
             summary["reconcilers"] = active_reconciler_count(db)
@@ -433,7 +490,8 @@ def boot_check() -> dict:
             "ORB_RESULT_QUARANTINE is on but no active account can attach or discard an "
             "unmatched result (ingest.reconcile is held by laboratory staff only, ruling "
             "LIS-R17, and needs ORB_LAB on). Results that match no patient will wait unseen "
-            "by any chart until a laboratory account exists. Switch the queue off or create one.")
+            "by any chart until a laboratory account exists. Switch the queue off or create one."
+        )
     return summary
 
 
@@ -441,6 +499,7 @@ async def _boot_task() -> None:
     """The one-shot boot hook, run by services/lab_module.startup in every
     module state (it is not a laboratory-only check)."""
     from database import run_db
+
     try:
         await run_db(boot_check)
     except Exception:
@@ -450,8 +509,10 @@ async def _boot_task() -> None:
 def _register_boot_task() -> None:
     try:
         from services import lab_module
-        lab_module.register_loop("result-quarantine-boot", _boot_task,
-                                 states=tuple(config.MODULE_STATES))
+
+        lab_module.register_loop(
+            "result-quarantine-boot", _boot_task, states=tuple(config.MODULE_STATES)
+        )
     except Exception:  # pragma: no cover - boot must not fail on this
         logger.warning("Unmatched results queue: boot check not registered", exc_info=True)
 
@@ -459,7 +520,7 @@ def _register_boot_task() -> None:
 _register_boot_task()
 
 
-def compliance_control() -> Optional[dict]:
+def compliance_control() -> dict | None:
     """The compliance report's line for the queue, or None when the switch is
     off and nothing is left in it (a site that never used it sees no line)."""
     on = queue_on()
@@ -471,7 +532,8 @@ def compliance_control() -> Optional[dict]:
         if not on:
             return None
         return {
-            "id": "result_quarantine", "name": "Unmatched laboratory results",
+            "id": "result_quarantine",
+            "name": "Unmatched laboratory results",
             "status": "unknown",
             "evidence": "The unmatched results queue is switched on, but Orb could not read it.",
             "remediation": "Contact Orb support: the unmatched results queue could not be read.",
@@ -480,48 +542,59 @@ def compliance_control() -> Optional[dict]:
     open_n = counts["open"]
     if not on and not open_n:
         return None
-    control = {"id": "result_quarantine", "name": "Unmatched laboratory results",
-               "settings": ["ORB_RESULT_QUARANTINE"]}
+    control = {
+        "id": "result_quarantine",
+        "name": "Unmatched laboratory results",
+        "settings": ["ORB_RESULT_QUARANTINE"],
+    }
     if on and not reconcilers:
         control.update(
             status="fail",
             evidence=(
                 f"Interfaced results that match no patient are held for laboratory staff, "
                 f"but no active account can attach or discard them. {open_n} result(s) are "
-                f"waiting, and none of them reaches any patient's chart until someone does."),
+                f"waiting, and none of them reaches any patient's chart until someone does."
+            ),
             remediation=(
                 "Create a laboratory technician or pathologist account (the laboratory module "
-                "must be on), or switch the queue off so unmatched results are stored as before."),
+                "must be on), or switch the queue off so unmatched results are stored as before."
+            ),
         )
         return control
     if not on:
         control.update(
             status="warn",
-            evidence=(f"The unmatched results queue is switched off, and {open_n} result(s) in it "
-                      f"have not been attached or discarded."),
+            evidence=(
+                f"The unmatched results queue is switched off, and {open_n} result(s) in it "
+                f"have not been attached or discarded."
+            ),
             remediation="Have laboratory staff attach or discard each one on the Laboratory screen.",
         )
         return control
     oldest = _parse_instant(counts.get("oldest_open_at"))
-    stale = bool(oldest and datetime.now(timezone.utc) - oldest > timedelta(hours=STALE_OPEN_HOURS))
+    stale = bool(oldest and datetime.now(UTC) - oldest > timedelta(hours=STALE_OPEN_HOURS))
     if stale:
         control.update(
             status="warn",
-            evidence=(f"{open_n} unmatched result(s) are waiting, the oldest for more than "
-                      f"{STALE_OPEN_HOURS} hours. None of them is on any patient's chart."),
+            evidence=(
+                f"{open_n} unmatched result(s) are waiting, the oldest for more than "
+                f"{STALE_OPEN_HOURS} hours. None of them is on any patient's chart."
+            ),
             remediation="Ask the laboratory to work the unmatched results list today.",
         )
     else:
         control.update(
             status="pass",
-            evidence=(f"Interfaced results that match no patient are held for laboratory staff "
-                      f"({reconcilers} account(s) can decide). {open_n} waiting now."),
+            evidence=(
+                f"Interfaced results that match no patient are held for laboratory staff "
+                f"({reconcilers} account(s) can decide). {open_n} waiting now."
+            ),
             remediation="Check the list each day; an unmatched result is a result no chart shows.",
         )
     return control
 
 
-def _parse_instant(value: Any) -> Optional[datetime]:
+def _parse_instant(value: Any) -> datetime | None:
     if not value:
         return None
     try:
@@ -529,7 +602,7 @@ def _parse_instant(value: Any) -> Optional[datetime]:
         if text.endswith("Z"):
             text = text[:-1] + "+00:00"
         dt = datetime.fromisoformat(text)
-        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
     except ValueError:
         return None
 
@@ -537,6 +610,7 @@ def _parse_instant(value: Any) -> Optional[datetime]:
 # ════════════════════════════════════════════════════════════════════════════
 #  The list
 # ════════════════════════════════════════════════════════════════════════════
+
 
 def _payload(row) -> dict:
     try:
@@ -551,7 +625,7 @@ def _payload(row) -> dict:
 _DEFAULT_SOURCE_NAMES = frozenset({"hl7_sender", "dev_replay"})
 
 
-def _sender_words(hl7_sender: Any, source_name: Any) -> Optional[str]:
+def _sender_words(hl7_sender: Any, source_name: Any) -> str | None:
     """Who sent the result, for the lists: the sending application and
     facility the message names (MSH-3, MSH-4), else the name the connection
     gave, else None."""
@@ -562,7 +636,7 @@ def _sender_words(hl7_sender: Any, source_name: Any) -> Optional[str]:
     return None if not label or label in _DEFAULT_SOURCE_NAMES else label
 
 
-def _display_value(payload: dict) -> Optional[str]:
+def _display_value(payload: dict) -> str | None:
     text = payload.get("value")
     if text is not None and str(text).strip():
         return str(text)
@@ -584,8 +658,10 @@ def list_queue(*, status: str = "open", limit: int = 100, full: bool) -> dict:
     with db_session() as db:
         if not queue_reachable(db):
             raise QuarantineNotFound(
-                "feature_disabled", "The unmatched results queue is switched off on this site.",
-                feature=FEATURE_ID)
+                "feature_disabled",
+                "The unmatched results queue is switched off on this site.",
+                feature=FEATURE_ID,
+            )
         rows = db.execute(
             f"""SELECT q.*, e.source_name AS sender, u.name AS resolved_by_name
                 FROM result_quarantine q
@@ -594,7 +670,8 @@ def list_queue(*, status: str = "open", limit: int = 100, full: bool) -> dict:
                 {where}
                 ORDER BY q.created_at DESC, q.id DESC
                 LIMIT ?""",
-            params + (limit,)).fetchall()
+            params + (limit,),
+        ).fetchall()
         counts = _counts(db)
     items = []
     for row in rows:
@@ -615,35 +692,43 @@ def list_queue(*, status: str = "open", limit: int = 100, full: bool) -> dict:
             identifiers = [i for i in (payload.get("patient_identifiers") or []) if _clean(i)]
             if not identifiers and _clean(row["raw_patient_identifier"]):
                 identifiers = [_clean(row["raw_patient_identifier"])]
-            item.update({
-                # Whether the message names the patient in at least two ways.
-                # Fewer can never pass the two-identifier check, so the screen
-                # offers only Discard and says why.
-                "identifiable": message_identity_kinds(_message_identity(row, payload))
-                >= REQUIRED_MATCHES,
-                "reason": row["reason"],
-                "observation_code": row["observation_code"],
-                "value": _display_value(payload),
-                "unit": payload.get("unit"),
-                "abnormal_flag": payload.get("abnormal_flag"),
-                "reference_range": payload.get("reference_range"),
-                "result_status": payload.get("status"),
-                "message_identifiers": identifiers,
-                "message_name": row["raw_patient_name"],
-                "message_date_of_birth": row["raw_patient_dob"],
-                "message_sex": payload.get("patient_sex"),
-                "resolved_by_name": row["resolved_by_name"],
-                "resolution_reason": row["resolution_reason"],
-                "attached_patient_id": row["attached_patient_id"],
-            })
+            item.update(
+                {
+                    # Whether the message names the patient in at least two ways.
+                    # Fewer can never pass the two-identifier check, so the screen
+                    # offers only Discard and says why.
+                    "identifiable": message_identity_kinds(_message_identity(row, payload))
+                    >= REQUIRED_MATCHES,
+                    "reason": row["reason"],
+                    "observation_code": row["observation_code"],
+                    "value": _display_value(payload),
+                    "unit": payload.get("unit"),
+                    "abnormal_flag": payload.get("abnormal_flag"),
+                    "reference_range": payload.get("reference_range"),
+                    "result_status": payload.get("status"),
+                    "message_identifiers": identifiers,
+                    "message_name": row["raw_patient_name"],
+                    "message_date_of_birth": row["raw_patient_dob"],
+                    "message_sex": payload.get("patient_sex"),
+                    "resolved_by_name": row["resolved_by_name"],
+                    "resolution_reason": row["resolution_reason"],
+                    "attached_patient_id": row["attached_patient_id"],
+                }
+            )
         items.append(item)
-    return {"enabled": queue_on(), "view": "reconcile" if full else "monitor",
-            "status": status, "counts": counts, "items": items}
+    return {
+        "enabled": queue_on(),
+        "view": "reconcile" if full else "monitor",
+        "status": status,
+        "counts": counts,
+        "items": items,
+    }
 
 
 # ════════════════════════════════════════════════════════════════════════════
 #  The two-identifier check
 # ════════════════════════════════════════════════════════════════════════════
+
 
 def _number(value: Any) -> str:
     return re.sub(r"\s+", "", str(value or "")).upper()
@@ -653,20 +738,26 @@ def _name_tokens(value: Any) -> list[str]:
     return sorted(re.findall(r"[0-9a-z]+", str(value or "").lower()))
 
 
-def _date_only(value: Any) -> Optional[str]:
+def _date_only(value: Any) -> str | None:
     match = re.match(r"^\s*(\d{4})-(\d{2})-(\d{2})", str(value or ""))
     if not match:
         return None
     try:
-        return datetime(int(match.group(1)), int(match.group(2)),
-                        int(match.group(3))).strftime("%Y-%m-%d")
+        return datetime(int(match.group(1)), int(match.group(2)), int(match.group(3))).strftime(
+            "%Y-%m-%d"
+        )
     except ValueError:
         return None
 
 
-def identity_checks(message: dict, record: Optional[dict], typed: dict, *,
-                    message_names_another: bool = False,
-                    name_and_dob_shared: bool = False) -> dict[str, str]:
+def identity_checks(
+    message: dict,
+    record: dict | None,
+    typed: dict,
+    *,
+    message_names_another: bool = False,
+    name_and_dob_shared: bool = False,
+) -> dict[str, str]:
     """One outcome per identifier kind. Pure: no database.
 
     message: {"identifiers": [...], "name": str|None, "dob": "YYYY-MM-DD"|None}
@@ -725,8 +816,12 @@ def identity_checks(message: dict, record: Optional[dict], typed: dict, *,
     else:
         out["date_of_birth"] = MATCH if _date_only(message.get("dob")) == dob else NO_MATCH
 
-    if (name_and_dob_shared and out["hospital_number"] != MATCH
-            and out["name"] == MATCH and out["date_of_birth"] == MATCH):
+    if (
+        name_and_dob_shared
+        and out["hospital_number"] != MATCH
+        and out["name"] == MATCH
+        and out["date_of_birth"] == MATCH
+    ):
         out["name"] = SHARED
         out["date_of_birth"] = SHARED
     return out
@@ -735,11 +830,13 @@ def identity_checks(message: dict, record: Optional[dict], typed: dict, *,
 def message_identity_kinds(message: dict) -> int:
     """How many identifier kinds the message carries at all (a number, a name,
     a real date of birth). Pure. Below REQUIRED_MATCHES no attach can pass."""
-    return sum((
-        any(_number(i) for i in (message.get("identifiers") or [])),
-        bool(_name_tokens(message.get("name"))),
-        _date_only(message.get("dob")) is not None,
-    ))
+    return sum(
+        (
+            any(_number(i) for i in (message.get("identifiers") or [])),
+            bool(_name_tokens(message.get("name"))),
+            _date_only(message.get("dob")) is not None,
+        )
+    )
 
 
 def identity_confirmed(checks: dict[str, str]) -> bool:
@@ -753,14 +850,19 @@ def identity_confirmed(checks: dict[str, str]) -> bool:
 
 def _message_identity(row, payload: dict) -> dict:
     identifiers = [i for i in (payload.get("patient_identifiers") or []) if _clean(i)]
-    if _clean(row["raw_patient_identifier"]) and _clean(row["raw_patient_identifier"]) not in identifiers:
+    if (
+        _clean(row["raw_patient_identifier"])
+        and _clean(row["raw_patient_identifier"]) not in identifiers
+    ):
         identifiers.append(_clean(row["raw_patient_identifier"]))
-    return {"identifiers": identifiers,
-            "name": row["raw_patient_name"] or payload.get("patient_name"),
-            "dob": row["raw_patient_dob"] or payload.get("patient_dob")}
+    return {
+        "identifiers": identifiers,
+        "name": row["raw_patient_name"] or payload.get("patient_name"),
+        "dob": row["raw_patient_dob"] or payload.get("patient_dob"),
+    }
 
 
-def _find_patient(db, hospital_number: str) -> Optional[dict]:
+def _find_patient(db, hospital_number: str) -> dict | None:
     """The patient a typed hospital number names: Orb id, then hospital number,
     then hospital number ignoring case (the order the ingestion lane resolves
     one in). None when it names nobody.
@@ -772,18 +874,21 @@ def _find_patient(db, hospital_number: str) -> Optional[dict]:
     number = (hospital_number or "").strip()
     if not number:
         return None
-    for sql in ("SELECT id, mrn, name, date_of_birth FROM patients WHERE id = ?",
-                "SELECT id, mrn, name, date_of_birth FROM patients WHERE mrn = ?"):
+    for sql in (
+        "SELECT id, mrn, name, date_of_birth FROM patients WHERE id = ?",
+        "SELECT id, mrn, name, date_of_birth FROM patients WHERE mrn = ?",
+    ):
         row = db.execute(sql, (number,)).fetchone()
         if row:
             return dict(row)
     rows = db.execute(
         "SELECT id, mrn, name, date_of_birth FROM patients WHERE LOWER(mrn) = LOWER(?) LIMIT 2",
-        (number,)).fetchall()
+        (number,),
+    ).fetchall()
     return dict(rows[0]) if len(rows) == 1 else None
 
 
-def _message_names_another_patient(db, message: dict, record: dict) -> Optional[str]:
+def _message_names_another_patient(db, message: dict, record: dict) -> str | None:
     """The id of a patient other than `record` whom a hospital number in the
     message names now, or None.
 
@@ -805,7 +910,8 @@ def _message_names_another_patient(db, message: dict, record: dict) -> Optional[
                       OR UPPER(REPLACE(id, ' ', '')) = ?
                       OR UPPER(REPLACE(COALESCE(mrn, ''), ' ', '')) = ?)
                LIMIT 1""",
-            (record["id"], raw, raw, raw, _number(raw), _number(raw))).fetchone()
+            (record["id"], raw, raw, raw, _number(raw), _number(raw)),
+        ).fetchone()
         if row is not None:
             return row["id"]
     return None
@@ -836,8 +942,10 @@ def _same_name_and_birth_date(db, message: dict, record: dict) -> list[str]:
     words = sorted(set(tokens))
     rows = db.execute(
         "SELECT id, name, date_of_birth FROM patients WHERE id != ? AND "
-        + " AND ".join("LOWER(name) LIKE ?" for _ in words) + " ORDER BY id",
-        (record["id"], *[f"%{w}%" for w in words])).fetchall()
+        + " AND ".join("LOWER(name) LIKE ?" for _ in words)
+        + " ORDER BY id",
+        (record["id"], *[f"%{w}%" for w in words]),
+    ).fetchall()
     out = []
     for row in rows:
         if _name_tokens(row["name"]) != tokens:
@@ -853,8 +961,9 @@ def _reason(text: Any) -> str:
     if not reason:
         raise QuarantineInvalid("reason_required", "Give a reason.")
     if len(reason) > MAX_REASON_CHARS:
-        raise QuarantineInvalid("reason_too_long",
-                                f"Keep the reason under {MAX_REASON_CHARS} characters.")
+        raise QuarantineInvalid(
+            "reason_too_long", f"Keep the reason under {MAX_REASON_CHARS} characters."
+        )
     return reason
 
 
@@ -863,12 +972,13 @@ def _open_row(db, qid: int):
     if row is None:
         raise QuarantineNotFound("not_found", "No such unmatched result.")
     if row["status"] != "open":
-        raise QuarantineConflict("already_resolved",
-                                 f"This result was already {row['status']}.", status=row["status"])
+        raise QuarantineConflict(
+            "already_resolved", f"This result was already {row['status']}.", status=row["status"]
+        )
     return row
 
 
-def _actor_fields(user: dict, request_meta: Optional[dict]) -> dict:
+def _actor_fields(user: dict, request_meta: dict | None) -> dict:
     meta = request_meta or {}
     return {
         "actor_user_id": (user or {}).get("id"),
@@ -884,8 +994,17 @@ def _actor_fields(user: dict, request_meta: Optional[dict]) -> dict:
 #  Attach and discard
 # ════════════════════════════════════════════════════════════════════════════
 
-def attach(qid: int, *, hospital_number: Any, name: Any = None, date_of_birth: Any = None,
-           reason: Any, user: dict, request_meta: Optional[dict] = None) -> dict:
+
+def attach(
+    qid: int,
+    *,
+    hospital_number: Any,
+    name: Any = None,
+    date_of_birth: Any = None,
+    reason: Any,
+    user: dict,
+    request_meta: dict | None = None,
+) -> dict:
     """Attach one open result to a patient after the two-identifier check.
 
     Returns {"attached": True, ...} on success, or {"attached": False,
@@ -904,13 +1023,13 @@ def attach(qid: int, *, hospital_number: Any, name: Any = None, date_of_birth: A
     Every refusal is audited and committed. Raises QuarantineError otherwise.
     """
     from permissions import department_scope, patient_in_scope
+
     from services import ingestion_service
     from services.ingestion_adapters import canonical_event_from_dict
 
     reason_text = _reason(reason)
     if not _clean(hospital_number):
-        raise QuarantineInvalid("hospital_number_required",
-                                "Give the patient's hospital number.")
+        raise QuarantineInvalid("hospital_number_required", "Give the patient's hospital number.")
     typed = {"hospital_number": hospital_number, "name": name, "date_of_birth": date_of_birth}
     if _clean(date_of_birth) and _date_only(date_of_birth) is None:
         raise QuarantineInvalid("bad_date_of_birth", "Write the date of birth as a calendar date.")
@@ -920,113 +1039,202 @@ def attach(qid: int, *, hospital_number: Any, name: Any = None, date_of_birth: A
     with db_session(immediate=True) as db:
         if not queue_reachable(db):
             raise QuarantineNotFound(
-                "feature_disabled", "The unmatched results queue is switched off on this site.",
-                feature=FEATURE_ID)
+                "feature_disabled",
+                "The unmatched results queue is switched off on this site.",
+                feature=FEATURE_ID,
+            )
         row = _open_row(db, qid)
         payload = _payload(row)
         record = _find_patient(db, str(hospital_number))
         if record is not None and not patient_in_scope(db, record["id"], department_scope(user)):
             record = None  # out of scope reads exactly as no such patient
         message = _message_identity(row, payload)
-        other_patient = (_message_names_another_patient(db, message, record)
-                         if record is not None else None)
-        shared_with = (_same_name_and_birth_date(db, message, record)
-                       if record is not None and other_patient is None else [])
-        checks = identity_checks(message, record, typed,
-                                 message_names_another=other_patient is not None,
-                                 name_and_dob_shared=bool(shared_with))
+        other_patient = (
+            _message_names_another_patient(db, message, record) if record is not None else None
+        )
+        shared_with = (
+            _same_name_and_birth_date(db, message, record)
+            if record is not None and other_patient is None
+            else []
+        )
+        checks = identity_checks(
+            message,
+            record,
+            typed,
+            message_names_another=other_patient is not None,
+            name_and_dob_shared=bool(shared_with),
+        )
         if not identity_confirmed(checks):
             metadata: dict = {"checks": checks}
             if other_patient:
                 refusal = REFUSED_OTHER_PATIENT
                 metadata["message_patient_id"] = other_patient
-                summary = ("Unmatched result not attached: a hospital number in the message now "
-                           "names a different patient")
+                summary = (
+                    "Unmatched result not attached: a hospital number in the message now "
+                    "names a different patient"
+                )
             elif SHARED in checks.values():
                 refusal = REFUSED_SHARED_IDENTITY
                 metadata["shared_with_patient_ids"] = shared_with
-                summary = ("Unmatched result not attached: another patient record has the same "
-                           "name and date of birth, and no hospital number confirms the patient")
+                summary = (
+                    "Unmatched result not attached: another patient record has the same "
+                    "name and date of birth, and no hospital number confirms the patient"
+                )
             else:
                 refusal = REFUSED_IDENTITY
-                summary = "Unmatched result not attached: the identifiers did not confirm the patient"
+                summary = (
+                    "Unmatched result not attached: the identifiers did not confirm the patient"
+                )
             metadata["refusal"] = refusal
             log_audit_event(
-                correlation_id=correlation_id, event_category="clinical_access",
-                action_type="lab_quarantine_attach_refused", outcome="failure", db=db,
+                correlation_id=correlation_id,
+                event_category="clinical_access",
+                action_type="lab_quarantine_attach_refused",
+                outcome="failure",
+                db=db,
                 patient_id=record["id"] if record else None,
-                target_type="result_quarantine", target_id=str(row["id"]),
-                summary_message=summary, metadata=metadata, **actor)
+                target_type="result_quarantine",
+                target_id=str(row["id"]),
+                summary_message=summary,
+                metadata=metadata,
+                **actor,
+            )
             return {"attached": False, "id": row["id"], "refusal": refusal, "checks": checks}
 
+        assert record is not None
         patient_id = record["id"]
         actor_ref = {"user_id": actor["actor_user_id"], "role": actor["actor_role"]}
         swept = row["source_observation_id"] is not None
         evt = source_label = None
         if swept:
             late = ingestion_service.later_correction_for_unlinked(
-                db, int(row["source_observation_id"]), patient_id)
+                db, int(row["source_observation_id"]), patient_id
+            )
         else:
             evt = canonical_event_from_dict(payload)
             source_label = row["source"] or payload.get("source_label") or "ingested_unknown"
             late = ingestion_service.later_correction_for_event(
-                db, evt, patient_id, event_id=row["ingestion_event_id"],
+                db,
+                evt,
+                patient_id,
+                event_id=row["ingestion_event_id"],
                 source_label=source_label,
-                sibling_in_message=_message_has_queued_sibling(db, row, evt))
+                sibling_in_message=_message_has_queued_sibling(db, row, evt),
+            )
         if late["outcome"] == "refuse":
             log_audit_event(
-                correlation_id=correlation_id, event_category="clinical_access",
-                action_type="lab_quarantine_attach_refused", outcome="failure", db=db,
-                patient_id=patient_id, target_type="result_quarantine", target_id=str(row["id"]),
+                correlation_id=correlation_id,
+                event_category="clinical_access",
+                action_type="lab_quarantine_attach_refused",
+                outcome="failure",
+                db=db,
+                patient_id=patient_id,
+                target_type="result_quarantine",
+                target_id=str(row["id"]),
                 summary_message=(
                     "Unmatched result not attached: a correction of it, sent after it, is on "
-                    "the patient's chart already"),
-                metadata={"checks": checks, "refusal": REFUSED_LATER_CORRECTION,
-                          "why": late.get("reason"), "corrections": late.get("candidates", [])},
-                **actor)
-            return {"attached": False, "id": row["id"], "refusal": REFUSED_LATER_CORRECTION,
-                    "checks": checks}
+                    "the patient's chart already"
+                ),
+                metadata={
+                    "checks": checks,
+                    "refusal": REFUSED_LATER_CORRECTION,
+                    "why": late.get("reason"),
+                    "corrections": late.get("candidates", []),
+                },
+                **actor,
+            )
+            return {
+                "attached": False,
+                "id": row["id"],
+                "refusal": REFUSED_LATER_CORRECTION,
+                "checks": checks,
+            }
 
         if swept:
             # Its message's other results are observations rows too, which the
             # correction rule reads itself.
             obs_id, superseded = ingestion_service.attach_unlinked_observation_in_txn(
-                db, int(row["source_observation_id"]), patient_id,
-                correlation_id=correlation_id, actor=actor_ref, later_correction=late)
+                db,
+                int(row["source_observation_id"]),
+                patient_id,
+                correlation_id=correlation_id,
+                actor=actor_ref,
+                later_correction=late,
+            )
         else:
+            assert evt is not None and source_label is not None
             obs_id, superseded = ingestion_service.write_observation_in_txn(
-                db, evt, patient_id, row["ingestion_event_id"], source_label,
-                correlation_id=correlation_id, actor=actor_ref,
+                db,
+                evt,
+                patient_id,
+                row["ingestion_event_id"],
+                source_label,
+                correlation_id=correlation_id,
+                actor=actor_ref,
                 sibling_in_message=_queued_sibling_result(db, row, evt),
-                later_correction=late)
+                later_correction=late,
+            )
         superseded_by = late.get("correction_id") if late["outcome"] == "supersede" else None
-        confirmation = {"confirmed": sorted(k for k, v in checks.items() if v == MATCH),
-                        "checks": checks}
+        confirmation = {
+            "confirmed": sorted(k for k, v in checks.items() if v == MATCH),
+            "checks": checks,
+        }
         cur = db.execute(
             """UPDATE result_quarantine
                SET status = 'attached', attached_patient_id = ?, attached_observation_id = ?,
                    resolved_by = ?, resolved_at = ?, resolution_reason = ?,
                    identity_confirmation_json = ?
                WHERE id = ? AND status = 'open'""",
-            (patient_id, obs_id, actor["actor_user_id"], utc_iso_now(), reason_text,
-             json.dumps(confirmation), row["id"]))
+            (
+                patient_id,
+                obs_id,
+                actor["actor_user_id"],
+                utc_iso_now(),
+                reason_text,
+                json.dumps(confirmation),
+                row["id"],
+            ),
+        )
         if cur.rowcount != 1:  # pragma: no cover - the IMMEDIATE lock prevents it
             raise QuarantineConflict("already_resolved", "This result was decided meanwhile.")
         log_audit_event(
-            correlation_id=correlation_id, event_category="clinical_access",
-            action_type="lab_quarantine_attached", outcome="success", db=db,
-            patient_id=patient_id, target_type="result_quarantine", target_id=str(row["id"]),
-            summary_message=(f"Unmatched result {row['id']} ({row['observation_name']}) attached "
-                             f"to the patient's chart as observation {obs_id}"
-                             + (f", already superseded by corrected result {superseded_by}"
-                                if superseded_by else "")),
-            metadata={"observation_id": obs_id, "confirmed": confirmation["confirmed"],
-                      "checks": checks, "reason": reason_text, "superseded": superseded,
-                      "superseded_by": superseded_by, "swept": swept},
-            **actor)
-    return {"attached": True, "id": int(qid), "patient_id": patient_id,
-            "observation_id": obs_id, "superseded": superseded,
-            "superseded_by": superseded_by, "checks": checks}
+            correlation_id=correlation_id,
+            event_category="clinical_access",
+            action_type="lab_quarantine_attached",
+            outcome="success",
+            db=db,
+            patient_id=patient_id,
+            target_type="result_quarantine",
+            target_id=str(row["id"]),
+            summary_message=(
+                f"Unmatched result {row['id']} ({row['observation_name']}) attached "
+                f"to the patient's chart as observation {obs_id}"
+                + (
+                    f", already superseded by corrected result {superseded_by}"
+                    if superseded_by
+                    else ""
+                )
+            ),
+            metadata={
+                "observation_id": obs_id,
+                "confirmed": confirmation["confirmed"],
+                "checks": checks,
+                "reason": reason_text,
+                "superseded": superseded,
+                "superseded_by": superseded_by,
+                "swept": swept,
+            },
+            **actor,
+        )
+    return {
+        "attached": True,
+        "id": int(qid),
+        "patient_id": patient_id,
+        "observation_id": obs_id,
+        "superseded": superseded,
+        "superseded_by": superseded_by,
+        "checks": checks,
+    }
 
 
 def _message_has_queued_sibling(db, row, evt) -> bool:
@@ -1036,11 +1244,13 @@ def _message_has_queued_sibling(db, row, evt) -> bool:
     observations rows, which the readers find themselves."""
     from services import ingestion_service
     from services.ingestion_adapters import canonical_event_from_dict
+
     if row["ingestion_event_id"] is None:
         return False
     others = db.execute(
         "SELECT payload_json FROM result_quarantine WHERE ingestion_event_id = ? AND id != ?",
-        (row["ingestion_event_id"], row["id"])).fetchall()
+        (row["ingestion_event_id"], row["id"]),
+    ).fetchall()
     events = [canonical_event_from_dict(_payload(o)) for o in others]
     return ingestion_service.message_has_sibling_result(evt, events)
 
@@ -1053,33 +1263,42 @@ def _queued_sibling_result(db, row, evt) -> bool:
     discarded, only the queue knows. Then the correction supersedes nothing
     (lis-20, services/ingestion_service.supersede_corrected_in_txn)."""
     from services import ingestion_service
+
     if not ingestion_service.is_external_correction(evt):
         return False
     return _message_has_queued_sibling(db, row, evt)
 
 
-def discard(qid: int, *, reason: Any, user: dict, request_meta: Optional[dict] = None) -> dict:
+def discard(qid: int, *, reason: Any, user: dict, request_meta: dict | None = None) -> dict:
     """Discard one open result, with a reason, audited on the same transaction."""
     reason_text = _reason(reason)
     actor = _actor_fields(user, request_meta)
     with db_session(immediate=True) as db:
         if not queue_reachable(db):
             raise QuarantineNotFound(
-                "feature_disabled", "The unmatched results queue is switched off on this site.",
-                feature=FEATURE_ID)
+                "feature_disabled",
+                "The unmatched results queue is switched off on this site.",
+                feature=FEATURE_ID,
+            )
         row = _open_row(db, qid)
         cur = db.execute(
             """UPDATE result_quarantine
                SET status = 'discarded', resolved_by = ?, resolved_at = ?, resolution_reason = ?
                WHERE id = ? AND status = 'open'""",
-            (actor["actor_user_id"], utc_iso_now(), reason_text, row["id"]))
+            (actor["actor_user_id"], utc_iso_now(), reason_text, row["id"]),
+        )
         if cur.rowcount != 1:  # pragma: no cover - the IMMEDIATE lock prevents it
             raise QuarantineConflict("already_resolved", "This result was decided meanwhile.")
         log_audit_event(
-            correlation_id=str(uuid.uuid4()), event_category="clinical_access",
-            action_type="lab_quarantine_discarded", outcome="success", db=db,
-            target_type="result_quarantine", target_id=str(row["id"]),
+            correlation_id=str(uuid.uuid4()),
+            event_category="clinical_access",
+            action_type="lab_quarantine_discarded",
+            outcome="success",
+            db=db,
+            target_type="result_quarantine",
+            target_id=str(row["id"]),
             summary_message=f"Unmatched result {row['id']} ({row['observation_name']}) discarded",
             metadata={"reason": reason_text, "swept": row["source_observation_id"] is not None},
-            **actor)
+            **actor,
+        )
     return {"discarded": True, "id": int(qid)}

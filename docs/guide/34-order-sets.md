@@ -180,14 +180,14 @@ sequenceDiagram
 **Gotchas:** `_CODELESS = orders_service.CODELESS_ORDER_TYPES` (`:152`), the set validator does **not** keep its own copy of "which order types may be free-text". It reads CPOE's. Two copies would drift and a set could encode an order CPOE then rejects.
 **Breaks if you change it:** adding an item field without adding it to `_ITEM_KEYS` makes every file using it fail validation with "unknown field(s)", which is the intended behaviour, because a typo'd key is the quietest failure there is: `"dosage"` instead of `"dose"` leaves the dose guard nothing to check and the order text unchanged, so nothing looks wrong anywhere (`:230-233`).
 
-#### `_line_of` / `_Ctx` / `_require_str`: `order_sets_service.py:156` / `:165` / `:213`
+#### `_line_of` / `_Ctx` / `_require_str`: `order_sets_service.py:171` / `:165` / `:213`
 **Signature:** `(lines, needle, start) -> int | None` / `class _Ctx` / `(ctx, obj, key, where, *needles, after) -> str | None`
 **Does:** The error-reporting machinery. `_Ctx` accumulates failures and `raise_if_any()` emits them all in one message, each naming the file, a line number and the field.
 **On screen:** the message an operator sees in the server's startup log when Orb refuses to boot.
 **Why it exists:** a validator that stops at the first error makes fixing a protocol file a fix-one-restart loop.
 **Breaks if you change it:** the line numbers come from searching the raw text for an anchor string (`_line_of`), not from a JSON parser with position tracking, so a line number is best-effort. Reformat the file (e.g. minify it) and every reported line becomes 1.
 
-#### `_validate_item`: `order_sets_service.py:223`
+#### `_validate_item`: `order_sets_service.py:242`
 **Signature:** `(ctx, item, where, set_anchor) -> dict | None`
 **Does:** Validates one item, and, for medications, **runs the dose guard against the protocol itself**.
 **On screen:** nothing; it decides whether the server starts.
@@ -201,44 +201,44 @@ sequenceDiagram
 **Breaks if you change it:** remove this and a site can ship "potassium chloride 20 mmol IV push" in a protocol; the per-patient guard would still stop it at apply time, but only after it has been in the file, in the protocol list, and in front of clinicians for however long.
 **Gotchas:** the call is **pure evaluation only, no formulary or ingredient resolution**, because there is no database at import time. `screen_items` runs the fuller version with ingredients resolved. So a branded name whose ingredient triggers a rule may pass load-time and be blocked per-patient.
 
-#### `_validate_set`: `order_sets_service.py:320`
+#### `_validate_set`: `order_sets_service.py:378`
 **Signature:** `(ctx, raw_set, index, seen_ids) -> dict | None`
 **Does:** Validates one set: id uniqueness, required fields, the guideline block, and every item.
 **On screen:** nothing.
 **Breaks if you change it:** duplicate ids would make `sets_by_id` silently keep the last one, so a protocol would vanish from the list with no error.
 
-#### `_fingerprint`: `order_sets_service.py:400`
+#### `_fingerprint`: `order_sets_service.py:473`
 **Signature:** `(payload) -> str`, first 16 hex chars of a SHA-256 over the canonical JSON
 **Does:** Hashes a set (and the whole file) so a version can be identified later.
 **On screen:** appears in `OrderSetSummary.fingerprint` and in the config header, but nothing renders it today.
 **Why it exists:** protocol files get edited, a new antibiotic, a changed fluid volume, and without the fingerprint stored on the application there is no way to know afterwards which version of the bundle a patient actually received.
 **Breaks if you change it:** changing the hash input (key order, separators) makes every historical `config_fingerprint` unmatchable against the current file.
 
-#### `load_config`: `order_sets_service.py:406`
+#### `load_config`: `order_sets_service.py:479`
 **Signature:** `(path: Path | None = None) -> dict`, **pure, no database**
 **Does:** Reads and fully validates the file, returning `{config_version, path, fingerprint, sets, sets_by_id}`.
 **On screen:** nothing directly. Its failure is a server that will not start.
 **How it works:** missing file → a message that says an absent protocol file is a deployment mistake, not a site that has no protocols (`:414-419`). Unreadable → OSError message. Bad JSON → `"{name}:{lineno}:{colno}: … not valid JSON, {msg}"` using **json's own line/column**, which is the whole reason this file is JSON and not a format needing a third-party parser to say where it hurt (`:429-435`, message at `:432`). Then root-shape checks, `config_version` must be exactly `1`, unknown root keys rejected, `sets` must be a non-empty list, then every set.
 **Breaks if you change it:** it must stay **pure**. Add a database read (for example, resolving terminology) and it can no longer run at import, and the fail-loudly-at-startup mechanism disappears. That is why `unknown_codes` is a separate function.
 
-#### `_CONFIG` / `reload_config` / `get_config`: `order_sets_service.py:482` / `:485` / `:495`
+#### `_CONFIG` / `reload_config` / `get_config`: `order_sets_service.py:557` / `:485` / `:495`
 **Signature:** `Optional[dict]` / `(path=None) -> dict` / `() -> dict`
 **Does:** The process-wide loaded config, and the way to replace it.
 **On screen:** every read endpoint serves from here, so the protocol list is a memory read, not a file read.
 **Breaks if you change it:** there is **no hot reload**. An operator who edits `order_sets.json` must restart the server; nothing watches the file. `reload_config` exists for import, for tests, and for an operator restarting after an edit.
 
-#### `list_sets`: `order_sets_service.py:501`
+#### `list_sets`: `order_sets_service.py:580`
 **Signature:** `() -> list[dict]`, id, name, indication, guideline, item_count, fingerprint
 **Does:** Summary of every configured set. **No PHI**, safe for any `ORDER_READ` user.
 **On screen:** the protocol cards down the left of the Order Sets screen (`src/components/orders/OrderSetsPanel.tsx:423-438`). Each card prints the name, the indication, and `"N items · <guideline name>"`.
 **Breaks if you change it:** adding a field is harmless; removing `item_count` blanks the card's meta line.
 
-#### `get_set`: `order_sets_service.py:516`
+#### `get_set`: `order_sets_service.py:595`
 **Signature:** `(set_id) -> dict`; raises `OrderSetError` listing the configured ids
 **Does:** The full definition of one set.
 **On screen:** the detail pane's title and citation (`src/components/orders/OrderSetsPanel.tsx:457-460`).
 
-#### `unknown_codes`: `order_sets_service.py:527`
+#### `unknown_codes`: `order_sets_service.py:605`
 **Signature:** `(set_id) -> list[dict]` of `{code_system, code}`
 **Does:** Which of this set's codes are **not** in the local `terminology` table.
 **On screen:** the amber note *"N codes in this protocol are not in this hospital's code list: LOINC 2524-7, …"* (`src/components/orders/OrderSetsPanel.tsx:479-487`).
@@ -246,21 +246,21 @@ sequenceDiagram
 **How it works:** a handful of indexed point lookups on **one** connection, deliberately never a full read of `terminology`, a site that has bulk-loaded the real LOINC and ICD-10 releases has millions of rows in there, and this runs on every preview.
 **Breaks if you change it:** rewriting it as `SELECT code FROM terminology` and filtering in Python turns every preview into a multi-million-row read.
 
-#### `resolve_items`: `order_sets_service.py:557`
+#### `resolve_items`: `order_sets_service.py:637`
 **Signature:** `(set_id, selections: list[dict] | None) -> list[dict]`
 **Does:** Applies the clinician's per-item edits, include/exclude and overrides of `description`, `priority`, `dose`, `route`, `frequency`, and returns the items that will actually be ordered, each with an `index` and an `edited_fields` list.
 **On screen:** nothing today, **the panel never sends selections.** `previewOrderSet`/`applyOrderSet` are always called with `items` undefined (`src/components/orders/OrderSetsPanel.tsx:314`, `:334`, `:349`), so every item is included unedited. The server-side capability is fully built; the UI for it is not.
 **Why `edited_fields` exists:** so the audit row can say which items the clinician changed from the protocol.
 **Breaks if you change it:** excluding everything raises `OrderSetError`, *"every item in '{set_id}' was excluded, nothing to order. Applying an empty set would write an audit row claiming a protocol was applied."* (`:609-611`). Remove that check and the ledger fills with applications that ordered nothing.
 
-#### `require_orderable_patient`: `order_sets_service.py:616`
+#### `require_orderable_patient`: `order_sets_service.py:699`
 **Signature:** `(patient_id) -> dict`; raises `OrderSetError`
 **Does:** The patient must exist and must still be an inpatient (`status` in `{None, "", "admitted"}`).
 **On screen:** the panel's error strip, *"Patient P001 is not admitted (status=discharged), an order set cannot be applied to a discharged patient. Re-admit them first, or order individually if this is deliberate follow-up."*
 **Why it exists:** same guard, same reasoning, as `emar_service.record_administration`. A patient discharged through Vigil keeps `medications.status='active'` and disappears from every board, so an order written against them afterwards is written against someone no ward believes it still has. **A protocol is exactly the kind of bulk action where that would go unnoticed.**
 **Breaks if you change it:** drop the check and eight orders can land on a discharged chart in one click, invisible to every ward board.
 
-#### `_dose_screen`: `order_sets_service.py:643`
+#### `_dose_screen`: `order_sets_service.py:726`
 **Signature:** `(patient_id, item) -> dict`
 **Does:** The dose guard for one medication item, at order time, **with** formulary ingredient resolution.
 **On screen:** feeds `verdict.dose_check`, which the panel uses only via `blocked`/`block_reason` today.
@@ -268,7 +268,7 @@ sequenceDiagram
 **Why it exists, and this is a subtle one:** it is **not fail-open and not fail-closed-silent**. If the evaluation itself errors, the item is reported `unavailable` with a `DOSE_WARN`, exactly as the bedside guard does, the clinician is told this item was **not** checked. It does not block, because an internal fault in this code is not evidence about the patient.
 **Breaks if you change it:** making an internal error block turns a bug in Orb into a refused sepsis bundle. Making it silently allow removes the clinician's only signal that the check did not run.
 
-#### `screen_items`: `order_sets_service.py:695`
+#### `screen_items`: `order_sets_service.py:783`
 **Signature:** `(patient_id, items, *, actor_id, entry_point, honour_acks) -> list[dict]`
 **Does:** Runs **every** gate on **every** item and returns one verdict per item. Writes nothing to `orders`.
 **On screen:** this list is what the panel renders, one `<li>` per item: a red **STOPPED** chip plus the reason for a blocked item, amber caution chips for an unblocked drug the gates raised something on or could not fully screen, a green **Cleared** chip for a drug with no findings, and no chip for a non-drug item (`src/components/orders/OrderSetsPanel.tsx:489-536`).
@@ -280,14 +280,14 @@ sequenceDiagram
 **Why `honour_acks` matters:** `False` (preview) means a supplied acknowledgement is **ignored**. A preview must never quietly consume an override, the clinician sees the severe alert, and the override happens on apply, once, with the order.
 **Breaks if you change it:** re-implementing the allergy screen here instead of calling `enforce_medication_safety` creates a second enforcement point that will drift from CPOE's. Setting `honour_acks=True` on preview means a clinician's override is spent on a screen that wrote nothing.
 
-#### `preview_set`: `order_sets_service.py:900`
+#### `preview_set`: `order_sets_service.py:1001`
 **Signature:** `(patient_id, set_id, *, actor_id, selections=None) -> dict`
 **Does:** What applying this set to this patient would do, and what would stop it. Writes no orders.
 **On screen:** the entire detail pane. `items` → the item list; `blocked` → the note under the Apply button; `would_apply` → whether Apply is enabled; `unknown_codes` → the amber terminology note; `recent_application` (`recent_application`, `:816`) → a warning, never a block, that this set was already applied to this patient inside the recent window (a Sepsis Six applied twice in two minutes is two sets of STAT drafts); `patient` (`patient_banner`, `:864`) → who the gates ran for, with their active allergies, so the name on the Apply button is the patient the verdicts belong to.
 **Why it exists:** it runs the **same** gates apply runs, so the preview and the apply cannot disagree about whether an item is safe.
 **Breaks if you change it:** any divergence between this and `apply_set`'s screening produces the worst possible user experience, a green preview followed by a refused apply.
 
-#### `apply_set`: `order_sets_service.py:949`
+#### `apply_set`: `order_sets_service.py:1064`
 **Signature:** `(patient_id, set_id, *, actor_id, actor_role=None, selections=None) -> dict`
 **Does:** Creates the real, individual, **draft** orders for a set. **All or nothing.**
 **On screen:** success → *"Applied for <patient>: N draft orders created and audited."* (`src/components/orders/OrderSetsPanel.tsx:579-585`), plus an amber note when the set held medications saying they are not sent to the ward or pharmacy and must be prescribed from the patient chart (`:586-594`); the applications history list refreshes, and the new drafts appear in the Orders tab with `draft` status chips. Failure → the "Nothing was ordered." block.
@@ -303,14 +303,14 @@ sequenceDiagram
 **Breaks if you change it:** creating orders `active` removes the human commit step and makes a half-finished apply dangerous. Writing the ledger after the orders leaves orphan orders. Screening item-by-item as you write produces the fix-one-restart loop step 3 exists to prevent.
 **Gotchas, stated honestly in the docstring (`:950-954`):** between the screen in step 3 and the write in step 4 there is a sub-millisecond window in which another connection could chart a new allergy. The bedside eMAR closes that window because a dose is the last line of defence; an order is not administered for minutes to hours, and its own administration re-screens.
 
-#### `_audit_set`: `order_sets_service.py:1123`
+#### `_audit_set`: `order_sets_service.py:1280`
 **Signature:** `(*, outcome, action_type, patient_id, set_def, actor_id, actor_role, verdicts, order_ids, application_id) -> None`
 **Does:** Writes the one event that says a **protocol** was applied, naming its orders.
 **On screen:** appears in the Admin panel's Audit Logs tab with action type `order_set_applied` or `order_set_blocked`, and a summary reading e.g. *"Order set 'Sepsis Six (1-hour bundle)' (sepsis_six) success for P001: 9 order(s), 2 safety alert(s). Guideline: Surviving Sepsis Campaign 2021"*.
 **Why it exists:** deliberately **in addition to**, never instead of, the per-order `order_events` row and the per-drug `clinical_safety` rows the medication gate already wrote. A reviewer asking "why are there eight orders at 02:14?" needs the answer "the sepsis bundle, by Dr X, citing SSC 2021"; a reviewer asking "was this drug screened?" needs the drug-level row. **Neither answers the other.**
 **Breaks if you change it:** the category is `clinical_record`, an established category, so an order set shows up in the same filter a reviewer already runs, and deliberately **not** one of the fail-closed categories, because a failed audit row must not un-write orders that are already on the chart. That is also why the whole call is wrapped in `try/except` (`:1099`). Making it fail-closed would roll back a protocol that is already partly on the chart.
 
-#### `list_applications`: `order_sets_service.py:1194`
+#### `list_applications`: `order_sets_service.py:1360`
 **Signature:** `(patient_id, limit=50) -> list[dict]`; limit clamped to 1–200
 **Does:** Protocols applied to this patient, newest first. **PHI, callers scope.**
 **On screen:** the "Already applied to this patient" section at the bottom of the panel (`src/components/orders/OrderSetsPanel.tsx:619-634`), one line per application: set name, applied-at timestamp, applied-by, order count.
@@ -328,18 +328,18 @@ sequenceDiagram
 
 ### File: `server/routes/orders_routes.py`: the five endpoints
 
-#### `OrderSetItemSelection` / `OrderSetApplyRequest`: `server/routes/orders_routes.py:63` / `:80`
+#### `OrderSetItemSelection` / `OrderSetApplyRequest`: `server/routes/orders_routes.py:71` / `:80`
 **Signature:** Pydantic bodies. `OrderSetApplyRequest` carries `patient_id` and an optional `items: list[OrderSetItemSelection]`.
 **Does:** The preview/apply request shape.
 **On screen:** the panel sends `{patient_id}` only (`src/api/orderSets.ts:126`, `:137`).
 **Gotchas:** **the patient is named in the body, not the path.** That is why both routes call `enforce_patient_scope(user, req.patient_id)` explicitly (`:135`, `:166`) instead of using the path-shaped `require_patient_access` dependency, the dependency cannot see a body field.
 **Breaks if you change it:** moving `patient_id` to the path without changing the guard, or removing the explicit `enforce_patient_scope`, opens a cross-ward hole: any `ORDER_WRITE` holder could apply a protocol to any patient in the hospital.
 
-#### `_selections`: `server/routes/orders_routes.py:95`
+#### `_selections`: `server/routes/orders_routes.py:105`
 **Signature:** `(req) -> list[dict] | None`
 **Does:** `[s.model_dump() for s in req.items] if req.items else None`.
 
-#### `_order_set_status`: `server/routes/orders_routes.py:99`
+#### `_order_set_status`: `server/routes/orders_routes.py:109`
 **Signature:** `(e: OrderSetError) -> int` → 404 or 400
 **Does:** Maps a service error to a status code by inspecting its message.
 **Gotchas:** it is **string matching on the exception message**, "not found" or "Unknown order set". Reword either message in the service and the endpoint silently starts returning 400 where it returned 404.
@@ -380,7 +380,7 @@ sequenceDiagram
 
 ### File: `server/migrations.py`: migration 13
 
-#### `_m13_order_sets`: `migrations.py:801`
+#### `_m13_order_sets`: `migrations.py:824`
 **Signature:** `(conn) -> None`; registered as `Migration(13, "order_sets", …)` at `:1622`
 **Does:** Three additive changes.
 **On screen:** without it, `apply_set` 500s on a missing table and every medication item in every shipped protocol fails terminology validation.

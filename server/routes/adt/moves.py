@@ -56,20 +56,25 @@ audited (the same answer as routes/adt/end_stay.py). After a move commits the
 housekeeping turnaround sync runs best-effort (adt-7); it can never fail the
 move.
 """
+
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from permissions import (
+    ADT_BED,
+    ADT_TRANSFER,
+    PATIENT_WRITE,
+    has_permission,
+    require_any_permission,
+)
 from pydantic import BaseModel
-
-from permissions import ADT_BED, ADT_TRANSFER, PATIENT_WRITE, has_permission, require_any_permission
-from routes.adt.end_stay import _meta, _scoped_admission, require_ward_clerk
 from services.adt import clerk as adt_clerk
 from services.adt import core as adt_core
 from services.adt import transfer as adt_transfer
 from services.adt.live import notify_adt_changed
 from services.audit_service import AuditWriteError
+
+from routes.adt.end_stay import _meta, _scoped_admission, require_ward_clerk
 
 router = APIRouter()
 
@@ -83,14 +88,14 @@ def _pushed(answer: dict, *admission_ids: str) -> dict:
 
 class AssignBedIn(BaseModel):
     #: A bed from bed setup, as the picker chose it. Either this or bed text.
-    bed_id: Optional[str] = None
-    ward_id: Optional[str] = None
+    bed_id: str | None = None
+    ward_id: str | None = None
     #: Typed ward and bed (a lane that only types); resolved against bed setup
     #: by design section 5, and kept unlinked when it names nothing there.
     #: Bed text with no ward resolves on the admission's recorded ward (its
     #: id, else its typed text); with no ward recorded it is 422 ward_required.
-    ward: Optional[str] = None
-    bed: Optional[str] = None
+    ward: str | None = None
+    bed: str | None = None
     #: Ruling ADT-S1 (a): bed_id is occupied, so register a temporary extra bed
     #: beside it with its own label and place the patient there.
     extra_bed: bool = False
@@ -100,21 +105,25 @@ class AssignBedIn(BaseModel):
     #: recorded it is 409 no_bed_to_correct. A correction naming a different
     #: bed meets the cleaning rule (ADT-S2 (c)) like an assignment.
     correction: bool = False
-    expected_bed_id: Optional[str] = None
-    reason: Optional[str] = None
+    expected_bed_id: str | None = None
+    reason: str | None = None
     #: When the patient was put in the bed; now when omitted. Up to
     #: ORB_ADT_BACKTIME_HOURS back, never before the admission.
-    moved_at: Optional[str] = None
-    out_of_service_reason: Optional[str] = None
+    moved_at: str | None = None
+    out_of_service_reason: str | None = None
     boarder_acknowledged: bool = False
     #: Ruling ADT-S2 (c): typed reason for a bed not yet recorded clean, and
     #: who authorises a bed awaiting a terminal clean: the sender (their own
     #: id), or another doctor, nurse or administrator who confirms it with
     #: their own signing PIN, typed here. A name alone is refused.
-    not_clean_reason: Optional[str] = None
-    terminal_clean_authorised_by: Optional[str] = None
-    terminal_clean_reason: Optional[str] = None
-    terminal_clean_authoriser_pin: Optional[str] = None
+    not_clean_reason: str | None = None
+    terminal_clean_authorised_by: str | None = None
+    terminal_clean_reason: str | None = None
+    terminal_clean_authoriser_pin: str | None = None
+
+
+_ASSIGN_ADMISSION_BED_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempotency-Key")
+_ASSIGN_ADMISSION_BED_USER_DEFAULT = Depends(require_any_permission(ADT_BED, PATIENT_WRITE))
 
 
 @router.post("/admissions/{admission_id}/bed")
@@ -122,8 +131,8 @@ def assign_admission_bed(
     admission_id: str,
     body: AssignBedIn,
     request: Request,
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    user: dict = Depends(require_any_permission(ADT_BED, PATIENT_WRITE)),
+    idempotency_key: str | None = _ASSIGN_ADMISSION_BED_IDEMPOTENCY_KEY_DEFAULT,
+    user: dict = _ASSIGN_ADMISSION_BED_USER_DEFAULT,
 ):
     """Give an admission awaiting a bed its bed. Refused (409
     bed_already_recorded) when a bed is already recorded, so nobody overwrites
@@ -164,9 +173,9 @@ def assign_admission_bed(
             **kwargs,
         )
     except adt_core.AdtError as err:
-        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err))
+        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err)) from err
     except AuditWriteError:
-        raise _audit_unavailable("bed")
+        raise _audit_unavailable("bed") from None
     if not placed.get("replayed"):
         # adt-7: the bed's housekeeping record follows, best-effort.
         adt_transfer.sync_housekeeping_after_commit()
@@ -174,23 +183,31 @@ def assign_admission_bed(
 
 
 def _audit_unavailable(what: str) -> HTTPException:
-    return HTTPException(status_code=503, detail={
-        "error": "audit_unavailable",
-        "message": f"The record of this {what} could not be written, so nothing was changed. "
-                   "Try again in a moment.",
-    })
+    return HTTPException(
+        status_code=503,
+        detail={
+            "error": "audit_unavailable",
+            "message": f"The record of this {what} could not be written, so nothing was changed. "
+            "Try again in a moment.",
+        },
+    )
 
 
 def _expected(body: BaseModel) -> dict:
     """expected_bed_id only when the request sent it: sent (even as null)
     means 'the screen showed this bed'; absent is refused by the mover."""
     if "expected_bed_id" in body.model_fields_set:
-        return {"expected_bed_id": getattr(body, "expected_bed_id")}
+        return {"expected_bed_id": body.expected_bed_id}
     return {}
 
 
+_MOVE_OPTIONS_USER_DEFAULT = Depends(require_any_permission(ADT_BED, ADT_TRANSFER, PATIENT_WRITE))
+
+
 @router.get("/move-options")
-def move_options(user: dict = Depends(require_any_permission(ADT_BED, ADT_TRANSFER, PATIENT_WRITE))):
+def move_options(
+    user: dict = _MOVE_OPTIONS_USER_DEFAULT,
+):
     """What the Move screen offers: the wards and beds of bed setup, each with
     the status the bed board derives and what placing a patient there needs;
     who may authorise a bed awaiting a terminal clean; the back-time window;
@@ -199,11 +216,16 @@ def move_options(user: dict = Depends(require_any_permission(ADT_BED, ADT_TRANSF
     return adt_transfer.move_choices(user)
 
 
+_ADMISSION_LOCATION_USER_DEFAULT = Depends(
+    require_any_permission(ADT_BED, ADT_TRANSFER, PATIENT_WRITE)
+)
+
+
 @router.get("/admissions/{admission_id}/location")
 def admission_location(
     admission_id: str,
     request: Request,
-    user: dict = Depends(require_any_permission(ADT_BED, ADT_TRANSFER, PATIENT_WRITE)),
+    user: dict = _ADMISSION_LOCATION_USER_DEFAULT,
 ):
     """Where an admission lies now (department, ward and bed, linked or not),
     for the Move screen to send back as expected_bed_id. No name or MRN.
@@ -211,42 +233,47 @@ def admission_location(
     503 when that row cannot be written."""
     _scoped_admission(admission_id, user, request)
     try:
-        return adt_transfer.admission_location(admission_id, actor=user,
-                                               request_meta=_meta(request))
+        return adt_transfer.admission_location(
+            admission_id, actor=user, request_meta=_meta(request)
+        )
     except adt_core.AdtError as err:
-        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err))
+        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err)) from err
     except AuditWriteError:
-        raise HTTPException(status_code=503, detail={
-            "error": "audit_unavailable",
-            "message": "This read could not be recorded, so nothing is shown. Try again in a moment.",
-        })
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "audit_unavailable",
+                "message": "This read could not be recorded, so nothing is shown. Try again in a moment.",
+            },
+        ) from None
 
 
 class MoveIn(BaseModel):
     """A place to move a patient to, as the bed picker chose it."""
-    bed_id: Optional[str] = None
-    ward_id: Optional[str] = None
+
+    bed_id: str | None = None
+    ward_id: str | None = None
     #: Typed ward and bed (a lane that only types), resolved against bed setup.
-    ward: Optional[str] = None
-    bed: Optional[str] = None
+    ward: str | None = None
+    bed: str | None = None
     #: Ruling ADT-S1 (a): bed_id is occupied, so register a temporary extra
     #: bed beside it with its own label and move the patient there.
     extra_bed: bool = False
     #: The bed the screen showed (null for none). Required.
-    expected_bed_id: Optional[str] = None
+    expected_bed_id: str | None = None
     #: Why the patient moves. Required: a move with no reason is not a record.
-    reason: Optional[str] = None
+    reason: str | None = None
     #: When the patient moved; now when omitted. Up to ORB_ADT_BACKTIME_HOURS
     #: back, never before the admission, never in the future.
-    moved_at: Optional[str] = None
-    notes: Optional[str] = None
-    out_of_service_reason: Optional[str] = None
+    moved_at: str | None = None
+    notes: str | None = None
+    out_of_service_reason: str | None = None
     boarder_acknowledged: bool = False
     #: Ruling ADT-S2 (c), as on the bed route.
-    not_clean_reason: Optional[str] = None
-    terminal_clean_authorised_by: Optional[str] = None
-    terminal_clean_reason: Optional[str] = None
-    terminal_clean_authoriser_pin: Optional[str] = None
+    not_clean_reason: str | None = None
+    terminal_clean_authorised_by: str | None = None
+    terminal_clean_reason: str | None = None
+    terminal_clean_authoriser_pin: str | None = None
 
 
 class TransferIn(MoveIn):
@@ -263,9 +290,14 @@ class TransferIn(MoveIn):
 
 def _move_kwargs(body: MoveIn) -> dict:
     return {
-        "ward_id": body.ward_id, "bed_id": body.bed_id, "ward_text": body.ward,
-        "bed_text": body.bed, "extra_bed": body.extra_bed, "moved_at": body.moved_at,
-        "notes": body.notes, "out_of_service_reason": body.out_of_service_reason,
+        "ward_id": body.ward_id,
+        "bed_id": body.bed_id,
+        "ward_text": body.ward,
+        "bed_text": body.bed,
+        "extra_bed": body.extra_bed,
+        "moved_at": body.moved_at,
+        "notes": body.notes,
+        "out_of_service_reason": body.out_of_service_reason,
         "boarder_acknowledged": body.boarder_acknowledged,
         "not_clean_reason": body.not_clean_reason,
         "terminal_clean_authorised_by": body.terminal_clean_authorised_by,
@@ -275,13 +307,17 @@ def _move_kwargs(body: MoveIn) -> dict:
     }
 
 
+_CHANGE_ADMISSION_BED_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempotency-Key")
+_CHANGE_ADMISSION_BED_USER_DEFAULT = Depends(require_any_permission(ADT_BED, PATIENT_WRITE))
+
+
 @router.post("/admissions/{admission_id}/bed-change")
 def change_admission_bed(
     admission_id: str,
     body: MoveIn,
     request: Request,
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    user: dict = Depends(require_any_permission(ADT_BED, PATIENT_WRITE)),
+    idempotency_key: str | None = _CHANGE_ADMISSION_BED_IDEMPOTENCY_KEY_DEFAULT,
+    user: dict = _CHANGE_ADMISSION_BED_USER_DEFAULT,
 ):
     """Move an admitted patient to another bed. The treating department never
     changes here (ruling ADT-S8). Needs expected_bed_id (stale is 409
@@ -291,28 +327,38 @@ def change_admission_bed(
     for a terminal clean, an authoriser who acts (ADT-S2 (c)); a boarder
     placement needs the acknowledgement. A patient with no bed recorded is
     409 no_bed_to_change: assign the bed instead."""
-    replay = adt_transfer.replayed_answer(idempotency_key, admission_id=admission_id, actor=user,
-                                          movement_type="bed_change")
+    replay = adt_transfer.replayed_answer(
+        idempotency_key, admission_id=admission_id, actor=user, movement_type="bed_change"
+    )
     if replay is not None:
         return replay
     _scoped_admission(admission_id, user, request)
     try:
         moved = adt_transfer.change_bed(
-            admission_id, actor=user, reason=body.reason, idempotency_key=idempotency_key,
-            request_meta=_meta(request), **_move_kwargs(body))
+            admission_id,
+            actor=user,
+            reason=body.reason,
+            idempotency_key=idempotency_key,
+            request_meta=_meta(request),
+            **_move_kwargs(body),
+        )
     except adt_core.AdtError as err:
-        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err))
+        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err)) from err
     except AuditWriteError:
-        raise _audit_unavailable("move")
+        raise _audit_unavailable("move") from None
     return _pushed(moved, admission_id)
+
+
+_CREATE_ADT_TRANSFER_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempotency-Key")
+_CREATE_ADT_TRANSFER_USER_DEFAULT = Depends(require_any_permission(ADT_TRANSFER, PATIENT_WRITE))
 
 
 @router.post("/transfers")
 def create_adt_transfer(
     body: TransferIn,
     request: Request,
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    user: dict = Depends(require_any_permission(ADT_TRANSFER, PATIENT_WRITE)),
+    idempotency_key: str | None = _CREATE_ADT_TRANSFER_IDEMPOTENCY_KEY_DEFAULT,
+    user: dict = _CREATE_ADT_TRANSFER_USER_DEFAULT,
 ):
     """Transfer an admitted patient to another treating department: the same
     admission, its status untouched, the department, ward and bed updated in
@@ -326,39 +372,51 @@ def create_adt_transfer(
     sender's own retry with the same Idempotency-Key answers that it was
     replayed, with no patient field, even once the chart has been handed
     over."""
-    replay = adt_transfer.replayed_answer(idempotency_key, admission_id=body.admission_id,
-                                          actor=user, movement_type="transfer")
+    replay = adt_transfer.replayed_answer(
+        idempotency_key, admission_id=body.admission_id, actor=user, movement_type="transfer"
+    )
     if replay is not None:
         return replay
     _scoped_admission(body.admission_id, user, request)
     try:
         moved = adt_transfer.transfer(
-            body.admission_id, actor=user, to_department=body.to_department,
-            reason=body.reason, awaiting_bed=body.awaiting_bed,
-            keep_location=body.keep_location, idempotency_key=idempotency_key,
-            request_meta=_meta(request), **_move_kwargs(body))
+            body.admission_id,
+            actor=user,
+            to_department=body.to_department,
+            reason=body.reason,
+            awaiting_bed=body.awaiting_bed,
+            keep_location=body.keep_location,
+            idempotency_key=idempotency_key,
+            request_meta=_meta(request),
+            **_move_kwargs(body),
+        )
     except adt_core.AdtError as err:
-        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err))
+        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err)) from err
     except AuditWriteError:
-        raise _audit_unavailable("transfer")
+        raise _audit_unavailable("transfer") from None
     return _pushed(moved, body.admission_id)
 
 
 class OrderedTransferIn(TransferIn):
     """A transfer the ward clerk carries out on a doctor's order (ADT-S8 (b)).
     The transfer's own fields, plus the doctor who ordered it."""
+
     #: The doctor who ordered the transfer: the patient's attending doctor or
     #: a doctor of the patient's current department. Recorded as named by the
     #: clerk, never as the doctor's own act.
     ordered_by: str
 
 
+_CREATE_ORDERED_TRANSFER_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempotency-Key")
+_CREATE_ORDERED_TRANSFER_USER_DEFAULT = Depends(require_ward_clerk)
+
+
 @router.post("/ordered-transfers")
 def create_ordered_transfer(
     body: OrderedTransferIn,
     request: Request,
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    user: dict = Depends(require_ward_clerk),
+    idempotency_key: str | None = _CREATE_ORDERED_TRANSFER_IDEMPOTENCY_KEY_DEFAULT,
+    user: dict = _CREATE_ORDERED_TRANSFER_USER_DEFAULT,
 ):
     """The ward clerk carries out a transfer a doctor ordered: another
     treating department, through the same transfer writer as POST /transfers
@@ -372,22 +430,29 @@ def create_ordered_transfer(
     in the clerk's department (404 otherwise, audited). The sender's own retry
     with the same Idempotency-Key answers that it was replayed, with no
     patient field, even once the chart has been handed over."""
-    replay = adt_transfer.replayed_answer(idempotency_key, admission_id=body.admission_id,
-                                          actor=user, movement_type="transfer")
+    replay = adt_transfer.replayed_answer(
+        idempotency_key, admission_id=body.admission_id, actor=user, movement_type="transfer"
+    )
     if replay is not None:
         return replay
     _scoped_admission(body.admission_id, user, request)
     try:
         moved = adt_clerk.ordered_transfer(
-            body.admission_id, actor=user, ordered_by=body.ordered_by,
-            to_department=body.to_department, reason=body.reason,
-            awaiting_bed=body.awaiting_bed, keep_location=body.keep_location,
-            idempotency_key=idempotency_key, request_meta=_meta(request),
-            **_move_kwargs(body))
+            body.admission_id,
+            actor=user,
+            ordered_by=body.ordered_by,
+            to_department=body.to_department,
+            reason=body.reason,
+            awaiting_bed=body.awaiting_bed,
+            keep_location=body.keep_location,
+            idempotency_key=idempotency_key,
+            request_meta=_meta(request),
+            **_move_kwargs(body),
+        )
     except adt_core.AdtError as err:
-        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err))
+        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err)) from err
     except AuditWriteError:
-        raise _audit_unavailable("transfer")
+        raise _audit_unavailable("transfer") from None
     return _pushed(moved, body.admission_id)
 
 
@@ -395,37 +460,43 @@ def create_ordered_transfer(
 #  Bed swap and a move recorded in error (adt-6b, W7-C)
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class SwapIn(BaseModel):
     """Two admitted patients exchange beds. A treating department never
     changes in a swap (ruling ADT-S8 held)."""
+
     first_admission_id: str
     second_admission_id: str
     #: The bed the screen showed for each patient. Both required.
-    expected_first_bed_id: Optional[str] = None
-    expected_second_bed_id: Optional[str] = None
+    expected_first_bed_id: str | None = None
+    expected_second_bed_id: str | None = None
     #: Why they swap. Required: a move with no reason is not a record.
-    reason: Optional[str] = None
+    reason: str | None = None
     #: When they swapped; now when omitted. Up to ORB_ADT_BACKTIME_HOURS back.
-    moved_at: Optional[str] = None
-    notes: Optional[str] = None
-    out_of_service_reason: Optional[str] = None
+    moved_at: str | None = None
+    notes: str | None = None
+    out_of_service_reason: str | None = None
     #: A patient moved onto a ward of another department lies there as a
     #: boarder (ruling ADT-S6 is not applied): the words name who cannot open
     #: the chart, and this confirms them read.
     boarder_acknowledged: bool = False
     #: Ruling ADT-S2 (c): neither bed is cleaned between the two patients.
-    not_clean_reason: Optional[str] = None
-    terminal_clean_authorised_by: Optional[str] = None
-    terminal_clean_reason: Optional[str] = None
-    terminal_clean_authoriser_pin: Optional[str] = None
+    not_clean_reason: str | None = None
+    terminal_clean_authorised_by: str | None = None
+    terminal_clean_reason: str | None = None
+    terminal_clean_authoriser_pin: str | None = None
+
+
+_SWAP_ADMISSION_BEDS_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempotency-Key")
+_SWAP_ADMISSION_BEDS_USER_DEFAULT = Depends(require_any_permission(ADT_BED, PATIENT_WRITE))
 
 
 @router.post("/bed-swaps")
 def swap_admission_beds(
     body: SwapIn,
     request: Request,
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    user: dict = Depends(require_any_permission(ADT_BED, PATIENT_WRITE)),
+    idempotency_key: str | None = _SWAP_ADMISSION_BEDS_IDEMPOTENCY_KEY_DEFAULT,
+    user: dict = _SWAP_ADMISSION_BEDS_USER_DEFAULT,
 ):
     """Swap the beds of two admitted patients in one transaction: two
     'bed_swap' movements, each patient in the other's bed, the index never
@@ -445,37 +516,49 @@ def swap_admission_beds(
         kwargs["expected_second_bed_id"] = body.expected_second_bed_id
     try:
         swapped = adt_transfer.swap_beds(
-            body.first_admission_id, body.second_admission_id, actor=user, reason=body.reason,
-            moved_at=body.moved_at, notes=body.notes,
+            body.first_admission_id,
+            body.second_admission_id,
+            actor=user,
+            reason=body.reason,
+            moved_at=body.moved_at,
+            notes=body.notes,
             out_of_service_reason=body.out_of_service_reason,
             boarder_acknowledged=body.boarder_acknowledged,
             not_clean_reason=body.not_clean_reason,
             terminal_clean_authorised_by=body.terminal_clean_authorised_by,
             terminal_clean_reason=body.terminal_clean_reason,
             terminal_clean_authoriser_pin=body.terminal_clean_authoriser_pin,
-            idempotency_key=idempotency_key, request_meta=_meta(request), **kwargs)
+            idempotency_key=idempotency_key,
+            request_meta=_meta(request),
+            **kwargs,
+        )
     except adt_core.AdtError as err:
-        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err))
+        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err)) from err
     except AuditWriteError:
-        raise _audit_unavailable("swap")
+        raise _audit_unavailable("swap") from None
     return _pushed(swapped, body.first_admission_id, body.second_admission_id)
 
 
 class CorrectionIn(BaseModel):
     """Undo a move recorded in error: the patient goes back to where the
     move took them from (and, for a transfer, to the department)."""
+
     #: The bed the screen showed (null for none). Required.
-    expected_bed_id: Optional[str] = None
+    expected_bed_id: str | None = None
     #: Why the move was recorded in error. Required.
-    reason: Optional[str] = None
-    notes: Optional[str] = None
-    out_of_service_reason: Optional[str] = None
+    reason: str | None = None
+    notes: str | None = None
+    out_of_service_reason: str | None = None
     boarder_acknowledged: bool = False
     #: Ruling ADT-S2 (c), for the bed the patient goes back to.
-    not_clean_reason: Optional[str] = None
-    terminal_clean_authorised_by: Optional[str] = None
-    terminal_clean_reason: Optional[str] = None
-    terminal_clean_authoriser_pin: Optional[str] = None
+    not_clean_reason: str | None = None
+    terminal_clean_authorised_by: str | None = None
+    terminal_clean_reason: str | None = None
+    terminal_clean_authoriser_pin: str | None = None
+
+
+_CORRECT_ADMISSION_MOVEMENT_IDEMPOTENCY_KEY_DEFAULT = Header(None, alias="Idempotency-Key")
+_CORRECT_ADMISSION_MOVEMENT_USER_DEFAULT = Depends(require_any_permission(ADT_BED, PATIENT_WRITE))
 
 
 @router.post("/movements/{movement_id}/correct")
@@ -483,8 +566,8 @@ def correct_admission_movement(
     movement_id: str,
     body: CorrectionIn,
     request: Request,
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    user: dict = Depends(require_any_permission(ADT_BED, PATIENT_WRITE)),
+    idempotency_key: str | None = _CORRECT_ADMISSION_MOVEMENT_IDEMPOTENCY_KEY_DEFAULT,
+    user: dict = _CORRECT_ADMISSION_MOVEMENT_USER_DEFAULT,
 ):
     """Undo the stay's latest move (a bed assignment, a bed change or a
     transfer) as recorded in error: a new 'correction' movement pointing at
@@ -501,27 +584,37 @@ def correct_admission_movement(
         return replay
     found = adt_transfer.movement_admission(movement_id)
     if found is None or not found.get("admission_id"):
-        raise HTTPException(status_code=404, detail={
-            "error": "movement_not_found", "message": "No movement with that id"})
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "movement_not_found", "message": "No movement with that id"},
+        )
     _scoped_admission(found["admission_id"], user, request)
     role = user.get("role", "")
-    may_change_department = has_permission(role, ADT_TRANSFER) or has_permission(role, PATIENT_WRITE)
+    may_change_department = has_permission(role, ADT_TRANSFER) or has_permission(
+        role, PATIENT_WRITE
+    )
     kwargs = {}
     if "expected_bed_id" in body.model_fields_set:
         kwargs["expected_bed_id"] = body.expected_bed_id
     try:
         corrected = adt_transfer.correct_movement(
-            movement_id, actor=user, reason=body.reason,
-            may_change_department=may_change_department, notes=body.notes,
+            movement_id,
+            actor=user,
+            reason=body.reason,
+            may_change_department=may_change_department,
+            notes=body.notes,
             out_of_service_reason=body.out_of_service_reason,
             boarder_acknowledged=body.boarder_acknowledged,
             not_clean_reason=body.not_clean_reason,
             terminal_clean_authorised_by=body.terminal_clean_authorised_by,
             terminal_clean_reason=body.terminal_clean_reason,
             terminal_clean_authoriser_pin=body.terminal_clean_authoriser_pin,
-            idempotency_key=idempotency_key, request_meta=_meta(request), **kwargs)
+            idempotency_key=idempotency_key,
+            request_meta=_meta(request),
+            **kwargs,
+        )
     except adt_core.AdtError as err:
-        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err))
+        raise HTTPException(status_code=err.http_status, detail=adt_core.http_detail(err)) from err
     except AuditWriteError:
-        raise _audit_unavailable("correction")
+        raise _audit_unavailable("correction") from None
     return _pushed(corrected, found["admission_id"])

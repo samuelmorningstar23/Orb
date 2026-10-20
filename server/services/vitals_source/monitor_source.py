@@ -48,6 +48,7 @@ Nothing here touches the database. Persistence happens in the sink, which hands
 off to `ingestion_service` (fully `run_db`-offloaded), so this module is pure
 asyncio I/O and cannot wedge the loop.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -56,11 +57,9 @@ import time
 import uuid
 from collections import Counter, deque
 from datetime import tzinfo
-from typing import Optional, Union
 
-from . import hl7v2
-from . import vendor_profiles
-from .base import ReadingHint, SourceKind, VitalsSource, LABEL_MONITOR_HL7, utc_now_iso
+from . import hl7v2, vendor_profiles
+from .base import LABEL_MONITOR_HL7, ReadingHint, SourceKind, VitalsSource, utc_now_iso
 from .mllp import DEFAULT_MAX_MESSAGE_BYTES, MllpFramer, frame
 from .profile_adapter import VendorProfileAdapter
 
@@ -111,7 +110,7 @@ class HL7MonitorSource(VitalsSource):
         max_message_bytes: int = DEFAULT_MAX_MESSAGE_BYTES,
         reconnect_delay_seconds: float = 5.0,
         receiving_app: str = "ORB",
-        device_timezone: Union[str, tzinfo, None] = None,
+        device_timezone: str | tzinfo | None = None,
         profile: str = "auto",
         strict_profile: bool = False,
     ):
@@ -136,7 +135,9 @@ class HL7MonitorSource(VitalsSource):
                 "[%s] device_timezone=%r is not a usable timezone; falling back to the "
                 "appliance zone (%s). Offset-less timestamps from this device will be "
                 "read in that zone.",
-                source_id, device_timezone, hl7v2.appliance_timezone(),
+                source_id,
+                device_timezone,
+                hl7v2.appliance_timezone(),
             )
         self.max_connections = max(1, int(max_connections))
         self.max_message_bytes = int(max_message_bytes)
@@ -150,7 +151,7 @@ class HL7MonitorSource(VitalsSource):
         # the pilot should run with once the site visit has happened.
         requested = (profile or "auto").strip().lower()
         self.profile_mode = "auto" if requested in ("auto", "detect", "") else "fixed"
-        self.configured_profile: Optional[vendor_profiles.VendorProfile] = None
+        self.configured_profile: vendor_profiles.VendorProfile | None = None
         if self.profile_mode == "fixed":
             if not vendor_profiles.is_known_profile(requested):
                 # Loud, not fatal. A typo in `.env` must not cost a ward its
@@ -159,7 +160,8 @@ class HL7MonitorSource(VitalsSource):
                 logger.error(
                     "[%s] ORB_MONITOR_PROFILE=%r is not a known vendor profile "
                     "(known: %s). Falling back to 'generic' — LOINC only.",
-                    source_id, requested,
+                    source_id,
+                    requested,
                     ", ".join(sorted(vendor_profiles.PROFILES)),
                 )
             self.configured_profile = vendor_profiles.profile_for(requested)
@@ -172,8 +174,8 @@ class HL7MonitorSource(VitalsSource):
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=max(1, int(queue_size)))
         self._worker_count = max(1, int(workers))
         self._workers: list[asyncio.Task] = []
-        self._server: Optional[asyncio.AbstractServer] = None
-        self._client_task: Optional[asyncio.Task] = None
+        self._server: asyncio.Server | None = None
+        self._client_task: asyncio.Task | None = None
         self._connections: set[asyncio.Task] = set()
         self._open_connections = 0
         # Reasons only — never payload bytes. The raw message (PHI) already has
@@ -188,7 +190,7 @@ class HL7MonitorSource(VitalsSource):
     # ════════════════════════════════════════
 
     @property
-    def bound_port(self) -> Optional[int]:
+    def bound_port(self) -> int | None:
         """The port actually in use (resolves `port=0` for tests/bench runs)."""
         if self._server is not None and self._server.sockets:
             try:
@@ -208,16 +210,17 @@ class HL7MonitorSource(VitalsSource):
         try:
             if self.mode == "listen":
                 self._server = await asyncio.start_server(
-                    self._on_connection, self.host, self.port,
+                    self._on_connection,
+                    self.host,
+                    self.port,
                 )
                 bound = ", ".join(str(s.getsockname()) for s in (self._server.sockets or []))
-                logger.info("[%s] MLLP listener up on %s (HL7 v2 ORU^R01)",
-                            self.source_id, bound)
+                logger.info("[%s] MLLP listener up on %s (HL7 v2 ORU^R01)", self.source_id, bound)
             else:
                 self._client_task = asyncio.create_task(
-                    self._connect_forever(), name=f"{self.source_id}-client")
-                logger.info("[%s] MLLP client dialling %s:%s",
-                            self.source_id, self.host, self.port)
+                    self._connect_forever(), name=f"{self.source_id}-client"
+                )
+                logger.info("[%s] MLLP client dialling %s:%s", self.source_id, self.host, self.port)
         except Exception:
             # The workers were spawned BEFORE the socket (so they are draining
             # the moment the first message lands). If binding then fails —
@@ -262,11 +265,17 @@ class HL7MonitorSource(VitalsSource):
     #  Connection handling
     # ════════════════════════════════════════
 
-    async def _on_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def _on_connection(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         """asyncio.start_server callback — one task per inbound connection."""
         if self._open_connections >= self.max_connections:
-            logger.warning("[%s] refusing connection: %d already open (cap %d)",
-                           self.source_id, self._open_connections, self.max_connections)
+            logger.warning(
+                "[%s] refusing connection: %d already open (cap %d)",
+                self.source_id,
+                self._open_connections,
+                self.max_connections,
+            )
             self.stats.note_error(f"connection cap {self.max_connections} reached")
             try:
                 writer.close()
@@ -298,15 +307,18 @@ class HL7MonitorSource(VitalsSource):
                 raise
             except Exception as e:
                 self.stats.note_error(f"connect failed: {e}")
-                logger.warning("[%s] connect to %s:%s failed: %s",
-                               self.source_id, self.host, self.port, e)
+                logger.warning(
+                    "[%s] connect to %s:%s failed: %s", self.source_id, self.host, self.port, e
+                )
             # Capped exponential backoff: a gateway that is down for an hour
             # must not be hammered, but reconnect must still be quick enough
             # that a blip costs a ward seconds, not minutes.
             await asyncio.sleep(delay)
             delay = min(delay * 2, 60.0)
 
-    async def _handle_stream(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def _handle_stream(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         """Read MLLP frames off one connection until it closes. Never raises."""
         peer = "unknown"
         try:
@@ -334,8 +346,12 @@ class HL7MonitorSource(VitalsSource):
                         except (ConnectionError, OSError) as e:
                             # The device vanished between its message and our
                             # ACK. It will retransmit; dedup makes that a no-op.
-                            logger.info("[%s] ACK to %s failed (%s); dropping connection",
-                                        self.source_id, peer, e)
+                            logger.info(
+                                "[%s] ACK to %s failed (%s); dropping connection",
+                                self.source_id,
+                                peer,
+                                e,
+                            )
                             return
         except asyncio.CancelledError:
             raise
@@ -351,7 +367,9 @@ class HL7MonitorSource(VitalsSource):
             if discarded.bytes_discarded_before_start or discarded.oversize_messages:
                 logger.warning(
                     "[%s] connection %s framing losses: %s",
-                    self.source_id, peer, discarded.as_dict(),
+                    self.source_id,
+                    peer,
+                    discarded.as_dict(),
                 )
             framer.reset()
             self._open_connections = max(0, self._open_connections - 1)
@@ -367,18 +385,23 @@ class HL7MonitorSource(VitalsSource):
     #  Message acceptance
     # ════════════════════════════════════════
 
-    def _reject(self, message, code: str, reason: str, *, peer: str,
-                control_id: str = "") -> str:
+    def _reject(self, message, code: str, reason: str, *, peer: str, control_id: str = "") -> str:
         self.stats.messages_rejected += 1
         self.stats.note_error(reason)
-        self.recent_rejects.append({
-            "at": utc_now_iso(), "peer": peer, "code": code,
-            "reason": reason, "control_id": control_id,
-        })
-        return hl7v2.build_ack(message, code, reason, receiving_app=self.receiving_app,
-                               control_id=control_id or None)
+        self.recent_rejects.append(
+            {
+                "at": utc_now_iso(),
+                "peer": peer,
+                "code": code,
+                "reason": reason,
+                "control_id": control_id,
+            }
+        )
+        return hl7v2.build_ack(
+            message, code, reason, receiving_app=self.receiving_app, control_id=control_id or None
+        )
 
-    def _accept(self, raw: bytes, peer: str) -> Optional[str]:
+    def _accept(self, raw: bytes, peer: str) -> str | None:
         """Validate one framed message and queue it. Returns the ACK to send.
 
         Runs on the connection task, so it must stay cheap and synchronous —
@@ -391,8 +414,9 @@ class HL7MonitorSource(VitalsSource):
             message = hl7v2.parse(text)
         except hl7v2.Hl7ParseError as e:
             self.stats.parse_failures += 1
-            logger.warning("[%s] unparseable message from %s (%d bytes): %s",
-                           self.source_id, peer, len(raw), e)
+            logger.warning(
+                "[%s] unparseable message from %s (%d bytes): %s", self.source_id, peer, len(raw), e
+            )
             # AR, not AE: retransmitting the identical unparseable bytes will
             # fail identically. Telling the sender to retry forever would turn
             # one bad message into a permanent flood.
@@ -404,18 +428,29 @@ class HL7MonitorSource(VitalsSource):
             # queue drains, counted so a monitor sending us the wrong feed is
             # visible on the bench instead of looking like silence.
             self.unsupported_messages += 1
-            logger.info("[%s] ignoring %s^%s from %s (this source handles ORU only)",
-                        self.source_id, message.message_type or "?",
-                        message.trigger_event or "?", peer)
-            return hl7v2.build_ack(message, hl7v2.ACK_REJECT,
-                                   "ORB monitor feed accepts ORU^R01 only",
-                                   receiving_app=self.receiving_app)
+            logger.info(
+                "[%s] ignoring %s^%s from %s (this source handles ORU only)",
+                self.source_id,
+                message.message_type or "?",
+                message.trigger_event or "?",
+                peer,
+            )
+            return hl7v2.build_ack(
+                message,
+                hl7v2.ACK_REJECT,
+                "ORB monitor feed accepts ORU^R01 only",
+                receiving_app=self.receiving_app,
+            )
 
         hints = self._extract_hints(message)
         if not hints:
-            return self._reject(message, hl7v2.ACK_REJECT,
-                                "no patient identifier in PID-3",
-                                peer=peer, control_id=control_id)
+            return self._reject(
+                message,
+                hl7v2.ACK_REJECT,
+                "no patient identifier in PID-3",
+                peer=peer,
+                control_id=control_id,
+            )
 
         item = {
             "raw": text,
@@ -436,13 +471,17 @@ class HL7MonitorSource(VitalsSource):
             logger.error(
                 "[%s] ingest queue full (%d): NACKing %s from %s so it retries — "
                 "the device is out-running persistence.",
-                self.source_id, self._queue.maxsize, control_id or "<no id>", peer,
+                self.source_id,
+                self._queue.maxsize,
+                control_id or "<no id>",
+                peer,
             )
             # AE = application error. In HL7 this is the sender's cue to retry,
             # which is precisely what we want: we did not take the message, and
             # the reading must not be lost just because we were busy.
-            return self._reject(message, hl7v2.ACK_ERROR,
-                                "receiver busy, retry", peer=peer, control_id=control_id)
+            return self._reject(
+                message, hl7v2.ACK_ERROR, "receiver busy, retry", peer=peer, control_id=control_id
+            )
 
         self.stats.messages_accepted += 1
         # ACK on ACCEPT, not on commit. HL7 senders time out in seconds; holding
@@ -470,7 +509,9 @@ class HL7MonitorSource(VitalsSource):
         except Exception:
             logger.debug("[%s] profile detection failed", self.source_id, exc_info=True)
             return vendor_profiles.COMBINED
-        label = detection.profile.key if detection.named_vendor else f"guess:{detection.profile.key}"
+        label = (
+            detection.profile.key if detection.named_vendor else f"guess:{detection.profile.key}"
+        )
         self.profile_detections[label] += 1
         return detection.profile
 
@@ -482,7 +523,10 @@ class HL7MonitorSource(VitalsSource):
             return
         # Count a known identifier always; admit a NEW one only while there is
         # room, so the list stays bounded without losing the counts it holds.
-        if detail in self.unmapped_identifiers or len(self.unmapped_identifiers) < MAX_UNMAPPED_IDENTIFIERS:
+        if (
+            detail in self.unmapped_identifiers
+            or len(self.unmapped_identifiers) < MAX_UNMAPPED_IDENTIFIERS
+        ):
             self.unmapped_identifiers[detail] += 1
 
     def _device_identity(self, message: hl7v2.Hl7Message) -> str:
@@ -523,11 +567,11 @@ class HL7MonitorSource(VitalsSource):
         # Most specific source of truth first. OBX-14 and OBR-7 are both
         # optional, so we fall down the chain rather than lose the date — an
         # undateable reading is treated as live, which is safe but blind.
-        best: Optional[hl7v2.Hl7Timestamp] = None
+        best: hl7v2.Hl7Timestamp | None = None
         for candidates in (
-            [obx.field(14) for obx in message.all("OBX")],     # per-observation
-            [obr.field(7) for obr in message.all("OBR")],      # per-panel
-            [message.message_datetime],                        # MSH-7
+            [obx.field(14) for obx in message.all("OBX")],  # per-observation
+            [obr.field(7) for obr in message.all("OBR")],  # per-panel
+            [message.message_datetime],  # MSH-7
         ):
             for raw in candidates:
                 parsed = hl7v2.parse_timestamp_detail(raw, default_tz=self.device_timezone)
@@ -536,12 +580,14 @@ class HL7MonitorSource(VitalsSource):
             if best is not None:
                 break
 
-        return [ReadingHint(
-            patient_identifier=patient,
-            observed_at=best.iso if best else None,
-            device_id=self._device_identity(message),
-            device_time_had_offset=best.had_offset if best else None,
-        )]
+        return [
+            ReadingHint(
+                patient_identifier=patient,
+                observed_at=best.iso if best else None,
+                device_id=self._device_identity(message),
+                device_time_had_offset=best.had_offset if best else None,
+            )
+        ]
 
     # ════════════════════════════════════════
     #  Persistence workers
@@ -581,8 +627,12 @@ class HL7MonitorSource(VitalsSource):
                     self.stats.last_reading_at = utc_now_iso()
                 if result.errors:
                     self.stats.note_error("; ".join(result.errors)[:300])
-                    logger.warning("[%s] ingest reported errors for %s: %s",
-                                   self.source_id, item["external_message_id"], result.errors)
+                    logger.warning(
+                        "[%s] ingest reported errors for %s: %s",
+                        self.source_id,
+                        item["external_message_id"],
+                        result.errors,
+                    )
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -592,8 +642,9 @@ class HL7MonitorSource(VitalsSource):
                 # event loop.
                 self.stats.parse_failures += 1
                 self.stats.note_error(f"ingest failed: {e}")
-                logger.exception("[%s] ingest failed for message from %s",
-                                 self.source_id, item.get("peer"))
+                logger.exception(
+                    "[%s] ingest failed for message from %s", self.source_id, item.get("peer")
+                )
             finally:
                 self._queue.task_done()
 
@@ -675,6 +726,5 @@ class HL7MonitorSource(VitalsSource):
         # alerting on the patient, so it surfaces here rather than silently
         # changing what gets scored.
         report = getattr(self.sink, "clock_skew_report", None)
-        base["clock_skew"] = (report(self.source_id) if callable(report)
-                              else {"state": "unknown"})
+        base["clock_skew"] = report(self.source_id) if callable(report) else {"state": "unknown"}
         return base

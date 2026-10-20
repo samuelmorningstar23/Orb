@@ -15,6 +15,7 @@ ward check. Duration is the whole reason it only showed up in a full run: a
 single-file run leaves none. The dump below now names that case explicitly
 instead of filing it under UNGUARDED.
 """
+from tests.source_contract import contract_source
 import inspect
 
 
@@ -43,7 +44,7 @@ def test_zzz_diagnose_patient_id_guard_enumeration():
         if endpoint is None:
             continue
         try:
-            src = inspect.getsource(endpoint)
+            src = contract_source(endpoint)
             err = None
         except Exception as exc:  # noqa: BLE001
             src, err = "", repr(exc)

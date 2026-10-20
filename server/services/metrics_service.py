@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Dict, Tuple
 
 # Process start time, captured at import. Uptime is (now - this).
 _PROCESS_START = time.time()
@@ -35,14 +34,14 @@ _PROCESS_START = time.time()
 # Keyed by (metric_name, sorted label tuple). Values are floats. A lock keeps
 # concurrent inc()/set_gauge() calls from racing (FastAPI runs a threadpool).
 _LOCK = threading.Lock()
-_LabelKey = Tuple[Tuple[str, str], ...]
-_counters: Dict[Tuple[str, _LabelKey], float] = {}
-_gauges: Dict[Tuple[str, _LabelKey], float] = {}
+_LabelKey = tuple[tuple[str, str], ...]
+_counters: dict[tuple[str, _LabelKey], float] = {}
+_gauges: dict[tuple[str, _LabelKey], float] = {}
 # Remember declared HELP/TYPE per metric name so the exposition is well-formed.
-_meta: Dict[str, Tuple[str, str]] = {}  # name -> (help_text, metric_type)
+_meta: dict[str, tuple[str, str]] = {}  # name -> (help_text, metric_type)
 
 
-def _label_key(labels: Dict[str, str] | None) -> _LabelKey:
+def _label_key(labels: dict[str, str] | None) -> _LabelKey:
     if not labels:
         return ()
     return tuple(sorted((str(k), str(v)) for k, v in labels.items()))
@@ -52,8 +51,9 @@ def _declare(name: str, metric_type: str, help_text: str) -> None:
     _meta.setdefault(name, (help_text, metric_type))
 
 
-def inc(name: str, value: float = 1.0, labels: Dict[str, str] | None = None,
-        help_text: str = "") -> None:
+def inc(
+    name: str, value: float = 1.0, labels: dict[str, str] | None = None, help_text: str = ""
+) -> None:
     """Increment a counter (creating it on first use). Safe to call from anywhere."""
     key = (name, _label_key(labels))
     with _LOCK:
@@ -61,8 +61,9 @@ def inc(name: str, value: float = 1.0, labels: Dict[str, str] | None = None,
         _counters[key] = _counters.get(key, 0.0) + value
 
 
-def set_gauge(name: str, value: float, labels: Dict[str, str] | None = None,
-              help_text: str = "") -> None:
+def set_gauge(
+    name: str, value: float, labels: dict[str, str] | None = None, help_text: str = ""
+) -> None:
     """Set a gauge to an absolute value (creating it on first use)."""
     key = (name, _label_key(labels))
     with _LOCK:
@@ -91,7 +92,7 @@ def _render_registry() -> list[str]:
         meta = dict(_meta)
 
     # Group samples by metric name so # HELP / # TYPE are printed once each.
-    grouped: Dict[str, list[Tuple[_LabelKey, float]]] = {}
+    grouped: dict[str, list[tuple[_LabelKey, float]]] = {}
     for (name, lk), val in {**counters, **gauges}.items():
         grouped.setdefault(name, []).append((lk, val))
 
@@ -121,6 +122,7 @@ def _count(query: str) -> int | None:
     """Run a cheap COUNT query defensively; return None if it cannot be sampled."""
     try:
         from database import get_db  # local import: avoid import cost at module load
+
         conn = get_db()
         try:
             row = conn.execute(query).fetchone()
@@ -135,7 +137,9 @@ def _db_size_bytes() -> int | None:
     """Total on-disk size of the SQLite DB plus its -wal/-shm sidecars."""
     try:
         import os
+
         from config import DB_PATH
+
         total = 0
         for suffix in ("", "-wal", "-shm"):
             path = f"{DB_PATH}{suffix}"
@@ -146,7 +150,7 @@ def _db_size_bytes() -> int | None:
         return None
 
 
-def _llm_queue_depth() -> Tuple[int | None, int | None]:
+def _llm_queue_depth() -> tuple[int | None, int | None]:
     """(queued_items, active_workers) for the LLM queue, without touching the loop.
 
     The queue is lazily created; if it has never been used `_queue` is None and
@@ -154,6 +158,7 @@ def _llm_queue_depth() -> Tuple[int | None, int | None]:
     """
     try:
         from services.llm_queue_service import llm_queue
+
         depth = 0
         q = getattr(llm_queue, "_queue", None)
         if q is not None:
@@ -174,6 +179,7 @@ def _llm_long_holds() -> int | None:
     """
     try:
         from services.llm_queue_service import llm_queue
+
         return int(getattr(llm_queue, "long_holds", 0))
     except Exception:
         return None
@@ -191,24 +197,41 @@ def render_metrics() -> str:
     # Process uptime — always available.
     try:
         uptime = max(0.0, time.time() - _PROCESS_START)
-        _emit(lines, "orb_process_uptime_seconds", "gauge",
-              "Seconds since this Orb process started.", uptime)
+        _emit(
+            lines,
+            "orb_process_uptime_seconds",
+            "gauge",
+            "Seconds since this Orb process started.",
+            uptime,
+        )
     except Exception:
         pass
 
     # DB size on disk (main + WAL + SHM).
     size = _db_size_bytes()
     if size is not None:
-        _emit(lines, "orb_db_size_bytes", "gauge",
-              "Total size in bytes of the SQLite database and its WAL/SHM sidecars.", size)
+        _emit(
+            lines,
+            "orb_db_size_bytes",
+            "gauge",
+            "Total size in bytes of the SQLite database and its WAL/SHM sidecars.",
+            size,
+        )
 
     # Cheap row counts. Each independently guarded.
     row_counts = (
         ("orb_patients_total", "Number of patient records.", "SELECT COUNT(*) FROM patients"),
         ("orb_orders_total", "Number of CPOE orders.", "SELECT COUNT(*) FROM orders"),
-        ("orb_audit_rows_total", "Number of audit_log rows (append-only).", "SELECT COUNT(*) FROM audit_logs"),
-        ("orb_active_admissions", "Number of currently admitted patients.",
-         "SELECT COUNT(*) FROM patients WHERE status = 'admitted'"),
+        (
+            "orb_audit_rows_total",
+            "Number of audit_log rows (append-only).",
+            "SELECT COUNT(*) FROM audit_logs",
+        ),
+        (
+            "orb_active_admissions",
+            "Number of currently admitted patients.",
+            "SELECT COUNT(*) FROM patients WHERE status = 'admitted'",
+        ),
     )
     for name, help_text, query in row_counts:
         val = _count(query)
@@ -218,17 +241,26 @@ def render_metrics() -> str:
     # LLM queue depth + active workers.
     depth, active = _llm_queue_depth()
     if depth is not None:
-        _emit(lines, "orb_llm_queue_depth", "gauge",
-              "Number of tasks waiting in the LLM priority queue.", depth)
+        _emit(
+            lines,
+            "orb_llm_queue_depth",
+            "gauge",
+            "Number of tasks waiting in the LLM priority queue.",
+            depth,
+        )
     if active is not None:
-        _emit(lines, "orb_llm_active_workers", "gauge",
-              "Number of in-flight LLM workers.", active)
+        _emit(lines, "orb_llm_active_workers", "gauge", "Number of in-flight LLM workers.", active)
     long_holds = _llm_long_holds()
     if long_holds is not None:
-        _emit(lines, "orb_llm_lane_long_holds_total", "counter",
-              "Lane acquisitions held past the lane-hold budget since boot. "
-              "The background lane is one slot wide, so this is the measure of "
-              "'nothing else could run'. Queue depth is not.", long_holds)
+        _emit(
+            lines,
+            "orb_llm_lane_long_holds_total",
+            "counter",
+            "Lane acquisitions held past the lane-hold budget since boot. "
+            "The background lane is one slot wide, so this is the measure of "
+            "'nothing else could run'. Queue depth is not.",
+            long_holds,
+        )
 
     # Everything registered by the app at runtime (request counters, etc.).
     lines.extend(_render_registry())

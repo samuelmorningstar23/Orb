@@ -43,13 +43,15 @@ the audit as text (the int target_id false-tamper trap).
 Pure functions here never touch the database: the parity report, the GET
 routes and the tests call them freely.
 """
+
 from __future__ import annotations
 
 import hashlib
 import json
 import logging
 import uuid
-from typing import Any, Mapping, NamedTuple, Optional
+from collections.abc import Mapping
+from typing import Any, NamedTuple
 
 from services.audit_service import log_audit_event
 from services.clinical_time import utc_iso_now
@@ -57,26 +59,68 @@ from services.clinical_time import utc_iso_now
 logger = logging.getLogger("orb.medorders")
 
 __all__ = [
-    "STATUSES", "LIVE_STATUSES", "TERMINAL_STATUSES", "HOLDABLE_FROM", "LEGAL_TRANSITIONS",
-    "SOURCES", "UNVERIFIED_SOURCES", "EVENT_KINDS", "REASON_REQUIRED_KINDS",
-    "ENCOUNTER_TYPES", "PRIORITIES", "SUPPLY_SOURCES", "PROJECTION_STATUSES",
-    "LEGACY_STOPPED_REASON", "LEGACY_REJECTED_REASON",
-    "MedOrderError", "MedOrderNotFound", "MedOrderInvalid", "MedOrderConflict",
-    "TransitionNotAllowed", "StaleOrderVersion", "StaleScreen", "NeedsInput", "NotPermitted",
-    "StoreUsageError", "http_detail", "StoreWrite",
-    "store_on", "lifecycle_on",
-    "is_legal_transition", "event_kind_for", "order_allows_dose", "legacy_status_for",
-    "projection_for", "fhir_status_for", "cpoe_status_for", "screen_fingerprint",
-    "get_order_in_txn", "events_in_txn", "screen_fingerprint_in_txn",
-    "record_event_in_txn", "create_in_txn", "link_projection_in_txn", "project_in_txn",
-    "transition_in_txn", "audit_in_txn", "legacy_decision_on_held_in_txn",
+    "STATUSES",
+    "LIVE_STATUSES",
+    "TERMINAL_STATUSES",
+    "HOLDABLE_FROM",
+    "LEGAL_TRANSITIONS",
+    "SOURCES",
+    "UNVERIFIED_SOURCES",
+    "EVENT_KINDS",
+    "REASON_REQUIRED_KINDS",
+    "ENCOUNTER_TYPES",
+    "PRIORITIES",
+    "SUPPLY_SOURCES",
+    "PROJECTION_STATUSES",
+    "LEGACY_STOPPED_REASON",
+    "LEGACY_REJECTED_REASON",
+    "MedOrderError",
+    "MedOrderNotFound",
+    "MedOrderInvalid",
+    "MedOrderConflict",
+    "TransitionNotAllowed",
+    "StaleOrderVersion",
+    "StaleScreen",
+    "NeedsInput",
+    "NotPermitted",
+    "StoreUsageError",
+    "http_detail",
+    "StoreWrite",
+    "store_on",
+    "lifecycle_on",
+    "is_legal_transition",
+    "event_kind_for",
+    "order_allows_dose",
+    "legacy_status_for",
+    "projection_for",
+    "fhir_status_for",
+    "cpoe_status_for",
+    "screen_fingerprint",
+    "get_order_in_txn",
+    "events_in_txn",
+    "screen_fingerprint_in_txn",
+    "record_event_in_txn",
+    "create_in_txn",
+    "link_projection_in_txn",
+    "project_in_txn",
+    "transition_in_txn",
+    "audit_in_txn",
+    "legacy_decision_on_held_in_txn",
 ]
 
 # ── Vocabularies ──────────────────────────────────────────────────────────────
 
 #: Every state an order can be in (migration 61's CHECK holds the same list).
-STATUSES = ("draft", "prescribed", "verified", "held", "stopped", "completed",
-            "cancelled", "rejected")
+STATUSES = (
+    "draft",
+    "prescribed",
+    "verified",
+    "held",
+    "stopped",
+    "completed",
+    "cancelled",
+    "rejected",
+)
 #: States in which the drug is on the ward: the order has a projection row
 #: whose status is 'active' or 'prn'.
 LIVE_STATUSES = ("prescribed", "verified", "held")
@@ -102,9 +146,19 @@ LEGAL_TRANSITIONS: dict[str, frozenset] = {
 #: (for example the outpatient prescription) adds its value without a rebuild.
 #: 'opd_prescription' is the outpatient lane (opd-12, W8-C,
 #: services/medorders/outpatient.py): encounter_type 'op', no ward row.
-SOURCES = ("chart", "cpoe", "order_set", "sage_handoff", "relay_agentic", "helix_approve",
-           "scribe_extracted", "history_import", "legacy_adopted", "verbal",
-           "opd_prescription")
+SOURCES = (
+    "chart",
+    "cpoe",
+    "order_set",
+    "sage_handoff",
+    "relay_agentic",
+    "helix_approve",
+    "scribe_extracted",
+    "history_import",
+    "legacy_adopted",
+    "verbal",
+    "opd_prescription",
+)
 
 #: Chart provenance values that need a pharmacist before the first dose. The
 #: same tuple as pharmacy_verification_service._UNVERIFIED_SOURCES and
@@ -115,10 +169,24 @@ UNVERIFIED_SOURCES = ("llm_extracted", "agentic")
 #: The ledger's event kinds. Status changes, plus the supply and bedside events
 #: the later lanes record against an order without changing its status.
 EVENT_KINDS = (
-    "created", "signed", "verified", "rejected", "held", "resumed", "stopped",
-    "completed", "cancelled", "amended", "adopted",
-    "supply_requested", "supply_reviewing", "supply_verified", "dispensed", "received",
-    "administered", "not_given",
+    "created",
+    "signed",
+    "verified",
+    "rejected",
+    "held",
+    "resumed",
+    "stopped",
+    "completed",
+    "cancelled",
+    "amended",
+    "adopted",
+    "supply_requested",
+    "supply_reviewing",
+    "supply_verified",
+    "dispensed",
+    "received",
+    "administered",
+    "not_given",
     # Pharmacy refused one supply row without ending the order (W7-E).
     "supply_rejected",
 )
@@ -139,14 +207,19 @@ LEGACY_REJECTED_REASON = "rejected by the pharmacist before the order store"
 
 _CPOE_STATUS = {
     "draft": "draft",
-    "prescribed": "active", "verified": "active", "held": "active",
-    "stopped": "cancelled", "cancelled": "cancelled", "rejected": "cancelled",
+    "prescribed": "active",
+    "verified": "active",
+    "held": "active",
+    "stopped": "cancelled",
+    "cancelled": "cancelled",
+    "rejected": "cancelled",
     "completed": "completed",
 }
 
 _FHIR_STATUS = {
     "draft": "draft",
-    "prescribed": "active", "verified": "active",
+    "prescribed": "active",
+    "verified": "active",
     "held": "on-hold",
     "stopped": "stopped",
     "completed": "completed",
@@ -161,13 +234,16 @@ _ENDED_WORDS = {
     "cancelled": "This order was cancelled, so a dose cannot be given.",
     "rejected": "The pharmacist rejected this order, so a dose cannot be given.",
 }
-_HELD_WORDS = ("This medicine is on hold, so a dose cannot be given. "
-               "You can still record it as not given (held).")
+_HELD_WORDS = (
+    "This medicine is on hold, so a dose cannot be given. "
+    "You can still record it as not given (held)."
+)
 _DRAFT_WORDS = "This medicine has not been signed by a prescriber, so a dose cannot be given."
 _UNKNOWN_WORDS = "The state of this order could not be read, so a dose cannot be given."
 
 
 # ── Errors ────────────────────────────────────────────────────────────────────
+
 
 class MedOrderError(Exception):
     """A refusal with a stable code, an HTTP status and words for the screen."""
@@ -175,8 +251,9 @@ class MedOrderError(Exception):
     http_status = 422
     default_code = "medication_order_refused"
 
-    def __init__(self, message: str, *, code: Optional[str] = None,
-                 order: Optional[Mapping] = None, **detail: Any):
+    def __init__(
+        self, message: str, *, code: str | None = None, order: Mapping | None = None, **detail: Any
+    ):
         super().__init__(message)
         self.message = message
         self.code = code or self.default_code
@@ -191,6 +268,7 @@ class MedOrderNotFound(MedOrderError):
 
 class MedOrderInvalid(MedOrderError):
     """A value the store does not accept (a caller's mistake, not a race)."""
+
     http_status = 422
     default_code = "invalid_medication_order"
 
@@ -216,12 +294,14 @@ class TransitionNotAllowed(MedOrderConflict):
 
 class StaleOrderVersion(MedOrderConflict):
     """Someone changed the order since the caller read it."""
+
     default_code = "stale_version"
 
 
 class StaleScreen(MedOrderConflict):
     """Allergies or the patient's live drugs changed since the safety screen
     ran: the client re-screens before the step can proceed."""
+
     default_code = "screen_stale"
 
 
@@ -243,26 +323,31 @@ class StoreWrite(NamedTuple):
     """What a writer returns: the order as it now stands, the ledger event it
     wrote (None when nothing was written), and whether this was a replay of an
     earlier request with the same idempotency key."""
+
     order: dict
-    event_id: Optional[int]
+    event_id: int | None
     replayed: bool
 
 
 # ── The switches, read at call time ───────────────────────────────────────────
 
+
 def store_on() -> bool:
     """ORB_MED_ORDER_STORE (record mode)."""
     import config
+
     return config.feature_enabled("med_order_store")
 
 
 def lifecycle_on() -> bool:
     """ORB_MED_ORDER_LIFECYCLE (authoritative mode); needs the store."""
     import config
+
     return config.feature_enabled("med_order_lifecycle")
 
 
 # ── Pure functions ────────────────────────────────────────────────────────────
+
 
 def _field(row: Any, name: str, default: Any = None) -> Any:
     """row[name] for a dict or a sqlite Row; `default` when the column is absent."""
@@ -276,8 +361,7 @@ def _field(row: Any, name: str, default: Any = None) -> Any:
         return default
 
 
-def is_legal_transition(from_status: str, to_status: str, *,
-                        held_from: Optional[str] = None) -> bool:
+def is_legal_transition(from_status: str, to_status: str, *, held_from: str | None = None) -> bool:
     """May an order in `from_status` move to `to_status`? A held order resumes
     only to the state it was held from."""
     allowed = LEGAL_TRANSITIONS.get(from_status)
@@ -296,8 +380,9 @@ def event_kind_for(from_status: str, to_status: str) -> str:
         return "resumed"
     if to_status in ("verified", "rejected", "held", "stopped", "completed", "cancelled"):
         return to_status
-    raise MedOrderInvalid(f"No event for a change from {from_status} to {to_status}",
-                          code="no_event_for_transition")
+    raise MedOrderInvalid(
+        f"No event for a change from {from_status} to {to_status}", code="no_event_for_transition"
+    )
 
 
 def order_allows_dose(order: Any, administration_status: str = "given") -> dict:
@@ -316,7 +401,9 @@ def order_allows_dose(order: Any, administration_status: str = "given") -> dict:
         return {"allowed": True, "code": None, "message": None}
     if status == "held":
         return {
-            "allowed": False, "code": "order_held", "message": _HELD_WORDS,
+            "allowed": False,
+            "code": "order_held",
+            "message": _HELD_WORDS,
             "held_by": _field(order, "status_changed_by"),
             "held_at": _field(order, "status_changed_at"),
             "hold_reason": _field(order, "status_reason"),
@@ -324,8 +411,12 @@ def order_allows_dose(order: Any, administration_status: str = "given") -> dict:
     if status == "draft":
         return {"allowed": False, "code": "order_not_signed", "message": _DRAFT_WORDS}
     if status in TERMINAL_STATUSES:
-        return {"allowed": False, "code": "order_ended", "message": _ENDED_WORDS[status],
-                "order_status": status}
+        return {
+            "allowed": False,
+            "code": "order_ended",
+            "message": _ENDED_WORDS[status],
+            "order_status": status,
+        }
     return {"allowed": False, "code": "order_state_unknown", "message": _UNKNOWN_WORDS}
 
 
@@ -351,10 +442,14 @@ def legacy_status_for(row: Any) -> dict:
     verified_at = _field(row, "verified_at") or None
     needs = 1 if source in UNVERIFIED_SOURCES else 0
     out = {
-        "status": None, "projection_status": None, "needs_verification": needs,
+        "status": None,
+        "projection_status": None,
+        "needs_verification": needs,
         "is_prn": 1 if legacy_status == "prn" else 0,
-        "verified_by": verified_by, "verified_at": verified_at if verified_by else None,
-        "status_reason": None, "adoptable": True,
+        "verified_by": verified_by,
+        "verified_at": verified_at if verified_by else None,
+        "status_reason": None,
+        "adoptable": True,
     }
     if legacy_status in PROJECTION_STATUSES:
         out["status"] = "verified" if verified_by else "prescribed"
@@ -371,7 +466,7 @@ def legacy_status_for(row: Any) -> dict:
     return out
 
 
-def projection_for(order: Any) -> Optional[dict]:
+def projection_for(order: Any) -> dict | None:
     """The ward row's columns for an order in its current state; None for a
     draft, which has no ward row. Never clears verified_by (I1): the verifier
     is included only to copy it onto the row."""
@@ -383,7 +478,8 @@ def projection_for(order: Any) -> Optional[dict]:
     if status not in LIVE_STATUSES:
         raise MedOrderInvalid(f"Unknown order state {status!r}", code="unknown_status")
     projection_status = _field(order, "projection_status") or (
-        "prn" if _field(order, "is_prn") else "active")
+        "prn" if _field(order, "is_prn") else "active"
+    )
     out = {"status": projection_status, "held_at": None, "hold_reason": None}
     if status == "held":
         out["held_at"] = _field(order, "status_changed_at")
@@ -399,8 +495,10 @@ def fhir_status_for(status: str) -> dict:
     'cancelled' with a statusReason, since FHIR has no rejected state."""
     if status not in _FHIR_STATUS:
         raise MedOrderInvalid(f"Unknown order state {status!r}", code="unknown_status")
-    return {"status": _FHIR_STATUS[status],
-            "status_reason": "rejected" if status == "rejected" else None}
+    return {
+        "status": _FHIR_STATUS[status],
+        "status_reason": "rejected" if status == "rejected" else None,
+    }
 
 
 def cpoe_status_for(status: str) -> str:
@@ -424,10 +522,15 @@ def screen_fingerprint(allergies, live_order_ids, unlinked_medication_ids) -> st
     screen_stale instead of writing on a screen that no longer holds (W116c)."""
     payload = {
         "allergies": sorted(
-            [str(_field(a, "id")), _norm(_field(a, "substance")),
-             _norm(_field(a, "substance_class")), _norm(_field(a, "reaction")),
-             _norm(_field(a, "severity"))]
-            for a in allergies),
+            [
+                str(_field(a, "id")),
+                _norm(_field(a, "substance")),
+                _norm(_field(a, "substance_class")),
+                _norm(_field(a, "reaction")),
+                _norm(_field(a, "severity")),
+            ]
+            for a in allergies
+        ),
         "orders": sorted(str(i) for i in live_order_ids),
         "unlinked": sorted(str(i) for i in unlinked_medication_ids),
     }
@@ -437,7 +540,8 @@ def screen_fingerprint(allergies, live_order_ids, unlinked_medication_ids) -> st
 
 # ── Readers (take a connection, write nothing) ────────────────────────────────
 
-def get_order_in_txn(conn, order_id: str) -> Optional[dict]:
+
+def get_order_in_txn(conn, order_id: str) -> dict | None:
     row = conn.execute("SELECT * FROM med_orders WHERE id = ?", (order_id,)).fetchone()
     return dict(row) if row is not None else None
 
@@ -467,54 +571,67 @@ def screen_fingerprint_in_txn(conn, patient_id: str) -> str:
         "AND med_order_id IS NULL",
         (patient_id,),
     ).fetchall()
-    return screen_fingerprint([dict(a) for a in allergies], [r[0] for r in orders],
-                              [r[0] for r in unlinked])
+    return screen_fingerprint(
+        [dict(a) for a in allergies], [r[0] for r in orders], [r[0] for r in unlinked]
+    )
 
 
 # ── Writers (the caller's transaction; never commit, never open a session) ────
+
 
 def _require_txn(conn) -> None:
     if not getattr(conn, "in_transaction", False):
         raise StoreUsageError(
             "medication-order writers run inside the caller's write transaction: "
             "open db_session(immediate=True) first (or write the caller's own row "
-            "first), then call this with that connection")
+            "first), then call this with that connection"
+        )
 
 
-def _clean(value: Any) -> Optional[str]:
+def _clean(value: Any) -> str | None:
     text = (str(value) if value is not None else "").strip()
     return text or None
 
 
-def _choice(value: Any, allowed: tuple, name: str) -> Optional[str]:
+def _choice(value: Any, allowed: tuple, name: str) -> str | None:
     if value is None:
         return None
     if value not in allowed:
-        raise MedOrderInvalid(f"{name} must be one of {', '.join(allowed)}",
-                              code=f"invalid_{name}")
+        raise MedOrderInvalid(f"{name} must be one of {', '.join(allowed)}", code=f"invalid_{name}")
     return value
 
 
-def _safety_summary(safety: Optional[Mapping]) -> Optional[dict]:
+def _safety_summary(safety: Mapping | None) -> dict | None:
     if not safety:
         return None
     return {
         "max_severity": safety.get("max_severity"),
         "blocking": safety.get("blocking"),
-        "alerts": len(safety.get("allergy_alerts") or []) + len(safety.get("interaction_alerts") or []),
+        "alerts": len(safety.get("allergy_alerts") or [])
+        + len(safety.get("interaction_alerts") or []),
         "interaction_screened": safety.get("interaction_screened"),
         "overridden": bool(safety.get("override")),
         "dose_decision": (safety.get("dose_check") or {}).get("decision"),
     }
 
 
-def audit_in_txn(conn, *, order: Mapping, action: str, actor_id: Optional[str],
-                 actor_role: Optional[str], entry_point: Optional[str],
-                 from_status: Optional[str] = None, to_status: Optional[str] = None,
-                 reason: Optional[str] = None, lane: Optional[str] = None,
-                 event_id: Optional[int] = None, safety: Optional[Mapping] = None,
-                 extra: Optional[Mapping] = None,
-                 request_meta: Optional[Mapping] = None) -> None:
+def audit_in_txn(
+    conn,
+    *,
+    order: Mapping,
+    action: str,
+    actor_id: str | None,
+    actor_role: str | None,
+    entry_point: str | None,
+    from_status: str | None = None,
+    to_status: str | None = None,
+    reason: str | None = None,
+    lane: str | None = None,
+    event_id: int | None = None,
+    safety: Mapping | None = None,
+    extra: Mapping | None = None,
+    request_meta: Mapping | None = None,
+) -> None:
     """The clinical_access audit row for one store write, on the caller's
     connection (fail-closed: an unwritable audit raises and rolls the write
     back)."""
@@ -557,14 +674,23 @@ def audit_in_txn(conn, *, order: Mapping, action: str, actor_id: Optional[str],
     )
 
 
-def record_event_in_txn(conn, *, order: Mapping, kind: str,
-                        from_status: Optional[str] = None, to_status: Optional[str] = None,
-                        actor_id: Optional[str] = None, actor_role: Optional[str] = None,
-                        entry_point: Optional[str] = None, reason: Optional[str] = None,
-                        ref_type: Optional[str] = None, ref_id: Any = None,
-                        payload: Optional[Mapping] = None,
-                        idempotency_key: Optional[str] = None,
-                        created_at: Optional[str] = None) -> int:
+def record_event_in_txn(
+    conn,
+    *,
+    order: Mapping,
+    kind: str,
+    from_status: str | None = None,
+    to_status: str | None = None,
+    actor_id: str | None = None,
+    actor_role: str | None = None,
+    entry_point: str | None = None,
+    reason: str | None = None,
+    ref_type: str | None = None,
+    ref_id: Any = None,
+    payload: Mapping | None = None,
+    idempotency_key: str | None = None,
+    created_at: str | None = None,
+) -> int:
     """Append one ledger event for `order` and return its id. Writes no audit
     (the caller's step audits once for the whole change)."""
     _require_txn(conn)
@@ -574,19 +700,32 @@ def record_event_in_txn(conn, *, order: Mapping, kind: str,
         "INSERT INTO med_order_events (med_order_id, patient_id, kind, from_status, to_status, "
         "actor_id, actor_role, entry_point, reason, ref_type, ref_id, payload_json, "
         "idempotency_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (order["id"], order["patient_id"], kind, from_status, to_status, actor_id, actor_role,
-         entry_point, _clean(reason), ref_type, str(ref_id) if ref_id is not None else None,
-         json.dumps(payload, sort_keys=True, default=str) if payload else None,
-         idempotency_key, created_at or utc_iso_now()),
+        (
+            order["id"],
+            order["patient_id"],
+            kind,
+            from_status,
+            to_status,
+            actor_id,
+            actor_role,
+            entry_point,
+            _clean(reason),
+            ref_type,
+            str(ref_id) if ref_id is not None else None,
+            json.dumps(payload, sort_keys=True, default=str) if payload else None,
+            idempotency_key,
+            created_at or utc_iso_now(),
+        ),
     )
     return int(cur.lastrowid)
 
 
-def _event_for_key(conn, idempotency_key: Optional[str]) -> Optional[dict]:
+def _event_for_key(conn, idempotency_key: str | None) -> dict | None:
     if not idempotency_key:
         return None
-    row = conn.execute("SELECT * FROM med_order_events WHERE idempotency_key = ?",
-                       (idempotency_key,)).fetchone()
+    row = conn.execute(
+        "SELECT * FROM med_order_events WHERE idempotency_key = ?", (idempotency_key,)
+    ).fetchone()
     return dict(row) if row is not None else None
 
 
@@ -594,55 +733,56 @@ _CREATABLE = ("draft", "prescribed", "verified", "stopped", "completed", "cancel
 
 
 def create_in_txn(
-    conn, *,
+    conn,
+    *,
     patient_id: str,
     drug_name: str,
     source: str,
     status: str,
     entered_by: str,
-    actor_id: Optional[str],
+    actor_id: str | None,
     entry_point: str,
-    actor_role: Optional[str] = None,
-    entered_by_role: Optional[str] = None,
-    admission_id: Optional[str] = None,
+    actor_role: str | None = None,
+    entered_by_role: str | None = None,
+    admission_id: str | None = None,
     encounter_type: str = "ip",
     needs_verification: bool = False,
-    formulary_id: Optional[str] = None,
-    dose: Optional[str] = None,
-    route: Optional[str] = None,
-    frequency: Optional[str] = None,
-    schedule_kind: Optional[str] = None,
+    formulary_id: str | None = None,
+    dose: str | None = None,
+    route: str | None = None,
+    frequency: str | None = None,
+    schedule_kind: str | None = None,
     is_prn: bool = False,
-    prn_indication: Optional[str] = None,
-    priority: Optional[str] = None,
-    start_at: Optional[str] = None,
-    end_at: Optional[str] = None,
-    duration_text: Optional[str] = None,
-    indication: Optional[str] = None,
-    notes: Optional[str] = None,
-    supply_source: Optional[str] = None,
-    prescriber_id: Optional[str] = None,
-    prescribed_at: Optional[str] = None,
-    verified_by: Optional[str] = None,
-    verified_at: Optional[str] = None,
-    status_reason: Optional[str] = None,
-    projection_status: Optional[str] = None,
-    legacy_medication_id: Optional[int] = None,
-    cpoe_order_id: Optional[str] = None,
-    order_set_application_id: Optional[int] = None,
-    sage_action_id: Optional[str] = None,
-    sage_handoff_id: Optional[str] = None,
-    scribe_note_id: Optional[str] = None,
-    idempotency_key: Optional[str] = None,
-    facility_id: Optional[str] = None,
-    safety: Optional[Mapping] = None,
-    fingerprint: Optional[str] = None,
+    prn_indication: str | None = None,
+    priority: str | None = None,
+    start_at: str | None = None,
+    end_at: str | None = None,
+    duration_text: str | None = None,
+    indication: str | None = None,
+    notes: str | None = None,
+    supply_source: str | None = None,
+    prescriber_id: str | None = None,
+    prescribed_at: str | None = None,
+    verified_by: str | None = None,
+    verified_at: str | None = None,
+    status_reason: str | None = None,
+    projection_status: str | None = None,
+    legacy_medication_id: int | None = None,
+    cpoe_order_id: str | None = None,
+    order_set_application_id: int | None = None,
+    sage_action_id: str | None = None,
+    sage_handoff_id: str | None = None,
+    scribe_note_id: str | None = None,
+    idempotency_key: str | None = None,
+    facility_id: str | None = None,
+    safety: Mapping | None = None,
+    fingerprint: str | None = None,
     event_kind: str = "created",
-    event_payload: Optional[Mapping] = None,
-    lane: Optional[str] = None,
+    event_payload: Mapping | None = None,
+    lane: str | None = None,
     audit: bool = True,
-    request_meta: Optional[Mapping] = None,
-    now: Optional[str] = None,
+    request_meta: Mapping | None = None,
+    now: str | None = None,
 ) -> StoreWrite:
     """Insert one order with its first ledger event (and, unless `audit` is
     False, its clinical_access audit row) in the caller's transaction.
@@ -661,15 +801,17 @@ def create_in_txn(
     if not _clean(patient_id):
         raise NeedsInput("A medication order needs a patient", code="patient_required")
     if not _clean(entered_by):
-        raise MedOrderInvalid("A medication order needs the person who entered it",
-                              code="entered_by_required")
+        raise MedOrderInvalid(
+            "A medication order needs the person who entered it", code="entered_by_required"
+        )
     if status not in _CREATABLE:
         raise MedOrderInvalid(f"An order cannot start as {status!r}", code="invalid_status")
     if source not in SOURCES:
         raise MedOrderInvalid(f"Unknown order source {source!r}", code="invalid_source")
     if event_kind not in ("created", "adopted"):
-        raise MedOrderInvalid("A new order's first event is 'created' or 'adopted'",
-                              code="invalid_event_kind")
+        raise MedOrderInvalid(
+            "A new order's first event is 'created' or 'adopted'", code="invalid_event_kind"
+        )
     _choice(encounter_type, ENCOUNTER_TYPES, "encounter_type")
     _choice(priority, PRIORITIES, "priority")
     _choice(supply_source, SUPPLY_SOURCES, "supply_source")
@@ -677,20 +819,23 @@ def create_in_txn(
     if status in LIVE_STATUSES:
         projection_status = projection_status or ("prn" if is_prn else "active")
     elif projection_status is not None:
-        raise MedOrderInvalid("Only a live order has a ward status",
-                              code="invalid_projection_status")
+        raise MedOrderInvalid(
+            "Only a live order has a ward status", code="invalid_projection_status"
+        )
     if status == "verified" and not _clean(verified_by):
         raise MedOrderInvalid("A verified order names its verifier", code="verified_by_required")
 
     if idempotency_key:
-        prior = conn.execute("SELECT * FROM med_orders WHERE idempotency_key = ?",
-                             (idempotency_key,)).fetchone()
+        prior = conn.execute(
+            "SELECT * FROM med_orders WHERE idempotency_key = ?", (idempotency_key,)
+        ).fetchone()
         if prior is not None:
             prior = dict(prior)
             if prior["patient_id"] == patient_id and prior["drug_name"] == drug:
                 return StoreWrite(prior, None, True)
-            raise MedOrderConflict("This request key was already used for another order",
-                                   code="idempotency_key_reused")
+            raise MedOrderConflict(
+                "This request key was already used for another order", code="idempotency_key_reused"
+            )
 
     now = now or utc_iso_now()
     if event_kind == "created" and status != "draft" and prescribed_at is None and prescriber_id:
@@ -699,44 +844,86 @@ def create_in_txn(
         prescribed_at = now
     order_id = str(uuid.uuid4())
     row = {
-        "id": order_id, "patient_id": patient_id, "admission_id": admission_id,
-        "encounter_type": encounter_type, "status": status, "held_from": None, "version": 1,
-        "source": source, "needs_verification": 1 if needs_verification else 0,
-        "drug_name": drug, "formulary_id": formulary_id,
-        "dose": _clean(dose), "route": _clean(route), "frequency": _clean(frequency),
-        "schedule_kind": schedule_kind, "is_prn": 1 if is_prn else 0,
-        "prn_indication": _clean(prn_indication), "priority": priority,
-        "start_at": start_at, "end_at": end_at, "duration_text": _clean(duration_text),
-        "indication": _clean(indication), "notes": _clean(notes),
+        "id": order_id,
+        "patient_id": patient_id,
+        "admission_id": admission_id,
+        "encounter_type": encounter_type,
+        "status": status,
+        "held_from": None,
+        "version": 1,
+        "source": source,
+        "needs_verification": 1 if needs_verification else 0,
+        "drug_name": drug,
+        "formulary_id": formulary_id,
+        "dose": _clean(dose),
+        "route": _clean(route),
+        "frequency": _clean(frequency),
+        "schedule_kind": schedule_kind,
+        "is_prn": 1 if is_prn else 0,
+        "prn_indication": _clean(prn_indication),
+        "priority": priority,
+        "start_at": start_at,
+        "end_at": end_at,
+        "duration_text": _clean(duration_text),
+        "indication": _clean(indication),
+        "notes": _clean(notes),
         "supply_source": supply_source,
-        "entered_by": entered_by, "entered_by_role": entered_by_role,
-        "prescriber_id": prescriber_id, "prescribed_at": prescribed_at,
-        "verified_by": _clean(verified_by), "verified_at": verified_at if verified_by else None,
-        "status_reason": _clean(status_reason), "status_changed_by": actor_id,
+        "entered_by": entered_by,
+        "entered_by_role": entered_by_role,
+        "prescriber_id": prescriber_id,
+        "prescribed_at": prescribed_at,
+        "verified_by": _clean(verified_by),
+        "verified_at": verified_at if verified_by else None,
+        "status_reason": _clean(status_reason),
+        "status_changed_by": actor_id,
         "status_changed_at": now,
         "last_safety_json": json.dumps(safety, sort_keys=True, default=str) if safety else None,
         "last_screened_at": now if safety else None,
         "screen_fingerprint": fingerprint,
         "projection_status": projection_status,
-        "legacy_medication_id": legacy_medication_id, "cpoe_order_id": cpoe_order_id,
+        "legacy_medication_id": legacy_medication_id,
+        "cpoe_order_id": cpoe_order_id,
         "order_set_application_id": order_set_application_id,
-        "sage_action_id": sage_action_id, "sage_handoff_id": sage_handoff_id,
-        "scribe_note_id": scribe_note_id, "idempotency_key": idempotency_key,
-        "facility_id": facility_id, "created_at": now, "updated_at": now,
+        "sage_action_id": sage_action_id,
+        "sage_handoff_id": sage_handoff_id,
+        "scribe_note_id": scribe_note_id,
+        "idempotency_key": idempotency_key,
+        "facility_id": facility_id,
+        "created_at": now,
+        "updated_at": now,
     }
     cols = ", ".join(row)
     marks = ", ".join("?" for _ in row)
     conn.execute(f"INSERT INTO med_orders ({cols}) VALUES ({marks})", tuple(row.values()))
     event_id = record_event_in_txn(
-        conn, order=row, kind=event_kind, from_status=None, to_status=status,
-        actor_id=actor_id, actor_role=actor_role, entry_point=entry_point,
-        reason=status_reason, payload=event_payload, created_at=now,
+        conn,
+        order=row,
+        kind=event_kind,
+        from_status=None,
+        to_status=status,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        entry_point=entry_point,
+        reason=status_reason,
+        payload=event_payload,
+        created_at=now,
     )
     if audit:
-        audit_in_txn(conn, order=row, action=f"med_order_{event_kind}", actor_id=actor_id,
-                     actor_role=actor_role, entry_point=entry_point, from_status=None,
-                     to_status=status, reason=status_reason, lane=lane, event_id=event_id,
-                     safety=safety, request_meta=request_meta)
+        audit_in_txn(
+            conn,
+            order=row,
+            action=f"med_order_{event_kind}",
+            actor_id=actor_id,
+            actor_role=actor_role,
+            entry_point=entry_point,
+            from_status=None,
+            to_status=status,
+            reason=status_reason,
+            lane=lane,
+            event_id=event_id,
+            safety=safety,
+            request_meta=request_meta,
+        )
     return StoreWrite(row, event_id, False)
 
 
@@ -748,33 +935,51 @@ def link_projection_in_txn(conn, order_id: str, medication_id: int) -> None:
     order = get_order_in_txn(conn, order_id)
     if order is None:
         raise MedOrderNotFound("This medication order no longer exists")
-    med = conn.execute("SELECT id, patient_id, med_order_id, status FROM medications "
-                       "WHERE id = ?", (medication_id,)).fetchone()
+    med = conn.execute(
+        "SELECT id, patient_id, med_order_id, status FROM medications WHERE id = ?",
+        (medication_id,),
+    ).fetchone()
     if med is None:
-        raise MedOrderNotFound("This medication is no longer on the chart",
-                               code="projection_not_found")
+        raise MedOrderNotFound(
+            "This medication is no longer on the chart", code="projection_not_found"
+        )
     if med["patient_id"] != order["patient_id"]:
-        raise MedOrderConflict("The chart row belongs to another patient",
-                               code="projection_patient_mismatch", order=order)
+        raise MedOrderConflict(
+            "The chart row belongs to another patient",
+            code="projection_patient_mismatch",
+            order=order,
+        )
     if order["status"] == "draft":
-        raise MedOrderConflict("An unsigned order has no chart row",
-                               code="draft_has_no_ward_row", order=order)
-    if med["status"] != projection_for(order)["status"]:
+        raise MedOrderConflict(
+            "An unsigned order has no chart row", code="draft_has_no_ward_row", order=order
+        )
+    projection = projection_for(order)
+    assert projection is not None
+    if med["status"] != projection["status"]:
         # Linking must never change what the ward sees: the row already says
         # what the order says, or the two are not the same order.
-        raise MedOrderConflict("The chart row does not match this order",
-                               code="projection_mismatch", order=order)
+        raise MedOrderConflict(
+            "The chart row does not match this order", code="projection_mismatch", order=order
+        )
     if med["med_order_id"] not in (None, order_id):
-        raise MedOrderConflict("This chart row already belongs to another order",
-                               code="projection_already_linked", order=order)
+        raise MedOrderConflict(
+            "This chart row already belongs to another order",
+            code="projection_already_linked",
+            order=order,
+        )
     if order["legacy_medication_id"] not in (None, medication_id):
-        raise MedOrderConflict("This order already has another chart row",
-                               code="order_already_linked", order=order)
-    conn.execute("UPDATE medications SET med_order_id = ? WHERE id = ? AND med_order_id IS NULL",
-                 (order_id, medication_id))
-    conn.execute("UPDATE med_orders SET legacy_medication_id = ? "
-                 "WHERE id = ? AND legacy_medication_id IS NULL",
-                 (medication_id, order_id))
+        raise MedOrderConflict(
+            "This order already has another chart row", code="order_already_linked", order=order
+        )
+    conn.execute(
+        "UPDATE medications SET med_order_id = ? WHERE id = ? AND med_order_id IS NULL",
+        (order_id, medication_id),
+    )
+    conn.execute(
+        "UPDATE med_orders SET legacy_medication_id = ? "
+        "WHERE id = ? AND legacy_medication_id IS NULL",
+        (medication_id, order_id),
+    )
 
 
 def project_in_txn(conn, order: Mapping) -> int:
@@ -785,29 +990,33 @@ def project_in_txn(conn, order: Mapping) -> int:
     if projection is None:
         return 0
     cols = ", ".join(f"{k} = ?" for k in projection)
-    cur = conn.execute(f"UPDATE medications SET {cols} WHERE med_order_id = ?",
-                       (*projection.values(), order["id"]))
+    cur = conn.execute(
+        f"UPDATE medications SET {cols} WHERE med_order_id = ?", (*projection.values(), order["id"])
+    )
     return cur.rowcount
 
 
 def transition_in_txn(
-    conn, order_id: str, to_status: str, *,
-    expected_version: Optional[int],
-    actor_id: Optional[str],
-    actor_role: Optional[str],
+    conn,
+    order_id: str,
+    to_status: str,
+    *,
+    expected_version: int | None,
+    actor_id: str | None,
+    actor_role: str | None,
     entry_point: str,
-    reason: Optional[str] = None,
-    lane: Optional[str] = None,
-    payload: Optional[Mapping] = None,
-    safety: Optional[Mapping] = None,
-    fingerprint: Optional[str] = None,
-    ref_type: Optional[str] = None,
+    reason: str | None = None,
+    lane: str | None = None,
+    payload: Mapping | None = None,
+    safety: Mapping | None = None,
+    fingerprint: str | None = None,
+    ref_type: str | None = None,
     ref_id: Any = None,
-    idempotency_key: Optional[str] = None,
+    idempotency_key: str | None = None,
     project: bool = True,
-    audit_extra: Optional[Mapping] = None,
-    request_meta: Optional[Mapping] = None,
-    now: Optional[str] = None,
+    audit_extra: Mapping | None = None,
+    request_meta: Mapping | None = None,
+    now: str | None = None,
 ) -> StoreWrite:
     """Move one order to `to_status` in the caller's transaction: the guarded
     UPDATE (id, version and status must still be what was read), its ledger
@@ -830,17 +1039,24 @@ def transition_in_txn(
     if prior is not None:
         if prior["med_order_id"] == order_id and prior["to_status"] == to_status:
             return StoreWrite(order, prior["id"], True)
-        raise MedOrderConflict("This request key was already used for another step",
-                               code="idempotency_key_reused", order=order)
+        raise MedOrderConflict(
+            "This request key was already used for another step",
+            code="idempotency_key_reused",
+            order=order,
+        )
 
     if expected_version is not None and order["version"] != expected_version:
-        raise StaleOrderVersion("This order was changed by someone else. Refresh and try again.",
-                                order=order)
+        raise StaleOrderVersion(
+            "This order was changed by someone else. Refresh and try again.", order=order
+        )
     from_status = order["status"]
     if not is_legal_transition(from_status, to_status, held_from=order["held_from"]):
         raise TransitionNotAllowed(
-            f"A {from_status} order cannot become {to_status}", order=order,
-            from_status=from_status, to_status=to_status)
+            f"A {from_status} order cannot become {to_status}",
+            order=order,
+            from_status=from_status,
+            to_status=to_status,
+        )
     kind = event_kind_for(from_status, to_status)
     reason_text = _clean(reason)
     if kind in REASON_REQUIRED_KINDS and not reason_text:
@@ -848,8 +1064,9 @@ def transition_in_txn(
     if kind in ("signed", "verified") and not _clean(actor_id):
         # The signer becomes the prescriber of record and the verifier is
         # copied to the ward row: neither step may be anonymous.
-        raise MedOrderInvalid(f"A {kind} step names the person who took it",
-                              code="actor_required", order=order)
+        raise MedOrderInvalid(
+            f"A {kind} step names the person who took it", code="actor_required", order=order
+        )
 
     now = now or utc_iso_now()
     sets: dict[str, Any] = {
@@ -865,7 +1082,8 @@ def transition_in_txn(
         sets["prescriber_id"] = actor_id
         sets["prescribed_at"] = now
         sets["projection_status"] = order["projection_status"] or (
-            "prn" if order["is_prn"] else "active")
+            "prn" if order["is_prn"] else "active"
+        )
     if kind == "verified":
         sets["verified_by"] = actor_id
         sets["verified_at"] = now
@@ -882,30 +1100,57 @@ def transition_in_txn(
         (*sets.values(), order_id, order["version"], from_status),
     )
     if cur.rowcount != 1:
-        raise StaleOrderVersion("This order was changed by someone else. Refresh and try again.",
-                                order=get_order_in_txn(conn, order_id) or order)
+        raise StaleOrderVersion(
+            "This order was changed by someone else. Refresh and try again.",
+            order=get_order_in_txn(conn, order_id) or order,
+        )
     after = get_order_in_txn(conn, order_id)
+    assert after is not None, "Medication order disappeared inside its transaction"
     event_id = record_event_in_txn(
-        conn, order=after, kind=kind, from_status=from_status, to_status=to_status,
-        actor_id=actor_id, actor_role=actor_role, entry_point=entry_point, reason=reason_text,
-        ref_type=ref_type, ref_id=ref_id, payload=payload, idempotency_key=idempotency_key,
+        conn,
+        order=after,
+        kind=kind,
+        from_status=from_status,
+        to_status=to_status,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        entry_point=entry_point,
+        reason=reason_text,
+        ref_type=ref_type,
+        ref_id=ref_id,
+        payload=payload,
+        idempotency_key=idempotency_key,
         created_at=now,
     )
     if project:
         project_in_txn(conn, after)
-    mirror = _mirror_cpoe_view_in_txn(conn, after, from_status=from_status, kind=kind,
-                                      actor_id=actor_id, reason=reason_text)
+    mirror = _mirror_cpoe_view_in_txn(
+        conn, after, from_status=from_status, kind=kind, actor_id=actor_id, reason=reason_text
+    )
     if mirror is not None:
         audit_extra = {**dict(audit_extra or {}), "cpoe_mirror": mirror}
-    audit_in_txn(conn, order=after, action=f"med_order_{kind}", actor_id=actor_id,
-                 actor_role=actor_role, entry_point=entry_point, from_status=from_status,
-                 to_status=to_status, reason=reason_text, lane=lane, event_id=event_id,
-                 safety=safety, extra=audit_extra, request_meta=request_meta)
+    audit_in_txn(
+        conn,
+        order=after,
+        action=f"med_order_{kind}",
+        actor_id=actor_id,
+        actor_role=actor_role,
+        entry_point=entry_point,
+        from_status=from_status,
+        to_status=to_status,
+        reason=reason_text,
+        lane=lane,
+        event_id=event_id,
+        safety=safety,
+        extra=audit_extra,
+        request_meta=request_meta,
+    )
     return StoreWrite(after, event_id, False)
 
 
-def _mirror_cpoe_view_in_txn(conn, order: Mapping, *, from_status: str, kind: str,
-                             actor_id: Optional[str], reason: Optional[str]) -> Optional[dict]:
+def _mirror_cpoe_view_in_txn(
+    conn, order: Mapping, *, from_status: str, kind: str, actor_id: str | None, reason: str | None
+) -> dict | None:
     """The CPOE view of a linked order follows its status (design section 2,
     "CPOE mirror"; medorders-7, W7-F), in the caller's transaction, keyed on
     the link and never on the switches. services/medorders/cpoe.py holds the
@@ -913,20 +1158,25 @@ def _mirror_cpoe_view_in_txn(conn, order: Mapping, *, from_status: str, kind: st
     if not order.get("cpoe_order_id"):
         return None
     from services.medorders import cpoe
-    return cpoe.mirror_cpoe_status_in_txn(conn, order, from_status=from_status, kind=kind,
-                                          actor_id=actor_id, reason=reason)
+
+    return cpoe.mirror_cpoe_status_in_txn(
+        conn, order, from_status=from_status, kind=kind, actor_id=actor_id, reason=reason
+    )
 
 
 def legacy_decision_on_held_in_txn(
-    conn, order_id: str, decision: str, *,
-    actor_id: Optional[str],
-    actor_role: Optional[str],
+    conn,
+    order_id: str,
+    decision: str,
+    *,
+    actor_id: str | None,
+    actor_role: str | None,
     entry_point: str,
-    reason: Optional[str] = None,
-    lane: Optional[str] = None,
-    audit_extra: Optional[Mapping] = None,
-    request_meta: Optional[Mapping] = None,
-    now: Optional[str] = None,
+    reason: str | None = None,
+    lane: str | None = None,
+    audit_extra: Mapping | None = None,
+    request_meta: Mapping | None = None,
+    now: str | None = None,
 ) -> StoreWrite:
     """A pharmacist's decision taken on the legacy Verify Queue while the order
     is HELD (W5-E, the legacy verify and reject mirror; design section 5).
@@ -946,54 +1196,85 @@ def legacy_decision_on_held_in_txn(
     transition_in_txn, in the caller's transaction."""
     _require_txn(conn)
     if decision not in ("verified", "rejected"):
-        raise MedOrderInvalid(f"Unknown pharmacist decision {decision!r}",
-                              code="invalid_decision")
+        raise MedOrderInvalid(f"Unknown pharmacist decision {decision!r}", code="invalid_decision")
     order = get_order_in_txn(conn, order_id)
     if order is None:
         raise MedOrderNotFound("This medication order no longer exists")
-    if order["status"] != "held" or (decision == "verified"
-                                     and order["held_from"] != "prescribed"):
+    if order["status"] != "held" or (decision == "verified" and order["held_from"] != "prescribed"):
         raise TransitionNotAllowed(
-            f"A {order['status']} order cannot be {decision} here", order=order,
-            from_status=order["status"], to_status=decision)
+            f"A {order['status']} order cannot be {decision} here",
+            order=order,
+            from_status=order["status"],
+            to_status=decision,
+        )
     reason_text = _clean(reason)
     if decision == "rejected" and not reason_text:
         raise NeedsInput("Say why", code="reason_required", order=order)
     if not _clean(actor_id):
-        raise MedOrderInvalid(f"A {decision} step names the person who took it",
-                              code="actor_required", order=order)
+        raise MedOrderInvalid(
+            f"A {decision} step names the person who took it", code="actor_required", order=order
+        )
 
     now = now or utc_iso_now()
     sets: dict[str, Any] = {"version": order["version"] + 1, "updated_at": now}
     if decision == "verified":
         sets.update({"held_from": "verified", "verified_by": actor_id, "verified_at": now})
     else:
-        sets.update({"status": "rejected", "held_from": None, "projection_status": None,
-                     "status_reason": reason_text, "status_changed_by": actor_id,
-                     "status_changed_at": now})
+        sets.update(
+            {
+                "status": "rejected",
+                "held_from": None,
+                "projection_status": None,
+                "status_reason": reason_text,
+                "status_changed_by": actor_id,
+                "status_changed_at": now,
+            }
+        )
     assignments = ", ".join(f"{k} = ?" for k in sets)
     cur = conn.execute(
         f"UPDATE med_orders SET {assignments} WHERE id = ? AND version = ? AND status = 'held'",
         (*sets.values(), order_id, order["version"]),
     )
     if cur.rowcount != 1:
-        raise StaleOrderVersion("This order was changed by someone else. Refresh and try again.",
-                                order=get_order_in_txn(conn, order_id) or order)
+        raise StaleOrderVersion(
+            "This order was changed by someone else. Refresh and try again.",
+            order=get_order_in_txn(conn, order_id) or order,
+        )
     after = get_order_in_txn(conn, order_id)
+    assert after is not None, "Medication order disappeared inside its transaction"
     event_id = record_event_in_txn(
-        conn, order=after, kind=decision, from_status="held", to_status=after["status"],
-        actor_id=actor_id, actor_role=actor_role, entry_point=entry_point,
-        reason=reason_text, payload={"while_held": True}, created_at=now,
+        conn,
+        order=after,
+        kind=decision,
+        from_status="held",
+        to_status=after["status"],
+        actor_id=actor_id,
+        actor_role=actor_role,
+        entry_point=entry_point,
+        reason=reason_text,
+        payload={"while_held": True},
+        created_at=now,
     )
     if decision == "rejected":
         project_in_txn(conn, after)
-    mirror = _mirror_cpoe_view_in_txn(conn, after, from_status="held", kind=decision,
-                                      actor_id=actor_id, reason=reason_text)
+    mirror = _mirror_cpoe_view_in_txn(
+        conn, after, from_status="held", kind=decision, actor_id=actor_id, reason=reason_text
+    )
     if mirror is not None:
         audit_extra = {**dict(audit_extra or {}), "cpoe_mirror": mirror}
-    audit_in_txn(conn, order=after, action=f"med_order_{decision}", actor_id=actor_id,
-                 actor_role=actor_role, entry_point=entry_point, from_status="held",
-                 to_status=after["status"], reason=reason_text, lane=lane, event_id=event_id,
-                 extra={"while_held": True, **dict(audit_extra or {})},
-                 request_meta=request_meta)
+    audit_in_txn(
+        conn,
+        order=after,
+        action=f"med_order_{decision}",
+        actor_id=actor_id,
+        actor_role=actor_role,
+        entry_point=entry_point,
+        from_status="held",
+        to_status=after["status"],
+        reason=reason_text,
+        lane=lane,
+        event_id=event_id,
+        extra={"while_held": True, **dict(audit_extra or {})},
+        request_meta=request_meta,
+    )
     return StoreWrite(after, event_id, False)

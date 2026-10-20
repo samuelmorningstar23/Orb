@@ -21,14 +21,16 @@ dose guard (prior administrations, the override ledger, the audit rows) lives in
 services/emar_service.py, exactly as allergy matching lives here and the bedside
 allergy interlock lives in services/allergy_interlock.py.
 """
+
 from __future__ import annotations
 
 import hashlib
 import logging
 import re
-from typing import Iterable, Optional
+from collections.abc import Iterable
 
 from database import db_session
+
 from services import interaction_db
 
 logger = logging.getLogger("orb.drug_safety")
@@ -69,56 +71,155 @@ _DRUG_CLASS_PATTERNS: dict[str, list[str]] = {
     # NOT "mox": it is a substring of MOXIfloxacin, a fluoroquinolone and one of
     # the standard alternatives FOR a penicillin-allergic patient. Blocking it on
     # a penicillin allergy is both wrong and the alert-fatigue hazard.
-    "penicillins": ["penicillin", "cillin", "co-amoxiclav", "amoxiclav",
-                    "augmentin", "tazocin", "clavam"],
+    "penicillins": [
+        "penicillin",
+        "cillin",
+        "co-amoxiclav",
+        "amoxiclav",
+        "augmentin",
+        "tazocin",
+        "clavam",
+    ],
     # Enumerated members PLUS the "cef"/"ceph" token-prefix rule below, which is
     # what actually makes this family complete.
-    "cephalosporins": ["cephalexin", "cefalexin", "cefuroxime", "ceftriaxone",
-                       "cefotaxime", "cefazolin", "ceftazidime", "cefixime",
-                       "cefpodoxime", "cefadroxil", "cefepime", "cefoperazone",
-                       "cefaclor", "cefprozil", "cefdinir", "ceftibuten",
-                       "cefditoren", "ceftaroline", "cephradine", "cefalotin"],
-    "carbapenems": ["penem"],   # meropenem, imipenem, ertapenem, doripenem, faropenem
-    "sulfonamides": ["sulfamethoxazole", "co-trimoxazole", "cotrimoxazole",
-                     "trimethoprim-sulfa", "sulfasalazine", "sulfadiazine",
-                     "sulfadoxine", "septran", "bactrim"],
+    "cephalosporins": [
+        "cephalexin",
+        "cefalexin",
+        "cefuroxime",
+        "ceftriaxone",
+        "cefotaxime",
+        "cefazolin",
+        "ceftazidime",
+        "cefixime",
+        "cefpodoxime",
+        "cefadroxil",
+        "cefepime",
+        "cefoperazone",
+        "cefaclor",
+        "cefprozil",
+        "cefdinir",
+        "ceftibuten",
+        "cefditoren",
+        "ceftaroline",
+        "cephradine",
+        "cefalotin",
+    ],
+    "carbapenems": ["penem"],  # meropenem, imipenem, ertapenem, doripenem, faropenem
+    "sulfonamides": [
+        "sulfamethoxazole",
+        "co-trimoxazole",
+        "cotrimoxazole",
+        "trimethoprim-sulfa",
+        "sulfasalazine",
+        "sulfadiazine",
+        "sulfadoxine",
+        "septran",
+        "bactrim",
+    ],
     # "-profen" (ibuprofen, ketoprofen, flurbiprofen, dexketoprofen),
     # "-coxib"  (celecoxib, etoricoxib, parecoxib, rofecoxib),
     # "-oxicam" (piroxicam, meloxicam, tenoxicam, lornoxicam).
     # Paracetamol/acetaminophen is deliberately NOT here — it is not an NSAID and
     # must never fire on an NSAID allergy.
-    "nsaids": ["ibuprofen", "naproxen", "diclofenac", "aceclofenac", "aspirin",
-               "acetylsalicylic", "ketorolac", "indometacin", "indomethacin",
-               "mefenamic", "nimesulide", "etodolac", "nabumetone", "ketoprofen",
-               "profen", "coxib", "oxicam",
-               # India: what is actually written on the drug chart.
-               # (kept at >=6 characters: a 4-character brand token is a
-               # substring of too much of the formulary to be safe)
-               "ecosprin", "disprin", "brufen", "combiflam", "voveran",
-               "zerodol", "dolonex", "hifenac", "aceclo", "flexon"],
-    "opioids": ["morphine", "codeine", "dihydrocodeine", "oxycodone", "fentanyl",
-                "fentanil",  # sufentanil, alfentanil, remifentanil
-                "tramadol", "tapentadol", "pethidine", "meperidine", "methadone",
-                "buprenorphine", "hydromorphone", "nalbuphine", "pentazocine",
-                # common combination/brand products that contain an opioid but whose
-                # name does not literally include the ingredient string:
-                "co-codamol", "co-dydramol", "solpadol", "kapake", "tylex", "zapain",
-                "ultracet", "fortwin"],
+    "nsaids": [
+        "ibuprofen",
+        "naproxen",
+        "diclofenac",
+        "aceclofenac",
+        "aspirin",
+        "acetylsalicylic",
+        "ketorolac",
+        "indometacin",
+        "indomethacin",
+        "mefenamic",
+        "nimesulide",
+        "etodolac",
+        "nabumetone",
+        "ketoprofen",
+        "profen",
+        "coxib",
+        "oxicam",
+        # India: what is actually written on the drug chart.
+        # (kept at >=6 characters: a 4-character brand token is a
+        # substring of too much of the formulary to be safe)
+        "ecosprin",
+        "disprin",
+        "brufen",
+        "combiflam",
+        "voveran",
+        "zerodol",
+        "dolonex",
+        "hifenac",
+        "aceclo",
+        "flexon",
+    ],
+    "opioids": [
+        "morphine",
+        "codeine",
+        "dihydrocodeine",
+        "oxycodone",
+        "fentanyl",
+        "fentanil",  # sufentanil, alfentanil, remifentanil
+        "tramadol",
+        "tapentadol",
+        "pethidine",
+        "meperidine",
+        "methadone",
+        "buprenorphine",
+        "hydromorphone",
+        "nalbuphine",
+        "pentazocine",
+        # common combination/brand products that contain an opioid but whose
+        # name does not literally include the ingredient string:
+        "co-codamol",
+        "co-dydramol",
+        "solpadol",
+        "kapake",
+        "tylex",
+        "zapain",
+        "ultracet",
+        "fortwin",
+    ],
     # Enumerated: a "-mycin" stem would swallow vancomycin and clindamycin, which
     # are neither macrolides nor aminoglycosides.
-    "macrolides": ["erythromycin", "clarithromycin", "azithromycin",
-                   "roxithromycin", "spiramycin", "fidaxomicin"],
-    "anticoagulants": ["warfarin", "heparin", "parin",   # enoxaparin, dalteparin, tinzaparin, fondaparinux
-                       "xaban",                          # apixaban, rivaroxaban, edoxaban
-                       "dabigatran", "acenocoumarol"],
+    "macrolides": [
+        "erythromycin",
+        "clarithromycin",
+        "azithromycin",
+        "roxithromycin",
+        "spiramycin",
+        "fidaxomicin",
+    ],
+    "anticoagulants": [
+        "warfarin",
+        "heparin",
+        "parin",  # enoxaparin, dalteparin, tinzaparin, fondaparinux
+        "xaban",  # apixaban, rivaroxaban, edoxaban
+        "dabigatran",
+        "acenocoumarol",
+    ],
     # NO "-statin" stem: nystatin is an antifungal and would be misclassified.
-    "statins": ["simvastatin", "atorvastatin", "rosuvastatin", "pravastatin",
-                "lovastatin", "fluvastatin", "pitavastatin"],
+    "statins": [
+        "simvastatin",
+        "atorvastatin",
+        "rosuvastatin",
+        "pravastatin",
+        "lovastatin",
+        "fluvastatin",
+        "pitavastatin",
+    ],
     "ace_inhibitors": ["pril"],  # ramipril, lisinopril, enalapril, perindopril, captopril…
     "potassium": ["potassium chloride", "sando-k", "kcl"],
     # Enumerated for the same reason as macrolides.
-    "aminoglycosides": ["gentamicin", "amikacin", "tobramycin", "streptomycin",
-                        "neomycin", "netilmicin", "kanamycin"],
+    "aminoglycosides": [
+        "gentamicin",
+        "amikacin",
+        "tobramycin",
+        "streptomycin",
+        "neomycin",
+        "netilmicin",
+        "kanamycin",
+    ],
 }
 
 # Short family stems that are only safe when they START A TOKEN. "cef" as a bare
@@ -200,10 +301,22 @@ _ALLERGEN_CLASS_TERMS: dict[str, list[str]] = {
     "penicillins": ["penicillin", "penicillins"],
     "cephalosporins": ["cephalosporin", "cephalosporins", "cephalosporin antibiotics"],
     "carbapenems": ["carbapenem", "carbapenems"],
-    "sulfonamides": ["sulfonamide", "sulfonamides", "sulphonamide", "sulphonamides",
-                     "sulfa", "sulpha", "sulfa drugs"],
-    "nsaids": ["nsaid", "nsaids", "non-steroidal anti-inflammatory",
-               "non steroidal anti inflammatory", "nonsteroidal anti-inflammatory"],
+    "sulfonamides": [
+        "sulfonamide",
+        "sulfonamides",
+        "sulphonamide",
+        "sulphonamides",
+        "sulfa",
+        "sulpha",
+        "sulfa drugs",
+    ],
+    "nsaids": [
+        "nsaid",
+        "nsaids",
+        "non-steroidal anti-inflammatory",
+        "non steroidal anti inflammatory",
+        "nonsteroidal anti-inflammatory",
+    ],
     "opioids": ["opioid", "opioids", "opiate", "opiates"],
     "macrolides": ["macrolide", "macrolides"],
     "anticoagulants": ["anticoagulant", "anticoagulants"],
@@ -273,45 +386,114 @@ _INTERACTION_GROUP_PATTERNS: dict[str, tuple[str, ...]] = {
     "ciclosporin": ("ciclosporin", "cyclosporin"),
     "theophylline": ("theophylline", "aminophylline", "deriphyllin"),
     # Groups named by the curated rows.
-    "azoles": ("fluconazole", "itraconazole", "ketoconazole", "voriconazole",
-               "posaconazole", "isavuconazole", "miconazole"),
+    "azoles": (
+        "fluconazole",
+        "itraconazole",
+        "ketoconazole",
+        "voriconazole",
+        "posaconazole",
+        "isavuconazole",
+        "miconazole",
+    ),
     "ssri": ("fluoxetine", "sertraline", "paroxetine", "citalopram", "fluvoxamine"),
-    "proton_pump_inhibitors": ("omeprazole", "pantoprazole", "lansoprazole",
-                               "rabeprazole", "ilaprazole"),   # esomeprazole contains omeprazole
+    "proton_pump_inhibitors": (
+        "omeprazole",
+        "pantoprazole",
+        "lansoprazole",
+        "rabeprazole",
+        "ilaprazole",
+    ),  # esomeprazole contains omeprazole
     # The clopidogrel row is specific to these two (CYP2C19); pantoprazole is the
     # usual alternative and must not fire.
-    "cyp2c19_inhibiting_ppis": ("omeprazole",),                # and esomeprazole
-    "potassium_sparing_diuretics": ("spironolactone", "aldactone", "eplerenone",
-                                    "amiloride", "triamterene"),
+    "cyp2c19_inhibiting_ppis": ("omeprazole",),  # and esomeprazole
+    "potassium_sparing_diuretics": (
+        "spironolactone",
+        "aldactone",
+        "eplerenone",
+        "amiloride",
+        "triamterene",
+    ),
     "fibrates": ("fenofibrate", "gemfibrozil", "bezafibrate", "ciprofibrate"),
-    "maoi": ("phenelzine", "tranylcypromine", "isocarboxazid", "moclobemide",
-             "selegiline", "rasagiline"),
+    "maoi": (
+        "phenelzine",
+        "tranylcypromine",
+        "isocarboxazid",
+        "moclobemide",
+        "selegiline",
+        "rasagiline",
+    ),
     "triptans": ("triptan",),
     "sympathomimetics": ("ephedrine", "phenylephrine", "phenylpropanolamine"),
     # Potassium-losing diuretics (loop and thiazide-type): the digoxin and lithium
     # rows are about the hypokalaemia and sodium loss these cause.
-    "diuretics": ("furosemide", "frusemide", "lasix", "bumetanide", "torasemide",
-                  "torsemide", "thiazide", "chlorthalidone", "chlortalidone",
-                  "indapamide", "metolazone"),
+    "diuretics": (
+        "furosemide",
+        "frusemide",
+        "lasix",
+        "bumetanide",
+        "torasemide",
+        "torsemide",
+        "thiazide",
+        "chlorthalidone",
+        "chlortalidone",
+        "indapamide",
+        "metolazone",
+    ),
     "thiazides": ("thiazide", "chlorthalidone", "chlortalidone", "indapamide", "metolazone"),
     # CredibleMeds "known risk" agents outside the macrolide and fluoroquinolone
     # rows, which carry their own (moderate) QT pairs.
-    "qt_prolonging": ("amiodarone", "dronedarone", "sotalol", "quinidine",
-                      "disopyramide", "procainamide", "flecainide", "haloperidol",
-                      "droperidol", "chlorpromazine", "thioridazine", "pimozide",
-                      "methadone", "citalopram", "chloroquine"),
-    "antipsychotics": ("haloperidol", "chlorpromazine", "thioridazine", "pimozide",
-                       "trifluoperazine", "fluphenazine", "flupentixol", "zuclopenthixol",
-                       "olanzapine", "quetiapine", "risperidone", "paliperidone",
-                       "aripiprazole", "ziprasidone", "clozapine", "amisulpride",
-                       "lurasidone", "asenapine"),
-    "fluoroquinolones": ("floxacin",),   # cipro-, levo-, moxi-, oflo-, norfloxacin
+    "qt_prolonging": (
+        "amiodarone",
+        "dronedarone",
+        "sotalol",
+        "quinidine",
+        "disopyramide",
+        "procainamide",
+        "flecainide",
+        "haloperidol",
+        "droperidol",
+        "chlorpromazine",
+        "thioridazine",
+        "pimozide",
+        "methadone",
+        "citalopram",
+        "chloroquine",
+    ),
+    "antipsychotics": (
+        "haloperidol",
+        "chlorpromazine",
+        "thioridazine",
+        "pimozide",
+        "trifluoperazine",
+        "fluphenazine",
+        "flupentixol",
+        "zuclopenthixol",
+        "olanzapine",
+        "quetiapine",
+        "risperidone",
+        "paliperidone",
+        "aripiprazole",
+        "ziprasidone",
+        "clozapine",
+        "amisulpride",
+        "lurasidone",
+        "asenapine",
+    ),
+    "fluoroquinolones": ("floxacin",),  # cipro-, levo-, moxi-, oflo-, norfloxacin
     "benzodiazepines": ("azepam", "azolam", "chlordiazepoxide", "clobazam"),
     "gabapentinoids": ("gabapentin", "pregabalin"),
     "beta_blockers": ("olol", "carvedilol", "labetalol"),
     "nitrates": ("isosorbide", "glyceryl trinitrate", "nitroglycerin", "nicorandil"),
-    "iodinated_contrast": ("iohexol", "iopamidol", "iodixanol", "ioversol", "iopromide",
-                           "iomeprol", "omnipaque", "visipaque"),
+    "iodinated_contrast": (
+        "iohexol",
+        "iopamidol",
+        "iodixanol",
+        "ioversol",
+        "iopromide",
+        "iomeprol",
+        "omnipaque",
+        "visipaque",
+    ),
 }
 
 _INGREDIENT_WORD_RE = re.compile(r"[a-z]+(?:['-][a-z]+)*")
@@ -320,14 +502,46 @@ _INGREDIENT_WORD_RE = re.compile(r"[a-z]+(?:['-][a-z]+)*")
 _MIN_INGREDIENT_WORD = 4
 # Salt and form words that are never the drug on their own. "potassium" is the
 # dangerous one: "Losartan potassium" is not a potassium supplement.
-_SINGLE_WORD_STOPLIST = frozenset({
-    "sodium", "potassium", "calcium", "magnesium", "hydrochloride", "chloride",
-    "sulphate", "sulfate", "acetate", "phosphate", "citrate", "maleate",
-    "succinate", "tartrate", "besylate", "mesylate", "bromide", "tablet",
-    "tablets", "capsule", "capsules", "injection", "infusion", "syrup",
-    "suspension", "solution", "oral", "cream", "ointment", "drops", "vial",
-    "ampoule", "inhaler", "extended", "release", "units",
-})
+_SINGLE_WORD_STOPLIST = frozenset(
+    {
+        "sodium",
+        "potassium",
+        "calcium",
+        "magnesium",
+        "hydrochloride",
+        "chloride",
+        "sulphate",
+        "sulfate",
+        "acetate",
+        "phosphate",
+        "citrate",
+        "maleate",
+        "succinate",
+        "tartrate",
+        "besylate",
+        "mesylate",
+        "bromide",
+        "tablet",
+        "tablets",
+        "capsule",
+        "capsules",
+        "injection",
+        "infusion",
+        "syrup",
+        "suspension",
+        "solution",
+        "oral",
+        "cream",
+        "ointment",
+        "drops",
+        "vial",
+        "ampoule",
+        "inhaler",
+        "extended",
+        "release",
+        "units",
+    }
+)
 
 
 def ingredient_key(name: str) -> str:
@@ -342,9 +556,10 @@ def _ingredient_phrases(drug_name: str) -> set[str]:
     phrases: set[str] = set()
     for size in (1, 2, 3):
         for i in range(len(words) - size + 1):
-            phrase = " ".join(words[i:i + size])
-            if size == 1 and (len(phrase) < _MIN_INGREDIENT_WORD
-                              or phrase in _SINGLE_WORD_STOPLIST):
+            phrase = " ".join(words[i : i + size])
+            if size == 1 and (
+                len(phrase) < _MIN_INGREDIENT_WORD or phrase in _SINGLE_WORD_STOPLIST
+            ):
                 continue
             phrases.add(phrase)
     # A class or group term is reached only through its own member list: the
@@ -374,7 +589,7 @@ def interaction_terms(drug_name: str) -> set[str]:
     return _vocabulary_terms(drug_name) | _ingredient_phrases(drug_name)
 
 
-def interaction_recognised(drug_name: str, terms: Optional[set[str]] = None) -> bool:
+def interaction_recognised(drug_name: str, terms: set[str] | None = None) -> bool:
     """True when the interaction knowledge base knows this drug at all.
 
     Known only when some interaction row (curated or loaded) names one of the
@@ -573,42 +788,53 @@ def match_allergies(
         #     ingredient/generic name for the same product.
         matched_name = next((n for n in names if names_overlap(sub, n)), None)
         if matched_name is not None:
-            alerts.append({
-                **common,
-                "severity": _worse_severity("severe" if sev in ("severe", "unknown") else sev, floor),
-                "message": f"Patient is allergic to {a['substance']} (documented reaction: {a.get('reaction') or 'unknown'}).",
-                "match": "direct",
-                "matched_on": matched_name,
-            })
+            alerts.append(
+                {
+                    **common,
+                    "severity": _worse_severity(
+                        "severe" if sev in ("severe", "unknown") else sev, floor
+                    ),
+                    "message": f"Patient is allergic to {a['substance']} (documented reaction: {a.get('reaction') or 'unknown'}).",
+                    "match": "direct",
+                    "matched_on": matched_name,
+                }
+            )
             continue
 
         # (b) same-class match
         shared = drug_classes & sub_classes
         if shared:
-            alerts.append({
-                **common,
-                "severity": _worse_severity("severe" if sev in ("severe", "unknown") else sev, floor),
-                "message": f"{label} shares a drug class ({', '.join(sorted(shared))}) with the "
-                           f"documented allergy to {a['substance']}.",
-                "match": "class",
-                "matched_on": ", ".join(sorted(shared)),
-            })
+            alerts.append(
+                {
+                    **common,
+                    "severity": _worse_severity(
+                        "severe" if sev in ("severe", "unknown") else sev, floor
+                    ),
+                    "message": f"{label} shares a drug class ({', '.join(sorted(shared))}) with the "
+                    f"documented allergy to {a['substance']}.",
+                    "match": "class",
+                    "matched_on": ", ".join(sorted(shared)),
+                }
+            )
             continue
 
         # (c) cross-reactivity
         for sc in sorted(sub_classes):
-            for (target_cls, xsev) in _CROSS_REACTIVITY.get(sc, []):
+            for target_cls, xsev in _CROSS_REACTIVITY.get(sc, []):
                 if target_cls in drug_classes:
                     reaction = (a.get("reaction") or "").strip()
-                    alerts.append({
-                        **common,
-                        "severity": _worse_severity(xsev, floor),
-                        "message": f"Cross-reactivity: {label} ({target_cls}) with documented "
-                                   f"{sc} allergy ({a['substance']}"
-                                   + (f"; reaction: {reaction}" if reaction else "") + ").",
-                        "match": "cross_reactivity",
-                        "matched_on": f"{sc}->{target_cls}",
-                    })
+                    alerts.append(
+                        {
+                            **common,
+                            "severity": _worse_severity(xsev, floor),
+                            "message": f"Cross-reactivity: {label} ({target_cls}) with documented "
+                            f"{sc} allergy ({a['substance']}"
+                            + (f"; reaction: {reaction}" if reaction else "")
+                            + ").",
+                            "match": "cross_reactivity",
+                            "matched_on": f"{sc}->{target_cls}",
+                        }
+                    )
     return alerts
 
 
@@ -622,9 +848,12 @@ def check_allergies(patient_id: str, drug_name: str) -> list[dict]:
     return match_allergies(allergies, drug_name)
 
 
-def _screen_interactions(patient_id: str, drug_name: str,
-                         exclude_med_id: int | None = None,
-                         exclude_order_id: str | None = None) -> tuple[list[dict], list[str]]:
+def _screen_interactions(
+    patient_id: str,
+    drug_name: str,
+    exclude_med_id: int | None = None,
+    exclude_order_id: str | None = None,
+) -> tuple[list[dict], list[str]]:
     """Interaction alerts for ``drug_name`` against the patient's active meds,
     plus the active meds the knowledge base does not know (not screened).
 
@@ -646,11 +875,13 @@ def _screen_interactions(patient_id: str, drug_name: str,
     interaction_db.ensure_seeded()
     new_terms = interaction_terms(drug_name)
     from services.medorders import screening
-    labels: list[Optional[str]]
+
+    labels: list[str | None]
     if screening.store_screen_on():
         with db_session() as db:
-            store_rows = screening.comparison_rows(db, patient_id, exclude_med_id=exclude_med_id,
-                                                   exclude_order_id=exclude_order_id)
+            store_rows = screening.comparison_rows(
+                db, patient_id, exclude_med_id=exclude_med_id, exclude_order_id=exclude_order_id
+            )
         rows = [{"drug_name": r["drug_name"]} for r in store_rows]
         labels = [screening.row_label(r) for r in store_rows]
     else:
@@ -662,8 +893,9 @@ def _screen_interactions(patient_id: str, drug_name: str,
         with db_session() as db:
             if exclude_order_id:
                 # The order's own ward row, when it has one.
-                own = db.execute("SELECT legacy_medication_id FROM med_orders WHERE id = ?",
-                                 (exclude_order_id,)).fetchone()
+                own = db.execute(
+                    "SELECT legacy_medication_id FROM med_orders WHERE id = ?", (exclude_order_id,)
+                ).fetchone()
                 if own is not None and own["legacy_medication_id"] is not None:
                     sql += " AND id != ?"
                     params.append(own["legacy_medication_id"])
@@ -672,7 +904,7 @@ def _screen_interactions(patient_id: str, drug_name: str,
 
     alerts: list[dict] = []
     unscreened: list[str] = []
-    for r, label in zip(rows, labels):
+    for r, label in zip(rows, labels, strict=False):
         existing = r["drug_name"]
         existing_terms = interaction_terms(existing)
         if not interaction_recognised(existing, existing_terms):
@@ -682,8 +914,12 @@ def _screen_interactions(patient_id: str, drug_name: str,
         hits = interaction_db.lookup_interactions(new_terms, existing_terms) if new_terms else []
         if not hits:
             continue
-        hits.sort(key=lambda h: (-_SEVERITY_RANK.get(h["severity"], 0),
-                                 h.get("match_type") != "ingredient"))
+        hits.sort(
+            key=lambda h: (
+                -_SEVERITY_RANK.get(h["severity"], 0),
+                h.get("match_type") != "ingredient",
+            )
+        )
         mechanisms: list[str] = []
         for h in hits:
             m = (h["mechanism"] or "").strip()
@@ -693,9 +929,11 @@ def _screen_interactions(patient_id: str, drug_name: str,
             "type": "interaction",
             "severity": hits[0]["severity"],
             "with": existing,
-            "message": (f"{drug_name} + {existing}"
-                        + (f" ({label})" if label else "")
-                        + f": {' '.join(mechanisms)}"),
+            "message": (
+                f"{drug_name} + {existing}"
+                + (f" ({label})" if label else "")
+                + f": {' '.join(mechanisms)}"
+            ),
             "classes": sorted({t for h in hits for t in (h["term_a"], h["term_b"])}),
         }
         if label:
@@ -704,8 +942,9 @@ def _screen_interactions(patient_id: str, drug_name: str,
     return alerts, unscreened
 
 
-def check_interactions(patient_id: str, drug_name: str,
-                       exclude_med_id: int | None = None) -> list[dict]:
+def check_interactions(
+    patient_id: str, drug_name: str, exclude_med_id: int | None = None
+) -> list[dict]:
     """Return interaction alerts between `drug_name` and the patient's active meds.
 
     Queries the data-backed `drug_interactions` table (via
@@ -720,9 +959,12 @@ def check_interactions(patient_id: str, drug_name: str,
     return _screen_interactions(patient_id, drug_name, exclude_med_id)[0]
 
 
-def check_medication_safety(patient_id: str, drug_name: str,
-                            exclude_med_id: int | None = None,
-                            exclude_order_id: str | None = None) -> dict:
+def check_medication_safety(
+    patient_id: str,
+    drug_name: str,
+    exclude_med_id: int | None = None,
+    exclude_order_id: str | None = None,
+) -> dict:
     """Full order-time safety screen. Returns allergy + interaction alerts and the
     single worst severity, plus a `blocking` flag (severe alerts block auto-orders).
 
@@ -741,11 +983,13 @@ def check_medication_safety(patient_id: str, drug_name: str,
     """
     allergy_alerts = check_allergies(patient_id, drug_name)
     if exclude_order_id is None:
-        interaction_alerts, unscreened_with = _screen_interactions(patient_id, drug_name,
-                                                                   exclude_med_id)
+        interaction_alerts, unscreened_with = _screen_interactions(
+            patient_id, drug_name, exclude_med_id
+        )
     else:
         interaction_alerts, unscreened_with = _screen_interactions(
-            patient_id, drug_name, exclude_med_id, exclude_order_id)
+            patient_id, drug_name, exclude_med_id, exclude_order_id
+        )
     all_alerts = allergy_alerts + interaction_alerts
     max_sev = "none"
     for a in all_alerts:
@@ -793,7 +1037,7 @@ def formulary_interaction_coverage() -> dict:
             rows = db.execute(
                 "SELECT id, name, generic_name FROM helix_medication_master ORDER BY name"
             ).fetchall()
-        except Exception:   # Helix tables not initialised on this database
+        except Exception:  # Helix tables not initialised on this database
             rows = []
     items = []
     for r in rows:
@@ -805,16 +1049,22 @@ def formulary_interaction_coverage() -> dict:
         # use (cephalosporins, say) covers nothing.
         terms = interaction_db.known_terms(candidates)
         covered = bool(terms)
-        items.append({
-            "id": r["id"],
-            "name": r["name"],
-            "generic_name": r["generic_name"],
-            "covered": covered,
-            "terms": sorted(terms),
-        })
+        items.append(
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "generic_name": r["generic_name"],
+                "covered": covered,
+                "terms": sorted(terms),
+            }
+        )
     covered_count = sum(1 for i in items if i["covered"])
-    return {"total": len(items), "covered": covered_count,
-            "not_covered": len(items) - covered_count, "items": items}
+    return {
+        "total": len(items),
+        "covered": covered_count,
+        "not_covered": len(items) - covered_count,
+        "items": items,
+    }
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -913,41 +1163,98 @@ class DoseGuardBlocked(Exception):
 # never judges a dose from another family.
 _UNIT_ALIASES: dict[str, tuple[str, float]] = {
     # mass → mg
-    "mg": ("mg", 1.0), "milligram": ("mg", 1.0), "milligrams": ("mg", 1.0),
+    "mg": ("mg", 1.0),
+    "milligram": ("mg", 1.0),
+    "milligrams": ("mg", 1.0),
     "mgs": ("mg", 1.0),
-    "g": ("mg", 1000.0), "gm": ("mg", 1000.0), "gms": ("mg", 1000.0),
-    "gram": ("mg", 1000.0), "grams": ("mg", 1000.0), "gr": ("mg", 1000.0),
-    "mcg": ("mg", 0.001), "ug": ("mg", 0.001), "µg": ("mg", 0.001),
-    "μg": ("mg", 0.001), "microgram": ("mg", 0.001), "micrograms": ("mg", 0.001),
+    "g": ("mg", 1000.0),
+    "gm": ("mg", 1000.0),
+    "gms": ("mg", 1000.0),
+    "gram": ("mg", 1000.0),
+    "grams": ("mg", 1000.0),
+    "gr": ("mg", 1000.0),
+    "mcg": ("mg", 0.001),
+    "ug": ("mg", 0.001),
+    "µg": ("mg", 0.001),
+    "μg": ("mg", 0.001),
+    "microgram": ("mg", 0.001),
+    "micrograms": ("mg", 0.001),
     "mcgs": ("mg", 0.001),
-    "ng": ("mg", 1e-6), "nanogram": ("mg", 1e-6), "nanograms": ("mg", 1e-6),
+    "ng": ("mg", 1e-6),
+    "nanogram": ("mg", 1e-6),
+    "nanograms": ("mg", 1e-6),
     # biological activity → units
-    "u": ("units", 1.0), "unit": ("units", 1.0), "units": ("units", 1.0),
-    "iu": ("units", 1.0), "ius": ("units", 1.0), "ui": ("units", 1.0),
+    "u": ("units", 1.0),
+    "unit": ("units", 1.0),
+    "units": ("units", 1.0),
+    "iu": ("units", 1.0),
+    "ius": ("units", 1.0),
+    "ui": ("units", 1.0),
     # amount of substance → mmol.
     # mEq is treated as mmol: every drug this matters for here (potassium
     # chloride) is monovalent, where 1 mEq == 1 mmol exactly. A polyvalent salt
     # would need its own conversion, which is why no polyvalent rule exists.
-    "mmol": ("mmol", 1.0), "mmols": ("mmol", 1.0),
-    "meq": ("mmol", 1.0), "meqs": ("mmol", 1.0), "mequiv": ("mmol", 1.0),
+    "mmol": ("mmol", 1.0),
+    "mmols": ("mmol", 1.0),
+    "meq": ("mmol", 1.0),
+    "meqs": ("mmol", 1.0),
+    "mequiv": ("mmol", 1.0),
     # volume → ml. No rule is written in mL (a volume is not a dose without a
     # concentration), but the family is recognised so that a dose charted in mL
     # is understood to be OUTSIDE a mg rule rather than silently compared to it.
-    "ml": ("ml", 1.0), "mls": ("ml", 1.0), "cc": ("ml", 1.0),
-    "millilitre": ("ml", 1.0), "millilitres": ("ml", 1.0),
-    "milliliter": ("ml", 1.0), "milliliters": ("ml", 1.0),
-    "l": ("ml", 1000.0), "litre": ("ml", 1000.0), "litres": ("ml", 1000.0),
+    "ml": ("ml", 1.0),
+    "mls": ("ml", 1.0),
+    "cc": ("ml", 1.0),
+    "millilitre": ("ml", 1.0),
+    "millilitres": ("ml", 1.0),
+    "milliliter": ("ml", 1.0),
+    "milliliters": ("ml", 1.0),
+    "l": ("ml", 1000.0),
+    "litre": ("ml", 1000.0),
+    "litres": ("ml", 1000.0),
 }
 
 # Dose FORMS. A count of these is not a measured dose, and their presence
 # alongside a measured quantity ("2 tablets (1g)") means the string is saying
 # two things at once — which we decline to reconcile.
 _COUNT_UNITS = {
-    "tab", "tabs", "tablet", "tablets", "cap", "caps", "capsule", "capsules",
-    "puff", "puffs", "drop", "drops", "spray", "sprays", "sachet", "sachets",
-    "amp", "amps", "ampoule", "ampoules", "vial", "vials", "patch", "patches",
-    "supp", "supps", "suppository", "suppositories", "neb", "nebs", "scoop",
-    "scoops", "piece", "pieces", "unitdose", "dose", "doses",
+    "tab",
+    "tabs",
+    "tablet",
+    "tablets",
+    "cap",
+    "caps",
+    "capsule",
+    "capsules",
+    "puff",
+    "puffs",
+    "drop",
+    "drops",
+    "spray",
+    "sprays",
+    "sachet",
+    "sachets",
+    "amp",
+    "amps",
+    "ampoule",
+    "ampoules",
+    "vial",
+    "vials",
+    "patch",
+    "patches",
+    "supp",
+    "supps",
+    "suppository",
+    "suppositories",
+    "neb",
+    "nebs",
+    "scoop",
+    "scoops",
+    "piece",
+    "pieces",
+    "unitdose",
+    "dose",
+    "doses",
 }
 
 _QUANTITY_RE = re.compile(r"(\d+(?:\.\d+)?)\s*([a-zµμ]+)", re.IGNORECASE)
@@ -962,8 +1269,14 @@ _DOSE_REFUSALS: tuple[tuple[re.Pattern, str], ...] = (
     # 10x insulin dose through simply because the nurse wrote the route in the
     # dose box. Found by probing the parser, not by a test.
     (re.compile(r"\d\s*/|/\s*\d", re.I), "rate_or_combination"),
-    (re.compile(r"/\s*(?:kg|kgs|hr|hrs|hour|hours|h|min|mins|minute|minutes|"
-                r"day|days|d|dose|m2|week)\b", re.I), "rate_or_per_unit"),
+    (
+        re.compile(
+            r"/\s*(?:kg|kgs|hr|hrs|hour|hours|h|min|mins|minute|minutes|"
+            r"day|days|d|dose|m2|week)\b",
+            re.I,
+        ),
+        "rate_or_per_unit",
+    ),
     (re.compile(r"\bper\b", re.I), "rate_or_per_unit"),
     (re.compile(r"\d\s*[:∶]\s*\d"), "ratio_product"),  # adrenaline 1:1000
     (re.compile(r"%"), "percentage_strength"),
@@ -979,12 +1292,12 @@ def _decimalise(text: str) -> str:
     naive float parse reads that as 10 — a 1000-fold UNDER-read, which would
     silently disarm the guard on exactly the drug it matters most for.
     """
-    text = re.sub(r"(?<=\d),(?=\d{3}(?!\d))", "", text)   # thousands separator
-    text = re.sub(r"(?<=\d),(?=\d)", ".", text)            # decimal comma
+    text = re.sub(r"(?<=\d),(?=\d{3}(?!\d))", "", text)  # thousands separator
+    text = re.sub(r"(?<=\d),(?=\d)", ".", text)  # decimal comma
     return text
 
 
-def parse_dose(text: Optional[str]) -> Optional[dict]:
+def parse_dose(text: str | None) -> dict | None:
     """One unambiguous quantity, converted to its family's canonical unit.
 
     Returns ``{"value", "unit", "raw_value", "raw_unit", "text"}`` or None.
@@ -1011,11 +1324,11 @@ def parse_dose(text: Optional[str]) -> Optional[dict]:
             continue
         alias = _UNIT_ALIASES.get(unit)
         if alias is None:
-            continue          # an unrecognised token is not a unit claim
+            continue  # an unrecognised token is not a unit claim
         canonical, factor = alias
         try:
             value = float(number)
-        except ValueError:      # pragma: no cover — regex guarantees a number
+        except ValueError:  # pragma: no cover — regex guarantees a number
             return None
         measured.append((value, unit, canonical, factor))
 
@@ -1043,13 +1356,36 @@ def parse_dose(text: Optional[str]) -> Optional[dict]:
 # Returns TAGS, not a single route: "IV push" is both intravenous and a push,
 # and the push is what kills with potassium.
 _ROUTE_TOKENS: dict[str, set[str]] = {
-    "oral": {"oral", "orally", "po", "p.o", "p.o.", "ng", "ngt", "peg", "rt",
-             "sl", "sublingual", "buccal", "mouth", "swallow"},
+    "oral": {
+        "oral",
+        "orally",
+        "po",
+        "p.o",
+        "p.o.",
+        "ng",
+        "ngt",
+        "peg",
+        "rt",
+        "sl",
+        "sublingual",
+        "buccal",
+        "mouth",
+        "swallow",
+    },
     "iv": {"iv", "i.v", "i.v.", "ivi", "intravenous", "intravenously"},
     "im": {"im", "i.m", "i.m.", "intramuscular", "intramuscularly"},
     "sc": {"sc", "s.c", "s.c.", "sq", "subcut", "subcutaneous", "subcutaneously"},
-    "nebulised": {"neb", "nebs", "nebulised", "nebulized", "nebuliser",
-                  "nebulizer", "inh", "inhaled", "inhalation"},
+    "nebulised": {
+        "neb",
+        "nebs",
+        "nebulised",
+        "nebulized",
+        "nebuliser",
+        "nebulizer",
+        "inh",
+        "inhaled",
+        "inhalation",
+    },
     "transdermal": {"transdermal", "patch", "td"},
     "topical": {"topical", "top", "skin"},
     "intrathecal": {"intrathecal", "intrathecally", "it", "spinal"},
@@ -1081,7 +1417,7 @@ _ROUTE_TOKEN_RE = re.compile(r"[a-z]+")
 _ROUTE_ABBREV_RE = re.compile(r"(?<=\b[a-z])[./](?=[a-z]\b)")
 
 
-def classify_route(route: Optional[str]) -> frozenset[str]:
+def classify_route(route: str | None) -> frozenset[str]:
     """Route text → a set of tags. Empty when the route says nothing we know.
 
     An empty set is meaningful: a rule that depends on route does not apply to a
@@ -1129,21 +1465,32 @@ DOSE_RULES: list[dict] = [
     # ── INSULIN ─────────────────────────────────────────────────────────────
     {
         "id": "insulin",
-        "match": ("insulin", "humalog", "lantus", "novorapid", "actrapid",
-                  "mixtard", "huminsulin", "glargine", "aspart", "lispro",
-                  "degludec", "detemir"),
+        "match": (
+            "insulin",
+            "humalog",
+            "lantus",
+            "novorapid",
+            "actrapid",
+            "mixtard",
+            "huminsulin",
+            "glargine",
+            "aspart",
+            "lispro",
+            "degludec",
+            "detemir",
+        ),
         "routes": None,
         "unit": "units",
         "warn_above": 50.0,
         "block_at": 100.0,
         "basis": "Adult subcutaneous doses are usually 4–40 units; 40–60 units "
-                 "per injection is ordinary in insulin-resistant type 2 diabetes.",
+        "per injection is ordinary in insulin-resistant type 2 diabetes.",
         "source": "ISMP List of High-Alert Medications in Acute Care Settings "
-                  "(insulin, all formulations): ISMP names 'U' misread as a "
-                  "zero as the classic error, i.e. 10U charted as 100. Insulin "
-                  "has no fixed maximum (it is titrated to response), which is "
-                  "why the ordinary range is a WARN band and only the 10x point "
-                  "is a block.",
+        "(insulin, all formulations): ISMP names 'U' misread as a "
+        "zero as the classic error, i.e. 10U charted as 100. Insulin "
+        "has no fixed maximum (it is titrated to response), which is "
+        "why the ordinary range is a WARN band and only the 10x point "
+        "is a block.",
     },
     # ── DIGOXIN ─────────────────────────────────────────────────────────────
     {
@@ -1155,12 +1502,12 @@ DOSE_RULES: list[dict] = [
         "warn_above": 0.25,
         "block_at": 1.0,
         "basis": "Maintenance 62.5–250 mcg once daily. Rapid digitalisation is "
-                 "0.75–1.5 mg TOTAL over 24h in DIVIDED doses, of which the "
-                 "largest single component is ~500 mcg.",
+        "0.75–1.5 mg TOTAL over 24h in DIVIDED doses, of which the "
+        "largest single component is ~500 mcg.",
         "source": "ISMP high-alert (digoxin); BNF 'Digoxin': oral loading "
-                  "0.75–1.5 mg in divided doses, maintenance 62.5–250 mcg daily. "
-                  "1.25 mg is exactly 10x the commonest 125 mcg tablet and is "
-                  "the textbook decimal slip; no single dose reaches 1 mg.",
+        "0.75–1.5 mg in divided doses, maintenance 62.5–250 mcg daily. "
+        "1.25 mg is exactly 10x the commonest 125 mcg tablet and is "
+        "the textbook decimal slip; no single dose reaches 1 mg.",
     },
     # ── OPIOIDS ─────────────────────────────────────────────────────────────
     # Route-specific rules come FIRST so that a parenteral dose is judged
@@ -1175,11 +1522,11 @@ DOSE_RULES: list[dict] = [
         "warn_above": 10.0,
         "block_at": 50.0,
         "basis": "Adult IV/IM/SC morphine is 2.5–10 mg per dose, titrated. "
-                 "Opioid-tolerant patients go higher, but by increments.",
+        "Opioid-tolerant patients go higher, but by increments.",
         "source": "ISMP high-alert (opioids, IV); BNF 'Morphine sulfate': acute "
-                  "pain 5–10 mg IV/SC every 4h. A 24-hour palliative syringe "
-                  "driver may total far more, but is charted as a rate and is "
-                  "therefore declined by the parser, not blocked here.",
+        "pain 5–10 mg IV/SC every 4h. A 24-hour palliative syringe "
+        "driver may total far more, but is charted as a rate and is "
+        "therefore declined by the parser, not blocked here.",
     },
     {
         "id": "morphine_oral",
@@ -1189,12 +1536,12 @@ DOSE_RULES: list[dict] = [
         "warn_above": 30.0,
         "block_at": None,
         "basis": "Oral immediate-release 5–20 mg every 4h; modified-release "
-                 "tablets exist up to 200 mg and are genuinely prescribed in "
-                 "opioid-tolerant palliative patients.",
+        "tablets exist up to 200 mg and are genuinely prescribed in "
+        "opioid-tolerant palliative patients.",
         "source": "BNF 'Morphine sulfate' (oral); ISMP high-alert (opioids). "
-                  "NO BLOCK ON PURPOSE: the 10x error (10 mg -> 100 mg oral) "
-                  "lands inside the real palliative range, so a block here "
-                  "cannot be made specific enough to be believed.",
+        "NO BLOCK ON PURPOSE: the 10x error (10 mg -> 100 mg oral) "
+        "lands inside the real palliative range, so a block here "
+        "cannot be made specific enough to be believed.",
     },
     {
         "id": "morphine_route_unknown",
@@ -1204,9 +1551,9 @@ DOSE_RULES: list[dict] = [
         "warn_above": 30.0,
         "block_at": None,
         "basis": "Route could not be read, so the ceiling is unknown, the oral "
-                 "(higher) warn threshold is used and nothing is blocked.",
+        "(higher) warn threshold is used and nothing is blocked.",
         "source": "Fallback, not a clinical claim. See morphine_parenteral and "
-                  "morphine_oral for the sourced thresholds.",
+        "morphine_oral for the sourced thresholds.",
     },
     {
         "id": "fentanyl_transdermal",
@@ -1215,7 +1562,7 @@ DOSE_RULES: list[dict] = [
         "skip": True,
         "basis": "A patch is dosed as a RATE (mcg/hour), not as a dose.",
         "source": "BNF 'Fentanyl' (transdermal). Judging a patch strength "
-                  "against a bolus ceiling would fire on every correct patch.",
+        "against a bolus ceiling would fire on every correct patch.",
     },
     {
         "id": "fentanyl_parenteral",
@@ -1226,10 +1573,10 @@ DOSE_RULES: list[dict] = [
         "warn_above": 0.2,
         "block_at": 1.0,
         "basis": "Ward analgesia 25–100 mcg IV per dose; anaesthetic induction "
-                 "reaches ~3 mcg/kg (200–300 mcg in an adult).",
+        "reaches ~3 mcg/kg (200–300 mcg in an adult).",
         "source": "ISMP high-alert (opioids, IV); BNF 'Fentanyl': 50–100 mcg "
-                  "IV. 1000 mcg (1 mg) is the 10x slip from 100 mcg and is not "
-                  "a ward dose by any indication.",
+        "IV. 1000 mcg (1 mg) is the 10x slip from 100 mcg and is not "
+        "a ward dose by any indication.",
     },
     {
         "id": "hydromorphone_parenteral",
@@ -1238,10 +1585,9 @@ DOSE_RULES: list[dict] = [
         "unit": "mg",
         "warn_above": 2.0,
         "block_at": 20.0,
-        "basis": "Roughly 5x the potency of morphine; parenteral doses are "
-                 "0.2–1 mg.",
+        "basis": "Roughly 5x the potency of morphine; parenteral doses are 0.2–1 mg.",
         "source": "ISMP high-alert (opioids); ISMP specifically names "
-                  "hydromorphone/morphine confusion as a recurring fatal error.",
+        "hydromorphone/morphine confusion as a recurring fatal error.",
     },
     {
         "id": "oxycodone_parenteral",
@@ -1251,12 +1597,12 @@ DOSE_RULES: list[dict] = [
         "warn_above": 10.0,
         "block_at": None,
         "basis": "Parenteral oxycodone is 1–10 mg per dose, roughly half the "
-                 "oral dose for the same effect.",
+        "oral dose for the same effect.",
         "source": "ISMP high-alert (opioids); BNF 'Oxycodone hydrochloride' "
-                  "(parenteral). Listed separately from the oral rule because "
-                  "the oral ceiling is 3x this one, and an id that claimed to "
-                  "be 'oral' while judging an IV dose would misreport itself in "
-                  "the record and the audit trail.",
+        "(parenteral). Listed separately from the oral rule because "
+        "the oral ceiling is 3x this one, and an id that claimed to "
+        "be 'oral' while judging an IV dose would misreport itself in "
+        "the record and the audit trail.",
     },
     {
         "id": "oxycodone",
@@ -1266,11 +1612,11 @@ DOSE_RULES: list[dict] = [
         "warn_above": 30.0,
         "block_at": None,
         "basis": "5–20 mg every 4–6h opioid-naive; 80 mg modified-release "
-                 "tablets exist and are prescribed in tolerant patients.",
+        "tablets exist and are prescribed in tolerant patients.",
         "source": "ISMP high-alert (opioids); BNF 'Oxycodone'. NO BLOCK for the "
-                  "same reason as oral morphine, the tolerant range overlaps "
-                  "the 10x error. Route-agnostic so that an unread route still "
-                  "gets the (higher, safer-to-not-fire) oral threshold.",
+        "same reason as oral morphine, the tolerant range overlaps "
+        "the 10x error. Route-agnostic so that an unread route still "
+        "gets the (higher, safer-to-not-fire) oral threshold.",
     },
     {
         "id": "tramadol",
@@ -1281,9 +1627,9 @@ DOSE_RULES: list[dict] = [
         "block_at": 400.0,
         "basis": "50–100 mg per dose, maximum 400 mg in 24 hours.",
         "source": "BNF 'Tramadol': max 400 mg daily. Unlike the strong opioids "
-                  "tramadol HAS a hard daily ceiling, so a single dose at the "
-                  "whole-day maximum is a defensible block. Included because it "
-                  "is the most-prescribed opioid on an Indian ward.",
+        "tramadol HAS a hard daily ceiling, so a single dose at the "
+        "whole-day maximum is a defensible block. Included because it "
+        "is the most-prescribed opioid on an Indian ward.",
     },
     # ── ANTICOAGULANTS ──────────────────────────────────────────────────────
     {
@@ -1295,24 +1641,31 @@ DOSE_RULES: list[dict] = [
         "warn_above": 10000.0,
         "block_at": 25000.0,
         "basis": "Loading bolus ~5000 units (or 75–80 units/kg); prophylaxis "
-                 "5000 units SC. Infusions run at 1000–2000 units/hour.",
+        "5000 units SC. Infusions run at 1000–2000 units/hour.",
         "source": "ISMP List of High-Alert Medications (heparin, unfractionated, "
-                  "IV); BNF 'Heparin (unfractionated)'. 25,000 units is a whole "
-                  "infusion BAG, never a single dose, and a bag is charted as "
-                  "'X units in Y mL', which the parser declines.",
+        "IV); BNF 'Heparin (unfractionated)'. 25,000 units is a whole "
+        "infusion BAG, never a single dose, and a bag is charted as "
+        "'X units in Y mL', which the parser declines.",
     },
     {
         "id": "enoxaparin",
-        "match": ("enoxaparin", "clexane", "lovenox", "dalteparin", "fragmin",
-                  "tinzaparin", "innohep"),
+        "match": (
+            "enoxaparin",
+            "clexane",
+            "lovenox",
+            "dalteparin",
+            "fragmin",
+            "tinzaparin",
+            "innohep",
+        ),
         "routes": None,
         "unit": "mg",
         "warn_above": 150.0,
         "block_at": 300.0,
         "basis": "Prophylaxis 40 mg once daily; treatment 1 mg/kg twice daily or "
-                 "1.5 mg/kg once daily, i.e. up to ~150 mg in a heavy adult.",
+        "1.5 mg/kg once daily, i.e. up to ~150 mg in a heavy adult.",
         "source": "ISMP high-alert (anticoagulants); BNF 'Enoxaparin sodium'. "
-                  "400 mg is the 10x slip from the 40 mg prophylactic dose.",
+        "400 mg is the 10x slip from the 40 mg prophylactic dose.",
     },
     {
         "id": "warfarin",
@@ -1322,24 +1675,23 @@ DOSE_RULES: list[dict] = [
         "warn_above": 15.0,
         "block_at": 50.0,
         "basis": "Usual daily dose 1–10 mg; loading up to 10 mg; genuinely "
-                 "resistant patients occasionally need 15–20 mg.",
+        "resistant patients occasionally need 15–20 mg.",
         "source": "ISMP high-alert (anticoagulants); BNF 'Warfarin sodium'. "
-                  "50 mg is the 10x slip from the common 5 mg dose.",
+        "50 mg is the 10x slip from the common 5 mg dose.",
     },
     # ── POTASSIUM ───────────────────────────────────────────────────────────
     {
         "id": "potassium_chloride",
-        "match": ("potassium chloride", "kcl", "potassium cl", "sando-k",
-                  "sando k"),
+        "match": ("potassium chloride", "kcl", "potassium cl", "sando-k", "sando k"),
         "routes": None,
         "unit": "mmol",
         "warn_above": 40.0,
         "block_at": 100.0,
         "basis": "Oral supplements are 12–24 mmol per dose. IV replacement is "
-                 "conventionally 20–40 mmol per bag, infused, never pushed.",
+        "conventionally 20–40 mmol per bag, infused, never pushed.",
         "source": "ISMP List of High-Alert Medications (potassium chloride "
-                  "concentrate for injection). The lethal error with potassium "
-                  "is the ROUTE, not the number. See ROUTE_RULES below.",
+        "concentrate for injection). The lethal error with potassium "
+        "is the ROUTE, not the number. See ROUTE_RULES below.",
     },
     # ── ADRENALINE ──────────────────────────────────────────────────────────
     # The clearest case for route-aware ceilings: 0.5 mg IM, 1 mg IV and 5 mg
@@ -1353,10 +1705,10 @@ DOSE_RULES: list[dict] = [
         "warn_above": 5.0,
         "block_at": 20.0,
         "basis": "Nebulised adrenaline for croup/post-extubation stridor is up "
-                 "to 5 mg (5 mL of 1:1000).",
+        "to 5 mg (5 mL of 1:1000).",
         "source": "BNF/APLS nebulised adrenaline 400 micrograms/kg to a max of "
-                  "5 mg. Listed separately because a 5 mg ceiling copied from "
-                  "the IM rule would block every correct nebuliser.",
+        "5 mg. Listed separately because a 5 mg ceiling copied from "
+        "the IM rule would block every correct nebuliser.",
     },
     {
         "id": "adrenaline_im_sc",
@@ -1367,10 +1719,10 @@ DOSE_RULES: list[dict] = [
         "warn_above": 0.5,
         "block_at": 2.0,
         "basis": "Anaphylaxis: 0.5 mg IM (0.5 mL of 1:1000) in an adult, "
-                 "repeatable every 5 minutes.",
+        "repeatable every 5 minutes.",
         "source": "Resuscitation Council anaphylaxis algorithm: 500 micrograms "
-                  "IM. Giving the 1 mg CARDIAC ARREST ampoule (1:10,000) by the "
-                  "anaphylaxis route is a named, recurring, fatal confusion.",
+        "IM. Giving the 1 mg CARDIAC ARREST ampoule (1:10,000) by the "
+        "anaphylaxis route is a named, recurring, fatal confusion.",
     },
     {
         "id": "adrenaline_other",
@@ -1381,10 +1733,10 @@ DOSE_RULES: list[dict] = [
         "warn_above": 1.0,
         "block_at": 10.0,
         "basis": "Cardiac arrest: 1 mg IV every 3–5 minutes. No route uses a "
-                 "single dose above the 5 mg nebulised maximum.",
+        "single dose above the 5 mg nebulised maximum.",
         "source": "Resuscitation Council ALS algorithm: 1 mg IV adrenaline. "
-                  "The block sits at 2x the largest legitimate dose by ANY "
-                  "route, so it cannot contradict the two rules above.",
+        "The block sits at 2x the largest legitimate dose by ANY "
+        "route, so it cannot contradict the two rules above.",
     },
     # ── SEDATIVES ───────────────────────────────────────────────────────────
     {
@@ -1395,21 +1747,24 @@ DOSE_RULES: list[dict] = [
         "warn_above": 10.0,
         "block_at": 50.0,
         "basis": "Procedural sedation 1–5 mg IV titrated; 10 mg buccal is the "
-                 "standard adult seizure dose.",
+        "standard adult seizure dose.",
         "source": "ISMP List of High-Alert Medications (moderate sedation "
-                  "agents, IV); BNF 'Midazolam'. 50 mg is the 10x slip from 5 mg.",
+        "agents, IV); BNF 'Midazolam'. 50 mg is the 10x slip from 5 mg.",
     },
     {
         "id": "propofol",
-        "match": ("propofol", "diprivan",),
+        "match": (
+            "propofol",
+            "diprivan",
+        ),
         "routes": ("iv",),
         "unit": "mg",
         "warn_above": 300.0,
         "block_at": 1000.0,
         "basis": "Induction 1.5–2.5 mg/kg, i.e. 100–200 mg in an adult.",
         "source": "ISMP high-alert (anaesthetic agents, IV); BNF 'Propofol'. "
-                  "Maintenance is a rate (mg/kg/hour) and is declined by the "
-                  "parser rather than judged here.",
+        "Maintenance is a rate (mg/kg/hour) and is declined by the "
+        "parser rather than judged here.",
     },
     # ── METHOTREXATE ────────────────────────────────────────────────────────
     # The famous methotrexate death is not a big dose — it is a WEEKLY drug
@@ -1421,9 +1776,9 @@ DOSE_RULES: list[dict] = [
         "routes": ("parenteral",),
         "skip": True,
         "basis": "High-dose oncology methotrexate is dosed per m² and reaches "
-                 "grams. There is no ceiling here we could state honestly.",
+        "grams. There is no ceiling here we could state honestly.",
         "source": "Deliberate non-coverage. Blocking oncology protocols is "
-                  "exactly the behaviour that gets a guard switched off.",
+        "exactly the behaviour that gets a guard switched off.",
     },
     {
         "id": "methotrexate_oral",
@@ -1432,13 +1787,12 @@ DOSE_RULES: list[dict] = [
         "unit": "mg",
         "warn_above": 30.0,
         "block_at": 100.0,
-        "min_interval_hours": 144.0,   # 6 days
-        "basis": "Oral methotrexate for rheumatoid arthritis/psoriasis is "
-                 "7.5–25 mg ONCE WEEKLY.",
+        "min_interval_hours": 144.0,  # 6 days
+        "basis": "Oral methotrexate for rheumatoid arthritis/psoriasis is 7.5–25 mg ONCE WEEKLY.",
         "source": "ISMP List of High-Alert Medications (methotrexate, oral, "
-                  "non-oncologic use). ISMP's stated hazard is daily "
-                  "administration of a weekly drug, which is why this entry "
-                  "constrains the INTERVAL as well as the amount.",
+        "non-oncologic use). ISMP's stated hazard is daily "
+        "administration of a weekly drug, which is why this entry "
+        "constrains the INTERVAL as well as the amount.",
     },
     # ── PARACETAMOL ─────────────────────────────────────────────────────────
     # Not an ISMP high-alert drug, and included on purpose anyway: it is the
@@ -1447,17 +1801,24 @@ DOSE_RULES: list[dict] = [
     # generic order is the commonest real duplicate there is.
     {
         "id": "paracetamol",
-        "match": ("paracetamol", "acetaminophen", "panadol", "calpol",
-                  "crocin", "tylenol", "perfalgan"),
+        "match": (
+            "paracetamol",
+            "acetaminophen",
+            "panadol",
+            "calpol",
+            "crocin",
+            "tylenol",
+            "perfalgan",
+        ),
         "routes": None,
         "unit": "mg",
         "warn_above": 1000.0,
         "block_at": 3000.0,
         "basis": "500 mg–1 g per dose, maximum 4 g in 24 hours.",
         "source": "BNF 'Paracetamol': 0.5–1 g every 4–6h, max 4 g daily. The "
-                  "block sits below the 24-hour maximum because 3 g has never "
-                  "been a single dose, and above 1 g so the standard dose is "
-                  "silent.",
+        "block sits below the 24-hour maximum because 3 g has never "
+        "been a single dose, and above 1 g so the standard dose is "
+        "silent.",
     },
     # ── VINCA ALKALOIDS ─────────────────────────────────────────────────────
     {
@@ -1469,7 +1830,7 @@ DOSE_RULES: list[dict] = [
         "block_at": 5.0,
         "basis": "Vincristine is conventionally capped at 2 mg per dose.",
         "source": "Standard oncology practice caps vincristine at 2 mg/dose. "
-                  "The fatal vincristine error is the ROUTE. See ROUTE_RULES.",
+        "The fatal vincristine error is the ROUTE. See ROUTE_RULES.",
     },
 ]
 
@@ -1482,28 +1843,28 @@ ROUTE_RULES: list[dict] = [
         "match": ("potassium chloride", "kcl", "potassium cl"),
         "forbidden": ("push",),
         "message": "Concentrated potassium chloride must NEVER be given by IV "
-                   "push or bolus, it causes immediate fatal cardiac arrest. "
-                   "It must be diluted and infused.",
+        "push or bolus, it causes immediate fatal cardiac arrest. "
+        "It must be diluted and infused.",
         "basis": "IV potassium is always diluted and infused, rate-limited "
-                 "(conventionally ≤10 mmol/hour peripherally).",
+        "(conventionally ≤10 mmol/hour peripherally).",
         "source": "ISMP List of High-Alert Medications (potassium chloride "
-                  "concentrate) and the ISMP/WHO 'never push concentrated "
-                  "potassium' rule, one of the oldest medication-safety "
-                  "recommendations there is. NOTE: a route charted as plain "
-                  "'IV' is deliberately NOT blocked, because it cannot be "
-                  "distinguished from a correct infusion, and blocking every "
-                  "correct potassium infusion would train the ward to click "
-                  "through this alert.",
+        "concentrate) and the ISMP/WHO 'never push concentrated "
+        "potassium' rule, one of the oldest medication-safety "
+        "recommendations there is. NOTE: a route charted as plain "
+        "'IV' is deliberately NOT blocked, because it cannot be "
+        "distinguished from a correct infusion, and blocking every "
+        "correct potassium infusion would train the ward to click "
+        "through this alert.",
     },
     {
         "id": "vinca_intrathecal",
         "match": ("vincristine", "vinblastine", "vinorelbine", "vindesine"),
         "forbidden": ("intrathecal",),
         "message": "Vinca alkaloids given intrathecally are universally fatal. "
-                   "This route is never correct.",
+        "This route is never correct.",
         "basis": "Vincristine is intravenous only.",
         "source": "WHO/ISMP alert on fatal intrathecal vincristine "
-                  "administration; this is a designated never-event worldwide.",
+        "administration; this is a designated never-event worldwide.",
     },
 ]
 
@@ -1526,7 +1887,7 @@ def _rule_matches_name(rule: dict, names: Iterable[str]) -> bool:
     return False
 
 
-def find_dose_rule(names: Iterable[str], route_tags: frozenset[str]) -> Optional[dict]:
+def find_dose_rule(names: Iterable[str], route_tags: frozenset[str]) -> dict | None:
     """First rule matching the drug AND applicable to the route, or None.
 
     Order in :data:`DOSE_RULES` is significant: route-specific entries precede
@@ -1558,10 +1919,10 @@ def _fmt(value: float, rule: dict) -> str:
 
 def evaluate_dose(
     drug_name: str,
-    dose_text: Optional[str],
-    route_text: Optional[str] = None,
+    dose_text: str | None,
+    route_text: str | None = None,
     ingredients: Iterable[str] = (),
-    ordered_dose: Optional[str] = None,
+    ordered_dose: str | None = None,
 ) -> dict:
     """PURE magnitude + route screen for ONE dose. No DB, no I/O.
 
@@ -1582,72 +1943,79 @@ def evaluate_dose(
         if not _rule_matches_name(rule, [_norm(n) for n in names if n]):
             continue
         if route_tags & set(rule["forbidden"]):
-            findings.append({
-                "kind": "route_forbidden",
-                "decision": DOSE_BLOCK,
-                "rule": rule["id"],
-                "drug": drug_name,
-                "route_given": route_text,
-                "message": rule["message"],
-                "source": rule["source"],
-            })
+            findings.append(
+                {
+                    "kind": "route_forbidden",
+                    "decision": DOSE_BLOCK,
+                    "rule": rule["id"],
+                    "drug": drug_name,
+                    "route_given": route_text,
+                    "message": rule["message"],
+                    "source": rule["source"],
+                }
+            )
             decision = DOSE_BLOCK
 
     # (b) Magnitude.
     parsed = parse_dose(dose_text)
-    rule = find_dose_rule(names, route_tags)
-    rule_id = rule["id"] if rule else None
+    dose_rule: dict | None
+    dose_rule = find_dose_rule(names, route_tags)
+    rule_id = dose_rule["id"] if dose_rule else None
 
-    if rule and not rule.get("skip") and parsed:
-        if parsed["unit"] == rule["unit"]:
+    if dose_rule and not dose_rule.get("skip") and parsed:
+        if parsed["unit"] == dose_rule["unit"]:
             value = parsed["value"]
-            block_at = rule.get("block_at")
-            warn_above = rule.get("warn_above")
+            block_at = dose_rule.get("block_at")
+            warn_above = dose_rule.get("warn_above")
             if block_at is not None and value >= block_at:
-                findings.append({
-                    "kind": "dose_magnitude",
-                    "decision": DOSE_BLOCK,
-                    "rule": rule_id,
-                    "drug": drug_name,
-                    "dose_given": parsed["text"],
-                    "ordered_dose": ordered_dose,
-                    "message": (
-                        f"{drug_name} {parsed['text']} is at or above "
-                        f"{_fmt(block_at, rule)}, no adult indication reaches "
-                        f"this as a single dose. {rule['basis']} "
-                        + (f"The order reads {ordered_dose}. " if ordered_dose else "")
-                        + "Check for a decimal or unit error before proceeding."
-                    ),
-                    "threshold": block_at,
-                    "unit": rule["unit"],
-                    "basis": rule["basis"],
-                    "source": rule["source"],
-                })
+                findings.append(
+                    {
+                        "kind": "dose_magnitude",
+                        "decision": DOSE_BLOCK,
+                        "rule": rule_id,
+                        "drug": drug_name,
+                        "dose_given": parsed["text"],
+                        "ordered_dose": ordered_dose,
+                        "message": (
+                            f"{drug_name} {parsed['text']} is at or above "
+                            f"{_fmt(block_at, dose_rule)}, no adult indication reaches "
+                            f"this as a single dose. {dose_rule['basis']} "
+                            + (f"The order reads {ordered_dose}. " if ordered_dose else "")
+                            + "Check for a decimal or unit error before proceeding."
+                        ),
+                        "threshold": block_at,
+                        "unit": dose_rule["unit"],
+                        "basis": dose_rule["basis"],
+                        "source": dose_rule["source"],
+                    }
+                )
                 decision = DOSE_BLOCK
             elif warn_above is not None and value > warn_above:
-                findings.append({
-                    "kind": "dose_magnitude",
-                    "decision": DOSE_WARN,
-                    "rule": rule_id,
-                    "drug": drug_name,
-                    "dose_given": parsed["text"],
-                    "ordered_dose": ordered_dose,
-                    "message": (
-                        f"{drug_name} {parsed['text']} is above the ordinary "
-                        f"adult range ({_fmt(warn_above, rule)}). {rule['basis']} "
-                        "This may well be deliberate. Proceed if it is intended."
-                    ),
-                    "threshold": warn_above,
-                    "unit": rule["unit"],
-                    "basis": rule["basis"],
-                    "source": rule["source"],
-                })
+                findings.append(
+                    {
+                        "kind": "dose_magnitude",
+                        "decision": DOSE_WARN,
+                        "rule": rule_id,
+                        "drug": drug_name,
+                        "dose_given": parsed["text"],
+                        "ordered_dose": ordered_dose,
+                        "message": (
+                            f"{drug_name} {parsed['text']} is above the ordinary "
+                            f"adult range ({_fmt(warn_above, dose_rule)}). {dose_rule['basis']} "
+                            "This may well be deliberate. Proceed if it is intended."
+                        ),
+                        "threshold": warn_above,
+                        "unit": dose_rule["unit"],
+                        "basis": dose_rule["basis"],
+                        "source": dose_rule["source"],
+                    }
+                )
                 if _DOSE_RANK[DOSE_WARN] > _DOSE_RANK[decision]:
                     decision = DOSE_WARN
 
     return {
         "decision": decision,
-        "rule": rule_id if (rule and not rule.get("skip")) else None,
+        "rule": rule_id if (dose_rule and not dose_rule.get("skip")) else None,
         "parsed_dose": parsed,
         "route_tags": sorted(route_tags),
         "findings": findings,
@@ -1670,16 +2038,16 @@ click, but a stream of false ones is how the real one gets clicked through too.
 """
 
 # Fraction of the dosing interval inside which a repeat is implausible.
-_WINDOW_FRACTION_SHORT = 0.5    # intervals under a day
-_WINDOW_FRACTION_LONG = 0.75    # daily and longer
+_WINDOW_FRACTION_SHORT = 0.5  # intervals under a day
+_WINDOW_FRACTION_LONG = 0.75  # daily and longer
 
 # (pattern, hours-per-captured-unit). A numeric interval always wins over a
 # word: "q4h PRN" is a q4h order that happens to be as-required.
 _FREQUENCY_PATTERNS: tuple[tuple[re.Pattern, float], ...] = (
-    (re.compile(r"\bq\.?\s?(\d+(?:\.\d+)?)\s?h\b", re.I), 1.0),      # q6h
+    (re.compile(r"\bq\.?\s?(\d+(?:\.\d+)?)\s?h\b", re.I), 1.0),  # q6h
     (re.compile(r"\bevery\s+(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hour|hours)\b", re.I), 1.0),
     (re.compile(r"\b(\d+(?:\.\d+)?)\s*(?:-|\s)?hourly\b", re.I), 1.0),
-    (re.compile(r"\bq\.?\s?(\d+)\s?d\b", re.I), 24.0),               # q2d
+    (re.compile(r"\bq\.?\s?(\d+)\s?d\b", re.I), 24.0),  # q2d
     (re.compile(r"\bevery\s+(\d+)\s*(?:d|day|days)\b", re.I), 24.0),
 )
 
@@ -1691,12 +2059,18 @@ _FREQUENCY_WORDS: tuple[tuple[re.Pattern, float], ...] = (
     (re.compile(r"\bmonthly\b|\bq4wk\b|\bevery month\b", re.I), 720.0),
     (re.compile(r"\bfortnightly\b|\bevery (?:2|two) weeks\b|\bq2wk\b", re.I), 336.0),
     (re.compile(r"\bweekly\b|\bonce a week\b|\bq7d\b|\bqwk\b|\bevery week\b", re.I), 168.0),
-    (re.compile(r"\b(?:od|qd|o\.d|once daily|once a day|daily|nocte|mane|"
-                r"om|on|hs|at night|morning)\b", re.I), 24.0),
+    (
+        re.compile(
+            r"\b(?:od|qd|o\.d|once daily|once a day|daily|nocte|mane|"
+            r"om|on|hs|at night|morning)\b",
+            re.I,
+        ),
+        24.0,
+    ),
 )
 
 
-def parse_frequency_hours(text: Optional[str]) -> Optional[float]:
+def parse_frequency_hours(text: str | None) -> float | None:
     """Dosing interval in hours from an order's frequency text, or None.
 
     None means "the order does not tell me", which includes PRN / SOS / STAT /
@@ -1712,7 +2086,7 @@ def parse_frequency_hours(text: Optional[str]) -> Optional[float]:
         if m:
             try:
                 n = float(m.group(1))
-            except (TypeError, ValueError):     # pragma: no cover
+            except (TypeError, ValueError):  # pragma: no cover
                 continue
             if n <= 0:
                 continue
@@ -1724,8 +2098,8 @@ def parse_frequency_hours(text: Optional[str]) -> Optional[float]:
 
 
 def duplicate_window_hours(
-    frequency_text: Optional[str],
-    drug_floor_hours: Optional[float] = None,
+    frequency_text: str | None,
+    drug_floor_hours: float | None = None,
 ) -> tuple[float, str]:
     """(window_hours, basis) — how soon is "too soon" for THIS order.
 
@@ -1765,10 +2139,10 @@ def same_product(names_a: Iterable[str], names_b: Iterable[str]) -> bool:
 def evaluate_duplicate(
     drug_name: str,
     ingredients: Iterable[str],
-    frequency_text: Optional[str],
+    frequency_text: str | None,
     prior_doses: list[dict],
-    drug_floor_hours: Optional[float] = None,
-) -> Optional[dict]:
+    drug_floor_hours: float | None = None,
+) -> dict | None:
     """PURE duplicate screen. ``prior_doses`` are dicts with ``names`` (the
     charted name plus any resolved ingredient names) and ``hours_ago``.
 
@@ -1808,9 +2182,11 @@ def evaluate_duplicate(
         "message": (
             f"{closest.get('drug_name') or drug_name} was already given to this "
             f"patient {_humanise_gap(minutes)} ago"
-            + (" (on a different order)"
-               if closest.get("medication_id") is not None
-               and closest.get("same_order") is False else "")
+            + (
+                " (on a different order)"
+                if closest.get("medication_id") is not None and closest.get("same_order") is False
+                else ""
+            )
             + f". The order's schedule makes a repeat inside {window:g}h "
             f"implausible ({basis.replace('_', ' ')}). Confirm this is not a "
             f"double dose before charting."
@@ -1836,18 +2212,44 @@ def _humanise_gap(minutes: float) -> str:
 # wording differs because a nurse reading it is being asked a different question.
 MIN_OVERRIDE_REASON_CHARS = 10
 _JUNK_DOSE_REASONS = {
-    "ok", "okay", "yes", "y", "n/a", "na", "none", "fine", "done", "test",
-    "asdf", "aaaa", "override", "no reason", "as discussed", "per doctor",
-    "as per doctor", "doctor said", "verbal order", "urgent", "emergency",
-    "correct", "confirmed", "checked", "double checked", "as charted",
-    "as prescribed", "-", ".", "..", "...",
+    "ok",
+    "okay",
+    "yes",
+    "y",
+    "n/a",
+    "na",
+    "none",
+    "fine",
+    "done",
+    "test",
+    "asdf",
+    "aaaa",
+    "override",
+    "no reason",
+    "as discussed",
+    "per doctor",
+    "as per doctor",
+    "doctor said",
+    "verbal order",
+    "urgent",
+    "emergency",
+    "correct",
+    "confirmed",
+    "checked",
+    "double checked",
+    "as charted",
+    "as prescribed",
+    "-",
+    ".",
+    "..",
+    "...",
 }
 #: The same reflex clear-throughs refused for any written override at order
 #: time (services/medorders/screening.validate_duplicate_reason reads it).
 JUNK_OVERRIDE_REASONS = frozenset(_JUNK_DOSE_REASONS)
 
 
-def validate_dose_override_reason(reason: Optional[str]) -> str:
+def validate_dose_override_reason(reason: str | None) -> str:
     """Clean a typed dose-override reason, or raise ValueError.
 
     Same shape as allergy_interlock.validate_override_reason and for the same
@@ -1873,11 +2275,11 @@ def validate_dose_override_reason(reason: Optional[str]) -> str:
 
 def dose_fingerprint(
     drug_name: str,
-    rule_id: Optional[str],
-    parsed_dose: Optional[dict],
+    rule_id: str | None,
+    parsed_dose: dict | None,
     route_tags: Iterable[str],
     matches_order: bool,
-) -> Optional[str]:
+) -> str | None:
     """Stable identity of "this drug at this dose by this route on this order".
 
     An override is carried forward only while the fingerprint holds, so changing
@@ -1893,17 +2295,20 @@ def dose_fingerprint(
     """
     if not rule_id:
         return None
-    raw = "\x1f".join([
-        _norm(drug_name), rule_id,
-        f"{parsed_dose['value']:.10g}" if parsed_dose else "unparsed",
-        parsed_dose["unit"] if parsed_dose else "n/a",
-        ",".join(sorted(route_tags)),
-        "order" if matches_order else "deviation",
-    ])
+    raw = "\x1f".join(
+        [
+            _norm(drug_name),
+            rule_id,
+            f"{parsed_dose['value']:.10g}" if parsed_dose else "unparsed",
+            parsed_dose["unit"] if parsed_dose else "n/a",
+            ",".join(sorted(route_tags)),
+            "order" if matches_order else "deviation",
+        ]
+    )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
 
-def summarize_dose_check(check: Optional[dict]) -> Optional[dict]:
+def summarize_dose_check(check: dict | None) -> dict | None:
     """Compact form stored on the administration row and sent to the ward board.
 
     The full finding list (with sources) goes to the audit chain; this is what a

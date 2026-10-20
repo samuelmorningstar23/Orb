@@ -37,6 +37,7 @@ Exit codes:
     1  refused (the reason is printed), or the audit trail was not available
     2  granting or revoking without a terminal to confirm at
 """
+
 from __future__ import annotations
 
 import argparse
@@ -48,6 +49,7 @@ import uuid
 
 # Ensure server root is in path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 
 from database import SERVICE_ACCOUNT_IDS, db_session  # noqa: E402
 from db_backend import DBIntegrityError  # noqa: E402
@@ -75,14 +77,20 @@ def _operator() -> dict:
 
 
 def _has_table(db, name: str) -> bool:
-    return db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-                      (name,)).fetchone() is not None
+    return (
+        db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+        ).fetchone()
+        is not None
+    )
 
 
 def _require_tables(db) -> None:
     if not _has_table(db, "enterprise_access_grants"):
-        raise GrantRefused("This database has no group-wide access table yet. Start Orb "
-                           "once so it is brought up to date (migration 70), then retry.")
+        raise GrantRefused(
+            "This database has no group-wide access table yet. Start Orb "
+            "once so it is brought up to date (migration 70), then retry."
+        )
 
 
 def _reason(raw: str | None) -> str:
@@ -94,6 +102,7 @@ def _reason(raw: str | None) -> str:
 
 def _audit(db, action_type: str, summary: str, user_id: str, metadata: dict) -> None:
     from services.audit_service import log_audit_event
+
     log_audit_event(
         correlation_id=str(uuid.uuid4()),
         event_category="security",
@@ -106,8 +115,7 @@ def _audit(db, action_type: str, summary: str, user_id: str, metadata: dict) -> 
         source_type="console",
         target_type="user",
         target_id=user_id,
-        metadata={**metadata, "operator": _operator(),
-                  "script": "grant_enterprise_access.py"},
+        metadata={**metadata, "operator": _operator(), "script": "grant_enterprise_access.py"},
     )
 
 
@@ -120,7 +128,8 @@ def list_grants() -> list[dict]:
             "g.granted_by, g.granted_at, g.reason, g.revoked_at, g.revoked_by, "
             "g.revoke_reason FROM enterprise_access_grants g "
             "LEFT JOIN users u ON u.id = g.user_id "
-            "ORDER BY (g.revoked_at IS NOT NULL), g.granted_at DESC, g.id DESC").fetchall()
+            "ORDER BY (g.revoked_at IS NOT NULL), g.granted_at DESC, g.id DESC"
+        ).fetchall()
     return [{k: r[k] for k in r.keys()} for r in rows]
 
 
@@ -128,44 +137,57 @@ def grant(user_id: str, reason: str | None) -> dict:
     """Give `user_id` group-wide access. Raises GrantRefused, or
     AuditWriteError when the audit row could not be written (nothing saved)."""
     import config
+
     from services import facility_service
 
     user_id = (user_id or "").strip()
     reason = _reason(reason)
     if not config.feature_enabled("multi_site"):
-        raise GrantRefused("Multi-site is switched off (ORB_MULTI_SITE), so no group-wide "
-                           "access can be given.")
+        raise GrantRefused(
+            "Multi-site is switched off (ORB_MULTI_SITE), so no group-wide access can be given."
+        )
     uid = user_id.lower()
     if uid in SERVICE_ACCOUNT_IDS or uid.startswith("bot_"):
-        raise GrantRefused(f"{user_id} is one of Orb's system accounts. It has no login "
-                           "and cannot hold group-wide access.")
+        raise GrantRefused(
+            f"{user_id} is one of Orb's system accounts. It has no login "
+            "and cannot hold group-wide access."
+        )
     try:
         with db_session(immediate=True) as db:
             _require_tables(db)
             row = db.execute(
                 "SELECT id, role, COALESCE(is_active, 1) AS is_active FROM users WHERE id = ?",
-                (user_id,)).fetchone()
+                (user_id,),
+            ).fetchone()
             if row is None:
                 raise GrantRefused(f"There is no account {user_id}.")
             if row["role"] not in facility_service.ENTERPRISE_GRANT_ROLES:
-                raise GrantRefused(f"{user_id} is a {row['role']}. Group-wide access is only "
-                                   "for administrators.")
+                raise GrantRefused(
+                    f"{user_id} is a {row['role']}. Group-wide access is only for administrators."
+                )
             if not row["is_active"]:
                 raise GrantRefused(f"{user_id} is switched off. Activate it first.")
             live = db.execute(
-                "SELECT id FROM enterprise_access_grants WHERE user_id = ? "
-                "AND revoked_at IS NULL", (user_id,)).fetchone()
+                "SELECT id FROM enterprise_access_grants WHERE user_id = ? AND revoked_at IS NULL",
+                (user_id,),
+            ).fetchone()
             if live is not None:
                 raise GrantRefused(f"{user_id} already has group-wide access (grant {live['id']}).")
             cur = db.execute(
                 "INSERT INTO enterprise_access_grants (user_id, granted_by, granted_at, reason) "
-                "VALUES (?, 'console', CURRENT_TIMESTAMP, ?)", (user_id, reason))
+                "VALUES (?, 'console', CURRENT_TIMESTAMP, ?)",
+                (user_id, reason),
+            )
             grant_id = cur.lastrowid
-            _audit(db, "enterprise_access_granted",
-                   f"Group-wide access granted to user {user_id} at the console",
-                   user_id, {"grant_id": grant_id, "reason": reason})
+            _audit(
+                db,
+                "enterprise_access_granted",
+                f"Group-wide access granted to user {user_id} at the console",
+                user_id,
+                {"grant_id": grant_id, "reason": reason},
+            )
     except DBIntegrityError:
-        raise GrantRefused(f"{user_id} already has group-wide access.")
+        raise GrantRefused(f"{user_id} already has group-wide access.") from None
     facility_service.invalidate_cache()
     return {"grant_id": grant_id, "user_id": user_id, "reason": reason}
 
@@ -181,16 +203,22 @@ def revoke(user_id: str, reason: str | None) -> dict:
         _require_tables(db)
         live = db.execute(
             "SELECT id FROM enterprise_access_grants WHERE user_id = ? AND revoked_at IS NULL",
-            (user_id,)).fetchone()
+            (user_id,),
+        ).fetchone()
         if live is None:
             raise GrantRefused(f"{user_id} holds no group-wide access.")
         db.execute(
             "UPDATE enterprise_access_grants SET revoked_at = CURRENT_TIMESTAMP, "
             "revoked_by = 'console', revoke_reason = ? WHERE id = ? AND revoked_at IS NULL",
-            (reason, live["id"]))
-        _audit(db, "enterprise_access_revoked",
-               f"Group-wide access revoked for user {user_id} at the console",
-               user_id, {"grant_id": live["id"], "reason": reason})
+            (reason, live["id"]),
+        )
+        _audit(
+            db,
+            "enterprise_access_revoked",
+            f"Group-wide access revoked for user {user_id} at the console",
+            user_id,
+            {"grant_id": live["id"], "reason": reason},
+        )
     facility_service.invalidate_cache()
     return {"grant_id": live["id"], "user_id": user_id, "reason": reason}
 
@@ -208,22 +236,32 @@ def _print_grants(rows: list[dict]) -> None:
         return
     for r in rows:
         state = "live" if r["revoked_at"] is None else f"revoked {r['revoked_at']}"
-        print(f"  {r['id']:>4}  {r['user_id']:<12} {(r['user_name'] or '')[:28]:<28} "
-              f"{state:<28} granted {r['granted_at']} by {r['granted_by'] or '?'}: {r['reason']}")
+        print(
+            f"  {r['id']:>4}  {r['user_id']:<12} {(r['user_name'] or '')[:28]:<28} "
+            f"{state:<28} granted {r['granted_at']} by {r['granted_by'] or '?'}: {r['reason']}"
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
     from services.audit_service import AuditWriteError
 
     parser = argparse.ArgumentParser(
-        description="Give, revoke or list group-wide access at the appliance's console.")
+        description="Give, revoke or list group-wide access at the appliance's console."
+    )
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument("--list", action="store_true", help="List every grant.")
-    action.add_argument("--grant", metavar="USER_ID", help="Give this administrator group-wide access.")
-    action.add_argument("--revoke", metavar="USER_ID", help="Revoke this account's group-wide access.")
+    action.add_argument(
+        "--grant", metavar="USER_ID", help="Give this administrator group-wide access."
+    )
+    action.add_argument(
+        "--revoke", metavar="USER_ID", help="Revoke this account's group-wide access."
+    )
     parser.add_argument("--reason", help="Why (required for --grant and --revoke).")
-    parser.add_argument("--yes", action="store_true",
-                        help="Revoke without the typed confirmation (never for --grant).")
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Revoke without the typed confirmation (never for --grant).",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -234,27 +272,36 @@ def main(argv: list[str] | None = None) -> int:
         _reason(args.reason)
         if args.grant or not args.yes:
             if not sys.stdin.isatty():
-                print("[fail] Run this at the appliance's console: it asks you to type the "
-                      "account id to confirm.", file=sys.stderr)
+                print(
+                    "[fail] Run this at the appliance's console: it asks you to type the "
+                    "account id to confirm.",
+                    file=sys.stderr,
+                )
                 return 2
             if not _confirm(target, "give" if args.grant else "revoke"):
                 print("[fail] The id did not match. Nothing was changed.", file=sys.stderr)
                 return 1
         if args.grant:
             done = grant(target, args.reason)
-            print(f"[ ok ] Group-wide access given to {target} (grant {done['grant_id']}). "
-                  f"{CACHE_NOTE}")
+            print(
+                f"[ ok ] Group-wide access given to {target} (grant {done['grant_id']}). "
+                f"{CACHE_NOTE}"
+            )
         else:
             done = revoke(target, args.reason)
-            print(f"[ ok ] Group-wide access revoked for {target} (grant {done['grant_id']}). "
-                  f"{CACHE_NOTE}")
+            print(
+                f"[ ok ] Group-wide access revoked for {target} (grant {done['grant_id']}). "
+                f"{CACHE_NOTE}"
+            )
         return 0
     except GrantRefused as refused:
         print(f"[fail] {refused}", file=sys.stderr)
         return 1
     except AuditWriteError as e:
-        print(f"[fail] The audit trail could not record this, so nothing was saved: {e}",
-              file=sys.stderr)
+        print(
+            f"[fail] The audit trail could not record this, so nothing was saved: {e}",
+            file=sys.stderr,
+        )
         return 1
 
 

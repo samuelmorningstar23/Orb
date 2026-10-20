@@ -24,35 +24,42 @@ see is 404, never 403. Still to come: adt-13b (NABH indicators, nabh_service).
 
 Every handler is a plain def (FastAPI threadpools it).
 """
-from __future__ import annotations
 
-from typing import Optional
+from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
-
 from permissions import ADT_READ, require_permission
+
 from services import adt_census_service as census_service
 
 router = APIRouter()
 
 
-def _read(user: dict, from_day: Optional[str], to_day: Optional[str],
-          ward_id: Optional[str]) -> dict:
+def _read(user: dict, from_day: str | None, to_day: str | None, ward_id: str | None) -> dict:
     try:
-        return census_service.census(actor=user, from_day=from_day, to_day=to_day,
-                                     ward_id=ward_id or None)
+        return census_service.census(
+            actor=user, from_day=from_day, to_day=to_day, ward_id=ward_id or None
+        )
     except census_service.CensusError as err:
-        raise HTTPException(status_code=err.http_status,
-                            detail={"error": err.code, "message": str(err), **err.detail})
+        raise HTTPException(
+            status_code=err.http_status,
+            detail={"error": err.code, "message": str(err), **err.detail},
+        ) from err
+
+
+_GET_CENSUS_FROM_DAY_DEFAULT = Query(None, alias="from")
+_GET_CENSUS_TO_DAY_DEFAULT = Query(None, alias="to")
+_GET_CENSUS_WARD_ID_DEFAULT = Query(None)
+_GET_CENSUS_USER_DEFAULT = Depends(require_permission(ADT_READ))
 
 
 @router.get("/census")
 def get_census(
-    from_day: Optional[str] = Query(None, alias="from"),
-    to_day: Optional[str] = Query(None, alias="to"),
-    ward_id: Optional[str] = Query(None),
-    user: dict = Depends(require_permission(ADT_READ)),
+    from_day: str | None = _GET_CENSUS_FROM_DAY_DEFAULT,
+    to_day: str | None = _GET_CENSUS_TO_DAY_DEFAULT,
+    ward_id: str | None = _GET_CENSUS_WARD_ID_DEFAULT,
+    user: dict = _GET_CENSUS_USER_DEFAULT,
 ):
     """The census for the caller's wards (or one of them) over a period of
     whole hospital-local days, YYYY-MM-DD inclusive; the seven days ending
@@ -61,12 +68,18 @@ def get_census(
     return _read(user, from_day, to_day, ward_id)
 
 
+_GET_CENSUS_CSV_FROM_DAY_DEFAULT = Query(None, alias="from")
+_GET_CENSUS_CSV_TO_DAY_DEFAULT = Query(None, alias="to")
+_GET_CENSUS_CSV_WARD_ID_DEFAULT = Query(None)
+_GET_CENSUS_CSV_USER_DEFAULT = Depends(require_permission(ADT_READ))
+
+
 @router.get("/census.csv")
 def get_census_csv(
-    from_day: Optional[str] = Query(None, alias="from"),
-    to_day: Optional[str] = Query(None, alias="to"),
-    ward_id: Optional[str] = Query(None),
-    user: dict = Depends(require_permission(ADT_READ)),
+    from_day: str | None = _GET_CENSUS_CSV_FROM_DAY_DEFAULT,
+    to_day: str | None = _GET_CENSUS_CSV_TO_DAY_DEFAULT,
+    ward_id: str | None = _GET_CENSUS_CSV_WARD_ID_DEFAULT,
+    user: dict = _GET_CENSUS_CSV_USER_DEFAULT,
 ):
     """The same census as CSV: one row per ward and day, the hospital's rows,
     then the method of every figure."""
@@ -75,6 +88,8 @@ def get_census_csv(
     return Response(
         content=census_service.census_csv(result),
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{name}"',
-                 "Cache-Control": "no-store"},
+        headers={
+            "Content-Disposition": f'attachment; filename="{name}"',
+            "Cache-Control": "no-store",
+        },
     )

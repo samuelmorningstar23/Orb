@@ -89,6 +89,7 @@ phi_access audit with their ids; available_beds names nobody.
 Every function is plain sync and opens its own sessions; routes call it from
 plain def handlers.
 """
+
 from __future__ import annotations
 
 import json
@@ -96,12 +97,14 @@ import logging
 import re
 import string
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from datetime import UTC, datetime
+from typing import Any
 
 from database import db_session
 from db_backend import DBIntegrityError
 from migrations_his.m0053_adt_bed_master import FACILITY_CODE, ROOM_TYPES, WARD_TYPES
+
 from services import housekeeping_service as hk
 from services.audit_service import log_audit_event
 from services.clinical_time import format_utc, parse_to_utc, utc_iso_now
@@ -184,8 +187,9 @@ def _key(value: str) -> str:
 def _natural_key(label: str) -> list:
     """Bed 2 before bed 10. re.split with a group alternates text and digits,
     so like is always compared with like (admission_service._natural_key)."""
-    return [(0, int(t), "") if t.isdigit() else (1, 0, t.casefold())
-            for t in re.split(r"(\d+)", label)]
+    return [
+        (0, int(t), "") if t.isdigit() else (1, 0, t.casefold()) for t in re.split(r"(\d+)", label)
+    ]
 
 
 def _norm_code(value: Any, what: str, *, limit: int = _MAX_CODE) -> str:
@@ -195,19 +199,24 @@ def _norm_code(value: Any, what: str, *, limit: int = _MAX_CODE) -> str:
     if not text:
         raise BedMasterError(f"{what} is required", code="required", field=what)
     if len(text) > limit:
-        raise BedMasterError(f"{what} is longer than {limit} characters", code="too_long", field=what)
+        raise BedMasterError(
+            f"{what} is longer than {limit} characters", code="too_long", field=what
+        )
     if "/" in text:
         raise BedMasterError(
             f"{what} cannot contain '/'. A bed is shown as ward/bed, so a '/' inside a "
             "code would make two different beds read the same.",
-            code="slash_not_allowed", field=what,
+            code="slash_not_allowed",
+            field=what,
         )
     if any(ord(c) < 32 or ord(c) == 127 for c in text):
-        raise BedMasterError(f"{what} contains a character that cannot be printed", code="bad_character", field=what)
+        raise BedMasterError(
+            f"{what} contains a character that cannot be printed", code="bad_character", field=what
+        )
     return text
 
 
-def _clean(value: Any, limit: int = _MAX_NAME) -> Optional[str]:
+def _clean(value: Any, limit: int = _MAX_NAME) -> str | None:
     if value is None:
         return None
     text = " ".join(str(value).split())
@@ -238,22 +247,43 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:12].upper()}"
 
 
-def _event(db, entity_type: str, entity_id: str, action: str, detail: dict | None,
-           actor: dict, now: str, reason: str | None = None) -> None:
+def _event(
+    db,
+    entity_type: str,
+    entity_id: str,
+    action: str,
+    detail: dict | None,
+    actor: dict,
+    now: str,
+    reason: str | None = None,
+) -> None:
     db.execute(
         """INSERT INTO bed_master_events
                (entity_type, entity_id, action, detail_json, reason, actor_user_id, occurred_at)
            VALUES (?, ?, ?, ?, ?, ?, ?)""",
         (
-            entity_type, str(entity_id), action,
+            entity_type,
+            str(entity_id),
+            action,
             json.dumps(detail, sort_keys=True, default=str) if detail else None,
-            _clean(reason, _MAX_NOTE), (actor or {}).get("id"), now,
+            _clean(reason, _MAX_NOTE),
+            (actor or {}).get("id"),
+            now,
         ),
     )
 
 
-def _audit(db, actor: dict, action: str, summary: str, *, target_type: str,
-           target_id: str, request_meta: dict | None, metadata: dict | None = None) -> None:
+def _audit(
+    db,
+    actor: dict,
+    action: str,
+    summary: str,
+    *,
+    target_type: str,
+    target_id: str | int | None,
+    request_meta: dict | None,
+    metadata: dict | None = None,
+) -> None:
     """One audit line per master write, inside the write's own transaction.
     Category 'facilities' (design section 9); no patient identifier."""
     meta = request_meta or {}
@@ -289,9 +319,11 @@ def _refresh_capacity() -> None:
     moment stale is a smaller problem than a saved bed reported as failed."""
     try:
         import config
+
         if config.module_state("adt") != "on":
             return
         from services.forecast_service import refresh_ward_capacity
+
         refresh_ward_capacity()
     except Exception:  # noqa: BLE001 - see the docstring
         logger.exception("capacity refresh after a bed setup write failed")
@@ -300,6 +332,7 @@ def _refresh_capacity() -> None:
 # ═════════════════════════════════════════════════════════════════════════════
 #  Departments and cover
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def _department_lists() -> tuple[list[str], list[str]]:
     """(covering, declared). Covering: departments an active doctor or nurse
@@ -335,11 +368,12 @@ def _resolve_department(name: Any, covering: list[str], declared: list[str]) -> 
         "Choose a department a doctor or nurse covers, or one the site configuration "
         "declares. A ward in any other department would hold patients nobody's "
         "board shows.",
-        code="unknown_department", field="department",
+        code="unknown_department",
+        field="department",
     )
 
 
-def _cover_note(department: str, covering: list[str]) -> Optional[str]:
+def _cover_note(department: str, covering: list[str]) -> str | None:
     if any(c.casefold() == (department or "").casefold() for c in covering):
         return None
     return f"Admissions refused until a doctor or nurse covers {department}."
@@ -358,6 +392,7 @@ def _ward_out(row: Any, covering: list[str]) -> dict:
 #  Reference checks (what makes a code immutable)
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _count(db, sql: str, params: tuple) -> int:
     return int(db.execute(sql, params).fetchone()[0] or 0)
 
@@ -372,27 +407,39 @@ def _ward_references(db, ward: dict) -> dict[str, int]:
         "beds": _count(db, "SELECT COUNT(*) FROM housekeeping_units WHERE ward_id = ?", (wid,)),
         "rooms": _count(db, "SELECT COUNT(*) FROM ward_rooms WHERE ward_id = ?", (wid,)),
         "housekeeping": _count(
-            db, "SELECT COUNT(*) FROM housekeeping_units WHERE ward_id IS NULL "
-                "AND LOWER(TRIM(ward)) = LOWER(TRIM(?))", (code,)),
+            db,
+            "SELECT COUNT(*) FROM housekeeping_units WHERE ward_id IS NULL "
+            "AND LOWER(TRIM(ward)) = LOWER(TRIM(?))",
+            (code,),
+        ),
         "admissions": _count(
-            db, "SELECT COUNT(*) FROM admissions WHERE LOWER(TRIM(COALESCE(ward, ''))) = LOWER(TRIM(?))",
-            (code,)),
+            db,
+            "SELECT COUNT(*) FROM admissions WHERE LOWER(TRIM(COALESCE(ward, ''))) = LOWER(TRIM(?))",
+            (code,),
+        ),
         "patients": _count(
-            db, "SELECT COUNT(*) FROM patients WHERE LOWER(TRIM(COALESCE(ward, ''))) = LOWER(TRIM(?))",
-            (code,)),
+            db,
+            "SELECT COUNT(*) FROM patients WHERE LOWER(TRIM(COALESCE(ward, ''))) = LOWER(TRIM(?))",
+            (code,),
+        ),
     }
     if "ward_id" in _table_columns(db, "admissions"):
-        refs["admissions"] += _count(db, "SELECT COUNT(*) FROM admissions WHERE ward_id = ?", (wid,))
+        refs["admissions"] += _count(
+            db, "SELECT COUNT(*) FROM admissions WHERE ward_id = ?", (wid,)
+        )
     movement_cols = _table_columns(db, "patient_movements")
     if movement_cols:
         refs["movements"] = _count(
-            db, "SELECT COUNT(*) FROM patient_movements WHERE LOWER(TRIM(COALESCE(from_ward, ''))) "
-                "= LOWER(TRIM(?)) OR LOWER(TRIM(COALESCE(to_ward, ''))) = LOWER(TRIM(?))",
-            (code, code))
+            db,
+            "SELECT COUNT(*) FROM patient_movements WHERE LOWER(TRIM(COALESCE(from_ward, ''))) "
+            "= LOWER(TRIM(?)) OR LOWER(TRIM(COALESCE(to_ward, ''))) = LOWER(TRIM(?))",
+            (code, code),
+        )
         for col in ("from_ward_id", "to_ward_id"):
             if col in movement_cols:
                 refs["movements"] += _count(
-                    db, f"SELECT COUNT(*) FROM patient_movements WHERE {col} = ?", (wid,))
+                    db, f"SELECT COUNT(*) FROM patient_movements WHERE {col} = ?", (wid,)
+                )
     return {k: v for k, v in refs.items() if v}
 
 
@@ -403,38 +450,57 @@ def _bed_references(db, unit: dict, ward_code: str) -> dict[str, int]:
     text, and the bed id columns later migrations add."""
     uid, label = unit["id"], unit["bed_label"] or ""
     refs = {
-        "cleaning_record": max(0, _count(
-            db, "SELECT COUNT(*) FROM housekeeping_unit_events WHERE unit_id = ?", (uid,)) - 1),
-        "cleaning_tasks": _count(db, "SELECT COUNT(*) FROM housekeeping_tasks WHERE unit_id = ?", (uid,)),
+        "cleaning_record": max(
+            0,
+            _count(db, "SELECT COUNT(*) FROM housekeeping_unit_events WHERE unit_id = ?", (uid,))
+            - 1,
+        ),
+        "cleaning_tasks": _count(
+            db, "SELECT COUNT(*) FROM housekeeping_tasks WHERE unit_id = ?", (uid,)
+        ),
         "admissions": _count(
-            db, "SELECT COUNT(*) FROM admissions WHERE LOWER(TRIM(COALESCE(ward, ''))) = LOWER(TRIM(?)) "
-                "AND LOWER(TRIM(COALESCE(bed, ''))) = LOWER(TRIM(?))", (ward_code, label)),
+            db,
+            "SELECT COUNT(*) FROM admissions WHERE LOWER(TRIM(COALESCE(ward, ''))) = LOWER(TRIM(?)) "
+            "AND LOWER(TRIM(COALESCE(bed, ''))) = LOWER(TRIM(?))",
+            (ward_code, label),
+        ),
         "patients": _count(
-            db, "SELECT COUNT(*) FROM patients WHERE LOWER(TRIM(COALESCE(ward, ''))) = LOWER(TRIM(?)) "
-                "AND LOWER(TRIM(COALESCE(bed, ''))) = LOWER(TRIM(?))", (ward_code, label)),
+            db,
+            "SELECT COUNT(*) FROM patients WHERE LOWER(TRIM(COALESCE(ward, ''))) = LOWER(TRIM(?)) "
+            "AND LOWER(TRIM(COALESCE(bed, ''))) = LOWER(TRIM(?))",
+            (ward_code, label),
+        ),
     }
     if "bed_id" in _table_columns(db, "admissions"):
         refs["admissions"] += _count(db, "SELECT COUNT(*) FROM admissions WHERE bed_id = ?", (uid,))
     movement_cols = _table_columns(db, "patient_movements")
     if movement_cols:
         refs["movements"] = _count(
-            db, "SELECT COUNT(*) FROM patient_movements WHERE "
-                "(LOWER(TRIM(COALESCE(from_ward, ''))) = LOWER(TRIM(?)) "
-                " AND LOWER(TRIM(COALESCE(from_bed, ''))) = LOWER(TRIM(?))) OR "
-                "(LOWER(TRIM(COALESCE(to_ward, ''))) = LOWER(TRIM(?)) "
-                " AND LOWER(TRIM(COALESCE(to_bed, ''))) = LOWER(TRIM(?)))",
-            (ward_code, label, ward_code, label))
+            db,
+            "SELECT COUNT(*) FROM patient_movements WHERE "
+            "(LOWER(TRIM(COALESCE(from_ward, ''))) = LOWER(TRIM(?)) "
+            " AND LOWER(TRIM(COALESCE(from_bed, ''))) = LOWER(TRIM(?))) OR "
+            "(LOWER(TRIM(COALESCE(to_ward, ''))) = LOWER(TRIM(?)) "
+            " AND LOWER(TRIM(COALESCE(to_bed, ''))) = LOWER(TRIM(?)))",
+            (ward_code, label, ward_code, label),
+        )
         for col in ("from_bed_id", "to_bed_id"):
             if col in movement_cols:
                 refs["movements"] += _count(
-                    db, f"SELECT COUNT(*) FROM patient_movements WHERE {col} = ?", (uid,))
+                    db, f"SELECT COUNT(*) FROM patient_movements WHERE {col} = ?", (uid,)
+                )
     return {k: v for k, v in refs.items() if v}
 
 
 _REFERENCE_WORDS = {
-    "beds": "beds", "rooms": "rooms", "housekeeping": "housekeeping register entries",
-    "admissions": "admissions", "patients": "patient records", "movements": "patient movements",
-    "cleaning_record": "cleaning records", "cleaning_tasks": "cleaning requests",
+    "beds": "beds",
+    "rooms": "rooms",
+    "housekeeping": "housekeeping register entries",
+    "admissions": "admissions",
+    "patients": "patient records",
+    "movements": "patient movements",
+    "cleaning_record": "cleaning records",
+    "cleaning_tasks": "cleaning requests",
 }
 
 
@@ -445,6 +511,7 @@ def _references_words(refs: dict[str, int]) -> str:
 # ═════════════════════════════════════════════════════════════════════════════
 #  Lookups inside a session
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def _ward_row(db, ward_id: str) -> dict:
     row = db.execute("SELECT * FROM wards WHERE id = ?", (ward_id,)).fetchone()
@@ -460,7 +527,7 @@ def _room_row(db, room_id: str) -> dict:
     return dict(row)
 
 
-def _bed_class_code(db, value: Any, *, require_active: bool = True) -> Optional[str]:
+def _bed_class_code(db, value: Any, *, require_active: bool = True) -> str | None:
     """The stored spelling of a bed class, or None for a blank value."""
     text = _clean(value, _MAX_CODE)
     if text is None:
@@ -469,11 +536,15 @@ def _bed_class_code(db, value: Any, *, require_active: bool = True) -> Optional[
         "SELECT code, is_active FROM bed_classes WHERE LOWER(TRIM(code)) = LOWER(TRIM(?))", (text,)
     ).fetchone()
     if row is None:
-        raise BedMasterError(f"There is no bed class {text}. Set it up under bed classes first.",
-                             code="bed_class_not_found", field="bed_class")
+        raise BedMasterError(
+            f"There is no bed class {text}. Set it up under bed classes first.",
+            code="bed_class_not_found",
+            field="bed_class",
+        )
     if require_active and not row["is_active"]:
-        raise BedMasterError(f"Bed class {row['code']} is switched off", code="bed_class_inactive",
-                             field="bed_class")
+        raise BedMasterError(
+            f"Bed class {row['code']} is switched off", code="bed_class_inactive", field="bed_class"
+        )
     return row["code"]
 
 
@@ -487,13 +558,15 @@ def _clash_ward_code(db, code: str, *, exclude_id: str | None = None) -> None:
         raise BedMasterConflict(
             f"Ward {row['code']} is already set up. Ward codes are compared without regard "
             f"to capital letters, so {code} and {row['code']} would be the same ward.",
-            code="duplicate_code", existing_id=row["id"],
+            code="duplicate_code",
+            existing_id=row["id"],
         )
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  Read
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def list_master(*, ward_id: str | None = None) -> dict:
     """The whole master for the Bed setup screen: wards (with cover), rooms,
@@ -505,31 +578,56 @@ def list_master(*, ward_id: str | None = None) -> dict:
     by_ward = " AND ward_id = ?" if ward_id else ""
     params: tuple = (ward_id,) if ward_id else ()
     with db_session() as db:
-        wards = [_ward_out(r, covering) for r in db.execute(
-            f"SELECT * FROM wards{ward_filter} ORDER BY LOWER(code)", params).fetchall()]
-        rooms = [_bool(dict(r), "is_isolation", "is_active") for r in db.execute(
-            f"SELECT * FROM ward_rooms WHERE 1 = 1{by_ward} ORDER BY ward_id, LOWER(code)",
-            params).fetchall()]
-        beds = [_bool(dict(r), "is_isolation_room", "is_temporary", "is_active") for r in db.execute(
-            f"""SELECT id, unit_code, ward_id, ward, room_id, room, bed_label, bed_class,
+        wards = [
+            _ward_out(r, covering)
+            for r in db.execute(
+                f"SELECT * FROM wards{ward_filter} ORDER BY LOWER(code)", params
+            ).fetchall()
+        ]
+        rooms = [
+            _bool(dict(r), "is_isolation", "is_active")
+            for r in db.execute(
+                f"SELECT * FROM ward_rooms WHERE 1 = 1{by_ward} ORDER BY ward_id, LOWER(code)",
+                params,
+            ).fetchall()
+        ]
+        beds = [
+            _bool(dict(r), "is_isolation_room", "is_temporary", "is_active")
+            for r in db.execute(
+                f"""SELECT id, unit_code, ward_id, ward, room_id, room, bed_label, bed_class,
                        is_isolation_room, is_temporary, is_active, retired_at, state,
                        state_since, notes, created_at, updated_at
-                  FROM housekeeping_units WHERE ward_id IS NOT NULL{by_ward}""", params).fetchall()]
+                  FROM housekeeping_units WHERE ward_id IS NOT NULL{by_ward}""",
+                params,
+            ).fetchall()
+        ]
         beds.sort(key=lambda b: (b["ward_id"], _natural_key(b.get("bed_label") or "")))
-        has_items = db.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'service_items'"
-        ).fetchone() is not None
-        listed_sql = ("(SELECT COUNT(*) FROM service_items s WHERE s.code = b.bed_day_service_code)"
-                      if has_items else "NULL")
-        bed_classes = [_bool(dict(r), "is_critical_care", "counts_in_census", "is_active") for r in db.execute(
-            f"SELECT b.*, {listed_sql} AS bed_day_charge_listed FROM bed_classes b ORDER BY LOWER(b.code)"
-        ).fetchall()]
-        legacy = [dict(r) for r in db.execute(
-            """SELECT id, unit_code, ward, room, bed_label, state
+        has_items = (
+            db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'service_items'"
+            ).fetchone()
+            is not None
+        )
+        listed_sql = (
+            "(SELECT COUNT(*) FROM service_items s WHERE s.code = b.bed_day_service_code)"
+            if has_items
+            else "NULL"
+        )
+        bed_classes = [
+            _bool(dict(r), "is_critical_care", "counts_in_census", "is_active")
+            for r in db.execute(
+                f"SELECT b.*, {listed_sql} AS bed_day_charge_listed FROM bed_classes b ORDER BY LOWER(b.code)"
+            ).fetchall()
+        ]
+        legacy = [
+            dict(r)
+            for r in db.execute(
+                """SELECT id, unit_code, ward, room, bed_label, state
                  FROM housekeeping_units
                 WHERE ward_id IS NULL AND unit_type = 'bed' AND is_active = 1
                 ORDER BY ward, unit_code"""
-        ).fetchall()]
+            ).fetchall()
+        ]
 
     for bc in bed_classes:
         if not bc.get("bed_day_service_code"):
@@ -570,12 +668,20 @@ def list_master(*, ward_id: str | None = None) -> dict:
 #  Wards
 # ═════════════════════════════════════════════════════════════════════════════
 
-_WARD_FIELDS = ("code", "name", "department", "ward_type", "default_bed_class",
-                "cleaning_tracked", "is_active")
+_WARD_FIELDS = (
+    "code",
+    "name",
+    "department",
+    "ward_type",
+    "default_bed_class",
+    "cleaning_tracked",
+    "is_active",
+)
 
 
-def save_ward(data: dict, *, actor: dict, ward_id: str | None = None,
-              request_meta: dict | None = None) -> dict:
+def save_ward(
+    data: dict, *, actor: dict, ward_id: str | None = None, request_meta: dict | None = None
+) -> dict:
     """Create a ward (ward_id None) or change the fields `data` carries.
 
     The department is resolved before the session (covering, else declared,
@@ -586,8 +692,11 @@ def save_ward(data: dict, *, actor: dict, ward_id: str | None = None,
     reason = data.pop("reason", None)
     hk.ensure_housekeeping_schema()
     covering, declared = _department_lists()
-    department = (_resolve_department(data["department"], covering, declared)
-                  if "department" in data else None)
+    department = (
+        _resolve_department(data["department"], covering, declared)
+        if "department" in data
+        else None
+    )
     now = utc_iso_now()
 
     if ward_id is None:
@@ -609,21 +718,46 @@ def save_ward(data: dict, *, actor: dict, ward_id: str | None = None,
                             default_bed_class, cleaning_tracked, is_active, created_by,
                             created_at, updated_at)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)""",
-                    (new_id, FACILITY_CODE, code, name, department, ward_type, bed_class,
-                     1 if tracked else 0, (actor or {}).get("id"), now, now),
+                    (
+                        new_id,
+                        FACILITY_CODE,
+                        code,
+                        name,
+                        department,
+                        ward_type,
+                        bed_class,
+                        1 if tracked else 0,
+                        (actor or {}).get("id"),
+                        now,
+                        now,
+                    ),
                 )
-                detail = {"code": code, "name": name, "department": department,
-                          "ward_type": ward_type, "default_bed_class": bed_class,
-                          "cleaning_tracked": tracked}
+                detail: dict[str, Any] = {
+                    "code": code,
+                    "name": name,
+                    "department": department,
+                    "ward_type": ward_type,
+                    "default_bed_class": bed_class,
+                    "cleaning_tracked": tracked,
+                }
                 _event(db, "ward", new_id, "created", detail, actor, now, reason)
-                _audit(db, actor, "bed_master_ward_created", f"Ward {code} set up in {department}",
-                       target_type="ward", target_id=new_id, request_meta=request_meta,
-                       metadata=detail)
+                _audit(
+                    db,
+                    actor,
+                    "bed_master_ward_created",
+                    f"Ward {code} set up in {department}",
+                    target_type="ward",
+                    target_id=new_id,
+                    request_meta=request_meta,
+                    metadata=detail,
+                )
                 row = db.execute("SELECT * FROM wards WHERE id = ?", (new_id,)).fetchone()
         except DBIntegrityError as exc:
-            raise BedMasterConflict(f"Ward {code} could not be saved because it clashes with "
-                                    "one already set up. Nothing was changed.",
-                                    code="duplicate_code") from exc
+            raise BedMasterConflict(
+                f"Ward {code} could not be saved because it clashes with "
+                "one already set up. Nothing was changed.",
+                code="duplicate_code",
+            ) from exc
         _refresh_capacity()
         return _ward_out(row, covering)
 
@@ -641,7 +775,8 @@ def save_ward(data: dict, *, actor: dict, ward_id: str | None = None,
                             f"The ward code {ward['code']} is already in use "
                             f"({_references_words(refs)}), so it cannot be changed. Change "
                             "the display name instead, or set up a new ward.",
-                            code="code_in_use", references=refs,
+                            code="code_in_use",
+                            references=refs,
                         )
                     _clash_ward_code(db, code, exclude_id=ward_id)
                     new["code"] = code
@@ -658,35 +793,54 @@ def save_ward(data: dict, *, actor: dict, ward_id: str | None = None,
             if "is_active" in data and data["is_active"] is not None:
                 active = 1 if data["is_active"] else 0
                 if not active and ward["is_active"]:
-                    beds = _count(db, "SELECT COUNT(*) FROM housekeeping_units WHERE ward_id = ? "
-                                      "AND is_active = 1 AND retired_at IS NULL", (ward_id,))
-                    held = _count(db, "SELECT COUNT(*) FROM admissions WHERE status = 'active' "
-                                      "AND LOWER(TRIM(COALESCE(ward, ''))) = LOWER(TRIM(?))",
-                                  (ward["code"],))
+                    beds = _count(
+                        db,
+                        "SELECT COUNT(*) FROM housekeeping_units WHERE ward_id = ? "
+                        "AND is_active = 1 AND retired_at IS NULL",
+                        (ward_id,),
+                    )
+                    held = _count(
+                        db,
+                        "SELECT COUNT(*) FROM admissions WHERE status = 'active' "
+                        "AND LOWER(TRIM(COALESCE(ward, ''))) = LOWER(TRIM(?))",
+                        (ward["code"],),
+                    )
                     if beds or held:
                         raise BedMasterConflict(
                             f"Ward {ward['code']} still has {beds} beds and {held} patients "
                             "admitted to it, so it cannot be switched off.",
-                            code="ward_in_use", beds=beds, admitted=held,
+                            code="ward_in_use",
+                            beds=beds,
+                            admitted=held,
                         )
                 new["is_active"] = active
             changes = {k: [ward.get(k), v] for k, v in new.items() if ward.get(k) != v}
             if changes:
                 cols = ", ".join(f"{k} = ?" for k in changes)
-                db.execute(f"UPDATE wards SET {cols}, updated_at = ? WHERE id = ?",
-                           (*[v[1] for v in changes.values()], now, ward_id))
+                db.execute(
+                    f"UPDATE wards SET {cols}, updated_at = ? WHERE id = ?",
+                    (*[v[1] for v in changes.values()], now, ward_id),
+                )
                 action = "updated"
                 if set(changes) == {"is_active"}:
                     action = "switched_on" if changes["is_active"][1] else "switched_off"
                 _event(db, "ward", ward_id, action, {"changes": changes}, actor, now, reason)
-                _audit(db, actor, "bed_master_ward_updated",
-                       f"Ward {ward['code']} changed: {', '.join(sorted(changes))}",
-                       target_type="ward", target_id=ward_id, request_meta=request_meta,
-                       metadata={"changes": changes})
+                _audit(
+                    db,
+                    actor,
+                    "bed_master_ward_updated",
+                    f"Ward {ward['code']} changed: {', '.join(sorted(changes))}",
+                    target_type="ward",
+                    target_id=ward_id,
+                    request_meta=request_meta,
+                    metadata={"changes": changes},
+                )
             row = db.execute("SELECT * FROM wards WHERE id = ?", (ward_id,)).fetchone()
     except DBIntegrityError as exc:
-        raise BedMasterConflict("That change clashes with a ward already set up. Nothing was "
-                                "changed.", code="duplicate_code") from exc
+        raise BedMasterConflict(
+            "That change clashes with a ward already set up. Nothing was changed.",
+            code="duplicate_code",
+        ) from exc
     if changes:
         _refresh_capacity()
     return _ward_out(row, covering)
@@ -696,8 +850,10 @@ def save_ward(data: dict, *, actor: dict, ward_id: str | None = None,
 #  Rooms
 # ═════════════════════════════════════════════════════════════════════════════
 
-def save_room(data: dict, *, actor: dict, room_id: str | None = None,
-              request_meta: dict | None = None) -> dict:
+
+def save_room(
+    data: dict, *, actor: dict, room_id: str | None = None, request_meta: dict | None = None
+) -> dict:
     """Create a room on a ward, or change one. A room code is unique inside its
     ward without regard to capital letters and immutable once a bed is in the
     room. Changing whether a room is an isolation room changes its beds too,
@@ -713,7 +869,9 @@ def save_room(data: dict, *, actor: dict, room_id: str | None = None,
             if room_id is None:
                 ward = _ward_row(db, str(data.get("ward_id") or ""))
                 if not ward["is_active"]:
-                    raise BedMasterConflict(f"Ward {ward['code']} is switched off", code="ward_inactive")
+                    raise BedMasterConflict(
+                        f"Ward {ward['code']} is switched off", code="ward_inactive"
+                    )
                 code = _norm_code(data.get("code"), "Room code")
                 room_type = _one_of(data.get("room_type") or "bay", ROOM_TYPES, "Room type")
                 isolation = data.get("is_isolation")
@@ -728,29 +886,49 @@ def save_room(data: dict, *, actor: dict, room_id: str | None = None,
                        VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)""",
                     (new_id, ward["id"], code, name, room_type, 1 if isolation else 0, now, now),
                 )
-                detail = {"ward_id": ward["id"], "ward_code": ward["code"], "code": code,
-                          "name": name, "room_type": room_type, "is_isolation": isolation}
+                detail: dict[str, Any] = {
+                    "ward_id": ward["id"],
+                    "ward_code": ward["code"],
+                    "code": code,
+                    "name": name,
+                    "room_type": room_type,
+                    "is_isolation": isolation,
+                }
                 _event(db, "room", new_id, "created", detail, actor, now, reason)
-                _audit(db, actor, "bed_master_room_created", f"Room {code} set up on {ward['code']}",
-                       target_type="room", target_id=new_id, request_meta=request_meta,
-                       metadata=detail)
+                _audit(
+                    db,
+                    actor,
+                    "bed_master_room_created",
+                    f"Room {code} set up on {ward['code']}",
+                    target_type="room",
+                    target_id=new_id,
+                    request_meta=request_meta,
+                    metadata=detail,
+                )
                 room_id = new_id
             else:
                 room = _room_row(db, room_id)
                 if data.get("ward_id") not in (None, room["ward_id"]):
-                    raise BedMasterError("A room cannot move to another ward. Set up a room on "
-                                         "that ward instead.", code="ward_fixed", field="ward_id")
+                    raise BedMasterError(
+                        "A room cannot move to another ward. Set up a room on that ward instead.",
+                        code="ward_fixed",
+                        field="ward_id",
+                    )
                 new: dict[str, Any] = {}
                 if data.get("code") is not None:
                     code = _norm_code(data["code"], "Room code")
                     if code != room["code"]:
-                        beds = _count(db, "SELECT COUNT(*) FROM housekeeping_units WHERE room_id = ?",
-                                      (room_id,))
+                        beds = _count(
+                            db,
+                            "SELECT COUNT(*) FROM housekeeping_units WHERE room_id = ?",
+                            (room_id,),
+                        )
                         if beds:
                             raise BedMasterConflict(
                                 f"Room {room['code']} has {beds} beds, so its code cannot be "
                                 "changed. Change the display name instead.",
-                                code="code_in_use", references={"beds": beds},
+                                code="code_in_use",
+                                references={"beds": beds},
                             )
                         _clash_room_code(db, room["ward_id"], code, exclude_id=room_id)
                         new["code"] = code
@@ -776,28 +954,36 @@ def save_room(data: dict, *, actor: dict, room_id: str | None = None,
                 if data.get("is_active") is not None:
                     active = 1 if data["is_active"] else 0
                     if not active and room["is_active"]:
-                        beds = _count(db, "SELECT COUNT(*) FROM housekeeping_units WHERE room_id = ? "
-                                          "AND is_active = 1 AND retired_at IS NULL", (room_id,))
+                        beds = _count(
+                            db,
+                            "SELECT COUNT(*) FROM housekeeping_units WHERE room_id = ? "
+                            "AND is_active = 1 AND retired_at IS NULL",
+                            (room_id,),
+                        )
                         if beds:
                             raise BedMasterConflict(
                                 f"Room {room['code']} still has {beds} beds, so it cannot be "
                                 "switched off. Move or retire its beds first.",
-                                code="room_in_use", beds=beds,
+                                code="room_in_use",
+                                beds=beds,
                             )
                     new["is_active"] = active
                 changes = {k: [room.get(k), v] for k, v in new.items() if room.get(k) != v}
                 if changes:
                     cols = ", ".join(f"{k} = ?" for k in changes)
-                    db.execute(f"UPDATE ward_rooms SET {cols}, updated_at = ? WHERE id = ?",
-                               (*[v[1] for v in changes.values()], now, room_id))
+                    db.execute(
+                        f"UPDATE ward_rooms SET {cols}, updated_at = ? WHERE id = ?",
+                        (*[v[1] for v in changes.values()], now, room_id),
+                    )
                     beds_changed: list[str] = []
                     if "is_isolation" in changes:
                         for unit in db.execute(
                             "SELECT id FROM housekeeping_units WHERE room_id = ? AND retired_at IS NULL",
                             (room_id,),
                         ).fetchall():
-                            hk.update_master_bed_on(db, unit["id"],
-                                                    is_isolation_room=bool(changes["is_isolation"][1]))
+                            hk.update_master_bed_on(
+                                db, unit["id"], is_isolation_room=bool(changes["is_isolation"][1])
+                            )
                             beds_changed.append(unit["id"])
                     detail = {"changes": changes}
                     if isolation_follows_type and "is_isolation" in changes:
@@ -805,16 +991,26 @@ def save_room(data: dict, *, actor: dict, room_id: str | None = None,
                     if beds_changed:
                         detail["beds_isolation_changed"] = beds_changed
                     _event(db, "room", room_id, "updated", detail, actor, now, reason)
-                    _audit(db, actor, "bed_master_room_updated",
-                           f"Room {room['code']} changed: {', '.join(sorted(changes))}",
-                           target_type="room", target_id=room_id, request_meta=request_meta,
-                           metadata=detail)
+                    _audit(
+                        db,
+                        actor,
+                        "bed_master_room_updated",
+                        f"Room {room['code']} changed: {', '.join(sorted(changes))}",
+                        target_type="room",
+                        target_id=room_id,
+                        request_meta=request_meta,
+                        metadata=detail,
+                    )
             row = db.execute("SELECT * FROM ward_rooms WHERE id = ?", (room_id,)).fetchone()
     except DBIntegrityError as exc:
-        raise BedMasterConflict("That room clashes with one already set up on this ward. "
-                                "Nothing was changed.", code="duplicate_code") from exc
+        raise BedMasterConflict(
+            "That room clashes with one already set up on this ward. Nothing was changed.",
+            code="duplicate_code",
+        ) from exc
     except hk.HousekeepingError as exc:
-        raise BedMasterConflict(f"{exc}. Nothing was changed.", code="housekeeping_refused") from exc
+        raise BedMasterConflict(
+            f"{exc}. Nothing was changed.", code="housekeeping_refused"
+        ) from exc
     return _bool(dict(row), "is_isolation", "is_active")
 
 
@@ -828,7 +1024,8 @@ def _clash_room_code(db, ward_id: str, code: str, *, exclude_id: str | None = No
         raise BedMasterConflict(
             f"Room {row['code']} is already set up on this ward. Room codes are compared "
             "without regard to capital letters.",
-            code="duplicate_code", existing_id=row["id"],
+            code="duplicate_code",
+            existing_id=row["id"],
         )
 
 
@@ -836,31 +1033,37 @@ def _clash_room_code(db, ward_id: str, code: str, *, exclude_id: str | None = No
 #  Beds
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _expand_labels(data: dict) -> list[str]:
     """The labels to register: a list, or a numbered range with an optional
     prefix and zero padding (prefix '' from 1 to 24, padding 2: '01' to '24')."""
     labels = data.get("labels")
     rng = data.get("range")
     if labels and rng:
-        raise BedMasterError("Give either a list of bed labels or a range, not both",
-                             code="labels_or_range")
+        raise BedMasterError(
+            "Give either a list of bed labels or a range, not both", code="labels_or_range"
+        )
     out: list[str] = []
     if rng:
         try:
             start, end = int(rng.get("start")), int(rng.get("end"))
             pad = int(rng.get("pad") or 0)
         except (TypeError, ValueError, AttributeError):
-            raise BedMasterError("A range needs a whole-number start and end", code="bad_range")
+            raise BedMasterError(
+                "A range needs a whole-number start and end", code="bad_range"
+            ) from None
         prefix = " ".join(str(rng.get("prefix") or "").split())
         if start < 0 or end < start:
-            raise BedMasterError("A range must run from a start up to an end at or above it",
-                                 code="bad_range")
+            raise BedMasterError(
+                "A range must run from a start up to an end at or above it", code="bad_range"
+            )
         if not 0 <= pad <= 4:
             raise BedMasterError("Padding is between 0 and 4 digits", code="bad_range")
         if end - start + 1 > MAX_BEDS_PER_REGISTRATION:
             raise BedMasterError(
                 f"At most {MAX_BEDS_PER_REGISTRATION} beds can be registered at once",
-                code="too_many_beds")
+                code="too_many_beds",
+            )
         out = [f"{prefix}{str(n).zfill(pad)}" for n in range(start, end + 1)]
     elif labels:
         if not isinstance(labels, (list, tuple)):
@@ -869,8 +1072,10 @@ def _expand_labels(data: dict) -> list[str]:
     if not out:
         raise BedMasterError("Give at least one bed label", code="required", field="labels")
     if len(out) > MAX_BEDS_PER_REGISTRATION:
-        raise BedMasterError(f"At most {MAX_BEDS_PER_REGISTRATION} beds can be registered at once",
-                             code="too_many_beds")
+        raise BedMasterError(
+            f"At most {MAX_BEDS_PER_REGISTRATION} beds can be registered at once",
+            code="too_many_beds",
+        )
     return [_norm_code(x, "Bed label") for x in out]
 
 
@@ -906,7 +1111,8 @@ def register_beds(data: dict, *, actor: dict, request_meta: dict | None = None) 
     if repeated:
         raise BedMasterConflict(
             f"These bed labels appear more than once: {', '.join(repeated)}. Nothing was saved.",
-            code="labels_repeated", labels=repeated,
+            code="labels_repeated",
+            labels=repeated,
         )
 
     registered: list[dict] = []
@@ -915,50 +1121,71 @@ def register_beds(data: dict, *, actor: dict, request_meta: dict | None = None) 
         with db_session(immediate=True) as db:
             ward = _ward_row(db, str(data.get("ward_id") or ""))
             if not ward["is_active"]:
-                raise BedMasterConflict(f"Ward {ward['code']} is switched off", code="ward_inactive")
+                raise BedMasterConflict(
+                    f"Ward {ward['code']} is switched off", code="ward_inactive"
+                )
             room = None
             if data.get("room_id"):
                 room = _room_row(db, str(data["room_id"]))
                 if room["ward_id"] != ward["id"]:
-                    raise BedMasterError(f"That room is not on {ward['code']}", code="room_not_on_ward")
+                    raise BedMasterError(
+                        f"That room is not on {ward['code']}", code="room_not_on_ward"
+                    )
                 if not room["is_active"]:
-                    raise BedMasterConflict(f"Room {room['code']} is switched off", code="room_inactive")
-            bed_class = (_bed_class_code(db, data["bed_class"]) if data.get("bed_class")
-                         else ward.get("default_bed_class"))
+                    raise BedMasterConflict(
+                        f"Room {room['code']} is switched off", code="room_inactive"
+                    )
+            bed_class = (
+                _bed_class_code(db, data["bed_class"])
+                if data.get("bed_class")
+                else ward.get("default_bed_class")
+            )
             isolation = data.get("is_isolation_room")
             # An adopted bed keeps its own isolation flag unless the request or
             # its room says otherwise.
-            adopt_isolation = (bool(isolation) if isolation is not None
-                               else bool(room["is_isolation"]) if room else None)
+            adopt_isolation = (
+                bool(isolation)
+                if isolation is not None
+                else bool(room["is_isolation"])
+                if room
+                else None
+            )
             if isolation is None:
                 isolation = bool(room["is_isolation"]) if room else False
 
             keys = [_key(x) for x in labels]
             marks = ",".join("?" for _ in keys)
-            taken = [r["bed_label"] for r in db.execute(
-                f"""SELECT bed_label FROM housekeeping_units
+            taken = [
+                r["bed_label"]
+                for r in db.execute(
+                    f"""SELECT bed_label FROM housekeeping_units
                      WHERE ward_id = ? AND LOWER(TRIM(bed_label)) IN ({marks})
                      ORDER BY bed_label""",
-                (ward["id"], *keys),
-            ).fetchall()]
+                    (ward["id"], *keys),
+                ).fetchall()
+            ]
             if taken:
                 raise BedMasterConflict(
                     f"{ward['code']} already has beds {', '.join(taken)}. Nothing was saved.",
-                    code="labels_taken", labels=taken,
+                    code="labels_taken",
+                    labels=taken,
                 )
 
             codes = [hk.master_unit_code(ward["code"], x) for x in labels]
             code_marks = ",".join("?" for _ in codes)
-            legacy = [dict(r) for r in db.execute(
-                f"""SELECT id, unit_code, ward, bed_label, unit_type, state, is_active
+            legacy = [
+                dict(r)
+                for r in db.execute(
+                    f"""SELECT id, unit_code, ward, bed_label, unit_type, state, is_active
                       FROM housekeeping_units
                      WHERE ward_id IS NULL
                        AND (unit_code IN ({code_marks})
                             OR (unit_type = 'bed'
                                 AND LOWER(TRIM(ward)) = LOWER(TRIM(?))
                                 AND LOWER(TRIM(COALESCE(bed_label, ''))) IN ({marks})))""",
-                (*codes, ward["code"], *keys),
-            ).fetchall()]
+                    (*codes, ward["code"], *keys),
+                ).fetchall()
+            ]
             # Which legacy row (if any) is this label's bed? Only a BED on THIS
             # ward with THIS label may be adopted (a switched-off one is
             # switched back on); a unit code that merely matches is a different
@@ -966,9 +1193,11 @@ def register_beds(data: dict, *, actor: dict, request_meta: dict | None = None) 
             adopt_for: dict[str, dict] = {}
             blocked: list[str] = []
             for unit in legacy:
-                same_bed = (unit["unit_type"] == "bed"
-                            and _key(unit["ward"] or "") == _key(ward["code"])
-                            and _key(unit["bed_label"] or "") in seen)
+                same_bed = (
+                    unit["unit_type"] == "bed"
+                    and _key(unit["ward"] or "") == _key(ward["code"])
+                    and _key(unit["bed_label"] or "") in seen
+                )
                 if not same_bed:
                     blocked.append(unit["unit_code"])
                     continue
@@ -982,7 +1211,8 @@ def register_beds(data: dict, *, actor: dict, request_meta: dict | None = None) 
                     "These codes are already on the housekeeping register and are not "
                     f"clearly the same beds: {', '.join(sorted(set(blocked)))}. Use different "
                     "bed labels, or change those units in housekeeping. Nothing was saved.",
-                    code="unit_codes_taken", unit_codes=sorted(set(blocked)),
+                    code="unit_codes_taken",
+                    unit_codes=sorted(set(blocked)),
                 )
             if adopt_for and not adopt:
                 found = sorted(u["unit_code"] for u in adopt_for.values())
@@ -990,51 +1220,99 @@ def register_beds(data: dict, *, actor: dict, request_meta: dict | None = None) 
                     f"{len(found)} of these beds are already on the housekeeping register "
                     f"({', '.join(found)}). Choose to adopt them to link them here and keep "
                     "their cleaning state, or use different labels. Nothing was saved.",
-                    code="already_in_housekeeping", unit_codes=found,
+                    code="already_in_housekeeping",
+                    unit_codes=found,
                 )
 
             for label in labels:
                 legacy_unit = adopt_for.get(_key(label))
                 if legacy_unit is not None:
                     unit = hk.adopt_unit_on(
-                        db, legacy_unit["id"], ward_id=ward["id"], bed_label=label,
-                        room_id=room["id"] if room else None, bed_class=bed_class,
+                        db,
+                        legacy_unit["id"],
+                        ward_id=ward["id"],
+                        bed_label=label,
+                        room_id=room["id"] if room else None,
+                        bed_class=bed_class,
                         is_isolation_room=adopt_isolation,
                     )
                     adopted.append(_bed_out(unit))
-                    _event(db, "bed", unit["id"], "adopted", {
-                        "unit_code": unit["unit_code"], "previous_unit_code": legacy_unit["unit_code"],
-                        "ward_id": ward["id"], "ward_code": ward["code"], "label": label,
-                        "room_id": unit["room_id"], "bed_class": unit["bed_class"],
-                        "state": unit["state"],
-                    }, actor, now, reason)
+                    _event(
+                        db,
+                        "bed",
+                        unit["id"],
+                        "adopted",
+                        {
+                            "unit_code": unit["unit_code"],
+                            "previous_unit_code": legacy_unit["unit_code"],
+                            "ward_id": ward["id"],
+                            "ward_code": ward["code"],
+                            "label": label,
+                            "room_id": unit["room_id"],
+                            "bed_class": unit["bed_class"],
+                            "state": unit["state"],
+                        },
+                        actor,
+                        now,
+                        reason,
+                    )
                 else:
                     unit = hk.register_unit_on(
-                        db, ward_id=ward["id"], room_id=room["id"] if room else None,
-                        bed_label=label, bed_class=bed_class, is_isolation_room=bool(isolation),
-                        notes=data.get("notes"), actor_user_id=(actor or {}).get("id"),
-                        actor_role=(actor or {}).get("role"), create_only=True,
+                        db,
+                        ward_id=ward["id"],
+                        room_id=room["id"] if room else None,
+                        bed_label=label,
+                        bed_class=bed_class,
+                        is_isolation_room=bool(isolation),
+                        notes=data.get("notes"),
+                        actor_user_id=(actor or {}).get("id"),
+                        actor_role=(actor or {}).get("role"),
+                        create_only=True,
                     )
                     registered.append(_bed_out(unit))
-                    _event(db, "bed", unit["id"], "registered", {
-                        "unit_code": unit["unit_code"], "ward_id": ward["id"],
-                        "ward_code": ward["code"], "label": label, "room_id": unit["room_id"],
-                        "bed_class": unit["bed_class"], "is_isolation_room": bool(isolation),
-                    }, actor, now, reason)
+                    _event(
+                        db,
+                        "bed",
+                        unit["id"],
+                        "registered",
+                        {
+                            "unit_code": unit["unit_code"],
+                            "ward_id": ward["id"],
+                            "ward_code": ward["code"],
+                            "label": label,
+                            "room_id": unit["room_id"],
+                            "bed_class": unit["bed_class"],
+                            "is_isolation_room": bool(isolation),
+                        },
+                        actor,
+                        now,
+                        reason,
+                    )
             _audit(
-                db, actor, "bed_master_beds_registered",
+                db,
+                actor,
+                "bed_master_beds_registered",
                 f"{len(registered)} beds registered and {len(adopted)} adopted on {ward['code']}",
-                target_type="ward", target_id=ward["id"], request_meta=request_meta,
-                metadata={"ward_code": ward["code"], "registered": len(registered),
-                          "adopted": len(adopted), "labels": labels[:MAX_BEDS_PER_REGISTRATION],
-                          "room_id": room["id"] if room else None, "bed_class": bed_class},
+                target_type="ward",
+                target_id=ward["id"],
+                request_meta=request_meta,
+                metadata={
+                    "ward_code": ward["code"],
+                    "registered": len(registered),
+                    "adopted": len(adopted),
+                    "labels": labels[:MAX_BEDS_PER_REGISTRATION],
+                    "room_id": room["id"] if room else None,
+                    "bed_class": bed_class,
+                },
             )
     except hk.HousekeepingError as exc:
         raise BedMasterConflict(f"{exc} Nothing was saved.", code="housekeeping_refused") from exc
     except DBIntegrityError as exc:
-        raise BedMasterConflict("One of these beds clashes with a unit already on the "
-                                "housekeeping register. Nothing was saved.",
-                                code="unit_codes_taken") from exc
+        raise BedMasterConflict(
+            "One of these beds clashes with a unit already on the "
+            "housekeeping register. Nothing was saved.",
+            code="unit_codes_taken",
+        ) from exc
     _refresh_capacity()
     return {
         "ward_id": ward["id"],
@@ -1059,8 +1337,9 @@ def update_bed(bed_id: str, data: dict, *, actor: dict, request_meta: dict | Non
     now = utc_iso_now()
     try:
         with db_session(immediate=True) as db:
-            row = db.execute("SELECT * FROM housekeeping_units WHERE id = ? AND ward_id IS NOT NULL",
-                             (bed_id,)).fetchone()
+            row = db.execute(
+                "SELECT * FROM housekeeping_units WHERE id = ? AND ward_id IS NOT NULL", (bed_id,)
+            ).fetchone()
             if row is None:
                 raise BedMasterNotFound("No bed with that id is set up", code="bed_not_found")
             unit = dict(row)
@@ -1073,11 +1352,13 @@ def update_bed(bed_id: str, data: dict, *, actor: dict, request_meta: dict | Non
                 if data["room_id"]:
                     room = _room_row(db, str(data["room_id"]))
                     if room["ward_id"] != ward["id"]:
-                        raise BedMasterError(f"That room is not on {ward['code']}",
-                                             code="room_not_on_ward")
+                        raise BedMasterError(
+                            f"That room is not on {ward['code']}", code="room_not_on_ward"
+                        )
                     if not room["is_active"]:
-                        raise BedMasterConflict(f"Room {room['code']} is switched off",
-                                                code="room_inactive")
+                        raise BedMasterConflict(
+                            f"Room {room['code']} is switched off", code="room_inactive"
+                        )
                     kwargs["room_id"] = room["id"]
                     room_isolation = bool(room["is_isolation"])
                 else:
@@ -1105,7 +1386,8 @@ def update_bed(bed_id: str, data: dict, *, actor: dict, request_meta: dict | Non
                         raise BedMasterConflict(
                             f"Bed {unit['bed_label']} on {ward['code']} is already in use "
                             f"({_references_words(refs)}), so its label cannot be changed.",
-                            code="label_in_use", references=refs,
+                            code="label_in_use",
+                            references=refs,
                         )
                     clash = db.execute(
                         "SELECT bed_label FROM housekeeping_units WHERE ward_id = ? AND id <> ? "
@@ -1113,8 +1395,11 @@ def update_bed(bed_id: str, data: dict, *, actor: dict, request_meta: dict | Non
                         (ward["id"], bed_id, label),
                     ).fetchone()
                     if clash is not None:
-                        raise BedMasterConflict(f"{ward['code']} already has bed {clash['bed_label']}",
-                                                code="labels_taken", labels=[clash["bed_label"]])
+                        raise BedMasterConflict(
+                            f"{ward['code']} already has bed {clash['bed_label']}",
+                            code="labels_taken",
+                            labels=[clash["bed_label"]],
+                        )
                     # The same legacy check register_beds makes: a bed typed into
                     # the housekeeping register on this ward with this label
                     # (switched off ones included), or any older unit already
@@ -1122,8 +1407,10 @@ def update_bed(bed_id: str, data: dict, *, actor: dict, request_meta: dict | Non
                     # two housekeeping rows for one physical bed, and the
                     # discharge turnaround could land on the stale one. A rename
                     # never adopts; register_beds with adopt_existing does that.
-                    legacy = [dict(r) for r in db.execute(
-                        """SELECT unit_code, ward, bed_label, unit_type
+                    legacy = [
+                        dict(r)
+                        for r in db.execute(
+                            """SELECT unit_code, ward, bed_label, unit_type
                              FROM housekeeping_units
                             WHERE ward_id IS NULL
                               AND (unit_code = ?
@@ -1131,49 +1418,74 @@ def update_bed(bed_id: str, data: dict, *, actor: dict, request_meta: dict | Non
                                        AND LOWER(TRIM(ward)) = LOWER(TRIM(?))
                                        AND LOWER(TRIM(COALESCE(bed_label, ''))) = ?))
                             ORDER BY unit_code""",
-                        (hk.master_unit_code(ward["code"], label), ward["code"], _key(label)),
-                    ).fetchall()]
+                            (hk.master_unit_code(ward["code"], label), ward["code"], _key(label)),
+                        ).fetchall()
+                    ]
                     if legacy:
                         same_bed = sorted(
-                            u["unit_code"] for u in legacy
+                            u["unit_code"]
+                            for u in legacy
                             if u["unit_type"] == "bed"
                             and _key(u["ward"] or "") == _key(ward["code"])
-                            and _key(u["bed_label"] or "") == _key(label))
+                            and _key(u["bed_label"] or "") == _key(label)
+                        )
                         if same_bed:
                             raise BedMasterConflict(
                                 f"Bed {label} on {ward['code']} is already on the housekeeping "
                                 f"register ({', '.join(same_bed)}), so this bed cannot take that "
                                 "label. Adopt that bed in Bed setup, or choose a different "
                                 "label. Nothing was changed.",
-                                code="already_in_housekeeping", unit_codes=same_bed,
+                                code="already_in_housekeeping",
+                                unit_codes=same_bed,
                             )
                         held = sorted(u["unit_code"] for u in legacy)
                         raise BedMasterConflict(
                             f"{', '.join(held)} is already on the housekeeping register as "
                             "something else. Choose a different label, or change that unit in "
                             "housekeeping. Nothing was changed.",
-                            code="unit_codes_taken", unit_codes=held,
+                            code="unit_codes_taken",
+                            unit_codes=held,
                         )
                     kwargs["bed_label"] = label
             after = hk.update_master_bed_on(db, bed_id, **kwargs)
-            changes = {k: [unit.get(k), after.get(k)]
-                       for k in ("room_id", "room", "bed_class", "is_isolation_room", "notes",
-                                 "bed_label", "unit_code")
-                       if unit.get(k) != after.get(k)}
+            changes = {
+                k: [unit.get(k), after.get(k)]
+                for k in (
+                    "room_id",
+                    "room",
+                    "bed_class",
+                    "is_isolation_room",
+                    "notes",
+                    "bed_label",
+                    "unit_code",
+                )
+                if unit.get(k) != after.get(k)
+            }
             if changes:
-                detail = {"changes": changes}
+                detail: dict[str, Any] = {"changes": changes}
                 if isolation_follows_room and "is_isolation_room" in changes:
                     detail["isolation_follows_room"] = True
                 _event(db, "bed", bed_id, "updated", detail, actor, now, reason)
-                _audit(db, actor, "bed_master_bed_updated",
-                       f"Bed {after['unit_code']} changed: {', '.join(sorted(changes))}",
-                       target_type="bed", target_id=bed_id, request_meta=request_meta,
-                       metadata=detail)
+                _audit(
+                    db,
+                    actor,
+                    "bed_master_bed_updated",
+                    f"Bed {after['unit_code']} changed: {', '.join(sorted(changes))}",
+                    target_type="bed",
+                    target_id=bed_id,
+                    request_meta=request_meta,
+                    metadata=detail,
+                )
     except hk.HousekeepingError as exc:
-        raise BedMasterConflict(f"{exc}. Nothing was changed.", code="housekeeping_refused") from exc
+        raise BedMasterConflict(
+            f"{exc}. Nothing was changed.", code="housekeeping_refused"
+        ) from exc
     except DBIntegrityError as exc:
-        raise BedMasterConflict("That label clashes with a unit already on the housekeeping "
-                                "register. Nothing was changed.", code="unit_codes_taken") from exc
+        raise BedMasterConflict(
+            "That label clashes with a unit already on the housekeeping "
+            "register. Nothing was changed.",
+            code="unit_codes_taken",
+        ) from exc
     _refresh_capacity()
     return _bed_out(after)
 
@@ -1182,8 +1494,10 @@ def update_bed(bed_id: str, data: dict, *, actor: dict, request_meta: dict | Non
 #  Bed classes
 # ═════════════════════════════════════════════════════════════════════════════
 
-def save_bed_class(data: dict, *, actor: dict, code: str | None = None,
-                   request_meta: dict | None = None) -> dict:
+
+def save_bed_class(
+    data: dict, *, actor: dict, code: str | None = None, request_meta: dict | None = None
+) -> dict:
     """Create a bed class (code None) or change one. The code is the key and
     never changes. A class a ward or an active bed uses cannot be switched off."""
     data = dict(data or {})
@@ -1196,13 +1510,19 @@ def save_bed_class(data: dict, *, actor: dict, code: str | None = None,
                 new_code = _norm_code(data.get("code"), "Bed class code")
                 name = _clean(data.get("name"))
                 if not name:
-                    raise BedMasterError("Bed class name is required", code="required", field="name")
-                clash = db.execute("SELECT code FROM bed_classes WHERE LOWER(TRIM(code)) = LOWER(TRIM(?))",
-                                   (new_code,)).fetchone()
+                    raise BedMasterError(
+                        "Bed class name is required", code="required", field="name"
+                    )
+                clash = db.execute(
+                    "SELECT code FROM bed_classes WHERE LOWER(TRIM(code)) = LOWER(TRIM(?))",
+                    (new_code,),
+                ).fetchone()
                 if clash is not None:
                     raise BedMasterConflict(
                         f"Bed class {clash['code']} is already set up. Codes are compared without "
-                        "regard to capital letters.", code="duplicate_code")
+                        "regard to capital letters.",
+                        code="duplicate_code",
+                    )
                 charge = _clean(data.get("bed_day_service_code"), _MAX_CODE)
                 critical = bool(data.get("is_critical_care") or False)
                 census = data.get("counts_in_census")
@@ -1214,27 +1534,48 @@ def save_bed_class(data: dict, *, actor: dict, code: str | None = None,
                        VALUES (?, ?, ?, ?, ?, 1, ?, ?)""",
                     (new_code, name, charge, 1 if critical else 0, 1 if census else 0, now, now),
                 )
-                detail = {"code": new_code, "name": name, "bed_day_service_code": charge,
-                          "is_critical_care": critical, "counts_in_census": census}
+                detail: dict[str, Any] = {
+                    "code": new_code,
+                    "name": name,
+                    "bed_day_service_code": charge,
+                    "is_critical_care": critical,
+                    "counts_in_census": census,
+                }
                 _event(db, "bed_class", new_code, "created", detail, actor, now, reason)
-                _audit(db, actor, "bed_master_bed_class_created", f"Bed class {new_code} set up",
-                       target_type="bed_class", target_id=new_code, request_meta=request_meta,
-                       metadata=detail)
+                _audit(
+                    db,
+                    actor,
+                    "bed_master_bed_class_created",
+                    f"Bed class {new_code} set up",
+                    target_type="bed_class",
+                    target_id=new_code,
+                    request_meta=request_meta,
+                    metadata=detail,
+                )
                 key = new_code
             else:
                 row = db.execute("SELECT * FROM bed_classes WHERE code = ?", (code,)).fetchone()
                 if row is None:
-                    raise BedMasterNotFound("No bed class with that code is set up",
-                                            code="bed_class_not_found")
+                    raise BedMasterNotFound(
+                        "No bed class with that code is set up", code="bed_class_not_found"
+                    )
                 current = dict(row)
                 new: dict[str, Any] = {}
-                if data.get("code") is not None and _norm_code(data["code"], "Bed class code") != code:
-                    raise BedMasterError("A bed class code cannot be changed. Set up a new class "
-                                         "instead.", code="code_fixed", field="code")
+                if (
+                    data.get("code") is not None
+                    and _norm_code(data["code"], "Bed class code") != code
+                ):
+                    raise BedMasterError(
+                        "A bed class code cannot be changed. Set up a new class instead.",
+                        code="code_fixed",
+                        field="code",
+                    )
                 if data.get("name") is not None:
                     name = _clean(data["name"])
                     if not name:
-                        raise BedMasterError("Bed class name is required", code="required", field="name")
+                        raise BedMasterError(
+                            "Bed class name is required", code="required", field="name"
+                        )
                     new["name"] = name
                 if "bed_day_service_code" in data:
                     new["bed_day_service_code"] = _clean(data["bed_day_service_code"], _MAX_CODE)
@@ -1245,31 +1586,54 @@ def save_bed_class(data: dict, *, actor: dict, code: str | None = None,
                 if data.get("is_active") is not None:
                     active = 1 if data["is_active"] else 0
                     if not active and current["is_active"]:
-                        beds = _count(db, "SELECT COUNT(*) FROM housekeeping_units WHERE bed_class = ? "
-                                          "AND is_active = 1 AND retired_at IS NULL", (code,))
-                        wards = _count(db, "SELECT COUNT(*) FROM wards WHERE default_bed_class = ? "
-                                           "AND is_active = 1", (code,))
+                        beds = _count(
+                            db,
+                            "SELECT COUNT(*) FROM housekeeping_units WHERE bed_class = ? "
+                            "AND is_active = 1 AND retired_at IS NULL",
+                            (code,),
+                        )
+                        wards = _count(
+                            db,
+                            "SELECT COUNT(*) FROM wards WHERE default_bed_class = ? "
+                            "AND is_active = 1",
+                            (code,),
+                        )
                         if beds or wards:
                             raise BedMasterConflict(
                                 f"Bed class {code} is used by {beds} beds and {wards} wards, so it "
-                                "cannot be switched off.", code="bed_class_in_use",
-                                beds=beds, wards=wards)
+                                "cannot be switched off.",
+                                code="bed_class_in_use",
+                                beds=beds,
+                                wards=wards,
+                            )
                     new["is_active"] = active
                 changes = {k: [current.get(k), v] for k, v in new.items() if current.get(k) != v}
                 if changes:
                     cols = ", ".join(f"{k} = ?" for k in changes)
-                    db.execute(f"UPDATE bed_classes SET {cols}, updated_at = ? WHERE code = ?",
-                               (*[v[1] for v in changes.values()], now, code))
-                    _event(db, "bed_class", code, "updated", {"changes": changes}, actor, now, reason)
-                    _audit(db, actor, "bed_master_bed_class_updated",
-                           f"Bed class {code} changed: {', '.join(sorted(changes))}",
-                           target_type="bed_class", target_id=code, request_meta=request_meta,
-                           metadata={"changes": changes})
+                    db.execute(
+                        f"UPDATE bed_classes SET {cols}, updated_at = ? WHERE code = ?",
+                        (*[v[1] for v in changes.values()], now, code),
+                    )
+                    _event(
+                        db, "bed_class", code, "updated", {"changes": changes}, actor, now, reason
+                    )
+                    _audit(
+                        db,
+                        actor,
+                        "bed_master_bed_class_updated",
+                        f"Bed class {code} changed: {', '.join(sorted(changes))}",
+                        target_type="bed_class",
+                        target_id=code,
+                        request_meta=request_meta,
+                        metadata={"changes": changes},
+                    )
                 key = code
             out = dict(db.execute("SELECT * FROM bed_classes WHERE code = ?", (key,)).fetchone())
     except DBIntegrityError as exc:
-        raise BedMasterConflict("That bed class clashes with one already set up. Nothing was "
-                                "changed.", code="duplicate_code") from exc
+        raise BedMasterConflict(
+            "That bed class clashes with one already set up. Nothing was changed.",
+            code="duplicate_code",
+        ) from exc
     _refresh_capacity()
     return _bool(out, "is_critical_care", "counts_in_census", "is_active")
 
@@ -1277,6 +1641,7 @@ def save_bed_class(data: dict, *, actor: dict, code: str | None = None,
 # ═════════════════════════════════════════════════════════════════════════════
 #  Site configuration import
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def import_site_config_wards(*, actor: dict, request_meta: dict | None = None) -> dict:
     """Set up one ward per bed prefix the site configuration declares, in the
@@ -1301,25 +1666,34 @@ def import_site_config_wards(*, actor: dict, request_meta: dict | None = None) -
     existing: list[dict] = []
     conflicts: list[dict] = []
     if not plan:
-        return {"created": created, "existing": existing, "conflicts": conflicts,
-                "skipped": skipped, "file_present": bool(cfg.present),
-                "message": "The site configuration declares no wards, so nothing was set up."}
+        return {
+            "created": created,
+            "existing": existing,
+            "conflicts": conflicts,
+            "skipped": skipped,
+            "file_present": bool(cfg.present),
+            "message": "The site configuration declares no wards, so nothing was set up.",
+        }
     now = utc_iso_now()
     try:
         with db_session(immediate=True) as db:
             for code, dept_name in plan:
                 department = _resolve_department(dept_name, covering, declared)
-                row = db.execute("SELECT * FROM wards WHERE LOWER(TRIM(code)) = LOWER(TRIM(?))",
-                                 (code,)).fetchone()
+                row = db.execute(
+                    "SELECT * FROM wards WHERE LOWER(TRIM(code)) = LOWER(TRIM(?))", (code,)
+                ).fetchone()
                 if row is not None:
                     if (row["department"] or "").casefold() == department.casefold():
                         existing.append(_ward_out(row, covering))
                     else:
-                        conflicts.append({
-                            "code": row["code"], "ward_id": row["id"],
-                            "department_in_setup": row["department"],
-                            "department_in_file": department,
-                        })
+                        conflicts.append(
+                            {
+                                "code": row["code"],
+                                "ward_id": row["id"],
+                                "department_in_setup": row["department"],
+                                "department_in_file": department,
+                            }
+                        )
                     continue
                 new_id = _new_id("WRD")
                 db.execute(
@@ -1327,43 +1701,82 @@ def import_site_config_wards(*, actor: dict, request_meta: dict | None = None) -
                            (id, facility_code, code, name, department, ward_type,
                             cleaning_tracked, is_active, created_by, created_at, updated_at)
                        VALUES (?, ?, ?, ?, ?, 'general', 1, 1, ?, ?, ?)""",
-                    (new_id, FACILITY_CODE, code, code, department, (actor or {}).get("id"), now, now),
+                    (
+                        new_id,
+                        FACILITY_CODE,
+                        code,
+                        code,
+                        department,
+                        (actor or {}).get("id"),
+                        now,
+                        now,
+                    ),
                 )
-                _event(db, "ward", new_id, "imported",
-                       {"code": code, "department": department, "source": "site configuration"},
-                       actor, now)
-                created.append(_ward_out(
-                    db.execute("SELECT * FROM wards WHERE id = ?", (new_id,)).fetchone(), covering))
+                _event(
+                    db,
+                    "ward",
+                    new_id,
+                    "imported",
+                    {"code": code, "department": department, "source": "site configuration"},
+                    actor,
+                    now,
+                )
+                created.append(
+                    _ward_out(
+                        db.execute("SELECT * FROM wards WHERE id = ?", (new_id,)).fetchone(),
+                        covering,
+                    )
+                )
             if created:
-                _audit(db, actor, "bed_master_site_config_imported",
-                       f"{len(created)} wards set up from the site configuration",
-                       target_type="ward", target_id=created[0]["id"], request_meta=request_meta,
-                       metadata={"created": [w["code"] for w in created],
-                                 "existing": [w["code"] for w in existing],
-                                 "conflicts": [c["code"] for c in conflicts]})
+                _audit(
+                    db,
+                    actor,
+                    "bed_master_site_config_imported",
+                    f"{len(created)} wards set up from the site configuration",
+                    target_type="ward",
+                    target_id=created[0]["id"],
+                    request_meta=request_meta,
+                    metadata={
+                        "created": [w["code"] for w in created],
+                        "existing": [w["code"] for w in existing],
+                        "conflicts": [c["code"] for c in conflicts],
+                    },
+                )
     except DBIntegrityError as exc:
-        raise BedMasterConflict("A ward in the site configuration clashes with one already set "
-                                "up. Nothing was saved.", code="duplicate_code") from exc
+        raise BedMasterConflict(
+            "A ward in the site configuration clashes with one already set up. Nothing was saved.",
+            code="duplicate_code",
+        ) from exc
     if created:
         _refresh_capacity()
-    return {"created": created, "existing": existing, "conflicts": conflicts,
-            "skipped": skipped, "file_present": bool(cfg.present), "message": None}
+    return {
+        "created": created,
+        "existing": existing,
+        "conflicts": conflicts,
+        "skipped": skipped,
+        "file_present": bool(cfg.present),
+        "message": None,
+    }
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  Retire a bed (adt-3)
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def _typed_occupants(db, ward_code: str, label: str) -> list[str]:
     """Active admissions with no bed_id whose typed ward and bed text name this
     bed. They lie in it as far as every screen that prints the text knows."""
-    return [r["id"] for r in db.execute(
-        """SELECT id FROM admissions
+    return [
+        r["id"]
+        for r in db.execute(
+            """SELECT id FROM admissions
             WHERE status = 'active' AND bed_id IS NULL
               AND LOWER(TRIM(COALESCE(ward, ''))) = LOWER(TRIM(?))
               AND LOWER(TRIM(COALESCE(bed, ''))) = LOWER(TRIM(?))""",
-        (ward_code, label),
-    ).fetchall()]
+            (ward_code, label),
+        ).fetchall()
+    ]
 
 
 def _bed_reserved(db, bed_id: str) -> bool:
@@ -1375,8 +1788,9 @@ def _bed_reserved(db, bed_id: str) -> bool:
     return adt_res.live_on_bed(db, bed_id) is not None
 
 
-def retire_bed(bed_id: str, data: dict | None = None, *, actor: dict,
-               request_meta: dict | None = None) -> dict:
+def retire_bed(
+    bed_id: str, data: dict | None = None, *, actor: dict, request_meta: dict | None = None
+) -> dict:
     """Retire a master bed: it leaves the board and every picker, keeps its
     cleaning record, its label and its history, and is never deleted.
 
@@ -1389,35 +1803,59 @@ def retire_bed(bed_id: str, data: dict | None = None, *, actor: dict,
     hk.ensure_housekeeping_schema()
     now = utc_iso_now()
     with db_session(immediate=True) as db:
-        row = db.execute("SELECT * FROM housekeeping_units WHERE id = ? AND ward_id IS NOT NULL",
-                         (bed_id,)).fetchone()
+        row = db.execute(
+            "SELECT * FROM housekeeping_units WHERE id = ? AND ward_id IS NOT NULL", (bed_id,)
+        ).fetchone()
         if row is None:
             raise BedMasterNotFound("No bed with that id is set up", code="bed_not_found")
         unit = dict(row)
         if unit.get("retired_at"):
-            raise BedMasterConflict(f"Bed {unit['unit_code']} is already retired", code="bed_retired")
+            raise BedMasterConflict(
+                f"Bed {unit['unit_code']} is already retired", code="bed_retired"
+            )
         ward = _ward_row(db, unit["ward_id"])
-        held = [r["id"] for r in db.execute(
-            "SELECT id FROM admissions WHERE bed_id = ? AND status = 'active'", (bed_id,)).fetchall()]
+        held = [
+            r["id"]
+            for r in db.execute(
+                "SELECT id FROM admissions WHERE bed_id = ? AND status = 'active'", (bed_id,)
+            ).fetchall()
+        ]
         held += _typed_occupants(db, ward["code"], unit.get("bed_label") or "")
         if held:
             raise BedMasterConflict(
                 f"Bed {unit['bed_label']} on {ward['code']} has a patient in it, so it cannot be "
                 "retired. Move the patient first.",
-                code="bed_occupied", admissions=len(held))
+                code="bed_occupied",
+                admissions=len(held),
+            )
         if _bed_reserved(db, bed_id):
             raise BedMasterConflict(
                 f"Bed {unit['bed_label']} on {ward['code']} is reserved, so it cannot be retired. "
-                "Release the reservation first.", code="bed_reserved")
+                "Release the reservation first.",
+                code="bed_reserved",
+            )
         db.execute(
             "UPDATE housekeeping_units SET retired_at = ?, is_active = 0, updated_at = ? WHERE id = ?",
             (now, now, bed_id),
         )
-        detail = {"unit_code": unit["unit_code"], "ward_id": ward["id"], "ward_code": ward["code"],
-                  "label": unit.get("bed_label"), "state": unit.get("state")}
+        detail: dict[str, Any] = {
+            "unit_code": unit["unit_code"],
+            "ward_id": ward["id"],
+            "ward_code": ward["code"],
+            "label": unit.get("bed_label"),
+            "state": unit.get("state"),
+        }
         _event(db, "bed", bed_id, "retired", detail, actor, now, reason)
-        _audit(db, actor, "bed_master_bed_retired", f"Bed {unit['unit_code']} retired",
-               target_type="bed", target_id=bed_id, request_meta=request_meta, metadata=detail)
+        _audit(
+            db,
+            actor,
+            "bed_master_bed_retired",
+            f"Bed {unit['unit_code']} retired",
+            target_type="bed",
+            target_id=bed_id,
+            request_meta=request_meta,
+            metadata=detail,
+        )
         after = db.execute("SELECT * FROM housekeeping_units WHERE id = ?", (bed_id,)).fetchone()
     _refresh_capacity()
     return _bed_out(after)
@@ -1430,8 +1868,9 @@ def retire_bed(bed_id: str, data: dict | None = None, *, actor: dict,
 _LINK_REASON = "Linked to the bed master by reconciliation"
 
 
-def _entry(adm: dict, *, ward: dict | None = None, bed: dict | None = None,
-           reason: str | None = None) -> dict:
+def _entry(
+    adm: dict, *, ward: dict | None = None, bed: dict | None = None, reason: str | None = None
+) -> dict:
     return {
         "admission_id": adm["id"],
         "patient_id": adm["patient_id"],
@@ -1453,17 +1892,21 @@ def _reconcile_on(db, *, ward_id: str | None, dept: str | None) -> dict:
     """Sort every active admission (inside `dept`, and on `ward_id` when
     given) against the master. Pure read on the caller's connection."""
     from permissions import scope_patient_ids_sql
+
     from services.adt.core import match_location_on
 
     ward_filter = _ward_row(db, ward_id) if ward_id else None
     scope_sql, scope_params = scope_patient_ids_sql(dept)
-    rows = [dict(r) for r in db.execute(
-        f"""SELECT id, patient_id, department, ward, bed, ward_id, bed_id, created_at
+    rows = [
+        dict(r)
+        for r in db.execute(
+            f"""SELECT id, patient_id, department, ward, bed, ward_id, bed_id, created_at
               FROM admissions
              WHERE status = 'active' AND patient_id IN ({scope_sql})
              ORDER BY created_at, rowid""",
-        scope_params,
-    ).fetchall()]
+            scope_params,
+        ).fetchall()
+    ]
 
     linked: list[dict] = []
     candidates: list[dict] = []
@@ -1474,8 +1917,9 @@ def _reconcile_on(db, *, ward_id: str | None, dept: str | None) -> dict:
     beds: dict[str, dict] = {}
     for adm in rows:
         if adm.get("bed_id"):
-            bed = db.execute("SELECT * FROM housekeeping_units WHERE id = ?",
-                             (adm["bed_id"],)).fetchone()
+            bed = db.execute(
+                "SELECT * FROM housekeeping_units WHERE id = ?", (adm["bed_id"],)
+            ).fetchone()
             bed = dict(bed) if bed else None
             ward = _ward_row(db, bed["ward_id"]) if bed and bed.get("ward_id") else None
             if ward_filter and (ward is None or ward["id"] != ward_filter["id"]):
@@ -1483,6 +1927,7 @@ def _reconcile_on(db, *, ward_id: str | None, dept: str | None) -> dict:
             entry = _entry(adm, ward=ward, bed=bed)
             linked.append(entry)
             if bed is not None:
+                assert ward is not None
                 beds[bed["id"]] = bed
                 claims.setdefault(bed["id"], []).append(entry)
                 if adm.get("ward") != ward["code"] or adm.get("bed") != bed["bed_label"]:
@@ -1490,8 +1935,9 @@ def _reconcile_on(db, *, ward_id: str | None, dept: str | None) -> dict:
             continue
         match = match_location_on(db, adm.get("ward"), adm.get("bed"))
         ward, bed = match["ward"], match["bed"]
-        on_ward = (ward is not None and ward_filter is not None and ward["id"] == ward_filter["id"]) \
-            or (ward_filter is not None and adm.get("ward_id") == ward_filter["id"])
+        on_ward = (
+            ward is not None and ward_filter is not None and ward["id"] == ward_filter["id"]
+        ) or (ward_filter is not None and adm.get("ward_id") == ward_filter["id"])
         if ward_filter and not on_ward:
             continue
         if not match["bed_text"]:
@@ -1510,13 +1956,16 @@ def _reconcile_on(db, *, ward_id: str | None, dept: str | None) -> dict:
 
     doubled_ids = {bid for bid, who in claims.items() if len(who) > 1}
     matched = [e for e in candidates if e["master_bed_id"] not in doubled_ids]
-    doubled = [{
-        "bed_id": bid,
-        "unit_code": beds[bid].get("unit_code"),
-        "bed_label": beds[bid].get("bed_label"),
-        "ward_id": beds[bid].get("ward_id"),
-        "admissions": [dict(e, reason="doubled_bed") for e in claims[bid]],
-    } for bid in sorted(doubled_ids)]
+    doubled = [
+        {
+            "bed_id": bid,
+            "unit_code": beds[bid].get("unit_code"),
+            "bed_label": beds[bid].get("bed_label"),
+            "ward_id": beds[bid].get("ward_id"),
+            "admissions": [dict(e, reason="doubled_bed") for e in claims[bid]],
+        }
+        for bid in sorted(doubled_ids)
+    ]
     return {
         "ward_id": ward_filter["id"] if ward_filter else None,
         "ward_code": ward_filter["code"] if ward_filter else None,
@@ -1528,8 +1977,11 @@ def _reconcile_on(db, *, ward_id: str | None, dept: str | None) -> dict:
         "mirror_mismatches": mismatches,
         "counts": {
             "active_admissions": len(linked) + len(candidates) + len(unlinked) + len(awaiting),
-            "linked": len(linked), "matched": len(matched), "doubled_beds": len(doubled),
-            "unlinked": len(unlinked), "awaiting": len(awaiting),
+            "linked": len(linked),
+            "matched": len(matched),
+            "doubled_beds": len(doubled),
+            "unlinked": len(unlinked),
+            "awaiting": len(awaiting),
             "mirror_mismatches": len(mismatches),
         },
     }
@@ -1548,8 +2000,9 @@ def _patient_ids(report: dict) -> list[str]:
     return seen
 
 
-def reconciliation_report(*, actor: dict, ward_id: str | None = None,
-                          request_meta: dict | None = None) -> dict:
+def reconciliation_report(
+    *, actor: dict, ward_id: str | None = None, request_meta: dict | None = None
+) -> dict:
     """The active admissions sorted against the master: linked, matched,
     doubled, unlinked and awaiting a bed, with counts. Lists admission and
     patient ids against typed places (no name, no MRN), so the read is
@@ -1570,8 +2023,10 @@ def reconciliation_report(*, actor: dict, ward_id: str | None = None,
                 action_type="bed_reconciliation_viewed",
                 outcome="success",
                 db=db,
-                summary_message=(f"Bed reconciliation viewed: {len(patient_ids)} patients"
-                                 + (f" on {report['ward_code']}" if report["ward_code"] else "")),
+                summary_message=(
+                    f"Bed reconciliation viewed: {len(patient_ids)} patients"
+                    + (f" on {report['ward_code']}" if report["ward_code"] else "")
+                ),
                 actor_user_id=(actor or {}).get("id"),
                 actor_role=(actor or {}).get("role"),
                 target_type="ward" if ward_id else "bed_master",
@@ -1580,8 +2035,11 @@ def reconciliation_report(*, actor: dict, ward_id: str | None = None,
                 http_method=meta.get("http_method"),
                 ip_address=meta.get("ip_address"),
                 user_agent=meta.get("user_agent"),
-                metadata={"patient_ids": patient_ids[:300], "patient_count": len(patient_ids),
-                          "department": dept},
+                metadata={
+                    "patient_ids": patient_ids[:300],
+                    "patient_count": len(patient_ids),
+                    "department": dept,
+                },
             )
     return report
 
@@ -1600,6 +2058,7 @@ def link_admissions(data: dict, *, actor: dict, request_meta: dict | None = None
     by services.adt.core.locate_admission_on; an unwritable audit rolls every
     link back."""
     from permissions import department_scope
+
     from services.adt.core import AdtError, locate_admission_on
 
     data = dict(data or {})
@@ -1614,50 +2073,74 @@ def link_admissions(data: dict, *, actor: dict, request_meta: dict | None = None
     skipped: list[dict] = []
     with db_session(immediate=True) as db:
         report = _reconcile_on(db, ward_id=data.get("ward_id"), dept=dept)
-        targets = [e for e in report["matched"]
-                   if wanted_set is None or e["admission_id"] in wanted_set]
+        targets = [
+            e for e in report["matched"] if wanted_set is None or e["admission_id"] in wanted_set
+        ]
         if wanted_set is not None:
-            classes = {"linked": "already_linked", "unlinked": "not_matched",
-                       "awaiting": "awaiting_bed"}
+            classes = {
+                "linked": "already_linked",
+                "unlinked": "not_matched",
+                "awaiting": "awaiting_bed",
+            }
             for key, why in classes.items():
                 for e in report[key]:
                     if e["admission_id"] in wanted_set:
-                        skipped.append({"admission_id": e["admission_id"], "code": why,
-                                        "message": None})
+                        skipped.append(
+                            {"admission_id": e["admission_id"], "code": why, "message": None}
+                        )
             for d in report["doubled"]:
                 for e in d["admissions"]:
                     if e["admission_id"] in wanted_set and e.get("bed_id") is None:
-                        skipped.append({"admission_id": e["admission_id"], "code": "doubled_bed",
-                                        "message": f"{d['unit_code']} is claimed by more than one "
-                                                   "admission. Settle where each patient lies on "
-                                                   "the ward first."})
+                        skipped.append(
+                            {
+                                "admission_id": e["admission_id"],
+                                "code": "doubled_bed",
+                                "message": f"{d['unit_code']} is claimed by more than one "
+                                "admission. Settle where each patient lies on "
+                                "the ward first.",
+                            }
+                        )
             known = {e["admission_id"] for e in targets} | {s["admission_id"] for s in skipped}
             for missing in sorted(wanted_set - known):
                 skipped.append({"admission_id": missing, "code": "not_found", "message": None})
         for e in targets:
             try:
                 placed = locate_admission_on(
-                    db, admission_id=e["admission_id"], actor=actor,
-                    movement_type="location_linked", reason=reason,
-                    ward_id=e["master_ward_id"], bed_id=e["master_bed_id"],
+                    db,
+                    admission_id=e["admission_id"],
+                    actor=actor,
+                    movement_type="location_linked",
+                    reason=reason,
+                    ward_id=e["master_ward_id"],
+                    bed_id=e["master_bed_id"],
                     expected_bed_id=None,
                     out_of_service_reason=data.get("out_of_service_reason"),
                     boarder_acknowledged=bool(data.get("boarder_acknowledged")),
                     request_meta=request_meta,
                 )
             except AdtError as exc:
-                skipped.append({"admission_id": e["admission_id"], "code": exc.code,
-                                "message": str(exc)})
+                skipped.append(
+                    {"admission_id": e["admission_id"], "code": exc.code, "message": str(exc)}
+                )
                 continue
-            linked.append({"admission_id": e["admission_id"], "patient_id": e["patient_id"],
-                           "bed_id": placed["bed_id"], "ward_id": placed["ward_id"],
-                           "ward": placed["ward"], "bed": placed["bed"],
-                           "movement_id": placed["movement"]["id"], "boarder": placed["boarder"]})
+            linked.append(
+                {
+                    "admission_id": e["admission_id"],
+                    "patient_id": e["patient_id"],
+                    "bed_id": placed["bed_id"],
+                    "ward_id": placed["ward_id"],
+                    "ward": placed["ward"],
+                    "bed": placed["bed"],
+                    "movement_id": placed["movement"]["id"],
+                    "boarder": placed["boarder"],
+                }
+            )
     return {"linked": linked, "skipped": skipped, "count": len(linked)}
 
 
-def mark_register_complete(ward_id: str, data: dict | None = None, *, actor: dict,
-                           request_meta: dict | None = None) -> dict:
+def mark_register_complete(
+    ward_id: str, data: dict | None = None, *, actor: dict, request_meta: dict | None = None
+) -> dict:
     """Say this ward's bed register is complete. From then on the ward's ADT
     figures count from wards.ledger_complete_from; earlier days read
     'insufficient data', never zero.
@@ -1693,13 +2176,23 @@ def mark_register_complete(ward_id: str, data: dict | None = None, *, actor: dic
                 WHERE id = ?""",
             (now, (actor or {}).get("id"), now, now, ward_id),
         )
-        detail = {"code": ward["code"], "ledger_complete_from": now,
-                  "linked_admissions": report["counts"]["linked"],
-                  "awaiting_bed": report["counts"]["awaiting"]}
+        detail: dict[str, Any] = {
+            "code": ward["code"],
+            "ledger_complete_from": now,
+            "linked_admissions": report["counts"]["linked"],
+            "awaiting_bed": report["counts"]["awaiting"],
+        }
         _event(db, "ward", ward_id, "register_completed", detail, actor, now, reason)
-        _audit(db, actor, "bed_master_register_completed",
-               f"Ward {ward['code']} bed register marked complete",
-               target_type="ward", target_id=ward_id, request_meta=request_meta, metadata=detail)
+        _audit(
+            db,
+            actor,
+            "bed_master_register_completed",
+            f"Ward {ward['code']} bed register marked complete",
+            target_type="ward",
+            target_id=ward_id,
+            request_meta=request_meta,
+            metadata=detail,
+        )
         row = db.execute("SELECT * FROM wards WHERE id = ?", (ward_id,)).fetchone()
     # From now on the capacity screens read this ward's count from the register.
     _refresh_capacity()
@@ -1781,7 +2274,12 @@ OCCUPIED_STATUSES = frozenset({"occupied", "occupied_on_leave", "occupied_abscon
 #: Movement types that can take a patient OUT of a bed. A movement whose
 #: destination is the same bed (a department-only transfer) vacates nothing.
 VACATING_MOVEMENT_TYPES: tuple[str, ...] = (
-    "discharge", "transfer", "bed_change", "bed_swap", "correction", "location_linked",
+    "discharge",
+    "transfer",
+    "bed_change",
+    "bed_swap",
+    "correction",
+    "location_linked",
 )
 
 _OUT_OF_SERVICE_MARKER = "Bed reported out of service"
@@ -1800,13 +2298,15 @@ def _cleaning_tracked(ward: dict) -> bool:
     ward says so. Read at call time."""
     import config
 
-    return bool(getattr(config, "HOUSEKEEPING_ENABLED", False)) and bool(ward.get("cleaning_tracked"))
+    return bool(getattr(config, "HOUSEKEEPING_ENABLED", False)) and bool(
+        ward.get("cleaning_tracked")
+    )
 
 
 _UNIX_EPOCH_JD = 2440587.5
 
 
-def _jd(value: Any) -> Optional[float]:
+def _jd(value: Any) -> float | None:
     """The julian day of any stored spelling (what SQLite's julianday() gives),
     or None when blank or unreadable. A stored time with no offset is UTC."""
     if value in (None, ""):
@@ -1818,14 +2318,14 @@ def _jd(value: Any) -> Optional[float]:
     return when.timestamp() / 86400.0 + _UNIX_EPOCH_JD
 
 
-def _jd_text(jd: Optional[float]) -> Optional[str]:
+def _jd_text(jd: float | None) -> str | None:
     """A julian day in the canonical UTC spelling, or None."""
     if jd is None:
         return None
-    return format_utc(datetime.fromtimestamp((jd - _UNIX_EPOCH_JD) * 86400.0, tz=timezone.utc))
+    return format_utc(datetime.fromtimestamp((jd - _UNIX_EPOCH_JD) * 86400.0, tz=UTC))
 
 
-def _minutes_since(jd: Optional[float], now_jd: float) -> Optional[int]:
+def _minutes_since(jd: float | None, now_jd: float) -> int | None:
     if jd is None:
         return None
     return max(0, int(round((now_jd - jd) * 24 * 60)))
@@ -1836,7 +2336,7 @@ def _in(values: Iterable[Any]) -> tuple[str, tuple]:
     return ", ".join("?" for _ in vals) or "NULL", vals
 
 
-def _visible_wards(db, dept: Optional[str]) -> list[dict]:
+def _visible_wards(db, dept: str | None) -> list[dict]:
     """Every ward this caller's board may show (see WHICH WARDS above)."""
     wards = [dict(r) for r in db.execute("SELECT * FROM wards ORDER BY LOWER(code)").fetchall()]
     if dept is None:
@@ -1844,14 +2344,16 @@ def _visible_wards(db, dept: Optional[str]) -> list[dict]:
     from permissions import scope_patient_ids_sql
 
     scope_sql, scope_params = scope_patient_ids_sql(dept)
-    holding = {r["ward_id"] for r in db.execute(
-        f"""SELECT DISTINCT ward_id FROM admissions
+    holding = {
+        r["ward_id"]
+        for r in db.execute(
+            f"""SELECT DISTINCT ward_id FROM admissions
              WHERE status = 'active' AND ward_id IS NOT NULL AND patient_id IN ({scope_sql})""",
-        scope_params,
-    ).fetchall()}
+            scope_params,
+        ).fetchall()
+    }
     key = dept.casefold()
-    return [w for w in wards
-            if (w.get("department") or "").casefold() == key or w["id"] in holding]
+    return [w for w in wards if (w.get("department") or "").casefold() == key or w["id"] in holding]
 
 
 def _occupants_on(db, wards: list[dict], beds: list[dict]) -> dict[str, list[dict]]:
@@ -1902,8 +2404,7 @@ def _reserved_beds(db, bed_ids: Iterable[str]) -> set[str]:
     return set(adt_res.live_on_beds(db, bed_ids))
 
 
-def _presence_prompt(holder: dict, *, absconded_at: Optional[datetime],
-                     now: datetime) -> Optional[str]:
+def _presence_prompt(holder: dict, *, absconded_at: datetime | None, now: datetime) -> str | None:
     """The board's advisory line for a patient off the ward too long (adt-10),
     or None. Advisory only: nothing closes or discharges on a timer.
 
@@ -1919,8 +2420,9 @@ def _presence_prompt(holder: dict, *, absconded_at: Optional[datetime],
         hours = int(getattr(config, "ADT_ABSCONDED_CLOSE_HOURS", 24))
         since = absconded_at or _parse_utc(holder.get("presence_since"))
         if since is not None and (now - since).total_seconds() >= hours * 3600:
-            return (f"Absconded for over {hours} hours. The stay can be closed with "
-                    "Record end of stay.")
+            return (
+                f"Absconded for over {hours} hours. The stay can be closed with Record end of stay."
+            )
     elif presence == "on_leave":
         hours = int(getattr(config, "ADT_LEAVE_PROMPT_HOURS", 48))
         since = _parse_utc(holder.get("presence_since"))
@@ -1929,7 +2431,7 @@ def _presence_prompt(holder: dict, *, absconded_at: Optional[datetime],
     return None
 
 
-def _parse_utc(value: Any) -> Optional[datetime]:
+def _parse_utc(value: Any) -> datetime | None:
     if value in (None, ""):
         return None
     try:
@@ -1943,11 +2445,15 @@ def _last_ready_jd(db, beds: list[dict]) -> dict[str, float]:
     if not beds:
         return {}
     marks, ids = _in(b["id"] for b in beds)
-    return {r[0]: float(r[1]) for r in db.execute(
-        f"""SELECT unit_id, MAX(julianday(occurred_at)) FROM housekeeping_unit_events
+    return {
+        r[0]: float(r[1])
+        for r in db.execute(
+            f"""SELECT unit_id, MAX(julianday(occurred_at)) FROM housekeeping_unit_events
              WHERE to_state = 'vacant_ready' AND unit_id IN ({marks}) GROUP BY unit_id""",
-        ids,
-    ).fetchall() if r[1] is not None}
+            ids,
+        ).fetchall()
+        if r[1] is not None
+    }
 
 
 def _last_vacated_jd(db, wards: list[dict], beds: list[dict]) -> dict[str, float]:
@@ -1988,9 +2494,17 @@ def _last_vacated_jd(db, wards: list[dict], beds: list[dict]) -> dict[str, float
     return out
 
 
-def _derive_status(bed: dict, ward: dict, *, occupied: bool, presence: Optional[str],
-                   reserved: bool, ready_jd: Optional[float], vacated_jd: Optional[float],
-                   state_jd: Optional[float]) -> tuple[str, list[str], Optional[float]]:
+def _derive_status(
+    bed: dict,
+    ward: dict,
+    *,
+    occupied: bool,
+    presence: str | None,
+    reserved: bool,
+    ready_jd: float | None,
+    vacated_jd: float | None,
+    state_jd: float | None,
+) -> tuple[str, list[str], float | None]:
     """(status, markers, since julian day) in the precedence above, for a bed
     whose occupant identity is decided by the caller."""
     state = bed.get("state")
@@ -1999,8 +2513,9 @@ def _derive_status(bed: dict, ward: dict, *, occupied: bool, presence: Optional[
         if state == "out_of_service":
             markers.append(_OUT_OF_SERVICE_MARKER)
         if occupied:
-            status = {"on_leave": "occupied_on_leave",
-                      "absconded": "occupied_absconded"}.get(presence or "", "occupied")
+            status = {"on_leave": "occupied_on_leave", "absconded": "occupied_absconded"}.get(
+                presence or "", "occupied"
+            )
             return status, markers, None
         return "reserved", markers, None
     if not bed.get("is_active"):
@@ -2011,7 +2526,9 @@ def _derive_status(bed: dict, ward: dict, *, occupied: bool, presence: Optional[
         return "vacant_untracked", markers, None
     if state == "out_of_service":
         return "out_of_service", markers, state_jd
-    last_ready = ready_jd if ready_jd is not None else (state_jd if state == "vacant_ready" else None)
+    last_ready = (
+        ready_jd if ready_jd is not None else (state_jd if state == "vacant_ready" else None)
+    )
     if state == "vacant_dirty":
         return "needs_cleaning", markers, state_jd
     if state == "occupied":
@@ -2030,7 +2547,7 @@ def _derive_status(bed: dict, ward: dict, *, occupied: bool, presence: Optional[
     return "needs_cleaning", markers, state_jd
 
 
-def _scope_filter(db, patient_ids: Iterable[str], dept: Optional[str]) -> set[str]:
+def _scope_filter(db, patient_ids: Iterable[str], dept: str | None) -> set[str]:
     """The ids among `patient_ids` inside `dept` (all of them for None)."""
     ids = tuple({p for p in patient_ids if p})
     if not ids:
@@ -2040,14 +2557,18 @@ def _scope_filter(db, patient_ids: Iterable[str], dept: Optional[str]) -> set[st
     from permissions import PATIENT_DEPARTMENT_SQL
 
     marks, params = _in(ids)
-    return {r[0] for r in db.execute(
-        f"SELECT p.id FROM patients p WHERE p.id IN ({marks}) AND {PATIENT_DEPARTMENT_SQL} = ?",
-        params + (dept,),
-    ).fetchall()}
+    return {
+        r[0]
+        for r in db.execute(
+            f"SELECT p.id FROM patients p WHERE p.id IN ({marks}) AND {PATIENT_DEPARTMENT_SQL} = ?",
+            params + (dept,),
+        ).fetchall()
+    }
 
 
-def _board_on(db, *, wards: list[dict], dept: Optional[str], identity: bool,
-              reservations: bool = True) -> dict:
+def _board_on(
+    db, *, wards: list[dict], dept: str | None, identity: bool, reservations: bool = True
+) -> dict:
     """Tiles for `wards` on the caller's connection. With identity False no
     patient field is ever read or returned (the available-beds read).
 
@@ -2062,21 +2583,25 @@ def _board_on(db, *, wards: list[dict], dept: Optional[str], identity: bool,
     from services.adt import reservations as adt_res
     from services.adt.presence import absconded_at_on
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     now_jd = _jd(now)
+    assert now_jd is not None
     ward_ids = [w["id"] for w in wards]
     beds: list[dict] = []
     if ward_ids:
         marks, ids = _in(ward_ids)
-        beds = [dict(r) for r in db.execute(
-            f"""SELECT u.id, u.unit_code, u.ward_id, u.room_id, u.room, u.bed_label, u.bed_class,
+        beds = [
+            dict(r)
+            for r in db.execute(
+                f"""SELECT u.id, u.unit_code, u.ward_id, u.room_id, u.room, u.bed_label, u.bed_class,
                        u.is_isolation_room, u.is_temporary, u.is_active, u.retired_at, u.state,
                        u.state_since, r.code AS room_code, r.name AS room_name,
                        COALESCE(r.is_isolation, 0) AS room_is_isolation
                   FROM housekeeping_units u LEFT JOIN ward_rooms r ON r.id = u.room_id
                  WHERE u.ward_id IN ({marks})""",
-            ids,
-        ).fetchall()]
+                ids,
+            ).fetchall()
+        ]
     occupants = _occupants_on(db, wards, beds)
     held = adt_res.live_on_beds(db, (b["id"] for b in beds), now=now) if reservations else {}
     reserved = set(held)
@@ -2086,24 +2611,38 @@ def _board_on(db, *, wards: list[dict], dept: Optional[str], identity: bool,
     absconded_at: dict[str, datetime] = {}
     if identity:
         in_scope = _scope_filter(
-            db, [a["patient_id"] for who in occupants.values() for a in who]
-            + [r["patient_id"] for r in held.values() if r.get("patient_id")], dept)
+            db,
+            [a["patient_id"] for who in occupants.values() for a in who]
+            + [r["patient_id"] for r in held.values() if r.get("patient_id")],
+            dept,
+        )
         absconded_at = absconded_at_on(
-            db, [a["id"] for who in occupants.values() for a in who
-                 if a.get("presence_status") == "absconded"])
+            db,
+            [
+                a["id"]
+                for who in occupants.values()
+                for a in who
+                if a.get("presence_status") == "absconded"
+            ],
+        )
     names: dict[str, dict] = {}
     assessment_due: set = set()
     if in_scope:
         marks, ids = _in(in_scope)
-        names = {r["id"]: dict(r) for r in db.execute(
-            f"SELECT id, name, mrn FROM patients WHERE id IN ({marks})", ids).fetchall()}
+        names = {
+            r["id"]: dict(r)
+            for r in db.execute(
+                f"SELECT id, name, mrn FROM patients WHERE id IN ({marks})", ids
+            ).fetchall()
+        }
         # adt-17b (ruling ADT-S5 (a)): a ward clerk's admission whose admission
         # assessment no doctor has recorded yet, flagged on its bed inside the
         # caller's scope only (services/adt/clerk.py).
         from services.adt.clerk import assessment_due_ids_on
+
         assessment_due = assessment_due_ids_on(
-            db, [a["id"] for who in occupants.values() for a in who
-                 if a["patient_id"] in in_scope])
+            db, [a["id"] for who in occupants.values() for a in who if a["patient_id"] in in_scope]
+        )
 
     by_ward = {w["id"]: w for w in wards}
     tiles_by_ward: dict[str, list[dict]] = {w["id"]: [] for w in wards}
@@ -2115,15 +2654,23 @@ def _board_on(db, *, wards: list[dict], dept: Optional[str], identity: bool,
             continue
         holder = who[0] if who else None
         status, markers, since_jd = _derive_status(
-            bed, ward, occupied=holder is not None,
+            bed,
+            ward,
+            occupied=holder is not None,
             presence=holder.get("presence_status") if holder else None,
-            reserved=bed["id"] in reserved, ready_jd=ready.get(bed["id"]),
-            vacated_jd=vacated.get(bed["id"]), state_jd=_jd(bed.get("state_since")))
+            reserved=bed["id"] in reserved,
+            ready_jd=ready.get(bed["id"]),
+            vacated_jd=vacated.get(bed["id"]),
+            state_jd=_jd(bed.get("state_since")),
+        )
         occupant = None
         hidden = False
         if holder is not None:
-            boarder = bool(ward.get("department")) and \
-                (holder.get("department") or "").casefold() != (ward.get("department") or "").casefold()
+            boarder = (
+                bool(ward.get("department"))
+                and (holder.get("department") or "").casefold()
+                != (ward.get("department") or "").casefold()
+            )
             if holder["patient_id"] in in_scope:
                 person = names.get(holder["patient_id"], {})
                 occupant = {
@@ -2143,12 +2690,14 @@ def _board_on(db, *, wards: list[dict], dept: Optional[str], identity: bool,
                 if holder["patient_id"] not in shown:
                     shown.append(holder["patient_id"])
                 since_jd = _jd(holder.get("admitted_at") or holder.get("created_at"))
-                prompt = _presence_prompt(holder, absconded_at=absconded_at.get(holder["id"]),
-                                          now=now)
+                prompt = _presence_prompt(
+                    holder, absconded_at=absconded_at.get(holder["id"]), now=now
+                )
                 if prompt:
                     markers.append(prompt)
                 if holder["id"] in assessment_due:
                     from services.adt.clerk import ASSESSMENT_DUE_MARKER
+
                     markers.append(ASSESSMENT_DUE_MARKER)
             else:
                 hidden = True
@@ -2171,51 +2720,65 @@ def _board_on(db, *, wards: list[dict], dept: Optional[str], identity: bool,
             # The hold hides the cleaning status, so say it as a marker: a
             # held bed may still be waiting for its clean.
             under, _, _ = _derive_status(
-                bed, ward, occupied=False, presence=None, reserved=False,
-                ready_jd=ready.get(bed["id"]), vacated_jd=vacated.get(bed["id"]),
-                state_jd=_jd(bed.get("state_since")))
+                bed,
+                ward,
+                occupied=False,
+                presence=None,
+                reserved=False,
+                ready_jd=ready.get(bed["id"]),
+                vacated_jd=vacated.get(bed["id"]),
+                state_jd=_jd(bed.get("state_since")),
+            )
             if under in ("needs_cleaning", "cleaning"):
                 markers.append(_board_words(under))
             patient = None
             if identity and res.get("patient_id") in in_scope:
                 person = names.get(res["patient_id"], {})
-                patient = {"patient_id": res["patient_id"], "admission_id": res.get("admission_id"),
-                           "name": person.get("name"), "mrn": person.get("mrn")}
+                patient = {
+                    "patient_id": res["patient_id"],
+                    "admission_id": res.get("admission_id"),
+                    "name": person.get("name"),
+                    "mrn": person.get("mrn"),
+                }
                 if res["patient_id"] not in shown:
                     shown.append(res["patient_id"])
             reservation = {
-                "id": res["id"], "purpose": res.get("purpose"),
+                "id": res["id"],
+                "purpose": res.get("purpose"),
                 "purpose_words": adt_res.PURPOSE_WORDS.get(res.get("purpose") or "", "Reserved"),
-                "reserved_at": res.get("reserved_at"), "expires_at": res.get("expires_at"),
+                "reserved_at": res.get("reserved_at"),
+                "expires_at": res.get("expires_at"),
                 "patient": patient,
                 "patient_hidden": bool(res.get("patient_id")) and patient is None,
             }
         if markers and markers[0] == _OUT_OF_SERVICE_MARKER and status != "out_of_service":
             words = f"{words}, bed reported out of service"
         isolation = bool(bed.get("is_isolation_room")) or bool(bed.get("room_is_isolation"))
-        tiles_by_ward[bed["ward_id"]].append({
-            "bed_id": bed["id"],
-            "unit_code": bed["unit_code"],
-            "bed_label": bed.get("bed_label"),
-            "ward_id": bed["ward_id"],
-            "room_id": bed.get("room_id"),
-            "room": bed.get("room_code") or bed.get("room"),
-            "room_name": bed.get("room_name"),
-            "bed_class": bed.get("bed_class"),
-            "isolation": isolation,
-            "temporary": bool(bed.get("is_temporary")),
-            "status": status,
-            "status_words": words,
-            "tone": _board_tone(status),
-            "markers": markers,
-            "free": status in FREE_STATUSES,
-            "housekeeping_state": bed.get("state") if _cleaning_tracked(ward) else None,
-            "since": _jd_text(since_jd),
-            "minutes_in_state": _minutes_since(since_jd, now_jd),
-            "occupant": occupant,
-            "occupant_hidden": hidden,
-            "reservation": reservation,
-        })
+        tiles_by_ward[bed["ward_id"]].append(
+            {
+                "bed_id": bed["id"],
+                "unit_code": bed["unit_code"],
+                "bed_label": bed.get("bed_label"),
+                "ward_id": bed["ward_id"],
+                "room_id": bed.get("room_id"),
+                "room": bed.get("room_code") or bed.get("room"),
+                "room_name": bed.get("room_name"),
+                "bed_class": bed.get("bed_class"),
+                "isolation": isolation,
+                "temporary": bool(bed.get("is_temporary")),
+                "status": status,
+                "status_words": words,
+                "tone": _board_tone(status),
+                "markers": markers,
+                "free": status in FREE_STATUSES,
+                "housekeeping_state": bed.get("state") if _cleaning_tracked(ward) else None,
+                "since": _jd_text(since_jd),
+                "minutes_in_state": _minutes_since(since_jd, now_jd),
+                "occupant": occupant,
+                "occupant_hidden": hidden,
+                "reservation": reservation,
+            }
+        )
 
     out_wards = []
     for ward in wards:
@@ -2225,29 +2788,45 @@ def _board_on(db, *, wards: list[dict], dept: Optional[str], identity: bool,
             counts[tile["status"]] = counts.get(tile["status"], 0) + 1
         counts["free"] = sum(1 for t in tiles if t["free"])
         counts["occupied_total"] = sum(1 for t in tiles if t["status"] in OCCUPIED_STATUSES)
-        out_wards.append({
-            "id": ward["id"],
-            "code": ward["code"],
-            "name": ward.get("name"),
-            "department": ward.get("department"),
-            "ward_type": ward.get("ward_type"),
-            "is_active": bool(ward.get("is_active")),
-            "cleaning_tracked": _cleaning_tracked(ward),
-            "register_complete": bool(ward.get("register_complete")),
-            "counts": counts,
-            "tiles": tiles,
-        })
+        out_wards.append(
+            {
+                "id": ward["id"],
+                "code": ward["code"],
+                "name": ward.get("name"),
+                "department": ward.get("department"),
+                "ward_type": ward.get("ward_type"),
+                "is_active": bool(ward.get("is_active")),
+                "cleaning_tracked": _cleaning_tracked(ward),
+                "register_complete": bool(ward.get("register_complete")),
+                "counts": counts,
+                "tiles": tiles,
+            }
+        )
     return {"wards": out_wards, "patient_ids": shown}
 
 
 def _ward_choice(ward: dict) -> dict:
-    return {"id": ward["id"], "code": ward["code"], "name": ward.get("name"),
-            "department": ward.get("department"), "is_active": bool(ward.get("is_active"))}
+    return {
+        "id": ward["id"],
+        "code": ward["code"],
+        "name": ward.get("name"),
+        "department": ward.get("department"),
+        "is_active": bool(ward.get("is_active")),
+    }
 
 
-def _phi_read_audit(db, actor: dict, action: str, summary: str, *, patient_ids: list[str],
-                    target_type: str, target_id: str, request_meta: dict | None,
-                    metadata: dict | None = None) -> None:
+def _phi_read_audit(
+    db,
+    actor: dict,
+    action: str,
+    summary: str,
+    *,
+    patient_ids: list[str],
+    target_type: str,
+    target_id: str,
+    request_meta: dict | None,
+    metadata: dict | None = None,
+) -> None:
     """One fail-closed phi_access line naming the patients a read showed,
     inside the read's own session."""
     meta = request_meta or {}
@@ -2266,13 +2845,15 @@ def _phi_read_audit(db, actor: dict, action: str, summary: str, *, patient_ids: 
         http_method=meta.get("http_method"),
         ip_address=meta.get("ip_address"),
         user_agent=meta.get("user_agent"),
-        metadata={"patient_ids": patient_ids[:300], "patient_count": len(patient_ids),
-                  **(metadata or {})},
+        metadata={
+            "patient_ids": patient_ids[:300],
+            "patient_count": len(patient_ids),
+            **(metadata or {}),
+        },
     )
 
 
-def bed_board(*, actor: dict, ward_id: str | None = None,
-              request_meta: dict | None = None) -> dict:
+def bed_board(*, actor: dict, ward_id: str | None = None, request_meta: dict | None = None) -> dict:
     """The bed board: every bed on the caller's wards (or on one of them) with
     its derived status, minutes in that status, isolation and temporary
     markers, the bed class, and the occupant when the caller may see them.
@@ -2286,22 +2867,29 @@ def bed_board(*, actor: dict, ward_id: str | None = None,
         if ward_id:
             chosen = [w for w in visible if w["id"] == ward_id]
             if not chosen:
-                raise BedMasterNotFound("No ward with that id on your bed board", code="ward_not_found")
+                raise BedMasterNotFound(
+                    "No ward with that id on your bed board", code="ward_not_found"
+                )
         else:
             chosen = [w for w in visible if w.get("is_active")]
         board = _board_on(db, wards=chosen, dept=dept, identity=True)
         # A switched-off ward with nobody in it has nothing to show.
         if not ward_id:
-            board["wards"] = [w for w in board["wards"]
-                              if w["is_active"] or w["counts"].get("occupied_total")]
+            board["wards"] = [
+                w for w in board["wards"] if w["is_active"] or w["counts"].get("occupied_total")
+            ]
         if board["patient_ids"]:
             _phi_read_audit(
-                db, actor, "bed_board_viewed",
+                db,
+                actor,
+                "bed_board_viewed",
                 f"Bed board viewed: {len(board['patient_ids'])} patients named",
                 patient_ids=board["patient_ids"],
                 target_type="ward" if ward_id else "bed_board",
-                target_id=ward_id or "all", request_meta=request_meta,
-                metadata={"department": dept, "ward_ids": [w["id"] for w in board["wards"]]})
+                target_id=ward_id or "all",
+                request_meta=request_meta,
+                metadata={"department": dept, "ward_ids": [w["id"] for w in board["wards"]]},
+            )
     return {
         "generated_at": utc_iso_now(),
         "department": dept,
@@ -2319,9 +2907,15 @@ def available_beds(*, actor: dict, ward_id: str | None = None) -> dict:
     so a picker can say why. No patient data: nothing here is audited."""
     hk.ensure_housekeeping_schema()
     with db_session() as db:
-        wards = [dict(r) for r in db.execute(
-            "SELECT * FROM wards WHERE is_active = 1" + (" AND id = ?" if ward_id else "")
-            + " ORDER BY LOWER(code)", (ward_id,) if ward_id else ()).fetchall()]
+        wards = [
+            dict(r)
+            for r in db.execute(
+                "SELECT * FROM wards WHERE is_active = 1"
+                + (" AND id = ?" if ward_id else "")
+                + " ORDER BY LOWER(code)",
+                (ward_id,) if ward_id else (),
+            ).fetchall()
+        ]
         if ward_id and not wards:
             raise BedMasterNotFound("No ward with that id is set up", code="ward_not_found")
         board = _board_on(db, wards=wards, dept=None, identity=False)
@@ -2329,19 +2923,33 @@ def available_beds(*, actor: dict, ward_id: str | None = None) -> dict:
         bed_ids = [t["bed_id"] for w in board["wards"] for t in w["tiles"]]
         if bed_ids:
             marks, ids = _in(bed_ids)
-            terminal = {r[0] for r in db.execute(
-                f"""SELECT DISTINCT unit_id FROM housekeeping_tasks
+            terminal = {
+                r[0]
+                for r in db.execute(
+                    f"""SELECT DISTINCT unit_id FROM housekeeping_tasks
                      WHERE status IN ('open', 'in_progress') AND clean_type = 'terminal'
-                       AND unit_id IN ({marks})""", ids).fetchall()}
+                       AND unit_id IN ({marks})""",
+                    ids,
+                ).fetchall()
+            }
 
     def _entry(ward: dict, tile: dict) -> dict:
-        return {"bed_id": tile["bed_id"], "unit_code": tile["unit_code"],
-                "bed_label": tile["bed_label"], "ward_id": ward["id"], "ward_code": ward["code"],
-                "ward_department": ward["department"], "room": tile["room"],
-                "bed_class": tile["bed_class"], "isolation": tile["isolation"],
-                "temporary": tile["temporary"], "status": tile["status"],
-                "status_words": tile["status_words"], "markers": tile["markers"],
-                "terminal_clean": tile["bed_id"] in terminal}
+        return {
+            "bed_id": tile["bed_id"],
+            "unit_code": tile["unit_code"],
+            "bed_label": tile["bed_label"],
+            "ward_id": ward["id"],
+            "ward_code": ward["code"],
+            "ward_department": ward["department"],
+            "room": tile["room"],
+            "bed_class": tile["bed_class"],
+            "isolation": tile["isolation"],
+            "temporary": tile["temporary"],
+            "status": tile["status"],
+            "status_words": tile["status_words"],
+            "markers": tile["markers"],
+            "terminal_clean": tile["bed_id"] in terminal,
+        }
 
     free: list[dict] = []
     not_ready: list[dict] = []
@@ -2351,12 +2959,17 @@ def available_beds(*, actor: dict, ward_id: str | None = None) -> dict:
                 free.append(_entry(ward, tile))
             elif tile["status"] in ("needs_cleaning", "cleaning"):
                 not_ready.append(_entry(ward, tile))
-    return {"ward_id": ward_id, "beds": free, "not_ready": not_ready,
-            "status_words": {k: v[0] for k, v in BOARD_STATUSES.items()}}
+    return {
+        "ward_id": ward_id,
+        "beds": free,
+        "not_ready": not_ready,
+        "status_words": {k: v[0] for k, v in BOARD_STATUSES.items()},
+    }
 
 
-def awaiting_bed(*, actor: dict, ward_id: str | None = None,
-                 request_meta: dict | None = None) -> dict:
+def awaiting_bed(
+    *, actor: dict, ward_id: str | None = None, request_meta: dict | None = None
+) -> dict:
     """Active admissions in the caller's scope with no master bed, as two
     lists that are never merged:
 
@@ -2386,12 +2999,20 @@ def awaiting_bed(*, actor: dict, ward_id: str | None = None,
         stays: dict[str, dict] = {}
         if everyone:
             marks, ids = _in(set(everyone))
-            people = {r["id"]: dict(r) for r in db.execute(
-                f"SELECT id, name, mrn FROM patients WHERE id IN ({marks})", ids).fetchall()}
+            people = {
+                r["id"]: dict(r)
+                for r in db.execute(
+                    f"SELECT id, name, mrn FROM patients WHERE id IN ({marks})", ids
+                ).fetchall()
+            }
             adm_marks, adm_ids = _in({e["admission_id"] for e in awaiting + unlinked})
-            stays = {r["id"]: dict(r) for r in db.execute(
-                f"SELECT id, admitted_at, created_at FROM admissions WHERE id IN ({adm_marks})",
-                adm_ids).fetchall()}
+            stays = {
+                r["id"]: dict(r)
+                for r in db.execute(
+                    f"SELECT id, admitted_at, created_at FROM admissions WHERE id IN ({adm_marks})",
+                    adm_ids,
+                ).fetchall()
+            }
         reason_words = {
             "awaiting_bed": "No bed recorded yet",
             "ward_not_in_setup": "The typed ward is not in bed setup",
@@ -2410,10 +3031,19 @@ def awaiting_bed(*, actor: dict, ward_id: str | None = None,
         shown = list(dict.fromkeys(everyone))
         if shown:
             _phi_read_audit(
-                db, actor, "awaiting_bed_viewed",
+                db,
+                actor,
+                "awaiting_bed_viewed",
                 f"Awaiting a bed and unlinked admissions viewed: {len(shown)} patients",
-                patient_ids=shown, target_type="ward" if ward_id else "bed_board",
-                target_id=ward_id or "all", request_meta=request_meta,
-                metadata={"department": dept, "awaiting": len(awaiting), "unlinked": len(unlinked)})
-    return {"ward_id": ward_id, "awaiting": awaiting, "unlinked": unlinked,
-            "counts": {"awaiting": len(awaiting), "unlinked": len(unlinked)}}
+                patient_ids=shown,
+                target_type="ward" if ward_id else "bed_board",
+                target_id=ward_id or "all",
+                request_meta=request_meta,
+                metadata={"department": dept, "awaiting": len(awaiting), "unlinked": len(unlinked)},
+            )
+    return {
+        "ward_id": ward_id,
+        "awaiting": awaiting,
+        "unlinked": unlinked,
+        "counts": {"awaiting": len(awaiting), "unlinked": len(unlinked)},
+    }

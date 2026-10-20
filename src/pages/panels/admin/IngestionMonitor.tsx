@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { getIngestionStatus, type IngestionEvent } from '../../../api/client'
 import { SourceBadge, ParseStatusBadge } from './AdminBadges'
 import { AdminLoadingState, AdminErrorState, AdminEmptyState } from './AdminEmptyState'
@@ -24,17 +24,17 @@ export default function IngestionMonitor() {
   const [error, setError] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<string>('')
 
-  const fetchData = () => {
+  const fetchData = useCallback(() => {
     setLoading(true)
     setError(null)
     getIngestionStatus(50, statusFilter || undefined)
       .then((res) => { setEvents(res.events); setMode(res.ingestion_mode) })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
-  }
+  }, [statusFilter])
 
   // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch/subscribe trigger: the setState is the loader's own loading flag, not state derived from props or state.
-  useEffect(() => { fetchData() }, [statusFilter])
+  useEffect(() => { fetchData() }, [fetchData])
 
   if (loading) return <AdminLoadingState message="Loading monitor data…" />
   if (error) return <AdminErrorState error={error} onRetry={fetchData} />

@@ -60,12 +60,13 @@ DESIGN RULES
     simulator runs on a biomedical engineer's laptop next to a monitor, with no
     database, no key and no `.env`. Standard library only.
 """
+
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Iterable, Optional
+from enum import Enum, StrEnum
 
 # The six vitals Orb scores NEWS2 from. Duplicated as literals rather than
 # imported from `base` for the no-Orb-imports rule above; `base.VITAL_KEYS` is
@@ -73,8 +74,12 @@ from typing import Iterable, Optional
 VITAL_KEYS = ("HR", "SBP", "DBP", "SpO2", "Temp", "RR")
 
 
-class Confidence(str, Enum):
+class Confidence(StrEnum):
     """How much a row in a mapping table is actually worth. See the banner."""
+
+    # Retain legacy diagnostic/display strings while using the standard string enum.
+    __str__ = Enum.__str__
+    __format__ = Enum.__format__
 
     STANDARD_MNEMONIC = "standard_mnemonic"
     STANDARD_CODE = "standard_code_unverified"
@@ -94,7 +99,7 @@ class Confidence(str, Enum):
 STRICT_CONFIDENCE = frozenset({Confidence.STANDARD_MNEMONIC, Confidence.STANDARD_CODE})
 
 
-def _norm(token: Optional[str]) -> str:
+def _norm(token: str | None) -> str:
     """Upper-case, strip, and squash punctuation: `NBP-S` ≡ `NBP_S` ≡ `nbp s`."""
     if not token:
         return ""
@@ -111,11 +116,11 @@ class ObxMapping:
     identifier" report, which otherwise fills with noise and stops being read.
     """
 
-    vital_key: Optional[str]
-    identifiers: tuple[str, ...] = ()      # matched against OBX-3.1
-    texts: tuple[str, ...] = ()            # matched against OBX-3.2
+    vital_key: str | None
+    identifiers: tuple[str, ...] = ()  # matched against OBX-3.1
+    texts: tuple[str, ...] = ()  # matched against OBX-3.2
     confidence: Confidence = Confidence.INFERRED
-    unit: str = ""                         # what the vendor typically sends
+    unit: str = ""  # what the vendor typically sends
     note: str = ""
     #: Tie-break when one message carries two sources for the same vital — a
     #: Philips panel routinely contains BOTH an ECG heart rate and an oximeter
@@ -140,10 +145,10 @@ class GatewayHandshake:
     """
 
     gateway: str
-    orb_mode: str                     # "listen" | "connect" — Orb's socket role
-    wiring: str                       # prose: who dials whom
+    orb_mode: str  # "listen" | "connect" — Orb's socket role
+    wiring: str  # prose: who dials whom
     expects_ack: bool = True
-    ack_mode: str = "original"        # original (MSH-15/16 empty) vs enhanced
+    ack_mode: str = "original"  # original (MSH-15/16 empty) vs enhanced
     hl7_versions: tuple[str, ...] = ("2.3", "2.4", "2.5")
     default_port: int = 2575
     notes: tuple[str, ...] = ()
@@ -166,7 +171,7 @@ class GatewayHandshake:
 @dataclass(frozen=True)
 class MappingHit:
     mapping: ObxMapping
-    matched_on: str                   # "identifier" | "text"
+    matched_on: str  # "identifier" | "text"
     profile_key: str
 
 
@@ -211,7 +216,7 @@ class VendorProfile:
 
     # ── mapping ──
 
-    def lookup(self, code: Optional[str], name: Optional[str]) -> Optional[MappingHit]:
+    def lookup(self, code: str | None, name: str | None) -> MappingHit | None:
         """Identifier first, then display text. Never a substring match.
 
         Substring matching is how `MDC_PRESS_BLD_NONINV_MEAN` becomes a systolic
@@ -225,7 +230,7 @@ class VendorProfile:
             return MappingHit(hit, "text", self.key)
         return None
 
-    def canonical_unit(self, unit: Optional[str]) -> Optional[str]:
+    def canonical_unit(self, unit: str | None) -> str | None:
         """Vendor unit spelling → a unit string Orb's normalisation understands.
 
         Unrecognised units are returned UNCHANGED, never blanked: an unknown
@@ -239,7 +244,7 @@ class VendorProfile:
 
     # ── emission (the bench simulator pretending to BE this device) ──
 
-    def preferred(self, vital_key: str) -> Optional[ObxMapping]:
+    def preferred(self, vital_key: str) -> ObxMapping | None:
         """The mapping this vendor would normally send for a vital."""
         candidates = [m for m in self.mappings if m.vital_key == vital_key]
         if not candidates:
@@ -255,8 +260,14 @@ class VendorProfile:
         That distinction is the honest limit of any bench without hardware, and
         it is why `site_questions` exists.
         """
-        ranges = {"HR": "60-100", "SBP": "90-140", "DBP": "60-90",
-                  "SpO2": "95-100", "Temp": "36.1-37.2", "RR": "12-20"}
+        ranges = {
+            "HR": "60-100",
+            "SBP": "90-140",
+            "DBP": "60-90",
+            "SpO2": "95-100",
+            "Temp": "36.1-37.2",
+            "RR": "12-20",
+        }
         out: list[tuple[str, str, str, str]] = []
         for vital in ("HR", "SBP", "DBP", "SpO2", "Temp", "RR"):
             mapping = self.preferred(vital)
@@ -281,8 +292,13 @@ class VendorProfile:
                 continue
             ident = mapping.identifiers[0]
             text = mapping.texts[0] if mapping.texts else ident
-            out.append(("^".join([ident, text, self.emission_coding_system]),
-                        self.unit_emission.get(mapping.unit, mapping.unit), "88"))
+            out.append(
+                (
+                    "^".join([ident, text, self.emission_coding_system]),
+                    self.unit_emission.get(mapping.unit, mapping.unit),
+                    "88",
+                )
+            )
         return out[:1]
 
     # ── description ──
@@ -291,14 +307,16 @@ class VendorProfile:
         """The one-page confirmation sheet for the vendor / biomed engineer."""
         rows = []
         for m in self.mappings:
-            rows.append({
-                "vital": m.vital_key or "(not scored)",
-                "obx_3_1": ", ".join(m.identifiers) or "—",
-                "obx_3_2": ", ".join(m.texts) or "—",
-                "unit": m.unit or "—",
-                "confidence": m.confidence.value,
-                "note": m.note,
-            })
+            rows.append(
+                {
+                    "vital": m.vital_key or "(not scored)",
+                    "obx_3_1": ", ".join(m.identifiers) or "—",
+                    "obx_3_2": ", ".join(m.texts) or "—",
+                    "unit": m.unit or "—",
+                    "confidence": m.confidence.value,
+                    "note": m.note,
+                }
+            )
         return rows
 
     def describe(self) -> dict:
@@ -425,58 +443,88 @@ PHILIPS_INTELLIVUE = VendorProfile(
     },
     mappings=(
         ObxMapping(
-            "HR", ("147842",), ("MDC_ECG_HEART_RATE", "MDC_ECG_CARD_BEAT_RATE", "HR"),
-            Confidence.STANDARD_MNEMONIC, "bpm",
+            "HR",
+            ("147842",),
+            ("MDC_ECG_HEART_RATE", "MDC_ECG_CARD_BEAT_RATE", "HR"),
+            Confidence.STANDARD_MNEMONIC,
+            "bpm",
             "ECG-derived heart rate. Numeric code unverified; mnemonic is the reliable match.",
         ),
         ObxMapping(
-            "HR", ("149530",), ("MDC_PULS_OXIM_PULS_RATE", "PULSE"),
-            Confidence.STANDARD_MNEMONIC, "bpm",
+            "HR",
+            ("149530",),
+            ("MDC_PULS_OXIM_PULS_RATE", "PULSE"),
+            Confidence.STANDARD_MNEMONIC,
+            "bpm",
             "Pulse rate from the oximeter. Used for HR only when no ECG rate is present in "
             "the same message. See `priority`.",
             priority=10,
         ),
         ObxMapping(
-            "SpO2", ("150456",), ("MDC_PULS_OXIM_SAT_O2", "SPO2", "SAO2"),
-            Confidence.STANDARD_MNEMONIC, "%",
+            "SpO2",
+            ("150456",),
+            ("MDC_PULS_OXIM_SAT_O2", "SPO2", "SAO2"),
+            Confidence.STANDARD_MNEMONIC,
+            "%",
             "Functional oxygen saturation.",
         ),
         ObxMapping(
-            "SBP", ("150017",), ("MDC_PRESS_BLD_NONINV_SYS", "MDC_PRESS_CUFF_SYS", "NBPS"),
-            Confidence.STANDARD_MNEMONIC, "mmHg",
+            "SBP",
+            ("150017",),
+            ("MDC_PRESS_BLD_NONINV_SYS", "MDC_PRESS_CUFF_SYS", "NBPS"),
+            Confidence.STANDARD_MNEMONIC,
+            "mmHg",
             "Non-invasive systolic. NEWS2 scores systolic only.",
         ),
         ObxMapping(
-            "DBP", ("150018",), ("MDC_PRESS_BLD_NONINV_DIA", "MDC_PRESS_CUFF_DIA", "NBPD"),
-            Confidence.STANDARD_MNEMONIC, "mmHg",
+            "DBP",
+            ("150018",),
+            ("MDC_PRESS_BLD_NONINV_DIA", "MDC_PRESS_CUFF_DIA", "NBPD"),
+            Confidence.STANDARD_MNEMONIC,
+            "mmHg",
         ),
         ObxMapping(
-            None, ("150019",), ("MDC_PRESS_BLD_NONINV_MEAN", "MDC_PRESS_CUFF_MEAN", "NBPM"),
-            Confidence.STANDARD_MNEMONIC, "mmHg",
+            None,
+            ("150019",),
+            ("MDC_PRESS_BLD_NONINV_MEAN", "MDC_PRESS_CUFF_MEAN", "NBPM"),
+            Confidence.STANDARD_MNEMONIC,
+            "mmHg",
             "Mean arterial pressure, recorded as an observation, NOT scored: NEWS2 takes "
             "systolic. Listed so it does not appear as an unknown identifier.",
         ),
         ObxMapping(
-            "RR", ("151562",), ("MDC_RESP_RATE", "MDC_TTHOR_RESP_RATE", "RR"),
-            Confidence.STANDARD_MNEMONIC, "/min",
+            "RR",
+            ("151562",),
+            ("MDC_RESP_RATE", "MDC_TTHOR_RESP_RATE", "RR"),
+            Confidence.STANDARD_MNEMONIC,
+            "/min",
             "Impedance respiration rate.",
         ),
         ObxMapping(
-            "RR", ("151594",), ("MDC_AWAY_RESP_RATE", "AWRR"),
-            Confidence.STANDARD_MNEMONIC, "/min",
+            "RR",
+            ("151594",),
+            ("MDC_AWAY_RESP_RATE", "AWRR"),
+            Confidence.STANDARD_MNEMONIC,
+            "/min",
             "Airway (capnography) respiration rate, present on ventilated/EtCO2 beds. "
             "Second choice behind impedance RR.",
             priority=10,
         ),
         ObxMapping(
-            "Temp", ("150344",), ("MDC_TEMP", "MDC_TEMP_BLD", "TEMP"),
-            Confidence.STANDARD_MNEMONIC, "Cel",
+            "Temp",
+            ("150344",),
+            ("MDC_TEMP", "MDC_TEMP_BLD", "TEMP"),
+            Confidence.STANDARD_MNEMONIC,
+            "Cel",
             "UNIT MATTERS: a Fahrenheit dimension must be translated before scoring. "
             "See unit_aliases.",
         ),
         ObxMapping(
-            None, (), ("MDC_ECG_V_P_C_CNT", "MDC_ECG_AMPL_ST_I", "MDC_ECG_AMPL_ST_II"),
-            Confidence.STANDARD_MNEMONIC, "",
+            None,
+            (),
+            ("MDC_ECG_V_P_C_CNT", "MDC_ECG_AMPL_ST_I", "MDC_ECG_AMPL_ST_II"),
+            Confidence.STANDARD_MNEMONIC,
+            "",
             "Ectopics / ST amplitudes. Real observations, not NEWS2 parameters.",
         ),
     ),
@@ -536,7 +584,17 @@ GE_CARESCAPE = VendorProfile(
             "than the CARESCAPE beds on the same ward.",
         ),
     ),
-    sending_hints=("GE", "GEMS", "CARESCAPE", "UNITY", "MARQUETTE", "SOLAR", "DASH", "DINAMAP", "CIC"),
+    sending_hints=(
+        "GE",
+        "GEMS",
+        "CARESCAPE",
+        "UNITY",
+        "MARQUETTE",
+        "SOLAR",
+        "DASH",
+        "DINAMAP",
+        "CIC",
+    ),
     coding_systems=("GEMS", "99GE", "GE"),
     emission_coding_system="GEMS",
     unit_emission={
@@ -561,53 +619,83 @@ GE_CARESCAPE = VendorProfile(
     },
     mappings=(
         ObxMapping(
-            "HR", ("HR", "ECGHR", "HRATE"), ("HEART RATE", "ECG HEART RATE"),
-            Confidence.CONVENTION, "bpm",
+            "HR",
+            ("HR", "ECGHR", "HRATE"),
+            ("HEART RATE", "ECG HEART RATE"),
+            Confidence.CONVENTION,
+            "bpm",
         ),
         ObxMapping(
-            "HR", ("PULSE", "PR", "SPO2R", "SPO2PR"), ("PULSE RATE", "SPO2 PULSE RATE"),
-            Confidence.INFERRED, "bpm",
+            "HR",
+            ("PULSE", "PR", "SPO2R", "SPO2PR"),
+            ("PULSE RATE", "SPO2 PULSE RATE"),
+            Confidence.INFERRED,
+            "bpm",
             "Oximeter pulse rate. Used for HR only when no ECG rate is in the same message.",
             priority=10,
         ),
         ObxMapping(
-            "SpO2", ("SPO2", "SAO2", "SPO2PCT"), ("OXYGEN SATURATION", "SPO2 %", "SAT"),
-            Confidence.CONVENTION, "%",
+            "SpO2",
+            ("SPO2", "SAO2", "SPO2PCT"),
+            ("OXYGEN SATURATION", "SPO2 %", "SAT"),
+            Confidence.CONVENTION,
+            "%",
         ),
         ObxMapping(
-            "SBP", ("NBPS", "NBPSYS", "SYS", "BPS", "ARTS"), ("NBP SYSTOLIC", "SYSTOLIC"),
-            Confidence.CONVENTION, "mmHg",
+            "SBP",
+            ("NBPS", "NBPSYS", "SYS", "BPS", "ARTS"),
+            ("NBP SYSTOLIC", "SYSTOLIC"),
+            Confidence.CONVENTION,
+            "mmHg",
             "`ARTS` is the invasive arterial systolic, same clinical parameter for NEWS2, "
             "but confirm the site wants it scored.",
         ),
         ObxMapping(
-            "DBP", ("NBPD", "NBPDIA", "DIA", "BPD", "ARTD"), ("NBP DIASTOLIC", "DIASTOLIC"),
-            Confidence.CONVENTION, "mmHg",
+            "DBP",
+            ("NBPD", "NBPDIA", "DIA", "BPD", "ARTD"),
+            ("NBP DIASTOLIC", "DIASTOLIC"),
+            Confidence.CONVENTION,
+            "mmHg",
         ),
         ObxMapping(
-            None, ("NBPM", "NBPMEAN", "MEAN", "ARTM"), ("NBP MEAN", "MEAN ARTERIAL PRESSURE", "MAP"),
-            Confidence.CONVENTION, "mmHg",
+            None,
+            ("NBPM", "NBPMEAN", "MEAN", "ARTM"),
+            ("NBP MEAN", "MEAN ARTERIAL PRESSURE", "MAP"),
+            Confidence.CONVENTION,
+            "mmHg",
             "Mean arterial pressure, recorded, not scored.",
         ),
         ObxMapping(
-            "RR", ("RESP", "RR", "RESPRATE"), ("RESPIRATION RATE", "RESPIRATORY RATE"),
-            Confidence.CONVENTION, "/min",
+            "RR",
+            ("RESP", "RR", "RESPRATE"),
+            ("RESPIRATION RATE", "RESPIRATORY RATE"),
+            Confidence.CONVENTION,
+            "/min",
         ),
         ObxMapping(
-            "RR", ("AWRR",), ("AIRWAY RESPIRATION RATE",),
-            Confidence.INFERRED, "/min",
+            "RR",
+            ("AWRR",),
+            ("AIRWAY RESPIRATION RATE",),
+            Confidence.INFERRED,
+            "/min",
             "Capnography-derived rate; second choice behind impedance RESP.",
             priority=10,
         ),
         ObxMapping(
-            "Temp", ("TEMP", "TEMP1", "TMP", "TBLD", "TCORE"), ("TEMPERATURE", "TEMP 1", "CORE TEMP"),
-            Confidence.CONVENTION, "Cel",
+            "Temp",
+            ("TEMP", "TEMP1", "TMP", "TBLD", "TCORE"),
+            ("TEMPERATURE", "TEMP 1", "CORE TEMP"),
+            Confidence.CONVENTION,
+            "Cel",
             "GE units are commonly written `DEGC`/`DEGF`. A Fahrenheit reading that is not "
             "translated scores as a fatal hypothermia or nothing at all.",
         ),
         ObxMapping(
-            None, ("ST", "PVC", "STI", "STII"), ("ST LEVEL", "PVC COUNT"),
-            Confidence.INFERRED, "",
+            None,
+            ("ST", "PVC", "STI", "STII"),
+            ("ST LEVEL", "PVC COUNT"),
+            Confidence.INFERRED,
+            "",
             "Not NEWS2 parameters. Listed to keep the unknown-identifier report readable.",
         ),
     ),
@@ -624,9 +712,7 @@ GE_CARESCAPE = VendorProfile(
 )
 
 
-PROFILES: dict[str, VendorProfile] = {
-    p.key: p for p in (GENERIC, PHILIPS_INTELLIVUE, GE_CARESCAPE)
-}
+PROFILES: dict[str, VendorProfile] = {p.key: p for p in (GENERIC, PHILIPS_INTELLIVUE, GE_CARESCAPE)}
 
 #: Aliases an operator might plausibly type into `.env`.
 _ALIASES = {
@@ -662,7 +748,7 @@ COMBINED = VendorProfile(
 )
 
 
-def profile_for(name: Optional[str]) -> VendorProfile:
+def profile_for(name: str | None) -> VendorProfile:
     """Resolve a configured name to a profile. Unknown names → GENERIC.
 
     Unknown is NOT fatal: a typo in `.env` must not stop a ward's monitor feed —
@@ -674,7 +760,7 @@ def profile_for(name: Optional[str]) -> VendorProfile:
     return PROFILES.get(key, GENERIC)
 
 
-def is_known_profile(name: Optional[str]) -> bool:
+def is_known_profile(name: str | None) -> bool:
     key = (name or "").strip().lower()
     return _ALIASES.get(key, key) in PROFILES
 
@@ -683,11 +769,12 @@ def is_known_profile(name: Optional[str]) -> bool:
 class Detection:
     profile: VendorProfile
     reason: str
-    named_vendor: bool           # False = we are guessing, and say so
+    named_vendor: bool  # False = we are guessing, and say so
 
 
-def detect(sending_app: str = "", sending_facility: str = "",
-           coding_systems: Iterable[str] = ()) -> Detection:
+def detect(
+    sending_app: str = "", sending_facility: str = "", coding_systems: Iterable[str] = ()
+) -> Detection:
     """Guess the vendor from MSH-3/MSH-4 and the OBX-3 coding system.
 
     Cheap, string-only, and deliberately conservative: when nothing matches we
@@ -734,9 +821,11 @@ def detect_from_message(message) -> Detection:
                 systems.append(system)
     except Exception:
         systems = []
-    return detect(getattr(message, "sending_application", "") or "",
-                  getattr(message, "sending_facility", "") or "",
-                  systems)
+    return detect(
+        getattr(message, "sending_application", "") or "",
+        getattr(message, "sending_facility", "") or "",
+        systems,
+    )
 
 
 def all_profiles() -> list[VendorProfile]:

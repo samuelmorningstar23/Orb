@@ -10,19 +10,27 @@ Scope is the caller's business: the routes check a patient with
 permissions.require_patient_access or patient_in_scope, and the queues pass
 permissions.scope_patient_ids_sql for the caller's department here.
 """
+
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
-from typing import Any, Mapping, Optional
+from collections.abc import Mapping
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from services.clinical_time import format_utc
 from services.medorders import core
 
 __all__ = [
-    "DRAFT_WAIT_HOURS", "QUEUE_LIMIT",
-    "active_admission_id", "order_scope_row", "serialize_order", "serialize_event",
-    "list_for_patient", "same_ingredient_live", "to_sign_queue",
+    "DRAFT_WAIT_HOURS",
+    "QUEUE_LIMIT",
+    "active_admission_id",
+    "order_scope_row",
+    "serialize_order",
+    "serialize_event",
+    "list_for_patient",
+    "same_ingredient_live",
+    "to_sign_queue",
 ]
 
 #: Ruling MO-R10 (a): unsigned drafts are never cancelled by the system; a
@@ -35,7 +43,7 @@ DRAFT_WAIT_HOURS = 24
 QUEUE_LIMIT = 200
 
 
-def active_admission_id(conn, patient_id: str) -> Optional[str]:
+def active_admission_id(conn, patient_id: str) -> str | None:
     """The patient's active admission (the newest, if several), or None."""
     row = conn.execute(
         "SELECT id FROM admissions WHERE patient_id = ? AND status = 'active' "
@@ -47,10 +55,9 @@ def active_admission_id(conn, patient_id: str) -> Optional[str]:
     return str(row["id"])
 
 
-def order_scope_row(conn, order_id: str) -> Optional[dict]:
+def order_scope_row(conn, order_id: str) -> dict | None:
     """The order's id and patient, for the scope check before any read of it."""
-    row = conn.execute("SELECT id, patient_id FROM med_orders WHERE id = ?",
-                       (order_id,)).fetchone()
+    row = conn.execute("SELECT id, patient_id FROM med_orders WHERE id = ?", (order_id,)).fetchone()
     return dict(row) if row is not None else None
 
 
@@ -82,8 +89,14 @@ def serialize_event(row: Mapping) -> dict:
 
 
 #: The ledger events behind an order's supply line (medorders-10, W9-D).
-SUPPLY_EVENT_KINDS = ("supply_requested", "supply_reviewing", "supply_verified",
-                      "supply_rejected", "dispensed", "received")
+SUPPLY_EVENT_KINDS = (
+    "supply_requested",
+    "supply_reviewing",
+    "supply_verified",
+    "supply_rejected",
+    "dispensed",
+    "received",
+)
 #: The bedside events behind an order's last dose.
 DOSE_EVENT_KINDS = ("administered", "not_given")
 
@@ -93,8 +106,12 @@ def _user_names(conn, ids) -> dict:
     if not wanted:
         return {}
     marks = ", ".join("?" for _ in wanted)
-    return {r["id"]: r["name"] for r in conn.execute(
-        f"SELECT id, name FROM users WHERE id IN ({marks})", tuple(wanted)).fetchall()}
+    return {
+        r["id"]: r["name"]
+        for r in conn.execute(
+            f"SELECT id, name FROM users WHERE id IN ({marks})", tuple(wanted)
+        ).fetchall()
+    }
 
 
 def _ledger_lines(conn, patient_id: str) -> dict:
@@ -105,32 +122,49 @@ def _ledger_lines(conn, patient_id: str) -> dict:
     chart says as 'supply not linked'."""
     kinds = SUPPLY_EVENT_KINDS + DOSE_EVENT_KINDS
     marks = ", ".join("?" for _ in kinds)
-    rows = [dict(r) for r in conn.execute(
-        f"SELECT med_order_id, kind, actor_id, actor_role, reason, ref_type, ref_id, "
-        f"created_at FROM med_order_events WHERE patient_id = ? AND kind IN ({marks}) "
-        f"ORDER BY created_at, id",
-        (patient_id, *kinds),
-    ).fetchall()]
+    rows = [
+        dict(r)
+        for r in conn.execute(
+            f"SELECT med_order_id, kind, actor_id, actor_role, reason, ref_type, ref_id, "
+            f"created_at FROM med_order_events WHERE patient_id = ? AND kind IN ({marks}) "
+            f"ORDER BY created_at, id",
+            (patient_id, *kinds),
+        ).fetchall()
+    ]
     names = _user_names(conn, (r["actor_id"] for r in rows))
     out: dict = {}
     for r in rows:
         line = out.setdefault(r["med_order_id"], {"supply": None, "last_dose": None})
-        who = {"by": r["actor_id"], "by_name": names.get(r["actor_id"]),
-               "by_role": r["actor_role"], "at": r["created_at"]}
+        who = {
+            "by": r["actor_id"],
+            "by_name": names.get(r["actor_id"]),
+            "by_role": r["actor_role"],
+            "at": r["created_at"],
+        }
         if r["kind"] in DOSE_EVENT_KINDS:
             # ref_type/ref_id name the medication_administrations row (the
             # eMAR writes them, emar_check.record_bedside_event_in_txn), so the
             # chart can join this dose to its administration record and mark
             # a dose given across a charted allergy, as the old table did.
-            line["last_dose"] = {"kind": r["kind"], "reason": r["reason"],
-                                 "ref_type": r["ref_type"], "ref_id": r["ref_id"], **who}
+            line["last_dose"] = {
+                "kind": r["kind"],
+                "reason": r["reason"],
+                "ref_type": r["ref_type"],
+                "ref_id": r["ref_id"],
+                **who,
+            }
             continue
         supply_id = r["ref_id"] if r["ref_type"] == "helix_order" else None
         current = line["supply"]
         if current is None or (supply_id and current.get("helix_order_id") != supply_id):
-            current = line["supply"] = {"helix_order_id": supply_id, "state": None,
-                                        "at": None, "requested_at": None,
-                                        "dispensed": None, "received": None}
+            current = line["supply"] = {
+                "helix_order_id": supply_id,
+                "state": None,
+                "at": None,
+                "requested_at": None,
+                "dispensed": None,
+                "received": None,
+            }
         current["state"] = r["kind"]
         current["at"] = r["created_at"]
         if r["kind"] == "supply_requested":
@@ -150,13 +184,22 @@ def list_for_patient(conn, patient_id: str) -> dict:
     state with who dispensed and received it, or None for 'supply not linked')
     and 'last_dose' (the last bedside record on the order's ledger, or None,
     with the ref_type and ref_id of the administration record it points at)."""
-    orders = [serialize_order(r) for r in conn.execute(
-        "SELECT * FROM med_orders WHERE patient_id = ? ORDER BY created_at DESC, id DESC",
-        (patient_id,),
-    ).fetchall()]
+    orders = [
+        serialize_order(r)
+        for r in conn.execute(
+            "SELECT * FROM med_orders WHERE patient_id = ? ORDER BY created_at DESC, id DESC",
+            (patient_id,),
+        ).fetchall()
+    ]
     if orders:
-        names = _user_names(conn, (o.get(c) for o in orders for c in (
-            "prescriber_id", "verified_by", "entered_by", "status_changed_by")))
+        names = _user_names(
+            conn,
+            (
+                o.get(c)
+                for o in orders
+                for c in ("prescriber_id", "verified_by", "entered_by", "status_changed_by")
+            ),
+        )
         lines = _ledger_lines(conn, patient_id)
         for o in orders:
             o["prescriber_name"] = names.get(o.get("prescriber_id"))
@@ -174,27 +217,30 @@ def list_for_patient(conn, patient_id: str) -> dict:
         (patient_id,),
     ).fetchall():
         mapping = core.legacy_status_for(r)
-        legacy.append({
-            "legacy": True,
-            "medication_id": r["id"],
-            "drug_name": r["drug_name"],
-            "dose": r["dosage"],
-            "route": r["route"],
-            "frequency": r["frequency"],
-            "chart_status": r["status"],
-            "status": mapping["status"],
-            "is_prn": bool(mapping["is_prn"]),
-            "needs_verification": bool(mapping["needs_verification"]),
-            "verified_by": mapping["verified_by"],
-            "verified_at": mapping["verified_at"],
-            "started_at": r["started_at"],
-            "adoptable": mapping["adoptable"],
-        })
+        legacy.append(
+            {
+                "legacy": True,
+                "medication_id": r["id"],
+                "drug_name": r["drug_name"],
+                "dose": r["dosage"],
+                "route": r["route"],
+                "frequency": r["frequency"],
+                "chart_status": r["status"],
+                "status": mapping["status"],
+                "is_prn": bool(mapping["is_prn"]),
+                "needs_verification": bool(mapping["needs_verification"]),
+                "verified_by": mapping["verified_by"],
+                "verified_at": mapping["verified_at"],
+                "started_at": r["started_at"],
+                "adoptable": mapping["adoptable"],
+            }
+        )
     return {"patient_id": patient_id, "orders": orders, "legacy": legacy}
 
 
-def same_ingredient_live(conn, patient_id: str, drug_name: str, *,
-                         exclude_order_id: Optional[str] = None) -> list[dict]:
+def same_ingredient_live(
+    conn, patient_id: str, drug_name: str, *, exclude_order_id: str | None = None
+) -> list[dict]:
     """Live orders and unadopted live chart rows for the same product, for the
     duplicate NOTICE at create and sign. Compared through
     drug_safety_service.same_product, the vocabulary the bedside repeat-dose
@@ -202,6 +248,7 @@ def same_ingredient_live(conn, patient_id: str, drug_name: str, *,
     insulins are two. A notice only: whether a duplicate needs a reason or is
     refused is ruling MO-R6, built in a later increment."""
     from services.drug_safety_service import same_product
+
     found = []
     marks = ", ".join("?" for _ in core.LIVE_STATUSES)
     for r in conn.execute(
@@ -212,21 +259,39 @@ def same_ingredient_live(conn, patient_id: str, drug_name: str, *,
         if r["id"] == exclude_order_id:
             continue
         if same_product([drug_name], [r["drug_name"]]):
-            found.append({"med_order_id": r["id"], "medication_id": r["legacy_medication_id"],
-                          "drug_name": r["drug_name"], "status": r["status"]})
+            found.append(
+                {
+                    "med_order_id": r["id"],
+                    "medication_id": r["legacy_medication_id"],
+                    "drug_name": r["drug_name"],
+                    "status": r["status"],
+                }
+            )
     for r in conn.execute(
         "SELECT id, drug_name, status FROM medications WHERE patient_id = ? "
         "AND status IN ('active', 'prn') AND med_order_id IS NULL ORDER BY id",
         (patient_id,),
     ).fetchall():
         if same_product([drug_name], [r["drug_name"]]):
-            found.append({"med_order_id": None, "medication_id": r["id"],
-                          "drug_name": r["drug_name"], "status": r["status"]})
+            found.append(
+                {
+                    "med_order_id": None,
+                    "medication_id": r["id"],
+                    "drug_name": r["drug_name"],
+                    "status": r["status"],
+                }
+            )
     return found
 
 
-def to_sign_queue(conn, scope_sql: str, scope_params: tuple, *,
-                  limit: int = QUEUE_LIMIT, now: Optional[datetime] = None) -> dict:
+def to_sign_queue(
+    conn,
+    scope_sql: str,
+    scope_params: tuple,
+    *,
+    limit: int = QUEUE_LIMIT,
+    now: datetime | None = None,
+) -> dict:
     """What a prescriber has to look at, inside the caller's department.
 
       drafts              unsigned orders, oldest first (MO-R10 (a): a draft
@@ -238,7 +303,7 @@ def to_sign_queue(conn, scope_sql: str, scope_params: tuple, *,
 
     `scope_sql` and `scope_params` come from permissions.scope_patient_ids_sql
     for the caller's own department."""
-    cutoff = format_utc((now or datetime.now(timezone.utc)) - timedelta(hours=DRAFT_WAIT_HOURS))
+    cutoff = format_utc((now or datetime.now(UTC)) - timedelta(hours=DRAFT_WAIT_HOURS))
     select = (
         "SELECT o.*, p.name AS patient_name, p.ward AS patient_ward, p.bed AS patient_bed, "
         "u.name AS entered_by_name FROM med_orders o "
@@ -247,22 +312,29 @@ def to_sign_queue(conn, scope_sql: str, scope_params: tuple, *,
         f"WHERE o.patient_id IN ({scope_sql}) "
     )
     drafts = []
-    for r in conn.execute(select + "AND o.status = 'draft' ORDER BY o.created_at, o.id LIMIT ?",
-                          (*scope_params, limit)).fetchall():
+    for r in conn.execute(
+        select + "AND o.status = 'draft' ORDER BY o.created_at, o.id LIMIT ?",
+        (*scope_params, limit),
+    ).fetchall():
         item = serialize_order(r)
         item["waiting_over_24h"] = bool(item.get("created_at")) and item["created_at"] < cutoff
         drafts.append(item)
     marks = ", ".join("?" for _ in core.LIVE_STATUSES)
-    nurse = [serialize_order(r) for r in conn.execute(
-        select + f"AND o.status IN ({marks}) AND o.entered_by_role = 'nurse' "
-                 "AND p.status = 'admitted' ORDER BY o.created_at DESC, o.id DESC LIMIT ?",
-        (*scope_params, *core.LIVE_STATUSES, limit),
-    ).fetchall()]
+    nurse = [
+        serialize_order(r)
+        for r in conn.execute(
+            select + f"AND o.status IN ({marks}) AND o.entered_by_role = 'nurse' "
+            "AND p.status = 'admitted' ORDER BY o.created_at DESC, o.id DESC LIMIT ?",
+            (*scope_params, *core.LIVE_STATUSES, limit),
+        ).fetchall()
+    ]
     return {
         "drafts": drafts,
         "entered_by_a_nurse": nurse,
         "draft_wait_hours": DRAFT_WAIT_HOURS,
-        "counts": {"drafts": len(drafts),
-                   "waiting_over_24h": sum(1 for d in drafts if d["waiting_over_24h"]),
-                   "entered_by_a_nurse": len(nurse)},
+        "counts": {
+            "drafts": len(drafts),
+            "waiting_over_24h": sum(1 for d in drafts if d["waiting_over_24h"]),
+            "entered_by_a_nurse": len(nurse),
+        },
     }

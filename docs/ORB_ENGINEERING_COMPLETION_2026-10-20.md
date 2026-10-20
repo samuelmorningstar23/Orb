@@ -142,3 +142,40 @@ GPU/concurrency measurement; native speech/Safari/iPad acceptance; PostgreSQL an
 hospital interfaces; hosted CI/release runs; restore/key-escrow, signed-media,
 power-loss and backup-under-load drills; and pilot ownership, training and
 approved module enablement. The updated PDF preserves those boundaries.
+
+
+## Legacy lint and typing follow-up — 20 October 2026
+
+This follow-up supersedes the legacy diagnostic counts above for the reviewed
+source at parent `59ee1bc` (including committed HIS changes). Across 398 production
+Python modules, Ruff findings dropped from 8,314 to zero, mypy errors from 1,051
+to zero, and unformatted files from 382 to zero. The lint/type/format budgets are
+now empty. Frontend ESLint dropped from one error and nine warnings to zero;
+TypeScript and the production build pass. Existing concurrent feature edits are
+preserved outside the selected commit.
+
+The full disposable final backend selection passes 16,773 tests with 11 explicit
+skips; the frontend passes 3,481 tests across 357 files. The 24 quality-tool tests,
+67 strict utility tests and all 9,028 documentation citations / 490 symbol anchors
+pass. The final 520-test boundary selection also passes. Counts overlap and must
+not be added. Exact manifests, hashes and logs are in
+`docs/audit-2026-10/legacy-lint-types-20261020/verification.json`.
+
+Type fixes retain lazy import barriers, FastAPI authorization dependency
+construction, enum display strings, valid optional receipt fields and safe
+external-input errors. Added regressions cover authorization-source inspection,
+verified-backup retention and invalid/missing procurement and clinic inputs.
+
+**Still open:** 4,334 missing parameter/return annotation slots remain under the
+separate adoption gate (starting inventory: 4,345). This is zero configured mypy
+errors, not full strict annotation coverage. The per-module coverage budget check
+still fails: the starting commit already exceeds older budgets, and cleanup adds
+uncovered defensive guards and changes statement counts. Limits are unchanged;
+`coverage-budget-findings.json` records both cohorts. Further service decomposition,
+optional SDK typing, hosted CI/release execution and the owner/site/integration
+work listed above remain. No deployment, live appliance change or full CI success
+is claimed.
+
+After the full run, a final whitespace-only Relay SQL edit passed the complete
+Relay selection: 163 passed, one explicit skip. Other production files remain
+byte-identical to the full-run source; this final delta is recorded separately.

@@ -5,48 +5,57 @@ reviews meds charted with provenance ``llm_extracted``/``agentic`` and either
 verifies (activates) or rejects (discontinues) them, correcting the dose as
 needed. Every verify/reject is audited under the ``clinical_record`` category.
 """
+
 from __future__ import annotations
 
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
-from typing import Optional
-
 from permissions import enforce_patient_scope, log_phi_read, require_permission
-from services import pharmacy_verification_service as pharmacy
+from pydantic import BaseModel
 from services.audit_service import log_audit_event
-from services.drug_safety_service import formulary_interaction_coverage
 from services.drug_chart import require_drug_chart
+from services.drug_safety_service import formulary_interaction_coverage
+
+from services import pharmacy_verification_service as pharmacy
 
 # The verification queue is drug chart rows. On an Orb Ward Record computer
 # every route answers 404 "The drug chart is not part of Orb Ward Record"
 # before any row is read (services/drug_chart).
-router = APIRouter(prefix="/api/pharmacy", tags=["Pharmacy Verification"],
-                   dependencies=[Depends(require_drug_chart)])
+router = APIRouter(
+    prefix="/api/pharmacy",
+    tags=["Pharmacy Verification"],
+    dependencies=[Depends(require_drug_chart)],
+)
 
 
 class VerifyRequest(BaseModel):
-    dosage: Optional[str] = None
-    route: Optional[str] = None
-    frequency: Optional[str] = None
+    dosage: str | None = None
+    route: str | None = None
+    frequency: str | None = None
     # Required (non-empty) when the re-run safety screen is severe or failed —
     # the pharmacist's acknowledgement reason for overriding the block.
-    ack_reason: Optional[str] = None
+    ack_reason: str | None = None
 
 
 class RejectRequest(BaseModel):
     reason: str
 
 
+_GET_PENDING_USER_DEFAULT = Depends(require_permission("helix.read"))
+
+
 @router.get("/pending")
-def get_pending(user=Depends(require_permission("helix.read"))):
+def get_pending(user=_GET_PENDING_USER_DEFAULT):
     """List all AI/agentic meds awaiting pharmacist verification."""
     return {"pending": pharmacy.list_pending_verification()}
 
 
+_GET_INTERACTION_COVERAGE_USER_DEFAULT = Depends(require_permission("helix.read"))
+
+
 @router.get("/interaction-coverage")
-def get_interaction_coverage(user=Depends(require_permission("helix.read"))):
+def get_interaction_coverage(user=_GET_INTERACTION_COVERAGE_USER_DEFAULT):
     """Which formulary items the interaction knowledge base can screen.
 
     An item that is not covered is screened for allergies only, so a clean
@@ -55,9 +64,11 @@ def get_interaction_coverage(user=Depends(require_permission("helix.read"))):
     return formulary_interaction_coverage()
 
 
+_GET_SOURCE_NOTE_USER_DEFAULT = Depends(require_permission("helix.read"))
+
+
 @router.get("/{med_id}/source-note")
-def get_source_note(med_id: int, request: Request,
-                    user=Depends(require_permission("helix.read"))):
+def get_source_note(med_id: int, request: Request, user=_GET_SOURCE_NOTE_USER_DEFAULT):
     """The signed note a queue medicine was read from: its words, who signed
     it and when, and the sentence that names the drug.
 
@@ -69,7 +80,9 @@ def get_source_note(med_id: int, request: Request,
     """
     note = pharmacy.source_note(med_id)
     if note is None:
-        raise HTTPException(status_code=404, detail="This medicine was not charted from a signed note.")
+        raise HTTPException(
+            status_code=404, detail="This medicine was not charted from a signed note."
+        )
     enforce_patient_scope(user, note["patient_id"])
     log_phi_read(
         request=request,
@@ -83,9 +96,16 @@ def get_source_note(med_id: int, request: Request,
     return note
 
 
+_VERIFY_USER_DEFAULT = Depends(require_permission("helix.write"))
+
+
 @router.post("/{med_id}/verify")
-def verify(med_id: int, req: VerifyRequest, request: Request,
-           user=Depends(require_permission("helix.write"))):
+def verify(
+    med_id: int,
+    req: VerifyRequest,
+    request: Request,
+    user=_VERIFY_USER_DEFAULT,
+):
     """Verify (and optionally dose-correct) an AI/agentic med → active order.
 
     A blank or placeholder dose, route or frequency returns 422. A severe (or
@@ -103,7 +123,7 @@ def verify(med_id: int, req: VerifyRequest, request: Request,
             ack_reason=req.ack_reason,
         )
     except pharmacy.IncompleteOrderError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except ValueError as e:
         if str(e).startswith("severe_ack_required:"):
             raise HTTPException(
@@ -115,8 +135,8 @@ def verify(med_id: int, req: VerifyRequest, request: Request,
                     "message": str(e).split(":", 1)[1].strip(),
                     "safety": getattr(e, "safety", None),
                 },
-            )
-        raise HTTPException(status_code=400, detail=str(e))
+            ) from e
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     med = result["medication"]
     log_audit_event(
@@ -146,9 +166,16 @@ def verify(med_id: int, req: VerifyRequest, request: Request,
     return result
 
 
+_REJECT_USER_DEFAULT = Depends(require_permission("helix.write"))
+
+
 @router.post("/{med_id}/reject")
-def reject(med_id: int, req: RejectRequest, request: Request,
-           user=Depends(require_permission("helix.write"))):
+def reject(
+    med_id: int,
+    req: RejectRequest,
+    request: Request,
+    user=_REJECT_USER_DEFAULT,
+):
     """Reject an AI/agentic med → discontinued, with the reason recorded."""
     try:
         result = pharmacy.reject_medication(
@@ -157,7 +184,7 @@ def reject(med_id: int, req: RejectRequest, request: Request,
             reason=req.reason,
         )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     med = result["medication"]
     log_audit_event(

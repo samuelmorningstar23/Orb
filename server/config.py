@@ -1,6 +1,11 @@
 """Orb Hospital OS — Configuration"""
+
 import os
+import sys as _sys
 from pathlib import Path
+from typing import TypedDict
+
+from offline_policy import local_model_origin
 
 # ── Strictly offline (standing rule, 4 October 2026) ──
 # Hugging Face libraries download a model the moment it is missing from the local
@@ -21,9 +26,7 @@ os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 # ingestion key, wildcard CORS and auto-reload on a real PHI deployment.
 DEPLOYMENT_PROFILE = os.getenv("ORB_DEPLOYMENT_PROFILE", "prod").strip().lower()
 if DEPLOYMENT_PROFILE not in ("dev", "prod"):
-    raise ValueError(
-        f"ORB_DEPLOYMENT_PROFILE must be 'dev' or 'prod', got {DEPLOYMENT_PROFILE!r}"
-    )
+    raise ValueError(f"ORB_DEPLOYMENT_PROFILE must be 'dev' or 'prod', got {DEPLOYMENT_PROFILE!r}")
 
 # Paths
 BASE_DIR = Path(__file__).resolve().parent
@@ -108,7 +111,9 @@ def cors_allow_origins() -> list[str]:
 # name with its mDNS .local form. ORB_ALLOWED_HOSTS ADDS names (host, host:port
 # or a URL all work); "*" there turns the check off and the Trust Center shows it
 # red. A "*" in ORB_CORS_ORIGINS does not: that answers a different question.
-ALLOWED_HOSTS_EXTRA = [h.strip() for h in os.getenv("ORB_ALLOWED_HOSTS", "").split(",") if h.strip()]
+ALLOWED_HOSTS_EXTRA = [
+    h.strip() for h in os.getenv("ORB_ALLOWED_HOSTS", "").split(",") if h.strip()
+]
 
 
 def _host_name(value: str) -> str | None:
@@ -155,22 +160,30 @@ def allowed_host_names() -> frozenset[str]:
         names.add("*")
     return frozenset(names)
 
+
 # TLS in transit. Orb serves HTTPS itself when both are set (main.py); otherwise
 # a reverse proxy must terminate TLS, and ORB_TLS_TERMINATED_UPSTREAM=1 is the
 # operator's declaration that one does. The Trust Center inspects the cert.
 TLS_CERT = os.getenv("ORB_TLS_CERT") or None
 TLS_KEY = os.getenv("ORB_TLS_KEY") or None
 TLS_TERMINATED_UPSTREAM = os.getenv("ORB_TLS_TERMINATED_UPSTREAM", "").strip().lower() in (
-    "1", "true", "yes", "on")
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 # Auth
 JWT_SECRET = os.getenv("ORB_JWT_SECRET")
 if not JWT_SECRET:
     import sys
+
     is_pytest = "pytest" in sys.modules or os.getenv("PYTEST_CURRENT_TEST") is not None
     # Fail closed on anything that is not the explicit dev profile.
     if DEPLOYMENT_PROFILE != "dev" and not is_pytest:
-        raise ValueError("CRITICAL SECURITY ERROR: ORB_JWT_SECRET environment variable must be set in production mode!")
+        raise ValueError(
+            "CRITICAL SECURITY ERROR: ORB_JWT_SECRET environment variable must be set in production mode!"
+        )
     JWT_SECRET = "orb-local-dev-secret-key-change-in-prod"
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_HOURS = 24
@@ -182,6 +195,7 @@ JWT_EXPIRY_HOURS = 24
 DISCHARGE_JWT_SECRET = os.getenv("ORB_DISCHARGE_JWT_SECRET")
 if not DISCHARGE_JWT_SECRET:
     import sys
+
     _is_pytest = "pytest" in sys.modules or os.getenv("PYTEST_CURRENT_TEST") is not None
     if DEPLOYMENT_PROFILE != "dev" and not _is_pytest:
         raise ValueError(
@@ -213,7 +227,7 @@ UPLOAD_ENCRYPTION_KEY = os.getenv("ORB_UPLOAD_ENCRYPTION_KEY")
 
 
 # Ollama is local-only under the standing offline-inference policy.
-from offline_policy import local_model_origin
+
 OLLAMA_BASE_URL = local_model_origin(os.getenv("ORB_OLLAMA_BASE_URL", "http://localhost:11434"))
 # Single shared MedGemma 1 27B Multimodal instance for all modules (Sage, Lens, Bridge, Scribe).
 # Each service passes its own system prompt and options per-request.
@@ -234,17 +248,20 @@ def _installed_model_names() -> "list[str] | None":
     global _installed_cache
     if _installed_cache is not ...:
         return _installed_cache  # type: ignore[return-value]
+
     # Models switched off (ORB_MODELS_ENABLED=false, or ORB_WARD_RECORD=true):
     # Ollama is not asked, even at import. Read from the environment here
     # because the switches themselves are defined further down this file.
     def _flag(name: str, default: str) -> bool:
         return os.getenv(name, default).strip().lower() in ("1", "true", "yes", "on")
+
     if _flag("ORB_WARD_RECORD", "false") or not _flag("ORB_MODELS_ENABLED", "true"):
         _installed_cache = None
         return None
     try:
         import json as _json
         import urllib.request
+
         with urllib.request.urlopen(f"{OLLAMA_BASE_URL}/api/tags", timeout=2) as resp:
             _installed_cache = [m.get("name", "") for m in _json.load(resp).get("models", [])]
     except Exception:
@@ -267,10 +284,13 @@ def _resolve_llm_model(preferred: str) -> str:
         return preferred
     fallback = next((n for n in installed if "medgemma" in n.lower()), None)
     if fallback:
-        print(f"  ! LLM model '{preferred}' not pulled in Ollama — falling back to '{fallback}'. "
-              f"Set ORB_LLM_MODEL or `ollama pull {preferred}` to override.")
+        print(
+            f"  ! LLM model '{preferred}' not pulled in Ollama — falling back to '{fallback}'. "
+            f"Set ORB_LLM_MODEL or `ollama pull {preferred}` to override."
+        )
         return fallback
     return preferred
+
 
 LLM_MODEL = _resolve_llm_model(os.getenv("ORB_LLM_MODEL", "medgemma:27b"))
 # Tiered models: the CHEAP tier serves the bounded, non-interactive ambient work
@@ -302,13 +322,19 @@ AMBIENT_BATCH_MAX = int(os.getenv("ORB_AMBIENT_BATCH_MAX", "8"))
 # scripted caller, or a dropped JSON field must never quietly downgrade a
 # clinician's answer to the model that is wrong 40% of the time on drug recall.
 THINKING_DEFAULT_ON = os.getenv("ORB_THINKING_DEFAULT", "on").strip().lower() not in (
-    "0", "false", "off", "no",
+    "0",
+    "false",
+    "off",
+    "no",
 )
 # Master switch for offering the toggle at all. OFF pins every Sage turn to the
 # careful model regardless of what the client sends — the panic switch for a
 # site that decides the fast lane is not for them.
 THINKING_FAST_MODE_ENABLED = os.getenv("ORB_FAST_MODE_ENABLED", "true").strip().lower() not in (
-    "0", "false", "off", "no",
+    "0",
+    "false",
+    "off",
+    "no",
 )
 
 
@@ -335,9 +361,11 @@ def _resolve_fast_model(preferred: str) -> str:
         if installed is None or AMBIENT_LLM_MODEL in installed:
             return AMBIENT_LLM_MODEL
     if installed is not None:
-        print(f"  ! Fast-mode model '{preferred}' is not pulled in Ollama — thinking-OFF "
-              f"will be served by '{LLM_MODEL}' (no speed win, but no wrong answers). "
-              f"`ollama pull {preferred}` or set ORB_FAST_MODEL.")
+        print(
+            f"  ! Fast-mode model '{preferred}' is not pulled in Ollama — thinking-OFF "
+            f"will be served by '{LLM_MODEL}' (no speed win, but no wrong answers). "
+            f"`ollama pull {preferred}` or set ORB_FAST_MODEL."
+        )
     return LLM_MODEL
 
 
@@ -354,7 +382,10 @@ THINKING_FAST_MODEL = _resolve_fast_model(os.getenv("ORB_FAST_MODEL", "medgemma:
 #                                  everything, including dosing and patient
 #                                  questions). Do not do this on a pilot ward.
 FAST_MODE_SAFETY_FLOOR = os.getenv("ORB_FAST_MODE_SAFETY_FLOOR", "1").strip().lower() not in (
-    "0", "false", "off", "no",
+    "0",
+    "false",
+    "off",
+    "no",
 )
 
 # ── Background LLM volume bound (services/llm_queue_service.BackgroundGovernor) ──
@@ -374,13 +405,17 @@ FAST_MODE_SAFETY_FLOOR = os.getenv("ORB_FAST_MODE_SAFETY_FLOOR", "1").strip().lo
 # tests' background acquisitions would shed each other. Governor tests enable it
 # explicitly (tests/test_background_governor.py); ORB_BG_LLM_GOVERNOR still
 # overrides in both directions.
-import sys as _sys
+
 _BG_GOV_DEFAULT = (
     "false"
     if ("pytest" in _sys.modules or os.getenv("PYTEST_CURRENT_TEST") is not None)
     else "true"
 )
-BG_LLM_GOVERNOR_ENABLED = os.getenv("ORB_BG_LLM_GOVERNOR", _BG_GOV_DEFAULT).lower() not in ("0", "false", "off")
+BG_LLM_GOVERNOR_ENABLED = os.getenv("ORB_BG_LLM_GOVERNOR", _BG_GOV_DEFAULT).lower() not in (
+    "0",
+    "false",
+    "off",
+)
 # Ceiling on ADMITTED background LLM calls per rolling 60 s, across all
 # background producers. 12/min ≈ one every 5 s, which is what the ambient tier
 # can serve without holding the GPU for most of the minute.
@@ -415,10 +450,14 @@ BG_LLM_QUIET_AFTER_INTERACTIVE_SECONDS = float(
 # prompt is byte-identical to today's (regression-pinned in
 # tests/test_sage_history_summarize.py).
 SAGE_HISTORY_SUMMARIZE = os.getenv("ORB_SAGE_HISTORY_SUMMARIZE", "0").strip().lower() in (
-    "1", "true", "yes", "on",
+    "1",
+    "true",
+    "yes",
+    "on",
 )
 
 VISION_MODEL = os.getenv("ORB_VISION_MODEL", LLM_MODEL)  # Shares same model instance as LLM
+OLLAMA_KEEP_ALIVE: int | str
 OLLAMA_KEEP_ALIVE_RAW = os.getenv("ORB_OLLAMA_KEEP_ALIVE", "1h")
 try:
     OLLAMA_KEEP_ALIVE = int(OLLAMA_KEEP_ALIVE_RAW)
@@ -457,14 +496,24 @@ is_dev = DEPLOYMENT_PROFILE == "dev"
 # they write is marked source = 'simulated'. Defaults ON in the dev profile and
 # OFF in prod, so fabricated results can never be written into a real
 # deployment. Override explicitly with ORB_DEMO_MODE.
-DEMO_MODE = os.getenv("ORB_DEMO_MODE", "true" if is_dev else "false").strip().lower() in ("1", "true", "yes", "on")
+DEMO_MODE = os.getenv("ORB_DEMO_MODE", "true" if is_dev else "false").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 # Lens (medical image analysis) ships NO validated imaging model — it is a
 # general-purpose vision LLM writing reference prose, in the most regulated space
 # Orb touches. It is therefore gated demo-only: enabled in dev/demo, and OFF in
 # prod unless an operator explicitly opts in (ORB_LENS_ENABLED), accepting that it
 # is clinician decision-support reference only and never a diagnostic device.
-LENS_ENABLED = os.getenv("ORB_LENS_ENABLED", "true" if is_dev else "false").strip().lower() in ("1", "true", "yes", "on")
+LENS_ENABLED = os.getenv("ORB_LENS_ENABLED", "true" if is_dev else "false").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 # The Orb Ward Record (docs/fundraising/SALES_PLAN_2026-10.md section 3, step 2)
 # runs with "no score computed, shown or logged". ORB_SCORING_ENABLED=false makes
@@ -472,12 +521,22 @@ LENS_ENABLED = os.getenv("ORB_LENS_ENABLED", "true" if is_dev else "false").stri
 # row, no NEWS2 or schedule in the response, no escalation, no Relay alert, no
 # sepsis bundle; the score preview answers 404 and the ward board sorts by ward
 # and bed. Default on, so every existing site is unchanged.
-SCORING_ENABLED = os.getenv("ORB_SCORING_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+SCORING_ENABLED = os.getenv("ORB_SCORING_ENABLED", "true").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 # Whether a NEWS2 of 7 or more opens a sepsis bundle by itself
 # (sepsis_bundle_service.maybe_autostart). Off, nothing starts one
 # automatically; a clinician can still start a bundle by hand. Default on.
-SEPSIS_AUTOSTART = os.getenv("ORB_SEPSIS_AUTOSTART", "true").strip().lower() in ("1", "true", "yes", "on")
+SEPSIS_AUTOSTART = os.getenv("ORB_SEPSIS_AUTOSTART", "true").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 # A set the ward clerk copies from the paper sheet (source clerk_transcribed)
 # whose sheet time is more than this many minutes before the moment it is keyed
@@ -490,7 +549,8 @@ SEPSIS_AUTOSTART = os.getenv("ORB_SEPSIS_AUTOSTART", "true").strip().lower() in 
 # 0 makes every transcribed set record only.
 try:
     TRANSCRIBED_LIVE_HOOK_MAX_AGE_MINUTES = max(
-        0, int(os.getenv("ORB_TRANSCRIBED_LIVE_HOOK_MAX_AGE_MINUTES", "120")))
+        0, int(os.getenv("ORB_TRANSCRIBED_LIVE_HOOK_MAX_AGE_MINUTES", "120"))
+    )
 except ValueError:
     TRANSCRIBED_LIVE_HOOK_MAX_AGE_MINUTES = 120
 
@@ -501,7 +561,12 @@ except ValueError:
 # any request leaves this process, nothing warms a model at boot, and those
 # features' routes answer 404 "Switched off on this computer". For a site that
 # wants the models off without the whole Ward Record profile. Default on.
-MODELS_ENABLED = os.getenv("ORB_MODELS_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+MODELS_ENABLED = os.getenv("ORB_MODELS_ENABLED", "true").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 # The Orb Ward Record profile (docs/fundraising/SALES_PLAN_2026-10.md section 3,
 # step 2): the ward's observation record and the monthly rounds file, with the
@@ -515,8 +580,12 @@ WARD_RECORD = os.getenv("ORB_WARD_RECORD", "false").strip().lower() in ("1", "tr
 # The settings ORB_WARD_RECORD forced off, by variable name, for the boot line.
 WARD_RECORD_FORCED: tuple[str, ...] = ()
 if WARD_RECORD:
-    WARD_RECORD_FORCED = ("ORB_SCORING_ENABLED", "ORB_SEPSIS_AUTOSTART",
-                          "ORB_LENS_ENABLED", "ORB_MODELS_ENABLED")
+    WARD_RECORD_FORCED = (
+        "ORB_SCORING_ENABLED",
+        "ORB_SEPSIS_AUTOSTART",
+        "ORB_LENS_ENABLED",
+        "ORB_MODELS_ENABLED",
+    )
     SCORING_ENABLED = False
     SEPSIS_AUTOSTART = False
     LENS_ENABLED = False
@@ -530,8 +599,10 @@ def ward_record_boot_line() -> str | None:
         return None
     asked = ", ".join(
         f"{name}=false (the variable says {os.getenv(name, 'nothing')})"
-        for name in WARD_RECORD_FORCED)
+        for name in WARD_RECORD_FORCED
+    )
     return f"Orb Ward Record profile (ORB_WARD_RECORD) is on. Forced: {asked}."
+
 
 # The dev profile's cheap Scribe stages run on the fast 4B through Ollama, the
 # same as .env sets on the dev box. They used to default to an MLX path for
@@ -549,7 +620,73 @@ DEFAULT_VERIFY_ENABLED = "false"
 
 # ── Scribe Pipeline Configuration ──
 # Each stage is independently configurable via env vars.
-SCRIBE = {
+
+
+class _AsrConfig(TypedDict):
+    model: str
+    provider: str
+    batch_size: int
+    quant: str | None
+    language: str
+    supported: list[dict[str, str]]
+
+
+class _GenerationConfig(TypedDict):
+    model: str
+    provider: str
+    temperature: float
+    max_tokens: int
+    ctx_size: int
+
+
+class _OptionalGenerationConfig(_GenerationConfig):
+    enabled: bool
+
+
+class _ScribeConfig(TypedDict):
+    asr: _AsrConfig
+    correction: _OptionalGenerationConfig
+    draft: _GenerationConfig
+    verify: _OptionalGenerationConfig
+
+
+class _DaemonConfig(TypedDict):
+    socket: str
+    model: str
+    timeout_ms: int
+    enabled: bool
+
+
+class _VadConfig(TypedDict):
+    model_path: str
+    threshold: float
+    min_speech_ms: int
+    min_silence_ms: int
+
+
+class _CorrectorConfig(TypedDict):
+    rxnorm_db: str
+    rxnorm_csv: str
+    max_edit_distance: int
+    enabled: bool
+
+
+class _ConversationalConfig(TypedDict):
+    model_path: str
+    whisper_adapter_path: str
+    max_tokens: int
+    temperature: float
+    enabled: bool
+
+
+class _VoiceConfig(TypedDict):
+    daemon: _DaemonConfig
+    vad: _VadConfig
+    corrector: _CorrectorConfig
+    conversational: _ConversationalConfig
+
+
+SCRIBE: _ScribeConfig = {
     "asr": {
         "model": os.getenv("ORB_SCRIBE_ASR_MODEL", WHISPER_MODEL),
         "provider": os.getenv("ORB_SCRIBE_ASR_PROVIDER", "whisper-mlx"),
@@ -607,6 +744,7 @@ INGESTION_MODE = os.getenv("ORB_INGESTION_MODE", "ingestion")
 INGESTION_API_KEY = os.getenv("ORB_INGESTION_API_KEY")
 if not INGESTION_API_KEY:
     import sys as _sys
+
     _is_pytest = "pytest" in _sys.modules or os.getenv("PYTEST_CURRENT_TEST") is not None
     if DEPLOYMENT_PROFILE != "dev" and not _is_pytest:
         raise ValueError(
@@ -636,7 +774,7 @@ INGESTION_FACILITY_KEY_PREFIX = "ORB_INGESTION_API_KEY_"
 def _ingestion_facility_code(env_name: str):
     """The facility code an ORB_INGESTION_API_KEY_<CODE> name carries, or None
     when it is not one (2 to 12 capital letters and digits)."""
-    code = env_name[len(INGESTION_FACILITY_KEY_PREFIX):]
+    code = env_name[len(INGESTION_FACILITY_KEY_PREFIX) :]
     if 2 <= len(code) <= 12 and code.isascii() and code.isalnum() and code == code.upper():
         return code
     return None
@@ -662,9 +800,11 @@ def ingestion_facility_keys_ignored() -> list:
     ignored = []
     for name, value in os.environ.items():
         if name.startswith(INGESTION_FACILITY_KEY_PREFIX) and (
-                _ingestion_facility_code(name) is None or not value.strip()):
+            _ingestion_facility_code(name) is None or not value.strip()
+        ):
             ignored.append(name)
     return sorted(ignored)
+
 
 # ── Bedside monitor integration (services/vitals_source) ──
 # OFF by default and read directly from the environment by
@@ -701,7 +841,12 @@ def ingestion_facility_keys_ignored() -> list:
 #                          a wrong clock is an operational fault to be fixed, not
 #                          a reason to stop scoring the patient. See
 #                          services/vitals_source/sink.py.
-MONITOR_ENABLED = os.getenv("ORB_MONITOR_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+MONITOR_ENABLED = os.getenv("ORB_MONITOR_ENABLED", "false").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 MONITOR_PROTOCOL = os.getenv("ORB_MONITOR_PROTOCOL", "hl7v2-mllp")
 MONITOR_MODE = os.getenv("ORB_MONITOR_MODE", "listen")
 MONITOR_HOST = os.getenv("ORB_MONITOR_HOST", "127.0.0.1")
@@ -724,7 +869,11 @@ PUBLIC_APP_BASE_URL = os.getenv("ORB_PUBLIC_APP_BASE_URL", "http://localhost:517
 # is a decision, not a fault: no link is issued, no boot error, and the Trust
 # Center row passes. See services/discharge_access_service.public_link_base_status.
 DISCHARGE_LINK_ENABLED = os.getenv("ORB_DISCHARGE_LINK_ENABLED", "true").strip().lower() not in (
-    "0", "false", "no", "off")
+    "0",
+    "false",
+    "no",
+    "off",
+)
 
 # ── Sage Ambient ──
 SAGE_AMBIENT_ENABLED = os.getenv("ORB_SAGE_AMBIENT", "true").lower() == "true"
@@ -758,7 +907,7 @@ SAGE_PREWARM_TIMEOUT_SECONDS = int(os.getenv("ORB_SAGE_PREWARM_TIMEOUT", "90"))
 SAGE_PREWARM_QUEUE_WAIT_SECONDS = int(os.getenv("ORB_SAGE_PREWARM_QUEUE_WAIT", "25"))
 
 # ── Voice Intelligence Pipeline ──
-VOICE = {
+VOICE: _VoiceConfig = {
     "daemon": {
         "socket": os.getenv("ORB_WHISPER_SOCKET", "ipc:///tmp/orb-whisper.sock"),
         "model": os.getenv("ORB_WHISPER_STREAMING_MODEL", WHISPER_MODEL),
@@ -781,10 +930,8 @@ VOICE = {
         # Default MedGemma Model: "medgemma-1.5-4b-it"
         # After running fine-tuning (fuse_medgemma.sh), switch to: "medgemma-1.5-4b-it-fused"
         "model_path": str(BASE_DIR / "models" / "medgemma-1.5-4b-it"),
-        
         # After running train_whisper.sh, specify the Whisper LoRA adapter path here if using mlx_whisper
         "whisper_adapter_path": str(BASE_DIR / "adapters" / "whisper-lora"),
-        
         "max_tokens": int(os.getenv("ORB_VOICE_AGENT_MAX_TOKENS", "256")),
         "temperature": float(os.getenv("ORB_VOICE_AGENT_TEMP", "0.3")),
         # DEFAULT OFF — deliberately. This flag gates ONE thing: the
@@ -919,7 +1066,9 @@ HOUSEKEEPING_TERMINAL_CLEAN_MINUTES = max(1, int(os.getenv("ORB_HK_TERMINAL_CLEA
 #: yet produced a cleaning task. Bounded because the sweep runs on every board
 #: load; a discharge older than this that never produced a task is reported as
 #: unmatched rather than silently back-filled days later.
-HOUSEKEEPING_DISCHARGE_LOOKBACK_HOURS = max(1, int(os.getenv("ORB_HK_DISCHARGE_LOOKBACK_HOURS", "72")))
+HOUSEKEEPING_DISCHARGE_LOOKBACK_HOURS = max(
+    1, int(os.getenv("ORB_HK_DISCHARGE_LOOKBACK_HOURS", "72"))
+)
 
 # ── Workforce: duty roster, attendance, payroll EXPORT ───────────────────────
 #
@@ -1022,6 +1171,7 @@ NABH_ENABLED = _module_enabled("ORB_NABH")
 # permissions.py are inert until a site turns the switch on.
 
 _OPT_IN_ON_VALUES = ("1", "true", "yes", "on")
+
 
 import logging as _logging  # noqa: E402 (kept inside this block on purpose)
 
@@ -1249,8 +1399,7 @@ FEATURE_PREREQUISITES = {
     "readmission": (("feature", "registration"),),
     "adt_strict_locations": (("module", "adt"),),
     "pharmacy_ward_stock": (("module", "pharmacy-store"),),
-    "ndps_register": (("module", "pharmacy-store"),
-                      ("setting", "ORB_PHARMACY_NDPS_ON_FAILURE")),
+    "ndps_register": (("module", "pharmacy-store"), ("setting", "ORB_PHARMACY_NDPS_ON_FAILURE")),
     "lab_analyser_listener": (("module", "lab"),),
     # Laboratory reports in the patient portal (lis-29): only while the
     # laboratory is on, not while it drains (the strict reading, LIS-R11).
@@ -1301,9 +1450,15 @@ def _prerequisite_problems(flag_id: str) -> list[str]:
     problems = []
     for kind, ref in FEATURE_PREREQUISITES.get(flag_id, ()):
         if kind == "feature":
-            ok = bool(globals().get(_FEATURE_CONSTANTS[ref], False)) and not _prerequisite_problems(ref)
+            ok = bool(globals().get(_FEATURE_CONSTANTS[ref], False)) and not _prerequisite_problems(
+                ref
+            )
         elif kind == "module":
-            ok = (module_state(ref) == "on") if ref in OPT_IN_MODULES else bool(enabled_modules().get(ref))
+            ok = (
+                (module_state(ref) == "on")
+                if ref in OPT_IN_MODULES
+                else bool(enabled_modules().get(ref))
+            )
         elif kind == "setting" and ref == "ORB_PHARMACY_NDPS_ON_FAILURE":
             ok = globals().get("PHARMACY_NDPS_ON_FAILURE") in _NDPS_FAILURE_MODES
         else:  # an unknown prerequisite kind fails closed
@@ -1346,12 +1501,15 @@ def switch_enabled(switch_id: str) -> bool:
 _FEATURE_REQUESTED = {f: _opt_in(env) for f, env in FEATURE_FLAGS.items()}
 
 REGISTRATION_ENABLED = _FEATURE_REQUESTED["registration"]
-OPD_ENABLED = (_FEATURE_REQUESTED["opd"] and REGISTRATION_ENABLED and FRONTDESK_ENABLED)
+OPD_ENABLED = _FEATURE_REQUESTED["opd"] and REGISTRATION_ENABLED and FRONTDESK_ENABLED
 READMISSION_ENABLED = _FEATURE_REQUESTED["readmission"] and REGISTRATION_ENABLED
 ADT_STRICT_LOCATIONS_ENABLED = _FEATURE_REQUESTED["adt_strict_locations"] and ADT_ENABLED
 PHARMACY_WARD_STOCK_ENABLED = _FEATURE_REQUESTED["pharmacy_ward_stock"] and PHARMACY_STORE_ENABLED
-PHARMACY_NDPS_REGISTER_ENABLED = (_FEATURE_REQUESTED["ndps_register"] and PHARMACY_STORE_ENABLED
-                                  and PHARMACY_NDPS_ON_FAILURE is not None)
+PHARMACY_NDPS_REGISTER_ENABLED = (
+    _FEATURE_REQUESTED["ndps_register"]
+    and PHARMACY_STORE_ENABLED
+    and PHARMACY_NDPS_ON_FAILURE is not None
+)
 LAB_ANALYSER_LISTENER_ENABLED = _FEATURE_REQUESTED["lab_analyser_listener"] and LAB_ENABLED
 RESULT_QUARANTINE_ENABLED = _FEATURE_REQUESTED["result_quarantine"]
 RESULT_CORRECTIONS_ENABLED = _FEATURE_REQUESTED["result_corrections"]
@@ -1360,8 +1518,9 @@ LAB_CRITICAL_INTERFACED_ENABLED = _FEATURE_REQUESTED["lab_critical_interfaced"]
 LAB_PORTAL_REPORTS_ENABLED = _FEATURE_REQUESTED["lab_portal_reports"] and LAB_ENABLED
 MED_ORDER_STORE_ENABLED = _FEATURE_REQUESTED["med_order_store"]
 MED_ORDER_LIFECYCLE_ENABLED = _FEATURE_REQUESTED["med_order_lifecycle"] and MED_ORDER_STORE_ENABLED
-MED_ORDER_VERIFY_BEFORE_DOSE_ENABLED = (_FEATURE_REQUESTED["med_order_verify_before_dose"]
-                                        and MED_ORDER_LIFECYCLE_ENABLED)
+MED_ORDER_VERIFY_BEFORE_DOSE_ENABLED = (
+    _FEATURE_REQUESTED["med_order_verify_before_dose"] and MED_ORDER_LIFECYCLE_ENABLED
+)
 # No prerequisite. Read through feature_enabled("multi_site") at request time.
 MULTI_SITE_ENABLED = _FEATURE_REQUESTED["multi_site"]
 
@@ -1404,10 +1563,13 @@ for _flag, _why in feature_flag_problems().items():
     if _flag == "ndps_register" and PHARMACY_NDPS_ON_FAILURE is None:
         _config_log.error(
             "ORB_PHARMACY_NDPS_REGISTER is set but the NDPS register stays OFF "
-            "(ruling GRN-RS7 is held for Samuel): %s", "; ".join(_why))
+            "(ruling GRN-RS7 is held for Samuel): %s",
+            "; ".join(_why),
+        )
     else:
-        _config_log.warning("Feature %s (%s) is set but stays OFF: %s",
-                            _flag, FEATURE_FLAGS[_flag], "; ".join(_why))
+        _config_log.warning(
+            "Feature %s (%s) is set but stays OFF: %s", _flag, FEATURE_FLAGS[_flag], "; ".join(_why)
+        )
 
 
 # ── Settings for the hospital-system build ───────────────────────────────────
@@ -1415,6 +1577,7 @@ for _flag, _why in feature_flag_problems().items():
 # the default (a typo must not become a zero), and choice settings fall back to
 # their default too. The defaults on safety settings are the STRICTEST option
 # the architect named, pending Samuel's confirmation of the ruling cited.
+
 
 def _int_setting(env_name: str, default: int, minimum: int = 0) -> int:
     raw = (os.getenv(env_name) or "").strip()
@@ -1463,7 +1626,9 @@ ADT_BACKTIME_HOURS = _int_setting("ORB_ADT_BACKTIME_HOURS", 72, minimum=0)
 #: Bed reservation expiry for ER and transfer reservations (ADT-P9).
 ADT_RESERVATION_MINUTES = _int_setting("ORB_ADT_RESERVATION_MINUTES", 120, minimum=1)
 #: Bed reservation expiry for elective and post-operative reservations (ADT-P9).
-ADT_RESERVATION_ELECTIVE_MINUTES = _int_setting("ORB_ADT_RESERVATION_ELECTIVE_MINUTES", 1440, minimum=1)
+ADT_RESERVATION_ELECTIVE_MINUTES = _int_setting(
+    "ORB_ADT_RESERVATION_ELECTIVE_MINUTES", 1440, minimum=1
+)
 #: After this long, the board prompts the bed manager to close an absconded
 #: stay. Advisory only; nothing closes on a timer (ADT-S3).
 ADT_ABSCONDED_CLOSE_HOURS = _int_setting("ORB_ADT_ABSCONDED_CLOSE_HOURS", 24, minimum=1)
@@ -1507,14 +1672,16 @@ LAB_COLLECTION_BACKDATE_MINUTES = _int_setting("ORB_LAB_COLLECTION_BACKDATE_MINU
 #: 'prescribed', is marked 'Given before pharmacist check', and every later
 #: dose waits for the check.
 MED_ORDER_FIRST_DOSE_BEFORE_CHECK = _choice_setting(
-    "ORB_MED_ORDER_FIRST_DOSE_BEFORE_CHECK", ("none", "stat_urgent"), "none")
+    "ORB_MED_ORDER_FIRST_DOSE_BEFORE_CHECK", ("none", "stat_urgent"), "none"
+)
 #: What the order screen does with a second live order for the same ingredient
 #: while ORB_MED_ORDER_LIFECYCLE is on (ruling MO-R6, held for Samuel;
 #: services/medorders/screening.py). 'block', the default, is the strictest
 #: option named: the order is refused and no reason clears it. 'acknowledge'
 #: is the architect's recommendation: a 428 that clears with a written reason.
 MED_ORDER_DUPLICATE_RULE = _choice_setting(
-    "ORB_MED_ORDER_DUPLICATE_RULE", ("block", "acknowledge"), "block")
+    "ORB_MED_ORDER_DUPLICATE_RULE", ("block", "acknowledge"), "block"
+)
 
 #: The longest delay ORB_LAB_PORTAL_DELAY_HOURS accepts: a year.
 LAB_PORTAL_DELAY_MAX_HOURS = 8760
@@ -1539,7 +1706,10 @@ def _portal_delay_hours(env_name: str = "ORB_LAB_PORTAL_DELAY_HOURS"):
         _config_log.warning(
             "%s=%r is not a whole number of hours from 1 to %d; laboratory reports "
             "reach the patient portal only when a doctor releases them",
-            env_name, raw, LAB_PORTAL_DELAY_MAX_HOURS)
+            env_name,
+            raw,
+            LAB_PORTAL_DELAY_MAX_HOURS,
+        )
         return None
     return hours
 
@@ -1578,7 +1748,6 @@ LAB_PORTAL_DELAY_HOURS = _portal_delay_hours()
 # site-level, documented act — never a default, never a dev convenience.
 _ENFORCE_RAW = (os.getenv("ORB_DISCHARGE_FINANCIAL_ENFORCE") or "").strip().lower()
 DISCHARGE_FINANCIAL_ENFORCE = _ENFORCE_RAW in ("1", "true", "yes", "on")
-
 
 
 # ── Retention: the minority protection (services/consent_service) ─────────────

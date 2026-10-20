@@ -30,12 +30,14 @@ fresh, not that it must be shown to be stale.
 A value measured AFTER the new reading (an out-of-order message) is carried as
 before; changing that is a separate decision (see the review's G-items).
 """
+
 from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable, Mapping
 from datetime import timedelta
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any
 
 from services.clinical_time import format_utc, parse_to_utc
 
@@ -74,8 +76,9 @@ def _has_value(column: str, value: Any) -> bool:
     return value is not None
 
 
-def carry_forward(latest: Optional[Mapping], observed_at: str,
-                  columns: Iterable[str]) -> tuple[dict, dict]:
+def carry_forward(
+    latest: Mapping | None, observed_at: str, columns: Iterable[str]
+) -> tuple[dict, dict]:
     """The values in `latest` still fresh at `observed_at`, and when each was measured.
 
     Returns ``(values, carried)``. ``values[column]`` is the latest row's value,
@@ -99,8 +102,9 @@ def carry_forward(latest: Optional[Mapping], observed_at: str,
     try:
         now = parse_to_utc(observed_at)
     except (TypeError, ValueError):
-        logger.warning("carry-forward: unreadable observation time %r; carrying nothing",
-                       observed_at)
+        logger.warning(
+            "carry-forward: unreadable observation time %r; carrying nothing", observed_at
+        )
         return values, carried
 
     for column in values:
@@ -111,8 +115,11 @@ def carry_forward(latest: Optional[Mapping], observed_at: str,
         try:
             measured_at = parse_to_utc(measured)
         except (TypeError, ValueError):
-            logger.warning("carry-forward: %s has no readable measurement time (%r); "
-                           "not carried", column, measured)
+            logger.warning(
+                "carry-forward: %s has no readable measurement time (%r); not carried",
+                column,
+                measured,
+            )
             continue
         if now - measured_at > CARRY_LIMITS[column]:
             continue
@@ -121,6 +128,6 @@ def carry_forward(latest: Optional[Mapping], observed_at: str,
     return values, carried
 
 
-def dump_carried(carried: Mapping[str, str]) -> Optional[str]:
+def dump_carried(carried: Mapping[str, str]) -> str | None:
     """The `vitals.carried_from` value for a row: JSON, or NULL when nothing was carried."""
     return json.dumps(dict(sorted(carried.items()))) if carried else None
