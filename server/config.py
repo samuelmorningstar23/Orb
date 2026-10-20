@@ -616,6 +616,56 @@ if not INGESTION_API_KEY:
     # Dev/test only fallback. Never use this value in a deployment that handles real data.
     INGESTION_API_KEY = "orb-ingest-dev-key"
 
+# ── Ingestion sources bound to a facility (multisite-16, W10-B) ──
+# Inert while one facility is on record (every site today): every source then
+# files to the whole appliance, exactly as before. Once more than one facility
+# is on record (services/facility_service.multi_facility_data), each source
+# files only to its own facility's patients (ruling MS-R14 (a)):
+#   * the key above (ORB_INGESTION_API_KEY) stays facility 1's;
+#   * ORB_INGESTION_API_KEY_<CODE> is another facility's REST key, CODE being
+#     the facility code on the Facilities screen (ORB_INGESTION_API_KEY_SAT1);
+#   * the bedside monitor feed (ORB_MONITOR_SOURCE_ID) is bound by listing it
+#     under its facility's [[facilities]] ingestion_sources in site.toml.
+# An unbound source, or an identifier that matches a patient at another
+# facility, files nothing and takes the unknown-patient path with an
+# authorization audit row; the operations status page lists such sources.
+# Read at call time, so a test can set one with monkeypatch.setenv.
+INGESTION_FACILITY_KEY_PREFIX = "ORB_INGESTION_API_KEY_"
+
+
+def _ingestion_facility_code(env_name: str):
+    """The facility code an ORB_INGESTION_API_KEY_<CODE> name carries, or None
+    when it is not one (2 to 12 capital letters and digits)."""
+    code = env_name[len(INGESTION_FACILITY_KEY_PREFIX):]
+    if 2 <= len(code) <= 12 and code.isascii() and code.isalnum() and code == code.upper():
+        return code
+    return None
+
+
+def ingestion_facility_keys() -> dict:
+    """{facility code: key} from every ORB_INGESTION_API_KEY_<CODE> that is
+    set and not blank. Never logged or published anywhere."""
+    keys = {}
+    for name, value in os.environ.items():
+        if not name.startswith(INGESTION_FACILITY_KEY_PREFIX):
+            continue
+        code = _ingestion_facility_code(name)
+        if code is not None and value.strip():
+            keys[code] = value.strip()
+    return keys
+
+
+def ingestion_facility_keys_ignored() -> list:
+    """The names (never the values) of ORB_INGESTION_API_KEY_* settings that
+    bind nothing: a blank value, or a name that does not end in a facility
+    code. For the operations status page."""
+    ignored = []
+    for name, value in os.environ.items():
+        if name.startswith(INGESTION_FACILITY_KEY_PREFIX) and (
+                _ingestion_facility_code(name) is None or not value.strip()):
+            ignored.append(name)
+    return sorted(ignored)
+
 # ── Bedside monitor integration (services/vitals_source) ──
 # OFF by default and read directly from the environment by
 # services.vitals_source.configure_from_env. Until the site visit names the

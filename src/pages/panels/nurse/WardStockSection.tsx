@@ -390,6 +390,9 @@ function StockRow({ drug }: { drug: WardStockDrug }) {
   if (drug.listed && drug.below_par) chips.push({ text: 'Below par', tone: 'warn' })
   if (drug.expired_units) chips.push({ text: `${drug.expired_units} expired`, tone: 'danger' })
   if (drug.held_units) chips.push({ text: `${drug.held_units} held, do not use`, tone: 'danger' })
+  if (drug.below_zero_units) {
+    chips.push({ text: `${drug.below_zero_units} given with none on the books, count this drug`, tone: 'warn' })
+  }
   if (drug.in_transit_units) chips.push({ text: `${drug.in_transit_units} on its way`, tone: 'muted' })
   if (drug.requested_units) chips.push({ text: `${drug.requested_units} asked for`, tone: 'muted' })
   return (

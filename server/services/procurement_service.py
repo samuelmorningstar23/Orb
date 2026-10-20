@@ -102,7 +102,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional, Sequence
 
 from database import db_session
-from services.billing_masters import next_document_number
+from services.billing_masters import MAIN_FACILITY_ID, next_document_number
 from services.money import (
     GST_TREATMENTS,
     QUANTITY_SCALE,
@@ -653,7 +653,10 @@ def _stamp_document_number(kind: str, doc_id: int) -> Optional[str]:
     if row["n"]:
         return str(row["n"])
     try:
-        allocated = next_document_number(series)
+        # Facility 1's series (multisite-7a): stores, indents, orders and
+        # receipts carry no facility until multisite-7b stamps one from the
+        # store, so every stores and pharmacy document numbers there.
+        allocated = next_document_number(series, facility_id=MAIN_FACILITY_ID)
     except Exception:
         logger.error(
             "could not allocate a %s number for %s %s — the document is saved and "

@@ -289,7 +289,7 @@ department room plus `dept:__all__`, so a clinician on another ward never receiv
 payload shape is built by `bot_service.py:132` `_next_reading` (the emit dict at
 `bot_service.py:203-219`) and includes a full `risk` object from `compute_news2`
 (`bot_service.py:200-201`). The HL7 ingestion path emits the same event at
-`server/services/ingestion_service.py:833`.
+`server/services/ingestion_service.py:1222`.
 **Change this →**
 - **Values.** HR/SPO2/RR render `.toFixed(0)`, TEMP `.toFixed(1)`, BP as
   `systolic/diastolic` both `.toFixed(0)`. Any missing value renders the em-dash `, `
@@ -804,7 +804,7 @@ a structured flag, a report that merely mentions the word is flagged.
 `getAdministrations`, called by `loadAdministrations` (`VigilPanel.tsx:641-650`).
 **Server:** meds, `vigil_routes.py:79-84` plus the `unverified` decoration at
 `vigil_routes.py:547-556`. Administrations, `server/routes/emar_routes.py:116`
-`get_patient_administrations` → `server/services/emar_service.py:988` `list_administrations`.
+`get_patient_administrations` → `server/services/emar_service.py:1030` `list_administrations`.
 **Change this →**
 - **Header count.** "**N total**" from `medications?.length || 0` (`:1785`), plus a `+` button
   that opens Add Medication (`:1786-1788`).

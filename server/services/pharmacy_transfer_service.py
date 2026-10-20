@@ -2083,7 +2083,7 @@ def _store_stock(conn, store: Mapping, today: str) -> dict:
                 "listed": False, "par_units": None, "max_units": None,
                 "on_hand_units": 0, "held_units": 0, "expired_units": 0,
                 "in_transit_units": 0, "requested_units": 0, "earliest_expiry": None,
-                "problem": None, "lots": []}
+                "below_zero_units": 0, "problem": None, "lots": []}
         return found
 
     master_cols = "m.name, m.form, m.strength, m.dispense_unit"
@@ -2098,12 +2098,21 @@ def _store_stock(conn, store: Mapping, today: str) -> dict:
     for lot in conn.execute(
             f"SELECT l.*, {master_cols} FROM helix_inventory_lots l "
             "LEFT JOIN helix_medication_master m ON m.id = l.medication_id "
-            "WHERE l.store_id = ? AND l.quantity > 0 "
+            "WHERE l.store_id = ? AND l.quantity <> 0 "
             "ORDER BY date(l.expiration_date) ASC, l.rowid ASC", (sid,)).fetchall():
         item = entry(lot["medication_id"], lot)
         units = int(lot["quantity"] or 0)
         expiry = str(lot["expiration_date"] or "")[:10] or None
         expired = not expiry or expiry < today
+        if units < 0:
+            # Ward stock used on a dose when the books held none (grn-17):
+            # shown, never hidden and never counted as stock, so the ward
+            # counts the drug.
+            item["below_zero_units"] -= units
+            item["lots"].append({
+                "lot_id": lot["id"], "batch_no": lot["lot_number"], "expiry_date": expiry,
+                "units": units, "status": lot["status"], "status_label": "below zero on the books"})
+            continue
         if lot["status"] != "available":
             item["held_units"] += units
         elif expired:

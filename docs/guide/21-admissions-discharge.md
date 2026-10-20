@@ -104,22 +104,22 @@ sequenceDiagram
 
 ### admission_service.py
 
-#### admit_patient: `server/services/admission_service.py:11`
+#### admit_patient: `server/services/admission_service.py:974`
 **Signature:** `admit_patient(data: dict, user: dict) -> dict`
 **Does:** Atomically creates every record a new patient needs across identity, admission, profile, monitoring, chat, and AI-memory tables, and returns a one-time patient login.
 **How it works:**
-1. Computes `now` as a UTC ISO-8601 string (`:16`) and reads the admitting user's id/name (`:17-18`).
-2. Mints the patient's **Bridge portal login**: `patient_user_id = "P" + 6 hex chars` and `temp_password = secrets.token_urlsafe(9)`, a unique one-time password, never a shared default (`:22-25`).
-3. Generates the other IDs: `patient_id = "PAT-" + 8 chars`, `mrn` (caller-supplied or `"MRN-" + 6 chars`), `admission_id = "ADM-…"`, `channel_id = "chan_…"` (`:28-31`).
-4. Opens `with db_session() as db:`, the single transaction boundary (`:33`).
-5. **Step 0** inserts a `users` row with `role='patient'`, `department = ward`, and the *hashed* one-time password (`:35-39`).
-6. **Step 1** inserts the `patients` identity row linked to that login (`user_id`), copying `ward`/`bed`/`diagnosis` onto the row because Vigil, Sage, and the discharge summary read those from `patients`, not `admissions`; `diagnosis = initial_diagnosis or chief_complaint`; `status='admitted'` (`:41-68`).
-7. **Step 2** inserts the `admissions` event row: source/type/department, referring clinician, chief complaint, triage severity, notes, `isolation_precautions` as JSON, `code_status` default `full_code`, optional `initial_vitals_json`, `status='active'` (`:71-100`).
-8. **Step 3** inserts the `patient_profiles` longitudinal row with `comorbidities`/`allergies`/`current_medications` stored as JSON arrays (`:103-120`).
-9. **Step 4** (conditional), if any of HR/BP-sys/SpO2 was provided, inserts a `vitals` row with `source='clinician'` and persisted `on_oxygen`, then computes a baseline NEWS2 via `compute_news2` and inserts a `risk_scores` row so the patient shows real risk in Vigil immediately. The whole block is wrapped in `try/except` and logs (not raises) on failure, a missing baseline score must not abort the admission (`:122-162`).
-10. **Step 5** opens a Relay `case_room` channel and posts a structured system message summarizing the admission (`:164-190`).
-11. **Step 6** seeds `sage_room_memory` with a patient summary, discussion summary, and initial risk flags (high-acuity if triage ≤ 2) (`:192-221`).
-12. Returns `success`, the four IDs, `mrn`, and the one-time `patient_login_id` + `temporary_password`, returned exactly once because only the hash is stored (`:223-233`).
+1. Computes `now` as a UTC ISO-8601 string (`:1070`) and reads the admitting user's id/name (`:1071-1072`).
+2. Mints the patient's **Bridge portal login**: `patient_user_id = "P" + 6 hex chars` and `temp_password = secrets.token_urlsafe(9)`, a unique one-time password, never a shared default (`:1074-1079`).
+3. Generates the other IDs: `patient_id = "PAT-" + 8 chars`, `mrn` (caller-supplied or `"MRN-" + 6 chars`), `admission_id = "ADM-…"`, `channel_id = "chan_…"` (`:1082-1086`).
+4. Opens `with db_session() as db:`, the single transaction boundary (`:1103`).
+5. **Step 0** inserts a `users` row with `role='patient'`, `department = ward`, and the *hashed* one-time password (`:1158-1160`).
+6. **Step 1** inserts the `patients` identity row linked to that login (`user_id`), copying `ward`/`bed`/`diagnosis` onto the row because Vigil, Sage, and the discharge summary read those from `patients`, not `admissions`; `diagnosis = initial_diagnosis or chief_complaint`; `status='admitted'` (`:1161-1194`).
+7. **Step 2** inserts the `admissions` event row: source/type/department, referring clinician, chief complaint, triage severity, notes, `isolation_precautions` as JSON, `code_status` default `full_code`, optional `initial_vitals_json`, `status='active'` (`:1203-1233`).
+8. **Step 3** inserts the `patient_profiles` longitudinal row with `comorbidities`/`allergies`/`current_medications` stored as JSON arrays (`:1242-1262`).
+9. **Step 4** (conditional), if any of HR/BP-sys/SpO2 was provided, inserts a `vitals` row with `source='clinician'` and persisted `on_oxygen`, then computes a baseline NEWS2 via `compute_news2` and inserts a `risk_scores` row so the patient shows real risk in Vigil immediately. The whole block is wrapped in `try/except` and logs (not raises) on failure, a missing baseline score must not abort the admission (`:1275-1349`).
+10. **Step 5** opens a Relay `case_room` channel and posts a structured system message summarizing the admission (`:1351-1375`).
+11. **Step 6** seeds `sage_room_memory` with a patient summary, discussion summary, and initial risk flags (high-acuity if triage ≤ 2) (`:1377-1414`).
+12. Returns `success`, the four IDs, `mrn`, and the one-time `patient_login_id` + `temporary_password`, returned exactly once because only the hash is stored (`:1468-1477`).
 
 **Why it exists:** Orb's modules are only useful if they all "see" a patient at the same instant. Doing the inserts in one transaction guarantees no module ever holds a dangling reference to a patient another module doesn't know about. Seeding vitals+risk inline is what makes a freshly admitted patient appear on the Vigil board without waiting for the simulator.
 **Data in/out:** In: the flattened `AdmissionRequest` dict + the authenticated `user` dict. Out: `{success, patient_id, admission_id, channel_id, mrn, patient_login_id, temporary_password}`.

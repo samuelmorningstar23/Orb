@@ -1016,11 +1016,13 @@ def _check_facilities() -> dict:
     import config
     import facility_fence
     from database import db_session
-    from services import facility_service
+    from services import facility_service, ingestion_service
 
     with db_session() as db:
         report = facility_service.facility_report(db)
         main_name = facility_service.display_name(db=db)
+        # multisite-16: which facility each ingestion source files to.
+        sources = ingestion_service.source_binding_report(db)
     multi = report["facilities"] > 1
     variants = report["department_variants"]
     unmastered = report["departments_not_in_master"]
@@ -1038,6 +1040,7 @@ def _check_facilities() -> dict:
         "departments_not_in_the_list": unmastered,
         "patients_with_admissions_at_several_facilities": several,
         "facility_fence": {**facility_fence.describe(), "holding": multi},
+        "ingestion_sources": sources,
     }
 
     problems: list[tuple[str, str, str]] = []
@@ -1096,6 +1099,26 @@ def _check_facilities() -> dict:
             f"list ({names}), so Orb cannot tell which facility they belong to.",
             "Add each one to the departments list of the right facility, or correct "
             "the spelling to a listed department.",
+        ))
+    if multi and (sources["unbound"] or sources["refused"]):
+        # multisite-16, ruling MS-R14 (a): such readings were filed to no patient.
+        told = sources["unbound"] + [
+            f"'{r['source_name'] or 'unnamed'}' was refused {r['refusals']} time(s): {r['words']}"
+            for r in sources["refused"]]
+        problems.append((
+            ATTENTION,
+            f"Some bedside or laboratory feeds are not filing to any patient, because more "
+            f"than one facility is on record and each feed files only to its own "
+            f"facility's patients: {'; '.join(told[:4])}"
+            + (f"; and {len(told) - 4} more." if len(told) > 4 else "."),
+            "Bind each feed to its facility. A bedside monitor feed: list its source name "
+            "under that facility in the site settings file, for example\n"
+            "    [[facilities]]\n    code = \"MAIN\"\n    ingestion_sources = [\"monitor_hl7\"]\n"
+            "then restart Orb. A laboratory or gateway that sends over the network: give it "
+            "its facility's own key, ORB_INGESTION_API_KEY_<facility code>, in the machine "
+            "settings file. Readings refused so far were put on no patient's chart; each "
+            "message is kept in the ingestion record, and laboratory results wait as "
+            "unmatched where that list is switched on.",
         ))
 
     notes: list[str] = []

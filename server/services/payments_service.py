@@ -80,7 +80,12 @@ from typing import Any, Optional, Sequence
 
 from database import db_session
 from services import facility_identity
-from services.billing_masters import next_document_number
+from services.billing_masters import (
+    MAIN_FACILITY_ID,
+    SeriesNotSetUp,
+    next_document_number,
+    series_is_configured,
+)
 from services.hospital_time import hospital_stamp, hospital_today, local_day_bounds_utc
 from services.money import (
     MoneyError,
@@ -289,11 +294,38 @@ def _iso_date(value: Optional[str], name: str) -> Optional[str]:
         raise PaymentError(f"{name} must be YYYY-MM-DD") from exc
 
 
-def _receipt_series_is_configured(db) -> bool:
-    row = db.execute(
-        "SELECT is_configured FROM document_number_series WHERE series_code = 'RCPT'"
-    ).fetchone()
-    return bool(row and int(row["is_configured"] or 0))
+def _receipt_series_is_configured(db, facility_id: int = MAIN_FACILITY_ID) -> bool:
+    """Whether the receipt series of a facility (multisite-7a; facility 1 by
+    default) is the site's real one."""
+    return series_is_configured(db, "RCPT", facility_id=facility_id)
+
+
+#: What each series this module draws from numbers, for a refusal's words.
+_SERIES_WORDS = {"RCPT": "receipt", "REF": "refund"}
+
+
+def _next_number(series_code: str, *, patient_id: Optional[str],
+                 admission_id: Optional[str] = None) -> dict:
+    """The next number of the series of the facility the document belongs to
+    (multisite-7a): the facility its supplier snapshot is taken for, which is
+    facility 1 while only one is on record. The answer adds `facility_id`.
+
+    A facility other than 1 that has no series of its own yet is refused in
+    words before anything is written, never numbered from facility 1's
+    series."""
+    with db_session() as db:
+        facility_id = facility_identity.document_facility_id(
+            db, patient_id=patient_id, admission_id=admission_id)
+    try:
+        doc = next_document_number(series_code, facility_id=facility_id)
+    except SeriesNotSetUp as exc:
+        raise PaymentError(
+            f"This facility has no {_SERIES_WORDS.get(series_code, 'document')} number "
+            "series yet, so nothing was recorded. An administrator sets one up in Admin, "
+            "Facilities."
+        ) from exc
+    doc["facility_id"] = facility_id
+    return doc
 
 
 # ── Views (what a screen and an API response receive) ────────────────────────
@@ -1002,7 +1034,7 @@ def record_payment(
         if counter_session_id is not None:
             _require_open_session(db, counter_session_id)
 
-    doc = next_document_number("RCPT")
+    doc = _next_number("RCPT", patient_id=patient_id, admission_id=admission_id)
     now = _utc_now_str()
 
     with db_session(immediate=True) as db:
@@ -1066,7 +1098,7 @@ def record_payment(
 
         balance = _deposit_balance(db, patient_id)
         row = _row(db.execute("SELECT * FROM payments WHERE id = ?", (payment_id,)).fetchone())
-        series_configured = _receipt_series_is_configured(db)
+        series_configured = _receipt_series_is_configured(db, doc["facility_id"])
 
         _audit(
             db,
@@ -1142,7 +1174,10 @@ def get_payment(payment_id: int) -> Optional[dict]:
             ).fetchall()
         ]
         view["allocations"] = allocations
-        view["receipt_series_is_configured"] = _receipt_series_is_configured(db)
+        # The series of the facility the receipt was issued by (its snapshot).
+        issued_by = row["supplier_facility_id"] if "supplier_facility_id" in row.keys() else None
+        view["receipt_series_is_configured"] = _receipt_series_is_configured(
+            db, int(issued_by or MAIN_FACILITY_ID))
     return view
 
 
@@ -1283,7 +1318,8 @@ def reverse_payment(payment_id: int, *, reason: str, reversed_by: str) -> dict:
             "A second person must sign for a reversal"
         )
 
-    doc = next_document_number("RCPT")
+    doc = _next_number("RCPT", patient_id=original["patient_id"],
+                       admission_id=original["admission_id"])
     now = _utc_now_str()
 
     with db_session(immediate=True) as db:
@@ -1438,7 +1474,7 @@ def apply_deposit_to_invoice(
     with db_session() as db:
         check(db)
 
-    doc = next_document_number("RCPT")
+    doc = _next_number("RCPT", patient_id=patient_id, admission_id=admission_id)
     now = _utc_now_str()
 
     with db_session(immediate=True) as db:
@@ -1684,7 +1720,7 @@ def request_refund(
                               payment_id=payment_id, invoice_id=invoice_id,
                               admission_id=admission_id)
 
-    doc = next_document_number("REF")
+    doc = _next_number("REF", patient_id=patient_id, admission_id=admission_id)
     now = _utc_now_str()
 
     with db_session(immediate=True) as db:
@@ -1826,7 +1862,8 @@ def pay_refund(refund_id: int, *, method: str, paid_by: str,
             f"refund {refund_id} is {refund['status']}; only an approved refund can be paid"
         )
 
-    doc = next_document_number("RCPT")
+    doc = _next_number("RCPT", patient_id=refund["patient_id"],
+                       admission_id=refund["admission_id"])
     now = _utc_now_str()
     amount = int(refund["amount_paise"])
 

@@ -713,12 +713,12 @@ There is **no lockout or unlock control on this screen.** Nothing in
 `src/pages/panels/admin/` posts to a lockout endpoint. The nearest things that
 exist are:
 - **Session revocation**, which happens implicitly: Deactivate and both password
-  resets bump `token_version` (`server/routes/admin_users_routes.py:904-910`,
-  `:955-961`, `:1385-1391`), killing every outstanding JWT immediately.
+  resets bump `token_version` (`server/routes/admin_users_routes.py:919-925`,
+  `:970-976`, `:1402-1408`), killing every outstanding JWT immediately.
 - **Signing-PIN lockout state**, cleared server-side when a new PIN is
   provisioned, `pin_security.clear_pin_failures(user_id)`
-  (`server/routes/admin_users_routes.py:1020`). The `POST
-  /api/admin/users/{id}/pin` endpoint (`:973-1041`) has **no UI on this screen**.
+  (`server/routes/admin_users_routes.py:1035`). The `POST
+  /api/admin/users/{id}/pin` endpoint (`:988-1056`) has **no UI on this screen**.
 - **Failed-login counts per user**, computed by the list endpoint as
   `failed_logins_24h` (`server/routes/admin_users_routes.py:205-216`), sent to
   the browser and then **not rendered**; see the Users table note below.
@@ -803,7 +803,7 @@ ghost "Activate".
 placeholder "e.g. DR-0142"), **Full name**, **Role** select, **Department
 (optional)**, **Temporary password** (plain text input, `minLength 8`).
 **API:** `POST /api/admin/users` (`:118-127`) →
-`server/routes/admin_users_routes.py:803-879` (`create_user`), 201 on success.
+`server/routes/admin_users_routes.py:817-894` (`create_user`), 201 on success.
 **Change this →** The password is validated twice: client-side at `:115`
 ("Password must be at least 8 characters." appears in red above the buttons)
 and by Pydantic at `server/routes/admin_users_routes.py:87`. A duplicate id
@@ -820,7 +820,7 @@ password input, a **Generate** button and a **Copy** button.
 **Data from:** `generatePassword()` (`:182-187`), 16 characters from a
 confusables-free alphabet via `crypto.getRandomValues`.
 **API:** `POST /api/admin/users/{id}/reset-password` (`:202-205`) →
-`server/routes/admin_users_routes.py:942-967`.
+`server/routes/admin_users_routes.py:957-982`.
 **Change this →** **Copy** is disabled until there is a password, and its label
 flips to **"Copied"** on success (`:471-472`); typing or re-generating resets it to
 "Copy" (`:467`, `:469`). Submit turns the button into "Saving…". Server-side the
@@ -831,7 +831,7 @@ their next request.
 **Rendered by:** `UsersPanel.tsx:490-545`. Two fields: **Role** (select,
 autofocused, same five roles) and **Department** (free text).
 **API:** `PATCH /api/admin/users/{id}` (`:509-512`) →
-`server/routes/admin_users_routes.py:1047-1126` (`patch_user`).
+`server/routes/admin_users_routes.py:1062-1143` (`patch_user`).
 **Change this →** This is the only role-editing surface in the product. On save,
 the toast reads "User updated", the table refetches and the row's Role chip
 changes colour. The department is trimmed and an empty string becomes NULL
@@ -846,10 +846,10 @@ consequence, for deactivation, "…will be blocked from logging in and all their
 active sessions will be revoked." (`:873`). The confirm button is red for
 deactivation (`:320`) and reads "Working…" while busy (`:324`).
 **API:** `POST /api/admin/users/{id}/deactivate|activate`, built at
-`UsersPanel.tsx:470` → `server/routes/admin_users_routes.py:885-936`.
+`UsersPanel.tsx:470` → `server/routes/admin_users_routes.py:900-951`.
 **Change this →** Deactivating **yourself** is refused server-side with a 400,
 "You cannot deactivate your own account"
-(`server/routes/admin_users_routes.py:895-896`), the UI does not hide the
+(`server/routes/admin_users_routes.py:910-911`), the UI does not hide the
 button, so the message arrives as a toast. Note the security caveat recorded in
 that file's docstring (`:48-52`): `auth_routes` does not currently reject
 `is_active=0` at login, so deactivation kills existing tokens but a fresh login
@@ -1061,7 +1061,7 @@ Duplicate, `:33-38`), a refresh button (`:39-41`) and an "N events" count
 · Correlation · Error** (`:59-66`); the Error cell turns red when non-empty
 (`:79`); the correlation is truncated to 12 chars and is not clickable.
 **API:** `getIngestionStatus(50, status)` (`src/api/client.ts:1852-1856`) →
-`GET /api/ingest/status` → `server/routes/ingestion_routes.py:220-225`
+`GET /api/ingest/status` → `server/routes/ingestion_routes.py:250-255`
 (`ingestion_status`), note this one requires **`ingest.monitor`**, not
 `admin.overview`.
 **Change this →** Changing the status select refetches (`:22`). Empty state

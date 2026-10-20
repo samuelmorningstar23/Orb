@@ -537,6 +537,20 @@ def _require_department_in_scope(request: Request, actor: dict, user_id: str,
     })
 
 
+def _master_spelling(department: str | None) -> str | None:
+    """multisite-3: with more than one facility on record, a department given
+    to an account is stored in the departments master's own spelling (case and
+    spacing folded), so the exact comparison every scope makes
+    (admissions.department against users.department) holds, and the account
+    resolves to the department's facility. Unchanged with one facility, and
+    for a department the master does not list (only a group-wide
+    administrator may use one, see _require_department_in_scope)."""
+    if department is None or not facility_service.multi_facility_data():
+        return department
+    from services.department_master import canonical_name
+    return canonical_name(department) or department
+
+
 def _multi_site_off() -> HTTPException:
     return HTTPException(status_code=400, detail={
         "error": "multi_site_off",
@@ -829,6 +843,7 @@ def create_user(
     # None (facility 1, unchanged) with one facility and the switch off.
     home_facility = _home_facility_for_new_account(
         request, user, user_id, department, body.facility_id)
+    department = _master_spelling(department)
 
     password_hash = hash_password(body.password)
 
@@ -1070,12 +1085,14 @@ def patch_user(
         changed["role"] = body.role
     if body.department is not None:
         dept = body.department.strip() or None
-        sets.append("department = ?")
-        params.append(dept)
-        changed["department"] = dept
         # multisite-6: the new department must belong to this administrator's
         # facilities (more than one facility on record only).
         _require_department_in_scope(request, user, user_id, dept, "role change")
+        # multisite-3: stored in the master's spelling (more than one only).
+        dept = _master_spelling(dept)
+        sets.append("department = ?")
+        params.append(dept)
+        changed["department"] = dept
 
     params.append(user_id)
     try:

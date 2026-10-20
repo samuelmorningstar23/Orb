@@ -16,8 +16,15 @@
  * adopts from /api/health), the screen lists every facility and says why a
  * second one cannot be added yet. Adding and closing facilities themselves come
  * with later steps of the multi-site work.
+ *
+ * Also with the switch on, each facility card has its document numbers
+ * (multisite-7a): the series its bills, receipts and other documents are
+ * numbered from, loaded when opened. An administrator of the facility edits a
+ * prefix, the digits or whether it is the hospital's real series, and sets up
+ * a second facility's own series. The server refuses any prefix that could
+ * repeat a number and says why beside the field.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
   FACILITY_FIELDS,
@@ -28,6 +35,12 @@ import {
   listFacilities,
   updateFacility,
 } from '../../../api/facilities'
+import { listDocumentSeries, saveDocumentSeries } from '../../../api/documentSeries'
+import type {
+  DocumentSeries,
+  DocumentSeriesChange,
+  DocumentSeriesList,
+} from '../../../api/documentSeries'
 import type {
   CreateCheck,
   Facility,
@@ -289,6 +302,280 @@ function IdentityCard({ facility, onSaved }: CardProps) {
   )
 }
 
+/* ── Document numbers (multisite-7a) ─────────────────────────────────────── */
+
+interface SeriesDraft {
+  code: string
+  label: string
+  /** Setting up a series this facility does not have yet. */
+  creating: boolean
+  prefix: string
+  suffix: string
+  digits: string
+  real: boolean
+}
+
+const PAD_WIDTH_MIN = 1
+const PAD_WIDTH_MAX = 12
+
+/** The change to send: on an edit only what changed; on a set-up everything
+ *  typed. A digits value that is not a whole number in range is refused here
+ *  with the same words the server uses. */
+function seriesChange(
+  draft: SeriesDraft, current: DocumentSeries | null,
+): DocumentSeriesChange | { digitsError: string } {
+  const digits = Number(draft.digits)
+  if (!/^\d+$/.test(draft.digits.trim()) || digits < PAD_WIDTH_MIN || digits > PAD_WIDTH_MAX) {
+    return { digitsError: `Give a whole number of digits from ${PAD_WIDTH_MIN} to ${PAD_WIDTH_MAX}.` }
+  }
+  const next: DocumentSeriesChange = {
+    prefix: draft.prefix, suffix: draft.suffix, pad_width: digits, is_configured: draft.real,
+  }
+  if (!current) return next
+  const change: DocumentSeriesChange = {}
+  if (next.prefix !== current.prefix) change.prefix = next.prefix
+  if (next.suffix !== current.suffix) change.suffix = next.suffix
+  if (next.pad_width !== current.pad_width) change.pad_width = next.pad_width
+  if (next.is_configured !== current.is_configured) change.is_configured = next.is_configured
+  return change
+}
+
+function SeriesSection({ facility }: { facility: Facility }) {
+  const [open, setOpen] = useState(false)
+  const [data, setData] = useState<DocumentSeriesList | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [hidden, setHidden] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
+  const [draft, setDraft] = useState<SeriesDraft | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<string, string>>>({})
+  const [notice, setNotice] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    let alive = true
+    listDocumentSeries(facility.id)
+      .then(res => { if (alive) { setData(res); setLoadError(null) } })
+      .catch(err => {
+        if (!alive) return
+        if (isSwitchedOff(err)) setHidden(true)
+        else setLoadError(errorText(err, 'Could not load the document numbers.'))
+      })
+    return () => { alive = false }
+  }, [open, facility.id, reloadKey])
+
+  const begin = (next: SeriesDraft) => {
+    setDraft(next)
+    setFormError(null)
+    setFieldErrors({})
+    setNotice(null)
+  }
+
+  const save = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!draft) return
+    const current = draft.creating
+      ? null
+      : data?.series.find(s => s.series_code === draft.code) ?? null
+    const change = seriesChange(draft, current)
+    if ('digitsError' in change) {
+      setFieldErrors({ pad_width: change.digitsError })
+      setFormError('Some details need correcting before they can be saved.')
+      return
+    }
+    if (!draft.creating && Object.keys(change).length === 0) {
+      setDraft(null)
+      setNotice('Nothing was changed.')
+      return
+    }
+    setSaving(true)
+    setFormError(null)
+    setFieldErrors({})
+    try {
+      const res = await saveDocumentSeries(facility.id, draft.code, change)
+      setDraft(null)
+      setNotice(res.created
+        ? `${res.series.label} are now numbered here. The next number is ${res.series.next_number_preview}.`
+        : `Saved. The next number is ${res.series.next_number_preview}.`)
+      setReloadKey(k => k + 1)
+    } catch (err) {
+      const errors = fieldErrorsOf(err)
+      if (errors.length) {
+        const byField: Partial<Record<string, string>> = {}
+        for (const fe of errors) byField[fe.field] = byField[fe.field] ?? fe.message
+        setFieldErrors(byField)
+        setFormError('Some details need correcting before they can be saved.')
+      } else {
+        setFormError(errorText(err, 'Could not save the numbering.'))
+      }
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (hidden) return null
+  const titleId = `facility-${facility.id}-series-title`
+  const field = (name: 'prefix' | 'suffix' | 'pad_width', label: string, hint: string,
+                 value: string, onChange: (v: string) => void) => {
+    const inputId = `facility-${facility.id}-series-${name}`
+    const error = fieldErrors[name]
+    const describedBy = [error ? `${inputId}-error` : null, `${inputId}-hint`].filter(Boolean).join(' ')
+    return (
+      <div className="admin-field">
+        <label className="admin-field__label" htmlFor={inputId}>{label}</label>
+        <input
+          id={inputId} className="admin-filter-input" value={value}
+          inputMode={name === 'pad_width' ? 'numeric' : undefined}
+          spellCheck={false}
+          onChange={e => onChange(e.target.value)}
+          aria-invalid={error ? true : undefined} aria-describedby={describedBy}
+        />
+        <span className="admin-section__hint" id={`${inputId}-hint`}>{hint}</span>
+        {error && <span className="admin-form__error" id={`${inputId}-error`}>{error}</span>}
+      </div>
+    )
+  }
+
+  return (
+    <section
+      className="glass-card" style={{ padding: 16 }} aria-labelledby={titleId}
+      data-testid={`facility-series-${facility.id}`}
+    >
+      <div className="admin-filter-row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+        <h3 className="admin-section__title" id={titleId}>
+          Document numbers, {facility.display_name}
+        </h3>
+        <button
+          type="button" className="admin-btn-ghost" aria-expanded={open}
+          onClick={() => setOpen(o => !o)}
+        >
+          {open ? 'Hide document numbers' : 'Show document numbers'}
+        </button>
+      </div>
+      {open && (
+        <>
+          <p className="admin-section__hint" style={{ marginTop: 4 }}>
+            Each facility numbers its own bills, receipts and other documents. A prefix may not
+            be the same as another facility&apos;s, begin with it or be the start of it, and may
+            not begin a number already issued, so no number is ever given twice. Hospital
+            numbers (UHID) are one series for the whole group.
+          </p>
+          {notice && <p className="admin-modal__text" role="status" style={{ marginTop: 8 }}>{notice}</p>}
+          {loadError && (
+            <div style={{ marginTop: 8 }}>
+              <p className="admin-form__error" role="alert">{loadError}</p>
+              <button type="button" className="admin-btn-ghost" style={{ marginTop: 8 }}
+                      onClick={() => setReloadKey(k => k + 1)}>
+                Try again
+              </button>
+            </div>
+          )}
+          {!data && !loadError && <p className="admin-modal__text" style={{ marginTop: 8 }}>Loading…</p>}
+          {data && data.series.length === 0 && (
+            <p className="admin-modal__text" style={{ marginTop: 8 }}>
+              No document numbers are set up at this facility yet.
+            </p>
+          )}
+          {data && data.series.length > 0 && (
+            <div className="admin-table-wrap" style={{ marginTop: 8 }}>
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Document</th>
+                    <th scope="col">Next number</th>
+                    <th scope="col">Series</th>
+                    <th scope="col"><span className="sr-only">Action</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.series.map(s => (
+                    <tr key={s.series_code}>
+                      <td>{s.label}{s.group_wide ? ' (whole group)' : ''}</td>
+                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{s.next_number_preview}</td>
+                      <td>
+                        {s.is_configured
+                          ? "The hospital's real series"
+                          : 'Placeholder, not yet set by the hospital'}
+                      </td>
+                      <td>
+                        {data.can_edit && !draft && (
+                          <button
+                            type="button" className="admin-btn-ghost"
+                            onClick={() => begin({
+                              code: s.series_code, label: s.label, creating: false,
+                              prefix: s.prefix, suffix: s.suffix, digits: String(s.pad_width),
+                              real: s.is_configured,
+                            })}
+                          >
+                            Edit<span className="sr-only"> {s.label.toLowerCase()}</span>
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {data && data.can_edit && data.can_add.length > 0 && !draft && (
+            <div style={{ marginTop: 12 }}>
+              <p className="admin-modal__text">Not numbered at this facility yet:</p>
+              <ul className="admin-modal__text" style={{ margin: '4px 0 0', paddingLeft: 20 }}
+                  data-testid={`facility-series-to-add-${facility.id}`}>
+                {data.can_add.map(a => (
+                  <li key={a.series_code} style={{ marginTop: 4 }}>
+                    {a.label}{' '}
+                    <button
+                      type="button" className="admin-btn-ghost"
+                      onClick={() => begin({
+                        code: a.series_code, label: a.label, creating: true,
+                        prefix: '', suffix: '', digits: '6', real: false,
+                      })}
+                    >
+                      Set up<span className="sr-only"> {a.label.toLowerCase()}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {draft && (
+            <form className="admin-form" onSubmit={save} style={{ marginTop: 12 }} noValidate
+                  aria-label={`${draft.creating ? 'Set up' : 'Edit'} numbering for ${draft.label.toLowerCase()}`}>
+              <p className="admin-section__title">{draft.label}</p>
+              <div className="admin-form__row">
+                {field('prefix', 'Prefix', 'Up to 16 letters, digits or / . _ -',
+                       draft.prefix, v => setDraft({ ...draft, prefix: v }))}
+                {field('suffix', 'Suffix', 'Optional, up to 8 characters',
+                       draft.suffix, v => setDraft({ ...draft, suffix: v }))}
+                {field('pad_width', 'Digits', `The number is padded to this many digits (${PAD_WIDTH_MIN} to ${PAD_WIDTH_MAX})`,
+                       draft.digits, v => setDraft({ ...draft, digits: v }))}
+              </div>
+              <label className="admin-field" style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <input
+                  type="checkbox" checked={draft.real}
+                  onChange={e => setDraft({ ...draft, real: e.target.checked })}
+                />
+                <span>This is the hospital&apos;s real series, not a placeholder</span>
+              </label>
+              {formError && <p className="admin-form__error" role="alert">{formError}</p>}
+              <div className="admin-modal__actions">
+                <button type="button" className="admin-btn-ghost" onClick={() => setDraft(null)} disabled={saving}>
+                  Cancel
+                </button>
+                <button type="submit" className="admin-filter-btn" disabled={saving}>
+                  {saving ? 'Saving…' : draft.creating ? 'Set up numbering' : 'Save numbering'}
+                </button>
+              </div>
+            </form>
+          )}
+        </>
+      )}
+    </section>
+  )
+}
+
 function CreateCheckSection() {
   const [check, setCheck] = useState<CreateCheck | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -378,7 +665,12 @@ export default function FacilitiesPanel() {
       )}
       {!data && !loadError && <p className="admin-modal__text">Loading…</p>}
 
-      {facilities.map(f => <IdentityCard key={f.id} facility={f} onSaved={onSaved} />)}
+      {facilities.map(f => (
+        <Fragment key={f.id}>
+          <IdentityCard facility={f} onSaved={onSaved} />
+          {multiSite && <SeriesSection facility={f} />}
+        </Fragment>
+      ))}
 
       {multiSite && <CreateCheckSection />}
     </div>

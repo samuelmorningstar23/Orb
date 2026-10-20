@@ -11,7 +11,7 @@ Built 2026-08-07.
 | | Column | Set by | Used for |
 |---|---|---|---|
 | **Tablet PIN** | `users.device_pin_hash` | `POST /api/auth/device-pin` (self) · `POST /api/auth/device-pin/{user_id}` (admin) | Signing in to a ward tablet. This chapter. |
-| **Signing PIN** | `users.pin_hash` | `POST /api/admin/users/{user_id}/pin` (`server/routes/admin_users_routes.py:973`) | Co-signing an agentic medication order. Guide 08-relay / guide 14-helix. |
+| **Signing PIN** | `users.pin_hash` | `POST /api/admin/users/{user_id}/pin` (`server/routes/admin_users_routes.py:988`) | Co-signing an agentic medication order. Guide 08-relay / guide 14-helix. |
 
 They are deliberately separate. If unlocking the tablet used the same secret, anyone who shoulder-surfs an unlock typed thirty times a shift on a shared screen could also countersign a medication order in that nurse's name, two independent controls collapsed into one. Migration 12's docstring says exactly this at `server/migrations.py:743-751`.
 
@@ -188,7 +188,7 @@ sequenceDiagram
 **Why it exists:** two reasons, both load-bearing. (1) It is module level rather than a closure inside `get_current_user`, because this runs on every authenticated request and rebuilding the function object per call is pure waste on the hottest path in the process. (2) **One session, deliberately**, `get_current_user` makes four decisions off this snapshot (exists / is_active / token_version / device-still-enrolled) and they must all be judged against the same one. Splitting the reads would put an `await` between them, letting an admin deactivation, a logout-driven `token_version` bump, or a device revocation land in the gap.
 **Breaks if you change it:** splitting into two `run_db()` hops validates a request against a half-old, half-new picture. A missing `enrolled_devices` table is caught and returns `device = None`, which fails **closed**, because a token claiming a device we cannot verify is not honoured.
 
-#### `get_current_user` device branch: `server/auth.py:465` (branch at `:505-514`)
+#### `get_current_user` device branch: `server/auth.py:536` (branch at `:505-514`)
 **Signature:** inside `async def get_current_user(request) -> dict`
 **Does:** If the token carries `did`, requires the device to still exist and be un-revoked; 401 otherwise. Carries `user["device_id"]` and `user["auth_method"]` for audit metadata.
 **On screen:** a revoked tablet's next request 401s, which the SPA's global interceptor turns into the session-expired modal (`src/components/SessionExpiredModal.tsx`, wired at `src/App.tsx`).
@@ -532,7 +532,7 @@ This file predates the tablet feature and is used by it only for hashing. Everyt
 
 2. **There is no "set my tablet PIN" screen.** `setOwnDevicePin` exists at `src/api/deviceAuth.ts:80` and no component imports it; `POST /api/auth/device-pin/{user_id}` (admin provisioning) has no caller either. So in practice a nurse cannot get a tablet PIN through the UI at all, the whole feature is currently reachable only through the API.
 
-3. **The audit's mapping of `/api/admin/users/{id}/pin` to this feature is wrong.** That endpoint (`server/routes/admin_users_routes.py:973`) sets `users.pin_hash`, the *signing* PIN for agentic medication orders. It is a different credential with a different threat model. Documented here only so nobody wires it to the tablet.
+3. **The audit's mapping of `/api/admin/users/{id}/pin` to this feature is wrong.** That endpoint (`server/routes/admin_users_routes.py:988`) sets `users.pin_hash`, the *signing* PIN for agentic medication orders. It is a different credential with a different threat model. Documented here only so nobody wires it to the tablet.
 
 4. **`enrolled_devices.last_seen_at` is only stamped on a *successful* PIN login.** It is written inside `_clear_pin_failures` (`auth_routes.py:265`), which runs on the success path of `pin_login` and nowhere else. So the column tracks "last successful PIN sign-in", not "last contact", a tablet used all day by someone who signs in once shows a timestamp from that morning, and a tablet whose users only ever fail shows nothing at all. `_device_public` reports it at `auth_routes.py:992`.
 

@@ -145,6 +145,13 @@ class SiteConfig:
     # services/lab_critical_service.py directly: it is the only reader, so
     # there is no older variable to translate it into.
     lab_critical: dict = field(default_factory=dict)
+    # The facilities of the hospital group this appliance holds ([[facilities]],
+    # multisite-3 and multisite-16): [{code, downtime_mirror_dir,
+    # ingestion_sources}], codes in capitals. Operator-only settings (a folder
+    # path, which feed belongs to which facility), so they live here and never
+    # in a column a screen can edit. The facility's identity is the facilities
+    # table's (the Facilities screen); this file only binds machinery to a code.
+    facilities: list[dict] = field(default_factory=list)
     env_overrides: dict[str, str] = field(default_factory=dict)
     env_conflicts: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -165,6 +172,19 @@ class SiteConfig:
         for d in self.departments:
             if any(w.strip().lower() == needle for w in d.get("wards", [])):
                 return d["name"]
+        return None
+
+    def facility_for_source(self, source_name: str | None) -> str | None:
+        """The code of the facility whose [[facilities]] block lists this
+        ingestion source (the monitor feed's ORB_MONITOR_SOURCE_ID), or None
+        when no block lists it. Compared ignoring case and outer spaces; the
+        file may list a source under one facility only."""
+        needle = (source_name or "").strip().casefold()
+        if not needle:
+            return None
+        for f in self.facilities:
+            if any(s.casefold() == needle for s in f.get("ingestion_sources", [])):
+                return f["code"]
         return None
 
 
@@ -214,10 +234,23 @@ _SCHEMA: dict[str, dict[str, dict]] = {
         "label": {"type": "str"},
         "timeout_minutes": {"type": "number", "min": 1, "max": 720},
     },
+    # The facilities of the hospital group (multisite-3 and multisite-16). One
+    # [[facilities]] block per facility code on the Facilities screen: where
+    # its downtime packs are mirrored, and which ingestion sources (the bedside
+    # monitor feed's ORB_MONITOR_SOURCE_ID) send its patients' readings. With
+    # more than one facility on record, a source no block lists files nothing.
+    "facilities": {
+        "code": {"type": "str", "required": True},
+        "downtime_mirror_dir": {"type": "str"},
+        "ingestion_sources": {"type": "str_list"},
+    },
 }
 
 # Tables that are arrays of tables ([[x]]) rather than single tables ([x]).
-_ARRAY_TABLES = {"departments", "escalation.tiers", "lab.critical.tiers"}
+_ARRAY_TABLES = {"departments", "escalation.tiers", "lab.critical.tiers", "facilities"}
+
+# A facility code as the facilities table stores it (migration 70).
+_FACILITY_CODE_RE = re.compile(r"^[A-Z0-9]{2,12}$")
 # Single tables nested inside another table ([x.y]).
 _SUB_TABLES = {"lab.critical"}
 
@@ -523,6 +556,10 @@ def _validate(path: Path, raw_text: str, doc: dict) -> SiteConfig:
             seen_wards[ward.lower()] = name
         cfg.departments.append(dept)
 
+    # ── [[facilities]] ──
+    if "facilities" in doc:
+        cfg.facilities = _validate_facilities(path, idx, doc["facilities"])
+
     # ── [escalation] ──
     esc_raw = doc.get("escalation", {}) or {}
     escalation = _check_table(path, idx, "escalation", esc_raw)
@@ -571,6 +608,72 @@ def _validate(path: Path, raw_text: str, doc: dict) -> SiteConfig:
 
     cfg.env_overrides = _to_env(cfg)
     return cfg
+
+
+def _validate_facilities(path: Path, idx: _LineIndex, raw: Any) -> list[dict]:
+    """[[facilities]] (multisite-3 and multisite-16), validated like every
+    other table (an unknown key or a blank value is refused with its line),
+    plus three rules of its own:
+
+      * the code is a facility code as the Facilities screen stores it
+        (2 to 12 capital letters and digits; written in any case, kept in
+        capitals), and each code has one block;
+      * downtime_mirror_dir is an absolute folder path, so where the packs
+        land never depends on the folder Orb happened to start in;
+      * an ingestion source is listed under one facility only, once. A feed
+        claimed by two facilities has no answer to whose patients its
+        readings are for, and Orb will not pick one."""
+    header = idx.table("facilities")
+    if not isinstance(raw, list) or not raw or not all(isinstance(e, dict) for e in raw):
+        raise SiteConfigError(
+            path, "'facilities' must be written as [[facilities]] blocks, one per facility.",
+            line=header, source_line=idx.text(header),
+            hint='Write each one as:\n  [[facilities]]\n  code = "MAIN"\n'
+                 '  ingestion_sources = ["monitor_hl7"]')
+    out: list[dict] = []
+    seen_codes: dict[str, int] = {}
+    seen_sources: dict[str, str] = {}
+    for i, entry in enumerate(raw):
+        fac = _check_table(path, idx, "facilities", entry, occurrence=i)
+        code = fac["code"].upper()
+        if not _FACILITY_CODE_RE.match(code):
+            raise _fail(
+                path, idx, "facilities", "code", occurrence=i,
+                problem=f"'{fac['code']}' is not a facility code.",
+                hint=("A facility code is 2 to 12 capital letters and digits, exactly as "
+                      "the Facilities screen shows it, e.g. code = \"MAIN\"."))
+        if code in seen_codes:
+            raise _fail(
+                path, idx, "facilities", "code", occurrence=i,
+                problem=f"facility '{code}' is listed twice "
+                        f"(first on line {seen_codes[code]}).",
+                hint="Merge the two blocks into one.")
+        seen_codes[code] = idx.key("facilities", "code", i) or 0
+        mirror = fac.get("downtime_mirror_dir")
+        if mirror is not None and not Path(mirror).is_absolute():
+            raise _fail(
+                path, idx, "facilities", "downtime_mirror_dir", occurrence=i,
+                problem=f"downtime_mirror_dir '{mirror}' is not a full folder path.",
+                hint=("Write the whole path from the top of the disk, e.g. "
+                      "downtime_mirror_dir = \"/Volumes/WardPacks/MAIN\"."))
+        sources: list[str] = []
+        for source in fac.get("ingestion_sources", []):
+            folded = source.casefold()
+            owner = seen_sources.get(folded)
+            if owner is not None:
+                raise _fail(
+                    path, idx, "facilities", "ingestion_sources", occurrence=i,
+                    problem=(f"ingestion source '{source}' is listed twice "
+                             f"(under '{owner}' and '{code}')."
+                             if owner != code else
+                             f"ingestion source '{source}' is listed twice under '{code}'."),
+                    hint=("A feed belongs to exactly one facility. With two, whose patients "
+                          "its readings are for has no answer, and Orb would have to pick one."))
+            seen_sources[folded] = code
+            sources.append(source)
+        out.append({"code": code, "downtime_mirror_dir": mirror,
+                    "ingestion_sources": sources})
+    return out
 
 
 def _validate_lab_critical(path: Path, idx: _LineIndex, lab_raw: Any, cfg: SiteConfig) -> dict:
@@ -793,6 +896,26 @@ def site_config_snapshot() -> dict:
              "timeout_minutes": t["timeout_minutes"]}
             for t in (cfg.lab_critical.get("tiers") or [])
         ],
+        # [[facilities]] (multisite-3 and multisite-16): codes and the feeds
+        # bound to each. The mirror folder is reported as set or not, never
+        # as the path itself.
+        "facilities": [
+            {"code": f["code"], "ingestion_sources": list(f["ingestion_sources"]),
+             "downtime_mirror_set": f["downtime_mirror_dir"] is not None}
+            for f in cfg.facilities
+        ],
         "notes": list(cfg.errors),
         "env_conflicts": list(cfg.env_conflicts),
     }
+
+
+def looks_like_bed_prefix(name: str | None) -> bool:
+    """A name shaped like a bed prefix ("GM-1"), which is never a department
+    (the [[departments]] rule, shared with the departments master)."""
+    return bool(_BED_PREFIX_RE.match((name or "").strip()))
+
+
+def facility_for_ingestion_source(source_name: str | None) -> str | None:
+    """The facility code the loaded file binds this ingestion source to, or
+    None (multisite-16). Reads only what this process loaded at startup."""
+    return _loaded.facility_for_source(source_name)

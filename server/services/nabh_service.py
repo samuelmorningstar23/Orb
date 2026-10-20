@@ -120,7 +120,7 @@ from db_backend import DBIntegrityError  # sqlcipher3 raises its OWN hierarchy:
 # sqlcipher3.dbapi2.IntegrityError is NOT a subclass of sqlite3.IntegrityError,
 # so `except sqlite3.IntegrityError` is DEAD CODE whenever ORB_DB_ENCRYPTION_KEY
 # is set — i.e. in the shipping config. Guarded by tests/test_db_exception_aliases.
-from services.billing_masters import next_document_number
+from services.billing_masters import MAIN_FACILITY_ID, next_document_number
 from services.stay_times import stay_start_sql, summary_less_ends
 
 logger = logging.getLogger("orb.nabh")
@@ -516,7 +516,10 @@ def report_incident(
     if externally_reportable is None:
         externally_reportable = severity in SENTINEL_SEVERITIES
 
-    reference = next_document_number("INC")["number"]
+    # Facility 1's series (multisite-7a): an incident carries no facility until
+    # multisite-7b stamps one, and a report is never refused for want of a
+    # series at another facility.
+    reference = next_document_number("INC", facility_id=MAIN_FACILITY_ID)["number"]
 
     def _work(conn) -> dict:
         cur = conn.execute(
@@ -3264,7 +3267,9 @@ def record_evidence_export(
         generated_by=generated_by,
         include_patient_identifiers=include_patient_identifiers, db=db)
     digest = hashlib.sha256(_canonical_json(pack).encode("utf-8")).hexdigest()
-    reference = next_document_number("NABHPACK")["number"]
+    # Facility 1's series (multisite-7a): the pack is hospital-wide until the
+    # NABH indicators run per facility.
+    reference = next_document_number("NABHPACK", facility_id=MAIN_FACILITY_ID)["number"]
     summary = pack["indicator_summary"]
 
     def _work(conn) -> dict:

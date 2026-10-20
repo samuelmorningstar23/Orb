@@ -10,6 +10,13 @@ that five module agents share ONE answer to three questions:
     "What number does this
      document get?"             → next_document_number()
 
+NUMBERING IS PER FACILITY (multisite-7a, migration 73). A series row belongs to
+one facility (document_number_series.facility_id, unique with the series code),
+and every allocator and lookup here takes `facility_id`, defaulting to 1, so a
+site with one facility numbers exactly as before. A second facility gets its own
+rows through save_document_series, whose prefix rule keeps two facilities'
+numbers from ever colliding (see _prefix_problems).
+
 THE RULE THIS MODULE IS BUILT AROUND: A PRICE NOBODY SET IS NOT ₹0.
 `resolve_rate` never returns a bare integer. It returns a `RateResolution` whose
 `configured` flag is False when no tariff row and no default rate exist, and
@@ -30,6 +37,8 @@ CONVENTIONS THIS FILE FOLLOWS (from the rest of server/services)
 from __future__ import annotations
 
 import logging
+import re
+import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Optional
@@ -85,6 +94,16 @@ __all__ = [
     "financial_year_for",
     "next_document_number",
     "SeriesNotConfigured",
+    "SeriesNotSetUp",
+    "SeriesEditError",
+    "MAIN_FACILITY_ID",
+    "GROUP_WIDE_SERIES",
+    "ISSUED_NUMBER_COLUMNS",
+    "series_label",
+    "series_is_configured",
+    "preview_series_number",
+    "list_document_series",
+    "save_document_series",
     "allocate_series_number",
     "verhoeff_check_digit",
     "verhoeff_valid",
@@ -104,6 +123,42 @@ class SeriesNotConfigured(MasterDataError):
     def __init__(self, series_code: str):
         self.series_code = series_code
         super().__init__(f"document series {series_code!r} is not configured on this site")
+
+
+#: Facility 1, MAIN (migration 70): every series a site had before migration
+#: 73 lives here, and every allocator defaults to it.
+MAIN_FACILITY_ID = 1
+
+
+class SeriesNotSetUp(MasterDataError):
+    """A facility other than 1 has no row for this series yet (multisite-7a).
+
+    Never answered by borrowing facility 1's series: a number from another
+    facility's series would print that facility's prefix on this facility's
+    document, which is exactly what per-facility numbering exists to stop.
+    The administrator sets the series up in Admin, Facilities."""
+
+    def __init__(self, series_code: str, facility_id: int):
+        self.series_code = series_code
+        self.facility_id = int(facility_id)
+        super().__init__(
+            f"document series {series_code!r} is not set up for facility {int(facility_id)}"
+        )
+
+
+class SeriesEditError(MasterDataError):
+    """A refused change to a document series, with per-field reasons for the
+    Facilities screen: `errors` is [{field, code, message}]."""
+
+    def __init__(self, message: str, *, code: str = "invalid_series", status: int = 400,
+                 errors: Optional[list] = None):
+        super().__init__(message)
+        self.code = code
+        self.status = status
+        self.errors = list(errors or [])
+
+    def body(self) -> dict:
+        return {"error": self.code, "message": str(self), "errors": self.errors}
 
 
 # ── Resolution results ───────────────────────────────────────────────────────
@@ -780,7 +835,33 @@ def financial_year_for(when: Optional[date | datetime | str] = None) -> str:
     return f"{start}-{str(start + 1)[-2:]}"
 
 
-def next_document_number(series_code: str, *, when: Optional[date | str] = None) -> dict:
+def _series_row(db, series_code: str, facility_id: int):
+    """The series row for one facility, or None. Every lookup by code goes
+    through here (migration 73 made the code unique per facility, not alone)."""
+    return db.execute(
+        "SELECT * FROM document_number_series WHERE series_code = ? AND facility_id = ?",
+        (series_code, int(facility_id)),
+    ).fetchone()
+
+
+def _missing_series(series_code: str, facility_id: int, message: str) -> MasterDataError:
+    """Facility 1's refusal is the one this module always gave; any other
+    facility is told its series is not set up yet."""
+    if int(facility_id) == MAIN_FACILITY_ID:
+        return MasterDataError(message)
+    return SeriesNotSetUp(series_code, facility_id)
+
+
+def series_is_configured(db, series_code: str, *,
+                         facility_id: int = MAIN_FACILITY_ID) -> bool:
+    """Whether a facility's series is the site's real one (is_configured),
+    False when the facility has no such series. On the caller's connection."""
+    row = _series_row(db, series_code, facility_id)
+    return bool(row is not None and int(row["is_configured"] or 0))
+
+
+def next_document_number(series_code: str, *, when: Optional[date | str] = None,
+                         facility_id: int = MAIN_FACILITY_ID) -> dict:
     """Allocate the next number in a series. ONE implementation, for everybody.
 
     Returns `{"number": "INV-2026-27-000001", "sequence": 1, "is_configured": 0}`.
@@ -798,16 +879,20 @@ def next_document_number(series_code: str, *, when: Optional[date | str] = None)
     numbers, but every screen that prints one must show that the series is a
     placeholder. A placeholder invoice number that looks official is worse than
     no number at all.
+
+    `facility_id` picks the facility's own row (migration 73); it defaults to 1,
+    whose rows are every series a site had before, so one-facility numbering is
+    unchanged. A facility other than 1 with no row for the series raises
+    SeriesNotSetUp: it never borrows facility 1's counter.
     """
     fy = financial_year_for(when)
     with db_session(immediate=True) as db:
-        row = db.execute(
-            "SELECT * FROM document_number_series WHERE series_code = ?", (series_code,)
-        ).fetchone()
+        row = _series_row(db, series_code, facility_id)
         if row is None:
-            raise MasterDataError(
+            raise _missing_series(
+                series_code, facility_id,
                 f"unknown document series {series_code!r}; migration 20 seeds "
-                "INV, RCPT, REF, CLM, IND, PO and GRN"
+                "INV, RCPT, REF, CLM, IND, PO and GRN",
             )
         # A new financial year restarts the sequence at 1.
         if (row["financial_year"] or "") != fy:
@@ -902,7 +987,8 @@ _CHECK_DIGIT_SCHEMES = {"verhoeff": verhoeff_check_digit}
 
 
 def allocate_series_number(db, series_code: str, *, when: Optional[date | str] = None,
-                           require_configured: bool = False) -> dict:
+                           require_configured: bool = False,
+                           facility_id: int = MAIN_FACILITY_ID) -> dict:
     """Allocate the next number in a series on the CALLER'S connection.
 
     The connection must already hold a write transaction (the caller opened
@@ -924,17 +1010,19 @@ def allocate_series_number(db, series_code: str, *, when: Optional[date | str] =
 
     Returns {series_code, number, sequence, financial_year (None when the
     series never resets), is_configured, check_digit}.
+
+    `facility_id` (default 1) picks the facility's own row, as in
+    next_document_number (migration 73).
     """
     if not getattr(db, "in_transaction", False):
         raise RuntimeError(
             "allocate_series_number needs the caller's open write transaction "
             "(db_session(immediate=True)); it never opens or commits one itself"
         )
-    row = db.execute(
-        "SELECT * FROM document_number_series WHERE series_code = ?", (series_code,)
-    ).fetchone()
+    row = _series_row(db, series_code, facility_id)
     if row is None:
-        raise MasterDataError(f"unknown document series {series_code!r}")
+        raise _missing_series(series_code, facility_id,
+                              f"unknown document series {series_code!r}")
     keys = set(row.keys())
     configured = int(row["is_configured"] or 0)
     if require_configured and not configured:
@@ -987,6 +1075,397 @@ def allocate_series_number(db, series_code: str, *, when: Optional[date | str] =
     }
 
 
+# ── Series per facility: what each series numbers, and the editor ────────────
+# multisite-7a. The editor is reached through /api/facilities/{id}/
+# document-series (routes/facility_routes.py), behind ORB_MULTI_SITE.
+
+#: Series that are one for the whole group, never one per facility. The UHID is
+#: a patient's hospital number for life and one person has one group MRN (ruling
+#: MS-R11 (a)); a second facility with its own UHID series would split one
+#: person into two records and their allergy history with them.
+GROUP_WIDE_SERIES = frozenset({"UHID"})
+
+#: Where each seeded series' numbers are written, as (table, column). The
+#: prefix rule reads these for numbers already issued, and treats series that
+#: write the same column as one register: stores and pharmacy purchase orders
+#: share purchase_orders.po_number and its unique index, so their prefixes must
+#: keep apart as surely as two facilities' must. A series a site added itself
+#: is not listed; only its own rows at other facilities are compared.
+ISSUED_NUMBER_COLUMNS: dict = {
+    "INV": (("invoices", "invoice_number"),),
+    "RCPT": (("payments", "receipt_number"),),
+    "REF": (("refunds", "refund_number"),),
+    "CLM": (("claims", "claim_number"),),
+    "IND": (("indents", "indent_number"),),
+    "PHIND": (("indents", "indent_number"),),
+    "PO": (("purchase_orders", "po_number"),),
+    "PHPO": (("purchase_orders", "po_number"),),
+    "GRN": (("goods_receipts", "grn_number"),),
+    "PHGRN": (("goods_receipts", "grn_number"),),
+    "PHTRF": (("pharmacy_transfers", "transfer_number"),),
+    "PHVR": (("pharmacy_vendor_returns", "return_number"),),
+    "PHRET": (("pharmacy_ward_returns", "return_number"),),
+    "PHCNT": (("pharmacy_stock_counts", "count_number"),),
+    "KIND": (("kitchen_indents", "indent_number"),),
+    "INC": (("nabh_incidents", "reference"),),
+    "NABHPACK": (("nabh_evidence_exports", "reference"),),
+    "UHID": (("patients", "mrn"),),
+}
+
+#: What each seeded series numbers, in the words the Facilities screen shows.
+SERIES_LABELS: dict = {
+    "INV": "Invoices and credit notes",
+    "RCPT": "Receipts",
+    "REF": "Refunds",
+    "CLM": "Insurance claims",
+    "IND": "Store indents",
+    "PO": "Purchase orders",
+    "GRN": "Goods receipts",
+    "KIND": "Kitchen indents",
+    "INC": "Incident reports",
+    "NABHPACK": "NABH evidence packs",
+    "UHID": "Hospital numbers (UHID)",
+    "PHPO": "Pharmacy purchase orders",
+    "PHGRN": "Pharmacy goods receipts",
+    "PHIND": "Pharmacy indents",
+    "PHTRF": "Pharmacy transfers",
+    "PHVR": "Pharmacy returns to vendor",
+    "PHRET": "Ward returns of medicines",
+    "PHCNT": "Pharmacy stock counts",
+}
+
+#: The fields the editor may change. The code, document type, counter,
+#: financial year, reset rule and check digit are never edited: moving a
+#: counter back reissues numbers, and the other four are what the software
+#: relies on the series to be.
+EDITABLE_SERIES_FIELDS = ("prefix", "suffix", "pad_width", "is_configured")
+
+_PREFIX_RE = re.compile(r"^[A-Za-z0-9/._-]{0,16}$")
+_SUFFIX_RE = re.compile(r"^[A-Za-z0-9/._-]{0,8}$")
+PAD_WIDTH_MIN, PAD_WIDTH_MAX = 1, 12
+
+
+def series_label(series_code: str, document_type: Optional[str] = None) -> str:
+    """The words for what a series numbers."""
+    label = SERIES_LABELS.get(series_code)
+    if label:
+        return label
+    words = (document_type or series_code or "").replace("_", " ").strip()
+    return (words[:1].upper() + words[1:]) if words else str(series_code)
+
+
+def preview_series_number(row, *, when: Optional[date | str] = None) -> str:
+    """The number a series would hand out next, as it would print. Allocates
+    nothing; follows allocate_series_number's rules (a yearly series restarts
+    at 1 in a new financial year; a check digit is appended)."""
+    keys = set(row.keys())
+    width = int(row["pad_width"] or 6)
+    resets = int(row["resets_yearly"]) if "resets_yearly" in keys and row["resets_yearly"] is not None else 1
+    scheme = (row["check_digit"] or None) if "check_digit" in keys else None
+    if resets:
+        fy = financial_year_for(when)
+        sequence = 1 if (row["financial_year"] or "") != fy else int(row["next_number"])
+        body = f"{fy}-{str(sequence).zfill(width)}"
+    else:
+        sequence = int(row["next_number"])
+        body = str(sequence).zfill(width)
+    if scheme in _CHECK_DIGIT_SCHEMES:
+        body += _CHECK_DIGIT_SCHEMES[scheme](str(sequence).zfill(width))
+    return f"{row['prefix'] or ''}{body}{row['suffix'] or ''}"
+
+
+def _series_view(row) -> dict:
+    out = _row_to_dict(row)
+    out["facility_id"] = int(out.get("facility_id") or MAIN_FACILITY_ID)
+    out["label"] = series_label(out["series_code"], out.get("document_type"))
+    out["is_configured"] = bool(int(out.get("is_configured") or 0))
+    out["resets_yearly"] = bool(int(out["resets_yearly"])) if out.get("resets_yearly") is not None else True
+    out["group_wide"] = out["series_code"] in GROUP_WIDE_SERIES
+    out["next_number_preview"] = preview_series_number(row)
+    return out
+
+
+def _table_has(db, table: str, column: str) -> bool:
+    cols = {r[1] for r in db.execute(f'PRAGMA table_info("{table}")').fetchall()}
+    return column in cols
+
+
+def _register_codes(series_code: str) -> set:
+    """Every series code that writes one of the same number columns as this
+    one, this one included."""
+    mine = set(ISSUED_NUMBER_COLUMNS.get(series_code, ()))
+    codes = {series_code}
+    for code, columns in ISSUED_NUMBER_COLUMNS.items():
+        if mine & set(columns):
+            codes.add(code)
+    return codes
+
+
+def _prefix_problems(db, *, facility_id: int, series_code: str, prefix: str,
+                     exclude_id: Optional[int]) -> list:
+    """Why `prefix` may not number this series at this facility, as field errors.
+
+    THE RULE. Two series writing one register (the same series at another
+    facility, or another series that writes the same number column) may not
+    have prefixes where one equals or begins with the other: only then could
+    their numbers ever be the same string, and the register's unique index
+    would refuse the second one at the moment a document is saved. And no
+    number already issued may begin with the prefix, whoever issued it: the
+    series would then be able to hand out a number already on record. So a
+    prefix is checked when it is set or changed, never on other edits."""
+    errors = []
+    codes = sorted(_register_codes(series_code))
+    marks = ",".join("?" for _ in codes)
+    has_facilities = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'facilities'"
+    ).fetchone() is not None
+    facility_code = "f.code" if has_facilities else "NULL"
+    join = "LEFT JOIN facilities f ON f.id = d.facility_id" if has_facilities else ""
+    others = db.execute(
+        f"SELECT d.id, d.facility_id, d.series_code, d.document_type, d.prefix, "
+        f"{facility_code} AS facility_code FROM document_number_series d {join} "
+        f"WHERE d.series_code IN ({marks}) AND d.id != ? ORDER BY d.facility_id, d.series_code",
+        (*codes, int(exclude_id) if exclude_id is not None else -1),
+    ).fetchall()
+    for other in others:
+        theirs = other["prefix"] or ""
+        if not (prefix == theirs or prefix.startswith(theirs) or theirs.startswith(prefix)):
+            continue
+        where = other["facility_code"] or f"facility {int(other['facility_id'])}"
+        what = series_label(other["series_code"], other["document_type"]).lower()
+        shown = theirs if theirs else "no prefix at all"
+        if other["series_code"] == series_code:
+            message = (f"Facility {where} numbers its {what} with {shown}. Two facilities' "
+                       "prefixes may not be the same, and neither may begin with the other, "
+                       "or their numbers could collide.")
+        else:
+            message = (f"{series_label(other['series_code'], other['document_type'])} at "
+                       f"{where} are numbered with {shown} in the same register. The two "
+                       "prefixes may not be the same, and neither may begin with the other.")
+        errors.append({"field": "prefix", "code": "prefix_clash", "message": message})
+        break
+    for table, column in ISSUED_NUMBER_COLUMNS.get(series_code, ()):
+        if not _table_has(db, table, column):
+            continue
+        hit = db.execute(
+            f'SELECT "{column}" AS n FROM "{table}" WHERE "{column}" IS NOT NULL '
+            f'AND substr("{column}", 1, ?) = ? LIMIT 1',
+            (len(prefix), prefix),
+        ).fetchone()
+        if hit is not None:
+            errors.append({
+                "field": "prefix", "code": "prefix_matches_issued",
+                "message": (f"A number already issued, {hit['n']}, begins with "
+                            f"{prefix if prefix else 'no prefix at all'}. Choose a prefix "
+                            "that no issued number begins with, so no number can be "
+                            "handed out twice."),
+            })
+            break
+    return errors
+
+
+def _facility_on_record(db, facility_id: int) -> Optional[dict]:
+    if db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'facilities'"
+    ).fetchone() is None:
+        return {"id": MAIN_FACILITY_ID, "code": "MAIN", "is_active": 1} \
+            if int(facility_id) == MAIN_FACILITY_ID else None
+    row = db.execute("SELECT id, code, is_active FROM facilities WHERE id = ?",
+                     (int(facility_id),)).fetchone()
+    return _row_to_dict(row) if row is not None else None
+
+
+def list_document_series(facility_id: int) -> dict:
+    """A facility's series for the Facilities screen: {facility_id, series,
+    can_add}. `can_add` lists the series facility 1 has that this facility
+    does not (never a group-wide one); it is empty for facility 1, which holds
+    every series the software seeds."""
+    fid = int(facility_id)
+    with db_session() as db:
+        if _facility_on_record(db, fid) is None:
+            raise SeriesEditError("No facility has that number.", code="not_found", status=404)
+        rows = db.execute(
+            "SELECT * FROM document_number_series WHERE facility_id = ? ORDER BY series_code",
+            (fid,),
+        ).fetchall()
+        series = [_series_view(r) for r in rows]
+        can_add = []
+        if fid != MAIN_FACILITY_ID:
+            have = {r["series_code"] for r in rows}
+            for main in db.execute(
+                "SELECT series_code, document_type FROM document_number_series "
+                "WHERE facility_id = ? ORDER BY series_code", (MAIN_FACILITY_ID,),
+            ).fetchall():
+                code = main["series_code"]
+                if code in have or code in GROUP_WIDE_SERIES:
+                    continue
+                can_add.append({"series_code": code, "document_type": main["document_type"],
+                                "label": series_label(code, main["document_type"])})
+    return {"facility_id": fid, "series": series, "can_add": can_add}
+
+
+def _validated_series_fields(changes: Any) -> tuple[dict, list]:
+    if not isinstance(changes, dict):
+        raise SeriesEditError("Send the fields to change as an object.")
+    out: dict = {}
+    errors: list = []
+    for field, value in changes.items():
+        if field not in EDITABLE_SERIES_FIELDS:
+            errors.append({"field": field, "code": "not_editable",
+                           "message": "This part of a number series cannot be changed here."})
+            continue
+        if field == "prefix":
+            if not isinstance(value, str) or not _PREFIX_RE.match(value):
+                errors.append({"field": field, "code": "bad_prefix",
+                               "message": "Use up to 16 letters, digits or the characters "
+                                          "/ . _ -, with no spaces."})
+                continue
+        elif field == "suffix":
+            if not isinstance(value, str) or not _SUFFIX_RE.match(value):
+                errors.append({"field": field, "code": "bad_suffix",
+                               "message": "Use up to 8 letters, digits or the characters "
+                                          "/ . _ -, with no spaces."})
+                continue
+        elif field == "pad_width":
+            if isinstance(value, bool) or not isinstance(value, int) \
+                    or not PAD_WIDTH_MIN <= value <= PAD_WIDTH_MAX:
+                errors.append({"field": field, "code": "bad_pad_width",
+                               "message": f"Give a whole number of digits from "
+                                          f"{PAD_WIDTH_MIN} to {PAD_WIDTH_MAX}."})
+                continue
+        elif field == "is_configured":
+            if not isinstance(value, bool):
+                errors.append({"field": field, "code": "bad_value",
+                               "message": "Say yes or no."})
+                continue
+            value = 1 if value else 0
+        out[field] = value
+    return out, errors
+
+
+def _audit_series(db, *, action: str, actor: Optional[dict], facility: dict,
+                  series_code: str, summary: str, changes: dict) -> None:
+    """site_admin, in the writing transaction (fail-soft category, as every
+    facility identity edit is)."""
+    from services.audit_service import log_audit_event
+    log_audit_event(
+        correlation_id=str(uuid.uuid4()),
+        event_category="site_admin",
+        action_type=action,
+        outcome="success",
+        db=db,
+        summary_message=summary,
+        actor_user_id=(actor or {}).get("id"),
+        actor_role=(actor or {}).get("role"),
+        target_type="document_series",
+        target_id=f"{int(facility['id'])}:{series_code}",
+        metadata={"facility_id": int(facility["id"]), "facility_code": facility.get("code"),
+                  "series_code": series_code, "changes": changes},
+    )
+
+
+def save_document_series(facility_id: int, series_code: str, changes: dict, *,
+                         actor: Optional[dict] = None) -> dict:
+    """Set up or edit one facility's series. Returns {series, created, changed}.
+
+    EDIT (the facility has the series): only EDITABLE_SERIES_FIELDS; a changed
+    prefix goes through _prefix_problems; nothing else is compared, so editing
+    the digits of a series whose prefix predates the rule is not refused.
+
+    SET UP (a facility other than 1 that lacks it): only a series facility 1
+    has (its document type, reset rule and check digit are copied), never a
+    group-wide one (GROUP_WIDE_SERIES), only for an active facility, and a
+    prefix must be given and pass the rule. The counter starts at 1.
+
+    Who may do this is the route's decision (facility.manage, own facility,
+    ORB_MULTI_SITE); every change writes a site_admin row with the field diff.
+    """
+    fid = int(facility_id)
+    code = (series_code or "").strip()
+    fields, errors = _validated_series_fields(changes)
+    if errors:
+        raise SeriesEditError("Some details need correcting before they can be saved.",
+                              errors=errors)
+    with db_session(immediate=True) as db:
+        facility = _facility_on_record(db, fid)
+        if facility is None:
+            raise SeriesEditError("No facility has that number.", code="not_found", status=404)
+        row = _series_row(db, code, fid)
+        if row is None:
+            if fid == MAIN_FACILITY_ID:
+                raise SeriesEditError("Facility 1 has no series with that code.",
+                                      code="series_not_found", status=404)
+            if code in GROUP_WIDE_SERIES:
+                raise SeriesEditError(
+                    f"{series_label(code)} are one series for the whole group, kept at "
+                    "facility 1, so a patient keeps one number at every facility.",
+                    code="group_wide_series", status=409)
+            template = _series_row(db, code, MAIN_FACILITY_ID)
+            if template is None:
+                raise SeriesEditError("No series with that code exists to set up.",
+                                      code="series_not_found", status=404)
+            if not int(facility.get("is_active") or 0):
+                raise SeriesEditError("This facility is closed; its numbering cannot be set up.",
+                                      code="facility_inactive", status=409)
+            if "prefix" not in fields:
+                raise SeriesEditError(
+                    "Give the prefix this facility's numbers start with.",
+                    errors=[{"field": "prefix", "code": "prefix_required",
+                             "message": "A facility's own series needs its own prefix."}])
+            problems = _prefix_problems(db, facility_id=fid, series_code=code,
+                                        prefix=fields["prefix"], exclude_id=None)
+            if problems:
+                raise SeriesEditError("That prefix could repeat a number.", errors=problems)
+            t = _row_to_dict(template)
+            values = {
+                "prefix": fields["prefix"],
+                "suffix": fields.get("suffix", ""),
+                "pad_width": fields.get("pad_width", int(t.get("pad_width") or 6)),
+                "is_configured": fields.get("is_configured", 0),
+            }
+            db.execute(
+                "INSERT INTO document_number_series (facility_id, series_code, document_type, "
+                "prefix, suffix, pad_width, next_number, is_configured, resets_yearly, "
+                "check_digit) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
+                (fid, code, t["document_type"], values["prefix"], values["suffix"],
+                 values["pad_width"], values["is_configured"],
+                 int(t["resets_yearly"]) if t.get("resets_yearly") is not None else 1,
+                 t.get("check_digit")),
+            )
+            fresh = _series_row(db, code, fid)
+            _audit_series(db, action="document_series_created", actor=actor, facility=facility,
+                          series_code=code,
+                          summary=f"Numbering for {series_label(code).lower()} set up at "
+                                  f"{facility.get('code') or fid}",
+                          changes={k: {"from": None, "to": v} for k, v in values.items()})
+            return {"series": _series_view(fresh), "created": True,
+                    "changed": sorted(values)}
+
+        current = _row_to_dict(row)
+        diff = {k: {"from": current.get(k), "to": v} for k, v in fields.items()
+                if current.get(k) != v}
+        if not diff:
+            return {"series": _series_view(row), "created": False, "changed": []}
+        if "prefix" in diff:
+            problems = _prefix_problems(db, facility_id=fid, series_code=code,
+                                        prefix=fields["prefix"], exclude_id=int(current["id"]))
+            if problems:
+                raise SeriesEditError("That prefix could repeat a number.", errors=problems)
+        sets = ", ".join(f"{k} = ?" for k in diff)
+        db.execute(
+            f"UPDATE document_number_series SET {sets}, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ?",
+            (*(fields[k] for k in diff), int(current["id"])),
+        )
+        fresh = _series_row(db, code, fid)
+        _audit_series(db, action="document_series_updated", actor=actor, facility=facility,
+                      series_code=code,
+                      summary=f"Numbering for {series_label(code, current.get('document_type')).lower()} "
+                              f"changed at {facility.get('code') or fid}",
+                      changes=diff)
+        return {"series": _series_view(fresh), "created": False, "changed": sorted(diff)}
+
+
 # ── Bootstrap ────────────────────────────────────────────────────────────────
 
 def ensure_default_masters() -> dict:
@@ -1023,6 +1502,9 @@ def ensure_default_masters() -> dict:
             ("PO", "purchase_order", "PO-"),
             ("GRN", "goods_receipt", "GRN-"),
         ):
+            # No facility named: the row lands at facility 1 through the column
+            # default, and the (facility_id, series_code) key (migration 73)
+            # makes the insert a no-op where facility 1 already has it.
             db.execute(
                 "INSERT OR IGNORE INTO document_number_series "
                 "(series_code, document_type, prefix, next_number, is_configured) "

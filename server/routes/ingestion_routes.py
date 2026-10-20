@@ -16,10 +16,11 @@ from fastapi import APIRouter, Request, HTTPException, Header, Depends
 from pydantic import BaseModel, Field
 from typing import Optional
 
+import config
 from auth import get_current_user
 from config import INGESTION_API_KEY, INGESTION_MODE
 from services.ingestion_adapters import HL7Adapter, JSONAdapter, CSVAdapter, FHIRAdapter
-from services.ingestion_service import ingest_payload, IngestionResult
+from services.ingestion_service import SourceBinding, ingest_payload, IngestionResult
 from services.audit_service import log_audit_event
 from services import result_quarantine_service
 from permissions import (
@@ -34,17 +35,43 @@ router = APIRouter(prefix="/api/ingest", tags=["ingestion"])
 #  API Key Verification
 # ════════════════════════════════════════════
 
-def _verify_api_key(x_api_key: Optional[str]):
-    """Verify the ingestion API key using a constant-time comparison.
+#: Facility 1's code (migration 70); the existing key is bound to it.
+_MAIN_FACILITY_CODE = "MAIN"
+
+
+def _verify_api_key(x_api_key: Optional[str]) -> SourceBinding:
+    """Verify the ingestion API key using a constant-time comparison, and
+    return the facility it binds the request to (multisite-16).
 
     A plain `!=` leaks the key length and per-character match position via timing,
     letting an attacker recover the key that guards real-patient data ingestion.
     hmac.compare_digest runs in time independent of where the mismatch is.
+
+    ORB_INGESTION_API_KEY is facility 1's key. Each ORB_INGESTION_API_KEY_<CODE>
+    (config.ingestion_facility_keys) is the key of the facility with that code.
+    Every configured key is compared, never stopping at the first match, so
+    the time taken does not say which one matched either. A key value set for
+    more than one facility binds none (cause 'key_shared'). The binding is
+    used only while more than one facility is on record; with one facility
+    every key files to the whole appliance, as before.
     """
-    if not x_api_key or not INGESTION_API_KEY or not hmac.compare_digest(
-        str(x_api_key), str(INGESTION_API_KEY)
-    ):
+    if not x_api_key:
         raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key header")
+    presented = str(x_api_key)
+    bound: set = set()
+    if INGESTION_API_KEY and hmac.compare_digest(presented, str(INGESTION_API_KEY)):
+        bound.add(_MAIN_FACILITY_CODE)
+    for code, key in sorted(config.ingestion_facility_keys().items()):
+        if hmac.compare_digest(presented, str(key)):
+            bound.add(code)
+    if not bound:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key header")
+    if len(bound) > 1:
+        return SourceBinding(bound_by="ingestion_key", cause="key_shared")
+    (code,) = bound
+    if code == _MAIN_FACILITY_CODE:
+        return SourceBinding(facility_id=1, facility_code=code, bound_by="ingestion_key")
+    return SourceBinding(facility_code=code, bound_by="ingestion_key")
 
 
 def _check_ingestion_enabled():
@@ -79,7 +106,7 @@ async def ingest_json(
         See JSONAdapter docstring for expected payload format.
     """
     _check_ingestion_enabled()
-    _verify_api_key(x_api_key)
+    binding = _verify_api_key(x_api_key)
 
     body = await request.body()
     raw_payload = body.decode("utf-8", errors="replace")
@@ -103,6 +130,7 @@ async def ingest_json(
         correlation_id=correlation_id,
         external_message_id=x_message_id,
         sio=sio,
+        source_binding=binding,
     )
 
     status_code = _http_status_from_result(result)
@@ -129,7 +157,7 @@ async def ingest_hl7(
         { "message": "MSH|^~\\\\&|..." }
     """
     _check_ingestion_enabled()
-    _verify_api_key(x_api_key)
+    binding = _verify_api_key(x_api_key)
 
     body = await request.body()
     raw_payload = body.decode("utf-8", errors="replace")
@@ -161,6 +189,7 @@ async def ingest_hl7(
         correlation_id=correlation_id,
         external_message_id=x_message_id,
         sio=sio,
+        source_binding=binding,
     )
 
     status_code = _http_status_from_result(result)
@@ -191,7 +220,7 @@ async def ingest_fhir(
         X-Message-Id:       Optional. Sender-provided dedup key.
     """
     _check_ingestion_enabled()
-    _verify_api_key(x_api_key)
+    binding = _verify_api_key(x_api_key)
 
     body = await request.body()
     raw_payload = body.decode("utf-8", errors="replace")
@@ -215,6 +244,7 @@ async def ingest_fhir(
         correlation_id=correlation_id,
         external_message_id=x_message_id,
         sio=sio,
+        source_binding=binding,
     )
 
     status_code = _http_status_from_result(result)
@@ -279,7 +309,7 @@ async def replay_fixture(
     Send any raw payload (JSON, HL7, CSV) and it will be auto-detected and processed.
     """
     _check_ingestion_enabled()
-    _verify_api_key(x_api_key)
+    binding = _verify_api_key(x_api_key)
 
     body = await request.body()
     raw_payload = body.decode("utf-8", errors="replace")
@@ -300,6 +330,7 @@ async def replay_fixture(
         source_name="dev_replay",
         correlation_id=correlation_id,
         sio=sio,
+        source_binding=binding,
     )
 
     # Audit M2M replay for traceability.

@@ -202,7 +202,7 @@ silently reopens the hole cookies were given the check for. Knock-on: the Socket
 **Change guide:** to rotate the signing key without a mass logout, accept a list of secrets (try new, fall back to old) here and mint with the new one in `create_token`; knock-on: `services/discharge_access_service.py:189` signs its own grants with the same `JWT_SECRET` and must rotate in lockstep.
 **Gotchas:** it raises `HTTPException`, an HTTP concept, even when called from non-HTTP contexts; the WebSocket caller must (and does) catch it (`server/ws/realtime.py:146-148`).
 
-### `get_current_user`: `server/auth.py:465`
+### `get_current_user`: `server/auth.py:536`
 **Signature:** `async (credentials: HTTPAuthorizationCredentials = Depends(security)) → dict`
 **Does:** the workhorse dependency: turns a bearer token into the authoritative user row, or aborts with 401.
 **How it works:** 1. `decode_token` on the extracted credentials (`:79`). 2. Require a `sub` claim (`:80-82`). 3. `SELECT * FROM users WHERE id = ?` inside a `db_session` context manager (auto-close; see guide 04-database-schema) (`:84-85`). 4. 401 "User not found" if the row is gone, a deleted user's tokens die immediately (`:87-88`). 5. Compare the token's `tv` claim against `users.token_version`; mismatch → 401 "Session revoked; please log in again" (`:96-99`). 6. Return the row as a plain dict, including `password_hash` and `totp_secret`, so downstream code must never echo it wholesale (routes return `UserOut` instead).
@@ -212,7 +212,7 @@ silently reopens the hole cookies were given the check for. Knock-on: the Socket
 **Change guide:** to add account disabling, add an `is_active` column and a check between steps 4 and 5 raising 403; knock-on: the Socket.IO `_authenticate` duplicates the row lookup (`server/ws/realtime.py:156-164`) and must add the same check.
 **Gotchas:** one DB read per authenticated request, deliberate (fresh role + revocation), but it means auth is only as available as SQLite. Note the WebSocket path does **not** check `tv` (see Discrepancies).
 
-### `require_role`: `server/auth.py:548` *(deprecated)*
+### `require_role`: `server/auth.py:555` *(deprecated)*
 **Signature:** `(*roles: str) → async dependency → dict`
 **Does:** dependency factory restricting an endpoint to a literal set of roles.
 **How it works:** 1. Returns an async `checker` that depends on `get_current_user`. 2. 403 "Insufficient permissions" if the DB-row role is not in `roles`, else returns the user (`:116-119`).
@@ -406,7 +406,7 @@ The policy's shape: doctors are the only role that can *sign* (notes, discharges
 **Change guide:** *worked example, mandate MFA for all doctors:* deploy with `ORB_MFA_REQUIRED_ROLES=doctor` (`server/config.py:50-52`). Knock-on: every non-enrolled doctor's login now returns 403 `mfa_enrollment_required`, but the shipped frontend has no enrollment screen or TOTP prompt (see Discrepancies), so ship the client flow first; the Trust Center adoption panel (`src/pages/panels/admin/TrustCenter.tsx:216-226`) will show the mandate.
 **Gotchas:** it is a `def` (sync) handler, FastAPI runs it in a threadpool, which is what makes the module-level dict mutation tolerable under one process. The `from services import mfa_service` at `:148` is unused in this function body (only `consume_totp` is used); harmless dead import.
 
-### `get_me`: `server/main.py:1290`: `GET /api/auth/me`
+### `get_me`: `server/main.py:1232`: `GET /api/auth/me`
 
 > **Moved, and the old bug is gone.** Earlier editions documented a `pass`-bodied stub at
 > `server/routes/auth_routes.py:228` that shadowed the real handler and would have 500'd on

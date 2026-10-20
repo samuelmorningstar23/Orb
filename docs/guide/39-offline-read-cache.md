@@ -440,13 +440,13 @@ sequenceDiagram
 
 This is not part of the read cache, but `useOfflineSession` imports two functions from it and the chapter is dishonest without it. `api/client` keeps an **offline write queue** in localStorage under `orb_offline_queue`: free clinical text, patient ids, dose payloads.
 
-#### `clearOfflineQueue`: `src/api/client.ts:549`
+#### `clearOfflineQueue`: `src/api/client.ts:642`
 **Signature:** `() -> number`
 **Does:** Drops every queued write.
 **Called from:** `App.logout` (`src/AppRoot.tsx:108`) and `useOfflineSession` on switch/sign-out (`useOfflineSession.ts:80`).
 **On screen:** the pending-count chip in the shell (`src/pages/ClinicianShell.tsx:493`, `:499`) drops to zero on its next two-second poll (`:342`).
 
-#### `clearForeignOfflineQueue`: `src/api/client.ts:566`
+#### `clearForeignOfflineQueue`: `src/api/client.ts:659`
 **Signature:** `(userId: string | null) -> OfflineRequest[]`
 **Does:** Drops queued writes that do **not** belong to `userId`; `null` drops all. Returns them, so the caller decides whether anyone needs telling.
 **Why:** a replay is sent on the **current** session's cookie, so a write queued by the last nurse would be filed against this one, *her name on another clinician's note or dose, with nothing on screen to reveal it* (`src/api/client.ts:631-635`). Same rule `phiCache` applies to reads: **a queued write is replayed for its author or not at all.**

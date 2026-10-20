@@ -1260,7 +1260,23 @@ def create_claim(
     # BEGIN IMMEDIATE, and db_session's contract says an immediate session must
     # be the outermost one (a nested frame is only a SAVEPOINT and cannot be
     # upgraded).
-    number = next_document_number("CLM")
+    #
+    # From the claims series of the patient's facility (multisite-7a): the
+    # admission's, else the latest encounter's; facility 1 while only one is
+    # on record. A facility with no claims series of its own is refused.
+    from services import facility_identity
+    from services.billing_masters import SeriesNotSetUp
+
+    with db_session() as db:
+        claim_facility = facility_identity.document_facility_id(
+            db, patient_id=patient_id, admission_id=admission_id)
+    try:
+        number = next_document_number("CLM", facility_id=claim_facility)
+    except SeriesNotSetUp as exc:
+        raise ClaimError(
+            "This facility has no claim number series yet, so no claim was raised. An "
+            "administrator sets one up in Admin, Facilities."
+        ) from exc
 
     try:
         claim_id = _insert_claim(

@@ -108,7 +108,7 @@ from typing import Any, Iterable, Optional
 
 from database import db_session
 from db_backend import DBIntegrityError
-from services.billing_masters import next_document_number
+from services.billing_masters import MAIN_FACILITY_ID, next_document_number
 from services.hospital_time import hospital_now, hospital_today
 
 logger = logging.getLogger("orb.dietary")
@@ -1195,7 +1195,9 @@ def issue_kitchen_indent(indent_id: int, *, issued_by: str) -> dict:
     # OUTSIDE the session above on purpose: next_document_number takes its own
     # `db_session(immediate=True)`, and nesting a second immediate write session
     # inside one we are holding is how this codebase has deadlocked before.
-    allocated = next_document_number("KIND")
+    # Facility 1's series (multisite-7a): a kitchen indent carries no facility
+    # until multisite-7b stamps one.
+    allocated = next_document_number("KIND", facility_id=MAIN_FACILITY_ID)
 
     with db_session(immediate=True) as db:
         # `AND status = 'draft'` makes a racing second issue a NO-OP rather than a

@@ -912,6 +912,227 @@ def cancel_charge(charge_id: int, *, reason: str, actor: Optional[str] = None) -
     return _decorate_charge(_row(fresh))
 
 
+# ── Pharmacy at batch MRP (grn-16, ruling GRN-R12, ORB_PHARMACY_STORE) ───────
+
+def _pharmacy_store_on() -> bool:
+    """The pharmacy store module is 'on' (not draining, not off)."""
+    try:
+        return config.module_state("pharmacy-store") == "on"
+    except Exception:  # noqa: BLE001 - an unreadable switch reads as off
+        return False
+
+
+def _unit_mrp(lot: Optional[dict]) -> Optional[int]:
+    """A batch's MRP for one dispense unit: the pack MRP over the units in a
+    pack, by money.py's one rounding rule. None where the batch has no MRP or
+    pack size recorded (nothing is guessed). The same figure the ward-return
+    credit uses (pharmacy_store_service.credit_candidate)."""
+    from services.money import _div_round_half_up
+
+    mrp = (lot or {}).get("mrp_pack_paise")
+    per_pack = (lot or {}).get("units_per_pack")
+    if isinstance(mrp, bool) or isinstance(per_pack, bool):
+        return None
+    if not isinstance(mrp, int) or not isinstance(per_pack, int) or per_pack <= 0 or mrp < 0:
+        return None
+    return _div_round_half_up(mrp, per_pack)
+
+
+def _drug_name(db, medication_id: Optional[str], cache: dict) -> Optional[str]:
+    med = _clean(medication_id)
+    if not med:
+        return None
+    if med not in cache:
+        row = (db.execute("SELECT name FROM helix_medication_master WHERE id = ?", (med,)).fetchone()
+               if _table_exists(db, "helix_medication_master") else None)
+        cache[med] = row["name"] if row is not None else None
+    return cache[med]
+
+
+def _dispensed_lots(db, order_id: str) -> list[dict]:
+    """Every batch an order's dispense movements took, first taken first, with
+    the drug that left the shelf (the substitute when one was set) and the
+    units. One batch per order today (a dispense is never split)."""
+    if not (_table_exists(db, "helix_stock_movements") and _table_exists(db, "helix_inventory_lots")):
+        return []
+    out = []
+    for r in db.execute(
+        "SELECT s.lot_id AS lot_id, s.medication_id AS medication_id, "
+        "-SUM(s.quantity_change) AS units FROM helix_stock_movements s "
+        "WHERE s.order_id = ? AND s.movement_type = 'dispense' "
+        "GROUP BY s.lot_id, s.medication_id ORDER BY MIN(s.seq), s.lot_id",
+        (order_id,),
+    ).fetchall():
+        lot = db.execute(
+            "SELECT id, lot_number, mrp_pack_paise, units_per_pack FROM helix_inventory_lots "
+            "WHERE id = ?", (r["lot_id"],),
+        ).fetchone()
+        out.append({"lot_id": r["lot_id"], "medication_id": r["medication_id"],
+                    "units": int(r["units"] or 0), "lot": _row(lot) if lot is not None else None})
+    return out
+
+
+def _dispense_key(order_id: str, lot_id: Optional[str], first_lot_id: Optional[str]) -> str:
+    """The charge key of one batch of an order's dispense: helix:<order> for
+    the first (the key every pharmacy charge has carried), and the batch added
+    for any further one, so a split dispense could never reuse a key."""
+    if first_lot_id is None or lot_id == first_lot_id:
+        return f"helix:{order_id}"
+    return f"helix:{order_id}:{lot_id}"
+
+
+def _dispense_candidates(db, *, patient_id: str) -> list[dict]:
+    """The pharmacy source with the pharmacy store on (grn-16).
+
+    Each dispensed order is priced from its dispense MOVEMENT: the drug that
+    left the shelf (the substitute when one was dispensed, never the
+    prescribed drug) and its batch, at the batch MRP per unit times the units
+    dispensed. A batch with no MRP falls back to the tariff for that drug,
+    units times the tariff rate (GRN-R12). An order with no dispense movement
+    is priced on the tariff for the drug Helix dispensed
+    (COALESCE(substitute, prescribed)).
+
+    A ward return (grn-15) is its OWN credit candidate, keyed
+    helix-return:<return id>, never a reuse of the order's key: it credits the
+    returned units at the unit rate the order was charged (credit_of names
+    that charge's key)."""
+    out: list[dict] = []
+    names: dict = {}
+    order_cols = {r[1] for r in db.execute("PRAGMA table_info(helix_patient_med_orders)").fetchall()}
+    substitute = ("o.substitute_medication_id" if "substitute_medication_id" in order_cols
+                  else "NULL")
+    first_lots: dict = {}
+    for row in db.execute(
+        f"SELECT o.id AS id, o.medication_id AS medication_id, {substitute} AS substitute_id, "
+        "o.status AS status, o.created_at AS created_at FROM helix_patient_med_orders o "
+        f"WHERE o.patient_id = ? AND o.status IN "
+        f"({','.join('?' * len(_DISPENSED_MED_STATUSES))}) ORDER BY o.created_at",
+        (patient_id, *_DISPENSED_MED_STATUSES),
+    ).fetchall():
+        day = _local_day_of_stored(row["created_at"])
+        lots = [lot for lot in _dispensed_lots(db, row["id"]) if lot["units"] > 0]
+        first_lots[row["id"]] = lots[0]["lot_id"] if lots else None
+        if not lots:
+            med_id = _clean(row["substitute_id"]) or _clean(row["medication_id"])
+            name = _drug_name(db, med_id, names)
+            out.append({
+                "source": "pharmacy",
+                "source_ref": row["id"],
+                "idempotency_key": f"helix:{row['id']}",
+                "candidate_codes": [c for c in [med_id, f"RX-{med_id}" if med_id else ""] if c],
+                "description": name or med_id or "Pharmacy dispense",
+                "service_date": day,
+                "kind": "pharmacy",
+                "label": f"pharmacy: {name or med_id}",
+                "price_basis": "tariff",
+            })
+            continue
+        for lot in lots:
+            med_id = _clean(lot["medication_id"])
+            name = _drug_name(db, med_id, names)
+            unit_mrp = _unit_mrp(lot["lot"])
+            out.append({
+                "source": "pharmacy",
+                "source_ref": row["id"],
+                "idempotency_key": _dispense_key(row["id"], lot["lot_id"], first_lots[row["id"]]),
+                "candidate_codes": [c for c in [med_id, f"RX-{med_id}" if med_id else ""] if c],
+                "description": name or med_id or "Pharmacy dispense",
+                "service_date": day,
+                "kind": "pharmacy",
+                "label": f"pharmacy: {name or med_id}",
+                "units": lot["units"],
+                "quantity_milli": lot["units"] * QUANTITY_SCALE,
+                "medication_id": med_id,
+                "prescribed_medication_id": _clean(row["medication_id"]),
+                "lot_id": lot["lot_id"],
+                "batch": (lot["lot"] or {}).get("lot_number"),
+                "unit_mrp_paise": unit_mrp,
+                "price_basis": "batch_mrp" if unit_mrp is not None else "tariff",
+            })
+
+    if _table_exists(db, "pharmacy_ward_returns"):
+        for r in db.execute(
+            "SELECT id, helix_order_id, helix_medication_id, lot_id, quantity_units, "
+            "occurred_at, created_at FROM pharmacy_ward_returns WHERE patient_id = ? "
+            "ORDER BY id",
+            (patient_id,),
+        ).fetchall():
+            order_id = r["helix_order_id"]
+            if order_id not in first_lots:
+                lots = [lot for lot in _dispensed_lots(db, order_id) if lot["units"] > 0]
+                first_lots[order_id] = lots[0]["lot_id"] if lots else None
+            units = int(r["quantity_units"] or 0)
+            if units <= 0:
+                continue
+            name = _drug_name(db, r["helix_medication_id"], names) or _clean(
+                r["helix_medication_id"]) or "Pharmacy return"
+            out.append({
+                "source": "pharmacy",
+                "source_ref": str(r["id"]),
+                "idempotency_key": f"helix-return:{r['id']}",
+                "candidate_codes": [],
+                "description": f"Returned: {name}, {_count(units, 'unit')}",
+                "service_date": _local_day_of_stored(r["occurred_at"] or r["created_at"]),
+                "kind": "pharmacy_return",
+                "label": f"pharmacy return: {name}",
+                "units": units,
+                "quantity_milli": units * QUANTITY_SCALE,
+                "credit_of": _dispense_key(order_id, r["lot_id"], first_lots.get(order_id)),
+            })
+    return out
+
+
+def _tax_inclusive_unit_rate(unit_mrp: int, units: int, rate_bp: int) -> int:
+    """The largest taxable value per unit whose line, GST added, does not pass
+    units times the unit MRP. MRP is the tax-inclusive ceiling a medicine may
+    be sold at, so a taxable line at MRP carries its tax inside the MRP, never
+    on top of it."""
+    qty = units * QUANTITY_SCALE
+    ceiling = unit_mrp * units
+
+    def total(rate: int) -> int:
+        return compute_line(unit_rate_paise=rate, quantity_milli=qty, gst_rate_bp=rate_bp,
+                            gst_treatment="taxable").total_paise
+
+    rate = (unit_mrp * 10000) // (10000 + rate_bp)
+    while total(rate + 1) <= ceiling:
+        rate += 1
+    while rate > 0 and total(rate) > ceiling:
+        rate -= 1
+    return rate
+
+
+def _mrp_line(cand: dict, *, plan_id: Optional[int], ward_class: Optional[str]) -> dict:
+    """How a batch-MRP candidate is charged: the service item (if the price
+    list has the drug) supplies the code and the GST treatment, the batch the
+    price. Without a service item the line is recorded under RX-<drug> and is
+    exempt, the module's default treatment for an item the list does not know."""
+    resolution = None
+    for code in cand["candidate_codes"]:
+        attempt = billing_masters.resolve_rate(code, tariff_plan_id=plan_id, ward_class=ward_class,
+                                               on_date=cand["service_date"])
+        if attempt.source != "unknown_item":
+            resolution = attempt
+            break
+    med_id = cand.get("medication_id") or ""
+    service_code = resolution.service_code if resolution is not None else f"RX-{med_id}"
+    treatment = (resolution.gst_treatment if resolution is not None else GST_EXEMPT) or GST_EXEMPT
+    rate_bp = int(resolution.gst_rate_bp or 0) if resolution is not None else 0
+    unit_mrp = int(cand["unit_mrp_paise"])
+    units = int(cand["units"])
+    inclusive = treatment == "taxable" and rate_bp > 0
+    rate = _tax_inclusive_unit_rate(unit_mrp, units, rate_bp) if inclusive else unit_mrp
+    line = compute_line(unit_rate_paise=rate, quantity_milli=units * QUANTITY_SCALE,
+                        gst_rate_bp=rate_bp, gst_treatment=treatment)
+    note = (f"Priced at batch MRP: {format_inr(unit_mrp)} a unit"
+            + (f", batch {cand['batch']}" if cand.get("batch") else "")
+            + (", GST included in the MRP" if inclusive else ""))
+    return {"service_code": service_code, "unit_rate_paise": rate,
+            "quantity_milli": units * QUANTITY_SCALE, "gst_treatment": treatment,
+            "gst_rate_bp": rate_bp, "total_paise": line.total_paise, "notes": note,
+            "rate_display": format_inr(unit_mrp)}
+
+
 def _clinical_candidates(db, *, patient_id: str) -> list[dict]:
     """Chargeable things Orb ALREADY KNOWS HAPPENED. Read-only, always.
 
@@ -961,6 +1182,13 @@ def _clinical_candidates(db, *, patient_id: str) -> list[dict]:
             "kind": row["order_type"],
             "label": f"{row['order_type']}: {row['description']}",
         })
+
+    # With the pharmacy store on (grn-16) the pharmacy source is read from the
+    # dispense movements instead: the drug that left the shelf, at its batch
+    # MRP, and ward returns as credits. Off, the lines below are unchanged.
+    if _pharmacy_store_on() and _table_exists(db, "helix_patient_med_orders"):
+        candidates.extend(_dispense_candidates(db, patient_id=patient_id))
+        return candidates
 
     if _table_exists(db, "helix_patient_med_orders"):
         has_master = _table_exists(db, "helix_medication_master")
@@ -1012,6 +1240,12 @@ def capture_clinical_charges(
       ``no_service_code``      — the clinical record carries no code to price on.
       ``no_service_item``      — no service item exists for that code.
       ``rate_not_configured``  — the item exists but has no price on this tariff.
+      ``order_not_charged``    a ward return (pharmacy store on) whose
+                                 dispense is not on the bill: nothing to credit.
+
+    With the pharmacy store on (grn-16) a dispense with a batch MRP is charged
+    at that MRP per unit times the units dispensed, whatever the tariff says,
+    and a ward return posts its own negative line; see _dispense_candidates.
 
     ``dry_run=True`` computes the same answer and writes nothing; that is how the
     discharge advisory can say "there are events this bill does not yet include"
@@ -1038,9 +1272,74 @@ def capture_clinical_charges(
             ).fetchall()
         }
 
+    # The unit rate each pharmacy line was (or, in a dry run, would be)
+    # charged at, by key, so a return in the same run credits what was billed.
+    charged_at: dict = {}
+
     for cand in candidates:
         if cand["idempotency_key"] in existing_keys:
             skipped.append({**_candidate_view(cand), "reason": "already_charged"})
+            continue
+        if cand.get("credit_of") is not None:
+            basis = charged_at.get(cand["credit_of"]) or _charged_line(
+                patient_id, cand["credit_of"])
+            if basis is None:
+                # Nothing on the bill to credit: the dispense was never
+                # charged, or its charge was cancelled.
+                skipped.append({**_candidate_view(cand), "reason": "order_not_charged"})
+                continue
+            credit = compute_line(
+                unit_rate_paise=-int(basis["unit_rate_paise"]),
+                quantity_milli=int(cand["quantity_milli"]),
+                gst_rate_bp=int(basis["gst_rate_bp"] or 0),
+                gst_treatment=basis["gst_treatment"] or GST_EXEMPT,
+            )
+            if dry_run:
+                posted.append({**_candidate_view(cand), "service_code": basis["service_code"],
+                               "rate_paise": -int(basis["unit_rate_paise"]),
+                               "total_paise": credit.total_paise, "would_post": True})
+                continue
+            charge = add_charge(
+                patient_id=patient_id, admission_id=admission_id,
+                service_code=basis["service_code"], description=cand["description"],
+                quantity_milli=int(cand["quantity_milli"]),
+                unit_rate_paise=-int(basis["unit_rate_paise"]),
+                gst_treatment=basis["gst_treatment"] or GST_EXEMPT,
+                gst_rate_bp=int(basis["gst_rate_bp"] or 0),
+                ward_class=ward_class, tariff_plan_id=plan_id,
+                service_date=cand["service_date"], source=cand["source"],
+                source_ref=str(cand["source_ref"]), idempotency_key=cand["idempotency_key"],
+                notes=f"Credit for medicine returned from the ward (charge {cand['credit_of']})",
+                charged_by=actor,
+            )
+            posted.append({**_candidate_view(cand), "charge_id": charge["id"],
+                           "service_code": charge["service_code"],
+                           "total_paise": charge["total_paise"],
+                           "total_display": charge["total_display"]})
+            continue
+        if cand.get("unit_mrp_paise") is not None:
+            line = _mrp_line(cand, plan_id=plan_id, ward_class=ward_class)
+            charged_at[cand["idempotency_key"]] = line
+            if dry_run:
+                posted.append({**_candidate_view(cand), "service_code": line["service_code"],
+                               "rate_paise": line["unit_rate_paise"],
+                               "rate_display": line["rate_display"],
+                               "total_paise": line["total_paise"], "would_post": True})
+                continue
+            charge = add_charge(
+                patient_id=patient_id, admission_id=admission_id,
+                service_code=line["service_code"], description=cand["description"],
+                quantity_milli=line["quantity_milli"], unit_rate_paise=line["unit_rate_paise"],
+                gst_treatment=line["gst_treatment"], gst_rate_bp=line["gst_rate_bp"],
+                ward_class=ward_class, tariff_plan_id=plan_id,
+                service_date=cand["service_date"], source=cand["source"],
+                source_ref=str(cand["source_ref"]), idempotency_key=cand["idempotency_key"],
+                notes=line["notes"], charged_by=actor,
+            )
+            posted.append({**_candidate_view(cand), "charge_id": charge["id"],
+                           "service_code": charge["service_code"],
+                           "total_paise": charge["total_paise"],
+                           "total_display": charge["total_display"]})
             continue
         if not cand["candidate_codes"]:
             skipped.append({**_candidate_view(cand), "reason": "no_service_code"})
@@ -1073,6 +1372,10 @@ def capture_clinical_charges(
                 "rate_display": resolution.display,
             })
             continue
+        charged_at[cand["idempotency_key"]] = {
+            "service_code": resolution.service_code, "unit_rate_paise": resolution.rate_paise,
+            "gst_rate_bp": resolution.gst_rate_bp, "gst_treatment": resolution.gst_treatment,
+        }
 
         if dry_run:
             posted.append({
@@ -1080,6 +1383,14 @@ def capture_clinical_charges(
                 "service_code": resolution.service_code,
                 "rate_paise": resolution.rate_paise,
                 "rate_display": resolution.display,
+                # More than one unit (a grn-14 dispense): the line, not the rate.
+                **({"total_paise": compute_line(
+                    unit_rate_paise=int(resolution.rate_paise or 0),
+                    quantity_milli=int(cand["quantity_milli"]),
+                    gst_rate_bp=int(resolution.gst_rate_bp or 0),
+                    gst_treatment=resolution.gst_treatment or GST_EXEMPT,
+                ).total_paise} if cand.get("quantity_milli", QUANTITY_SCALE) != QUANTITY_SCALE
+                   else {}),
                 "would_post": True,
             })
             continue
@@ -1089,6 +1400,9 @@ def capture_clinical_charges(
             admission_id=admission_id,
             service_code=resolution.service_code,
             description=cand["description"],
+            # Units dispensed for a pharmacy line with the store on (grn-16);
+            # one unit for every other candidate, as always.
+            quantity_milli=cand.get("quantity_milli", QUANTITY_SCALE),
             ward_class=ward_class,
             tariff_plan_id=plan_id,
             service_date=cand["service_date"],
@@ -1130,6 +1444,19 @@ def _candidate_view(cand: dict) -> dict:
         "kind": cand["kind"],
         "service_date": cand["service_date"],
     }
+
+
+def _charged_line(patient_id: str, key: str) -> Optional[dict]:
+    """The live (not cancelled) charge a return credit reverses, by its key,
+    or None. A return is credited at the unit rate the patient was charged."""
+    with db_session() as db:
+        row = db.execute(
+            "SELECT service_code, unit_rate_paise, gst_treatment, gst_rate_bp "
+            "FROM encounter_charges WHERE patient_id = ? AND idempotency_key = ? "
+            "AND status != ? AND rate_is_configured = 1",
+            (patient_id, key, _CHARGE_CANCELLED),
+        ).fetchone()
+    return _row(row) if row is not None else None
 
 
 def _discharge_stamp(db, admission: dict) -> Optional[str]:
@@ -1207,13 +1534,157 @@ def _ward_by_day(moves: list[dict], current_ward: Optional[str],
     return out
 
 
+# ── Bed days by bed class (adt-15, ORB_ADT) ──────────────────────────────────
+
+#: Movements that place a stay in a bed, the list the ADT census reads
+#: (services/adt_census_service._LOCATING_TYPES). A movement a correction
+#: points at (corrects_movement_id) never happened.
+_LOCATING_MOVEMENT_TYPES = (
+    "admission", "bed_assigned", "bed_change", "transfer", "bed_swap", "location_linked",
+    "correction",
+)
+
+#: Presence movements (adt-10): between a leave_start and the next of these the
+#: patient is on leave. Absconding is not leave; its days are charged as days
+#: on the ward (ADT-P6 speaks of leave only).
+_PRESENCE_MOVEMENT_TYPES = ("leave_start", "leave_end", "absconded", "absconded_return")
+
+#: Why a day could not be priced by its bed class, in words for the desk.
+BED_DAY_UNPRICED_WORDS = {
+    "no_bed": "Not in a bed from bed setup at midnight",
+    "no_bed_class": "The bed has no bed class in bed setup",
+    "no_service_code": "The bed class has no bed-day charge code in bed setup",
+    "no_service_item": "The bed-day charge code is not on the price list",
+    "rate_not_configured": "No price on this tariff for that day",
+}
+
+
+def _adt_module_on() -> bool:
+    """The beds and admissions module is 'on' (not draining, not off)."""
+    try:
+        return config.module_state("adt") == "on"
+    except Exception:  # noqa: BLE001 - an unreadable switch reads as off
+        return False
+
+
+def _parse_stored(value: Any) -> Optional[datetime]:
+    """A stored time as an aware UTC datetime (clinical_time reads every
+    legacy spelling), or None."""
+    from services.clinical_time import parse_to_utc
+
+    if value is None or value == "":
+        return None
+    try:
+        return parse_to_utc(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _midnight_after(day: date) -> datetime:
+    """The midnight that ends a hospital-local day, in UTC: the census instant."""
+    tz = hospital_timezone()
+    return datetime.combine(day + timedelta(days=1), datetime.min.time(),
+                            tzinfo=tz).astimezone(timezone.utc)
+
+
+def _stay_ledger(db, admission: dict) -> tuple[list[dict], list[dict]]:
+    """(placing moves, presence moves) of one stay, in the order they happened
+    (moved_at, ties by the order they were written), with every movement a
+    correction points at left out. Empty without the migration 51 ledger."""
+    if not _table_exists(db, "patient_movements"):
+        return [], []
+    cols = {r[1] for r in db.execute("PRAGMA table_info(patient_movements)").fetchall()}
+    if not {"to_bed_id", "from_bed_id", "corrects_movement_id"} <= cols:
+        return [], []
+    rows = [_row(r) for r in db.execute(
+        "SELECT rowid AS row_order, id, movement_type, moved_at, from_bed_id, to_bed_id, "
+        "corrects_movement_id FROM patient_movements WHERE admission_id = ?",
+        (admission["id"],),
+    ).fetchall()]
+    voided = {r["corrects_movement_id"] for r in rows if r.get("corrects_movement_id")}
+    floor = datetime.min.replace(tzinfo=timezone.utc)
+    for r in rows:
+        r["at"] = _parse_stored(r.get("moved_at")) or floor
+    live = sorted((r for r in rows if r["id"] not in voided),
+                  key=lambda r: (r["at"], r.get("row_order") or 0))
+    return ([r for r in live if r["movement_type"] in _LOCATING_MOVEMENT_TYPES],
+            [r for r in live if r["movement_type"] in _PRESENCE_MOVEMENT_TYPES])
+
+
+def _bed_at(placing: list[dict], admission: dict, instant: datetime, *,
+            inclusive: bool) -> Optional[str]:
+    """The bed (housekeeping_units.id) the stay lay in at `instant`.
+
+    Before the first placing move: nowhere when that move is the admission
+    itself, the bed a link records when it is a link (a link places a patient
+    who was already lying there), else the move's from-bed. With no moves at
+    all, the admission's own bed."""
+    if not placing:
+        return admission.get("bed_id")
+    first = placing[0]
+    if first["movement_type"] == "admission":
+        bed = None
+    elif first["movement_type"] == "location_linked":
+        bed = first.get("to_bed_id")
+    else:
+        bed = first.get("from_bed_id")
+    for move in placing:
+        if move["at"] < instant or (inclusive and move["at"] <= instant):
+            bed = move.get("to_bed_id")
+        else:
+            break
+    return bed
+
+
+def _on_leave_at(presence: list[dict], instant: datetime, *, inclusive: bool) -> bool:
+    state = None
+    for move in presence:
+        if move["at"] < instant or (inclusive and move["at"] <= instant):
+            state = move["movement_type"]
+        else:
+            break
+    return state == "leave_start"
+
+
+def _bed_master(db, bed_ids: set) -> tuple[dict, dict]:
+    """(beds by id, bed classes by code) for the beds a stay lay in."""
+    beds: dict = {}
+    classes: dict = {}
+    ids = sorted(b for b in bed_ids if b)
+    if ids and _table_exists(db, "housekeeping_units"):
+        marks = ",".join("?" for _ in ids)
+        for r in db.execute(
+            f"SELECT id, bed_label, ward, bed_class FROM housekeeping_units WHERE id IN ({marks})",
+            tuple(ids),
+        ).fetchall():
+            beds[r["id"]] = _row(r)
+    if _table_exists(db, "bed_classes"):
+        for r in db.execute(
+            "SELECT code, name, bed_day_service_code FROM bed_classes"
+        ).fetchall():
+            classes[r["code"]] = _row(r)
+    return beds, classes
+
+
+def _class_of(bed: Optional[dict], classes: dict) -> Optional[dict]:
+    code = _clean((bed or {}).get("bed_class"))
+    if not code:
+        return None
+    found = classes.get(code)
+    if found is None:
+        folded = {k.strip().casefold(): v for k, v in classes.items()}
+        found = folded.get(code.casefold())
+    return found
+
+
 def post_bed_day_charges(
     *,
     admission_id: str,
-    service_code: str,
+    service_code: Optional[str] = None,
     through: Optional[str] = None,
     ward_class: Optional[str] = None,
     actor: Optional[str] = None,
+    patient_id: Optional[str] = None,
 ) -> dict:
     """Post one bed-day charge per calendar day of an admission, idempotently.
 
@@ -1238,10 +1709,48 @@ def post_bed_day_charges(
     transfer ledger. The admission row holds only the CURRENT ward, so a CCU
     stay that ended on a general ward was billed entirely at general rates.
     An explicit ``ward_class`` still prices every day at that class.
+
+    THE STAY STARTS AT ITS ARRIVAL (adt-8c, services/stay_times): admitted_at,
+    which beds and admissions (ORB_ADT) records and may back-time, else
+    created_at. Without ORB_ADT admitted_at is never written, so the first day
+    is the one it always was.
+
+    BY BED CLASS (adt-15, ORB_ADT on, no ``service_code``). Each day is priced
+    by the bed the patient lay in at the midnight census (the midnight that
+    ends the day; the departure for the last day of an ended stay, now for
+    today): the ledger's placing moves give the bed (to_bed_id), the bed its
+    class, and the class (bed_classes) the charge code (bed_day_service_code),
+    priced on the tariff row for that class (ward_class = the class code). A
+    day that cannot be priced that way is not charged and is named with the
+    reason in ``unpriced_detail`` (and its date in ``unpriced_days``): no bed,
+    a bed with no class, a class with no code, a code not on the price list,
+    no price that day. The days already posted are never posted again (one
+    key per day, whichever way it was priced). With ORB_ADT off a service code
+    is still required, as before.
+
+    LEAVE DAYS (ruling ADT-P6, ORB_ADT on): a day the patient was on leave at
+    the midnight census is charged when ORB_ADT_LEAVE_RENT_CHARGED is on (the
+    default: the bed is held) and is not charged when it is off; either way
+    the day is listed in ``leave_days``. Absconded days are charged as days on
+    the ward.
+
+    ``patient_id``, when given (the route passes the path's patient), must be
+    the admission's patient: bed days are never posted on another patient's
+    stay through a patient the caller may reach.
     """
+    from services import stay_times
+
     service_code = _clean(service_code)
-    if not service_code:
+    adt_on = _adt_module_on()
+    by_class = not service_code
+    if by_class and not adt_on:
         raise BillingError("a bed-day service code is required", code="invalid_input")
+    if by_class and _clean(ward_class):
+        raise BillingError(
+            "a ward class prices bed days only with a bed-day service code; without "
+            "one each day is priced by the class of its bed",
+            code="invalid_input",
+        )
     with db_session() as db:
         adm = db.execute(
             "SELECT * FROM admissions WHERE id = ?", (admission_id,)
@@ -1249,14 +1758,55 @@ def post_bed_day_charges(
         if adm is None:
             raise BillingError(f"no admission {admission_id!r}", code="not_found")
         admission = _row(adm)
+        if patient_id is not None and admission.get("patient_id") != _clean(patient_id):
+            raise BillingError(
+                "that admission belongs to a different patient",
+                code="admission_patient_mismatch",
+            )
+        ended = (admission.get("status") or "active") != "active"
         discharge_stamp = (_discharge_stamp(db, admission)
-                           if admission.get("status") == "discharged" else None)
+                           if admission.get("status") == "discharged"
+                           or (by_class and ended) else None)
         moves = _admission_moves(db, admission_id)
+        placing, presence = _stay_ledger(db, admission) if adt_on else ([], [])
+        beds, classes = ({}, {})
+        existing_keys: set = set()
+        if by_class:
+            beds, classes = _bed_master(db, {admission.get("bed_id")}
+                                        | {m.get("to_bed_id") for m in placing}
+                                        | {m.get("from_bed_id") for m in placing})
+            existing_keys = {
+                r["idempotency_key"] for r in db.execute(
+                    "SELECT idempotency_key FROM encounter_charges WHERE admission_id = ? "
+                    "AND idempotency_key IS NOT NULL", (admission_id,),
+                ).fetchall()
+            }
 
     # The admission timestamp is stored UTC; the bed day it starts is a
     # hospital-local calendar day. See _local_day_of_stored.
-    start = _local_day_of_stored(admission.get("created_at")) or hospital_today().isoformat()
-    if through:
+    stay_start = stay_times.stay_start_stored(admission)
+    start = _local_day_of_stored(stay_start) or hospital_today().isoformat()
+    if by_class:
+        last = (_local_day_of_stored(discharge_stamp) if ended
+                else hospital_today().isoformat())
+        if through:
+            end = _iso_day(through)
+            if last and end > last:
+                raise BillingError(
+                    f"bed days can be posted only up to {last}, the "
+                    + ("day this stay ended" if ended else "current day"),
+                    code="through_after_stay_end",
+                    detail={"last_day": last},
+                )
+        elif last:
+            end = last
+        else:
+            raise BillingError(
+                "this admission has ended but its end time is not recorded; give the "
+                "last chargeable day",
+                code="invalid_input",
+            )
+    elif through:
         end = _iso_day(through)
     elif admission.get("status") == "discharged":
         end = _local_day_of_stored(discharge_stamp)
@@ -1281,20 +1831,69 @@ def post_bed_day_charges(
 
     wards = _ward_by_day(moves, admission.get("ward"), start_d, end_d)
     posted, replayed, unpriced_days = [], [], []
+    unpriced_detail: list[dict] = []
+    leave_days: list[str] = []
+    leave_rent = bool(getattr(config, "ADT_LEAVE_RENT_CHARGED", True))
+    # The census instant of the stay's last day: its departure once it has
+    # ended, now while it is live (today's midnight has not come yet).
+    cap = (_parse_stored(discharge_stamp) if ended
+           else datetime.now(timezone.utc)) if adt_on else None
+
+    def _unpriced(day_iso: str, reason: str, **extra) -> None:
+        unpriced_days.append(day_iso)
+        unpriced_detail.append({"day": day_iso, "reason": reason,
+                                "message": BED_DAY_UNPRICED_WORDS.get(reason, reason), **extra})
+
     day = start_d
     while day <= end_d:
+        iso = day.isoformat()
+        key = f"bedday:{admission_id}:{iso}"
+        instant, inclusive = (_midnight_after(day), False) if adt_on else (None, False)
+        if cap is not None and instant is not None and instant > cap:
+            instant, inclusive = cap, True
+        if by_class and key in existing_keys:
+            replayed.append({"idempotency_key": key, "service_date": iso})
+            day += timedelta(days=1)
+            continue
+        if instant is not None and _on_leave_at(presence, instant, inclusive=inclusive):
+            leave_days.append(iso)
+            if not leave_rent:
+                day += timedelta(days=1)
+                continue
+        code_for_day, class_for_day, words = service_code, ward_class, f"Bed charge: {iso}"
+        if by_class:
+            bed_id = _bed_at(placing, admission, instant, inclusive=inclusive)
+            bed = beds.get(bed_id) if bed_id else None
+            if bed is None:
+                _unpriced(iso, "no_bed")
+                day += timedelta(days=1)
+                continue
+            bed_class = _class_of(bed, classes)
+            label = bed.get("bed_label")
+            if bed_class is None:
+                _unpriced(iso, "no_bed_class", bed=label, bed_class=bed.get("bed_class"))
+                day += timedelta(days=1)
+                continue
+            code_for_day = _clean(bed_class.get("bed_day_service_code"))
+            class_for_day = bed_class["code"]
+            if not code_for_day:
+                _unpriced(iso, "no_service_code", bed=label, bed_class=class_for_day)
+                day += timedelta(days=1)
+                continue
+            words = f"Bed charge ({bed_class.get('name') or class_for_day}): {iso}"
         try:
             charge = add_charge(
                 patient_id=admission["patient_id"],
                 admission_id=admission_id,
-                service_code=service_code,
-                ward_class=ward_class or wards.get(day) or admission.get("ward"),
-                service_date=day.isoformat(),
+                service_code=code_for_day,
+                ward_class=(class_for_day if by_class
+                            else ward_class or wards.get(day) or admission.get("ward")),
+                service_date=iso,
                 source="bed_day",
-                source_ref=f"{admission_id}:{day.isoformat()}",
-                idempotency_key=f"bedday:{admission_id}:{day.isoformat()}",
+                source_ref=f"{admission_id}:{iso}",
+                idempotency_key=key,
                 charged_by=actor,
-                description=f"Bed charge: {day.isoformat()}",
+                description=words,
             )
             (replayed if charge.get("replayed") else posted).append(charge)
         except BillingError as exc:
@@ -1306,13 +1905,20 @@ def post_bed_day_charges(
             # "Tuesday onward is billed, Sunday and Monday are not" — with those
             # two days NAMED, so somebody prices them rather than discovering
             # the gap when the final bill is short.
-            unpriced_days.append(day.isoformat())
+            unknown = (exc.detail or {}).get("source") == "unknown_item"
+            if by_class:
+                _unpriced(iso, "no_service_item" if unknown else "rate_not_configured",
+                          bed=label, bed_class=class_for_day, service_code=code_for_day)
+            else:
+                _unpriced(iso, "rate_not_configured", service_code=code_for_day)
         day += timedelta(days=1)
 
     total = sum(int(c["total_paise"]) for c in posted)
     return {
         "admission_id": admission_id,
-        "service_code": service_code,
+        "service_code": service_code or None,
+        "pricing": "bed_class" if by_class else "service_code",
+        "stay_start": stay_start,
         "from": start_d.isoformat(),
         "through": end_d.isoformat(),
         "posted": posted,
@@ -1322,6 +1928,9 @@ def post_bed_day_charges(
         "posted_total_display": format_inr(total),
         "unpriced_days": unpriced_days,
         "unpriced_day_count": len(unpriced_days),
+        "unpriced_detail": unpriced_detail,
+        "leave_days": leave_days,
+        "leave_rent_charged": leave_rent if adt_on else None,
     }
 
 
@@ -1885,6 +2494,11 @@ def create_credit_note(
             "SELECT * FROM invoice_lines WHERE invoice_id = ? ORDER BY line_no",
             (int(invoice_id),),
         ).fetchall()]
+        # The facility whose INV series numbers the note (multisite-7a): the
+        # one its supplier snapshot below is taken for. Facility 1 while only
+        # one is on record, with no statement run.
+        series_facility = facility_identity.document_facility_id(
+            db, patient_id=source["patient_id"], admission_id=source["admission_id"])
 
     if not lines:
         raise BillingError(
@@ -1919,7 +2533,15 @@ def create_credit_note(
             "of %s; the %s paise difference is carried as round-off.",
             invoice_id, totals.total_paise, source_payable, cn_rounding,
         )
-    allocation = billing_masters.next_document_number("INV")
+    try:
+        allocation = billing_masters.next_document_number("INV", facility_id=series_facility)
+    except billing_masters.SeriesNotSetUp as exc:
+        raise BillingError(
+            "This facility has no invoice number series yet, so no credit note can be "
+            "numbered. An administrator sets one up in Admin, Facilities.",
+            code="series_not_set_up",
+            detail={"series_code": exc.series_code, "facility_id": exc.facility_id},
+        ) from exc
 
     with db_session() as db:
         # Re-checked with the number already drawn, because the gap between the
@@ -2262,11 +2884,11 @@ def invoice_print_view(invoice_id: int) -> dict:
     invoice = get_invoice(invoice_id)
     supplier = facility_identity.supplier_block(invoice, number_field="invoice_number")
 
+    # The INV series of the facility the bill names as its supplier
+    # (multisite-7a); facility 1 for a bill numbered before migration 72.
     with db_session() as db:
-        series = db.execute(
-            "SELECT is_configured FROM document_number_series WHERE series_code = 'INV'"
-        ).fetchone()
-    series_configured = bool(series["is_configured"]) if series is not None else False
+        series_configured = billing_masters.series_is_configured(
+            db, "INV", facility_id=int(supplier.get("facility_id") or billing_masters.MAIN_FACILITY_ID))
 
     tax_lines = [l for l in invoice["lines"] if int(l["tax_paise"] or 0) != 0]
     exempt_lines = [l for l in invoice["lines"] if l["gst_treatment"] != "taxable"]

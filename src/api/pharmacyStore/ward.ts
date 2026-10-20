@@ -92,6 +92,12 @@ export interface WardStockDrug {
   below_par: boolean
   /** What a top-up would ask for now: par less on hand, on its way and asked for. */
   top_up_units: number
+  /**
+   * Units given from ward stock on the eMAR when the books held none (grn-17):
+   * the books are below zero by this much and the ward should count the drug.
+   * Absent from an older server.
+   */
+  below_zero_units?: number
   /** Set when the drug may not be ward stock (barred, unlisted, NDPS ...). */
   problem: WardStockProblem | null
   lots: WardStockLot[]

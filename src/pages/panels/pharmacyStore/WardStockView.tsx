@@ -650,6 +650,11 @@ function StoreTable({ store }: { store: WardStoreStock }) {
                     {d.listed && d.below_par && <span className="psw-chip psw-chip--warn">Below par</span>}
                     {d.held_units > 0 && <span className="psw-sub">{d.held_units} held</span>}
                     {d.expired_units > 0 && <span className="psw-sub">{d.expired_units} expired</span>}
+                    {(d.below_zero_units ?? 0) > 0 && (
+                      <span className="psw-chip psw-chip--warn">
+                        {`${d.below_zero_units} given with none on the books, count this drug`}
+                      </span>
+                    )}
                     {d.problem && <span className="psw-sub">{d.problem.message}</span>}
                   </td>
                 </tr>

@@ -105,7 +105,7 @@ sequenceDiagram
 | `simulation` | **disabled** (HTTP 503 from `_check_ingestion_enabled`) | enabled | Pure demo, synthetic vitals only, no external writes. |
 | `hybrid` | **enabled** | enabled | Dev/demo where you want both. |
 
-The route layer enforces the ingestion half: `_check_ingestion_enabled` (`ingestion_routes.py:42`) raises 503 whenever the mode is `simulation`. The bot half is enforced elsewhere (bot startup checks the same var, outside this guide's scope). Crucially, `/api/ingest/replay` does **not** call `_check_ingestion_enabled`, so the dev replay endpoint works in every mode (see its Gotchas).
+The route layer enforces the ingestion half: `_check_ingestion_enabled` (`ingestion_routes.py:48`) raises 503 whenever the mode is `simulation`. The bot half is enforced elsewhere (bot startup checks the same var, outside this guide's scope). Crucially, `/api/ingest/replay` does **not** call `_check_ingestion_enabled`, so the dev replay endpoint works in every mode (see its Gotchas).
 
 ### Flow C: Provenance: how ingested and simulated data are told apart
 
@@ -119,7 +119,7 @@ There is **no separate table** for ingested data. Both bots and adapters write t
 | CSV replay | `'csv_replay'` | `'csv_replay'` |
 | FHIR ingest | `'ingested_fhir'` (via the `ingested_{source_type}` fallback) | `'ingested_fhir'` |
 
-Every ingested row also carries `source_event_id` → the `ingestion_events` row that captured the original raw payload, giving a full audit trail back to the exact bytes received. The label map is `_SOURCE_LABELS` (`ingestion_service.py:75`); unknown source types fall back to `f"ingested_{source_type}"` (`ingestion_service.py:408`). Bot pruning is careful to delete **only** `source='simulated'` rows so real clinical data is append-only (`bot_service.py:226-238`).
+Every ingested row also carries `source_event_id` → the `ingestion_events` row that captured the original raw payload, giving a full audit trail back to the exact bytes received. The label map is `_SOURCE_LABELS` (`ingestion_service.py:76`); unknown source types fall back to `f"ingested_{source_type}"` (`ingestion_service.py:778`). Bot pruning is careful to delete **only** `source='simulated'` rows so real clinical data is append-only (`bot_service.py:226-238`).
 
 > **Two different "provenance" notions, do not conflate them.** The `source` column above is *ingestion* provenance (which feed). The `ProvenanceChip` React component is *model* provenance (which AI model produced a generated output), a completely separate concern, surfaced on Sage/Lens/Forecast/Scribe outputs, not on ingested vitals. Both are "honesty layers"; they are unrelated code paths.
 
@@ -140,7 +140,7 @@ Every ingested row also carries `source_event_id` → the `ingestion_events` row
 **Why it exists:** the router needs a cheap, typed flag to decide vitals-vs-everything-else without re-inspecting codes.
 **Data in/out:** enum values only.
 **Talks to:** set by every adapter; read by `ingestion_service._route_events`.
-**Change guide:** to route a new class (e.g. device waveforms) into a dedicated table, add a member here and branch on it in `_route_events` (`ingestion_service.py:414-418`).
+**Change guide:** to route a new class (e.g. device waveforms) into a dedicated table, add a member here and branch on it in `_route_events` (`ingestion_service.py:784-788`).
 **Gotchas:** only VITAL is special-cased downstream; SCORE/DEVICE_METRIC/NOTE_STUB exist but are currently all treated as generic observations.
 
 #### ValueType: `ingestion_adapters.py:41`
@@ -159,7 +159,7 @@ Every ingested row also carries `source_event_id` → the `ingestion_events` row
 **Data in/out:** produced by `parse`; `value` is *always* a string, `value_numeric` is the parsed float (or None).
 **Talks to:** every adapter constructs it; `ingestion_service` reads every field.
 **Change guide:** to carry a new field end-to-end (say `device_serial`), add it here, populate it in each adapter's constructor call, and add a column + insert param in `_insert_observation`/`_insert_vitals`.
-**Gotchas:** `value` vs `value_numeric` are separate, `_insert_observation` stores `value` in `value_text` *only when* `value_numeric is None` (`ingestion_service.py:803`), so a numeric obs has NULL `value_text`.
+**Gotchas:** `value` vs `value_numeric` are separate, `_insert_observation` stores `value` in `value_text` *only when* `value_numeric is None` (`ingestion_service.py:1183`), so a numeric obs has NULL `value_text`.
 
 #### _VITAL_CODE_MAP + map_to_vital_key: `ingestion_adapters.py:86` / `:120`
 **Signature:** `map_to_vital_key(code, name) → Optional[str]`.
@@ -273,13 +273,13 @@ A plain `Exception` subclass signalling an unparseable payload; caught by `inges
 
 ### `server/services/ingestion_service.py`
 
-#### IngestionResult: `ingestion_service.py:42` (`to_dict` at `:58`)
+#### IngestionResult: `ingestion_service.py:43` (`to_dict` at `:59`)
 **Signature:** `@dataclass` (event_id, correlation_id, parse_status, received, inserted_vitals, inserted_observations, duplicates, errors).
 **Does:** the summary the pipeline returns to a route.
 **How it works:** `__post_init__` initialises `errors` to `[]`; `to_dict` serialises for the JSON response.
 **Talks to:** built by `ingest_payload`; read by `_build_response`/`_http_status_from_result`.
 
-#### _resolve_patient_id: `ingestion_service.py:96`
+#### _resolve_patient_id: `ingestion_service.py:97`
 **Signature:** `(db, raw_identifier) → Optional[str]`.
 **Does:** matches an inbound patient id to a real `patients.id`.
 **How it works:** tries exact `id`, then exact `mrn`, then case-insensitive `mrn`, all parameterised.
@@ -287,38 +287,38 @@ A plain `Exception` subclass signalling an unparseable payload; caught by `inges
 **Talks to:** `_insert_vitals`, `_insert_observation`.
 **Gotchas:** if nothing matches, vitals **raise** (`_insert_vitals` → `"Patient not found"`) but observations still insert with `patient_id = NULL` (a deliberate "never drop clinical data" choice, logged as a warning).
 
-#### ingest_payload: `ingestion_service.py:357`
+#### ingest_payload: `ingestion_service.py:727`
 **Signature:** `async (raw_payload, adapter=None, source_name=None, content_type=None, correlation_id=None, external_message_id=None, sio=None) → IngestionResult`.
 **Does:** the whole pipeline, capture, dedup, parse, route, status, audit.
 **How it works:** (1) select adapter if none given; audit the request; if still none, record a `failed` raw event and return. (2) fingerprint. (3) dedup query against `ingestion_events` (ignoring prior `failed` rows), on hit, record a `duplicate` event and return. (4) record the `received` raw event. (5) `adapter.parse` inside try/except (ParseError → `failed`; any other exception → `failed`). (6) stamp `raw_event_id` + `source_type` onto every event (provenance). (7) `_route_events`. (8) compute final status: `parsed` (no errors), `partially_parsed` (errors but some inserts), or `failed`; update the event row and audit.
 **Why it exists:** one funnel so every format gets identical dedup/provenance/audit/routing.
 **Data in/out:** raw string → `IngestionResult`.
 **Talks to:** called by all four ingest routes; calls the adapter, `_record_raw_event`, `_route_events`, `log_audit_event` (guide 05).
-**Change guide:** to dedup on `external_message_id` instead of payload bytes, change the dedup SELECT at `:177` (and populate that column in `_record_raw_event`). Knock-on: retries with a new timestamp but same message-id would then dedup.
+**Change guide:** to dedup on `external_message_id` instead of payload bytes, change the dedup SELECT at `:544` (and populate that column in `_record_raw_event`). Knock-on: retries with a new timestamp but same message-id would then dedup.
 **Gotchas:** the dedup SELECT and the subsequent INSERT are in **separate** `db_session()` blocks, a tiny TOCTOU window (harmless under single-writer SQLite). `parse` is called synchronously (adapters are CPU-only, no `await`).
 
-#### _record_raw_event: `ingestion_service.py:581`
+#### _record_raw_event: `ingestion_service.py:957`
 **Signature:** keyword-only `(raw_payload, source_type, source_name, correlation_id, external_message_id, fingerprint, parse_status, parse_error, adapter_name, patient_identifier_raw) → int` (new id).
 **Does:** inserts the provenance/audit row into `ingestion_events` and returns its id.
 **How it works:** one parameterised INSERT; caps `raw_payload` at 50 000 chars.
 **Why it exists:** captures the *exact bytes received* before any parsing, so a failed/duplicate/partial ingest is still fully reconstructable.
 **Talks to:** called by `ingest_payload`.
-**Gotchas:** it passes `adapter_name` into **both** the `payload_format` and `adapter_name` columns (`:352,357`), so `payload_format` effectively duplicates `adapter_name`. `patient_identifier_raw`/`encounter_identifier_raw` are never populated (always NULL). The docstring flags a real PHI-retention concern: raw payloads (PHI) are stored indefinitely with no purge (GDPR storage-limitation issue, deferred).
+**Gotchas:** it passes `adapter_name` into **both** the `payload_format` and `adapter_name` columns (`:722,727`), so `payload_format` effectively duplicates `adapter_name`. `patient_identifier_raw`/`encounter_identifier_raw` are never populated (always NULL). The docstring flags a real PHI-retention concern: raw payloads (PHI) are stored indefinitely with no purge (GDPR storage-limitation issue, deferred).
 
-#### _update_event_status: `ingestion_service.py:629`
+#### _update_event_status: `ingestion_service.py:1006`
 **Signature:** `(event_id, status, *, parse_error=None, vitals_inserted=0, observations_inserted=0)`.
 **Does:** stamps final status + counts + `processed_at` on the event row.
 **Talks to:** `ingest_payload`.
 
-#### _route_events: `ingestion_service.py:655`
+#### _route_events: `ingestion_service.py:1032`
 **Signature:** `async (events, event_id, source_type, sio, correlation_id) → (vitals, obs, errors)`.
 **Does:** splits events into per-patient vitals and everything-else, inserts each, tallies counts and per-item errors.
 **How it works:** computes the `source_label` from `_SOURCE_LABELS`; buckets `VITAL`+mapped-key events by patient into `vitals_by_patient`, the rest into `non_vital_events`; calls `_insert_vitals` per patient and `_insert_observation` per other event, catching exceptions into the `errors` list (so one bad datum doesn't abort the batch).
 **Why it exists:** the vitals table is one-row-per-timestamp-per-patient, so per-patient batching is required; labs are independent rows.
 **Talks to:** `_insert_vitals`, `_insert_observation`.
-**Gotchas:** the vital guard requires *both* `mapped_vital_key` and `observation_type == VITAL` (`:411`); anything else falls into observations.
+**Gotchas:** the vital guard requires *both* `mapped_vital_key` and `observation_type == VITAL` (`:781`); anything else falls into observations.
 
-#### _insert_vitals: `ingestion_service.py:714`
+#### _insert_vitals: `ingestion_service.py:1091`
 **Signature:** `async (patient_raw_id, vital_events, event_id, source_label, sio, correlation_id) → int`.
 **Does:** merges several vital events into one `vitals` row, then runs the full downstream (NEWS2 + risk row + socket emit + alert).
 **How it works:** resolves the patient (raise if unknown); seeds a `{HR,SBP,DBP,SpO2,Temp,RR}` map; fills it from the events (taking the first `observed_at`); if *all* values are None, returns 0 (nothing to write); **carry-forward**: reads the patient's most recent `vitals` row and backfills any missing field, plus carries `consciousness` and `on_oxygen` so NEWS2 scores all 7 parameters, but only while each value's measurement is within its age limit (HR/BP/SpO2/RR 4 h, temperature 8 h, ACVPU/O2 12 h; `services/vitals_carry.py`, measured time kept in `vitals.carried_from`), else it stays `None`; INSERTs the row with `source = source_label` and `source_event_id`; recomputes NEWS2 via `compute_news2(hr,sbp,rr,temp,spo2,consciousness,on_oxygen)`; writes a `risk_scores` row; builds the bot-identical `vitals:update` payload and emits it; calls `_check_ingested_alert`.
@@ -328,7 +328,7 @@ A plain `Exception` subclass signalling an unparseable payload; caught by `inges
 **Change guide:** to stop carry-forward (only score what actually arrived), remove the `latest`-fill block at `:492-508`; knock-on: partial vitals feeds would score a 5-param NEWS2 subset (the very thing the current code avoids).
 **Gotchas:** the INSERT column list (`:512-514`) **omits `on_oxygen`**, so the carried-forward on-oxygen flag is used for *this* score but never persisted, the new row's `on_oxygen` defaults to 0, so the next carry-forward loses it (see Discrepancies). Also the docstring claims `on_oxygen` is "not yet in schema", stale; the column exists via migration (`database.py:1174`).
 
-#### _check_ingested_alert: `ingestion_service.py:847`
+#### _check_ingested_alert: `ingestion_service.py:1236`
 **Signature:** `async (patient_id, vitals_payload, risk, sio, correlation_id)`.
 **Does:** if NEWS2 level is non-stable, posts a Vigil alert message into the patient's Relay case room and emits realtime updates.
 **How it works:** returns immediately if `risk.level == "stable"`; builds the reason line with `news2_reason_line` (shared by all three alert lanes since 2026-10-02), which is *wording only*: the NEWS2 level alone gates the alert, and if the helper raises the alert goes out with the band alone; upserts a `bot_vigil` user; finds the `case_room` channel for the patient; inserts an `alert` message (`is_bot=1`, `source='bot'`) and emits `message:new` to the channel room; emits a global `patient_status_update`; audits.
@@ -336,7 +336,7 @@ A plain `Exception` subclass signalling an unparseable payload; caught by `inges
 **Talks to:** `messages`/`channels`/`users`/`patients` tables; `sio` (guide 06); Relay (guide 08).
 **Gotchas:** the `bot_vigil` user is inserted with role `'doctor'` but the message's `sender_role` is `'intelligence'`, cosmetic mismatch. No alert is raised if the patient has no `case_room` channel.
 
-#### _insert_observation: `ingestion_service.py:1002`
+#### _insert_observation: `ingestion_service.py:1391`
 **Signature:** `(evt, event_id, source_label, correlation_id)`.
 **Does:** inserts one non-vital observation (lab, or a FHIR patient/med/allergy provenance event) into `observations`.
 **How it works:** resolves patient (may be None → inserts NULL patient_id, logs a warning); INSERTs all 17 columns including `source`, `source_event_id`, code system, panel/OBR grouping, and `raw_segment_ref`; stores `value` in `value_text` only when `value_numeric is None`; audits.
@@ -405,11 +405,11 @@ Serialise `patient_allergies` → `AllergyIntolerance` (criticality from severit
 
 ### `server/routes/ingestion_routes.py`: router prefix `/api/ingest` (`:22`)
 
-#### _verify_api_key: `ingestion_routes.py:29`
+#### _verify_api_key: `ingestion_routes.py:30`
 **Does:** rejects a request unless `X-API-Key` matches `INGESTION_API_KEY` via `hmac.compare_digest` (timing-safe). Raises 401 otherwise.
 **Why it exists:** a plain `!=` leaks the key length/position by timing; this guards a real-patient write path.
 
-#### _check_ingestion_enabled: `ingestion_routes.py:42`
+#### _check_ingestion_enabled: `ingestion_routes.py:48`
 **Does:** raises 503 when `INGESTION_MODE == "simulation"`. This is the runtime enforcement of Flow B.
 **Gotchas:** `/replay` intentionally skips this.
 
@@ -421,13 +421,13 @@ Serialise `patient_allergies` → `AllergyIntolerance` (criticality from severit
 **Change guide:** to add a `/api/ingest/csv` route, copy `ingest_json` and pass `CSVAdapter()`.
 **Gotchas:** the adapter is fixed per endpoint (no sniffing), sending HL7 to `/json` will fail to parse and return 422.
 
-#### ingestion_status: `ingestion_routes.py:220`
+#### ingestion_status: `ingestion_routes.py:250`
 **Signature:** `(limit=20, status=None, user=Depends(require_permission("ingest.monitor")))`.
 **Does:** returns recent `ingestion_events` (id, source, parse_status, counts, timestamps) for governance, plus the current `ingestion_mode`.
 **Auth:** RBAC `ingest.monitor` (guide 03).
 **Gotchas:** `limit` capped at 100.
 
-#### replay_fixture: `ingestion_routes.py:264`
+#### replay_fixture: `ingestion_routes.py:294`
 **Signature:** async `(request, x_api_key)`.
 **Does:** dev endpoint, verifies the key, **auto-detects** the adapter (`adapter=None`), ingests, and audits the replay.
 **Gotchas:** does **not** call `_check_ingestion_enabled`, so it runs in `simulation` mode too, a footgun if you assume simulation blocks all writes.
@@ -559,11 +559,11 @@ The `.css` file styles a rounded inline-flex pill: base `.prov-chip`, a `--compa
 
 ## Discrepancies and open questions
 
-1. **`on_oxygen` is scored but never persisted on ingested rows.** `_insert_vitals` computes/carries `on_oxygen` and feeds it to `compute_news2` (`ingestion_service.py:558`) but the `INSERT INTO vitals` column list (`:512-514`) omits `on_oxygen`, so the new row defaults to `0`. An on-oxygen patient's flag is used for the current score but lost on the next ingested vital's carry-forward. **Fix:** add `on_oxygen` to the INSERT.
-2. **Stale comment: "column not yet in schema".** The carry-forward block (`ingestion_service.py:491-493,507`) and its DEFERRED note claim `on_oxygen` is not in the schema, but `database.py:1174-1175` adds it via migration. The defensive read still works; the comment is wrong.
-3. **`payload_format` duplicates `adapter_name`.** `_record_raw_event` passes `adapter_name` into both the `payload_format` and `adapter_name` columns (`ingestion_service.py:356,357`), so `payload_format` never holds a distinct value. Also `patient_identifier_raw`/`encounter_identifier_raw` are never populated (always NULL), so the raw-id provenance those columns promise is absent.
+1. **`on_oxygen` is scored but never persisted on ingested rows.** `_insert_vitals` computes/carries `on_oxygen` and feeds it to `compute_news2` (`ingestion_service.py:934`) but the `INSERT INTO vitals` column list (`:888-890`) omits `on_oxygen`, so the new row defaults to `0`. An on-oxygen patient's flag is used for the current score but lost on the next ingested vital's carry-forward. **Fix:** add `on_oxygen` to the INSERT.
+2. **Stale comment: "column not yet in schema".** The carry-forward block (`ingestion_service.py:867-869,883`) and its DEFERRED note claim `on_oxygen` is not in the schema, but `database.py:1174-1175` adds it via migration. The defensive read still works; the comment is wrong.
+3. **`payload_format` duplicates `adapter_name`.** `_record_raw_event` passes `adapter_name` into both the `payload_format` and `adapter_name` columns (`ingestion_service.py:726,727`), so `payload_format` never holds a distinct value. Also `patient_identifier_raw`/`encounter_identifier_raw` are never populated (always NULL), so the raw-id provenance those columns promise is absent.
 4. **FHIR non-vital resources do not materialise into their tables.** `_route_events` only sends `VITAL` events to `vitals`; everything else (including FHIR `Patient`/`Encounter`/`MedicationRequest`/`AllergyIntolerance` events, which are `ObservationType.UNKNOWN`) goes to `_insert_observation`. So ingesting a FHIR MedicationRequest creates an `observations` row named "MedicationRequest", **not** a `medications` row, despite the export side reading `medications`/`patient_allergies`/`problem_list`. Interop is complete only for vitals/labs; demographic/med/allergy/problem ingestion is capture-only. A design limitation, not necessarily a bug.
 5. **Timezone relabelling in `parse_hl7_timestamp`.** It strips the HL7 offset then stamps the result as UTC (`ingestion_adapters.py:195-199`), so a local-time HL7 timestamp is silently mislabelled UTC. Downstream `observed_at`/NEWS2 trend timing could be off by the site's UTC offset.
-6. **Dedup TOCTOU + `external_message_id` unused.** The dedup SELECT and the raw-event INSERT run in separate `db_session()` blocks (`ingestion_service.py:176,211`); harmless under single-writer SQLite but not atomic. The sender-provided `external_message_id` is stored but never used for dedup, only the payload byte-hash is.
-7. **`/api/ingest/replay` bypasses mode gating.** Unlike the other ingest routes, `replay_fixture` never calls `_check_ingestion_enabled` (`ingestion_routes.py:264-308`), so it writes real rows even in `simulation` mode. And `replay_ingestion.py:check_status` calls `/status` with no auth header, which would fail against an RBAC-enforced deployment.
+6. **Dedup TOCTOU + `external_message_id` unused.** The dedup SELECT and the raw-event INSERT run in separate `db_session()` blocks (`ingestion_service.py:518,1065`); harmless under single-writer SQLite but not atomic. The sender-provided `external_message_id` is stored but never used for dedup, only the payload byte-hash is.
+7. **`/api/ingest/replay` bypasses mode gating.** Unlike the other ingest routes, `replay_fixture` never calls `_check_ingestion_enabled` (`ingestion_routes.py:294-339`), so it writes real rows even in `simulation` mode. And `replay_ingestion.py:check_status` calls `/status` with no auth header, which would fail against an RBAC-enforced deployment.
 8. **Naming collision, two "provenance" concepts.** The task groups the ingestion-source `source` column with the `ProvenanceChip`, but they are unrelated: the chip shows *AI model* lineage on generated outputs and never displays a vital's ingestion source. No dedicated UI component in scope surfaces the `vitals.source`/`observations.source` value; it is exposed only via `/api/ingest/status` and raw rows.

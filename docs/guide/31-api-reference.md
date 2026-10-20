@@ -175,7 +175,7 @@ which one guards each route:
    layer additionally scopes every query to that patient's own `user_id`. Only
    the `/api/bridge/*` routes use this.
 3. **Machine-to-machine API key**, the `X-API-Key` header, constant-time
-   compared against `INGESTION_API_KEY` (`ingestion_routes.py:29`). Only the
+   compared against `INGESTION_API_KEY` (`ingestion_routes.py:30`). Only the
    `/api/ingest/*` write endpoints use this. There is **no JWT** here because
    the caller is a device or another system, not a person.
 
@@ -219,7 +219,7 @@ Auth-column shorthand:
 - **perm: X**, `Depends(require_permission("X"))`.
 - **role: a/b**, `Depends(require_role("a","b"))` (legacy helper; reads DB role).
 - **patient-self**, `Depends(require_patient_self())`.
-- **api-key**, `X-API-Key` header (`_verify_api_key`, `ingestion_routes.py:29`; constant-time compare at `:36`).
+- **api-key**, `X-API-Key` header (`_verify_api_key`, `ingestion_routes.py:30`; constant-time compare at `:37`).
 - **grant**, custom bearer access-grant header (discharge access only).
 
 ### The dependency helpers (every table row rests on these)
@@ -719,17 +719,17 @@ JWT. `complete` (`surgery_routes.py:383`) is idempotent (a second call returns
 
 | Method | Path | Auth | Request | Response | Purpose | Handler |
 |---|---|---|---|---|---|---|
-| POST | `/api/ingest/json` | api-key | raw JSON body; headers `X-API-Key`, `X-Correlation-Id?`, `X-Message-Id?` | `{status,event_id,correlation_id,parse_status,counts,errors}` | Ingest structured JSON. | `ingestion_routes.py:56` |
-| POST | `/api/ingest/hl7` | api-key | raw HL7 v2 ORU string (or `{message}`) | same envelope | Ingest HL7. | `ingestion_routes.py:108` |
-| POST | `/api/ingest/fhir` | api-key | FHIR R4 JSON (Bundle or resource) | same envelope | Ingest FHIR R4. | `ingestion_routes.py:166` |
-| GET | `/api/ingest/status` | perm: ingest.monitor | `?limit=20&status` | `{events,count,ingestion_mode}` | Query ingestion events. | `ingestion_routes.py:220` |
-| POST | `/api/ingest/replay` | api-key | raw payload (auto-detect) | same envelope | Dev replay with auto-detect adapter. | `ingestion_routes.py:264` |
+| POST | `/api/ingest/json` | api-key | raw JSON body; headers `X-API-Key`, `X-Correlation-Id?`, `X-Message-Id?` | `{status,event_id,correlation_id,parse_status,counts,errors}` | Ingest structured JSON. | `ingestion_routes.py:83` |
+| POST | `/api/ingest/hl7` | api-key | raw HL7 v2 ORU string (or `{message}`) | same envelope | Ingest HL7. | `ingestion_routes.py:136` |
+| POST | `/api/ingest/fhir` | api-key | FHIR R4 JSON (Bundle or resource) | same envelope | Ingest FHIR R4. | `ingestion_routes.py:195` |
+| GET | `/api/ingest/status` | perm: ingest.monitor | `?limit=20&status` | `{events,count,ingestion_mode}` | Query ingestion events. | `ingestion_routes.py:250` |
+| POST | `/api/ingest/replay` | api-key | raw payload (auto-detect) | same envelope | Dev replay with auto-detect adapter. | `ingestion_routes.py:294` |
 
 The write endpoints are the only ones guarded by `X-API-Key` (`_verify_api_key`,
-`ingestion_routes.py:29`, constant-time) and are disabled in `simulation` mode
+`ingestion_routes.py:30`, constant-time) and are disabled in `simulation` mode
 (`503`, `_check_ingestion_enabled`, line 42). The ingest envelope uses **HTTP
 status to signal parse outcome**: 200 parsed/duplicate, 207 partial, 422 failed
-(`_http_status_from_result`, `ingestion_routes.py:315`). See the ingestion guide.
+(`_http_status_from_result`, `ingestion_routes.py:346`). See the ingestion guide.
 
 ---
 
@@ -961,8 +961,8 @@ Other subsystems depend on these exact facts:
 - **Ingestion envelope.** All `/api/ingest/*` write endpoints return
   `{status, event_id, correlation_id, parse_status, counts{received,
   inserted_vitals, inserted_observations, duplicates}, errors}`
-  (`_build_response`, `ingestion_routes.py:326`) with HTTP status encoding the
-  parse outcome (`ingestion_routes.py:315`). Consumed by ingestion tooling.
+  (`_build_response`, `ingestion_routes.py:357`) with HTTP status encoding the
+  parse outcome (`ingestion_routes.py:346`). Consumed by ingestion tooling.
 - **Audit is a hard dependency.** `phi_access` audit events fail closed, media
   serving (`main.py:421`) and FHIR export (`fhir_export_routes.py:29`) abort with
   `503` if the audit cannot be written. Every mutation is also caught by the

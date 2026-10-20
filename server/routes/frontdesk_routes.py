@@ -158,6 +158,7 @@ from services.adt import core as adt_core
 from services.adt import transfer as adt_transfer
 from services.audit_service import AuditWriteError, log_audit_event
 from services.frontdesk_service import (
+    CrossFacilityMoveRefused,
     FrontDeskError,
     OpdReplayConflict,
     cancel_opd_visit,
@@ -1542,6 +1543,10 @@ def create_transfer(
             notes=data.notes,
             idempotency_key=data.idempotency_key,
         )
+    except CrossFacilityMoveRefused as err:
+        # multisite-3: another facility's department, while more than one
+        # facility is on record. Audited by the service; nothing written.
+        raise HTTPException(status_code=409, detail={"error": err.code, "message": str(err)})
     except FrontDeskError as err:
         raise _bad_request(err)
 

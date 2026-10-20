@@ -10,6 +10,13 @@ increments add routes here without touching main.py again.
   GET   /create-check               facility.manage why a facility cannot be added
   POST  ""                          facility.manage add a facility
   POST  /{id}/deactivate            facility.manage close a facility
+  GET   /{id}/document-series       facility.read   a facility's number series
+  PUT   /{id}/document-series/{code} facility.manage set up or edit one series
+
+The two document-series routes (multisite-7a, W10-A) answer 404
+feature_disabled while ORB_MULTI_SITE is off, as the design's series editor
+needs the switch. A series carries no patient data, so they sit in this open
+prefix too.
 
 multisite-2 (W9-E, 10 October 2026) added everything but /meta. Facility 1's
 identity (GET and PATCH) works whatever ORB_MULTI_SITE says: W162 says the HFR
@@ -202,3 +209,57 @@ def deactivate_facility(
             facility_id, user=user, reason=body.reason if body else None)
     except facility_identity.FacilityIdentityError as exc:
         raise _refused(exc) from exc
+
+
+class DocumentSeriesBody(BaseModel):
+    """The editable parts of one number series. On an edit only the fields sent
+    change; setting up a facility's own series needs a prefix."""
+    model_config = ConfigDict(extra="forbid")
+
+    prefix: Optional[str] = None
+    suffix: Optional[str] = None
+    pad_width: Optional[int] = None
+    is_configured: Optional[bool] = None
+
+
+@router.get("/{facility_id}/document-series")
+def list_document_series(
+    facility_id: int,
+    _gate: None = Depends(_MULTI_SITE),
+    user: dict = Depends(require_permission(FACILITY_READ)),
+):
+    """A facility's number series and what it may still set up, with whether
+    this account may edit them. No patient data."""
+    from services import billing_masters, facility_identity
+
+    try:
+        out = billing_masters.list_document_series(facility_id)
+    except billing_masters.SeriesEditError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.body()) from exc
+    out["can_edit"] = facility_identity.can_edit(user, facility_id)
+    return out
+
+
+@router.put("/{facility_id}/document-series/{series_code}")
+def save_document_series(
+    facility_id: int,
+    series_code: str,
+    body: DocumentSeriesBody = Body(...),
+    _gate: None = Depends(_MULTI_SITE),
+    user: dict = Depends(require_permission(FACILITY_MANAGE)),
+):
+    """Set up or edit one series of one facility (multisite-7a). The account's
+    own facility only, unless it holds group-wide access. A prefix that could
+    repeat a number is refused with the reason (400 invalid_series)."""
+    from services import billing_masters, facility_identity
+
+    if not facility_identity.can_edit(user, facility_id):
+        raise HTTPException(status_code=403, detail={
+            "error": "not_your_facility",
+            "message": "Only an administrator of this facility can change its numbering.",
+        })
+    try:
+        return billing_masters.save_document_series(
+            facility_id, series_code, body.model_dump(exclude_unset=True), actor=user)
+    except billing_masters.SeriesEditError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.body()) from exc

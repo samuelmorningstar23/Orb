@@ -183,7 +183,7 @@ There is no classical computer-vision model, no bounding boxes, no trained imagi
 
 ### `server/routes/lens_routes.py`
 
-### `router` + upload-validation constants: `server/routes/lens_routes.py:13`
+### `router` + upload-validation constants: `server/routes/lens_routes.py:22`
 **Signature:** `APIRouter(prefix="/api/lens", tags=["lens"])` (line 13); `_ALLOWED_IMAGE_EXTS` (line 57), `_IMAGE_MAGIC` (line 63), `MAX_IMAGE_BYTES` (line 70).
 **Does:** Declares the router (mounted in `server/main.py:688` via `app.include_router(lens_router)`, imported at `main.py:58`) and the upload allowlists: extension map `.jpg/.jpeg/.png/.webp/.gif/.bmp/.tif/.tiff → canonical ext`, magic-byte signatures for JPEG/PNG/GIF/BMP/TIFF, and a 25 MB size cap.
 **Why it exists:** The comment block above the allowlists (`lens_routes.py:50-56`) explains the threat: a client-supplied `.html`/`.svg` extension served same-origin becomes stored XSS (cross-site scripting, attacker-controlled script running on your origin); so the server never trusts the client extension and re-derives it from bytes.

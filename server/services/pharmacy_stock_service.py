@@ -63,6 +63,19 @@ same transaction:
                 modes;
   2. every registered hook (register_movement_hook); an exception from one
      rolls the whole movement back.
+
+WARD STOCK USED ON A DOSE (grn-17, behind ORB_PHARMACY_WARD_STOCK). After an
+eMAR dose commits as 'given' for an order given from ward stock (the order's
+supply source, MO-R12) and bound to a drug in the master (med_orders.
+formulary_id), the eMAR books one unit off the patient's ward imprest store,
+FEFO, in a transaction of its own (record_ward_consumption_in_txn). It never
+blocks or delays the dose: the dose is already charted, and a failure here is
+logged and leaves the dose as it is. This is the ONE decrement allowed to take
+a lot below zero (post_movement's allow_negative, for 'consumption' on a ward
+imprest lot only): when the ward's books hold no in-date unit, the use is
+booked against the ward's own batch of the drug and the negative balance is
+flagged on the ward stock overview and by reconcile(), never refused. Such a
+use is never presented as certain for that batch (ward_consumption_for_batch).
 """
 from __future__ import annotations
 
@@ -535,6 +548,7 @@ def post_movement(
     remarks: Optional[str] = None,
     unit_cost_paise: Optional[int] = None,
     occurred_at: object = None,
+    allow_negative: bool = False,
 ) -> dict:
     """Move `quantity_change` units into (+) or out of (-) one lot, and write
     the ledger row that says so. Returns the movement row as a dict.
@@ -542,7 +556,12 @@ def post_movement(
     A replay of an `idempotency_key` already in the ledger writes nothing and
     returns the earlier row with `replayed` True; the same key on a different
     lot, type or quantity is refused. `order_id` is the Helix order a dispense
-    belongs to (the legacy column billing and the ward receipt read)."""
+    belongs to (the legacy column billing and the ward receipt read).
+
+    `allow_negative` lets the lot go below zero instead of refusing. Only a
+    'consumption' on a ward imprest lot may ask for it (grn-17: a dose already
+    given is booked, and the gap is flagged, never refused); any other movement
+    asking for it is refused (negative_not_allowed)."""
     _require_transaction(conn)
     if movement_type not in MOVEMENT_TYPES:
         raise StockError(f"unknown movement type {movement_type!r}", code="bad_movement_type")
@@ -582,11 +601,20 @@ def post_movement(
     if lot is None:
         raise StockError(f"no lot {lot_id}", code="lot_not_found")
 
-    cur = conn.execute(
-        "UPDATE helix_inventory_lots SET quantity = COALESCE(quantity, 0) + ? "
-        "WHERE id = ? AND COALESCE(quantity, 0) + ? >= 0",
-        (change, lot_id, change),
-    )
+    if allow_negative:
+        _check_negative_allowed(conn, movement_type, lot)
+        cur = conn.execute(
+            "UPDATE helix_inventory_lots SET quantity = COALESCE(quantity, 0) + ? WHERE id = ?",
+            (change, lot_id),
+        )
+    else:
+        # Units coming IN are never refused: a ward batch booked below zero
+        # (grn-17) must still take its next delivery, which brings it back up.
+        cur = conn.execute(
+            "UPDATE helix_inventory_lots SET quantity = COALESCE(quantity, 0) + ? "
+            "WHERE id = ? AND (? > 0 OR COALESCE(quantity, 0) + ? >= 0)",
+            (change, lot_id, change, change),
+        )
     if cur.rowcount != 1:
         raise InsufficientStock(
             "this lot does not hold enough units for that. Nothing was changed.")
@@ -1263,3 +1291,314 @@ def reconcile(conn, *, lot_ids: Optional[Iterable[str]] = None) -> dict:
         "balance_breaks": breaks,
         "bad_master_values": bad_master,
     }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Ward stock used on an eMAR dose (grn-17)
+# ═════════════════════════════════════════════════════════════════════════════
+
+#: reference_type on a consumption movement; reference_id is the eMAR
+#: administration's id, which names the patient (the movement row names none).
+CONSUMPTION_REFERENCE = "medication_administration"
+
+#: The one store kind a dose is booked against. A crash cart's use is found
+#: and confirmed by the cart's own check (grn-23), never by a dose.
+CONSUMPTION_STORE_KIND = "ward_imprest"
+
+#: Units one given dose takes off the ward's books: one, like a Helix dispense
+#: today (GRN-R13 keeps the dispense quantity at one unit, and a dose's custody
+#: names one supply unit). A schedule-derived quantity waits for W117; a dose
+#: that used more than one unit is put right by the ward's count.
+CONSUMPTION_UNITS_PER_DOSE = 1
+
+#: med_orders.supply_source of an order given from ward stock (MO-R12). Only
+#: such an order is booked: a dose from the patient's own pharmacy supply or
+#: the patient's own medicines never touches the ward's books.
+WARD_STOCK_SUPPLY = "ward_stock"
+
+#: Why a given dose took nothing off a ward's books, in words for the log.
+CONSUMPTION_SKIP_WORDS = {
+    "switched_off": "ward stock is switched off on this site",
+    "not_linked": "the dose's ward row is not linked to a medication order",
+    "not_given": "the administration is not a given dose",
+    "not_formulary_bound": "the order names no drug in the drug master",
+    "not_from_ward_stock": "the order is not given from ward stock",
+    "no_department": "the patient has no department on record",
+    "no_ward_store": "the patient's department has no ward stock store",
+    "not_ward_stock": "the drug is not ward stock in the patient's department",
+    "store_ambiguous": "more than one ward store in the department holds the drug",
+    "no_ward_lot": "the ward store holds no available batch of the drug",
+}
+
+
+def ward_consumption_on() -> bool:
+    """ORB_PHARMACY_WARD_STOCK (under ORB_PHARMACY_STORE), read at call time.
+    DB-free, so the eMAR asks it before opening anything."""
+    import config
+
+    return bool(config.feature_enabled("pharmacy_ward_stock"))
+
+
+def consumption_key(administration_id: Any) -> str:
+    """The movement's idempotency key: one booking per administration, so a
+    second call for the same dose answers the first and writes nothing."""
+    return f"{CONSUMPTION_REFERENCE}:{int(administration_id)}:consumption"
+
+
+def _check_negative_allowed(conn, movement_type: str, lot: Any) -> None:
+    """post_movement's allow_negative: a consumption on a ward imprest lot
+    only. Everything else keeps the guarded decrement."""
+    store = None
+    if lot["store_id"] is not None:
+        store = conn.execute("SELECT pharmacy_kind FROM stores WHERE id = ?",
+                             (lot["store_id"],)).fetchone()
+    if movement_type != "consumption" or store is None or \
+            store["pharmacy_kind"] != CONSUMPTION_STORE_KIND:
+        raise StockError("only ward stock used on a dose may take a lot below zero. Nothing "
+                         "was changed.", code="negative_not_allowed")
+
+
+def _skip(reason: str, **extra: Any) -> dict:
+    return {"status": "skipped", "reason": reason,
+            "reason_words": CONSUMPTION_SKIP_WORDS.get(reason, reason), **extra}
+
+
+def _patient_location(conn, patient_id: str) -> tuple[Optional[str], Optional[str]]:
+    """(department, ward) of the patient's current stay: the department by the
+    same rule department scope reads (permissions.PATIENT_DEPARTMENT_SQL), the
+    ward from that same admission row, else the patients row."""
+    from permissions import PATIENT_DEPARTMENT_SQL
+
+    row = conn.execute(f"SELECT {PATIENT_DEPARTMENT_SQL} AS department, p.ward AS ward "
+                       "FROM patients p WHERE p.id = ?", (patient_id,)).fetchone()
+    if row is None:
+        return None, None
+    stay = conn.execute(
+        "SELECT a.ward FROM admissions a WHERE a.patient_id = ? "
+        "ORDER BY (a.status = 'active') DESC, a.created_at DESC, a.rowid DESC LIMIT 1",
+        (patient_id,)).fetchone()
+    ward = (stay["ward"] if stay is not None and _text(stay["ward"]) else None) or row["ward"]
+    return _text(row["department"]), _text(ward)
+
+
+def _ward_store_for(conn, department: str, ward: Optional[str],
+                    drug_id: str) -> tuple[Optional[dict], Optional[str]]:
+    """The patient's ward imprest store that holds this drug: (store, None),
+    or (None, reason). A store holds the drug when the drug is on its list (an
+    active par level above zero) or it has available units of it. Departments
+    are compared as department scope compares them (case and outer spaces
+    ignored). With two such stores in the department, the patient's ward
+    decides; when it does not, nothing is guessed."""
+    kind_and_dept = ("s.pharmacy_kind = ? AND s.is_active = 1 "
+                     "AND lower(trim(COALESCE(s.department, ''))) = lower(trim(?))")
+    stores = [dict(r) for r in conn.execute(
+        "SELECT s.id, s.code, s.name, s.department, s.ward FROM stores s "
+        f"WHERE {kind_and_dept} AND ("
+        "  EXISTS (SELECT 1 FROM pharmacy_par_levels p WHERE p.store_id = s.id "
+        "          AND p.helix_medication_id = ? AND p.is_active = 1 AND p.par_units > 0) "
+        "  OR EXISTS (SELECT 1 FROM helix_inventory_lots l WHERE l.store_id = s.id "
+        "          AND l.medication_id = ? AND l.status = 'available' AND l.quantity > 0)) "
+        "ORDER BY s.id", (CONSUMPTION_STORE_KIND, department, drug_id, drug_id)).fetchall()]
+    if not stores:
+        any_store = conn.execute(f"SELECT 1 FROM stores s WHERE {kind_and_dept} LIMIT 1",
+                                 (CONSUMPTION_STORE_KIND, department)).fetchone()
+        return None, ("not_ward_stock" if any_store else "no_ward_store")
+    if len(stores) == 1:
+        return stores[0], None
+    want = (ward or "").strip().lower()
+    on_ward = [s for s in stores if want and (s["ward"] or "").strip().lower() == want]
+    if len(on_ward) == 1:
+        return on_ward[0], None
+    return None, "store_ambiguous"
+
+
+def _consumption_lot(conn, store_id: int, drug_id: str, units: int,
+                     today: str) -> tuple[Optional[dict], bool]:
+    """(lot, below_zero). FEFO among the store's available, in-date lots of the
+    drug holding the units. When none does, the ward's own batch the use is
+    booked against, below zero: an available lot of the drug already at or
+    below zero, in date first (earliest expiry), else the latest expiry. A
+    lot that is held (quarantined, recalled, NSQ, awaiting inspection) or
+    expired with units left is never taken: nobody may use those units, and a
+    negative booking against them would hide them. (None, False) when the store
+    has no such lot."""
+    row = conn.execute(
+        "SELECT l.* FROM helix_inventory_lots l WHERE l.store_id = ? AND l.medication_id = ? "
+        "AND l.status = 'available' AND date(l.expiration_date) >= ? AND l.quantity >= ? "
+        "ORDER BY date(l.expiration_date) ASC, l.rowid ASC LIMIT 1",
+        (store_id, drug_id, today, units)).fetchone()
+    if row is not None:
+        return dict(row), False
+    row = conn.execute(
+        "SELECT l.* FROM helix_inventory_lots l WHERE l.store_id = ? AND l.medication_id = ? "
+        "AND l.status = 'available' AND COALESCE(l.quantity, 0) < ? "
+        "ORDER BY CASE WHEN date(l.expiration_date) >= ? THEN 0 ELSE 1 END, "
+        "CASE WHEN date(l.expiration_date) >= ? THEN julianday(l.expiration_date) "
+        "ELSE -julianday(l.expiration_date) END, l.rowid DESC LIMIT 1",
+        (store_id, drug_id, units, today, today)).fetchone()
+    return (dict(row), True) if row is not None else (None, False)
+
+
+def plan_ward_consumption(conn, administration_id: Any, *, med_order_id: Optional[str],
+                          today: Optional[str] = None) -> dict:
+    """What one given dose takes off the ward's books, decided on the caller's
+    connection. Writes nothing. Returns {status: 'consume', ...} with the
+    patient, drug, store, lot, units and below_zero, or a skip
+    {status: 'skipped', reason, reason_words} (reasons: CONSUMPTION_SKIP_WORDS).
+
+    Booked only when every one of these holds: ward stock is on; the
+    administration is a given dose; its ward row is linked to a medication
+    order of the same patient; the order names its drug in the drug master
+    (formulary_id) and is given from ward stock (supply_source); the patient's
+    department has exactly one ward imprest store that holds the drug (the
+    ward decides between two); and that store has an available batch of it."""
+    if not ward_consumption_on():
+        return _skip("switched_off")
+    if not med_order_id:
+        return _skip("not_linked")
+    adm = conn.execute("SELECT id, patient_id, status FROM medication_administrations "
+                       "WHERE id = ?", (administration_id,)).fetchone()
+    if adm is None or adm["status"] != "given":
+        return _skip("not_given")
+    order = conn.execute("SELECT id, patient_id, formulary_id, supply_source FROM med_orders "
+                         "WHERE id = ?", (med_order_id,)).fetchone()
+    if order is None or order["patient_id"] != adm["patient_id"]:
+        return _skip("not_linked")
+    drug_id = _text(order["formulary_id"])
+    if not drug_id:
+        return _skip("not_formulary_bound")
+    if order["supply_source"] != WARD_STOCK_SUPPLY:
+        return _skip("not_from_ward_stock")
+    department, ward = _patient_location(conn, adm["patient_id"])
+    if not department:
+        return _skip("no_department")
+    store, reason = _ward_store_for(conn, department, ward, drug_id)
+    if store is None:
+        return _skip(reason or "not_ward_stock")
+    units = CONSUMPTION_UNITS_PER_DOSE
+    lot, below_zero = _consumption_lot(conn, int(store["id"]), drug_id, units,
+                                       today or site_today())
+    if lot is None:
+        return _skip("no_ward_lot", store=store)
+    return {"status": "consume", "reason": None, "administration_id": int(adm["id"]),
+            "patient_id": adm["patient_id"], "med_order_id": order["id"], "drug_id": drug_id,
+            "store": store, "lot": lot, "units": units, "below_zero": below_zero}
+
+
+def record_ward_consumption_in_txn(conn, administration_id: Any, *,
+                                   med_order_id: Optional[str], actor_id: str,
+                                   today: Optional[str] = None) -> dict:
+    """Book one given dose's ward stock use, in the caller's transaction
+    (db_session(immediate=True), opened by the eMAR AFTER the dose committed).
+    Returns {status: 'consumed' | 'already' | 'skipped', ...}.
+
+    The 'consumption' movement (reference medication_administration and the
+    administration's id, key consumption_key) and its fail-closed
+    clinical_access audit row 'ward_stock_consumed' are written together or not
+    at all. A second call for the same administration answers 'already' and
+    writes nothing. When the ward's books hold no in-date unit the movement
+    takes the batch below zero (allow_negative): booked and flagged, never
+    refused."""
+    _require_transaction(conn)
+    key = consumption_key(administration_id)
+    prior = conn.execute("SELECT * FROM helix_stock_movements WHERE idempotency_key = ?",
+                         (key,)).fetchone()
+    if prior is not None:
+        return {"status": "already", "reason": None, "movement": dict(prior)}
+    plan = plan_ward_consumption(conn, administration_id, med_order_id=med_order_id,
+                                 today=today)
+    if plan["status"] != "consume":
+        return plan
+    lot, store, below_zero = plan["lot"], plan["store"], plan["below_zero"]
+    remarks = ("Used on the ward for a dose given (eMAR)" if not below_zero else
+               "Used on the ward for a dose given (eMAR) when the ward's books held none of "
+               "this drug: the batch given is not certain. Count this drug.")
+    movement = post_movement(
+        conn, lot_id=lot["id"], movement_type="consumption", quantity_change=-plan["units"],
+        actor_id=actor_id, reference_type=CONSUMPTION_REFERENCE,
+        reference_id=str(plan["administration_id"]), idempotency_key=key, remarks=remarks,
+        allow_negative=below_zero)
+    drug = conn.execute("SELECT name FROM helix_medication_master WHERE id = ?",
+                        (plan["drug_id"],)).fetchone()
+    drug_name = (drug["name"] if drug is not None else None) or plan["drug_id"]
+    store_name = store["name"] or store["code"]
+    balance = int(movement["balance_after_units"])
+    from services import audit_service
+
+    audit_service.log_audit_event(
+        correlation_id=str(uuid.uuid4()),
+        event_category="clinical_access",
+        action_type="ward_stock_consumed",
+        outcome="success",
+        db=conn,
+        summary_message=(
+            f"Ward stock: {_units_words(plan['units'])} of {drug_name} taken off {store_name} "
+            f"for eMAR administration {plan['administration_id']}"
+            + (f", with none on the books (batch balance now {balance})" if below_zero else "")),
+        actor_user_id=actor_id,
+        target_type="medication_administration",
+        target_id=str(plan["administration_id"]),
+        patient_id=plan["patient_id"],
+        metadata={
+            "administration_id": plan["administration_id"],
+            "med_order_id": plan["med_order_id"],
+            "helix_medication_id": plan["drug_id"],
+            "store_id": int(store["id"]),
+            "store_code": store["code"],
+            "lot_id": lot["id"],
+            "batch_no": lot["lot_number"],
+            "units": plan["units"],
+            "movement_id": movement["id"],
+            "balance_after_units": balance,
+            "below_zero": below_zero,
+        },
+    )
+    return {"status": "consumed", "reason": None, "movement": movement,
+            "store_id": int(store["id"]), "lot_id": lot["id"], "below_zero": below_zero,
+            "balance_after_units": balance}
+
+
+def ward_consumption_for_batch(conn, medication_id: str, batch_no: Any) -> list[dict]:
+    """Every dose booked off a ward's books from this drug's batch (compared
+    without case or spaces), oldest first, each attributed to its patient
+    through the eMAR administration it records: {movement_id,
+    administration_id, patient_id, store_id, store_code, store_name,
+    department, lot_id, batch_no, expiry_date, units, occurred_at,
+    batch_certain}. batch_certain is False for a use booked when the ward's
+    books held none (the movement took the batch below zero), so a recall
+    trace lists that patient as possibly given the batch, never as certainly.
+    The hook grn-10's recall trace reads. Takes the caller's connection and
+    never writes. It returns patient ids: the caller audits the disclosure."""
+    key = _batch_key(batch_no)
+    if not key:
+        return []
+    out: list[dict] = []
+    for r in conn.execute(
+            "SELECT mv.id, mv.lot_id, mv.store_id, mv.quantity_change, mv.balance_after_units, "
+            "mv.occurred_at, mv.reference_id, l.lot_number, l.expiration_date, "
+            "s.code AS store_code, s.name AS store_name, s.department, "
+            "ma.patient_id, ma.id AS administration_id "
+            "FROM helix_stock_movements mv "
+            "JOIN helix_inventory_lots l ON l.id = mv.lot_id "
+            "LEFT JOIN stores s ON s.id = mv.store_id "
+            "LEFT JOIN medication_administrations ma ON ma.id = CAST(mv.reference_id AS INTEGER) "
+            "WHERE mv.movement_type = 'consumption' AND mv.reference_type = ? "
+            "AND mv.medication_id = ? ORDER BY mv.seq",
+            (CONSUMPTION_REFERENCE, medication_id)).fetchall():
+        if _batch_key(r["lot_number"]) != key:
+            continue
+        balance = r["balance_after_units"]
+        out.append({
+            "movement_id": r["id"],
+            "administration_id": (int(r["administration_id"])
+                                  if r["administration_id"] is not None else None),
+            "patient_id": r["patient_id"],
+            "store_id": r["store_id"], "store_code": r["store_code"],
+            "store_name": r["store_name"] or r["store_code"], "department": r["department"],
+            "lot_id": r["lot_id"], "batch_no": r["lot_number"],
+            "expiry_date": str(r["expiration_date"])[:10] if r["expiration_date"] else None,
+            "units": -int(r["quantity_change"] or 0),
+            "occurred_at": r["occurred_at"],
+            "batch_certain": balance is not None and int(balance) >= 0,
+        })
+    return out

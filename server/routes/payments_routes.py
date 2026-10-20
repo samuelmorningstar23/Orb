@@ -255,10 +255,17 @@ async def payments_config(user: dict = Depends(_COUNTER_READ)):
     """What this module can and cannot do here, for a screen to render honestly."""
     def _read():
         from database import db_session
+        from services import facility_service
+        from services.billing_masters import MAIN_FACILITY_ID
+
         with db_session() as db:
+            # The counter's own facility's receipt series (multisite-7a);
+            # facility 1 while only one is on record.
+            facility_id = facility_service.user_facility_id(user, db=db) or MAIN_FACILITY_ID
             row = db.execute(
                 "SELECT prefix, next_number, financial_year, is_configured "
-                "FROM document_number_series WHERE series_code = 'RCPT'"
+                "FROM document_number_series WHERE series_code = 'RCPT' AND facility_id = ?",
+                (int(facility_id),),
             ).fetchone()
         return {
             "receipt_series": {

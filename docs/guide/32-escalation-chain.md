@@ -373,19 +373,19 @@ The section header comment (`:952-975`) states two rules worth keeping. **Every 
 
 And the permission model: reading is `alert.read`; acknowledging and resolving require `alert.read` **and** `vitals.write`, which resolves to `{doctor, clinician, nurse}`. An administrator can see an unanswered deterioration and cannot silently clear it. The header is honest that this combination stands in for a dedicated `escalation.acknowledge` permission that does not exist yet.
 
-#### `EscalationAcknowledgeIn`: `vigil_routes.py:1215`
+#### `EscalationAcknowledgeIn`: `vigil_routes.py:1222`
 **Signature:** `class EscalationAcknowledgeIn(BaseModel)`, one optional field, `note: str | None`
 **Does:** The acknowledge request body.
 **On screen:** would be a free-text "note" box in an acknowledge dialog.
 **Why it exists:** It deliberately carries **no patient id**. The chain names the patient; letting a request name one is the caller-named-scope hole `server/tests/test_caller_named_patient_scope.py` exists to catch.
 **Breaks if you add a `patient_id`:** you have reintroduced a class of bug the test suite specifically hunts.
 
-#### `EscalationResolveIn`: `vigil_routes.py:1222`
+#### `EscalationResolveIn`: `vigil_routes.py:1229`
 **Signature:** `class EscalationResolveIn(BaseModel)`, `reason: str` (required), `category: str | None`
 **Does:** The resolve request body. `reason` being required at the Pydantic layer means a missing reason is a 422 before the handler runs; a *blank* reason is a 400 from the service.
 **Breaks if you make `reason` optional:** the dismiss button returns.
 
-#### `_escalation_or_404`: `vigil_routes.py:1227`
+#### `_escalation_or_404`: `vigil_routes.py:1234`
 **Signature:** `(escalation_id, user, include_events=True) -> dict`
 **Does:** Loads a chain and proves the caller's ward owns its patient.
 **On screen:** the difference between a detail drawer opening and a "not found" state.
@@ -460,7 +460,7 @@ And the permission model: reading is `alert.read`; acknowledging and resolving r
 | Contract | Producer | Consumer | Breaks how |
 |---|---|---|---|
 | The NEWS2 dict shape (`raw_news2`, `level`, `drivers`, `single_param_3`, `complete`, `missing_parameters`) | `vigil_service.compute_news2` (`server/services/vigil_service.py:345`) | `qualifies` (`server/services/escalation_service.py:269`), `evaluate_observation` (`:555`), `scan_new_observations` (`:1711`) | rename `raw_news2` and `qualifies` silently returns False for every patient, total, silent loss of escalation |
-| `ORB_ESCALATION_*` environment variables | `site_config_service._to_env` (`server/services/site_config_service.py:519`) | `tier_policy` (`:138`), `news2_threshold` (`:193`), `_honour_single_param_3` (`:208`), `_lookback_minutes` (`:215`), `_relay_notify_enabled` (`:228`) | a `site.toml` tier list that is not a JSON array makes `tier_policy` fall back to the default and log, the site's timings silently do not apply |
+| `ORB_ESCALATION_*` environment variables | `site_config_service._to_env` (`server/services/site_config_service.py:552`) | `tier_policy` (`:138`), `news2_threshold` (`:193`), `_honour_single_param_3` (`:208`), `_lookback_minutes` (`:215`), `_relay_notify_enabled` (`:228`) | a `site.toml` tier list that is not a JSON array makes `tier_policy` fall back to the default and log, the site's timings silently do not apply |
 | Ward boundary | `permissions.PATIENT_DEPARTMENT_SQL` + `department_scope` | `_patient_context` (`:309`), `list_escalations` (`:1586`), `vigil_routes.py:1286` | any second derivation of "which ward" drifts from this one |
 | Relay case room delivery | `ingestion_service._persist_relay_alert` | `_notify` (`:717`), `nurse_shift_service.dispatch_observation_alert` (`:710`) | a patient with no case room means the escalation message reaches nobody; logged at ERROR, chain still exists |
 | Fail-closed audit | `audit_service.log_audit_event` with `event_category="clinical_access"` | `_audit` (`:475`) | an audit failure rolls back the escalation state change, by design |

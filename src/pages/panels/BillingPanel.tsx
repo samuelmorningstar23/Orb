@@ -47,9 +47,11 @@ import type {
   Invoice, OpPatient, PrintView, ServiceItem, TariffPlan,
 } from '../../api/billing'
 import { MoneyError, formatInr, formatInrOrUnset, toPaise } from '../../lib/money'
-import { formatClinicalDate, formatClinicalDateTime } from '../../lib/datetime'
+import {
+  formatClinicalDate, formatClinicalDateKey, formatClinicalDateTime, localDateKey,
+} from '../../lib/datetime'
 import { humaniseEnum, plural } from '../../lib/humanise'
-import { currentFeatureFlags, subscribeModuleFlags } from '../../shellConfig'
+import { currentFeatureFlags, currentModuleFlags, subscribeModuleFlags } from '../../shellConfig'
 import './BillingPanel.css'
 
 type TabId = 'bills' | 'charges' | 'prices'
@@ -828,6 +830,170 @@ function OpdCounterModal({ patientId, patientName, items, onClose, onDone }: {
    "Choose a patient…" with the running bill gone. Lifting the id one level up
    keeps the selection alive across the round trip; the charges themselves are
    re-fetched on remount by the effect below, so nothing is served stale. */
+/** What POST /billing/patients/{id}/bed-days answers (adt-15). */
+interface BedDaysResult {
+  from: string
+  through: string
+  pricing?: 'bed_class' | 'service_code'
+  posted_count: number
+  posted_total_display: string
+  already_present: number
+  unpriced_days: string[]
+  unpriced_detail?: {
+    day: string
+    reason: string
+    message: string
+    bed?: string | null
+  }[]
+  leave_days?: string[]
+  leave_rent_charged?: boolean | null
+}
+
+/**
+ * "Post bed days through [date]" (W136, adt-15). Room rent is one charge per
+ * hospital day, posted on request; a day already on the bill is never posted
+ * twice. With beds and admissions switched on, each day is priced by the class
+ * of the bed the patient lay in at midnight unless a bed charge item is chosen;
+ * with it off a bed charge item is required, as the server says. A day that
+ * cannot be priced is named with the reason, never charged at zero.
+ */
+function BedDaysForm({ patientId, admissionId, discharged, items, adtOn, onClose, onPosted }: {
+  patientId: string
+  admissionId: string
+  discharged: boolean
+  items: ServiceItem[]
+  adtOn: boolean
+  onClose: () => void
+  onPosted: () => void
+}) {
+  const bedItems = useMemo(
+    () => items.filter(i => i.category === 'bed' && Number(i.is_active) === 1), [items],
+  )
+  const [through, setThrough] = useState('')
+  const [code, setCode] = useState<string>(adtOn ? '' : (bedItems[0]?.code ?? ''))
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [result, setResult] = useState<BedDaysResult | null>(null)
+  const needsItem = !adtOn
+  const label = through
+    ? `Post bed days through ${formatClinicalDateKey(through)}`
+    : discharged ? 'Post bed days up to the discharge day' : 'Post bed days up to today'
+
+  const post = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const body: Record<string, string> = { admission_id: admissionId }
+      if (through) body.through = through
+      if (code) body.service_code = code
+      const res = await apiFetch<BedDaysResult>(
+        `/billing/patients/${encodeURIComponent(patientId)}/bed-days`,
+        { method: 'POST', body: JSON.stringify(body) },
+      )
+      setResult(res)
+      onPosted()
+    } catch (err) {
+      setError(errorText(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const unpriced = result
+    ? (result.unpriced_detail ?? result.unpriced_days.map(day => ({
+        day, reason: 'rate_not_configured', message: 'No price on this tariff for that day',
+        bed: null,
+      })))
+    : []
+  const leaveDays = result?.leave_days ?? []
+
+  return (
+    <div className="bill-capture" data-testid="bed-days-form">
+      <h3 className="bill-subhead">Bed days</h3>
+      <label className="bill-field" htmlFor="bed-days-through">
+        <span className="bill-field__label">Through</span>
+        <input
+          id="bed-days-through" type="date" className="bill-input" value={through}
+          max={localDateKey()} onChange={e => { setThrough(e.target.value); setResult(null) }}
+        />
+      </label>
+      <p className="bill-muted bill-tiny">
+        Leave the date empty to charge up to today, or up to the discharge day for a patient
+        who has left.
+      </p>
+      <label className="bill-field" htmlFor="bed-days-item">
+        <span className="bill-field__label">Price each day by</span>
+        <select
+          id="bed-days-item" className="bill-input" value={code}
+          onChange={e => { setCode(e.target.value); setResult(null) }}
+        >
+          {adtOn && <option value="">The class of the bed at midnight (Bed setup)</option>}
+          {needsItem && bedItems.length === 0 && (
+            <option value="">No bed charge item on the price list</option>
+          )}
+          {bedItems.map(i => (
+            <option key={i.code} value={i.code}>{i.name} ({i.code})</option>
+          ))}
+        </select>
+      </label>
+      {needsItem && bedItems.length === 0 && (
+        <p className="bill-notice bill-notice--warn">
+          No bed charge item is on the price list. Add one with the category Bed on the Price
+          list tab.
+        </p>
+      )}
+      <div className="bill-actions">
+        <button
+          type="button" className="bill-btn bill-btn--primary"
+          disabled={busy || (needsItem && !code)} onClick={post}
+        >
+          {label}
+        </button>
+        <button type="button" className="bill-btn" disabled={busy} onClick={onClose}>
+          Close
+        </button>
+      </div>
+      {error && <p className="bill-error" role="alert">{error}</p>}
+      {result && (
+        <div role="status" data-testid="bed-days-result">
+          <p className="bill-muted">
+            {plural(result.posted_count, 'bed day')} posted, {result.posted_total_display}, for{' '}
+            {formatClinicalDateKey(result.from)} to {formatClinicalDateKey(result.through)}.
+            {result.already_present > 0 &&
+              ` ${plural(result.already_present, 'day was', 'days were')} already on the bill.`}
+          </p>
+          {unpriced.length > 0 && (
+            <>
+              <p className="bill-notice bill-notice--warn">
+                {plural(unpriced.length, 'day')} could not be priced and{' '}
+                {unpriced.length === 1 ? 'was' : 'were'} not charged:
+              </p>
+              <ul className="bill-list">
+                {unpriced.map(d => (
+                  <li key={d.day}>
+                    <span>{formatClinicalDateKey(d.day)}</span>
+                    <span className="bill-reason">
+                      {d.message}{d.bed ? `, bed ${d.bed}` : ''}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          {leaveDays.length > 0 && (
+            <p className="bill-muted">
+              On leave at midnight: {leaveDays.map(formatClinicalDateKey).join(', ')}.{' '}
+              {result.leave_rent_charged === false
+                ? 'This hospital does not charge room rent for leave days, so they were not charged.'
+                : 'This hospital charges room rent while the bed is held, so they were charged.'}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ChargesTab(
   { items, patientId, setPatientId }:
   { items: ServiceItem[]; patientId: string; setPatientId: (id: string) => void },
@@ -844,6 +1010,7 @@ function ChargesTab(
   // The pending charge whose "Cancel charge" form is open, and its reason.
   const [cancelling, setCancelling] = useState<number | null>(null)
   const [cancelReason, setCancelReason] = useState('')
+  const [bedDaysOpen, setBedDaysOpen] = useState(false)
 
   /* Patients on the ward AND discharged patients with something still to
      bill: no final bill yet, or a charge still pending after it (an outpatient
@@ -858,6 +1025,10 @@ function ChargesTab(
      asks for nothing new. */
   const features = useSyncExternalStore(subscribeModuleFlags, currentFeatureFlags)
   const opdOn = features.opd === true
+  /* Beds and admissions (adt-15): with it on, bed days can be priced by the
+     class of each day's bed; off, a bed charge item is chosen as before. */
+  const modules = useSyncExternalStore(subscribeModuleFlags, currentModuleFlags)
+  const adtOn = modules.adt === true
   useEffect(() => {
     const ward = apiFetch<WardPatient[]>('/vigil/patients?limit=100')
       .then(rows => (Array.isArray(rows) ? rows : []))
@@ -1055,7 +1226,10 @@ function ChargesTab(
           <span className="bill-field__label">Patient</span>
           <select
             id="charges-patient" className="bill-input" value={patientId}
-            onChange={e => { setPatientId(e.target.value); setCapture(null); setCounterOpen(false) }}
+            onChange={e => {
+              setPatientId(e.target.value); setCapture(null); setCounterOpen(false)
+              setBedDaysOpen(false)
+            }}
           >
             <option value="">Choose a patient…</option>
             {patients.filter(p => !p.discharged && !p.outpatient).map(p => (
@@ -1196,6 +1370,13 @@ function ChargesTab(
               </>
             ) : (
               <>
+                {admissionId && (
+                  <button type="button" className="bill-btn" disabled={busy}
+                          aria-expanded={bedDaysOpen}
+                          onClick={() => setBedDaysOpen(open => !open)}>
+                    Post bed days
+                  </button>
+                )}
                 <button type="button" className="bill-btn bill-btn--primary"
                         disabled={busy || stayPending.length === 0}
                         onClick={() => raise('interim')}>
@@ -1209,6 +1390,19 @@ function ChargesTab(
               </>
             )}
           </div>
+
+          {bedDaysOpen && admissionId && !outpatient && (
+            <BedDaysForm
+              key={`${patientId}:${admissionId}`}
+              patientId={patientId}
+              admissionId={admissionId}
+              discharged={patients.some(p => p.id === patientId && p.discharged)}
+              items={items}
+              adtOn={adtOn}
+              onClose={() => setBedDaysOpen(false)}
+              onPosted={() => { void load(patientId, admissionId, isOutpatient) }}
+            />
+          )}
 
           {otherPending.map(group => (
             <div
@@ -1280,6 +1474,10 @@ function ChargesTab(
                           <span className="bill-reason">
                             {s.reason === 'rate_not_configured' ? 'No price on this tariff'
                               : s.reason === 'no_service_item' ? 'No matching service item'
+                              // grn-16: a ward return whose dispense is not on the bill
+                              // (the server's reason; src/api/billing.ts predates it).
+                              : (s.reason as string) === 'order_not_charged'
+                                ? 'A return: the medicine it returns is not on the bill'
                               : 'No code to price on'}
                           </span>
                         </li>

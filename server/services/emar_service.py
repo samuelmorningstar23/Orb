@@ -933,6 +933,15 @@ def record_administration(
                 },
             )
 
+    # ── Ward stock used for this dose (grn-17) ───────────────────────────────
+    # AFTER the commit above, on purpose: the dose is charted and audited
+    # whatever happens here. A given dose of an order given from ward stock
+    # takes one unit off the ward store's books in a transaction of its own;
+    # any failure there is logged and the dose stands. A replayed dose never
+    # gets here (it returned above), and an unlinked ward row is never booked.
+    if status == "given" and linked_order:
+        _book_ward_stock_use(inserted_id, linked_order, actor_id)
+
     if dose_check and dose_check.get("decision") != drug_safety_service.DOSE_ALLOW:
         logger.warning(
             "eMAR: DOSE %s on med %s (%s %s %s) for patient %s by %s%s%s",
@@ -952,6 +961,39 @@ def record_administration(
     if before_check:
         record["given_before_pharmacist_check"] = True
     return {**record, "replayed": False}
+
+
+def _book_ward_stock_use(administration_id: int, linked_order: dict, actor_id: str) -> None:
+    """Book a given dose's ward stock use (grn-17), after the dose committed.
+
+    Never raises and never changes the dose or its answer: with
+    ORB_PHARMACY_WARD_STOCK off it returns before opening anything; otherwise
+    services/pharmacy_stock_service decides and writes, in one immediate
+    transaction of its own, the consumption movement and its audit row
+    together. Anything that goes wrong there (a busy or broken stock ledger, an
+    audit outage) rolls that transaction back and is logged here."""
+    try:
+        from services import pharmacy_stock_service as stock
+
+        if not stock.ward_consumption_on():
+            return
+        with db_session(immediate=True) as conn:
+            outcome = stock.record_ward_consumption_in_txn(
+                conn, administration_id, med_order_id=linked_order.get("med_order_id"),
+                actor_id=actor_id)
+    except Exception as exc:  # the dose is charted; the stock books must never touch it
+        logger.warning(
+            "eMAR: administration %s is charted, but its ward stock use was not booked (%s)",
+            administration_id, getattr(exc, "code", None) or type(exc).__name__)
+        return
+    if outcome.get("status") == "consumed" and outcome.get("below_zero"):
+        logger.warning(
+            "eMAR: administration %s was booked against ward stock that the books did not "
+            "hold (lot %s now %s): the ward should count this drug",
+            administration_id, outcome.get("lot_id"), outcome.get("balance_after_units"))
+    elif outcome.get("status") == "skipped":
+        logger.info("eMAR: administration %s took nothing off ward stock: %s",
+                    administration_id, outcome.get("reason_words") or outcome.get("reason"))
 
 
 def _before_check_administration_ids(db, patient_id: str) -> set[int]:

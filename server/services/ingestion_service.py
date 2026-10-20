@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -107,14 +108,28 @@ _SOURCE_LABELS = {
 #  Patient Resolution
 # ════════════════════════════════════════════
 
-def _resolve_patient_id(db, raw_identifier: str) -> Optional[str]:
+#: _resolve_patient_id's facility argument for "no facility limit": one
+#: facility on record, or a lane whose patient its caller has already scoped.
+ANY_FACILITY = object()
+
+
+def _resolve_patient_id(db, raw_identifier: str, facility_id=ANY_FACILITY) -> Optional[str]:
     """Try to match a raw patient identifier to an existing patient.
 
     Checks, in order:
       1. Exact match on patients.id
       2. Exact match on patients.mrn
       3. Case-insensitive match on patients.mrn
+
+    `facility_id` (multisite-16): ANY_FACILITY, the default, matches across
+    the whole appliance as above. A facility id files only to a patient whose
+    current facility (permissions.FACILITY_PATIENT_SQL) is that facility, and
+    only when no patient the identifier names is at another facility. None
+    (a source bound to no facility) matches nobody. See _facility_match.
     """
+    if facility_id is not ANY_FACILITY:
+        bound = SourceFacility(limited=True, facility_id=facility_id)
+        return _facility_match(db, raw_identifier, bound)[0]
     # Direct ID match
     row = db.execute("SELECT id FROM patients WHERE id = ?", (raw_identifier,)).fetchone()
     if row:
@@ -133,6 +148,351 @@ def _resolve_patient_id(db, raw_identifier: str) -> Optional[str]:
         return row["id"]
 
     return None
+
+
+# ════════════════════════════════════════════
+#  Which facility a source files to (multisite-16, W10-B)
+# ════════════════════════════════════════════
+# With one facility on record (every site today) nothing here runs: every
+# source files to the whole appliance, exactly as before, and the only cost is
+# a cached check (facility_service.multi_facility_data_async, no executor hop
+# on a warm cache).
+#
+# Once more than one facility is on record, every source is bound to one
+# facility and files only to that facility's patients (ruling MS-R14 (a), the
+# strictest option: a vital filed on the wrong patient is worse than a vital
+# held for review):
+#   * REST (/api/ingest/*): by the key that authenticated the request. The
+#     existing ORB_INGESTION_API_KEY is facility 1's; ORB_INGESTION_API_KEY_<CODE>
+#     is the facility with that code's (config.ingestion_facility_keys). The
+#     route passes the binding; a header the sender writes never chooses it.
+#   * The bedside monitor feed and any other caller that passes no binding:
+#     by its source name (ORB_MONITOR_SOURCE_ID) in site.toml's
+#     [[facilities]] ingestion_sources.
+#   * A chart lane (a label classified MANUAL: typed entry, admission vitals)
+#     has no facility limit: its route already checked the patient against the
+#     person's own facility and department scope, and its identifier is the
+#     patient id that check passed.
+# An unbound source, or an identifier that names a patient at another
+# facility (even when it also names one here), files NOTHING: the reading
+# takes today's unknown-patient path exactly (vitals refused with the same
+# words, so the sender learns nothing; observations kept unlinked or held in
+# the unmatched results queue), and an authorization 'ingestion_source_unbound'
+# row is written, at most one per source, cause and patient a minute. The
+# operations status page lists the sources refused since the server started.
+# The vitals INSERT path (clinical_time, carried_from) is not touched.
+
+
+@dataclass(frozen=True)
+class SourceBinding:
+    """How a caller bound its source: a facility by id or code, or nothing
+    (`cause` says why). bound_by: 'ingestion_key' or 'site_config'."""
+    facility_id: Optional[int] = None
+    facility_code: Optional[str] = None
+    bound_by: str = "site_config"
+    cause: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class SourceFacility:
+    """The facility one payload files to. `limited` False: no facility limit
+    (one facility on record, or a chart lane). Limited with facility_id None:
+    bound to no facility, so it files to nobody."""
+    limited: bool
+    facility_id: Optional[int] = None
+    source_name: Optional[str] = None
+    bound_by: str = "one_facility"
+    facility_code: Optional[str] = None
+    cause: Optional[str] = None
+
+
+NO_FACILITY_LIMIT = SourceFacility(limited=False)
+
+#: Why a source files to nobody, in words for the audit row and status page.
+SOURCE_REFUSAL_WORDS = {
+    "source_not_listed": "the source is not listed under any facility in the site settings file",
+    "unknown_facility_code": "the source is bound to a facility code that is not on record",
+    "facility_inactive": "the source is bound to a facility that is closed",
+    "key_shared": "the key it signed in with belongs to more than one facility",
+    "source_unbound": "the source is bound to no facility",
+    "identifier_at_another_facility":
+        "the patient identifier names a patient record at another facility",
+}
+
+#: At most one audit row per (source, cause, patient) in this many seconds;
+#: the refusals in between are counted into the next row. The audit table is
+#: append-only, and a bedside monitor sends a message every few seconds.
+SOURCE_REFUSAL_AUDIT_EVERY_SECONDS = 60.0
+_REFUSAL_KEYS_MAX = 512
+_refusal_lock = threading.Lock()
+_refusal_audit_last: dict[tuple, list] = {}
+_refusal_seen: dict[tuple, dict] = {}
+#: Patched by tests.
+_refusal_clock = time.monotonic
+
+
+def _chart_lane(source_label: Optional[str]) -> bool:
+    """A lane whose patient its route already scoped: the label is MANUAL."""
+    from services.vitals_source.base import SourceKind, classify_source_label
+    return classify_source_label(source_label) is SourceKind.MANUAL
+
+
+def resolve_source_facility(binding: Optional[SourceBinding], source_name: Optional[str],
+                            source_label: Optional[str], *, db=None) -> SourceFacility:
+    """The facility a payload from this source files to. BLOCKING (one
+    facilities read); call it through run_db from async code."""
+    from services import facility_service
+    if not facility_service.multi_facility_data(db=db):
+        return NO_FACILITY_LIMIT
+    if binding is None:
+        if _chart_lane(source_label):
+            return SourceFacility(limited=False, source_name=source_name, bound_by="chart")
+        from services.site_config_service import facility_for_ingestion_source
+        code = facility_for_ingestion_source(source_name)
+        binding = SourceBinding(facility_code=code, bound_by="site_config",
+                                cause=None if code else "source_not_listed")
+    if binding.facility_id is None and not binding.facility_code:
+        return SourceFacility(limited=True, facility_id=None, source_name=source_name,
+                              bound_by=binding.bound_by, cause=binding.cause or "source_unbound")
+    if db is None:
+        with db_session() as own:
+            return _bound_facility_on(own, binding, source_name)
+    return _bound_facility_on(db, binding, source_name)
+
+
+def _bound_facility_on(db, binding: SourceBinding, source_name: Optional[str]) -> SourceFacility:
+    if binding.facility_id is not None:
+        row = db.execute("SELECT id, code, is_active FROM facilities WHERE id = ?",
+                         (binding.facility_id,)).fetchone()
+    else:
+        row = db.execute("SELECT id, code, is_active FROM facilities WHERE code = ? COLLATE NOCASE",
+                         (binding.facility_code,)).fetchone()
+    code = row["code"] if row is not None else binding.facility_code
+    if row is None or not row["is_active"]:
+        return SourceFacility(limited=True, facility_id=None, source_name=source_name,
+                              bound_by=binding.bound_by, facility_code=code,
+                              cause="unknown_facility_code" if row is None else "facility_inactive")
+    return SourceFacility(limited=True, facility_id=int(row["id"]), source_name=source_name,
+                          bound_by=binding.bound_by, facility_code=code)
+
+
+async def _source_facility(binding: Optional[SourceBinding], source_name: Optional[str],
+                           source_label: Optional[str]) -> SourceFacility:
+    """resolve_source_facility for ingest_payload: with one facility on record
+    and a warm cache, no executor hop and no statement."""
+    from services import facility_service
+    if not await facility_service.multi_facility_data_async():
+        return NO_FACILITY_LIMIT
+    return await run_db(resolve_source_facility, binding, source_name, source_label)
+
+
+def _facility_match(db, raw_identifier: str,
+                    source: SourceFacility) -> tuple[Optional[str], Optional[dict]]:
+    """(patient id, refusal) for one identifier from one source.
+
+    No facility limit: today's match and no refusal. A source bound to no
+    facility: nobody, and a refusal whatever the identifier names. A bound
+    source: today's match when every patient record the identifier names
+    (by id, hospital number, or hospital number ignoring case) is at the
+    source's facility; otherwise nobody, and a refusal. An identifier that
+    names nobody anywhere is today's unknown patient, with no refusal."""
+    today = _resolve_patient_id(db, raw_identifier)
+    if not source.limited:
+        return today, None
+    if source.facility_id is None:
+        return None, _source_refusal(source, cause=source.cause or "source_unbound",
+                                     patient_id=today)
+    if today is None:
+        return None, None
+    from permissions import FACILITY_PATIENT_SQL
+    rows = db.execute(
+        f"SELECT p.id AS id, {FACILITY_PATIENT_SQL} AS fid FROM patients p "
+        "WHERE p.id = ? OR p.mrn = ? OR LOWER(p.mrn) = LOWER(?)",
+        (raw_identifier, raw_identifier, raw_identifier)).fetchall()
+    elsewhere = sorted({int(r["fid"]) for r in rows
+                        if r["fid"] is not None and int(r["fid"]) != source.facility_id})
+    # A record whose facility cannot be read counts as another facility's.
+    unreadable = any(r["fid"] is None for r in rows)
+    if not elsewhere and not unreadable:
+        return today, None
+    return None, _source_refusal(source, cause="identifier_at_another_facility",
+                                 patient_id=today, other_facility_ids=elsewhere)
+
+
+def _source_refusal(source: SourceFacility, *, cause: str, patient_id: Optional[str],
+                    other_facility_ids: Optional[list] = None) -> dict:
+    return {
+        "source_name": source.source_name,
+        "bound_by": source.bound_by,
+        "source_facility_id": source.facility_id,
+        "source_facility_code": source.facility_code,
+        "cause": cause,
+        "patient_id": patient_id,
+        "other_facility_ids": other_facility_ids or [],
+    }
+
+
+class SourceFacilityRefused(ValueError):
+    """A vitals message refused by its source's facility binding. str() is
+    exactly the unknown-patient words, so the sender is told nothing more than
+    for an identifier that names nobody; `refusal` is for the audit row only."""
+
+    def __init__(self, raw_identifier: str, refusal: dict):
+        super().__init__(f"Patient not found for identifier: {raw_identifier}")
+        self.refusal = refusal
+
+
+def record_source_refusal(refusal: dict, *, source_label: Optional[str] = None,
+                          event_id: Optional[int] = None,
+                          correlation_id: Optional[str] = None) -> bool:
+    """Count one refusal for the operations status page and, when due, write
+    the authorization 'ingestion_source_unbound' row. BLOCKING (the audit
+    write), never raises. True when a row was written."""
+    source = str(refusal.get("source_name") or "")[:120]
+    cause = refusal.get("cause") or "source_unbound"
+    key = (source, cause, refusal.get("patient_id"))
+    now = _refusal_clock()
+    with _refusal_lock:
+        seen = _refusal_seen.setdefault((source, cause), {"refusals": 0})
+        seen["refusals"] += 1
+        seen["last_at"] = utc_iso_now()
+        last = _refusal_audit_last.get(key)
+        if last is not None and (now - last[0]) < SOURCE_REFUSAL_AUDIT_EVERY_SECONDS:
+            last[1] += 1
+            return False
+        counted = last[1] if last is not None else 0
+        if len(_refusal_audit_last) >= _REFUSAL_KEYS_MAX and key not in _refusal_audit_last:
+            oldest = min(_refusal_audit_last, key=lambda k: _refusal_audit_last[k][0])
+            _refusal_audit_last.pop(oldest, None)
+        _refusal_audit_last[key] = [now, 0]
+    try:
+        log_audit_event(
+            correlation_id=correlation_id or str(uuid.uuid4()),
+            event_category="authorization",
+            action_type="ingestion_source_unbound",
+            outcome="denied",
+            patient_id=refusal.get("patient_id"),
+            source_type=source_label,
+            source_event_id=event_id,
+            target_type="ingestion_source",
+            target_id=source or None,
+            summary_message=(f"Readings from ingestion source {source or '(unnamed)'} were "
+                             f"filed to no patient: {SOURCE_REFUSAL_WORDS.get(cause, cause)}."),
+            metadata={
+                "source_name": source or None,
+                "bound_by": refusal.get("bound_by"),
+                "source_facility_id": refusal.get("source_facility_id"),
+                "source_facility_code": refusal.get("source_facility_code"),
+                "cause": cause,
+                "other_facility_ids": refusal.get("other_facility_ids") or [],
+                "refusals_since_last_row": counted,
+            },
+        )
+    except Exception:
+        logger.warning("Could not write the ingestion_source_unbound audit row", exc_info=True)
+        return False
+    return True
+
+
+def source_refusals() -> list[dict]:
+    """Sources refused since this process started, for the operations status
+    page: [{source_name, cause, words, refusals, last_at}]. Source names and
+    counts only, never a patient."""
+    with _refusal_lock:
+        items = [(k, dict(v)) for k, v in _refusal_seen.items()]
+    return [{"source_name": source or None, "cause": cause,
+             "words": SOURCE_REFUSAL_WORDS.get(cause, cause),
+             "refusals": v["refusals"], "last_at": v.get("last_at")}
+            for (source, cause), v in sorted(items, key=lambda kv: kv[0])]
+
+
+def reset_source_refusals() -> None:
+    """Forget the counts and the audit throttle (tests)."""
+    with _refusal_lock:
+        _refusal_seen.clear()
+        _refusal_audit_last.clear()
+
+
+def _facility_on_record(db, code: Optional[str]) -> Optional[dict]:
+    if not code:
+        return None
+    row = db.execute("SELECT id, code, is_active FROM facilities WHERE code = ? COLLATE NOCASE",
+                     (code,)).fetchone()
+    return None if row is None else {"id": int(row["id"]), "code": row["code"],
+                                     "active": bool(row["is_active"])}
+
+
+def source_binding_report(db) -> dict:
+    """The ingestion sources and the facility each is bound to, for the
+    operations status page (multisite-16). Source names, facility codes and
+    counts only: never a key, never a patient. BLOCKING.
+
+    Keys: monitor_feed {enabled, source_name, facility_code, bound, cause};
+    facility_keys [{code, on_record, active, shared}] (the per-facility REST
+    keys, by code); keys_ignored (setting names that bind nothing);
+    site_config [{code, ingestion_sources, on_record, active}];
+    refused (source_refusals()); unbound [words], what is not bound, which
+    matters only while more than one facility is on record."""
+    import os
+
+    import config
+    from services.site_config_service import current_site_config
+
+    cfg = current_site_config()
+    unbound: list[str] = []
+
+    enabled = os.getenv("ORB_MONITOR_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
+    monitor_name = os.getenv("ORB_MONITOR_SOURCE_ID", "monitor_hl7")
+    monitor_code = cfg.facility_for_source(monitor_name)
+    monitor_fac = _facility_on_record(db, monitor_code)
+    cause = None
+    if monitor_code is None:
+        cause = "source_not_listed"
+    elif monitor_fac is None:
+        cause = "unknown_facility_code"
+    elif not monitor_fac["active"]:
+        cause = "facility_inactive"
+    if enabled and cause:
+        unbound.append(f"the bedside monitor feed '{monitor_name}' "
+                       f"({SOURCE_REFUSAL_WORDS[cause]})")
+
+    keys = config.ingestion_facility_keys()
+    main_key = str(config.INGESTION_API_KEY or "")
+    facility_keys = []
+    for code in sorted(keys):
+        fac = _facility_on_record(db, code)
+        shared = any(other != code and keys[other] == keys[code] for other in keys) or (
+            code != "MAIN" and keys[code] == main_key)
+        facility_keys.append({"code": code, "on_record": fac is not None,
+                              "active": bool(fac and fac["active"]), "shared": shared})
+        if shared:
+            unbound.append(f"the ingestion key for facility {code} "
+                           f"({SOURCE_REFUSAL_WORDS['key_shared']})")
+        elif fac is None or not fac["active"]:
+            unbound.append(f"the ingestion key for facility {code} ("
+                           + SOURCE_REFUSAL_WORDS["unknown_facility_code" if fac is None
+                                                  else "facility_inactive"] + ")")
+
+    site_config = []
+    for f in cfg.facilities:
+        fac = _facility_on_record(db, f["code"])
+        site_config.append({"code": f["code"], "ingestion_sources": list(f["ingestion_sources"]),
+                            "on_record": fac is not None, "active": bool(fac and fac["active"])})
+        if f["ingestion_sources"] and (fac is None or not fac["active"]):
+            unbound.append(f"the sources listed under facility {f['code']} in the site settings "
+                           "file (" + SOURCE_REFUSAL_WORDS["unknown_facility_code" if fac is None
+                                                          else "facility_inactive"] + ")")
+
+    return {
+        "monitor_feed": {"enabled": enabled, "source_name": monitor_name,
+                         "facility_code": monitor_code, "bound": cause is None,
+                         "cause": cause},
+        "facility_keys": facility_keys,
+        "keys_ignored": config.ingestion_facility_keys_ignored(),
+        "site_config": site_config,
+        "refused": source_refusals(),
+        "unbound": unbound,
+    }
 
 
 # ════════════════════════════════════════════
@@ -163,7 +523,12 @@ def _find_duplicate_event(fingerprint):
         return existing
 
 
-def _persist_vitals_row(patient_raw_id, vital_events, event_id, source_label):
+def _persist_vitals_row(patient_raw_id, vital_events, event_id, source_label,
+                        source_facility=NO_FACILITY_LIMIT):
+    # `source_facility` (multisite-16) limits which patient the identifier may
+    # name; a refusal raises SourceFacilityRefused with the unknown-patient
+    # words before anything is written. The default is no limit.
+    #
     # The carry-forward SELECT and the INSERT below are one read-modify-write:
     # the new row inherits whatever the patient's latest row holds for vitals the
     # feed omitted. They stay in a single db_session (and so a single run_db
@@ -172,8 +537,10 @@ def _persist_vitals_row(patient_raw_id, vital_events, event_id, source_label):
     # it has already superseded — silently back-dating a vital that NEWS2 is
     # about to be scored on.
     with db_session() as db:
-        # Resolve patient
-        patient_id = _resolve_patient_id(db, patient_raw_id)
+        # Resolve patient, within the source's facility (multisite-16)
+        patient_id, refusal = _facility_match(db, patient_raw_id, source_facility)
+        if refusal is not None:
+            raise SourceFacilityRefused(patient_raw_id, refusal)
         if not patient_id:
             raise ValueError(f"Patient not found for identifier: {patient_raw_id}")
 
@@ -312,7 +679,8 @@ def _persist_vitals_row(patient_raw_id, vital_events, event_id, source_label):
         return patient_id, vitals_map, observed_at, consciousness, on_oxygen, on_scale_2
 
 
-def _insert_observations_batch(events, event_id, source_label, correlation_id, backfill=False):
+def _insert_observations_batch(events, event_id, source_label, correlation_id, backfill=False,
+                               source_facility=NO_FACILITY_LIMIT):
     """Insert a batch of non-vital observations in one trip to the DB pool.
 
     Deliberately NOT one shared transaction. Each observation keeps its own
@@ -330,6 +698,7 @@ def _insert_observations_batch(events, event_id, source_label, correlation_id, b
 
     `backfill` is the payload's own flag (ingest_payload): an older result
     replayed is stored in full but raises no interfaced critical (lis-22).
+    `source_facility` is the source's facility binding (multisite-16).
     """
     inserted = 0
     quarantined = 0
@@ -341,7 +710,8 @@ def _insert_observations_batch(events, event_id, source_label, correlation_id, b
                        and message_has_sibling_result(evt, events))
             if _insert_observation(evt, event_id, source_label, correlation_id,
                                    sibling_in_message=sibling,
-                                   backfill=backfill) == "quarantined":
+                                   backfill=backfill,
+                                   source_facility=source_facility) == "quarantined":
                 quarantined += 1
             else:
                 inserted += 1
@@ -440,6 +810,7 @@ async def ingest_payload(
     sio=None,
     source_label: Optional[str] = None,
     backfill: bool = False,
+    source_binding: Optional[SourceBinding] = None,
 ) -> IngestionResult:
     """Full ingestion pipeline: capture → parse → deduplicate → route → emit.
 
@@ -462,6 +833,11 @@ async def ingest_payload(
                               recompute the live risk score, do NOT raise a Vigil
                               alert and are NOT emitted to the live board, because
                               a stale value must not present itself as current.
+        source_binding:       The facility this source is bound to (multisite-16),
+                              from the REST key that authenticated it. None: the
+                              source is looked up by source_name in site.toml's
+                              [[facilities]]. Consulted only while more than one
+                              facility is on record (see the section above).
 
     Returns:
         IngestionResult with counts and any errors.
@@ -602,10 +978,11 @@ async def ingest_payload(
         evt.raw_event_id = event_id
         evt.source_type = adapter.source_type
 
-    # ── Step 7: Route into tables ──
+    # ── Step 7: Route into tables, within the source's facility ──
+    source_facility = await _source_facility(source_binding, source_name, source_label)
     vitals_count, obs_count, route_errors, quarantined_count = await _route_events(
         canonical_events, event_id, adapter.source_type, sio, correlation_id,
-        source_label=source_label, backfill=backfill,
+        source_label=source_label, backfill=backfill, source_facility=source_facility,
     )
 
     result.inserted_vitals = vitals_count
@@ -743,11 +1120,13 @@ async def _route_events(
     correlation_id: str = None,
     source_label: Optional[str] = None,
     backfill: bool = False,
+    source_facility: SourceFacility = NO_FACILITY_LIMIT,
 ) -> tuple[int, int, list[str], int]:
     """Route canonical events into vitals / observations tables.
 
     Returns (vitals_inserted, observations_inserted, errors, quarantined): the
     last counts results the unmatched results queue took (lis-19).
+    `source_facility` limits whose patients the identifiers may name.
     """
     vitals_inserted = 0
     obs_inserted = 0
@@ -770,7 +1149,7 @@ async def _route_events(
         try:
             count = await _insert_vitals(
                 patient_raw_id, vital_events, event_id, source_label, sio, correlation_id,
-                backfill=backfill,
+                backfill=backfill, source_facility=source_facility,
             )
             vitals_inserted += count
         except Exception as e:
@@ -789,6 +1168,7 @@ async def _route_events(
         batch_inserted, batch_errors, quarantined = await run_db(
             _insert_observations_batch,
             non_vital_events, event_id, source_label, correlation_id, backfill,
+            source_facility,
         )
         obs_inserted += batch_inserted
         errors.extend(batch_errors)
@@ -804,6 +1184,7 @@ async def _insert_vitals(
     sio=None,
     correlation_id: str = None,
     backfill: bool = False,
+    source_facility: SourceFacility = NO_FACILITY_LIMIT,
 ) -> int:
     """Map vital events into a single vitals table row and trigger downstream logic.
 
@@ -815,9 +1196,17 @@ async def _insert_vitals(
     history must be complete — but it skips the live-state effects. See the
     guard below for exactly why each one is skipped.
     """
-    db_result = await run_db(
-        _persist_vitals_row, patient_raw_id, vital_events, event_id, source_label
-    )
+    try:
+        db_result = await run_db(
+            _persist_vitals_row, patient_raw_id, vital_events, event_id, source_label,
+            source_facility,
+        )
+    except SourceFacilityRefused as refused:
+        # multisite-16: today's unknown-patient path (the same error, so the
+        # caller and the sender see nothing new), plus the audit row.
+        await run_db(record_source_refusal, refused.refusal, source_label=source_label,
+                     event_id=event_id, correlation_id=correlation_id)
+        raise
     if db_result is None:
         return 0
     (patient_id, vitals_map, observed_at, consciousness, on_oxygen,
@@ -1222,6 +1611,7 @@ def _insert_observation(
     *,
     sibling_in_message: bool = False,
     backfill: bool = False,
+    source_facility: SourceFacility = NO_FACILITY_LIMIT,
 ) -> str:
     """Insert a non-vital observation into the observations table.
 
@@ -1236,15 +1626,21 @@ def _insert_observation(
     laboratory flagged HH, LL or AA then raises a critical callback (lis-22,
     _raise_interfaced_critical), AFTER this commit: the result stands
     whatever happens to the critical.
+
+    `source_facility` (multisite-16): an identifier its source may not file
+    takes the unmatched branch below exactly as an unknown one does, and the
+    refusal is audited after the commit.
     """
     # A correction reads the results it may supersede and then writes; take
     # the write lock first so nothing lands in between (database.db_session).
     correcting = _corrections_on() and is_external_correction(evt)
     quarantine_id = None
     obs_id = None
+    refusal = None
     with db_session(immediate=correcting) as db:
-        # Try to resolve patient
-        patient_id = _resolve_patient_id(db, evt.patient_identifier) if evt.patient_identifier else None
+        # Try to resolve patient, within the source's facility (multisite-16)
+        patient_id, refusal = (_facility_match(db, evt.patient_identifier, source_facility)
+                               if evt.patient_identifier else (None, None))
 
         if patient_id is None and _quarantine_on() and _queue_takes(evt, source_label):
             # Held for laboratory staff to attach to the right patient or
@@ -1272,6 +1668,11 @@ def _insert_observation(
             obs_id, _superseded = write_observation_in_txn(
                 db, evt, patient_id, event_id, source_label, correlation_id=correlation_id,
                 sibling_in_message=sibling_in_message)
+
+    if refusal is not None:
+        # multisite-16, after the commit like every audit row here.
+        record_source_refusal(refusal, source_label=source_label, event_id=event_id,
+                              correlation_id=correlation_id)
 
     if quarantine_id is not None:
         # Fail-soft 'ingestion' category after commit, as below.

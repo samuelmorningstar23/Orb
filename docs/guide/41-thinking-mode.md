@@ -439,7 +439,7 @@ sequenceDiagram
 **Gotchas, the voice lane is deliberately excluded.** `/sage/voice` never calls `begin_turn`, so a spoken turn takes the default (careful) until voice grows a control of its own (`:1927-1928`). That is a real behavioural difference between typing and speaking the same question.
 **Breaks if you change it:** move it after the pre-LLM safety gate and a refused turn records no toggle position. Add it to the voice handler without adding a visible control and a clinician gets fast answers from a surface with no way to see or change the setting.
 
-#### `_prov_no_model_route_info`: `server/routes/sage_routes.py:2254`
+#### `_prov_no_model_route_info`: `server/routes/sage_routes.py:2284`
 **Signature:** `() -> dict` → `{"thinking_requested": …}`
 **Does:** Supplies a minimal `route_info` for the exits where no model is ever selected, a pre-LLM refusal, a retrieval failure.
 **On screen:** nothing. It exists for the provenance row.
@@ -513,7 +513,7 @@ The module header states why the store exists at all: the toggle lives in the co
 
 ### File: `src/api/client.ts`: putting the flag on the wire
 
-#### `querySage`'s `thinking` parameter: `src/api/client.ts:1491`, parameter at `:1104-1112`, body at `:1127-1131`
+#### `querySage`'s `thinking` parameter: `src/api/client.ts:1017`, parameter at `:1104-1112`, body at `:1127-1131`
 **Signature:** `thinking?: boolean`; body sends `thinking: thinking ?? true`
 **Does:** Sends the flag explicitly on every Sage request.
 **On screen:** nothing directly.

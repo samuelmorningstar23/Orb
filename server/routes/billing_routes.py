@@ -223,7 +223,9 @@ class CaptureIn(BaseModel):
 
 class BedDaysIn(BaseModel):
     admission_id: str
-    service_code: str
+    #: Omit to price each day by the class of the patient's bed (adt-15, needs
+    #: ORB_ADT on); with ORB_ADT off a bed-day service code is still required.
+    service_code: Optional[str] = None
     through: Optional[str] = None
     ward_class: Optional[str] = None
 
@@ -521,11 +523,15 @@ def post_bed_days(
     payload: BedDaysIn,
     user: dict = Depends(require_patient_access(BILLING_READ, BILLING_WRITE)),
 ):
+    """Post bed days through a date (W136, adt-15). The admission must be the
+    path patient's: the scope check above covers the patient, not an
+    admission id in the body."""
     _billing_enabled()
     result = _handle(
         billing_service.post_bed_day_charges,
         admission_id=payload.admission_id, service_code=payload.service_code,
         through=payload.through, ward_class=payload.ward_class, actor=user.get("id"),
+        patient_id=patient_id,
     )
     return {"status": "success", **result}
 

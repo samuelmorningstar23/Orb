@@ -99,6 +99,7 @@ logger = logging.getLogger("orb.frontdesk")
 
 __all__ = [
     "FrontDeskError",
+    "CrossFacilityMoveRefused",
     "OPD_CONSULTATION_SERVICE_CODE",
     "ensure_frontdesk_schema",
     "list_covering_departments",
@@ -118,6 +119,15 @@ __all__ = [
 
 class FrontDeskError(ValueError):
     """A front-desk request that cannot be honoured (bad ward, bad state)."""
+
+
+class CrossFacilityMoveRefused(FrontDeskError):
+    """multisite-3 (W10-B): a move into another facility's department while
+    more than one facility is on record. Raised before anything is written,
+    after the authorization 'cross_facility_move_refused' row; the transfer
+    route answers 409 with `code`."""
+
+    code = "cross_facility_move_refused"
 
 
 class OpdReplayConflict(FrontDeskError):
@@ -308,7 +318,8 @@ def _movement_api_dict(row) -> dict:
 #  Ward cover — the anti-orphaning list
 # ═════════════════════════════════════════════════════════════════════════════
 
-def list_covering_departments() -> list[str]:
+def list_covering_departments(facility_id: Optional[int] = None, *,
+                              facilities: Optional[frozenset] = None) -> list[str]:
     """Every department at least one ACTIVE clinical account covers.
 
     THIS IS THE ANTI-ORPHANING LIST, and it is derived from exactly the column
@@ -320,7 +331,20 @@ def list_covering_departments() -> list[str]:
     convention a blank department means "hospital-wide governance account", not
     "covers every ward" — such an account reading across wards is not the same
     thing as a ward having staff on it.
+
+    FACILITIES (multisite-3, W10-B). With one facility on record (every site
+    today) the list is exactly as before, and every department is facility
+    1's, so `facility_id` other than 1, or `facilities` without 1, gives [].
+    With more than one facility on record (ruling MS-R4 (a): a department name
+    is unique across the group and owned by one facility, in the departments
+    master), a department the master does not list, or lists as inactive, is
+    left out: no facility owns it, so its staff see no patient and a patient
+    put there would be on nobody's board. `facility_id` then keeps one
+    facility's departments and `facilities` (a facility scope, None for every
+    facility) those of a set.
     """
+    from services import facility_service
+
     ensure_frontdesk_schema()
     marks = ",".join("?" for _ in _COVERING_ROLES)
     with db_session() as db:
@@ -334,21 +358,54 @@ def list_covering_departments() -> list[str]:
                  ORDER BY 1""",
             _COVERING_ROLES,
         ).fetchall()
-    return [r["department"] for r in rows]
+        names = [r["department"] for r in rows]
+        if not facility_service.multi_facility_data(db=db):
+            main = facility_service.MAIN_FACILITY_ID
+            if ((facility_id is not None and facility_id != main)
+                    or (facilities is not None and main not in facilities)):
+                return []
+            return names
+        master = _department_master_on(db)
+    kept = []
+    for name in names:
+        owner = master.get(name.strip().casefold())
+        if owner is None or not owner[1]:
+            continue
+        if facility_id is not None and owner[0] != facility_id:
+            continue
+        if facilities is not None and owner[0] not in facilities:
+            continue
+        kept.append(name)
+    return kept
 
 
-def _resolve_covering_department(name: str) -> Optional[str]:
+def _department_master_on(db) -> dict:
+    """{name ignoring case and outer spaces: (facility id, active)} from the
+    departments master (migration 70); {} when the table is absent."""
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'departments'"
+                  ).fetchone() is None:
+        return {}
+    return {r["name"].strip().casefold(): (int(r["facility_id"]), bool(r["is_active"]))
+            for r in db.execute("SELECT name, facility_id, is_active FROM departments").fetchall()}
+
+
+def _resolve_covering_department(name: str, *, facility_id: Optional[int] = None,
+                                 facilities: Optional[frozenset] = None) -> Optional[str]:
     """Map a typed department onto its CANONICAL covered spelling, or None.
 
     Case- and whitespace-insensitive, because a clerk typing "cardiology" must
     not create an invisible ward that differs from "Cardiology" by one byte. The
     value STORED is always the canonical string from `users.department`, so the
     equality test in PATIENT_DEPARTMENT_SQL matches exactly.
+
+    `facility_id` and `facilities` narrow the list as in
+    list_covering_departments (multisite-3); with neither, a department of any
+    facility resolves.
     """
     wanted = (name or "").strip().casefold()
     if not wanted:
         return None
-    for canonical in list_covering_departments():
+    for canonical in list_covering_departments(facility_id, facilities=facilities):
         if canonical.casefold() == wanted:
             return canonical
     return None
@@ -368,6 +425,104 @@ def uncovered_department_words(to_department: object) -> str:
         "Transferring there would leave the patient admitted on a ward that "
         "appears on nobody's board."
     )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Moves between facilities (multisite-3, W10-B)
+# ═════════════════════════════════════════════════════════════════════════════
+# Orb works out which facility a chart belongs to from the patient's
+# admissions (permissions.FACILITY_PATIENT_SQL), and that is exact only while
+# all of a patient's admissions are at one facility. So while more than one
+# facility is on record, every lane that admits a patient or changes the
+# department of an admission refuses a department of another facility than
+# the one the patient's admissions are at (the design's attribution
+# invariant; ruling MS-R3 stays at (c), refuse, until it and R009 are ruled).
+# A refusal writes an authorization 'cross_facility_move_refused' row and
+# changes nothing. With one facility on record none of this reads anything.
+
+CROSS_FACILITY_TRANSFER_WORDS = (
+    "That department belongs to another facility of the group. Orb does not move a "
+    "patient between facilities yet, so nothing was changed. Choose a department of "
+    "the facility the patient is at."
+)
+
+
+def patient_facility_ids_on(db, patient_id: str) -> set:
+    """The facilities this patient's admissions, active or not, are at."""
+    return {int(r[0]) for r in db.execute(
+        "SELECT DISTINCT facility_id FROM admissions WHERE patient_id = ? "
+        "AND facility_id IS NOT NULL", (patient_id,)).fetchall()}
+
+
+def audit_cross_facility_refusal(*, lane: str, cause: str, patient_id: Optional[str],
+                                 actor_id: Optional[str], actor_role: Optional[str],
+                                 to_department: Optional[str], to_facility_id: Optional[int],
+                                 from_facility_ids, admission_id: Optional[str] = None,
+                                 request_meta: Optional[dict] = None) -> None:
+    """The authorization row for a refused cross-facility move or admission.
+    Written on a connection of its own after nothing was written (fail-soft,
+    like every authorization row). BLOCKING."""
+    from services.audit_service import log_audit_event
+
+    meta = request_meta or {}
+    log_audit_event(
+        correlation_id=str(uuid.uuid4()),
+        event_category="authorization",
+        action_type="cross_facility_move_refused",
+        outcome="denied",
+        summary_message=(f"Refused {lane.replace('_', ' ')} of {patient_id or 'a new patient'} "
+                         f"into {to_department!r}: {cause.replace('_', ' ')}"),
+        actor_user_id=actor_id,
+        actor_role=actor_role,
+        patient_id=patient_id,
+        target_type="admission" if admission_id else "patient",
+        target_id=admission_id or patient_id,
+        request_path=meta.get("request_path"),
+        http_method=meta.get("http_method"),
+        ip_address=meta.get("ip_address"),
+        user_agent=meta.get("user_agent"),
+        metadata={
+            "lane": lane,
+            "cause": cause,
+            "to_department": to_department,
+            "to_facility_id": to_facility_id,
+            "from_facility_ids": sorted(from_facility_ids or ()),
+        },
+    )
+
+
+def _refuse_cross_facility_transfer(patient_id: str, department: str,
+                                    actor_id: Optional[str]) -> None:
+    """transfer_patient's facility check, before its immediate session:
+    CrossFacilityMoveRefused (after the audit row) when the destination's
+    facility is not the one the patient's admissions are at. The facility of
+    an admission never changes and a department in use cannot change
+    facility (services/department_master.py), so the answer holds through the
+    write."""
+    from services import facility_service
+
+    if not facility_service.multi_facility_data():
+        return
+    to_facility = facility_service.department_facility(department)
+    with db_session() as db:
+        admission = db.execute(
+            """SELECT id FROM admissions WHERE patient_id = ? AND status = 'active'
+                ORDER BY created_at DESC, rowid DESC LIMIT 1""", (patient_id,)).fetchone()
+        if admission is None:
+            return      # transfer_patient refuses it in its own words
+        held = patient_facility_ids_on(db, patient_id)
+        role_row = (db.execute("SELECT role FROM users WHERE id = ?", (actor_id,)).fetchone()
+                    if actor_id else None)
+    if to_facility is not None and held <= {to_facility}:
+        return
+    audit_cross_facility_refusal(
+        lane="frontdesk_transfer",
+        cause="department_not_listed" if to_facility is None else "patient_at_another_facility",
+        patient_id=patient_id, actor_id=actor_id,
+        actor_role=role_row["role"] if role_row else None,
+        to_department=department, to_facility_id=to_facility, from_facility_ids=held,
+        admission_id=admission["id"])
+    raise CrossFacilityMoveRefused(CROSS_FACILITY_TRANSFER_WORDS)
 
 
 def list_transfer_destinations() -> list[dict]:
@@ -1417,6 +1572,9 @@ def transfer_patient(
     canonical_dept = _resolve_covering_department(to_department)
     if canonical_dept is None:
         raise FrontDeskError(uncovered_department_words(to_department))
+    # multisite-3: never into another facility's department while more than
+    # one facility is on record (CrossFacilityMoveRefused, audited).
+    _refuse_cross_facility_transfer(patient_id, canonical_dept, moved_by)
 
     ward = _clean(to_ward, _MAX_LABEL_LEN)
     bed = _clean(to_bed, _MAX_LABEL_LEN)

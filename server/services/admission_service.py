@@ -97,20 +97,104 @@ DEPARTMENT_NOT_COVERED = (
 )
 
 
-def resolve_admission_department(name) -> str:
+def resolve_admission_department(name, *, facility_id: int | None = None,
+                                 facilities: frozenset | None = None) -> str:
     """The department as the access boundary spells it, or AdmissionInputError.
 
     permissions.department_scope matches admissions.department to users.department
     exactly, so a typed "cardiology" or "Cardiolgy" admitted a patient onto no
     doctor's board. Same rule and helper as an OPD registration or a transfer
     (frontdesk_service._resolve_covering_department).
+
+    multisite-3: `facility_id` or `facilities` keep the departments of that
+    facility or set; with more than one facility on record a department the
+    departments master does not list never resolves. The admission itself
+    checks the facility again (admission_facility) whatever the caller passed.
     """
     from services.frontdesk_service import _resolve_covering_department
 
-    canonical = _resolve_covering_department(name if isinstance(name, str) else "")
+    canonical = _resolve_covering_department(name if isinstance(name, str) else "",
+                                             facility_id=facility_id, facilities=facilities)
     if canonical is None:
         raise AdmissionInputError(DEPARTMENT_NOT_COVERED)
     return canonical
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Admissions carry the facility (multisite-3, W10-B)
+# ═════════════════════════════════════════════════════════════════════════════
+# With one facility on record (every site today) nothing here reads or writes
+# anything: every admission and patient keeps migration 70's default,
+# facility 1. With more than one, an admission takes the facility of its
+# department in the departments master (ruling MS-R4 (a): a department belongs
+# to exactly one facility), stamped on admissions.facility_id and, for a
+# patient the admission creates, on patients.registered_facility_id, in the
+# admission's own transaction. Refused first, each after an authorization
+# 'cross_facility_move_refused' row and with nothing written:
+#   * a department no facility lists (400 department_not_listed);
+#   * an admitting account whose facilities do not include it (403
+#     facility_scope): the admitter could not open the chart they created;
+#   * an existing patient with an admission at another facility (409
+#     cross_facility_move_refused): the facility of a chart is derived from
+#     its admissions, so they must all be at one facility until encounters
+#     carry their own (ruling MS-R3 stays at (c), refuse).
+
+OUTSIDE_FACILITY_WORDS = (
+    "That department belongs to another facility of the group. Admit the patient to a "
+    "department of your own facility."
+)
+CROSS_FACILITY_ADMISSION_WORDS = (
+    "This patient has been admitted at another facility of the group. Orb does not "
+    "admit a patient at a second facility yet, so nothing was saved."
+)
+
+
+def admission_facility(department, user: dict, *, lane: str, patient_id: str | None = None,
+                       request_meta: dict | None = None) -> int | None:
+    """The facility a new admission into `department` is at, or None while one
+    facility is on record (nothing to stamp). Raises AdmissionRefused, after
+    the audit row, for the three refusals above. Opens sessions of its own:
+    call it before the admission's transaction opens."""
+    from services import facility_service
+    from services.frontdesk_service import audit_cross_facility_refusal, patient_facility_ids_on
+
+    if not facility_service.multi_facility_data():
+        return None
+    to_facility = facility_service.department_facility(department)
+    scope = facility_service.facility_scope_for(user)
+    held: set = set()
+    if patient_id:
+        with db_session() as db:
+            held = patient_facility_ids_on(db, patient_id)
+    if to_facility is None:
+        cause, refused = "department_not_listed", AdmissionRefused(
+            "department_not_listed", DEPARTMENT_NOT_COVERED, status=400)
+    elif scope is not None and to_facility not in scope:
+        cause, refused = "actor_outside_facility", AdmissionRefused(
+            "facility_scope", OUTSIDE_FACILITY_WORDS, status=403)
+    elif held - {to_facility}:
+        cause, refused = "patient_at_another_facility", AdmissionRefused(
+            "cross_facility_move_refused", CROSS_FACILITY_ADMISSION_WORDS, status=409)
+    else:
+        return to_facility
+    audit_cross_facility_refusal(
+        lane=lane, cause=cause, patient_id=patient_id, actor_id=user.get("id"),
+        actor_role=user.get("role"), to_department=department, to_facility_id=to_facility,
+        from_facility_ids=held, request_meta=request_meta)
+    raise refused
+
+
+def _stamp_admission_facility_on(db, *, admission_id: str, patient_id: str,
+                                 facility_id: int | None, new_patient: bool) -> None:
+    """Write the admission's facility on the admission's own transaction, and
+    for a patient this admission creates, the facility they were registered
+    at. None (one facility on record): the columns' default, 1, stands."""
+    if facility_id is None:
+        return
+    db.execute("UPDATE admissions SET facility_id = ? WHERE id = ?", (facility_id, admission_id))
+    if new_patient:
+        db.execute("UPDATE patients SET registered_facility_id = ? WHERE id = ?",
+                   (facility_id, patient_id))
 
 
 def require_listed_attending(doctor_id) -> str:
@@ -172,9 +256,14 @@ def admission_choices(user_department=None, *, user: dict | None = None) -> dict
     The DEPARTMENT is the one validated choice, because it carries the access
     boundary.
     """
+    from services import facility_service
     from services.frontdesk_service import list_covering_departments
 
-    departments = list_covering_departments()
+    # multisite-3: with more than one facility on record, only the departments
+    # of the caller's own facilities (admission_facility refuses the rest).
+    scope = (facility_service.facility_scope_for(user)
+             if user is not None and facility_service.multi_facility_data() else None)
+    departments = list_covering_departments(facilities=scope)
     with db_session() as db:
         held_rows = db.execute(
             """SELECT TRIM(ward) AS ward, TRIM(bed) AS bed FROM patients
@@ -971,6 +1060,13 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
                 if _adt_admitting() else None)
     authoriser_pin = None
 
+    # multisite-3: the facility this admission is at; None (nothing read)
+    # while one facility is on record. Refusals are raised here, before any
+    # session of the admission opens.
+    admission_facility_id = admission_facility(
+        data.get("department"), user, lane="clerk_admission" if clerk_entry else door,
+        request_meta=request_meta)
+
     now = datetime.now(timezone.utc).isoformat()
     admitting_user_id = user["id"]
     admitting_user_name = user.get("name", "Unknown")
@@ -1135,6 +1231,8 @@ def _admit(data: dict, user: dict, *, idempotency_key: str | None = None,
                 now
             )
         )
+        _stamp_admission_facility_on(db, admission_id=admission_id, patient_id=patient_id,
+                                     facility_id=admission_facility_id, new_patient=True)
         if adt_plan is not None:
             # When the stay began, which may be up to ADT_BACKTIME_HOURS back
             # (ruling ADT-P3); created_at stays the time it was recorded.
@@ -2076,6 +2174,12 @@ def admit_existing_patient(visit_id: str, data: dict, user: dict, *, scope_depar
             raise now_refused from None
         raise
 
+    # multisite-3: the facility of this admission (None with one facility on
+    # record); refused when the patient's admissions are at another facility.
+    admission_facility_id = admission_facility(
+        data.get("department"), user, lane="opd_admission", patient_id=patient_id,
+        request_meta=request_meta)
+
     meta = dict(request_meta or {})
     state: dict = {}
 
@@ -2210,6 +2314,8 @@ def admit_existing_patient(visit_id: str, data: dict, user: dict, *, scope_depar
              data.get("nursing_notes"), json.dumps(data.get("isolation_precautions") or []),
              data.get("code_status") or "full_code", now, row["id"]),
         )
+        _stamp_admission_facility_on(db, admission_id=admission_id, patient_id=patient_id,
+                                     facility_id=admission_facility_id, new_patient=False)
         if adt_plan is not None:
             db.execute("UPDATE admissions SET admitted_at = ? WHERE id = ?",
                        (adt_plan["admitted_iso"], admission_id))
@@ -3091,6 +3197,12 @@ def readmit_patient(patient_id: str, data: dict, user: dict, *, scope_department
             raise now_refused from None
         raise
 
+    # multisite-3: the facility of this admission (None with one facility on
+    # record); refused when the patient's admissions are at another facility.
+    admission_facility_id = admission_facility(
+        data.get("department"), user, lane="readmission", patient_id=patient_id,
+        request_meta=request_meta)
+
     # 4. One immediate transaction.
     try:
         with db_session(immediate=True) as db:
@@ -3099,7 +3211,8 @@ def readmit_patient(patient_id: str, data: dict, user: dict, *, scope_department
                 return replay
             state = _readmit_on(db, patient_id=patient_id, admission_id=admission_id,
                                 data=data, user=user, identity_facts=identity_facts,
-                                adt_plan=adt_plan, key=key, request_meta=request_meta)
+                                adt_plan=adt_plan, key=key, request_meta=request_meta,
+                                facility_id=admission_facility_id)
     except DBIntegrityError as exc:
         if "admissions" in str(exc):
             # The one-active-admission index (migration 65): a concurrent
@@ -3147,9 +3260,11 @@ def readmit_patient(patient_id: str, data: dict, user: dict, *, scope_department
 
 
 def _readmit_on(db, *, patient_id: str, admission_id: str, data: dict, user: dict,
-                identity_facts: dict, adt_plan, key: str, request_meta) -> dict:
+                identity_facts: dict, adt_plan, key: str, request_meta,
+                facility_id: int | None = None) -> dict:
     """readmit_patient's transaction body, on the caller's immediate session.
-    Anything raised here rolls every row back."""
+    Anything raised here rolls every row back. `facility_id` is
+    admission_facility's answer (multisite-3)."""
     from services import patient_matching as pm
     from services.clinical_records_service import allergy_entries, record_allergies_on
 
@@ -3242,6 +3357,8 @@ def _readmit_on(db, *, patient_id: str, admission_id: str, data: dict, user: dic
          data.get("nursing_notes"), json.dumps(data.get("isolation_precautions") or []),
          data.get("code_status") or "full_code", now),
     )
+    _stamp_admission_facility_on(db, admission_id=admission_id, patient_id=patient_id,
+                                 facility_id=facility_id, new_patient=False)
     if adt_plan is not None:
         db.execute("UPDATE admissions SET admitted_at = ? WHERE id = ?",
                    (adt_plan["admitted_iso"], admission_id))
