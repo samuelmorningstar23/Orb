@@ -1,0 +1,62 @@
+/* The nursing note sheet (founding ward list item 4). Flat "Quiet Clinical":
+   tokens only, no opacity, status words as text tokens, never as fills. */
+.nursing-note__hint {
+  margin: 0 0 12px;
+  font-size: 0.86rem;
+  color: var(--text-secondary);
+}
+.nursing-note__text {
+  width: 100%;
+  min-height: 132px;
+  resize: vertical;
+  font: inherit;
+  line-height: 1.45;
+}
+.nursing-note__count {
+  margin: 6px 0 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.nursing-note__count--over { color: var(--status-danger-text); }
+.nursing-note__recent {
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+.nursing-note__recent-title {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.nursing-note__muted {
+  margin: 0;
+  font-size: 0.86rem;
+  color: var(--text-secondary);
+}
+.nursing-note__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.nursing-note__item {
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-surface);
+}
+.nursing-note__meta {
+  margin: 0 0 4px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+.nursing-note__body {
+  margin: 0;
+  white-space: pre-wrap;
+  color: var(--text-primary);
+}

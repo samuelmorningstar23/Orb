@@ -3,6 +3,7 @@
 import asyncio
 import json
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from database import db_session, get_db, run_db
 from db_backend import DBIntegrityError
@@ -27,6 +28,7 @@ from services.medorders import core as medorder_core
 
 # The expected course is drafted by a model: 404 while the models are off.
 from services.model_switch import require_models_on
+from services.nursing_note_service import nursing_notes_enabled
 from services.stay_times import summary_less_ends_sql
 from services.vigil_service import (
     SCORING_OFF_REASON,
@@ -99,6 +101,22 @@ def _load_patient_bundle(patient_id: str):
                ORDER BY created_at DESC""",
             (patient_id,),
         ).fetchall()
+
+        # The nurses' shift notes (migration 88), printed on the inpatient
+        # record with the signed notes. None on an Orb Ward Record computer,
+        # where nursing notes stay on paper.
+        nursing_notes = (
+            db.execute(
+                """SELECT nn.id, nn.author_id, u.name AS author_name, nn.shift_date,
+                          nn.shift_label, nn.content, nn.written_at
+                     FROM nursing_notes nn LEFT JOIN users u ON u.id = nn.author_id
+                    WHERE nn.patient_id = ?
+                    ORDER BY nn.written_at DESC, nn.id DESC LIMIT 200""",
+                (patient_id,),
+            ).fetchall()
+            if nursing_notes_enabled()
+            else []
+        )
 
         # Risk score history
         risk_history = db.execute(
@@ -190,6 +208,7 @@ def _load_patient_bundle(patient_id: str):
             problems,
             admission,
             previous_stay,
+            nursing_notes,
         )
 
 
@@ -735,6 +754,7 @@ async def get_patient(
         problems,
         admission,
         previous_stay,
+        nursing_notes,
     ) = await run_db(_load_patient_bundle, patient_id)
 
     # Score vitals[0], the row the command bar shows. This used to call
@@ -827,6 +847,7 @@ async def get_patient(
         "simulated_vitals": bool(vitals) and _row_source(vitals[0]) == LABEL_SIMULATED,
         "notes": [dict(n) for n in notes],
         "scribe_notes": [dict(s) for s in scribe_notes],
+        "nursing_notes": [dict(n) for n in nursing_notes],
         "risk_history": [
             {
                 "score": r["score"],
@@ -900,7 +921,7 @@ def _row_source(row) -> str | None:
     return row["source"] if "source" in row.keys() else None
 
 
-def _row_pain_score(row) -> int | None:
+def _row_pain_score(row: Any) -> int | None:
     """`vitals.pain_score` of a row (migration 87), or None on a database that
     predates the column."""
     value = row["pain_score"] if "pain_score" in row.keys() else None

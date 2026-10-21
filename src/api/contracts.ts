@@ -189,6 +189,18 @@ export interface ClinicalDocumentRow {
 }
 
 
+/** A `nursing_notes` row as the chart carries it: one per-shift note a nurse
+ *  wrote, with her name beside her id. Printed on the inpatient record. */
+export interface NursingNoteRow {
+  id: number;
+  author_id: string;
+  author_name: string | null;
+  shift_date: string;
+  shift_label: string;
+  content: string;
+  written_at: string;
+}
+
 /** A `scribe_notes` row. The JSON columns arrive as stored TEXT here; the
  *  verification route is the one that parses them. */
 export interface ScribeNoteRow {
@@ -297,6 +309,9 @@ export interface PatientDetail {
   simulated_vitals: boolean;
   notes: ClinicalDocumentRow[];
   scribe_notes: ScribeNoteRow[];
+  /** The nurses' shift notes, newest first (migration 88). Absent on an
+   *  older server; empty under the Orb Ward Record profile. */
+  nursing_notes?: NursingNoteRow[];
   risk_history: { score: number; level: string; drivers: string[]; timestamp: string }[];
   lens_analyses: LensAnalysisRow[];
   medications: ChartMedicationRow[];
@@ -1081,7 +1096,10 @@ export type StoryType =
   | 'observation' | 'bundle' | 'problem' | 'allergy' | 'order_event'
   /* Outpatient visits and signed outpatient notes (opd-10), on the story only
      while the server's 'opd' feature is on. */
-  | 'opd_visit' | 'opd_consultation';
+  | 'opd_visit' | 'opd_consultation'
+  /* The nurses' shift notes (migration 88, 21 October 2026). Absent under the
+     Orb Ward Record profile, where nursing notes stay on paper. */
+  | 'nursing_note';
 
 
 export interface StoryEvent {

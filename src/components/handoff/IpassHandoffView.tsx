@@ -408,6 +408,24 @@ export function IpassHandoffView({ patientId, patientName, setPageTitle = false 
             </ul>
           </>
         )}
+        {/* The nurses' shift notes of the window, as written and under their
+            names (21 October 2026). The same rule as the contingencies: no
+            heading over nothing. */}
+        {(s.nursing_notes?.length ?? 0) > 0 && (
+          <div data-testid="ipass-nursing-notes">
+            <p style={{ margin: '8px 0 4px' }}><strong>Nursing notes (last {draft.window_hours}h)</strong></p>
+            <ul style={{ margin: 0, paddingLeft: 20 }}>
+              {(s.nursing_notes ?? []).map(n => (
+                <li key={n.id}>
+                  <span style={{ color: 'var(--text-secondary)' }}>
+                    {n.written_at_display}, {n.shift_label}, {n.author_name}:
+                  </span>{' '}
+                  {n.content}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </Section>
 
       {/* THE AI-DRAFTED SUPPLEMENT — Sage's four-section assessment.

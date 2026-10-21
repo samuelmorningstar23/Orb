@@ -364,6 +364,28 @@ def _get_active_allergies(db, patient_id: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def _get_recent_nursing_notes(db: Any, patient_id: str, cutoff_iso: str) -> list[dict]:
+    """The nurses' shift notes written in the window, newest first, each with
+    the ward-clock time the sheet prints. Empty on an Orb Ward Record computer
+    (the handover is off there anyway) and on a database without the table."""
+    from services.nursing_note_service import recent_notes
+
+    out = []
+    for n in recent_notes(db, patient_id, cutoff_iso):
+        out.append(
+            {
+                "id": n["id"],
+                "written_at": n["written_at"],
+                "written_at_display": hospital_stamp(n["written_at"]) or n["written_at"],
+                "shift_label": n["shift_label"],
+                "author_id": n["author_id"],
+                "author_name": n.get("author_name") or n["author_id"],
+                "content": n["content"],
+            }
+        )
+    return out
+
+
 def _get_recent_notes(db, patient_id: str, cutoff_iso: str) -> list[dict]:
     rows = db.execute(
         # Compare via datetime() so the stored 'YYYY-MM-DD HH:MM:SS' created_at and
@@ -1419,6 +1441,17 @@ def _render_plain_text(sections: dict, patient: dict, generated_at: str) -> str:
         lines.append("   Contingency planning:")
         for c in sa["contingencies"]:
             lines.append(f"     - {c}")
+    # The nurses' shift notes of the window, as written and under their names.
+    # Nothing at all when there are none: a heading over nothing reads as a
+    # section someone forgot.
+    nursing = sections.get("nursing_notes") or []
+    if nursing:
+        lines.append(f"   Nursing notes (last {HANDOFF_WINDOW_HOURS}h):")
+        for n in nursing:
+            lines.append(
+                f"     - {n['written_at_display']}, {n['shift_label']}, "
+                f"{n['author_name']}: {n['content']}"
+            )
 
     # The AI-drafted supplement sits BETWEEN the last I-PASS section and the
     # read-back, deliberately: the receiver signs off having seen everything
@@ -1471,6 +1504,9 @@ def build_ipass(
         problems = _get_active_problems(db, patient_id)
         allergies = _get_active_allergies(db, patient_id)
         recent_notes = _get_recent_notes(db, patient_id, cutoff_iso)
+        # The nurses' shift notes of the window (founding ward list item 4):
+        # what the outgoing shift wrote, carried onto the sheet as written.
+        nursing_notes = _get_recent_nursing_notes(db, patient_id, cutoff_iso)
 
     # Risk + trend (deterministic; degrade gracefully if models/CfC absent).
     # Risk scores the row this handoff PRINTS (vitals[-1]). A second "latest"
@@ -1516,13 +1552,15 @@ def build_ipass(
     }
     sections["synthesis"] = _build_synthesis(patient, sections["illness_severity"]["severity"])
     sections["ai_assessment"] = assessment
+    sections["nursing_notes"] = nursing_notes
 
     generated_at = _iso(_now())
     source_summary = (
         f"Auto-drafted I-PASS handoff for {patient.get('name')} (MRN {patient.get('mrn')}) "
         f"from the last {window_hours}h: {len(vitals)} vitals reading(s), {len(meds)} active "
         f"medication(s), {len(problems)} active problem(s), {len(allergies)} allergy record(s), "
-        f"{len(bundles)} open care bundle(s), {len(recent_notes)} recent note(s)."
+        f"{len(bundles)} open care bundle(s), {len(recent_notes)} recent note(s)"
+        + (f", {len(nursing_notes)} nursing note(s)." if nursing_notes else ".")
         + (
             f" Illness severity {sections['illness_severity']['severity']} "
             f"({sections['illness_severity']['text']})."

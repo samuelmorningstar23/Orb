@@ -313,6 +313,14 @@ def _shift_label(start: dt_time, hours: float) -> str:
     return f"{start.strftime('%H:%M')} to {end_minutes // 60:02d}:{end_minutes % 60:02d}"
 
 
+def shift_at(instant: datetime) -> tuple[str, str]:
+    """(shift day, shift label) for an aware instant, by the ward shifts the
+    rounds file uses. The nursing note (services/nursing_note_service.py) is
+    filed with it, so a note and a round never disagree about the shift."""
+    shifts, _source = ward_shifts()
+    return _shift_of(instant, shifts, _hospital_tz())
+
+
 def _shift_of(instant: datetime, shifts: list[tuple[dt_time, float]], tz) -> tuple[str, str]:
     """(shift day, shift label) for an instant: the hospital-local day the
     shift STARTED on, so a night shift's 02:00 round sits under the evening it

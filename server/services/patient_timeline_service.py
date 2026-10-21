@@ -207,6 +207,15 @@ def _r_scribe(r: dict) -> dict:
     }
 
 
+def _r_nursing_note(r: dict) -> dict:
+    return {
+        "title": f"Nursing note ({r.get('shift_label') or 'shift not recorded'})",
+        "detail": _clip(r.get("content")),
+        "severity": "info",
+        "badge": "NURSING",
+    }
+
+
 def _r_imaging(r: dict) -> dict:
     return {
         "title": f"Imaging analysed: {(r.get('image_type') or 'image').upper()}",
@@ -263,6 +272,20 @@ class _DrugChartSource(_Source):
         from services.drug_chart import drug_chart_enabled
 
         return super().base_table if drug_chart_enabled() else ""
+
+
+@dataclass(frozen=True)
+class _NursingNoteSource(_Source):
+    """The nurses' shift notes (services/nursing_note_service.py). On an Orb
+    Ward Record computer nursing notes stay on paper (SALES_PLAN section 3), so
+    the stream names no table and is left out of the rail and the count, as a
+    stream whose table does not exist is."""
+
+    @property
+    def base_table(self) -> str:
+        from services.nursing_note_service import nursing_notes_enabled
+
+        return super().base_table if nursing_notes_enabled() else ""
 
 
 #: The order rows that are not medication orders, for _OrderSource.
@@ -748,6 +771,20 @@ SOURCES: tuple[_Source, ...] = (
         where_sql="oc.status = 'signed'",
         render=_r_opd_consultation,
         feature="opd",
+    ),
+    # The nurses' shift notes (migration 88), the per-shift nursing record.
+    _NursingNoteSource(
+        kind="nursing_note",
+        from_sql="nursing_notes nn LEFT JOIN users u ON u.id = nn.author_id",
+        patient_col="nn.patient_id",
+        ts_col="nn.written_at",
+        id_col="nn.id",
+        select_cols=(
+            "nn.shift_label AS shift_label",
+            "nn.content AS content",
+            "u.name AS actor_name",
+        ),
+        render=_r_nursing_note,
     ),
 )
 

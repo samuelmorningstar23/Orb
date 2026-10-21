@@ -34,6 +34,19 @@ export interface IpassBundle {
   outstanding: string[];
 }
 
+/** One nursing note of the handover window, as the server carries it: the
+ *  ward-clock time and the shift it was filed under are the server's words. */
+export interface IpassNursingNote {
+  id: number;
+  written_at: string;
+  /** The hospital clock, e.g. "21 Oct 2026, 14:20 IST". Print this. */
+  written_at_display: string;
+  shift_label: string;
+  author_id: string;
+  author_name: string;
+  content: string;
+}
+
 export interface IpassLatestVitals {
   timestamp: string | null;
   heart_rate: number | null;
@@ -197,6 +210,10 @@ export interface IpassSections {
    *  client tests one field instead of inferring from absence — and renders
    *  nothing at all, not an empty heading, when it is null. */
   ai_assessment: IpassReasonedAssessment | null;
+  /** The nurses' shift notes of the window, newest first (21 October 2026).
+   *  Absent on an older server; rendered under Situation Awareness, and not
+   *  at all when empty. */
+  nursing_notes?: IpassNursingNote[];
 }
 
 export interface IpassDraft {

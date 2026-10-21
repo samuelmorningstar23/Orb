@@ -116,7 +116,7 @@ The frontend has the same split in the other direction. `node_modules` was insta
 | 1 | Pain score on the observation sheet | Built 21 October 2026: `vitals.pain_score` (migration 87), nurse sheet and clerk copy, inpatient record print, downtime pack, chart trend, rounds-file blank count; never scored (`tests/test_vitals_pain_score.py`) |
 | 2 | Ward clerk admits with ward and bed picker; marks a patient left | Built in wave 9 (`services/adt/clerk.py`, `DepartAction`, `AssessmentAction`, `test_ward_clerk_admit_depart.py`). Uncommitted, unverified by the lane |
 | 3 | Roster import on the Ward Record rail | Not done. `WARD_RECORD_TAB_IDS` is still vigil, shift, adt, observations, admin |
-| 4 | A nursing note type nurses can write | Not built. The only nursing text is the admission form's one box |
+| 4 | A nursing note type nurses can write | Built 21 October 2026: `nursing_notes` (migration 88), `services/nursing_note_service.py`, routes under `/api/patients/{id}/nursing-notes` wearing `require_patient_access`; nurse's shift board sheet, chart timeline, I-PASS, inpatient record print; off under the Ward Record profile (`tests/test_nursing_notes.py`) |
 | 5 | Allergy add and deactivate on the chart | Not built. No chart control calls the allergy routes |
 | 6 | Stop, hold, resume a charted medicine | Server half still empty: `routes/medorders/lifecycle.py` is a 20-line docstring. The screens exist and hide their buttons behind `MEDORDER_HOLD_STOP_ROUTES = false` |
 | 7 | Escalation screen with acknowledge wired, on-call rota | Not built. The acknowledge route is still a permission combination standing in (vigil_routes.py:1209); no rota |

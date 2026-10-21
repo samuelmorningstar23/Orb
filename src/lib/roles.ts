@@ -67,6 +67,13 @@ export const VITALS_WRITE = 'vitals.write' as const
 /** Copying an observation set from the paper sheet: the ward clerk only. Her
  *  entry sheet asks for the time written on the sheet and shows no score. */
 export const VITALS_TRANSCRIBE = 'vitals.transcribe' as const
+/** The per-shift nursing note (21 October 2026): written by the nurse on her
+ *  own ward, read by the nurse and the doctor. Mirrored so the shift board
+ *  offers the Nursing note button only to an account whose write will not
+ *  403. Off under the Orb Ward Record profile, where nursing notes stay on
+ *  paper. */
+export const NURSING_NOTE_WRITE = 'nursing_note.write' as const
+export const NURSING_NOTE_READ = 'nursing_note.read' as const
 /** Recording (and withdrawing) a patient's consent. The doctor's on the server.
  *  Mirrored so the registration step offers the privacy notice and consent
  *  questions only to an account whose request will not 403 (opd-19). Ruling
@@ -152,6 +159,8 @@ export type Permission =
   | typeof DISCHARGE_PUBLISH
   | typeof VITALS_WRITE
   | typeof VITALS_TRANSCRIBE
+  | typeof NURSING_NOTE_WRITE
+  | typeof NURSING_NOTE_READ
   | typeof CONSENT_RECORD
   | HisPermission
 
@@ -206,6 +215,7 @@ const ROLE_PERMISSIONS: Record<string, readonly Permission[]> = {
   // records returns for her own ward (GRN-R8). No bed-board grant: the nurse's
   // read-only board waits on ruling ADT-S7, and until then she gets nothing new.
   nurse: [PATIENT_READ_ALL, OUTCOME_RECORD, HELIX_RECEIVE, VITALS_WRITE,
+          NURSING_NOTE_WRITE, NURSING_NOTE_READ,
           LAB_COLLECT, LAB_CRITICAL_ACK,
           WARD_STOCK_READ, WARD_STOCK_RECEIVE, WARD_INDENT_RAISE, WARD_RETURN_RECORD],
   // HIS: the doctor registers and consults outpatients (OPD-N3), reads the bed
@@ -214,7 +224,7 @@ const ROLE_PERMISSIONS: Record<string, readonly Permission[]> = {
   // The doctor also records consent (opd-19 offers it on the walk-in).
   doctor: [PATIENT_READ_ALL, PATIENT_WRITE, OUTCOME_RECORD, RELAY_EXECUTE_ACTION,
            MEDICATION_PRESCRIBE, DISCHARGE_GENERATE, DISCHARGE_PUBLISH, VITALS_WRITE,
-           CONSENT_RECORD,
+           NURSING_NOTE_READ, CONSENT_RECORD,
            REGISTRATION_READ, REGISTRATION_WRITE, OPD_CONSULT,
            ADT_READ, LAB_COLLECT, LAB_CRITICAL_ACK],
   // Governance + read-only clinical. Holds OUTCOME_RECORD for backfill, but

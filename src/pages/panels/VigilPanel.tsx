@@ -22,6 +22,7 @@ import type { News2 } from '../../api/nurse'
 import WardBriefCard from '../../components/sage/WardBrief'
 import { DischargePrintView } from '../../components/DischargePrintView'
 import { InpatientRecordPrintView, type RecordNote } from '../../components/InpatientRecordPrintView'
+import { withNursingNotes } from '../../lib/nursingNotes'
 import { getDischargeAdvisory, type DischargeAdvisory } from '../../api/billing'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ReferenceArea, ResponsiveContainer } from 'recharts'
 import SizedChart from '../../components/SizedChart'
@@ -3101,7 +3102,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
           medications={drugChart ? currentMedications(medications) : []}
           showMedicines={drugChart}
           latestVitals={Object.keys(latest).length ? latest : null}
-          notes={signedNotes(notes, data.scribe_notes)}
+          notes={withNursingNotes(signedNotes(notes, data.scribe_notes), data.nursing_notes)}
           siteName={data.site_name}
         />,
         document.body

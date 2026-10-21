@@ -46,6 +46,13 @@ VITALS_WRITE = "vitals.write"  # Record a bedside observation set (nurse/doctor)
 # sheet. It is NOT vitals.write: the clerk cannot mark a set entered in error,
 # and holds no vitals.read, so no score preview and no chart.
 VITALS_TRANSCRIBE = "vitals.transcribe"
+# The per-shift nursing note (founding ward list item 4, 21 October 2026):
+# free text a nurse writes about a patient on her own ward. Write is the
+# nurse's; read is the nurse's and the doctor's. Neither is patient.write,
+# which a nurse does not hold, and neither reaches the ward clerk. Both routes
+# wear require_patient_access, the observations route's ward rule.
+NURSING_NOTE_WRITE = "nursing_note.write"
+NURSING_NOTE_READ = "nursing_note.read"
 ALERT_READ = "alert.read"  # View clinical alerts
 MEDICATION_WRITE = "medication.write"  # Chart / modify a medication order, and record a dose
 
@@ -323,6 +330,9 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         # (services/allergy_interlock.py). See the constant's note above for why
         # this is a separate permission rather than a re-used one.
         MEDICATION_PRESCRIBE,
+        # Reads the nurses' shift notes on the chart and the handover; does
+        # not write one (a doctor's note is a Scribe or clinical note).
+        NURSING_NOTE_READ,
         SCRIBE_CREATE_DRAFT,
         SCRIBE_READ_ALL,
         SCRIBE_EDIT_DRAFT,
@@ -373,6 +383,9 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         PATIENT_READ_ALL,
         VITALS_READ,
         VITALS_WRITE,
+        # The per-shift nursing note, hers to write and read on her own ward.
+        NURSING_NOTE_WRITE,
+        NURSING_NOTE_READ,
         ALERT_READ,
         MEDICATION_WRITE,
         SCRIBE_CREATE_DRAFT,

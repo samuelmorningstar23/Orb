@@ -125,6 +125,7 @@ from routes.shadow_routes import router as shadow_router
 from routes.surgery_routes import router as surgery_router
 from routes.vigil_routes import router as vigil_router
 from routes.ward_record_routes import router as ward_record_router
+from routes.nursing_note_routes import router as nursing_note_router
 from routes.workforce_routes import router as workforce_router
 
 # run_vitals_bot is no longer imported here: it is owned by
@@ -1150,6 +1151,7 @@ app.include_router(abdm_router)
 app.include_router(billing_router)
 app.include_router(nabh_router)
 app.include_router(ward_record_router)
+app.include_router(nursing_note_router)
 
 app.include_router(admission_router)
 

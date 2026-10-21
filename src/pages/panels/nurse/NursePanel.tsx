@@ -11,13 +11,14 @@ import HandoverSheet from './HandoverSheet'
 import MedRoundSheet from './MedRoundSheet'
 import News2Badge from '../../../components/News2Badge'
 import ObsEntrySheet from './ObsEntrySheet'
+import NursingNoteSheet from './NursingNoteSheet'
 import OutcomeCaptureSheet from './OutcomeCaptureSheet'
 import SamplesSheet from './SamplesSheet'
 import { allergyBlocked } from './allergyBlock'
 import { clockTime, missedSlotsCount, obsLabel, relativeMinutes, shiftDate } from './time'
 import { news2Description } from '../../../lib/news2'
 import { rovingTabKeyDown } from '../../../lib/tablist'
-import { HELIX_RECEIVE, LAB_COLLECT, hasPermission } from '../../../lib/roles'
+import { HELIX_RECEIVE, LAB_COLLECT, NURSING_NOTE_WRITE, hasPermission } from '../../../lib/roles'
 import { currentModuleFlags, subscribeModuleFlags, useClinicalSwitches } from '../../../shellConfig'
 import { useOfflineSnapshot } from '../../../hooks/useOfflineSnapshot'
 import { useNow } from '../../../hooks/useNow'
@@ -255,6 +256,7 @@ export default function NursePanel() {
 
   const [obsFor, setObsFor] = useState<NursePatientCard | null>(null)
   const [roundFor, setRoundFor] = useState<{ patient: NursePatientCard; medId: number | null } | null>(null)
+  const [noteFor, setNoteFor] = useState<NursePatientCard | null>(null)
   const [flash, setFlash] = useState<{ message: string; tone: 'ok' | 'warn' } | null>(null)
 
   const load = useCallback(async (opts?: { quiet?: boolean }) => {
@@ -320,6 +322,9 @@ export default function NursePanel() {
         : 'fresh'
 
   const medRound = medicationRoundOn(board, wardRecord)
+  // The nursing note is the nurse's own and not part of the Orb Ward Record,
+  // where nursing notes stay on paper (lib/roles mirrors the server's grant).
+  const nursingNotes = !wardRecord && hasPermission(NURSING_NOTE_WRITE)
   const tasks = useMemo(() => buildTasks(board, medRound), [board, medRound])
   const overdueTasks = tasks.filter(t => t.overdue)
   const soonTasks = tasks.filter(t => !t.overdue && t.dueSoon)
@@ -919,6 +924,14 @@ export default function NursePanel() {
                   <button type="button" className="nurse-btn nurse-btn--primary" onClick={() => setObsFor(p)}>
                     Record obs
                   </button>
+                  {/* The per-shift nursing note (21 October 2026): the nurse's
+                      own, on her own ward. Not on an Orb Ward Record computer,
+                      where nursing notes stay on paper and the route is off. */}
+                  {nursingNotes && (
+                    <button type="button" className="nurse-btn nurse-btn--secondary" onClick={() => setNoteFor(p)}>
+                      Nursing note
+                    </button>
+                  )}
                   {medRound && (
                     <button
                       type="button"
@@ -983,6 +996,18 @@ export default function NursePanel() {
               ? `Observations recorded for ${name}. ${news2Description(news2)}. ${schedule.response}`
               : `Observations recorded for ${name}.`)
             void load({ quiet: true })
+          }}
+        />
+      )}
+
+      {noteFor && nursingNotes && (
+        <NursingNoteSheet
+          patient={noteFor}
+          onClose={() => setNoteFor(null)}
+          onWritten={note => {
+            const name = noteFor.name
+            setNoteFor(null)
+            showFlash(`Nursing note saved for ${name} (${note.shift_label}).`)
           }}
         />
       )}
