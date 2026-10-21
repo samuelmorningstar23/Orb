@@ -1085,7 +1085,7 @@ def normalise_illegible(illegible) -> tuple[str, ...]:
     return tuple(f for f in ILLEGIBLE_FIELDS if f in names)
 
 
-def clean_pain_score(raw: object) -> int:
+def clean_pain_score(raw: Any) -> int:
     """A pain score as the sheet writes it: a whole number from 0 to 10.
 
     Raises ValueError naming the field, as the other readings do. A half point

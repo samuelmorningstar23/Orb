@@ -1,8 +1,10 @@
 /**
  * Admin under the Orb Ward Record profile (6 October 2026): only the sections
  * Ward Record sells, Data first (it holds the ward intervals and the monthly
- * rounds file), then Users, the audit log and its trace, the Flight Recorder
- * and the Trust Center. An ordinary site keeps every section.
+ * rounds file), then Users, the Roster Import (21 October 2026: the ward
+ * list's way into the observation record on day one, no model needed), the
+ * audit log and its trace, the Flight Recorder and the Trust Center. An
+ * ordinary site keeps every section.
  */
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -35,10 +37,20 @@ describe('Admin under the Ward Record profile', () => {
   it('lists only the Ward Record sections and opens on Data', () => {
     act(() => { setClinicalSwitches({ ward_record: true, scoring_enabled: false, models_enabled: false }) })
     render(<AdminPanel />)
-    expect(sections()).toEqual(['Data & Backups', 'Users', 'Audit Logs', 'Trace', 'Flight Recorder', 'Trust Center'])
+    expect(sections()).toEqual(['Data & Backups', 'Users', 'Roster Import', 'Audit Logs', 'Trace', 'Flight Recorder', 'Trust Center'])
     expect(screen.getByText('Data content')).toBeTruthy()
     fireEvent.click(screen.getByRole('tab', { name: 'Flight Recorder' }))
     expect(screen.getByText('Flight content')).toBeTruthy()
+  })
+
+  it('offers the roster import under the profile, and opens it', () => {
+    act(() => { setClinicalSwitches({ ward_record: true, scoring_enabled: false, models_enabled: false }) })
+    render(<AdminPanel />)
+    fireEvent.click(screen.getByRole('tab', { name: 'Roster Import' }))
+    expect(screen.getByText('Roster content')).toBeTruthy()
+    // Still no model section and no Overview: the profile sells the record, not the models.
+    expect(sections()).not.toContain('Model Governance')
+    expect(sections()).not.toContain('Overview')
   })
 
   it('an ordinary site keeps every section and opens on the overview', () => {

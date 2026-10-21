@@ -1655,9 +1655,13 @@ const ROLE_CONFIG: Record<string, ShellRoleConfig> = {
  * the ward list and chart, with no scores (vigil); observation entry (the
  * nurse's shift); the clerk's own Observations tab, which works with ORB_ADT
  * off, and the beds, inside Beds, which still needs ORB_ADT; and Admin, which
- * then shows only the Ward Record
- * sections (Data, Users, the audit log, the Flight Recorder, the Trust
- * Center). Downtime is a page of its own, opened from the chart. Every other
+ * then shows only the Ward Record sections (Data, Users, the Roster Import,
+ * the audit log, the Flight Recorder, the Trust Center; AdminPanel
+ * WARD_RECORD_ADMIN_TABS). The roster import is how the ward's patient list
+ * reaches the observation record on day one (founding ward list item 3, 21
+ * October 2026); it is an Admin section, not a rail tab, so it is listed
+ * there and not here. Relay messaging stays off this rail.
+ * Downtime is a page of its own, opened from the chart. Every other
  * tab is hidden, and a direct visit to one shows the plain "Not part of Orb
  * Ward Record" page instead (ClinicianShell).
  *

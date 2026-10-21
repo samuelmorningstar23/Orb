@@ -102,9 +102,13 @@ const ADMIN_PANEL_ID = 'admin-subpanel'
 
 /** Under the Orb Ward Record profile (ORB_WARD_RECORD) Admin shows only what
  *  Ward Record sells, in this order: the Ward Record section in Data (ward
- *  intervals and the monthly rounds file), users, the audit log (and the trace
- *  it opens), the Flight Recorder and the Trust Center. */
-const WARD_RECORD_ADMIN_TABS: readonly AdminTab[] = ['data', 'users', 'audit', 'trace', 'flight', 'trust']
+ *  intervals and the monthly rounds file), users, the roster import (founding
+ *  ward list item 3, 21 October 2026: it needs no model, and it is how the
+ *  ward's patient list reaches the observation record on day one; hiding it
+ *  cost the founding ward its cutover tool), the audit log (and the trace it
+ *  opens), the Flight Recorder and the Trust Center. Relay messaging stays
+ *  off the rail (shellConfig WARD_RECORD_TAB_IDS). */
+const WARD_RECORD_ADMIN_TABS: readonly AdminTab[] = ['data', 'users', 'roster', 'audit', 'trace', 'flight', 'trust']
 
 export default function AdminPanel() {
   const { wardRecord } = useClinicalSwitches()
