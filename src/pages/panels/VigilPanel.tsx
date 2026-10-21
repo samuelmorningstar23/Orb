@@ -12,6 +12,7 @@ import '../Vigil.css'
 import CareBundleTimer from '../../components/vigil/CareBundleTimer'
 import SafetyAlertModal from '../../components/vigil/SafetyAlertModal'
 import AdministerModal, { type AdministerAllergy } from '../../components/vigil/AdministerModal'
+import AllergiesModal from '../../components/vigil/AllergiesModal'
 import PatientStory from '../../components/vigil/PatientStory'
 import SageInsightsFeed from '../../components/sage/SageInsightsFeed'
 import SageAlertAssessment from '../../components/sage/SageAlertAssessment'
@@ -1085,6 +1086,11 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
      this list on its card; the doctor's chart had no allergy data on the client
      at all, so this is where it comes from on this path. */
   const [chartedAllergies, setChartedAllergies] = useState<AdministerAllergy[] | null>(null)
+  /* The chart's allergy controls (21 October 2026): the list with add and
+     deactivate. A change bumps the reload key so the list handed to the
+     Administer modal and the prints is re-read, not patched client-side. */
+  const [allergiesModalOpen, setAllergiesModalOpen] = useState(false)
+  const [allergyReload, setAllergyReload] = useState(0)
   // Live presence: other clinicians currently viewing THIS patient.
   const [viewers, setViewers] = useState<{ user_id: string; name: string; role: string }[]>([])
   const currentUser = getUser()
@@ -1219,7 +1225,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
         if (live) setChartedAllergies(null)
       })
     return () => { live = false }
-  }, [patientId])
+  }, [patientId, allergyReload])
 
   // Live presence: announce that we're viewing this patient and render who else
   // is. enter/leave are re-emitted on reconnect (fresh sid loses room membership).
@@ -1918,6 +1924,14 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
             )}
             <button className="command-bar__btn" onClick={() => setNotesHistoryModalOpen(true)} id="btn-notes">
               <Icon name="note" size={13} /> Notes
+            </button>
+            {/* The structured allergy list, with add and deactivate for the
+                prescriber (patient.write): the list every safety check reads.
+                No medicine word here: on an Orb Ward Record computer the chart
+                says nothing of a drug chart (VigilPanel.drugChart.test). */}
+            <button className="command-bar__btn" onClick={() => setAllergiesModalOpen(true)} id="btn-allergies"
+              title="The charted allergies, the list every safety check reads; add one or deactivate one with a reason">
+              Allergies{chartedAllergies && chartedAllergies.length > 0 ? ` (${chartedAllergies.length})` : ''}
             </button>
             {canWriteNote && (
               <button className="command-bar__btn" onClick={openAddNote} id="btn-add-note">
@@ -3080,6 +3094,17 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
           allergies={chartedAllergies}
           onClose={() => setAdministerTarget(null)}
           onRecorded={() => { setAdministerTarget(null); loadAdministrations() }}
+        />
+      )}
+
+      {/* The chart's allergy list with add and deactivate (21 October 2026). */}
+      {allergiesModalOpen && (
+        <AllergiesModal
+          patientId={patientId}
+          patientName={patient.name}
+          canWrite={canWriteNote}
+          onClose={() => setAllergiesModalOpen(false)}
+          onChanged={() => setAllergyReload(n => n + 1)}
         />
       )}
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from permissions import require_patient_access
+from pydantic import BaseModel
 from services.audit_service import log_audit_event
 from services.clinical_records_service import (
     add_allergy,
@@ -39,15 +40,27 @@ def get_allergies(
 _POST_ALLERGY_USER_DEFAULT = Depends(require_patient_access("patient.write"))
 
 
+#: The severities patient_allergies stores (its CHECK constraint). The chart
+#: control offers exactly these; anything else is refused rather than quietly
+#: stored as unknown, because an allergy graded on the ward is a safety fact.
+ALLERGY_SEVERITIES = ("mild", "moderate", "severe", "unknown")
+
+
 @router.post("/{patient_id}/allergies")
 def post_allergy(patient_id: str, data: dict, user: dict = _POST_ALLERGY_USER_DEFAULT):
-    if not data.get("substance"):
+    if not str(data.get("substance") or "").strip():
         raise HTTPException(status_code=422, detail="substance is required")
+    severity = str(data.get("severity") or "unknown").strip().lower()
+    if severity not in ALLERGY_SEVERITIES:
+        raise HTTPException(
+            status_code=422, detail=f"severity must be one of {list(ALLERGY_SEVERITIES)}"
+        )
+    reaction = str(data.get("reaction") or "").strip() or None
     record = add_allergy(
         patient_id,
         data["substance"],
-        reaction=data.get("reaction"),
-        severity=data.get("severity", "unknown"),
+        reaction=reaction,
+        severity=severity,
         recorded_by=user["id"],
         source=data.get("source", "clinician"),
     )
@@ -56,13 +69,74 @@ def post_allergy(patient_id: str, data: dict, user: dict = _POST_ALLERGY_USER_DE
         event_category="clinical_record",
         action_type="allergy_recorded",
         outcome="success",
-        summary_message=f"Allergy '{record['substance']}' recorded for {patient_id}",
+        summary_message=(
+            f"Allergy '{record['substance']}' recorded for {patient_id} "
+            f"({severity}{', ' + reaction if reaction else ''})"
+        ),
         actor_user_id=user["id"],
+        actor_role=user.get("role"),
         patient_id=patient_id,
         target_type="patient_allergy",
         target_id=str(record["id"]),
+        # The reaction and the grade are the facts the interlock reads, so the
+        # audit row carries them as recorded (founding ward list item 5).
+        metadata={
+            "substance": record["substance"],
+            "reaction": record.get("reaction"),
+            "severity": record.get("severity"),
+            "source": record.get("source"),
+        },
     )
     return record
+
+
+class DeactivateAllergyIn(BaseModel):
+    reason: str
+
+
+_DEACTIVATE_ALLERGY_USER_DEFAULT = Depends(require_patient_access("patient.write"))
+
+
+@router.post("/{patient_id}/allergies/{allergy_id}/deactivate")
+def deactivate_allergy_with_reason(
+    patient_id: str,
+    allergy_id: int,
+    body: DeactivateAllergyIn,
+    # The chart's control (founding ward list item 5, 21 October 2026). The
+    # same scope and patient binding as the DELETE below, plus a reason the
+    # audit chain keeps: taking an allergy off the list disarms the interlock
+    # for that drug, so whoever reads the trail later must find out why.
+    user: dict = _DEACTIVATE_ALLERGY_USER_DEFAULT,
+) -> dict:
+    reason = body.reason.strip()
+    if not reason:
+        raise HTTPException(status_code=422, detail="A reason is required to deactivate an allergy")
+    if len(reason) > 500:
+        raise HTTPException(status_code=422, detail="The reason holds at most 500 characters")
+    before = {row["id"]: row for row in list_allergies(patient_id, include_inactive=True)}.get(
+        allergy_id
+    )
+    if before is None or not deactivate_allergy(allergy_id, patient_id):
+        raise HTTPException(status_code=404, detail="Allergy not found")
+    log_audit_event(
+        correlation_id=f"allergy-deact-{allergy_id}",
+        event_category="clinical_record",
+        action_type="allergy_deactivated",
+        outcome="success",
+        summary_message=(f"Allergy '{before['substance']}' deactivated for {patient_id}: {reason}"),
+        actor_user_id=user["id"],
+        actor_role=user.get("role"),
+        patient_id=patient_id,
+        target_type="patient_allergy",
+        target_id=str(allergy_id),
+        metadata={
+            "substance": before["substance"],
+            "reaction": before.get("reaction"),
+            "severity": before.get("severity"),
+            "reason": reason,
+        },
+    )
+    return {"ok": True, "id": allergy_id, "status": "inactive", "reason": reason}
 
 
 _DELETE_ALLERGY_USER_DEFAULT = Depends(require_patient_access("patient.write"))

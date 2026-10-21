@@ -1,0 +1,124 @@
+/* The chart's allergy list with add and deactivate (founding ward list item
+   5). Flat "Quiet Clinical": tokens only, no opacity; severity as a text
+   token, never a fill, except the one danger button whose label is the
+   on-fill token. */
+.allergies-modal { max-width: 640px; width: 100%; }
+.allergies-modal__subject {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+.allergies-modal__close {
+  margin-left: auto;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 1.1rem;
+  line-height: 1;
+}
+.allergies-modal__close:hover { color: var(--text-primary); border-color: var(--border-focus); }
+.allergies-modal__note {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  font-size: 0.88rem;
+  color: var(--text-primary);
+}
+.allergies-modal__note--danger { color: var(--status-danger-text); }
+.allergies-modal__note--ok { color: var(--status-ok-text); }
+.allergies-modal__muted { margin: 0; font-size: 0.86rem; color: var(--text-secondary); }
+.allergies-modal__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.allergies-modal__item {
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+.allergies-modal__row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.allergies-modal__substance {
+  margin: 0 0 2px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: capitalize;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.allergies-modal__severity { font-size: 0.78rem; font-weight: 600; text-transform: none; }
+.allergies-modal__severity--severe { color: var(--status-danger-text); }
+.allergies-modal__severity--moderate { color: var(--status-warn-text); }
+.allergies-modal__severity--mild { color: var(--text-secondary); }
+.allergies-modal__severity--unknown { color: var(--text-muted); }
+.allergies-modal__meta { margin: 0; font-size: 0.8rem; color: var(--text-secondary); }
+.allergies-modal__deactivate {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.allergies-modal__add {
+  margin-top: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.allergies-modal__add-title {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+/* minmax(0, …) tracks and min-width: 0 inputs: an <input> has an intrinsic
+   width of about 20 characters, which made three of them overflow the modal
+   sideways and scroll its body (seen in the browser, 21 October 2026). */
+.allergies-modal__fields { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.4fr) minmax(0, 1fr); gap: 10px; }
+@media (max-width: 640px) { .allergies-modal__fields { grid-template-columns: minmax(0, 1fr); } }
+.allergies-modal__field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.allergies-modal__label { font-size: 0.8rem; font-weight: 600; color: var(--text-secondary); }
+.allergies-modal__input {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+.allergies-modal__input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.allergies-modal__actions { display: flex; gap: 8px; justify-content: flex-end; }
+.allergies-modal__btn {
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 0.88rem;
+}
+.allergies-modal__btn:disabled { color: var(--text-muted); }
+.allergies-modal__btn--ghost { color: var(--text-secondary); }
+.allergies-modal__btn--ghost:hover:not(:disabled) { color: var(--text-primary); border-color: var(--border-focus); }
+.allergies-modal__btn--primary { background: var(--accent-deep); color: var(--btn-primary-text); border-color: transparent; }
+.allergies-modal__btn--primary:disabled { background: var(--bg-surface); color: var(--text-muted); border-color: var(--border-subtle); }
+.allergies-modal__btn--danger { background: var(--status-danger); color: var(--status-on-fill); border-color: transparent; }
+.allergies-modal__btn--danger:disabled { background: var(--bg-surface); color: var(--text-muted); border-color: var(--border-subtle); }
