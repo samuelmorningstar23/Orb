@@ -190,28 +190,28 @@ sequenceDiagram
 **Why 12 hours:** one shift. Past that, a cached chart belongs to a different set of patients and a different set of decisions.
 **Breaks if you change it:** shortening the prefix to `orb:` would make `clearOfflineCache` delete the nurse's in-progress observations at every sign-out. Raising `CACHE_MAX_AGE_MS` past a shift means a nurse coming on at 08:00 can be served the night nurse's 20:00 board, correctly labelled "12 hours old", but present, and a label is weaker protection than an absence.
 
-#### `CacheEnvelope` / `CacheHit`: `phiCache.ts:34` / `:42`
+#### `CacheEnvelope` / `CacheHit`: `phiCache.ts:40` / `:42`
 **Signature:** `{data, savedAt, userId?}` / `{data, ageMs, savedAt}`
 **Does:** The stored shape and the returned shape.
 **On screen:** `CacheHit.savedAt` becomes the clock time in the banner; `ageMs` is the honesty bound in machine-readable form.
 **Why `userId` is optional on the envelope but mandatory in practice:** an entry **without** it was written by an older build that had no ownership rule. It is **refused, never guessed at** (`:37-39`, enforced at `:158-161`). Defaulting an unstamped entry to the current user would be exactly the leak the stamp exists to prevent, an entry written by nurse A under the old build, read by nurse B under the new one.
 **Breaks if you change it:** returning only `data` from `readCache` and dropping `ageMs`/`savedAt` removes the caller's ability to date the copy, and the banner has nothing true to print. That is the HONESTY bound, and it is the one a caller can silently discard.
 
-#### `storage`: `phiCache.ts:50`
+#### `storage`: `phiCache.ts:56`
 **Signature:** `() -> Storage | null`
 **Does:** Returns `localStorage`, or `null` if it is unavailable.
 **On screen:** nothing directly, but a `null` here degrades every panel to `source: 'none'`, so the banner says "no saved copy on this device".
 **Why the try/catch:** Safari in private mode **throws on access** rather than returning null (`:55`). Without the catch, opening Orb in a private window would throw inside a render.
 **Breaks if you change it:** removing the guard turns an unusual browser mode into a white screen.
 
-#### `cacheKeys` / `readEnvelope`: `phiCache.ts:60` / `:71`
+#### `cacheKeys` / `readEnvelope`: `phiCache.ts:75` / `:71`
 **Signature:** `() -> string[]` / `(key) -> CacheEnvelope<T> | null`
 **Does:** Enumerate this module's keys; parse and shape-check one entry.
 **On screen:** nothing.
 **Gotchas:** `readEnvelope` **deletes** a corrupt entry rather than throwing (`:80-85`), a half-written record from a tab killed mid-write must not throw into a render. A shape check on `savedAt` (`:78`) means an entry that parses but has no timestamp is treated as a miss, not as age-zero.
 **Breaks if you change it:** letting `JSON.parse` throw propagates into `useOfflineSnapshot`, which is called during render, one corrupt byte on the device would blank the ward board.
 
-#### `writeCache`: `phiCache.ts:95`
+#### `writeCache`: `phiCache.ts:130`
 **Signature:** `(key, data, userId, savedAt = Date.now()) -> boolean`
 **Does:** Stores one envelope for one user. Returns `false` when nothing was stored.
 **On screen:** **nothing at the moment it runs.** It drives what a *later* offline cold start can show. A `false` return is invisible today, see Discrepancies.
@@ -225,7 +225,7 @@ sequenceDiagram
 **Breaks if you change it:** dropping the `!userId` check writes unowned entries that `readCache` then refuses forever, the cache would appear to work and never serve anything. Removing the oversize check (`:117`) makes one large chart evict the entire ward board and then fail anyway.
 **Gotchas:** `serialised.length` is **UTF-16 code units, not bytes.** For a ward of Devanagari or Tamil names the two differ, and most browsers charge quota per code unit, so this measures the same thing the browser does, but the constant's name is misleading. See Discrepancies.
 
-#### `readCache`: `phiCache.ts:142`
+#### `readCache`: `phiCache.ts:181`
 **Signature:** `(key, userId, now = Date.now()) -> CacheHit<T> | null`
 **Does:** Returns a cached value, **and takes the entry away**, whenever it cannot be trusted: wrong owner, unstamped, expired, future-dated, or corrupt.
 **On screen:** this is the cold-start-offline read. A hit paints the ward board or the drug chart under the banner; a `null` paints *"There is no saved copy of the shift board on this device, so there is nothing to show."*
@@ -239,7 +239,7 @@ sequenceDiagram
 **Why a future stamp is refused rather than clamped to zero:** its age is *unknowable*, so it cannot be honestly labelled, and the banner's entire value is that its number is true (`:167-168`).
 **Breaks if you change it:** turn the wipe into a per-key `removeItem` and nurse B reading one stale key leaves nurse A's other five patients sitting on the device for the rest of the shift. Clamp a negative age to zero and the banner confidently prints "less than a minute old" over data of unknown vintage, worse than showing nothing, because it actively invites her to act on it.
 
-#### `clearOfflineCache`: `phiCache.ts:184`
+#### `clearOfflineCache`: `phiCache.ts:223`
 **Signature:** `() -> number` (how many entries were removed)
 **Does:** Removes every entry this module owns. Nothing else.
 **On screen:** nothing visible, which is the point. The next thing the arriving nurse sees is her own empty state, not somebody else's ward.
@@ -247,13 +247,13 @@ sequenceDiagram
 **Called from:** `App.logout` (`src/AppRoot.tsx:124`), `useOfflineSession` on switch/sign-out (`useOfflineSession.ts:79`), `useOfflineSession` on a crash boot (`:60`), and `readCache` itself on a foreign entry (`phiCache.ts:163`). **Four call sites, three of them proactive and one reactive**, because a single call site is a single thing to forget.
 **Breaks if you change it:** widening the key filter takes the nurse's obs draft and the theme with it (`phiCache.test.ts:110-123` fails). Narrowing it, or adding a "keep the current user's entries" optimisation, reintroduces the leak the whole hook exists to close, because on a switch the "current user" at the moment of the call is ambiguous by definition.
 
-#### `cacheEntryCount` / `cacheBytes`: `phiCache.ts:192` / `:196`
+#### `cacheEntryCount` / `cacheBytes`: `phiCache.ts:230` / `:196`
 **Signature:** `() -> number` / `() -> number`
 **Does:** How many entries, and how large.
 **On screen:** **nothing.** Neither is rendered anywhere. `cacheEntryCount` is the crash-recovery probe in `useOfflineSession.ts:59`; `cacheBytes` exists only for the size test (`phiCache.test.ts:97`).
 **Breaks if you change it:** `cacheEntryCount` returning 0 for a non-empty cache silently disables crash recovery, the "battery died mid-round" wipe stops happening, and nothing on screen changes to tell you.
 
-#### `newestCachedAt`: `phiCache.ts:206`
+#### `newestCachedAt`: `phiCache.ts:248`
 **Signature:** `(userId, now = Date.now()) -> number | null`
 **Does:** When **this user's** freshest still-valid entry was saved, across every key on the device.
 **On screen:** the second sentence of the banner's no-copy state, *"This device last heard from Orb at 13:58."* (`OfflineBanner.tsx:87`, printed at `:114-116`).
@@ -261,7 +261,7 @@ sequenceDiagram
 **How it works:** applies the same ownership and age filters as `readCache` (`:213-215`), but **does not delete** anything it rejects. It is a query, and it is called from a render.
 **Breaks if you change it:** making it wipe on a foreign entry (matching `readCache`) would put a device wipe inside a React render, on a component that re-renders every 20 seconds while degraded (`OfflineBanner.tsx:40`, `:71-75`). Dropping the age filter makes the banner cite a timestamp for data that has already expired and can no longer be served.
 
-#### `evictOldest`: `phiCache.ts:229`
+#### `evictOldest`: `phiCache.ts:271`
 **Signature:** `(incomingBytes: number) -> void`
 **Does:** Deletes oldest-first until the cache fits under `CACHE_MAX_BYTES`.
 **On screen:** nothing, but it decides which chart is still there on the next dead-zone read.
@@ -357,7 +357,7 @@ sequenceDiagram
 **On screen:** `OfflineBanner` destructures four of the five fields at `OfflineBanner.tsx:65`.
 **Gotchas:** `userId` uses `options.userId !== undefined ? options.userId : getUser()?.id ?? null` (`:74`), an **explicit `null` is honoured**, so a caller can deliberately disable caching, while omitting the option falls back to the signed-in user. That three-way distinction is why it is not written as `??`.
 
-#### `useOfflineSnapshot`: `useOfflineSnapshot.ts:68`
+#### `useOfflineSnapshot`: `useOfflineSnapshot.ts:77`
 **Signature:** `<T>(key, live: T | null | undefined, options) -> OfflineSnapshot<T>`
 **Does:** Answers the one question a panel cannot answer for itself: **is what I am about to render live, or is it a copy?**
 **On screen:** everything. `snapshot.data` is what five surfaces render; `snapshot.source` decides whether the banner exists; `snapshot.savedAt` is the clock time in it.
@@ -440,19 +440,19 @@ sequenceDiagram
 
 This is not part of the read cache, but `useOfflineSession` imports two functions from it and the chapter is dishonest without it. `api/client` keeps an **offline write queue** in localStorage under `orb_offline_queue`: free clinical text, patient ids, dose payloads.
 
-#### `clearOfflineQueue`: `src/api/client.ts:642`
+#### `clearOfflineQueue`: `src/api/client.ts:750`
 **Signature:** `() -> number`
 **Does:** Drops every queued write.
 **Called from:** `App.logout` (`src/AppRoot.tsx:128`) and `useOfflineSession` on switch/sign-out (`useOfflineSession.ts:80`).
 **On screen:** the pending-count chip in the shell (`src/pages/ClinicianShell.tsx:726`, `:732`) drops to zero on its next two-second poll (`:508`).
 
-#### `clearForeignOfflineQueue`: `src/api/client.ts:659`
+#### `clearForeignOfflineQueue`: `src/api/client.ts:767`
 **Signature:** `(userId: string | null) -> OfflineRequest[]`
 **Does:** Drops queued writes that do **not** belong to `userId`; `null` drops all. Returns them, so the caller decides whether anyone needs telling.
 **Why:** a replay is sent on the **current** session's cookie, so a write queued by the last nurse would be filed against this one, *her name on another clinician's note or dose, with nothing on screen to reveal it* (`src/api/client.ts:631-635`). Same rule `phiCache` applies to reads: **a queued write is replayed for its author or not at all.**
 **On screen:** when called from `processOfflineQueue` (`:650`) it dispatches `orb:offline-sync-failed` (`:654`), which the shell renders as a `role="alert"` badge, "N queued action(s) failed to sync. Please re-enter" (`src/pages/ClinicianShell.tsx:708-712`). When called from `useOfflineSession` on a boot it is silent, deliberately.
 
-#### `offlineMutate`: `src/api/client.ts:704`
+#### `offlineMutate`: `src/api/client.ts:812`
 **Signature:** `(path, body, offlineResult, method, key?) -> Promise<T>`
 **Does:** With no connection, **queues the request and returns the caller's optimistic result** (`:619-622`). It is a module-private `async function`, not exported.
 **On screen:** nothing today, every one of its three callers is now guarded by `assertOnlineForWrite` at the UI layer, so offline it is never reached. It remains the mechanism the guards exist to keep unreachable. **See Discrepancies; this is the largest open tension in the subsystem.**

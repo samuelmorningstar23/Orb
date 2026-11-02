@@ -605,6 +605,103 @@ def _inv_series_next_number() -> int:
     return int(row["next_number"])
 
 
+@pytest.mark.parametrize("pooled", [False, True])
+def test_opd_counter_later_price_failure_rolls_back_all_lines(patient, consult_code, monkeypatch, pooled):
+    import db_backend
+    monkeypatch.setattr(db_backend, "POOL_ENABLED", pooled)
+    unpriced = _service_item("NOPRICE", name="Unpriced outpatient item", category="consultation")
+    before = _inv_series_next_number()
+    with pytest.raises(BillingError) as refused:
+        billing_service.create_opd_invoice_atomic(
+            patient_id=patient, created_by="D001", lines=[
+                {"service_code": consult_code, "unit_rate_paise": 150000},
+                {"service_code": unpriced},
+            ],
+        )
+    assert refused.value.code == "rate_not_configured"
+    with db_session() as db:
+        assert db.execute("SELECT COUNT(*) FROM encounter_charges WHERE patient_id=?", (patient,)).fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM invoices WHERE patient_id=?", (patient,)).fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM audit_logs WHERE patient_id=?", (patient,)).fetchone()[0] == 0
+    assert _inv_series_next_number() == before
+
+
+@pytest.mark.parametrize("pooled", [False, True])
+def test_opd_counter_issue_audit_exception_restores_number_and_charges(patient, consult_code, monkeypatch, pooled):
+    import db_backend
+    monkeypatch.setattr(db_backend, "POOL_ENABLED", pooled)
+    original_audit = billing_service._audit
+    def fail_issue(db, **kwargs):
+        if kwargs["action_type"] == "billing_invoice_issued":
+            raise RuntimeError("Audit unavailable")
+        return original_audit(db, **kwargs)
+    monkeypatch.setattr(billing_service, "_audit", fail_issue)
+    before = _inv_series_next_number()
+    with pytest.raises(RuntimeError, match="Audit unavailable"):
+        billing_service.create_opd_invoice_atomic(
+            patient_id=patient, created_by="D001", lines=[{"service_code": consult_code, "unit_rate_paise": 150000}],
+        )
+    with db_session() as db:
+        assert db.execute("SELECT COUNT(*) FROM encounter_charges WHERE patient_id=?", (patient,)).fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM invoices WHERE patient_id=?", (patient,)).fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM audit_logs WHERE patient_id=?", (patient,)).fetchone()[0] == 0
+    assert _inv_series_next_number() == before
+
+
+@pytest.mark.parametrize("pooled", [False, True])
+def test_opd_counter_commits_one_issued_invoice_and_exact_lines(patient, consult_code, monkeypatch, pooled):
+    import db_backend
+    monkeypatch.setattr(db_backend, "POOL_ENABLED", pooled)
+    result = billing_service.create_opd_invoice_atomic(
+        patient_id=patient, created_by="D001", lines=[
+            {"service_code": consult_code, "unit_rate_paise": 150000},
+            {"service_code": consult_code, "unit_rate_paise": 50000},
+        ],
+    )
+    assert result["invoice"]["status"] == "issued"
+    assert result["invoice"]["invoice_number"]
+    assert result["invoice"]["payable_paise"] == 200000
+    with db_session() as db:
+        rows = db.execute("SELECT id,status,invoice_id FROM encounter_charges WHERE patient_id=? ORDER BY id", (patient,)).fetchall()
+        assert [row["id"] for row in rows] == result["charge_ids"]
+        assert all(row["status"] == "billed" and row["invoice_id"] == result["invoice"]["id"] for row in rows)
+
+
+@pytest.mark.parametrize("pooled", [False, True])
+def test_explicit_connection_uses_staged_payer_and_tariff(patient, plan, consult_code, monkeypatch, pooled):
+    """Caller-owned work sees its own policy/rate writes in either DB mode."""
+    import db_backend
+    monkeypatch.setattr(db_backend, "POOL_ENABLED", pooled)
+    payer = billing_masters.upsert_payer(
+        code="TST-PAYER-" + uuid.uuid4().hex, name="Synthetic staged payer",
+        payer_type="insurer", tariff_plan_id=plan,
+    )
+    billing_masters.set_tariff_rate(tariff_plan_id=plan, service_code=consult_code, rate_paise=150000)
+    with db_session(immediate=True) as db:
+        billing_masters.record_patient_payer_on(
+            db, patient_id=patient, payer_code=payer["code"], created_by="D001",
+        )
+        db.execute("UPDATE tariff_rates SET rate_paise=175001 WHERE tariff_plan_id=? AND service_code=?",
+                   (plan, consult_code))
+        charge = billing_service.add_charge(patient_id=patient, service_code=consult_code,
+                                            charged_by="D001", _db=db)
+        assert charge["tariff_plan_id"] == plan
+        assert charge["unit_rate_paise"] == 175001
+        prior_name = db.execute("SELECT legal_name FROM facilities WHERE id=1").fetchone()[0]
+        db.execute("UPDATE facilities SET legal_name='Synthetic transaction-local supplier' WHERE id=1")
+        invoice = billing_service.create_invoice(patient_id=patient, charge_ids=[charge["id"]],
+                                                  encounter_type="op", created_by="D001", _db=db)
+        assert invoice["supplier_name"] == "Synthetic transaction-local supplier"
+        # Restore the shared synthetic fixture before issue; the draft read
+        # above must still see the caller's current identity, without caches.
+        db.execute("UPDATE facilities SET legal_name=? WHERE id=1", (prior_name,))
+        invoice = billing_service.issue_invoice(invoice["id"], actor="D001", _db=db)
+        assert invoice["payer_id"] == payer["id"]
+        assert invoice["payer"]["id"] == payer["id"]
+        assert invoice["payable_paise"] == invoice["payer_responsibility_paise"] == 175001
+        assert invoice["patient_responsibility_paise"] == 0
+
+
 def test_a_second_credit_note_against_one_invoice_is_refused(patient, plan, consult_code):
     """ONE INVOICE, ONE CREDIT NOTE.
 

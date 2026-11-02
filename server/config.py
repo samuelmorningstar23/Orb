@@ -456,6 +456,24 @@ SAGE_HISTORY_SUMMARIZE = os.getenv("ORB_SAGE_HISTORY_SUMMARIZE", "0").strip().lo
     "on",
 )
 
+# Precomputed current-admission AI drafts. Enable in the measured hospital
+# serving profile; existing installs/tests must not start a census-wide model
+# workload merely by upgrading. Reads never call a model synchronously.
+SUMMARY_ENABLED = os.getenv("ORB_SUMMARY_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on")
+SUMMARY_REFRESH_SECONDS = float(os.getenv("ORB_SUMMARY_REFRESH_SECONDS", "1800"))
+SUMMARY_WORKERS = int(os.getenv("ORB_SUMMARY_WORKERS", "1"))
+SUMMARY_MAX_PENDING = int(os.getenv("ORB_SUMMARY_MAX_PENDING", "256"))
+SUMMARY_SCAN_SECONDS = float(os.getenv("ORB_SUMMARY_SCAN_SECONDS", "5"))
+SUMMARY_GENERATION_TIMEOUT_SECONDS = float(os.getenv("ORB_SUMMARY_GENERATION_TIMEOUT_SECONDS", "120"))
+SUMMARY_MAX_SOURCE_CHARS = int(os.getenv("ORB_SUMMARY_MAX_SOURCE_CHARS", "12000"))
+SUMMARY_CONTEXT_TOKENS = int(os.getenv("ORB_SUMMARY_CONTEXT_TOKENS", "16384"))
+SUMMARY_MODEL = os.getenv("ORB_SUMMARY_MODEL", LLM_MODEL).strip()
+SUMMARY_MODEL_REVISION = os.getenv("ORB_SUMMARY_MODEL_REVISION", "").strip()
+HTTP_MAX_INFLIGHT = int(os.getenv("ORB_HTTP_MAX_INFLIGHT", "200"))
+SAGE_QUEUE_WAIT_SECONDS = float(os.getenv("ORB_SAGE_QUEUE_WAIT_SECONDS", "2"))
+if not 0.01 <= SAGE_QUEUE_WAIT_SECONDS <= 15:
+    raise ValueError("ORB_SAGE_QUEUE_WAIT_SECONDS must be between 0.01 and 15 seconds")
+
 VISION_MODEL = os.getenv("ORB_VISION_MODEL", LLM_MODEL)  # Shares same model instance as LLM
 OLLAMA_KEEP_ALIVE: int | str
 OLLAMA_KEEP_ALIVE_RAW = os.getenv("ORB_OLLAMA_KEEP_ALIVE", "1h")
@@ -474,7 +492,7 @@ except ValueError:
 # local Whisper lane only (SCRIBE["asr"], VOICE["daemon"] below).
 
 # Embeddings
-EMBEDDING_MODEL = "BAAI/bge-m3"
+EMBEDDING_MODEL = os.getenv("ORB_EMBEDDING_MODEL", "BAAI/bge-m3")
 EMBEDDING_DIM = 1024  # BGE-M3 output dimension
 
 # Whisper (Scribe) — legacy top-level vars kept for backward compat
@@ -566,6 +584,18 @@ MODELS_ENABLED = os.getenv("ORB_MODELS_ENABLED", "true").strip().lower() in (
     "true",
     "yes",
     "on",
+)
+# Keep ordinary background inference on. An isolated inference benchmark can
+# disable automatic warmups/knowledge indexing/narration without changing the
+# interactive model, safety floor or clinical routes. A disabled value measures
+# idle latency only; it cannot qualify normal ward background-load performance.
+BACKGROUND_MODELS_ENABLED = os.getenv(
+    "ORB_BACKGROUND_MODELS_ENABLED", "true"
+).strip().lower() not in (
+    "0",
+    "false",
+    "off",
+    "no",
 )
 
 # The Orb Ward Record profile (docs/fundraising/SALES_PLAN_2026-10.md section 3,
@@ -1195,6 +1225,19 @@ OPT_IN_MODULES = {
     "adt": "ORB_ADT",
     "pharmacy-store": "ORB_PHARMACY_STORE",
     "lab": "ORB_LAB",
+    "feedback": "ORB_FEEDBACK",
+    "mortuary": "ORB_MORTUARY",
+    "cssd": "ORB_CSSD",
+    "reporting": "ORB_REPORTING",
+    "finance-tools": "ORB_FINANCE_TOOLS",
+    "radiology": "ORB_RADIOLOGY",
+    "care-plans": "ORB_CARE_PLANS",
+    "emergency": "ORB_EMERGENCY",
+    "perioperative": "ORB_PERIOPERATIVE",
+    "dialysis": "ORB_DIALYSIS",
+    "record-governance": "ORB_RECORD_GOVERNANCE",
+    "infection-surveillance": "ORB_INFECTION_SURVEILLANCE",
+    "radiation-safety": "ORB_RADIATION_SAFETY",
 }
 
 # Beds and admissions: bed master, bed board, census, master-aware admit,
@@ -1217,12 +1260,40 @@ PHARMACY_STORE_ENABLED = _opt_in("ORB_PHARMACY_STORE")
 # so open specimens and critical results are never hidden.
 LAB_ENABLED = _opt_in("ORB_LAB")
 
+# Local hospital workflows: opt-in, no external transports.
+FEEDBACK_ENABLED = _opt_in("ORB_FEEDBACK")
+MORTUARY_ENABLED = _opt_in("ORB_MORTUARY")
+CSSD_ENABLED = _opt_in("ORB_CSSD")
+REPORTING_ENABLED = _opt_in("ORB_REPORTING")
+FINANCE_TOOLS_ENABLED = _opt_in("ORB_FINANCE_TOOLS")
+RADIOLOGY_ENABLED = _opt_in("ORB_RADIOLOGY")
+CARE_PLANS_ENABLED = _opt_in("ORB_CARE_PLANS")
+EMERGENCY_ENABLED = _opt_in("ORB_EMERGENCY")
+PERIOPERATIVE_ENABLED = _opt_in("ORB_PERIOPERATIVE")
+DIALYSIS_ENABLED = _opt_in("ORB_DIALYSIS")
+RECORD_GOVERNANCE_ENABLED = _opt_in("ORB_RECORD_GOVERNANCE")
+INFECTION_SURVEILLANCE_ENABLED = _opt_in("ORB_INFECTION_SURVEILLANCE")
+RADIATION_SAFETY_ENABLED = _opt_in("ORB_RADIATION_SAFETY")
+
 # Module id -> the constant that holds it. Read at call time, so a test that
 # monkeypatches config.LAB_ENABLED changes what every reader sees.
 _OPT_IN_MODULE_CONSTANTS = {
     "adt": "ADT_ENABLED",
     "pharmacy-store": "PHARMACY_STORE_ENABLED",
     "lab": "LAB_ENABLED",
+    "feedback": "FEEDBACK_ENABLED",
+    "mortuary": "MORTUARY_ENABLED",
+    "cssd": "CSSD_ENABLED",
+    "reporting": "REPORTING_ENABLED",
+    "finance-tools": "FINANCE_TOOLS_ENABLED",
+    "radiology": "RADIOLOGY_ENABLED",
+    "care-plans": "CARE_PLANS_ENABLED",
+    "emergency": "EMERGENCY_ENABLED",
+    "perioperative": "PERIOPERATIVE_ENABLED",
+    "dialysis": "DIALYSIS_ENABLED",
+    "record-governance": "RECORD_GOVERNANCE_ENABLED",
+    "infection-surveillance": "INFECTION_SURVEILLANCE_ENABLED",
+    "radiation-safety": "RADIATION_SAFETY_ENABLED",
 }
 
 MODULE_STATES = ("on", "draining", "off")

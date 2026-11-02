@@ -100,6 +100,31 @@ XML_ANSWER = (
 )
 
 
+def test_capacity_rejection_is_retryable_error_and_never_success(monkeypatch):
+    from services.sage_service import SageCapacityBusy
+
+    token = _login()
+
+    async def busy(*args, **kwargs):
+        kwargs["route_info"]["queue_wait_ms"] = 2000
+        if False:
+            yield ""
+        raise SageCapacityBusy("Synthetic capacity limit")
+
+    monkeypatch.setattr(sage_routes, "query_ollama", busy)
+    response = client.post(
+        "/api/sage/query", headers={"Authorization": f"Bearer {token}"},
+        json={"query": "What does the term tachycardia mean?"},
+    )
+    events = _collect_events(response.text)
+    failures = [event for event in events if event.get("code") == "SAGE_CAPACITY_REJECTED"]
+    assert len(failures) == 1
+    assert failures[0]["retry_after_seconds"] == 1
+    assert failures[0]["timing"]["queue_wait_ms"] == 2000
+    assert not any(event.get("done") is True for event in events)
+    assert "Synthetic capacity limit" not in response.text
+
+
 def _chunked(text: str, size: int) -> list[str]:
     return [text[i:i + size] for i in range(0, len(text), size)]
 

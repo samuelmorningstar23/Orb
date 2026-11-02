@@ -50,6 +50,13 @@ These need **time-series vitals with real outcome labels** (LoS, discharge, dete
 ICU transfer, or mortality within N hours; LoS from admit→discharge timestamps; acuity classes
 from trajectory of the warning score. Document the exact label definitions in the training repo.
 
+The offline Vigil adapter now accepts **already-labelled** deterioration and
+mortality extracts through `--labelled-extract`. Its
+[input contract and validation commands](VIGIL_LABELLED_EXTRACT.md) require
+prediction-time feature availability, a subject-separated split and training-only
+normalization. The adapter does not select an outcome definition, obtain dataset
+access, or establish clinical acceptance. Only synthetic adapter checks have run.
+
 ### 2.2 MedGemma (4B + 27B): clinical language & reasoning
 | Dataset | Access | Use |
 |---|---|---|

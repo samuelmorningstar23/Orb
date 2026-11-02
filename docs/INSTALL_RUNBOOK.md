@@ -1331,7 +1331,7 @@ ollama list
 
 | Sign | Cause | Fix |
 |---|---|---|
-| `"ollama_reachable": false` | Ollama is not running | Start it: `ollama serve`. Confirm it starts on boot. |
+| `"ollama_reachable": false` | Ollama is not running | Start it from the repository with `./scripts/serve-ollama.sh`; see [offline daemon and cache profile](SETUP.md#orb-owned-offline-daemon-and-prompt-cache-profile). Configure startup through that launcher. |
 | Startup log: `Warmup got HTTP 404 for model '<name>'` | The tag in `ORB_LLM_MODEL` is not pulled | `ollama list`, then `ollama pull <tag>` or correct the variable |
 | `"warm": false` for a configured model | Evicted from memory | The keep-warm loop re-loads it within five minutes. To force it, use the admin panel's model load control, or `POST /api/health/models/load` (admin permission). |
 | Models keep getting evicted | `ORB_OLLAMA_KEEP_ALIVE` is a finite value | Set `ORB_OLLAMA_KEEP_ALIVE=-1`. The code default is one hour. |

@@ -42,7 +42,6 @@ export interface ApiPermissionError extends Error {
 }
 
 
-
 // ─── Offline Support ───
 export interface OfflineRequest {
   id: string;

@@ -15,6 +15,7 @@ from database import db_session, run_db
 
 from services.event_bus import StateEvent, event_bus
 from services.llm_queue_service import llm_queue
+from services.local_model_http import local_model_ssl_context
 from services.medication_safety_gate import (
     MedicationSafetyBlocked,
     enforce_medication_safety,
@@ -327,12 +328,12 @@ async def prewarm_patient_prefix(patient_id: str, facts: dict | None) -> bool:
         # their turn already prefilled the prefix, and the prewarm becomes a
         # second 27B prefill of tokens nobody is waiting for. Give up instead;
         # the next chart open (or the interactive turn itself) warms it.
-        await llm_queue.acquire(priority=3, timeout=SAGE_PREWARM_QUEUE_WAIT_SECONDS)
+        ticket = await llm_queue.acquire(priority=3, timeout=SAGE_PREWARM_QUEUE_WAIT_SECONDS, model=choice.model)
         t0 = time.monotonic()
         from services import ollama_gateway
 
         try:
-            async with httpx.AsyncClient(
+            async with httpx.AsyncClient(verify=local_model_ssl_context(), 
                 timeout=SAGE_PREWARM_TIMEOUT_SECONDS, trust_env=False
             ) as client:
                 # Audited: the chart block went to the model, so "which model
@@ -361,7 +362,7 @@ async def prewarm_patient_prefix(patient_id: str, facts: dict | None) -> bool:
                 resp.raise_for_status()
                 data = resp.json()
         finally:
-            llm_queue.release()
+            llm_queue.release(ticket)
         logger.info(
             "[SagePrewarm] %s prefix resident on %s in %.0f ms "
             "(prompt_eval=%s tok, prompt_eval_ms=%.0f)",
@@ -644,7 +645,7 @@ async def _extract_updates(note_id, patient_id: str, structured_text: str) -> di
 
     updates = {}
     try:
-        await llm_queue.acquire(priority=3)
+        ticket = await llm_queue.acquire(priority=3, model=model_choice.model)
     except TimeoutError:
         # Queue timeout or a BackgroundGovernor shed: fail closed exactly like
         # the residency guard above — the signed note stands as source of truth.
@@ -659,7 +660,7 @@ async def _extract_updates(note_id, patient_id: str, structured_text: str) -> di
     from services import ollama_gateway
 
     try:
-        async with httpx.AsyncClient(timeout=extract_timeout, trust_env=False) as client:
+        async with httpx.AsyncClient(verify=local_model_ssl_context(), timeout=extract_timeout, trust_env=False) as client:
             # NOT yield_to_clinician: this pass writes the chart, and its only
             # fallback is "extract nothing", which drops the note's medication
             # changes from the pharmacist queue. Yielding it needs a retry.
@@ -702,7 +703,7 @@ async def _extract_updates(note_id, patient_id: str, structured_text: str) -> di
         )
         updates = {}
     finally:
-        llm_queue.release()
+        llm_queue.release(ticket)
 
     return updates
 

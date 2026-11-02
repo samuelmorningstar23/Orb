@@ -235,6 +235,35 @@ def recent_observations(
     ).fetchall()
 
 
+def summary_observations(
+    db: Any, patient_id: str, *, since: str, limit: int = 500
+) -> tuple[int, list[Any]]:
+    """Current-admission final interfaced results for a saved summary draft.
+
+    The summary reads native LIS results separately, so linked projection rows
+    are excluded to avoid duplicating one result. Keep withdrawal/correction and
+    time ordering in this canonical reader. The total is returned separately so
+    the caller can refuse over-budget context rather than silently omit results.
+    No user-controlled SQL fragment is accepted.
+    """
+    bounded = max(1, min(500, int(limit)))
+    where = (
+        "patient_id = ? AND lab_result_id IS NULL "
+        f"AND {live_observations_sql()} "
+        "AND LOWER(TRIM(COALESCE(status, 'final'))) IN ('', 'f', 'final', 'c', 'corrected') "
+        f"AND julianday({observed_instant_sql()}) >= julianday(?)"
+    )
+    params = (patient_id, since)
+    total = db.execute(f"SELECT COUNT(*) FROM observations WHERE {where}", params).fetchone()[0]
+    rows = db.execute(
+        "SELECT id, observation_code, observation_name, value_numeric, value_text, unit, reference_range, "
+        "abnormal_flag, status, source, observed_at, recorded_at FROM observations "
+        f"WHERE {where} ORDER BY {order_by_sql()} LIMIT ?",
+        (*params, bounded),
+    ).fetchall()
+    return total, rows
+
+
 def previous_result(
     db, patient_id: str, code: str, before_iso: str, *, exclude_simulated: bool = False
 ) -> Any | None:

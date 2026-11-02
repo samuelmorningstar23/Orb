@@ -1,0 +1,37 @@
+# Mac mini HTTPS gateway, illustrative addresses/certificate paths only.
+# Install hospital-issued certificates and replace the two private IPs/names.
+# Studio API listens on the private wired network with its own TLS certificate.
+# On Studio: ORB_FORWARDED_ALLOW_IPS=10.77.0.10 (the mini's actual address).
+map $http_upgrade $orb_connection_upgrade {
+    default upgrade;
+    '' close;
+}
+upstream orb_studio {
+    server 10.77.0.20:8443;
+    keepalive 64;
+}
+server {
+    listen 443 ssl;
+    server_name orb.hospital.internal;
+    ssl_certificate /etc/orb/tls/gateway.crt;
+    ssl_certificate_key /etc/orb/tls/gateway.key;
+    client_max_body_size 101m;
+    location / {
+        proxy_pass https://orb_studio;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        # Overwrite, rather than append, an untrusted incoming forwarding chain.
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $orb_connection_upgrade;
+        proxy_ssl_server_name on;
+        proxy_ssl_name orb-studio.hospital.internal;
+        proxy_ssl_trusted_certificate /etc/orb/tls/hospital-ca.crt;
+        proxy_ssl_verify on;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 180s;
+        proxy_send_timeout 180s;
+    }
+}

@@ -317,6 +317,48 @@ ADMIN_OVERVIEW = "admin.overview"  # View admin governance dashboard
 # Extensible: add new roles (e.g. governance_admin, security_admin) by
 # adding a new key with the desired permission set.
 
+# Offline hospital workflows; all grants are inert until their module is on.
+FEEDBACK_READ = "feedback.read"
+FEEDBACK_WRITE = "feedback.write"
+FEEDBACK_MANAGE = "feedback.manage"
+MORTUARY_READ = "mortuary.read"
+MORTUARY_WRITE = "mortuary.write"
+MORTUARY_MANAGE = "mortuary.manage"
+MORTUARY_RELEASE = "mortuary.release"
+CSSD_READ = "cssd.read"
+CSSD_WRITE = "cssd.write"
+CSSD_MANAGE = "cssd.manage"
+CSSD_RELEASE = "cssd.release"
+REPORTING_READ = "reporting.read"
+REPORTING_WRITE = "reporting.write"
+REPORTING_EXPORT = "reporting.export"
+FINANCE_TOOLS_READ = "finance_tools.read"
+FINANCE_TOOLS_WRITE = "finance_tools.write"
+FINANCE_TOOLS_APPROVE = "finance_tools.approve"
+FINANCE_TOOLS_EXPORT = "finance_tools.export"
+RIS_READ = "ris.read"
+RIS_WRITE = "ris.write"
+RIS_SIGN = "ris.sign"
+CARE_PLAN_READ = "care_plan.read"
+CARE_PLAN_WRITE = "care_plan.write"
+EMERGENCY_RECORD_READ = "emergency_record.read"
+EMERGENCY_RECORD_WRITE = "emergency_record.write"
+PERIOPERATIVE_RECORD_READ = "perioperative_record.read"
+PERIOPERATIVE_RECORD_WRITE = "perioperative_record.write"
+PERIOPERATIVE_RECORD_SIGN = "perioperative_record.sign"
+DIALYSIS_RECORD_READ = "dialysis_record.read"
+DIALYSIS_RECORD_WRITE = "dialysis_record.write"
+DIALYSIS_RECORD_PRESCRIBE = "dialysis_record.prescribe"
+RECORD_GOVERNANCE_READ = "record_governance.read"
+RECORD_GOVERNANCE_WRITE = "record_governance.write"
+RECORD_GOVERNANCE_RELEASE = "record_governance.release"
+
+RADIATION_SAFETY_READ = "radiation_safety.read"
+RADIATION_SAFETY_WRITE = "radiation_safety.write"
+INFECTION_SURVEILLANCE_READ = "infection_surveillance.read"
+INFECTION_SURVEILLANCE_WRITE = "infection_surveillance.write"
+INFECTION_SURVEILLANCE_MANAGE = "infection_surveillance.manage"
+
 ROLE_PERMISSIONS: dict[str, set[str]] = {
     "doctor": {
         PATIENT_READ_ALL,
@@ -599,6 +641,73 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         LAB_MASTER,
     },
 }
+
+# Dedicated grants avoid borrowing pharmacy or governance authority.
+ROLE_PERMISSIONS["admin"].update(
+    {
+        RADIATION_SAFETY_READ,
+        RADIATION_SAFETY_WRITE,
+        INFECTION_SURVEILLANCE_READ,
+        INFECTION_SURVEILLANCE_WRITE,
+        INFECTION_SURVEILLANCE_MANAGE,
+        FEEDBACK_READ,
+        FEEDBACK_WRITE,
+        FEEDBACK_MANAGE,
+        MORTUARY_READ,
+        MORTUARY_WRITE,
+        MORTUARY_MANAGE,
+        MORTUARY_RELEASE,
+        CSSD_READ,
+        CSSD_WRITE,
+        CSSD_MANAGE,
+        CSSD_RELEASE,
+        REPORTING_READ,
+        REPORTING_WRITE,
+        REPORTING_EXPORT,
+        FINANCE_TOOLS_READ,
+        FINANCE_TOOLS_WRITE,
+        FINANCE_TOOLS_APPROVE,
+        FINANCE_TOOLS_EXPORT,
+        RECORD_GOVERNANCE_READ,
+        RECORD_GOVERNANCE_WRITE,
+        RECORD_GOVERNANCE_RELEASE,
+        RIS_READ,
+        CARE_PLAN_READ,
+        EMERGENCY_RECORD_READ,
+        PERIOPERATIVE_RECORD_READ,
+        DIALYSIS_RECORD_READ,
+    }
+)
+ROLE_PERMISSIONS["doctor"].update(
+    {
+        RIS_READ,
+        RIS_WRITE,
+        RIS_SIGN,
+        CARE_PLAN_READ,
+        CARE_PLAN_WRITE,
+        EMERGENCY_RECORD_READ,
+        EMERGENCY_RECORD_WRITE,
+        PERIOPERATIVE_RECORD_READ,
+        PERIOPERATIVE_RECORD_WRITE,
+        PERIOPERATIVE_RECORD_SIGN,
+        DIALYSIS_RECORD_READ,
+        DIALYSIS_RECORD_WRITE,
+        DIALYSIS_RECORD_PRESCRIBE,
+    }
+)
+ROLE_PERMISSIONS["nurse"].update(
+    {
+        CARE_PLAN_READ,
+        CARE_PLAN_WRITE,
+        EMERGENCY_RECORD_READ,
+        EMERGENCY_RECORD_WRITE,
+        PERIOPERATIVE_RECORD_READ,
+        PERIOPERATIVE_RECORD_WRITE,
+        DIALYSIS_RECORD_READ,
+        DIALYSIS_RECORD_WRITE,
+        RIS_READ,
+    }
+)
 
 # Alias clinician to doctor
 ROLE_PERMISSIONS["clinician"] = ROLE_PERMISSIONS["doctor"]

@@ -10,6 +10,8 @@ from typing import Any
 
 from database import db_session
 
+from services.local_model_http import local_model_ssl_context
+
 logger = logging.getLogger(__name__)
 
 
@@ -329,8 +331,8 @@ Be concise, clinically precise, and use standard medical terminology."""
 
     try:
         import httpx
-        from config import OLLAMA_KEEP_ALIVE
 
+        from config import OLLAMA_KEEP_ALIVE
         from services import ollama_gateway
         from services.llm_queue_service import llm_queue
 
@@ -340,9 +342,9 @@ Be concise, clinically precise, and use standard medical terminology."""
 
         model_choice = await select_chat_model()
 
-        await llm_queue.acquire(priority=2)
+        ticket = await llm_queue.acquire(priority=2, model=model_choice.model)
         try:
-            async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
+            async with httpx.AsyncClient(verify=local_model_ssl_context(), timeout=120.0, trust_env=False) as client:
                 async with ollama_gateway.stream(
                     client,
                     "/api/chat",
@@ -367,7 +369,7 @@ Be concise, clinically precise, and use standard medical terminology."""
                         except json.JSONDecodeError:
                             continue
         finally:
-            llm_queue.release()
+            llm_queue.release(ticket)
 
     except Exception as e:
         # No model, no assessment. This fallback used to print "ASA Class III"

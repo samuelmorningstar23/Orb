@@ -249,6 +249,30 @@ def test_backup_with_a_failing_receipt_is_urgent(tmp_path, monkeypatch):
     assert check["detail"]["newest_verified"] is False
 
 
+@pytest.mark.parametrize("change", [
+    {"backup_file": "orb-backup-other.db"},
+    {"size_bytes": 4095},
+    {"size_bytes": True},
+    {"schema": "orb.backup.verification/2"},
+    {"ok": "true"},
+    {"integrity_check": "corrupt"},
+])
+def test_unbound_or_invalid_receipt_is_unchecked(tmp_path, monkeypatch, change):
+    receipt = {
+        "schema": ops_health_service.VERIFICATION_SCHEMA,
+        "backup_file": "orb-backup-20260807-020000.db",
+        "ok": True, "integrity_check": "ok", "size_bytes": 4096,
+        **change,
+    }
+    check = _backup_check(tmp_path, monkeypatch, files={
+        "orb-backup-20260807-020000.db": b"x" * 4096,
+        "orb-backup-20260807-020000.verified.json": json.dumps(receipt),
+    })
+    assert check["detail"]["newest_verified"] is False
+    assert check["detail"]["has_receipt"] is False
+    assert check["status"] == "attention"
+
+
 def test_stale_backup_is_flagged(tmp_path, monkeypatch):
     monkeypatch.setenv("ORB_HEARTBEAT_BACKUP_MAX_AGE_H", "1")
     old = tmp_path / "orb-backup-20260101-020000.db"

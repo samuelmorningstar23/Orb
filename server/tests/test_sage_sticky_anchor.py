@@ -658,7 +658,8 @@ async def test_the_prewarm_gives_up_rather_than_waiting_out_a_long_background_jo
     async def _select():
         return _Choice()
 
-    async def _acquire(priority=3, timeout=None):
+    async def _acquire(priority=3, timeout=None, *, model=None):
+        assert model == "medgemma:27b"
         waits.append(timeout)
         raise TimeoutError("background lane busy")
 

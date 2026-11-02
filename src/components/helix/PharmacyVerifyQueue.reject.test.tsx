@@ -41,7 +41,7 @@ describe('PharmacyVerifyQueue inline reject', () => {
     rejectMedication.mockReset()
     promptSpy = vi.spyOn(window, 'prompt').mockImplementation(() => 'should never be used')
   })
-  afterEach(() => promptSpy.mockRestore())
+  afterEach(() => { promptSpy.mockRestore() })
 
   it('asks for the reason in the row, never through a browser prompt', async () => {
     render(<PharmacyVerifyQueue />)

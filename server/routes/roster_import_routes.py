@@ -41,16 +41,16 @@ in the repo README).
 
 from __future__ import annotations
 
-import json
 import logging
 
 from database import run_db
 from db_backend import DBIntegrityError
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from permissions import ADMIN_OVERVIEW, require_permission
+from routes.import_mapping import parse_mapping as _parse_mapping
+from services import roster_import
 from services.audit_service import log_audit_event
 
-from services import roster_import
 
 logger = logging.getLogger("orb.roster_import")
 
@@ -62,7 +62,7 @@ router = APIRouter(prefix="/api/admin/roster-import", tags=["roster-import"])
 
 async def _read_upload(file: UploadFile) -> bytes:
     """Read the upload with a hard size cap before anything else touches it."""
-    content = await file.read()
+    content = await file.read(roster_import.MAX_CSV_BYTES + 1)
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
     if len(content) > roster_import.MAX_CSV_BYTES:
@@ -71,28 +71,6 @@ async def _read_upload(file: UploadFile) -> bytes:
             detail=f"File exceeds the {roster_import.MAX_CSV_BYTES // (1024 * 1024)} MB limit.",
         )
     return content
-
-
-def _parse_mapping(mapping: str) -> dict[str, str]:
-    """Parse the JSON mapping form field into {orb_field: csv_header}."""
-    try:
-        parsed = json.loads(mapping or "{}")
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=422, detail=f"mapping must be valid JSON: {e}") from e
-    if not isinstance(parsed, dict):
-        raise HTTPException(
-            status_code=422, detail="mapping must be a JSON object of {orb_field: csv_column}"
-        )
-    out: dict[str, str] = {}
-    for k, v in parsed.items():
-        if v is None or v == "":
-            continue
-        if not isinstance(k, str) or not isinstance(v, str):
-            raise HTTPException(
-                status_code=422, detail="mapping keys and values must both be strings"
-            )
-        out[k] = v
-    return out
 
 
 def _audit(

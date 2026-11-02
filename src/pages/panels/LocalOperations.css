@@ -1,0 +1,34 @@
+.local-ops { padding: 24px; color: var(--text-primary); max-width: 1600px; margin: auto; }
+.local-ops-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+/* Keep the paging control clear of the shell's floating Sage button. */
+nav.local-ops-header { padding-inline-end: 72px; }
+.local-ops-notice { padding: 14px; border: 1px solid var(--border-color, #64748b); border-radius: 10px; background: var(--bg-secondary); line-height: 1.5; }
+.local-ops-grid { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(320px, 1.4fr); gap: 24px; align-items: start; }
+.local-ops section, .local-ops details { min-width: 0; margin: 16px 0; padding: 16px; border: 1px solid var(--border-color, #64748b); border-radius: 10px; background: var(--bg-secondary); }
+.local-ops details > summary { cursor: pointer; padding: 8px; font-weight: 600; }
+.local-ops form, .local-ops fieldset { display: grid; gap: 14px; min-width: 0; }
+.local-ops fieldset { border: 1px solid var(--border-color, #64748b); padding: 12px; }
+.local-ops-field { display: grid; gap: 6px; min-width: 0; }
+.local-ops input, .local-ops select, .local-ops textarea { width: 100%; min-height: 44px; box-sizing: border-box; padding: 10px; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color, #64748b); border-radius: 6px; font: inherit; }
+.local-ops button { min-height: 44px; padding: 8px 14px; color: var(--text-primary); background: var(--bg-primary); border: 1px solid var(--border-color, #64748b); border-radius: 6px; font: inherit; cursor: pointer; }
+.local-ops button:disabled { cursor: default; color: var(--btn-disabled-text); background: var(--btn-disabled-bg); border-color: var(--btn-disabled-border); }
+.local-ops button:focus-visible, .local-ops summary:focus-visible { outline: 3px solid var(--accent-primary, #38bdf8); outline-offset: 2px; }
+.local-ops-list { list-style: none; padding: 0; display: grid; gap: 8px; }
+.local-ops-list button { width: 100%; text-align: left; overflow-wrap: anywhere; }
+.local-ops-list button[aria-pressed=true] { border: 2px solid var(--accent-primary, #38bdf8); }
+.local-ops p, .local-ops dd, .local-ops li { overflow-wrap: anywhere; white-space: pre-wrap; }
+.local-ops dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 16px; }
+.local-ops dd { margin: 0; }
+.local-ops-error { border-left: 4px solid #dc2626; padding: 12px; }
+.local-ops-history { padding-left: 24px; }
+.local-ops-history li { margin-bottom: 16px; }
+.local-ops-check { display: flex; align-items: center; gap: 10px; padding: 8px; }
+.local-ops-check input { width: auto; min-height: auto; }
+@media (max-width: 800px) { .local-ops { padding: 12px; } .local-ops-grid { grid-template-columns: minmax(0, 1fr); } .local-ops dl { grid-template-columns: minmax(0,1fr); } }
+.local-ops-table { overflow-x: auto; }
+.local-ops table { width: 100%; border-collapse: collapse; text-align: left; }
+.local-ops th, .local-ops td { padding: 10px; border-bottom: 1px solid var(--border-color, #64748b); overflow-wrap: anywhere; }
+.local-ops caption { text-align: left; padding: 10px 0; font-weight: 600; }
+.local-ops-antibiogram table { min-width: 760px; }
+.local-ops-antibiogram th, .local-ops-antibiogram td { overflow-wrap: normal; }
+.local-ops-antibiogram:focus-visible { outline: 3px solid var(--accent-primary, #38bdf8); outline-offset: 2px; }

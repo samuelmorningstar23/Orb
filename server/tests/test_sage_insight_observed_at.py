@@ -118,6 +118,9 @@ def test_a_stewardship_card_describes_no_reading(patient):
 
 
 def test_the_feed_sends_observed_at(patient):
+    with db_session() as db:
+        db.execute("INSERT OR IGNORE INTO users (id, name, role, password_hash) "
+                   "VALUES ('ADMIN-OBSAT', 'Observed At Admin', 'admin', 'test-only')")
     _chart(patient, 300, spo2=97)
     _chart(patient, 240, spo2=95)
     taken = _chart(patient, 180, spo2=93)

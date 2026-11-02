@@ -777,6 +777,15 @@
   border-color: var(--status-on-fill);
 }
 
+/* Neutral/stable badges normally use a translucent surface. Over the red
+   emergency row that blends away the contrast of their own text tokens.
+   Keep their neutral meaning on an opaque theme surface; filled urgency
+   bands keep the status fill and its paired on-fill text. */
+.patient-row--emergency .news2--none,
+.patient-row--emergency .news2--stable {
+  background: var(--bg-primary);
+}
+
 .emergency-badge {
   display: inline-block;
   margin-left: 12px;

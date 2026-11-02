@@ -1,13 +1,24 @@
 name: CI
 
 on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Verified commit to test for a candidate build
+        required: false
+        type: string
+        default: ""
   push:
     branches: ["**"]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   backend:
     name: Backend (pytest)
+    timeout-minutes: 60
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -19,6 +30,8 @@ jobs:
       PYTHONUNBUFFERED: "1"
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -26,6 +39,7 @@ jobs:
           cache-dependency-path: |
             server/requirements-dev.txt
             server/requirements-bootstrap.txt
+            server/requirements-quality.txt
             server/constraints-security.txt
       - name: Install slim test dependencies
         run: |
@@ -38,6 +52,36 @@ jobs:
         # Missing optional runtime packages used to turn encryption and restore
         # regressions into skips on a fresh CI runner.
         run: python -c "import bcrypt, cryptography, qrcode, png, sqlcipher3"
+      - name: Install pinned Python quality tools
+        run: python -m pip install -r requirements-quality.txt
+      # This is an explicit two-file adoption scope, not whole-backend compliance.
+      # Keep the full pytest job below: the scoped coverage selection cannot replace it.
+      - name: Scoped Python lint and formatting
+        working-directory: .
+        run: |
+          python -m ruff check --config tools/python-quality/pyproject.toml server/routes/import_mapping.py scripts/release_candidate.py
+          python -m ruff format --check --config tools/python-quality/pyproject.toml server/routes/import_mapping.py scripts/release_candidate.py
+      - name: Scoped Python strict typing
+        working-directory: .
+        run: python -m mypy --config-file tools/python-quality/pyproject.toml
+      - name: Scoped Python statement and branch coverage
+        working-directory: .
+        run: |
+          python -m coverage run --rcfile=tools/python-quality/pyproject.toml -m pytest -q \
+            server/tests/test_import_and_time_compatibility.py::test_both_importers_preserve_mapping_form_values \
+            server/tests/test_import_and_time_compatibility.py::test_both_importers_reject_ambiguous_mapping_types_with_422 \
+            server/tests/test_release_candidate.py
+          python -m coverage report --rcfile=tools/python-quality/pyproject.toml
+          python -m coverage json --rcfile=tools/python-quality/pyproject.toml
+          python -c 'import json; from pathlib import Path; report = json.loads(Path("python-quality-coverage.json").read_text()); assert set(report["files"]) == {"server/routes/import_mapping.py", "scripts/release_candidate.py"}, "Coverage must include both declared utilities"'
+      - name: Upload scoped Python coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-quality-coverage
+          path: python-quality-coverage.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run tests with complete backend coverage
         run: |
           python -m pip install coverage==7.16.2
@@ -88,12 +132,15 @@ jobs:
 
   frontend:
     name: Frontend (build + tests)
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
       - name: Install dependencies
         run: npm ci
@@ -108,28 +155,49 @@ jobs:
         run: npm run build
       - name: Unit tests
         run: npm run test
+      - name: Upload candidate frontend
+        if: inputs.ref != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-frontend
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
 
   # Drives every screen (all roles, all tabs/sub-tabs) in BOTH themes against a
   # mocked API, auto-checks contrast/visibility/misalignment + JS errors, and
   # fails on any non-allowlisted finding. See tests/visual/README.md.
   visual-audit:
     name: Visual audit (light + dark)
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
       - run: npm ci
       - name: Install audit browser
         run: |
-          npm install --no-save playwright wait-on
           npx playwright install --with-deps chromium
-      - name: Start dev server
+      - name: Verify visual checker regressions
+        run: node --test tests/visual/checks-regression.cjs tests/visual/driver-regression.cjs tests/visual/offline-fixtures-regression.cjs scripts/sage_browser_timing.test.cjs
+      - name: Build production frontend
+        run: npm run build
+      - name: Start production preview
         run: |
-          npm run dev -- --port 5173 --host 127.0.0.1 &
-          npx wait-on http://127.0.0.1:5173 --timeout 90000
+          npm run preview -- --port 5173 --host 127.0.0.1 --strictPort &
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent --max-time 1 http://127.0.0.1:5173 >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Production preview did not become ready within 90 seconds" >&2
+          exit 1
       - name: Run visual audit
         run: node tests/visual/driver.cjs
       - name: Gate on findings
@@ -140,20 +208,21 @@ jobs:
         with:
           name: visual-audit
           path: |
-            tests/visual/shots/
-            tests/visual/audit-results.json
+            tests/visual/out/
           retention-days: 14
 
-  # Golden-journey e2e: real FastAPI backend + Vite dev server, both booted by
-  # playwright.config.ts (webServer array — expects server/.venv-dev to exist).
+  # Five golden + six offline journeys: production frontend and an owned seeded DB.
   e2e:
-    name: E2E (5 golden journeys)
+    name: E2E (11 real-backend journeys)
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
       - uses: actions/setup-python@v5
         with:
@@ -174,12 +243,6 @@ jobs:
           server/.venv-dev/bin/python -m pip install -r server/requirements-bootstrap.txt
           server/.venv-dev/bin/pip install torch==2.14.1 --index-url https://download.pytorch.org/whl/cpu
           server/.venv-dev/bin/pip install -r server/requirements-dev.txt
-      - name: Seed demo database
-        env:
-          ORB_DEPLOYMENT_PROFILE: dev
-          ORB_JWT_SECRET: ci-only-secret
-        working-directory: server
-        run: .venv-dev/bin/python scripts/reset_db_and_seed.py
       - name: Install e2e browser
         run: npx playwright install --with-deps chromium
       - name: Run e2e

@@ -19,13 +19,20 @@ holds (`GET /api/ps`) and picks a name.
 
 from __future__ import annotations
 
+import asyncio
+from dataclasses import dataclass
 import logging
+import math
+import threading
 import time
 from datetime import UTC
 from typing import NamedTuple
+from weakref import WeakKeyDictionary
 
 import httpx
+
 from config import AMBIENT_LLM_MODEL, LLM_MODEL, MODEL_FALLBACK_ENABLED, OLLAMA_BASE_URL
+from services.local_model_http import local_model_ssl_context
 
 logger = logging.getLogger("orb.model_router")
 
@@ -33,7 +40,24 @@ logger = logging.getLogger("orb.model_router")
 # several times (retrieval, generation, narrator). A short TTL keeps it to one
 # round-trip per burst while still reacting to an unload within a second.
 _PS_TTL_SECONDS = 1.0
-_ps_cache: tuple[float, frozenset[str]] | None = None
+_PS_PROBE_TIMEOUT_SECONDS = 2.0
+
+
+@dataclass
+class _ResidencyState:
+    origin: str
+    epoch: int
+    cache: tuple[float, frozenset[str]] | None = None
+    pending: asyncio.Task[frozenset[str] | None] | None = None
+
+
+# A task/lock from one asyncio.run() or request-worker loop must never be awaited
+# by another loop. Completed states hold no loop/task references, allowing old
+# loops to disappear from the weak index. The registry lock is held only for
+# tiny synchronous state changes, never network I/O or an await.
+_ps_states: WeakKeyDictionary[asyncio.AbstractEventLoop, _ResidencyState] = WeakKeyDictionary()
+_ps_state_lock = threading.Lock()
+_ps_epoch = 0
 
 
 def _is_expiring(expires_at) -> bool:
@@ -66,26 +90,13 @@ class ModelChoice(NamedTuple):
     """The tier that would have been used if it were resident."""
 
 
-async def probe_residency(timeout: float = 2.0) -> frozenset[str] | None:
-    """Names Ollama currently holds in memory, or None when Ollama is unreachable.
-
-    None (unknown) and empty-set (reachable, nothing loaded) are DIFFERENT
-    answers: ambient services use the distinction to skip optional work when a
-    tier was deliberately evicted, without misreading an engine blip as
-    "everything is evicted".
-    """
-    global _ps_cache
-    # Models switched off (ORB_MODELS_ENABLED, or the Orb Ward Record): Ollama
-    # is not asked. None reads as "cannot tell", and every ambient caller then
-    # skips its optional work.
+async def _fetch_residency(state: _ResidencyState) -> frozenset[str] | None:
+    """One bounded engine read; cancelling a waiter cannot cancel this owner."""
     from services.model_switch import models_enabled
 
-    if not models_enabled():
-        return None
-    now = time.monotonic()
-    if _ps_cache and now - _ps_cache[0] < _PS_TTL_SECONDS:
-        return _ps_cache[1]
     try:
+        if not models_enabled():
+            return None
         # trust_env=False — THIS LINE IS WHY THE API WEDGED (twice on 2026-08-01,
         # once for 3.5 hours; /api/health stopped answering entirely).
         #
@@ -113,22 +124,64 @@ async def probe_residency(timeout: float = 2.0) -> frozenset[str] | None:
         # internet feeds were removed on 6 October 2026, and that same test
         # now fails the build if any server module calls a host that is not
         # loopback.
-        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-            resp = await client.get(f"{OLLAMA_BASE_URL}/api/ps")
-            resp.raise_for_status()
-            # A model being torn down still appears in /api/ps (Ollama's unload
-            # is async, the runner shows "Stopping..."), but routing a turn to
-            # it triggers a full cold reload. Treat an already-expired
-            # expires_at as NOT resident so that window can't cost 80 seconds.
-            names = frozenset(
-                m.get("name", "")
-                for m in resp.json().get("models", [])
-                if m.get("name") and not _is_expiring(m.get("expires_at"))
-            )
+        async with asyncio.timeout(_PS_PROBE_TIMEOUT_SECONDS):
+            async with httpx.AsyncClient(verify=local_model_ssl_context(), timeout=_PS_PROBE_TIMEOUT_SECONDS, trust_env=False) as client:
+                resp = await client.get(f"{state.origin}/api/ps")
+                resp.raise_for_status()
+                # A model being torn down still appears in /api/ps (Ollama's
+                # unload is async), but routing to it triggers a cold reload.
+                names = frozenset(
+                    m.get("name", "")
+                    for m in resp.json().get("models", [])
+                    if m.get("name") and not _is_expiring(m.get("expires_at"))
+                )
+        with _ps_state_lock:
+            if state.epoch != _ps_epoch or state.origin != OLLAMA_BASE_URL or not models_enabled():
+                return None
+            state.cache = (time.monotonic(), names)
+        return names
     except Exception as e:
         logger.debug("residency probe failed (%s) — treating as unknown", e)
         return None
-    _ps_cache = (now, names)
+    finally:
+        with _ps_state_lock:
+            if state.pending is asyncio.current_task():
+                state.pending = None
+
+
+async def probe_residency(timeout: float = 2.0) -> frozenset[str] | None:
+    """Names held by the current local engine; None means unknown, not empty.
+
+    Concurrent cold callers on the same loop/origin/configuration share one
+    bounded read. Each caller keeps its own wait budget; a short timeout or
+    cancellation does not cancel the shared read or another caller. The shared
+    network read is capped at two seconds and failures are never cached.
+    Invalidation/origin changes fence an in-flight result from every waiter.
+    """
+    from services.model_switch import models_enabled
+
+    if not models_enabled() or not math.isfinite(timeout) or timeout <= 0:
+        return None
+    loop = asyncio.get_running_loop()
+    origin = OLLAMA_BASE_URL
+    with _ps_state_lock:
+        state = _ps_states.get(loop)
+        if state is None or state.epoch != _ps_epoch or state.origin != origin:
+            state = _ResidencyState(origin, _ps_epoch)
+            _ps_states[loop] = state
+        if state.cache is not None and time.monotonic() - state.cache[0] < _PS_TTL_SECONDS:
+            return state.cache[1]
+        if state.pending is None:
+            state.pending = loop.create_task(_fetch_residency(state), name="orb-residency-probe")
+        pending = state.pending
+    try:
+        names = await asyncio.wait_for(asyncio.shield(pending), timeout)
+    except TimeoutError:
+        return None
+    with _ps_state_lock:
+        if (state.epoch != _ps_epoch or state.origin != OLLAMA_BASE_URL
+                or state is not _ps_states.get(loop) or not models_enabled()):
+            return None
     return names
 
 
@@ -163,8 +216,12 @@ def invalidate_residency_cache() -> None:
     Called right after an operator loads/unloads a model so the next request
     routes on the new reality instead of waiting out the TTL.
     """
-    global _ps_cache
-    _ps_cache = None
+    global _ps_epoch
+    with _ps_state_lock:
+        _ps_epoch += 1
+        # Do not cancel another caller's task from this possibly different
+        # thread/loop. Its bounded completion is fenced by the epoch instead.
+        _ps_states.clear()
 
 
 async def select_chat_model(

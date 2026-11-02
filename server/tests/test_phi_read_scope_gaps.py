@@ -48,6 +48,7 @@ from fastapi.testclient import TestClient
 from auth import create_token
 from database import db_session
 from main import app
+from tests.scope_inventory import _is_scoped_service_delegation
 
 client = TestClient(app)
 
@@ -379,10 +380,11 @@ def test_every_get_route_taking_a_patient_id_query_param_is_scoped():
         if "patient_id" not in sig.parameters or "{patient_id}" in path:
             continue
         checked += 1
-        if not any(tok in src for tok in ("require_patient_access",
-                                          "enforce_patient_scope",
-                                          "patient_in_scope",
-                                          "scope_patient_ids_sql")):
+        if not (any(tok in src for tok in ("require_patient_access",
+                                           "enforce_patient_scope",
+                                           "patient_in_scope",
+                                           "scope_patient_ids_sql"))
+                or _is_scoped_service_delegation(endpoint, src, mutation=False)):
             unguarded.append(f"{sorted(methods)} {path}")
 
     assert checked >= 3, (
@@ -394,6 +396,31 @@ def test_every_get_route_taking_a_patient_id_query_param_is_scoped():
         "with no ward check — the same disclosure as the path-param leak, in a "
         "spelling the path-param guard cannot see:\n  " + "\n  ".join(sorted(unguarded))
     )
+
+
+def test_query_scope_delegations_are_visible_and_reject_changed_actor_or_guard(monkeypatch):
+    from routes.care_plan_routes import get_records
+    from routes.record_governance_routes import records
+    from services import offline_clinical_records, record_governance_service
+
+    for endpoint, module, guard in (
+        (get_records, offline_clinical_records, "_scope"),
+        (records, record_governance_service, "scope_patient_ids_sql"),
+    ):
+        source = inspect.getsource(endpoint)
+        assert _is_scoped_service_delegation(endpoint, source, mutation=False)
+        for original, replacement in (
+            ("user, patient_id", "other_user, patient_id") if endpoint is get_records
+            else ("actor=user", "actor=patient_id"),
+            ("patient_id, limit", "other_patient_id, limit") if endpoint is get_records
+            else ("patient_id=patient_id", "patient_id=other_patient_id"),
+            ("    return ", "    read_before_scope()\n    return "),
+        ):
+            assert original in source
+            assert not _is_scoped_service_delegation(endpoint, source.replace(original, replacement), mutation=False)
+        with monkeypatch.context() as patch:
+            patch.setattr(module, guard, lambda *args, **kwargs: None)
+            assert not _is_scoped_service_delegation(endpoint, source, mutation=False)
 
 
 def test_the_query_param_guard_and_the_path_guard_agree_on_one_patient(world):

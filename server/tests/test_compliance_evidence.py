@@ -65,6 +65,7 @@ def _backup(dirpath, stamp, *, receipt_ok=None, age_hours=1.0):
     if receipt_ok is not None:
         (dirpath / f"orb-backup-{stamp}.verified.json").write_text(json.dumps({
             "schema": "orb.backup.verification/1", "ok": receipt_ok,
+            "backup_file": path.name, "size_bytes": path.stat().st_size,
             "integrity_check": "ok" if receipt_ok else "corrupt",
             "row_counts": {"patients": 3, "audit_logs": 10},
             "verified_utc": datetime.now(timezone.utc).isoformat(),

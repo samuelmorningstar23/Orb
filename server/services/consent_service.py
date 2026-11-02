@@ -484,7 +484,14 @@ _EXPORT_EXCLUDED: dict[str, str] = {
 #: Tables that ARE exported, but through a curated section further down rather
 #: than as raw rows — so the schema walk must skip them or the principal gets the
 #: same consents twice, once readable and once not.
-_EXPORT_RENDERED_ELSEWHERE = frozenset({"consent_records", "consent_withdrawals"})
+_EXPORT_RENDERED_ELSEWHERE = frozenset(
+    {
+        "consent_records",
+        "consent_withdrawals",
+        "finance_journal_exports",
+        "finance_charge_attributions",
+    }
+)
 
 #: Columns dropped from `audit_logs` rows in the access-history section. The
 #: hash-chain columns are chain internals, and the IP/user-agent of the STAFF
@@ -639,6 +646,85 @@ def data_principal_export(patient_id: str, *, include_access_history: bool = Tru
             }
             total += len(rows)
 
+        # Shared financial snapshots can contain several patients. Export only
+        # this patient's journal legs, never the parent rows_json wholesale.
+        names = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if {"finance_journal_exports", "finance_journal_export_patients"} <= names:
+            journal_rows = []
+            for saved in db.execute(
+                """SELECT e.id,e.created_at,e.rows_json FROM finance_journal_exports e
+                    JOIN finance_journal_export_patients p ON p.export_id=e.id WHERE p.patient_id=?""",
+                (patient_id,),
+            ):
+                for leg in json.loads(saved["rows_json"]):
+                    if leg.get("patient_id") == patient_id:
+                        journal_rows.append(
+                            {"export_id": saved["id"], "exported_at": saved["created_at"], **leg}
+                        )
+            if journal_rows:
+                sections["finance_journal_entries"] = {
+                    "title": "Your accounting export entries",
+                    "rows": journal_rows,
+                    "row_count": len(journal_rows),
+                    "note": "Only entries about you are included; shared export snapshots contain other patients and are not copied here.",
+                }
+                total += len(journal_rows)
+        if {"finance_charge_attributions", "encounter_charges"} <= names:
+            attribution_rows = _rows(
+                db.execute(
+                    """SELECT a.* FROM finance_charge_attributions a
+                JOIN encounter_charges c ON c.id=a.charge_id WHERE c.patient_id=?""",
+                    (patient_id,),
+                )
+            )
+            if attribution_rows:
+                sections["finance_charge_attributions"] = {
+                    "title": "Doctor attribution for your charges",
+                    "rows": attribution_rows,
+                    "row_count": len(attribution_rows),
+                }
+                total += len(attribution_rows)
+
+        if {"finance_payout_lines", "finance_payout_claims"} <= names:
+            claim_rows = _rows(
+                db.execute(
+                    """SELECT c.source_line_id,c.doctor_id,c.statement_id,c.claimed_at
+                FROM finance_payout_claims c JOIN finance_payout_lines l
+                  ON l.source_line_id=c.source_line_id AND l.doctor_id=c.doctor_id AND l.statement_id=c.statement_id
+                WHERE l.patient_id=? ORDER BY c.claimed_at,c.source_line_id""",
+                    (patient_id,),
+                )
+            )
+            if claim_rows:
+                sections["finance_payout_claims"] = {
+                    "title": "Payout claims for your billed services",
+                    "rows": claim_rows,
+                    "row_count": len(claim_rows),
+                }
+                total += len(claim_rows)
+        if {"finance_payout_lines", "finance_payout_statements"} <= names:
+            # A statement may combine many patients. Its approval/evidence
+            # context belongs to each claimed line, but batch totals and
+            # deductions cannot be attributed to one patient and stay out.
+            statement_rows = _rows(
+                db.execute(
+                    """SELECT s.id AS statement_id,s.facility_id,s.from_day,s.to_day,s.status,
+                s.created_by,s.created_at,s.approved_by,s.approved_at,s.paid_by,s.paid_at,s.payment_reference,
+                s.cancelled_by,s.cancelled_at FROM finance_payout_statements s
+                WHERE EXISTS (SELECT 1 FROM finance_payout_lines l WHERE l.statement_id=s.id AND l.patient_id=?)
+                ORDER BY s.created_at,s.id""",
+                    (patient_id,),
+                )
+            )
+            if statement_rows:
+                sections["finance_payout_statement_context"] = {
+                    "title": "Approval and payment evidence for your payout records",
+                    "rows": statement_rows,
+                    "row_count": len(statement_rows),
+                    "note": "Shared statement totals, deductions and other patients' lines are excluded. Only status and evidence context for your own lines is included.",
+                }
+                total += len(statement_rows)
+
         if include_access_history:
             cols = ", ".join(_ACCESS_HISTORY_COLUMNS)
             rows = _rows(
@@ -774,6 +860,20 @@ _RETENTION_SOURCES: dict[str, list[tuple[str, str | None, str]]] = {
         ("lab_critical_notifications", "patient_id", "raised_at"),
         ("lab_critical_events", "patient_id", "occurred_at"),
         ("result_quarantine", None, "created_at"),
+        # Locally authored clinical workflows (migration 83); events include
+        # historical clinical snapshots and share the chart's retention owner.
+        # Parent clocks stay at creation; edits have their own recorded events
+        # and must not silently restart a clinical record's retention clock.
+        ("ris_studies", "patient_id", "created_at"),
+        ("ris_studies_events", "patient_id", "recorded_at"),
+        ("care_plans", "patient_id", "created_at"),
+        ("care_plans_events", "patient_id", "recorded_at"),
+        ("emergency_visits", "patient_id", "created_at"),
+        ("emergency_visits_events", "patient_id", "recorded_at"),
+        ("perioperative_records", "patient_id", "created_at"),
+        ("perioperative_records_events", "patient_id", "recorded_at"),
+        ("dialysis_sessions", "patient_id", "created_at"),
+        ("dialysis_sessions_events", "patient_id", "recorded_at"),
     ],
     "prescription_and_dispensing": [
         ("medications", "patient_id", "started_at"),
@@ -996,6 +1096,19 @@ def retention_review(*, now: datetime | None = None, patient_id: str | None = No
                     )
 
                 try:
+                    if pcol and "record_legal_holds" in existing_tables:
+                        hold_sql = (
+                            "EXISTS (SELECT 1 FROM record_legal_holds h "
+                            f"WHERE h.patient_id={table}.{pcol} AND h.released_at IS NULL "
+                            "AND CASE WHEN json_valid(h.categories_json)=0 THEN 1 "
+                            "WHEN json_type(h.categories_json)!='array' THEN 1 "
+                            "WHEN json_array_length(h.categories_json)=0 THEN 1 ELSE EXISTS "
+                            "(SELECT 1 FROM json_each(h.categories_json) j WHERE j.type!='text' OR j.value=?) END)"
+                        )
+                        held = _count(f"{where} AND {hold_sql}", params + [p["category"]])
+                        entry["held_legal_hold"] = entry.get("held_legal_hold", 0) + held
+                        where += f" AND NOT {hold_sql}"
+                        params.append(p["category"])
                     if protected and pcol:
                         age_args = [maj, minor_age]
                         # Overdue means overdue AND releasable. A record whose
@@ -1031,6 +1144,7 @@ def retention_review(*, now: datetime | None = None, patient_id: str | None = No
                         n = _count(where, params)
                 except Exception as exc:  # pragma: no cover — defensive
                     logger.warning("retention probe failed for %s: %s", table, exc)
+                    entry.setdefault("probe_errors", []).append(table)
                     continue
                 entry["by_table"][table] = n
                 entry["overdue_count"] += n
@@ -1056,6 +1170,35 @@ def retention_review(*, now: datetime | None = None, patient_id: str | None = No
         "total_overdue": sum(c["overdue_count"] for c in out),
         # Load-bearing, not decoration. See the docstring.
         "deleted_anything": False,
+        "local_records_awaiting_retention_policy": [
+            table
+            for table in (
+                "feedback_cases",
+                "feedback_events",
+                "mortuary_cases",
+                "mortuary_events",
+                "cssd_issues",
+                "cssd_events",
+                "record_legal_holds",
+                "mrd_files",
+                "mrd_release_requests",
+                "record_governance_events",
+                "finance_charge_attributions",
+                "finance_payout_statements",
+                "finance_payout_lines",
+                "finance_payout_claims",
+                "finance_journal_exports",
+                "finance_journal_export_patients",
+                "radiation_safety_records",
+                "infection_cases",
+                "infection_exposure_days",
+                "infection_susceptibility",
+                "infection_isolation_records",
+                "infection_events",
+                "infection_requests",
+            )
+            if table in existing_tables
+        ],
         "action": (
             "Review each overdue category with the records officer. Orb does not "
             "destroy anything on a timer; destruction needs a signed order."
@@ -1393,7 +1536,7 @@ def adjudicate_erasure_request(request_id: str, *, decided_by: str) -> dict:
     reason and (for refusals) the citation that compels retention.
     """
     _require(decided_by, "decided_by")
-    with db_session() as db:
+    with db_session(immediate=True) as db:
         req = db.execute("SELECT * FROM erasure_requests WHERE id = ?", (request_id,)).fetchone()
         if not req:
             raise ValueError(f"unknown erasure request {request_id}")
@@ -1412,7 +1555,13 @@ def adjudicate_erasure_request(request_id: str, *, decided_by: str) -> dict:
         decisions: list[dict] = []
         for p in policies:
             cat = p["category"]
-            if p["erasable"]:
+            from services.record_governance_service import active_hold
+
+            if active_hold(db, patient_id, cat):
+                disposition, executable = "refused", False
+                reason = "An active recorded legal hold prevents erasure of this category. Review the hold with the records officer."
+                authority = "Recorded hold authority; see records governance register"
+            elif p["erasable"]:
                 executor = _ERASURE_EXECUTORS.get(cat)
                 if executor:
                     disposition, executable = "honoured", True
@@ -1501,7 +1650,7 @@ def execute_erasure_request(request_id: str, *, executed_by: str) -> dict:
     two acts, and the second one wants a human to have read the first.
     """
     _require(executed_by, "executed_by")
-    with db_session() as db:
+    with db_session(immediate=True) as db:
         req = db.execute("SELECT * FROM erasure_requests WHERE id = ?", (request_id,)).fetchone()
         if not req:
             raise ValueError(f"unknown erasure request {request_id}")
@@ -1521,6 +1670,13 @@ def execute_erasure_request(request_id: str, *, executed_by: str) -> dict:
                 (request_id,),
             )
         )
+
+        from services.record_governance_service import active_hold
+
+        if any(active_hold(db, patient_id, d["category"]) for d in decisions):
+            raise ValueError(
+                "An active legal hold now prevents this erasure. Nothing was erased; review the hold and record a new decision."
+            )
 
         ts = _now()
         total = 0

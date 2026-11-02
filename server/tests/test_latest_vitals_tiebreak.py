@@ -74,9 +74,13 @@ def _admit(*, user_id: str | None = None) -> str:
             (pid, f"Tiebreak {pid[-4:]}", f"MRN-{pid}", DEPT, earlier, user_id),
         )
         db.execute(
-            """INSERT INTO admissions (patient_id, department, ward, bed, status, admitted_by)
-               VALUES (?, ?, ?, 'TB-1', 'active', ?)""",
-            (pid, DEPT, DEPT, ADMITTER),
+            # These observations belong to this stay. The default admission
+            # clock is now, after both sets, which correctly hides them from
+            # current-stay portal readers and defeats the intended tie test.
+            """INSERT INTO admissions (patient_id, department, ward, bed, status,
+                                       admitted_by, admitted_at, created_at)
+               VALUES (?, ?, ?, 'TB-1', 'active', ?, ?, ?)""",
+            (pid, DEPT, DEPT, ADMITTER, earlier, earlier),
         )
         _insert_vitals(db, pid, earlier, EARLIER)
         benign_id = _insert_vitals(db, pid, tie, BENIGN)

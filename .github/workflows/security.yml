@@ -1,0 +1,183 @@
+name: Dependency security
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Verified commit to test for a candidate build
+        required: false
+        type: string
+        default: ""
+  push:
+    branches: ["**"]
+  pull_request:
+  schedule:
+    - cron: "30 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  npm-audit:
+    name: JavaScript dependency advisories
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Audit the committed lockfile
+        # Audit requires no install and therefore runs no dependency scripts.
+        run: npm audit --package-lock-only --audit-level=high --json > npm-audit.json
+      - name: Upload advisory report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-advisories
+          path: npm-audit.json
+          retention-days: 14
+
+  python-audit:
+    name: Python dependency advisories
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the audit tool
+        run: |
+          python -m pip install -r server/requirements-bootstrap.txt
+          python -m pip install pip-audit==2.9.0
+      - name: Audit production pins
+        # Query declared pins without installing Apple-only/GPU packages or
+        # executing their build hooks. This remains separate from the installed
+        # slim Linux runtime audit; Apple/ML production dependencies stay visible.
+        run: python -m pip_audit --strict --no-deps --disable-pip -r server/requirements.txt --format json --output python-production-audit.json
+      - name: Audit test pins
+        if: always()
+        run: python -m pip_audit --strict --no-deps --disable-pip -r server/requirements-dev.txt --format json --output python-test-audit.json
+      - name: Audit quality tool pins
+        if: always()
+        run: python -m pip_audit --strict --no-deps --disable-pip -r server/requirements-quality.txt --format json --output python-quality-audit.json
+      - name: Audit HTTP constraint pins
+        if: always()
+        run: python -m pip_audit --strict --no-deps --disable-pip -r server/constraints-security.txt --format json --output python-http-constraints-audit.json
+      - name: Audit bootstrap tooling pins
+        if: always()
+        run: python -m pip_audit --strict --no-deps --disable-pip -r server/requirements-bootstrap.txt --format json --output python-bootstrap-audit.json
+      - name: Upload advisory reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-advisories
+          path: python-*-audit.json
+          retention-days: 14
+
+  python-runtime-audit:
+    name: Installed slim Python dependency advisories
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            server/requirements-dev.txt
+            server/requirements-bootstrap.txt
+            server/constraints-security.txt
+      - name: Install the actual slim Linux runtime
+        run: |
+          python -m venv .venv-audit-runtime
+          .venv-audit-runtime/bin/python -m pip install -r server/requirements-bootstrap.txt
+          .venv-audit-runtime/bin/python -m pip install torch==2.14.1 --index-url https://download.pytorch.org/whl/cpu
+          .venv-audit-runtime/bin/python -m pip install -r server/requirements-dev.txt
+          .venv-audit-runtime/bin/python -m pip check
+          .venv-audit-runtime/bin/python -m pip freeze --all > python-resolved-runtime-freeze.txt
+      - name: Install the scanner separately
+        # Scanner packages must not be mistaken for application dependencies.
+        run: |
+          python -m venv .venv-audit-tool
+          .venv-audit-tool/bin/python -m pip install -r server/requirements-bootstrap.txt
+          .venv-audit-tool/bin/python -m pip install pip-audit==2.9.0
+      - name: Audit every installed runtime dependency
+        # --path enumerates the installed tree including transitives. No --no-deps,
+        # vulnerability ignores, automatic fixes, or continue-on-error are applied.
+        run: |
+          runtime_site=$(.venv-audit-runtime/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')
+          .venv-audit-tool/bin/python -m pip_audit --strict --path "$runtime_site" --format json --output python-resolved-runtime-audit.json
+      - name: Upload resolved dependency evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-resolved-runtime-advisories
+          path: |
+            python-resolved-runtime-audit.json
+            python-resolved-runtime-freeze.txt
+          retention-days: 14
+
+  python-apple-production-audit:
+    name: Resolved Apple production dependency advisories
+    # Explicit Apple Silicon image: MLX has platform-specific dependencies.
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned audit tooling
+        run: |
+          python -m pip install -r server/requirements-bootstrap.txt
+          python -m pip install pip-audit==2.9.0
+      - name: Resolve the complete Apple production dependency tree
+        # Resolve trusted package metadata only: no application install, model
+        # downloads or speech inference. Legacy tiktoken has no py3.12 wheel,
+        # so source metadata is needed; this does not certify its native build.
+        run: |
+          test "$(uname -m)" = arm64
+          python -m pip install --dry-run --ignore-installed --report python-apple-production-resolution.json -r server/requirements.txt
+          python - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+          from packaging.version import Version
+
+          report = json.loads(Path("python-apple-production-resolution.json").read_text())
+          rows = [(item["metadata"]["name"], item["metadata"]["version"]) for item in report["install"]]
+          assert rows, "Production resolution must contain packages"
+          names = {re.sub(r"[-_.]+", "-", name).lower() for name, _ in rows}
+          assert {"torch", "transformers", "lightning-whisper-mlx", "mlx", "tiktoken"} <= names, "Production speech/ML dependencies must remain covered"
+          for name, version in rows:
+              assert re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name), "Invalid resolved package name"
+              assert str(Version(version)) == version, "Invalid resolved package version"
+          Path("python-apple-production-resolved.txt").write_text("".join(f"{name}=={version}\n" for name, version in sorted(rows)))
+          PY
+      - name: Audit every resolved Apple production package
+        # The complete resolution is explicitly pinned above. --no-deps avoids
+        # installing Apple packages into the scanner environment, not omissions.
+        run: python -m pip_audit --strict --no-deps --disable-pip -r python-apple-production-resolved.txt --format json --output python-apple-production-audit.json
+      - name: Upload Apple production dependency evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-apple-production-advisories
+          path: |
+            python-apple-production-resolution.json
+            python-apple-production-resolved.txt
+            python-apple-production-audit.json
+          retention-days: 14

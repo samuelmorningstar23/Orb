@@ -10,12 +10,12 @@ Everything here is defensive: a patient with missing/None vitals, no risk histor
 or malformed data must never raise — surveillance must not take down the app.
 """
 
-import json
 import uuid
 from datetime import UTC, datetime, timedelta
 
 from database import db_session
-
+from permissions import department_scope, patient_in_scope, scope_patient_ids_sql
+from services import facility_service
 from services.clinical_time import format_utc, parse_to_utc
 from services.news2_text import news2_description
 from services.vigil_service import news2_reason_line, score_vitals_row, scoring_enabled
@@ -91,16 +91,6 @@ def _num(v):
         return None
 
 
-def _parse_drivers(raw):
-    try:
-        d = json.loads(raw) if raw else []
-        if isinstance(d, list):
-            return [str(x) for x in d][:3]
-    except (TypeError, ValueError):
-        pass
-    return []
-
-
 def _hours_since(ts) -> float:
     try:
         s = str(ts).replace("Z", "+00:00")
@@ -110,17 +100,6 @@ def _hours_since(ts) -> float:
         return (datetime.now(UTC) - dt).total_seconds() / 3600.0
     except Exception:
         return 0.0
-
-
-def _recent_dedup_exists(db, dedup_key) -> bool:
-    cutoff, flap_cutoff = _dedup_cutoffs()
-    return (
-        db.execute(
-            f"SELECT 1 FROM sage_insights WHERE {_DEDUP_SUPPRESSED_SQL} LIMIT 1",
-            (dedup_key, cutoff, flap_cutoff),
-        ).fetchone()
-        is not None
-    )
 
 
 def _refresh_insight(db, dedup_key, detail, title=None, severity=None, observed_at=None) -> None:
@@ -727,21 +706,33 @@ def evaluate_patient(patient_id, raised_again=None) -> list:
     return new_ids
 
 
-def evaluate_all_admitted(raised_again=None) -> list:
+def evaluate_all_admitted(raised_again=None, user=None) -> list:
     """Sweep every admitted patient. Returns ids of all new insights created.
-    `raised_again` as in evaluate_patient."""
+    `raised_again` as in evaluate_patient. A manual caller supplies their
+    authenticated user; the scheduled system sweep keeps hospital-wide scope.
+    """
     ids = []
     try:
         with db_session() as db:
-            rows = db.execute("SELECT id FROM patients WHERE status = 'admitted'").fetchall()
+            scope_sql, scope_params = scope_patient_ids_sql(
+                department_scope(user),
+                facilities=(
+                    facility_service.facility_scope_for(user, db=db) if user is not None else None
+                ),
+            )
+            rows = db.execute(
+                f"SELECT id FROM patients WHERE status = 'admitted' AND id IN ({scope_sql})",
+                scope_params,
+            ).fetchall()
             # Discharged patients are never swept again — without this their
             # insights stay 'active' forever (observed leak: 31 patients with
             # active insights vs 30 admitted).
+            manual_scope = f" AND patient_id IN ({scope_sql})" if user is not None else ""
             db.execute(
-                """UPDATE sage_insights SET state = 'auto_resolved', updated_at = ?
+                f"""UPDATE sage_insights SET state = 'auto_resolved', updated_at = ?
                    WHERE state = 'active' AND patient_id NOT IN
-                         (SELECT id FROM patients WHERE status = 'admitted')""",
-                (_now(),),
+                         (SELECT id FROM patients WHERE status = 'admitted'){manual_scope}""",
+                (_now(), *(scope_params if user is not None else ())),
             )
         for r in rows:
             ids.extend(evaluate_patient(r["id"], raised_again))
@@ -752,22 +743,41 @@ def evaluate_all_admitted(raised_again=None) -> list:
 
 def get_active_insights(user_id, role) -> list:
     """Active insights for this clinician (their patients), newest + most severe first.
-    Admins see all."""
+    Admins see every recipient within their normal patient scope. The stored
+    user row supplies role and department; the role argument is kept for callers.
+    """
     sev_order = "CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END"
     with db_session() as db:
+        user = db.execute(
+            "SELECT id, role, department FROM users WHERE id = ? AND COALESCE(is_active, 1) = 1",
+            (user_id,),
+        ).fetchone()
+        if user is None:
+            return []
+        user = dict(user)
+        # Recipient assignment never grants access to a chart. Derive scope
+        # from the stored clinician, including an insight targeted at them.
+        role = user["role"]
+        scope_sql, scope_params = scope_patient_ids_sql(
+            department_scope(user),
+            facilities=facility_service.facility_scope_for(user, db=db),
+        )
         if role == "admin":
             rows = db.execute(
                 f"""SELECT i.*, p.name as patient_name FROM sage_insights i
                     LEFT JOIN patients p ON p.id = i.patient_id
-                    WHERE i.state = 'active' ORDER BY {sev_order}, i.created_at DESC LIMIT 50"""
+                    WHERE i.state = 'active' AND i.patient_id IN ({scope_sql})
+                    ORDER BY {sev_order}, i.created_at DESC LIMIT 50""",
+                scope_params,
             ).fetchall()
         else:
             rows = db.execute(
                 f"""SELECT i.*, p.name as patient_name FROM sage_insights i
                     LEFT JOIN patients p ON p.id = i.patient_id
                     WHERE i.state = 'active' AND (i.target_user_id = ? OR i.target_user_id IS NULL)
+                    AND i.patient_id IN ({scope_sql})
                     ORDER BY {sev_order}, i.created_at DESC LIMIT 50""",
-                (user_id,),
+                (user_id, *scope_params),
             ).fetchall()
         out = [dict(r) for r in rows]
     # Scoring switched off: a deterioration card is a band, so none is shown.
@@ -783,13 +793,30 @@ def get_active_insights(user_id, role) -> list:
 
 
 def transition_insight(insight_id, new_state, user_id, role) -> dict:
-    """Dismiss / act an insight. Membership-guarded: a clinician may only transition
-    insights targeted at them (admins: any). Returns the updated row or {}."""
+    """Dismiss / act an insight inside the stored caller's chart scope.
+    Recipient assignment is an additional guard (admins: any recipient).
+    Returns the updated row or {} without disclosing an inaccessible insight.
+    """
     if new_state not in ("dismissed", "acted"):
         raise ValueError("invalid state")
     with db_session() as db:
         row = db.execute("SELECT * FROM sage_insights WHERE id = ?", (insight_id,)).fetchone()
         if not row:
+            return {}
+        user = db.execute(
+            "SELECT id, role, department FROM users WHERE id = ? AND COALESCE(is_active, 1) = 1",
+            (user_id,),
+        ).fetchone()
+        if user is None:
+            return {}
+        user = dict(user)
+        role = user["role"]
+        if not patient_in_scope(
+            db,
+            row["patient_id"],
+            department_scope(user),
+            facilities=facility_service.facility_scope_for(user, db=db),
+        ):
             return {}
         if role != "admin" and row["target_user_id"] not in (None, user_id):
             raise PermissionError("not your insight")

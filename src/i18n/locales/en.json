@@ -33,7 +33,20 @@
     "pharmacy-store": "Pharmacy store",
     "lab": "Laboratory",
     "opd": "OPD",
-    "observations": "Observations"
+    "observations": "Observations",
+    "feedback": "Feedback",
+    "mortuary": "Mortuary",
+    "cssd": "CSSD",
+    "reporting": "Reports",
+    "finance-tools": "Finance tools",
+    "radiology": "Radiology",
+    "care-plans": "Care plans",
+    "emergency": "Emergency",
+    "perioperative": "Perioperative",
+    "dialysis": "Dialysis",
+    "record-governance": "Medical records",
+    "radiation-safety": "Radiation safety",
+    "infection-surveillance": "Infection surveillance"
   },
   "subtitle": {
     "admin": "System governance & audit traceability",
@@ -69,7 +82,20 @@
     "pharmacy-store": "Drug purchasing, goods receipt, batches, expiry and stock",
     "lab": "Specimens, results, validation and reports",
     "opd": "Outpatient queue, consultations and prescriptions",
-    "observations": "Copy each round from the paper observation sheet"
+    "observations": "Copy each round from the paper observation sheet",
+    "feedback": "Complaints and patient feedback",
+    "mortuary": "Body custody and handover",
+    "cssd": "Instrument packs and sterilisation cycles",
+    "reporting": "Local reports and patient cohorts",
+    "finance-tools": "Accounting exports and doctor payouts",
+    "radiology": "Study workflow and signed reports",
+    "care-plans": "Goals, interventions and evaluation",
+    "emergency": "Emergency assessment and disposition",
+    "perioperative": "Anaesthesia and recovery documentation",
+    "dialysis": "Prescribed and recorded dialysis sessions",
+    "record-governance": "File custody, legal holds and releases",
+    "radiation-safety": "Radiation safety",
+    "infection-surveillance": "Infection surveillance"
   },
   "subtitleScoringOff": {
     "vigil": "Patients and their vitals"

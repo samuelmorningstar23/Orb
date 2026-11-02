@@ -32,13 +32,14 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from database import db_session
 from db_backend import DBIntegrityError
 
 from services import allergy_interlock, drug_safety_service
 from services.audit_service import log_audit_event
+from services.clinical_time import parse_to_utc
 from services.drug_safety_service import DoseGuardBlocked
 from services.medorders import emar_check
 from services.medorders import supply as medorder_supply
@@ -96,14 +97,6 @@ def _hydrate(row) -> dict:
 # DOSE GUARD — the database half. The clinical rules are in
 # services/drug_safety_service.py; this is history, ledger and audit.
 # ═════════════════════════════════════════════════════════════════════════════
-_TS_FORMATS = (
-    "%Y-%m-%d %H:%M:%S",
-    "%Y-%m-%d %H:%M:%S.%f",
-    "%Y-%m-%dT%H:%M:%S",
-    "%Y-%m-%dT%H:%M:%S.%f",
-)
-
-
 def _parse_ts(value) -> datetime | None:
     """A stored administered_at → naive UTC datetime, or None.
 
@@ -113,22 +106,11 @@ def _parse_ts(value) -> datetime | None:
     it cannot be read — a timestamp we cannot trust must not become an elapsed
     time we then act on.
     """
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value.replace(tzinfo=None) if value.tzinfo else value
-    text = str(value).strip()
-    if not text:
-        return None
-    for fmt in _TS_FORMATS:
-        try:
-            return datetime.strptime(text, fmt)
-        except ValueError:
-            continue
     try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        return parsed.replace(tzinfo=None) if parsed.tzinfo else parsed
-    except ValueError:
+        # Explicit offsets describe an instant, not a wall clock to relabel.
+        # Bare SQLite/legacy Orb values retain their existing UTC meaning.
+        return parse_to_utc(value).replace(tzinfo=None)
+    except (ValueError, TypeError, OverflowError):
         return None
 
 
@@ -164,12 +146,11 @@ def _read_recent_administrations(
     cannot. The cap remains only as a runaway guard, and because the ordering is
     newest-first it can now only discard rows OLDER than a match we already have.
     """
-    cutoff = datetime.utcnow() - timedelta(hours=float(lookback_hours) + 1.0)
-    # Compared as text against SQLite's own CURRENT_TIMESTAMP format. A row
-    # written in ISO form ('...T09:00:00') sorts AFTER the space-separated
-    # cutoff for the same second, so it is over-included rather than dropped —
-    # and then filtered exactly by _parse_ts below. Erring toward reading one
-    # row too many is the only safe direction here.
+    cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=float(lookback_hours) + 1.0)
+    # Imported explicit offsets can cross a UTC day boundary, so raw TEXT
+    # comparison can discard a recent dose before Python ever normalizes it.
+    # Select and order by the actual instant before the row cap; the patient
+    # predicate still bounds the scan, and _parse_ts applies exact precision.
     cutoff_text = cutoff.strftime("%Y-%m-%d %H:%M:%S")
     rows = db.execute(
         """SELECT ma.id, ma.medication_id, ma.administered_at, ma.administered_by,
@@ -177,8 +158,8 @@ def _read_recent_administrations(
              FROM medication_administrations ma
              JOIN medications m ON m.id = ma.medication_id
             WHERE ma.patient_id = ? AND ma.status = 'given'
-              AND ma.administered_at >= ?
-            ORDER BY ma.administered_at DESC, ma.id DESC
+              AND julianday(ma.administered_at) >= julianday(?)
+            ORDER BY julianday(ma.administered_at) DESC, ma.id DESC
             LIMIT 2000""",
         (patient_id, cutoff_text),
     ).fetchall()
@@ -331,7 +312,9 @@ def _screen_dose(
             lookback_hours=window,
             exclude_idempotency_key=idempotency_key,
         )
-        now = datetime.utcnow()
+        # Existing administration timestamps and _parse_ts use naive UTC.
+        # Keep that arithmetic contract while avoiding deprecated utcnow().
+        now = datetime.now(UTC).replace(tzinfo=None)
         prior_names = _resolve_prior_names(db, priors)
         prior_doses = []
         for p in priors:

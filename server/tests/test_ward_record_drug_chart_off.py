@@ -71,8 +71,12 @@ def patient():
                        'admitted', ?)""",
             (pid, portal_uid, f"MRN-{tag}", started))
         db.execute(
-            "INSERT INTO admissions (patient_id, department, status, admitted_by) "
-            "VALUES (?, ?, 'active', 'WDCADM')", (pid, DEPT))
+            # The charted medication belongs to this admission; leaving its
+            # start at the insertion default would make the six-hour-old
+            # positive control correctly disappear from current-stay Bridge.
+            "INSERT INTO admissions (patient_id, department, status, admitted_by, "
+            "admitted_at, created_at) VALUES (?, ?, 'active', 'WDCADM', ?, ?)",
+            (pid, DEPT, started, started))
         db.execute(
             "INSERT INTO patient_allergies (patient_id, substance, substance_class, reaction, "
             "severity, status) VALUES (?, 'Penicillin', 'penicillin', 'Anaphylaxis', 'severe', 'active')",

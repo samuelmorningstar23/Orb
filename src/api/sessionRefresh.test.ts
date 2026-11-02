@@ -9,7 +9,7 @@
  * localStorage must survive the whole flow.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { apiFetch } from './client'
+import { ApiIdentityChangedError, apiFetch, getUser, setUser } from './client'
 
 const events: string[] = []
 const onExpired = () => events.push('expired')
@@ -56,6 +56,13 @@ function stubLapsedSession({ refreshStatus = 200, refreshDelayMs = 0, repairSess
 }
 
 const refreshCalls = (calls: string[]) => calls.filter((c) => c.endsWith('/auth/refresh')).length
+const firstUser = { id: 'NUR-A', name: 'Nurse A', role: 'nurse' }
+const nextUser = { id: 'NUR-B', name: 'Nurse B', role: 'nurse' }
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(r => { resolve = r })
+  return { promise, resolve }
+}
 
 describe('single-flight session refresh', () => {
   it('refreshes once and retries the original request on a 401', async () => {
@@ -108,5 +115,83 @@ describe('single-flight session refresh', () => {
     stubLapsedSession()
     await apiFetch('/vigil/patients')
     expect(localStorage.getItem('orb_token')).toBeNull()
+  })
+
+  it.each([200, 401])('does not publish an abandoned initial HTTP %s or expire the next user', async status => {
+    setUser(firstUser)
+    const response = deferred<Response>()
+    const fetch = vi.fn(() => response.promise)
+    vi.stubGlobal('fetch', fetch)
+    const result = apiFetch('/vigil/patients').catch(e => e)
+    setUser(nextUser)
+    response.resolve(json(status === 200 ? [{ id: 'old-chart' }] : { detail: 'Expired' }, status))
+
+    expect(await result).toBeInstanceOf(ApiIdentityChangedError)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(getUser()).toEqual(nextUser)
+    expect(events).toEqual([])
+  })
+
+  it.each([200, 401])('does not retry or expire the next user after an abandoned HTTP %s refresh', async status => {
+    setUser(firstUser)
+    const refresh = deferred<Response>()
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(json({ detail: 'Expired' }, 401))
+      .mockImplementationOnce(() => refresh.promise)
+    vi.stubGlobal('fetch', fetch)
+    const result = apiFetch('/vigil/patients', { method: 'POST', body: '{}' }).catch(e => e)
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
+    setUser(nextUser)
+    refresh.resolve(json({ ok: status === 200 }, status))
+
+    expect(await result).toBeInstanceOf(ApiIdentityChangedError)
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(getUser()).toEqual(nextUser)
+    expect(events).toEqual([])
+  })
+
+  it.each([200, 401])('does not publish an abandoned HTTP %s retry or expire the next user', async status => {
+    setUser(firstUser)
+    const retry = deferred<Response>()
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(json({ detail: 'Expired' }, 401))
+      .mockResolvedValueOnce(json({ ok: true }))
+      .mockImplementationOnce(() => retry.promise)
+    vi.stubGlobal('fetch', fetch)
+    const result = apiFetch('/vigil/patients').catch(e => e)
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(3))
+    setUser(nextUser)
+    retry.resolve(json(status === 200 ? [{ id: 'old-chart' }] : { detail: 'Expired' }, status))
+
+    expect(await result).toBeInstanceOf(ApiIdentityChangedError)
+    expect(fetch).toHaveBeenCalledTimes(3)
+    expect(getUser()).toEqual(nextUser)
+    expect(events).toEqual([])
+  })
+
+  it.each([200, 403])('does not publish an old HTTP %s body after identity changes during body parsing', async status => {
+    setUser(firstUser)
+    const body = deferred<unknown>()
+    const response = json({}, status)
+    const parse = vi.spyOn(response, 'json').mockImplementation(() => body.promise)
+    vi.stubGlobal('fetch', vi.fn(async () => response))
+    const result = apiFetch('/vigil/patients').catch(e => e)
+    await vi.waitFor(() => expect(parse).toHaveBeenCalledTimes(1))
+    setUser(nextUser)
+    body.resolve(status === 200 ? [{ id: 'old-chart' }] : { detail: 'Old permission refusal' })
+
+    expect(await result).toBeInstanceOf(ApiIdentityChangedError)
+    expect(getUser()).toEqual(nextUser)
+    expect(events).toEqual([])
+  })
+
+  it('keeps anonymous sign-in responses usable when the stored identity changes', async () => {
+    const response = deferred<Response>()
+    vi.stubGlobal('fetch', vi.fn(() => response.promise))
+    const result = apiFetch('/auth/login', { method: 'POST', body: '{}' })
+    setUser(nextUser)
+    response.resolve(json({ user: nextUser }))
+    await expect(result).resolves.toEqual({ user: nextUser })
+    expect(events).toEqual([])
   })
 })

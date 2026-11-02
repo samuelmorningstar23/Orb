@@ -249,10 +249,10 @@ describe('what else the chart leaves out with the switches off', () => {
     expect(vi.mocked(prefetchSageContext)).not.toHaveBeenCalled()
   })
 
-  it('keeps the Sepsis Six card, the forecast and the Sage warm up on an ordinary site', async () => {
+  it('keeps the Sepsis Six card and Sage warm up without requesting an unused forecast', async () => {
     await openChart()
     expect(screen.getByTestId('care-bundle')).toBeTruthy()
-    expect(vi.mocked(getPatientForecast)).toHaveBeenCalled()
+    expect(vi.mocked(getPatientForecast)).not.toHaveBeenCalled()
     expect(vi.mocked(prefetchSageContext)).toHaveBeenCalled()
   })
 })

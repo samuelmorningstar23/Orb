@@ -17,7 +17,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const apiFetch = vi.fn<(path: string, init?: RequestInit) => Promise<unknown>>()
 
-vi.mock('../../../api/client', () => ({
+vi.mock('../../../api/client', async () => ({
+  ...await vi.importActual<typeof import('../../../api/client')>('../../../api/client'),
   API_BASE: '/api',
   apiFetch: (path: string, init?: RequestInit) => apiFetch(path, init),
   buildHeaders: () => ({}),

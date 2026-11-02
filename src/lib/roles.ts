@@ -148,6 +148,84 @@ export const HIS_PERMISSIONS = [
 
 export type HisPermission = (typeof HIS_PERMISSIONS)[number]
 
+export const FEEDBACK_READ = 'feedback.read' as const
+export const FEEDBACK_WRITE = 'feedback.write' as const
+export const FEEDBACK_MANAGE = 'feedback.manage' as const
+export const MORTUARY_READ = 'mortuary.read' as const
+export const MORTUARY_WRITE = 'mortuary.write' as const
+export const MORTUARY_MANAGE = 'mortuary.manage' as const
+export const MORTUARY_RELEASE = 'mortuary.release' as const
+export const CSSD_READ = 'cssd.read' as const
+export const CSSD_WRITE = 'cssd.write' as const
+export const CSSD_MANAGE = 'cssd.manage' as const
+export const CSSD_RELEASE = 'cssd.release' as const
+export const REPORTING_READ = 'reporting.read' as const
+export const REPORTING_WRITE = 'reporting.write' as const
+export const REPORTING_EXPORT = 'reporting.export' as const
+export const FINANCE_TOOLS_READ = 'finance_tools.read' as const
+export const FINANCE_TOOLS_WRITE = 'finance_tools.write' as const
+export const FINANCE_TOOLS_APPROVE = 'finance_tools.approve' as const
+export const FINANCE_TOOLS_EXPORT = 'finance_tools.export' as const
+export const RIS_READ = 'ris.read' as const
+export const RIS_WRITE = 'ris.write' as const
+export const RIS_SIGN = 'ris.sign' as const
+export const CARE_PLAN_READ = 'care_plan.read' as const
+export const CARE_PLAN_WRITE = 'care_plan.write' as const
+export const EMERGENCY_RECORD_READ = 'emergency_record.read' as const
+export const EMERGENCY_RECORD_WRITE = 'emergency_record.write' as const
+export const PERIOPERATIVE_RECORD_READ = 'perioperative_record.read' as const
+export const PERIOPERATIVE_RECORD_WRITE = 'perioperative_record.write' as const
+export const PERIOPERATIVE_RECORD_SIGN = 'perioperative_record.sign' as const
+export const DIALYSIS_RECORD_READ = 'dialysis_record.read' as const
+export const DIALYSIS_RECORD_WRITE = 'dialysis_record.write' as const
+export const DIALYSIS_RECORD_PRESCRIBE = 'dialysis_record.prescribe' as const
+export const RECORD_GOVERNANCE_READ = 'record_governance.read' as const
+export const RECORD_GOVERNANCE_WRITE = 'record_governance.write' as const
+export const RECORD_GOVERNANCE_RELEASE = 'record_governance.release' as const
+
+export const RADIATION_SAFETY_READ = 'radiation_safety.read'
+export const RADIATION_SAFETY_WRITE = 'radiation_safety.write'
+export const INFECTION_SURVEILLANCE_READ = 'infection_surveillance.read'
+export const INFECTION_SURVEILLANCE_WRITE = 'infection_surveillance.write'
+export const INFECTION_SURVEILLANCE_MANAGE = 'infection_surveillance.manage'
+export const OFFLINE_PERMISSIONS = [RADIATION_SAFETY_READ, RADIATION_SAFETY_WRITE, INFECTION_SURVEILLANCE_READ, INFECTION_SURVEILLANCE_WRITE, INFECTION_SURVEILLANCE_MANAGE,
+  FEEDBACK_READ,
+  FEEDBACK_WRITE,
+  FEEDBACK_MANAGE,
+  MORTUARY_READ,
+  MORTUARY_WRITE,
+  MORTUARY_MANAGE,
+  MORTUARY_RELEASE,
+  CSSD_READ,
+  CSSD_WRITE,
+  CSSD_MANAGE,
+  CSSD_RELEASE,
+  REPORTING_READ,
+  REPORTING_WRITE,
+  REPORTING_EXPORT,
+  FINANCE_TOOLS_READ,
+  FINANCE_TOOLS_WRITE,
+  FINANCE_TOOLS_APPROVE,
+  FINANCE_TOOLS_EXPORT,
+  RIS_READ,
+  RIS_WRITE,
+  RIS_SIGN,
+  CARE_PLAN_READ,
+  CARE_PLAN_WRITE,
+  EMERGENCY_RECORD_READ,
+  EMERGENCY_RECORD_WRITE,
+  PERIOPERATIVE_RECORD_READ,
+  PERIOPERATIVE_RECORD_WRITE,
+  PERIOPERATIVE_RECORD_SIGN,
+  DIALYSIS_RECORD_READ,
+  DIALYSIS_RECORD_WRITE,
+  DIALYSIS_RECORD_PRESCRIBE,
+  RECORD_GOVERNANCE_READ,
+  RECORD_GOVERNANCE_WRITE,
+  RECORD_GOVERNANCE_RELEASE,
+] as const
+export type OfflinePermission = (typeof OFFLINE_PERMISSIONS)[number]
+
 export type Permission =
   | typeof PATIENT_READ_ALL
   | typeof PATIENT_WRITE
@@ -163,6 +241,7 @@ export type Permission =
   | typeof NURSING_NOTE_READ
   | typeof CONSENT_RECORD
   | HisPermission
+  | OfflinePermission
 
 /**
  * Which feature each HIS role needs (mirror of server/roles.py ROLE_FEATURE).
@@ -264,6 +343,10 @@ const ROLE_PERMISSIONS: Record<string, readonly Permission[]> = {
   pathologist: [LAB_READ, LAB_COLLECT, LAB_RECEIVE, LAB_RESULT, LAB_CRITICAL_LOG, INGEST_RECONCILE,
                 LAB_AUTHORISE, LAB_MASTER],
 }
+
+ROLE_PERMISSIONS.admin = [...ROLE_PERMISSIONS.admin, RADIATION_SAFETY_READ, RADIATION_SAFETY_WRITE, INFECTION_SURVEILLANCE_READ, INFECTION_SURVEILLANCE_WRITE, INFECTION_SURVEILLANCE_MANAGE, FEEDBACK_READ, FEEDBACK_WRITE, FEEDBACK_MANAGE, MORTUARY_READ, MORTUARY_WRITE, MORTUARY_MANAGE, MORTUARY_RELEASE, CSSD_READ, CSSD_WRITE, CSSD_MANAGE, CSSD_RELEASE, REPORTING_READ, REPORTING_WRITE, REPORTING_EXPORT, FINANCE_TOOLS_READ, FINANCE_TOOLS_WRITE, FINANCE_TOOLS_APPROVE, FINANCE_TOOLS_EXPORT, RECORD_GOVERNANCE_READ, RECORD_GOVERNANCE_WRITE, RECORD_GOVERNANCE_RELEASE, RIS_READ, CARE_PLAN_READ, EMERGENCY_RECORD_READ, PERIOPERATIVE_RECORD_READ, DIALYSIS_RECORD_READ]
+ROLE_PERMISSIONS.doctor = [...ROLE_PERMISSIONS.doctor, RIS_READ, RIS_WRITE, RIS_SIGN, CARE_PLAN_READ, CARE_PLAN_WRITE, EMERGENCY_RECORD_READ, EMERGENCY_RECORD_WRITE, PERIOPERATIVE_RECORD_READ, PERIOPERATIVE_RECORD_WRITE, PERIOPERATIVE_RECORD_SIGN, DIALYSIS_RECORD_READ, DIALYSIS_RECORD_WRITE, DIALYSIS_RECORD_PRESCRIBE]
+ROLE_PERMISSIONS.nurse = [...ROLE_PERMISSIONS.nurse, CARE_PLAN_READ, CARE_PLAN_WRITE, EMERGENCY_RECORD_READ, EMERGENCY_RECORD_WRITE, PERIOPERATIVE_RECORD_READ, PERIOPERATIVE_RECORD_WRITE, DIALYSIS_RECORD_READ, DIALYSIS_RECORD_WRITE, RIS_READ]
 
 // Same alias the server declares.
 ROLE_PERMISSIONS.clinician = ROLE_PERMISSIONS.doctor

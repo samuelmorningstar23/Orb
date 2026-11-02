@@ -11,6 +11,7 @@ TimeoutError (LaneYielded), which every background caller already turns into
 its deterministic fallback.
 """
 import asyncio
+import copy
 import json
 import time
 
@@ -102,6 +103,112 @@ CHAT = {
                  {"role": "user", "content": "HR 132, BP 82/49"}],
     "stream": False,
 }
+
+
+@pytest.mark.parametrize("purpose,path", [
+    ("ward_narrator", "/api/generate"),
+    ("expected_course_projection", "/api/chat"),
+    ("vigil_recommendation", "/api/chat"),
+    ("relay_ambient_classify", "/api/generate"),
+    ("relay_room_fit_check", "/api/generate"),
+])
+@pytest.mark.parametrize("context", [2048, 4096])
+def test_shared_ambient_model_reuses_the_interactive_context_without_changing_the_request(
+        monkeypatch, purpose, path, context):
+    import config
+    from services.sage_service import INTERACTIVE_NUM_CTX
+
+    monkeypatch.setattr(config, "LLM_MODEL", "same:27b")
+    monkeypatch.setattr(config, "AMBIENT_LLM_MODEL", "same:27b")
+    recorded = []
+
+    async def record(payload, *args):
+        recorded.append(payload)
+
+    monkeypatch.setattr(ollama_gateway, "_record", record)
+    payload = {
+        **CHAT,
+        "model": "same:27b",
+        "prompt": "Keep this exact synthetic prompt.",
+        "system": "Keep this exact synthetic system message.",
+        "format": "json",
+        "keep_alive": "5m",
+        "options": {"num_ctx": context, "num_predict": 60, "temperature": 0.2},
+    }
+    original = copy.deepcopy(payload)
+    client = _Client()
+    response = asyncio.run(ollama_gateway.post(client, path, payload, purpose=purpose))
+    sent = client.posts[0][1]
+
+    assert response.status_code == 200
+    assert INTERACTIVE_NUM_CTX == 8192
+    assert sent == {**original, "options": {**original["options"], "num_ctx": 8192}}
+    assert sent is not payload and sent["options"] is not payload["options"]
+    assert payload == original
+    assert recorded == [sent]
+    assert hash_prompt(sent) == hash_prompt(original)
+
+
+@pytest.mark.parametrize("primary,ambient,model,purpose,options", [
+    ("primary:27b", "ambient:4b", "ambient:4b", "ward_narrator", {"num_ctx": 4096}),
+    ("primary:27b", "ambient:4b", "ambient:4b", "relay_room_fit_check", {"num_ctx": 2048}),
+    ("primary:27b", "ambient:4b", "primary:27b", "ward_narrator", {"num_ctx": 4096}),
+    ("same:27b", "same:27b", "same:27b-other", "ward_narrator", {"num_ctx": 4096}),
+    ("same:27b", "same:27b-other", "same:27b", "ward_narrator", {"num_ctx": 4096}),
+    ("", "", "", "ward_narrator", {"num_ctx": 4096}),
+    ("same:27b", "same:27b", None, "ward_narrator", {"num_ctx": 4096}),
+    ("same:27b", "same:27b", "same:27b", "lens_analysis", {"num_ctx": 4096}),
+    ("same:27b", "same:27b", "same:27b", "ward_narrator", None),
+    ("same:27b", "same:27b", "same:27b", "ward_narrator", {}),
+    ("same:27b", "same:27b", "same:27b", "ward_narrator", {"num_ctx": 1024}),
+    ("same:27b", "same:27b", "same:27b", "ward_narrator", {"num_ctx": 8192}),
+    ("same:27b", "same:27b", "same:27b", "ward_narrator", {"num_ctx": 16384}),
+    ("same:27b", "same:27b", "same:27b", "ward_narrator", {"num_ctx": "4096"}),
+    ("same:27b", "same:27b", "same:27b", "ward_narrator", {"num_ctx": 4096.0}),
+])
+def test_context_alignment_does_not_rewrite_other_models_lanes_or_windows(
+        monkeypatch, primary, ambient, model, purpose, options):
+    import config
+
+    monkeypatch.setattr(config, "LLM_MODEL", primary)
+    monkeypatch.setattr(config, "AMBIENT_LLM_MODEL", ambient)
+
+    async def record(*args):
+        pass
+
+    monkeypatch.setattr(ollama_gateway, "_record", record)
+    payload = {**CHAT, "model": model}
+    if options is not None:
+        payload["options"] = options
+    original = copy.deepcopy(payload)
+    client = _Client()
+    asyncio.run(ollama_gateway.post(client, "/api/chat", payload, purpose=purpose))
+
+    assert client.posts[0][1] is payload
+    assert payload == original
+
+
+def test_models_off_refuses_before_context_alignment_request_or_audit(monkeypatch):
+    import config
+
+    monkeypatch.setattr(config, "MODELS_ENABLED", False)
+    calls = []
+
+    def align(*args):
+        calls.append("alignment")
+        raise AssertionError("models-off must refuse first")
+
+    async def record(*args):
+        calls.append("audit")
+
+    monkeypatch.setattr(ollama_gateway, "_shared_ambient_context", align)
+    monkeypatch.setattr(ollama_gateway, "_record", record)
+    client = _Client()
+    with pytest.raises(ollama_gateway.ModelsSwitchedOff):
+        asyncio.run(ollama_gateway.post(
+            client, "/api/chat", CHAT, purpose="expected_course_projection"))
+    assert client.posts == []
+    assert calls == []
 
 
 # ── hash_prompt ──────────────────────────────────────────────────────────────

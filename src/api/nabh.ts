@@ -4,14 +4,8 @@
  * The incident / adverse-event register, the quality-indicator dashboard, and
  * the date-ranged evidence pack a hospital hands an assessor.
  *
- * WHY THIS FILE USES A RAW `fetch` INSTEAD OF `apiFetch`. The shared wrapper
- * flattens an error body down to a message string. Every refusal this module
- * can produce is one the UI reacts to DIFFERENTLY — `module_disabled` is a
- * whole-panel state, `open_actions` belongs on the close button,
- * `no_action_reason_required` has to open a field, `not_staff` is a permission
- * explanation — so the machine-readable `error` code has to survive the trip.
- * `request()` keeps it on a typed `NabhApiError`, and still sends the session
- * cookie and CSRF token exactly the way `apiFetch` does.
+ * Shared transport handles session ownership, refresh and CSRF. Domain errors
+ * keep their machine-readable codes and structured refusal details.
  *
  * ══════════════════════════════════════════════════════════════════════════
  *  THE ONE RULE THIS CLIENT ENFORCES ON THE VIEW
@@ -29,7 +23,7 @@
  * it should take two separate bugs, in two languages, to print a flattering
  * number on an accreditation document.
  */
-import { API_BASE, buildHeaders, errorDetailMessage } from './client';
+import { domainRequest } from './domainTransport';
 
 /** A refusal from the NABH API, with its machine-readable code intact. */
 export class NabhApiError extends Error {
@@ -53,22 +47,9 @@ export class NabhApiError extends Error {
   }
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API_BASE}/nabh${path}`, {
-    ...options,
-    credentials: 'include',
-    headers: buildHeaders((options.method as string) || 'GET'),
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => null);
-    const detail = body && typeof body.detail === 'object' ? body.detail : null;
-    throw new NabhApiError(
-      errorDetailMessage(body?.detail, response.status),
-      response.status,
-      detail?.error || `http_${response.status}`,
-    );
-  }
-  return response.json() as Promise<T>;
+function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  return domainRequest<T>(`/nabh${path}`, options,
+    (message, status, code) => new NabhApiError(message, status, code));
 }
 
 function post<T>(path: string, body?: unknown): Promise<T> {
@@ -412,25 +393,11 @@ export function getExports(limit = 50): Promise<{ exports: ExportRow[] }> {
   return request(`/exports${query({ limit })}`);
 }
 
-/**
- * The Markdown pack, as text. Uses the same raw `fetch` so the module-disabled
- * and permission codes survive; the body is text, not JSON.
- */
-export async function generatePackMarkdown(body: {
+/** The Markdown pack uses the shared session transport with a text decoder. */
+export function generatePackMarkdown(body: {
   period_start?: string; period_end?: string; ward?: string;
   include_patient_identifiers?: boolean;
 }): Promise<string> {
-  const response = await fetch(`${API_BASE}/nabh/export.md`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: buildHeaders('POST'),
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    const parsed = await response.json().catch(() => null);
-    const detail = parsed && typeof parsed.detail === 'object' ? parsed.detail : null;
-    throw new NabhApiError(errorDetailMessage(parsed?.detail, response.status),
-                           response.status, detail?.error || `http_${response.status}`);
-  }
-  return response.text();
+  return domainRequest<string>('/nabh/export.md', { method: 'POST', body: JSON.stringify(body) },
+    (message, status, code) => new NabhApiError(message, status, code), 'text');
 }

@@ -1,0 +1,31 @@
+.rf-workbench { padding: var(--space-5); color: var(--text-primary); max-width: 1440px; margin: 0 auto; }
+.rf-workbench header { margin-bottom: var(--space-5); }
+.rf-workbench h1 { font-size: clamp(1.6rem, 3vw, 2.2rem); margin: .3em 0; }
+.rf-workbench h2 { font-size: 1.25rem; }
+.rf-workbench p { line-height: 1.55; }
+.rf-eyebrow { color: var(--text-muted); text-transform: uppercase; font-size: .75rem; letter-spacing: .1em; }
+.rf-card { background: var(--bg-surface); border: 1px solid var(--border-glass); border-radius: var(--radius-lg); padding: var(--space-4); margin: var(--space-4) 0; }
+.rf-grid, .rf-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: var(--space-4); }
+.rf-workbench label { display: flex; flex-direction: column; gap: 7px; font-size: .9rem; color: var(--text-secondary); min-width: 0; }
+.rf-workbench input, .rf-workbench select, .rf-workbench textarea { background: var(--bg-input, var(--bg-surface)); color: var(--text-primary); border: 1px solid var(--border-glass); border-radius: var(--radius-sm); padding: 10px; font: inherit; min-height: 42px; max-width: 100%; }
+.rf-workbench button { border: 1px solid var(--border-glass); background: var(--bg-surface-hover, var(--bg-surface)); color: var(--text-primary); padding: 10px 16px; border-radius: var(--radius-sm); cursor: pointer; font: inherit; min-height: 44px; }
+.rf-workbench button.rf-primary { background: var(--accent-deep); color: var(--btn-primary-text); border-color: var(--accent-deep); }
+.rf-workbench button:disabled { color: var(--btn-disabled-text); background: var(--btn-disabled-bg); border-color: var(--btn-disabled-border); cursor: default; }
+.rf-workbench :is(input, select, textarea, button):focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.rf-workbench fieldset { border: 1px solid var(--border-glass); border-radius: var(--radius-sm); padding: var(--space-3); margin: var(--space-4) 0; min-width: 0; }
+.rf-workbench legend { color: var(--text-secondary); padding: 0 6px; }
+.rf-workbench label.rf-check { display: flex; flex-direction: row; align-items: center; gap: 9px; min-height: 40px; }
+.rf-workbench .rf-check input { min-height: 18px; width: 18px; accent-color: var(--accent-deep); }
+.rf-actions, .rf-tabs { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; margin-top: var(--space-3); }
+.rf-tabs button[aria-pressed=true] { border-color: var(--accent-text); color: var(--accent-text); }
+.rf-filter { display: grid; grid-template-columns: 1fr 1fr 1.2fr auto; align-items: end; gap: var(--space-3); margin-bottom: var(--space-3); }
+.rf-help { color: var(--text-muted); font-size: .85rem; }
+.rf-error { color: var(--status-danger-text); border: 1px solid var(--status-danger-text); padding: var(--space-3); border-radius: var(--radius-sm); }
+.rf-notice { color: var(--status-info-text); }
+.rf-scroll { max-width: 100%; overflow-x: auto; }
+.rf-workbench table { border-collapse: collapse; width: 100%; font-size: .875rem; font-variant-numeric: tabular-nums; }
+.rf-workbench th, .rf-workbench td { padding: 11px 12px; border-bottom: 1px solid var(--border-subtle); text-align: left; vertical-align: top; white-space: nowrap; }
+.rf-workbench th { color: var(--text-secondary); font-weight: 600; text-transform: capitalize; }
+.rf-workbench td { max-width: 420px; white-space: normal; overflow-wrap: anywhere; }
+.rf-workbench .rf-amount { font-variant-numeric: tabular-nums; font-size: 1.25rem; }
+@media(max-width: 700px) { .rf-workbench { padding: var(--space-3); } .rf-filter { grid-template-columns: 1fr; } .rf-actions > button { flex: 1 1 auto; } }

@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { useOfflineSnapshot } from './useOfflineSnapshot'
-import { readCache, writeCache, OFFLINE_CACHE_PREFIX } from '../lib/offline/phiCache'
+import { CACHE_MAX_AGE_MS, readCache, writeCache, OFFLINE_CACHE_PREFIX } from '../lib/offline/phiCache'
 
 const NURSE_A = 'U-NURSE-A'
 
@@ -25,6 +25,8 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
   setOnline(true)
 })
 
@@ -157,5 +159,146 @@ describe('useOfflineSnapshot — reconnect', () => {
     rerender({ live: fresh })
     expect(result.current.source).toBe('live')
     expect(result.current.data).toBe(fresh)
+  })
+})
+
+describe('useOfflineSnapshot — memory obeys the cache bounds', () => {
+  it('does not reuse one patient snapshot when the cache key changes offline', () => {
+    const a = { name: 'Patient A' }
+    const b = { name: 'Patient B' }
+    writeCache('chart:B', b, NURSE_A)
+    const { result, rerender } = renderHook(
+      ({ key, live }: { key: string; live: typeof a | null }) =>
+        useOfflineSnapshot(key, live, { userId: NURSE_A }),
+      { initialProps: { key: 'chart:A', live: a as typeof a | null } },
+    )
+    setOnline(false)
+    rerender({ key: 'chart:B', live: null })
+    expect(result.current.data).toEqual(b)
+  })
+
+  it('does not lend in-memory PHI to a different owner or a signed-out screen', () => {
+    const board = { name: 'Patient A' }
+    const { result, rerender } = renderHook(
+      ({ owner }: { owner: string | null }) =>
+        useOfflineSnapshot('board', board, { userId: owner }),
+      { initialProps: { owner: NURSE_A as string | null } },
+    )
+    setOnline(false)
+    rerender({ owner: 'U-NURSE-B' })
+    expect(result.current.data).toBeNull()
+    rerender({ owner: null })
+    expect(result.current.data).toBeNull()
+  })
+
+  it('does not re-stamp the old owner payload while online before new data arrives', () => {
+    const board = { name: 'Patient A' }
+    const { result, rerender } = renderHook(
+      ({ owner }: { owner: string }) => useOfflineSnapshot('board', board, { userId: owner }),
+      { initialProps: { owner: NURSE_A } },
+    )
+    rerender({ owner: 'U-NURSE-B' })
+    expect(result.current.data).toBeNull()
+    expect(localStorage.getItem(`${OFFLINE_CACHE_PREFIX}board`)).toContain(NURSE_A)
+  })
+
+  it('expires an in-memory copy after one shift without user interaction', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-10T08:00:00Z'))
+    const board = { name: 'Patient A' }
+    const { result } = renderHook(() => useOfflineSnapshot('board', board, { userId: NURSE_A }))
+    setOnline(false)
+    expect(result.current.source).toBe('cache')
+    act(() => { vi.advanceTimersByTime(CACHE_MAX_AGE_MS + 60_000) })
+    expect(result.current.data).toBeNull()
+    expect(result.current.source).toBe('none')
+  })
+
+  it('refuses an in-memory copy after the device clock moves backwards', () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-10T08:00:00Z'))
+    const board = { name: 'Patient A' }
+    const { result, rerender } = renderHook(() => useOfflineSnapshot('board', board, { userId: NURSE_A }))
+    setOnline(false)
+    vi.setSystemTime(new Date('2026-10-10T07:59:00Z'))
+    rerender()
+    expect(result.current.data).toBeNull()
+  })
+
+  it('honours an authoritative refusal even when offline memory exists', () => {
+    const board = { name: 'Patient A' }
+    const { result, rerender } = renderHook(
+      ({ allowed }: { allowed: boolean }) =>
+        useOfflineSnapshot('board', board, { userId: NURSE_A, cacheAllowed: allowed }),
+      { initialProps: { allowed: true } },
+    )
+    setOnline(false)
+    rerender({ allowed: false })
+    expect(result.current.data).toBeNull()
+    expect(result.current.source).toBe('none')
+    expect(readCache('board', NURSE_A)).toBeNull()
+
+    // Resetting a load error or toggling network state is not a fresh answer.
+    rerender({ allowed: true })
+    expect(result.current.data).toBeNull()
+    setOnline(true)
+    expect(result.current.data).toBeNull()
+  })
+
+  it('evicts an authoritative refusal so an offline remount cannot recover it', () => {
+    writeCache('board', { name: 'Patient A' }, NURSE_A)
+    writeCache('other', { name: 'Patient B' }, NURSE_A)
+    const denied = renderHook(() =>
+      useOfflineSnapshot('board', null, { userId: NURSE_A, cacheAllowed: false }),
+    )
+    denied.unmount()
+    setOnline(false)
+    const { result } = renderHook(() => useOfflineSnapshot('board', null, { userId: NURSE_A }))
+    expect(result.current.source).toBe('none')
+    expect(readCache('other', NURSE_A)).not.toBeNull()
+  })
+
+  it('keeps a refused chart blocked across remounts when only deletion is denied', () => {
+    const key = 'chart:deletion-denied'
+    const fullKey = OFFLINE_CACHE_PREFIX + key
+    writeCache(key, { name: 'Old chart' }, NURSE_A)
+    writeCache('other:deletion-denied', { name: 'Other chart' }, NURSE_A)
+    const remove = Storage.prototype.removeItem
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(function (this: Storage, storedKey: string) {
+      if (storedKey === fullKey) throw new DOMException('Deletion denied', 'SecurityError')
+      remove.call(this, storedKey)
+    })
+    const denied = renderHook(() => useOfflineSnapshot(key, null, { userId: NURSE_A, cacheAllowed: false }))
+    denied.unmount()
+    expect(localStorage.getItem(fullKey)).not.toBeNull()
+    setOnline(false)
+    const cold = renderHook(() => useOfflineSnapshot(key, null, { userId: NURSE_A }))
+    expect(cold.result.current.source).toBe('none')
+    expect(readCache('other:deletion-denied', NURSE_A)).not.toBeNull()
+    cold.unmount()
+
+    setOnline(true)
+    const fresh = { name: 'Freshly authorized chart' }
+    const authorized = renderHook(() => useOfflineSnapshot(key, fresh, { userId: NURSE_A }))
+    authorized.unmount()
+    setOnline(false)
+    const reopened = renderHook(() => useOfflineSnapshot(key, null, { userId: NURSE_A }))
+    expect(reopened.result.current.source).toBe('cache')
+    expect(reopened.result.current.data).toEqual(fresh)
+  })
+
+  it('accepts a new live answer after a refusal without reviving the denied payload', () => {
+    const oldBoard = { name: 'Patient A' }
+    const freshBoard = { name: 'Patient A', revised: true }
+    const { result, rerender } = renderHook(
+      ({ live, allowed }) => useOfflineSnapshot('board', live, { userId: NURSE_A, cacheAllowed: allowed }),
+      { initialProps: { live: oldBoard, allowed: true } },
+    )
+    rerender({ live: oldBoard, allowed: false })
+    rerender({ live: oldBoard, allowed: true })
+    expect(result.current.data).toBeNull()
+    rerender({ live: freshBoard, allowed: true })
+    expect(result.current.data).toBe(freshBoard)
+    expect(readCache('board', NURSE_A)?.data).toEqual(freshBoard)
   })
 })

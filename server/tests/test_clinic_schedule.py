@@ -311,7 +311,10 @@ def test_nothing_about_slots_is_stored(desk_on, admin, doctor):
     with db_session() as db:
         names = {r[0] for r in db.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '%slot%'")}
-    assert names == set()
+    # Mortuary physical storage slots are a distinct, persisted register. This
+    # invariant is about computed clinic appointment slots, never all uses of
+    # the word "slot" across independent hospital domains.
+    assert names - {"mortuary_slots"} == set()
 
 
 # ── 4. Exceptions ─────────────────────────────────────────────────────────────

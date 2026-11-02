@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Orb Medical ASR WER Benchmark Suite
 
-Runs high-fidelity end-to-end benchmarking of the Whisper Turbo pipeline on macOS:
+Runs a synthetic-speech comparison of the installed Whisper pipeline on macOS
+inside an invocation-owned disposable database:
 1. Uses macOS built-in speech synthesis (say) to generate real acoustic WAV files.
 2. Compares raw Whisper, context-biased Whisper, and RxNorm-corrected transcriptions.
 3. Computes Word Error Rate (WER) using Levenshtein distance.
-4. Generates a clinical accuracy report comparing the three configurations.
+4. Reports synthetic-case WER for the three configurations. This does not
+   establish clinical accuracy or patient-speech performance.
 """
 
 import os
@@ -20,14 +22,110 @@ from typing import TypedDict
 SERVER_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SERVER_DIR))
 
-from config import SCRIBE, VOICE  # noqa: E402 - application imports require the path/environment bootstrap above.
+# Import the application only inside a fresh worker whose database is owned by
+# this invocation. Importing this developer tool must never bind the live DB.
+import secrets
+import sqlite3
 
-# orb.db may be SQLCipher-encrypted at rest, which the stdlib sqlite3 driver
-# cannot open at all ("file is not a database"); the fixture helpers below go
-# through the app's codec-aware connection instead. (The RxNorm reference DB used
-# by RxNormCorrector is a separate, unencrypted file and keeps stdlib sqlite3.)
-from database import _open_raw_connection, _row_factory_for  # noqa: E402 - application imports require the path/environment bootstrap above.
-from services.scribe_service import build_whisper_hints, transcribe_audio  # noqa: E402 - application imports require the path/environment bootstrap above.
+
+def _workspace() -> Path:
+    root = Path(os.environ.get("ORB_WER_WORKSPACE", "")).resolve()
+    token = os.environ.get("ORB_WER_TOKEN", "")
+    marker = root / ".owned-by-wer"
+    if (
+        not token
+        or not marker.is_file()
+        or marker.is_symlink()
+        or marker.read_text() != token
+        or Path(os.environ.get("ORB_DB_PATH", "")).resolve() != root / "benchmark.db"
+    ):
+        raise RuntimeError("WER benchmark requires its own disposable database worker")
+    return root
+
+
+def _load_runtime():
+    root = _workspace()
+    path = root / "benchmark.db"
+    # Refuse reuse, including an empty preexisting file or a symlink. This is
+    # never a snapshot/copy of the configured application database.
+    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+    os.close(fd)
+    with sqlite3.connect(path) as db:
+        db.execute("PRAGMA foreign_keys=ON")
+        db.executescript("""
+            CREATE TABLE users(id TEXT PRIMARY KEY, name TEXT);
+            CREATE TABLE patients(id TEXT PRIMARY KEY, name TEXT, mrn TEXT UNIQUE,
+                diagnosis TEXT, created_at TEXT, status TEXT,
+                attending_doctor_id TEXT REFERENCES users(id));
+            CREATE TABLE medications(id INTEGER PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients(id),
+                drug_name TEXT, dosage TEXT, frequency TEXT, status TEXT);
+        """)
+    global build_whisper_hints, transcribe_audio, VOICE, SCRIBE, db_session
+    from config import DB_PATH, SCRIBE, VOICE
+    from database import db_session
+    from services.scribe_service import build_whisper_hints, transcribe_audio
+
+    if Path(DB_PATH).resolve() != path:
+        raise RuntimeError("Application database was imported before benchmark isolation")
+    # Use installed reference data, never rebuild or mutate its registry. The
+    # existing corrector may create a missing DB from CSV; only a private copy
+    # is therefore handed to it. Missing provisioning fails before inference.
+    reference = Path(VOICE["corrector"]["rxnorm_db"])
+    if not reference.is_file():
+        raise RuntimeError("The local RxNorm reference must be provisioned before benchmarking")
+    local_reference = root / "rxnorm-reference.db"
+    with sqlite3.connect(reference.resolve().as_uri() + "?mode=ro", uri=True) as src:
+        with sqlite3.connect(local_reference) as dest:
+            src.backup(dest)
+    os.chmod(local_reference, 0o600)
+    VOICE["corrector"]["rxnorm_db"] = str(local_reference)
+    VOICE["corrector"]["rxnorm_csv"] = ""
+    VOICE["daemon"]["enabled"] = False
+
+
+def _require_benchmark_connection():
+    root = _workspace()
+    import config
+    import database
+
+    if (
+        Path(config.DB_PATH).resolve() != root / "benchmark.db"
+        or Path(database.DB_PATH).resolve() != root / "benchmark.db"
+    ):
+        raise RuntimeError("Refusing benchmark writes outside the owned disposable database")
+
+
+def isolated_main(run=subprocess.run) -> int:
+    """Launch a fresh process before config/database imports, then remove its DB."""
+    with tempfile.TemporaryDirectory(prefix="orb_wer_benchmark_") as directory:
+        root = Path(directory).resolve()
+        token = secrets.token_urlsafe(32)
+        marker = root / ".owned-by-wer"
+        marker.write_text(token)
+        marker.chmod(0o600)
+        env = dict(os.environ)
+        env.update(
+            ORB_WER_WORKSPACE=str(root),
+            ORB_WER_TOKEN=token,
+            ORB_DB_PATH=str(root / "benchmark.db"),
+            ORB_DEPLOYMENT_PROFILE="dev",
+            ORB_DB_ENCRYPTION_KEY="",
+            ORB_UPLOAD_ENCRYPTION_KEY="",
+            ORB_DB_POOL="0",
+            ORB_JWT_SECRET=secrets.token_urlsafe(48),
+            ORB_WHISPER_DAEMON_ENABLED="false",
+            HF_HUB_OFFLINE="1",
+            TRANSFORMERS_OFFLINE="1",
+            ORB_BACKUP_DIR=str(root / "backups"),
+            ORB_FHIR_EXPORT_DIR=str(root / "exports"),
+            ORB_WATCHDOG_DIR=str(root / "watchdog"),
+        )
+        result = run(
+            [sys.executable, str(Path(__file__).resolve()), "--isolated-worker"],
+            env=env,
+            check=False,
+        )
+        return result.returncode if result.returncode >= 0 else 1
 
 
 # Define clinical test cases
@@ -146,58 +244,31 @@ def synthesize_speech(text: str, output_wav: str) -> bool:
 
 
 def seed_test_patient(patient_id: str, case: _ClinicalCase):
-    """Seed patient data into orb.db to test dynamic hint building."""
-    # Raw (not fully configured) connection on purpose: foreign_keys stays OFF so
-    # the fixture can delete and re-insert the test patient without tripping
-    # constraints from dependent tables.
-    conn = _open_raw_connection()
-    conn.row_factory = _row_factory_for(conn)
-    cursor = conn.cursor()
-
-    try:
-        # Clean up existing test data
-        cursor.execute("DELETE FROM patients WHERE id = ?", (patient_id,))
-        cursor.execute("DELETE FROM medications WHERE patient_id = ?", (patient_id,))
-
-        # Insert Patient
-        cursor.execute(
-            "INSERT INTO patients (id, name, mrn, diagnosis, created_at, status) VALUES (?, ?, ?, ?, ?, 'admitted')",
+    """Seed only this invocation's synthetic context, with enforced references."""
+    _require_benchmark_connection()
+    with db_session(immediate=True) as db:
+        db.execute(
+            "INSERT INTO patients(id,name,mrn,diagnosis,created_at,status) VALUES (?,?,?,?,?,'admitted')",
             (
                 patient_id,
                 case["patient_name"],
-                f"MRN-{case['id']}",
+                "MRN-" + patient_id,
                 case["diagnosis"],
                 "2026-05-20T00:00:00Z",
             ),
         )
-
-        # Insert Medications
         for med in case["medications"]:
-            cursor.execute(
-                "INSERT INTO medications (patient_id, drug_name, dosage, frequency, status) VALUES (?, ?, '1 tab', 'once daily', 'active')",
+            db.execute(
+                "INSERT INTO medications(patient_id,drug_name,dosage,frequency,status) VALUES (?,?,'1 tab','once daily','active')",
                 (patient_id, med),
             )
 
-        conn.commit()
-    except Exception as e:
-        print(f"DB seeding error: {e}")
-        conn.rollback()
-    finally:
-        conn.close()
-
 
 def cleanup_test_patient(patient_id: str):
-    """Clean up test patient data from orb.db."""
-    conn = _open_raw_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("DELETE FROM patients WHERE id = ?", (patient_id,))
-        cursor.execute("DELETE FROM medications WHERE patient_id = ?", (patient_id,))
-        conn.commit()
-    except Exception as e:
-        print(f"DB cleanup error: {e}")
-    finally:
-        conn.close()
+    _require_benchmark_connection()
+    with db_session(immediate=True) as db:
+        db.execute("DELETE FROM medications WHERE patient_id=?", (patient_id,))
+        db.execute("DELETE FROM patients WHERE id=?", (patient_id,))
 
 
 def run_transcription(audio_path: str, hints: str, apply_corrections: bool) -> str:
@@ -212,13 +283,15 @@ def run_transcription(audio_path: str, hints: str, apply_corrections: bool) -> s
 
         # Use transcribe_audio pipeline
         text = transcribe_audio(audio_path, apply_correction=False, hints=hints)
+        if not isinstance(text, str) or not text.strip():
+            raise RuntimeError("ASR returned no transcript; benchmark result is unavailable")
         return text
     finally:
         VOICE["corrector"]["enabled"] = original_corrector_enabled
         SCRIBE["correction"]["enabled"] = original_scribe_correction_enabled
 
 
-def main():
+def run_benchmark():
     print("=========================================================")
     print("      Orb Medical ASR Word Error Rate (WER) Benchmark    ")
     print("=========================================================")
@@ -239,62 +312,86 @@ def main():
             f"\n[Case {case['id']}] Preparing patient context: {case['patient_name']} ({case['diagnosis']})..."
         )
 
-        # 1. Seed the patient context
-        patient_id = f"PAT-WER-{case['id']}"
-        seed_test_patient(patient_id, case)
+        fd = None
+        temp_wav = None
+        seeded = False
+        try:
+            # 1. Seed the patient context
+            patient_id = f"PAT-WER-{secrets.token_hex(8)}-{case['id']}"
+            seed_test_patient(patient_id, case)
+            seeded = True
 
-        # Validate that hints are built properly
-        hints = build_whisper_hints(patient_id)
-        print(f'  → Generated context hints: "{hints}"')
+            # Validate that hints are built properly
+            hints = build_whisper_hints(patient_id)
+            if not hints:
+                raise RuntimeError("Benchmark patient hints could not be built")
+            print(f'  → Generated context hints: "{hints}"')
 
-        # 2. Synthesize WAV speech file
-        temp_wav = tempfile.mktemp(suffix=".wav")
-        print("  → Synthesizing speech audio (macOS say) into WAV...")
-        if not synthesize_speech(case["spoken_text"], temp_wav):
-            print("  ❌ Failed to generate audio. Skipping case.")
-            cleanup_test_patient(patient_id)
-            continue
+            # 2. Synthesize WAV speech file
+            fd, temp_wav = tempfile.mkstemp(prefix="orb_wer_benchmark_", suffix=".wav")
+            os.close(fd)
+            fd = None
+            print("  → Synthesizing speech audio (macOS say) into WAV...")
+            if not synthesize_speech(case["spoken_text"], temp_wav):
+                print("  ❌ Failed to generate audio. Skipping case.")
+                continue
 
-        print("  → Speech successfully synthesized. Running ASR pipeline...")
+            print("  → Speech successfully synthesized. Running ASR pipeline...")
 
-        # 3. Baseline ASR (No hints, no phonetic corrector)
-        t_start = time.perf_counter()
-        baseline_text = run_transcription(temp_wav, hints="", apply_corrections=False)
-        t_baseline = round((time.perf_counter() - t_start) * 1000)
-        baseline_wer = compute_wer(case["reference"], baseline_text)
+            # 3. Baseline ASR (No hints, no phonetic corrector)
+            t_start = time.perf_counter()
+            baseline_text = run_transcription(temp_wav, hints="", apply_corrections=False)
+            t_baseline = round((time.perf_counter() - t_start) * 1000)
+            baseline_wer = compute_wer(case["reference"], baseline_text)
 
-        # 4. Context-Biased ASR (With patient context hints, no phonetic corrector)
-        t_start = time.perf_counter()
-        biased_text = run_transcription(temp_wav, hints=hints, apply_corrections=False)
-        t_biased = round((time.perf_counter() - t_start) * 1000)
-        biased_wer = compute_wer(case["reference"], biased_text)
+            # 4. Context-Biased ASR (With patient context hints, no phonetic corrector)
+            t_start = time.perf_counter()
+            biased_text = run_transcription(temp_wav, hints=hints, apply_corrections=False)
+            t_biased = round((time.perf_counter() - t_start) * 1000)
+            biased_wer = compute_wer(case["reference"], biased_text)
 
-        # 5. Full Pipeline (With patient context hints AND RxNorm phonetic correction)
-        t_start = time.perf_counter()
-        full_text = run_transcription(temp_wav, hints=hints, apply_corrections=True)
-        t_full = round((time.perf_counter() - t_start) * 1000)
-        full_wer = compute_wer(case["reference"], full_text)
+            # 5. Full Pipeline (With patient context hints AND RxNorm phonetic correction)
+            t_start = time.perf_counter()
+            full_text = run_transcription(temp_wav, hints=hints, apply_corrections=True)
+            t_full = round((time.perf_counter() - t_start) * 1000)
+            full_wer = compute_wer(case["reference"], full_text)
 
-        # Log case details
-        results.append(
-            {
-                "id": case["id"],
-                "reference": case["reference"],
-                "baseline": {"text": baseline_text, "wer": baseline_wer, "ms": t_baseline},
-                "biased": {"text": biased_text, "wer": biased_wer, "ms": t_biased},
-                "full": {"text": full_text, "wer": full_wer, "ms": t_full},
-            }
-        )
+            # Log case details
+            results.append(
+                {
+                    "id": case["id"],
+                    "reference": case["reference"],
+                    "baseline": {"text": baseline_text, "wer": baseline_wer, "ms": t_baseline},
+                    "biased": {"text": biased_text, "wer": biased_wer, "ms": t_biased},
+                    "full": {"text": full_text, "wer": full_wer, "ms": t_full},
+                }
+            )
 
-        # Cleanup WAV and DB
-        if os.path.exists(temp_wav):
-            os.remove(temp_wav)
-        cleanup_test_patient(patient_id)
+        finally:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            if temp_wav is not None:
+                try:
+                    os.remove(temp_wav)
+                except OSError:
+                    pass
+
+            if seeded:
+                cleanup_test_patient(patient_id)
 
         # Print case summary
         print(f'  [Baseline] WER: {baseline_wer:.1%}, ASR: "{baseline_text}" ({t_baseline}ms)')
         print(f'  [Biased  ] WER: {biased_wer:.1%}, ASR: "{biased_text}" ({t_biased}ms)')
         print(f'  [Full    ] WER: {full_wer:.1%}, ASR: "{full_text}" ({t_full}ms)')
+
+    if not results:
+        print(
+            "No benchmark cases completed; check speech synthesis before retrying.", file=sys.stderr
+        )
+        raise SystemExit(1)
 
     # --- Generate Beautiful Final Summary Report ---
     print("\n\n" + "═" * 80)
@@ -346,5 +443,20 @@ def main():
     print("\nBenchmark completed successfully!\n")
 
 
+def main() -> int:
+    if sys.argv[1:] == ["--isolated-worker"]:
+        try:
+            _load_runtime()
+            run_benchmark()
+            return 0
+        except Exception:
+            print("WER benchmark failed; no application database was modified.", file=sys.stderr)
+            return 1
+    if sys.argv[1:]:
+        print("Usage: benchmark_wer.py (always uses a disposable database)", file=sys.stderr)
+        return 2
+    return isolated_main()
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

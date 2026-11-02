@@ -5,7 +5,7 @@
  * picture that keeps working when the EHR / network / LLM is down. The backend
  * assembles and serves these from local SQLite with no external dependencies.
  */
-import { API_BASE, apiFetch, buildHeaders, handleResponseError } from './client';
+import { apiFetch, apiFetchText } from './client';
 
 export interface DowntimeDemographics {
   id: string;
@@ -214,13 +214,7 @@ export async function captureAll(): Promise<CaptureAllResult> {
   return apiFetch('/downtime/capture-all', { method: 'POST' });
 }
 
-/** Fetch the ward-level print pack as raw HTML. A raw fetch, not apiFetch:
- *  the response is a text/html document and apiFetch would json() it. */
-export async function fetchWardPackHtml(patientId: string): Promise<string> {
-  const response = await fetch(`${API_BASE}/downtime/${patientId}/ward-pack`, {
-    credentials: 'include',
-    headers: buildHeaders('GET'),
-  });
-  if (!response.ok) await handleResponseError(response);
-  return response.text();
+/** Fetch the HTML print pack with the shared session and ownership boundary. */
+export function fetchWardPackHtml(patientId: string): Promise<string> {
+  return apiFetchText(`/downtime/${patientId}/ward-pack`);
 }

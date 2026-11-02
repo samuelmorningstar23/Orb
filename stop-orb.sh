@@ -19,36 +19,86 @@ warn() { printf '\033[0;33m[warn]\033[0m  %s\n' "$*"; }
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# 1. The wrapper first (its cleanup trap forwards the signal to its children).
-for pid in $(pgrep -f "run-orb.sh" 2>/dev/null); do
-  info "Stopping run-orb.sh (pid $pid)"
-  kill -INT "$pid" 2>/dev/null || true
+# Process names alone do not establish ownership: another checkout can also
+# run `python main.py`. Verify both command and working directory, and repeat
+# that check before every signal in case a PID was reused during shutdown.
+owned_process() {
+  local pid="$1" command executable arguments cwd
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$pid" != "$$" ] || return 1
+  command="$(ps -o command= -p "$pid" 2>/dev/null)" || return 1
+  command="${command#"${command%%[![:space:]]*}"}"
+  executable="${command%% *}"
+  arguments="${command#* }"
+  [ "$arguments" != "$command" ] || return 1
+  cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')"
+  # The first script argument must be ours. A path merely mentioned by another
+  # program (for example --output /this/checkout/server/main.py) proves nothing.
+  case "${executable##*/}" in
+    bash|sh|zsh)
+      case "$arguments" in
+        "$REPO_ROOT/run-orb.sh"|"$REPO_ROOT/run-orb.sh "*) return 0 ;;
+        run-orb.sh|run-orb.sh\ *|./run-orb.sh|./run-orb.sh\ *) [ "$cwd" = "$REPO_ROOT" ] ;;
+        *) return 1 ;;
+      esac ;;
+    python|python[0-9]|python[0-9].[0-9]*)
+      case "$arguments" in
+        main.py|main.py\ *) [ "$cwd" = "$REPO_ROOT/server" ] ;;
+        "$REPO_ROOT/server/main.py"|"$REPO_ROOT/server/main.py "*) return 0 ;;
+        *) return 1 ;;
+      esac ;;
+    node)
+      case "$arguments" in
+        "$REPO_ROOT/node_modules/.bin/vite"|"$REPO_ROOT/node_modules/.bin/vite "*|\
+        "$REPO_ROOT/node_modules/vite/bin/vite.js"|"$REPO_ROOT/node_modules/vite/bin/vite.js "*|\
+        node_modules/.bin/vite|node_modules/.bin/vite\ *|node_modules/vite/bin/vite.js|node_modules/vite/bin/vite.js\ *)
+          [ "$cwd" = "$REPO_ROOT" ] ;;
+        *) return 1 ;;
+      esac ;;
+    npm)
+      case "$arguments" in run\ dev|run\ dev\ *) [ "$cwd" = "$REPO_ROOT" ] ;; *) return 1 ;; esac ;;
+    *) return 1 ;;
+  esac
+}
+
+PIDS=()
+for pid in $(pgrep -f 'run-orb[.]sh|python[^ ]* .*main[.]py|vite|npm run dev' 2>/dev/null); do
+  if owned_process "$pid"; then PIDS+=("$pid"); fi
 done
 
-# 2. The backend and the Vite dev server, in case they were started by hand.
-for pattern in "$REPO_ROOT/server/.venv/bin/python main.py" "python main.py" "vite" "npm run dev"; do
-  for pid in $(pgrep -f "$pattern" 2>/dev/null); do
-    # only touch processes that belong to this checkout
-    if ps -o command= -p "$pid" 2>/dev/null | grep -q "Orb"; then
-      info "Stopping pid $pid ($pattern)"
-      kill -INT "$pid" 2>/dev/null || true
+signal_owned() {
+  local signal="$1" pid
+  for pid in "${PIDS[@]:-}"; do
+    if owned_process "$pid"; then
+      info "Stopping checkout process $pid ($signal)"
+      kill -"$signal" "$pid" 2>/dev/null || true
     fi
   done
-done
+}
 
-# 3. Wait up to 20 s for a clean exit, then escalate.
+any_owned_alive() {
+  local pid
+  for pid in "${PIDS[@]:-}"; do
+    if owned_process "$pid"; then return 0; fi
+  done
+  return 1
+}
+
+signal_owned INT
+
+# Wait up to 20 s for a clean exit, then escalate only the verified PIDs.
 for _ in $(seq 1 20); do
-  pgrep -f "python main.py" >/dev/null 2>&1 || break
+  any_owned_alive || break
   sleep 1
 done
-if pgrep -f "python main.py" >/dev/null 2>&1; then
-  warn "Backend did not exit within 20 s; sending TERM"
-  pkill -TERM -f "python main.py" 2>/dev/null || true
+if any_owned_alive; then
+  warn "Checkout processes did not exit within 20 s; sending TERM"
+  signal_owned TERM
   sleep 5
 fi
-if pgrep -f "python main.py" >/dev/null 2>&1; then
-  warn "Backend still alive; sending KILL"
-  pkill -KILL -f "python main.py" 2>/dev/null || true
+if any_owned_alive; then
+  warn "Checkout processes still alive; sending KILL"
+  signal_owned KILL
 fi
 
 # 4. Unload every model Ollama currently has in memory.

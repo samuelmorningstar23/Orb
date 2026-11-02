@@ -3,6 +3,7 @@ import { querySage, querySageVoice, getSageHistory, transcribeAudio, getPatients
 import { getThinkingMode } from '../../api/thinkingMode'
 import { canSeeWardList } from '../../lib/roles'
 import { newId } from '../../lib/id'
+import { sageThreads } from '../../lib/sageHistory'
 import { useActivePatient } from '../../contexts/ActivePatientContext'
 import { useActiveView, buildWireViewContext } from '../../contexts/ActiveViewContext'
 import { useSageRuntime } from '../../contexts/SageRuntimeContext'
@@ -214,6 +215,9 @@ export default function SagePanel({ userName }: SagePanelProps) {
      clinician had already dismissed. Minted once per mounted panel and re-minted
      by "New Chat", so a new thread is a new thread on both sides. */
   const conversationIdRef = useRef<string>(newConversationId())
+  const turnGeneration = useRef(0)
+  const historyGeneration = useRef(0)
+  const voiceGeneration = useRef(0)
 
   // ─── Voice Chat Mode ───
   const [voiceMode, setVoiceMode] = useState(false)
@@ -234,6 +238,7 @@ export default function SagePanel({ userName }: SagePanelProps) {
 
   // ─── TTS State ───
   const ttsQueueRef = useRef<string[]>([])          // sentences waiting to be spoken
+  const ttsGeneration = useRef(0)
   const ttsSpeakingRef = useRef(false)               // is TTS currently speaking an utterance
   const ttsBufferRef = useRef('')                    // accumulated unspoken text from streaming
   const spokenSentencesRef = useRef<Set<string>>(new Set()) // track what we've already queued
@@ -281,36 +286,6 @@ export default function SagePanel({ userName }: SagePanelProps) {
   // A newly admitted patient's name is in the hint too, without a page reload.
   useDataChanged(loadPatientNamesHint)
 
-  const refreshHistory = useCallback(async () => {
-    try {
-      const res = await getSageHistory()
-      // Stored messages are put into `messages` VERBATIM by loadConversation,
-      // and the speed footer below reads `metadata.timing` off them. That is
-      // the whole of how a reloaded conversation keeps its timing, so anything
-      // here that re-maps a row to {role, content} silently deletes the footer
-      // for every past turn — which is how it went missing in the first place.
-      if (res && Array.isArray(res.messages)) setHistoryList(res.messages)
-    } catch (err) {
-      // Keep the last known list rather than blanking the sidebar on a blip.
-      console.error(err)
-    }
-  }, [])
-
-  // Load stored conversations on mount so "Recent Conversations" reflects the
-  // server, and refresh whenever a turn is saved or a new chat is started.
-  useEffect(() => { void refreshHistory() }, [refreshHistory])
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (voiceTimerRef.current) clearInterval(voiceTimerRef.current)
-      if (autoListenTimerRef.current) clearTimeout(autoListenTimerRef.current)
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') mediaRecorderRef.current.stop()
-      streamRef.current?.getTracks().forEach(t => t.stop())
-      speechSynthesis.cancel()
-    }
-  }, [])
-
   // ─── TTS Engine ───
   // A named function so it can call itself: recursing through the `speakNext`
   // const reads it before its declaration (react-hooks/immutability).
@@ -332,8 +307,9 @@ export default function SagePanel({ userName }: SagePanelProps) {
         // All done speaking — auto-listen if in voice mode
         setIsSpeaking(false)
         if (voiceModeRef.current) {
+          const generation = ttsGeneration.current
           autoListenTimerRef.current = setTimeout(() => {
-            if (voiceModeRef.current) {
+            if (generation === ttsGeneration.current && voiceModeRef.current) {
               startVoiceRecordingRef.current()
             }
           }, 800) // brief pause before auto-listen
@@ -361,12 +337,15 @@ export default function SagePanel({ userName }: SagePanelProps) {
     utterance.rate = 1.05
     utterance.pitch = 1.0
 
+    const generation = ttsGeneration.current
     utterance.onend = () => {
+      if (generation !== ttsGeneration.current) return
       ttsSpeakingRef.current = false
       speakNextSentence() // process next in queue
     }
 
     utterance.onerror = () => {
+      if (generation !== ttsGeneration.current) return
       ttsSpeakingRef.current = false
       speakNextSentence()
     }
@@ -394,6 +373,7 @@ export default function SagePanel({ userName }: SagePanelProps) {
   }, [speakNext])
 
   const cancelTTS = useCallback(() => {
+    ++ttsGeneration.current
     speechSynthesis.cancel()
     ttsQueueRef.current = []
     ttsBufferRef.current = ''
@@ -407,19 +387,89 @@ export default function SagePanel({ userName }: SagePanelProps) {
     }
   }, [])
 
+  const stopVoiceCapture = useCallback(() => {
+    ++voiceGeneration.current
+    if (voiceTimerRef.current) clearInterval(voiceTimerRef.current)
+    voiceTimerRef.current = null
+    const recorder = mediaRecorderRef.current
+    mediaRecorderRef.current = null
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.onstop = null
+      try { recorder.stop() } catch { /* Track cleanup still runs if the recorder already stopped. */ }
+    }
+    streamRef.current?.getTracks().forEach(track => track.stop())
+    streamRef.current = null
+    releaseMic('sage-panel')
+    setVoiceRecording(false)
+    setVoiceTranscribing(false)
+    setVoiceElapsed(0)
+    setVoiceStatus('')
+  }, [releaseMic])
+
+  const refreshHistory = useCallback(async () => {
+    const request = ++historyGeneration.current
+    try {
+      const res = await getSageHistory()
+      if (request !== historyGeneration.current) return
+      // Stored messages are put into `messages` VERBATIM by loadConversation,
+      // and the speed footer below reads `metadata.timing` off them. That is
+      // the whole of how a reloaded conversation keeps its timing, so anything
+      // here that re-maps a row to {role, content} silently deletes the footer
+      // for every past turn — which is how it went missing in the first place.
+      if (res && Array.isArray(res.messages)) setHistoryList(res.messages)
+    } catch (err) {
+      if (request !== historyGeneration.current) return
+      // An authoritative refusal is not an offline fallback permission.
+      if (err && typeof err === 'object' && 'status' in err && [401, 403, 404].includes(Number(err.status))) {
+        ++turnGeneration.current
+        abortControllerRef.current?.abort()
+        abortControllerRef.current = null
+        cancelTTS()
+        stopVoiceCapture()
+        voiceModeRef.current = false
+        setVoiceMode(false)
+        setStreaming(false)
+        setStreamStage(null)
+        setHistoryList([])
+        setMessages([])
+      }
+      console.error(err)
+    }
+  }, [cancelTTS, stopVoiceCapture])
+
+  // Load stored conversations on mount so "Recent Conversations" reflects the
+  // server, and refresh whenever a turn is saved or a new chat is started.
+  useEffect(() => { void refreshHistory() }, [refreshHistory])
+
+  // Cleanup on unmount
+  useEffect(() => {
+    const turns = turnGeneration
+    const histories = historyGeneration
+    return () => {
+      ++turns.current
+      ++histories.current
+      abortControllerRef.current?.abort()
+      stopVoiceCapture()
+      cancelTTS()
+    }
+  }, [cancelTTS, stopVoiceCapture])
+
   // ─── Submit Query ───
   const submitQuery = useCallback(async (userQuery: string) => {
     if (!userQuery.trim()) return
+    const turn = ++turnGeneration.current
+    stopVoiceCapture()
     setVoiceNotice(null)
 
     // If already streaming, abort current response (keep partial answer) and start new query
-    if (streaming && abortControllerRef.current) {
+    if (abortControllerRef.current) {
       abortControllerRef.current.abort()
       cancelTTS()
       setStreaming(false)
       abortControllerRef.current = null
       // Brief delay to let abort settle
       await new Promise(r => setTimeout(r, 50))
+      if (turn !== turnGeneration.current) return
     }
 
     setQuery('')
@@ -443,7 +493,7 @@ export default function SagePanel({ userName }: SagePanelProps) {
     // even if they had scrolled up while reading the previous one.
     stickToBottomRef.current = true
     setTimeout(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+      messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth' })
     }, 50)
 
     abortControllerRef.current = new AbortController()
@@ -455,18 +505,19 @@ export default function SagePanel({ userName }: SagePanelProps) {
       if (voiceModeRef.current) {
         let accumulatedText = ''
         const { timing } = await querySageVoice(userQuery, pid || undefined, (token) => {
+          if (turn !== turnGeneration.current) return
           accumulatedText += token
           setMessages(prev => {
             const updated = [...prev]
             updated[updated.length - 1] = { role: 'assistant', content: accumulatedText }
             return updated
           })
-          feedTTS(accumulatedText)
+          if (voiceModeRef.current) feedTTS(accumulatedText)
         }, abortControllerRef.current.signal, undefined, wireView)
         // The voice lane reports timing as the stream's return value, not as a
         // metadata event — attach it to the finished answer so the speed footer
         // renders (and persists) for voice turns exactly like chat turns.
-        if (timing) {
+        if (timing && turn === turnGeneration.current) {
           setMessages(prev => {
             const updated = [...prev]
             const last = updated[updated.length - 1]
@@ -478,6 +529,7 @@ export default function SagePanel({ userName }: SagePanelProps) {
         }
       } else {
         await querySage(userQuery, pid || undefined, (partial) => {
+          if (turn !== turnGeneration.current) return
           setMessages(prev => {
             const updated = [...prev]
             updated[updated.length - 1] = { role: 'assistant', content: partial }
@@ -488,6 +540,7 @@ export default function SagePanel({ userName }: SagePanelProps) {
             feedTTS(partial)
           }
         }, abortControllerRef.current.signal, (incomingMeta) => {
+          if (turn !== turnGeneration.current) return
           // Merge metadata + structured_response onto the last assistant message
           setMessages(prev => {
             const updated = [...prev]
@@ -505,6 +558,7 @@ export default function SagePanel({ userName }: SagePanelProps) {
             return updated
           })
         }, wireView, (stage) => {
+          if (turn !== turnGeneration.current) return
           // Honest progress during the long local-model path.
           setStreamStage(stage)
           // THINKING MODE — read at SEND time, so the question uses the toggle
@@ -513,6 +567,7 @@ export default function SagePanel({ userName }: SagePanelProps) {
         }, getThinkingMode(), conversationIdRef.current)
       }
     } catch (e) {
+      if (turn !== turnGeneration.current) return
       if ((e as Error).name === 'AbortError') {
         setMessages(prev => {
           const updated = [...prev]
@@ -527,25 +582,28 @@ export default function SagePanel({ userName }: SagePanelProps) {
         })
         return
       }
+      cancelTTS()
       setMessages(prev => {
         const updated = [...prev]
         updated[updated.length - 1] = { role: 'assistant', content: 'Connection failed. Ensure local models are running and responsive.' }
         return updated
       })
     } finally {
-      setStreaming(false)
-      setStreamStage(null)
-      streamingDoneRef.current = true
-      abortControllerRef.current = null
-      // If voice mode and nothing queued, trigger final flush
-      if (voiceModeRef.current && !ttsSpeakingRef.current) {
-        speakNext()
+      if (turn === turnGeneration.current) {
+        setStreaming(false)
+        setStreamStage(null)
+        streamingDoneRef.current = true
+        abortControllerRef.current = null
+        // If voice mode and nothing queued, trigger final flush
+        if (voiceModeRef.current && !ttsSpeakingRef.current) {
+          speakNext()
+        }
+        // The server persists the turn as the stream closes; pick it up so the
+        // sidebar isn't showing a stale list.
+        void refreshHistory()
       }
-      // The server persists the turn as the stream closes; pick it up so the
-      // sidebar isn't showing a stale list.
-      void refreshHistory()
     }
-  }, [cancelTTS, feedTTS, speakNext, refreshHistory, streaming])
+  }, [cancelTTS, feedTTS, speakNext, refreshHistory, stopVoiceCapture, streaming])
 
   const handleQuery = async () => {
     await submitQuery(query.trim())
@@ -580,46 +638,51 @@ export default function SagePanel({ userName }: SagePanelProps) {
   }, [])
 
   const handleStop = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort()
-      setStreaming(false)
-    }
+    ++turnGeneration.current
+    abortControllerRef.current?.abort()
+    abortControllerRef.current = null
+    setStreaming(false)
+    setStreamStage(null)
     cancelTTS()
+    setMessages(previous => {
+      const last = previous.at(-1)
+      if (last?.role !== 'assistant') return previous
+      if (!last.content.trim()) return previous.slice(0, -2)
+      return [...previous.slice(0, -1), {
+        ...last, metadata: { ...last.metadata, status: 'stopped' },
+      }]
+    })
   }
 
   // ─── Voice Recording Logic ───
   const startVoiceRecording = async () => {
-    // Refuse BEFORE the clinician speaks, as the round's dictation does. This
-    // used to record anyway and end on "No speech detected" when the appliance
-    // had no speech recognition installed.
     if (localAsrAvailable === false) {
       setVoiceNotice(VOICE_UNAVAILABLE)
       setVoiceStatus('')
       return
     }
-    // Claim the shared mic so Scribe or the round can't grab the device
-    // mid-recording.
     if (!claimMic('sage-panel')) {
       setVoiceStatus('Microphone is in use by another Sage surface.')
-      setTimeout(() => setVoiceStatus(''), 2500)
       return
     }
-    // Cancel any ongoing TTS before recording
+    const voice = ++voiceGeneration.current
+    const turn = turnGeneration.current
+    const isCurrent = () => voice === voiceGeneration.current && turn === turnGeneration.current
     cancelTTS()
     setVoiceStatus('Requesting microphone…')
 
     let stream: MediaStream
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      streamRef.current = stream
     } catch (err) {
-      // First attempt failed — retry once after 500ms (mic might be releasing from another app)
+      if (!isCurrent()) return
       try {
-        await new Promise(r => setTimeout(r, 500))
+        await new Promise(resolve => setTimeout(resolve, 500))
+        if (!isCurrent()) return
         setVoiceStatus('Retrying mic access…')
         stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-        streamRef.current = stream
       } catch (err2) {
+        if (!isCurrent()) return
         const errName = (err2 as Error)?.name || (err as Error)?.name || 'Unknown'
         const errMsg = (err2 as Error)?.message || (err as Error)?.message || ''
         const msg = errName === 'NotAllowedError' ? 'Mic blocked: allow in browser settings.'
@@ -627,112 +690,113 @@ export default function SagePanel({ userName }: SagePanelProps) {
           : errName === 'NotFoundError' ? 'No mic detected by browser. Check System Preferences > Sound.'
           : `Mic error [${errName}]: ${errMsg}`
         setVoiceStatus(msg)
-        setTimeout(() => setVoiceStatus(''), 5000)
         releaseMic('sage-panel')
         return
       }
     }
-
-    audioChunksRef.current = []
+    if (!isCurrent()) {
+      stream.getTracks().forEach(track => track.stop())
+      return
+    }
+    streamRef.current = stream
+    const chunks: Blob[] = []
+    audioChunksRef.current = chunks
     setVoiceElapsed(0)
-
-    // MediaRecorder for Whisper transcription
-    const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
-    recorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data) }
-    recorder.start()
-    mediaRecorderRef.current = recorder
-
-    // Local Whisper transcribes the recording when it stops. Nothing listens
-    // while it runs (no browser speech), so it stops when the clinician taps.
+    try {
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+      recorder.ondataavailable = event => {
+        if (isCurrent() && event.data.size > 0) chunks.push(event.data)
+      }
+      recorder.start()
+      mediaRecorderRef.current = recorder
+    } catch {
+      stopVoiceCapture()
+      setVoiceStatus('This browser could not start local recording.')
+      return
+    }
     setVoiceStatus('Listening… (local transcription; tap to stop)')
     setVoiceRecording(true)
     const start = Date.now()
     recordingStartRef.current = start
-    voiceTimerRef.current = setInterval(() => setVoiceElapsed(Math.floor((Date.now() - start) / 1000)), 1000)
+    voiceTimerRef.current = setInterval(() => {
+      if (isCurrent()) setVoiceElapsed(Math.floor((Date.now() - start) / 1000))
+    }, 1000)
   }
 
-  // Kept current after every render. speakNext is memoised once, and it used to
-  // call the startVoiceRecording of the FIRST render, from before the AI
-  // posture (and so localAsrAvailable) had loaded.
+  // Auto-listen reads the current appliance posture and recording closure.
   useEffect(() => { startVoiceRecordingRef.current = () => { void startVoiceRecording() } })
 
   const stopVoiceRecording = () => {
-    if (voiceTimerRef.current) { clearInterval(voiceTimerRef.current); voiceTimerRef.current = null }
-    // Release mic ownership so other Sage surfaces resume (the device tracks are
-    // stopped below, after the recorder finalizes).
+    const voice = voiceGeneration.current
+    const turn = turnGeneration.current
+    const isCurrent = () => voice === voiceGeneration.current && turn === turnGeneration.current
+    if (voiceTimerRef.current) clearInterval(voiceTimerRef.current)
+    voiceTimerRef.current = null
     releaseMic('sage-panel')
     setVoiceRecording(false)
     setVoiceStatus('Processing…')
-
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.onstop = async () => {
-        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
-        const elapsed = (Date.now() - recordingStartRef.current) / 1000
-
-        // Quick tap (< 1.5s) → skip Whisper
+    const recorder = mediaRecorderRef.current
+    const chunks = audioChunksRef.current
+    const elapsed = (Date.now() - recordingStartRef.current) / 1000
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.onstop = async () => {
+        if (!isCurrent()) return
         if (elapsed < 1.5) {
           setVoiceStatus('')
           return
         }
-        
+        const blob = new Blob(chunks, { type: 'audio/webm' })
         setVoiceStatus('Transcribing with Whisper AI…')
         setVoiceTranscribing(true)
         try {
           const result = await transcribeAudio(blob, `Specific names and context: ${patientNamesHint}`, true)
+          if (!isCurrent()) return
           const rawText = result.transcript?.trim()
           const finalText = rawText ? correctClinicalSpelling(rawText) : ''
+          setVoiceTranscribing(false)
           if (finalText) {
             setVoiceStatus('Sending to Sage…')
-            setVoiceTranscribing(false)
             await submitQuery(finalText)
           } else {
-            setVoiceTranscribing(false)
             setVoiceStatus('No speech detected.')
-            setTimeout(() => setVoiceStatus(''), 2000)
           }
         } catch {
+          if (!isCurrent()) return
           setVoiceTranscribing(false)
           setVoiceStatus('Transcription failed.')
-          setTimeout(() => setVoiceStatus(''), 2000)
         }
       }
-      mediaRecorderRef.current.stop()
+      recorder.stop()
     } else {
       setVoiceStatus('')
     }
-    streamRef.current?.getTracks().forEach(t => t.stop())
+    streamRef.current?.getTracks().forEach(track => track.stop())
+    streamRef.current = null
   }
 
   const toggleVoiceMode = () => {
     cancelTTS()
-    const enteringVoice = !voiceMode
-    
-    if (enteringVoice) {
-      // Say so now, rather than switching into a voice mode that cannot hear.
+    if (!voiceMode) {
       if (localAsrAvailable === false) {
         setVoiceNotice(VOICE_UNAVAILABLE)
         return
       }
       setVoiceNotice(null)
+      voiceModeRef.current = true
       setVoiceMode(true)
       setVoiceElapsed(0)
       setVoiceStatus('Starting voice mode…')
-      // Auto-start recording after render settles
-      setTimeout(() => startVoiceRecording(), 300)
+      const voice = voiceGeneration.current
+      const turn = turnGeneration.current
+      autoListenTimerRef.current = setTimeout(() => {
+        if (voice === voiceGeneration.current && turn === turnGeneration.current && voiceModeRef.current) {
+          startVoiceRecordingRef.current()
+        }
+      }, 300)
     } else {
-      // Leaving voice mode → force-kill ALL mic resources
-      if (voiceTimerRef.current) { clearInterval(voiceTimerRef.current); voiceTimerRef.current = null }
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.onstop = null
-        try { mediaRecorderRef.current.stop() } catch { /* already inactive */ }
-      }
-      mediaRecorderRef.current = null
-      streamRef.current?.getTracks().forEach(t => t.stop())
-      streamRef.current = null
-      setVoiceRecording(false)
+      stopVoiceCapture()
+      voiceModeRef.current = false
       setVoiceMode(false)
-      setVoiceElapsed(0)
-      setVoiceStatus('')
     }
   }
 
@@ -742,34 +806,20 @@ export default function SagePanel({ userName }: SagePanelProps) {
 
   const formatTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 
-  // Extract the last 5 user messages. A question row carries no metadata of
-  // its own: the patient it was about is on the answer that follows it.
-  const recentUserChats = historyList
-    .map((msg, index) => {
-      const next = historyList[index + 1]
-      const patientName = next?.role === 'assistant' ? next.metadata?.patient_name : undefined
-      return { ...msg, index, patientName: typeof patientName === 'string' ? patientName : undefined }
-    })
-    .filter(m => m.role === 'user')
-    .slice(-5)
-    .reverse()
+  const recentUserChats = sageThreads(historyList)
 
   const loadConversation = (startIndex: number) => {
-    // The history is a flat message list; a "conversation" is the selected user
-    // message plus the assistant reply(ies) that follow it, up to the next user
-    // message. Slicing on the clicked index makes each recent-chat item distinct
-    // instead of always dumping the entire history.
-    if (typeof startIndex !== 'number' || startIndex < 0) {
-      setMessages([...historyList])
-    } else {
-      let end = historyList.length
-      for (let i = startIndex + 1; i < historyList.length; i++) {
-        if (historyList[i].role === 'user') { end = i; break }
-      }
-      setMessages(historyList.slice(startIndex, end))
-    }
+    const thread = recentUserChats.find(item => item.index === startIndex)
+    if (!thread) return
+    ++turnGeneration.current
+    abortControllerRef.current?.abort()
+    abortControllerRef.current = null
+    setStreaming(false); cancelTTS(); stopVoiceCapture(); setStreamStage(null)
+    // Null-id legacy turns cannot be resumed safely into a shared context.
+    conversationIdRef.current = thread.conversationId ?? newConversationId()
+    setMessages([...thread.messages])
     setTimeout(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+      messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth' })
     }, 50)
   }
 
@@ -786,12 +836,13 @@ export default function SagePanel({ userName }: SagePanelProps) {
           // "New Chat" opens a fresh thread — it must never delete stored
           // conversations. Prior threads stay in Recent Conversations, where
           // they are the clinician's only record of earlier reasoning.
+          ++turnGeneration.current
           if (abortControllerRef.current) { abortControllerRef.current.abort(); abortControllerRef.current = null; setStreaming(false); }
           // Re-mint the thread id BEFORE clearing the panel. Clearing `messages`
           // alone used to be the whole of "New Chat", and the server carried on
           // prepending the previous conversation to every prompt.
           conversationIdRef.current = newConversationId()
-          cancelTTS(); setMessages([]); setQuery(''); setStreamStage(null);
+          cancelTTS(); stopVoiceCapture(); setMessages([]); setQuery(''); setStreamStage(null);
           void refreshHistory()
         }}
       />

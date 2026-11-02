@@ -1,10 +1,8 @@
 import { useState, useEffect, useMemo, useCallback, type CSSProperties } from 'react'
 import ProvenanceChip from '../../components/ProvenanceChip'
-import { buildHeaders } from '../../api/client'
+import { apiFetch } from '../../api/client'
 import { localDateKey } from '../../lib/datetime'
 import { rovingTabKeyDown } from '../../lib/tablist'
-
-const API = ''
 
 const legendItemStyle: CSSProperties = {
   display: 'inline-flex',
@@ -21,16 +19,6 @@ const legendDotStyle: CSSProperties = {
   height: '10px',
   borderRadius: '50%',
   flexShrink: 0,
-}
-
-async function apiFetch(path: string) {
-  const res = await fetch(`${API}${path}`, {
-    // Cookie session (buildHeaders adds a Bearer only if a token is persisted).
-    credentials: 'include',
-    headers: buildHeaders('GET'),
-  })
-  if (!res.ok) throw new Error(`API ${res.status}`)
-  return res.json()
 }
 
 interface DailyForecast {
@@ -199,10 +187,10 @@ export default function ForecastPanel() {
   const fetchAll = useCallback(async () => {
     try {
       const [hosp, disc, cap, pat] = await Promise.all([
-        apiFetch('/api/forecast/hospital'),
-        apiFetch('/api/forecast/discharge-board'),
-        apiFetch('/api/forecast/capacity'),
-        apiFetch('/api/forecast/admission-patterns'),
+        apiFetch<HospitalForecast>('/forecast/hospital'),
+        apiFetch<DischargeRow[]>('/forecast/discharge-board'),
+        apiFetch<CapacityData>('/forecast/capacity'),
+        apiFetch<AdmissionPatterns>('/forecast/admission-patterns'),
       ])
       setHospitalData(hosp)
       setDischargeBoard(disc)

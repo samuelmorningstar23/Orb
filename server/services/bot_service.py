@@ -437,14 +437,9 @@ def _generate_vitals(now_ts, cycle_counter):
                     ) WHERE rn <= {MAX_VITALS_PER_PATIENT}
                 )
             """)
-            db.execute("""
-                DELETE FROM risk_scores WHERE id NOT IN (
-                    SELECT id FROM (
-                        SELECT id, ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY timestamp DESC) as rn
-                        FROM risk_scores
-                    ) WHERE rn <= 100
-                )
-            """)
+            # risk_scores has no source discriminator. Row-capping it here also
+            # erases real monitoring history on hybrid deployments, so simulator
+            # housekeeping must leave it intact until retention has provenance.
         return emit_queue
 
 

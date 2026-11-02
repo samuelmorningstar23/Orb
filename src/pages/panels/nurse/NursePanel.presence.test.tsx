@@ -8,10 +8,10 @@
  * the cards carry neither and nothing is drawn.
  */
 import { render, screen, fireEvent, within } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NursePatientCard, ShiftBoard } from '../../../api/nurse'
 import { clearOfflineCache } from '../../../lib/offline/phiCache'
-import { formatClinicalTime } from '../../../lib/datetime'
+import { formatClinicalDateTime, formatClinicalTime } from '../../../lib/datetime'
 
 const getShiftBoard = vi.fn()
 
@@ -24,7 +24,8 @@ vi.mock('../../../api/nurse', () => ({
 
 import NursePanel from './NursePanel'
 
-const SINCE = new Date(Date.now() - 50 * 60_000).toISOString()
+const NOW = new Date(2026, 9, 10, 12).getTime()
+const SINCE = new Date(NOW - 50 * 60_000).toISOString()
 
 function patient(over: Partial<NursePatientCard> & Record<string, unknown> = {}): NursePatientCard {
   return {
@@ -54,18 +55,24 @@ async function renderPanel(b: ShiftBoard) {
 }
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(NOW)
   getShiftBoard.mockReset()
   clearOfflineCache()
   localStorage.setItem('orb_user', JSON.stringify({ id: 'NUR001', name: 'Nurse A', role: 'nurse' }))
 })
 
+afterEach(() => { vi.useRealTimers() })
+
 describe('not on ward on the nurse board', () => {
-  it('says so on the queue row and the card, and keeps the overdue task', async () => {
-    await renderPanel(board([patient({ presence_status: 'on_leave', presence_since: SINCE })]))
-    const words = `Not on ward since ${formatClinicalTime(SINCE)} (on leave)`
+  it.each([0, 1])('says the patient left %s days ago on the queue and card, and keeps the overdue task', async days => {
+    const since = new Date(Date.parse(SINCE) - days * 86_400_000).toISOString()
+    await renderPanel(board([patient({ presence_status: 'on_leave', presence_since: since })]))
+    const when = days ? formatClinicalDateTime(since) : formatClinicalTime(since)
+    const words = `Not on ward since ${when} (on leave)`
     const row = screen.getByRole('button', { name: /record observations/ })
     expect(within(row).getByText(words)).toBeTruthy()
-    expect(row.getAttribute('aria-label')).toContain(`not on ward since ${formatClinicalTime(SINCE)}`)
+    expect(row.getAttribute('aria-label')).toContain(`not on ward since ${when}`)
     fireEvent.click(screen.getByRole('tab', { name: /My patients/ }))
     expect(screen.getByTestId('not-on-ward').textContent).toBe(words)
   })

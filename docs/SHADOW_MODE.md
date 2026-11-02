@@ -318,6 +318,10 @@ against how long the same lookup takes manually, measured once under observation
 rather than assumed. It cannot measure clinical time saved, because that would
 require a controlled comparison the pilot is not running.
 
+Only clinician-requested Sage answers enter this lookup proxy. Machine-initiated
+Vigil alert drafts are excluded from its answer count and latency distribution;
+their measured timings remain in the shadow log.
+
 I report it as a bounded, sourced estimate with its assumptions visible, or I do
 not report it. It is the metric most likely to be quoted back in a fundraising
 context and the one with the weakest foundation, and those two facts together

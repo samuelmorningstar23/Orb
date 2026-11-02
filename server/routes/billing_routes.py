@@ -375,7 +375,7 @@ class InvoiceIn(BaseModel):
 class OpdInvoiceIn(BaseModel):
     """An OPD bill in one call: capture the lines, raise the invoice, issue it."""
 
-    lines: list[ChargeIn] = Field(min_length=1)
+    lines: list[ChargeIn] = Field(min_length=1, max_length=100)
     place_of_supply: str | None = None
     interstate: bool = False
     notes: str | None = None
@@ -1015,46 +1015,21 @@ def create_opd_invoice(
 ):
     """The outpatient counter: type the lines, get a bill, in one round trip.
 
-    The charges are posted first (each one priced or refused on its own), then a
-    single invoice is raised over exactly those charge ids — never over "whatever
-    is pending", which would sweep an unrelated line onto an OPD bill.
+    All lines and their invoice commit together. An unpriced or invalid later
+    line rolls back the earlier lines too; unrelated pending charges are never
+    swept onto this outpatient bill.
     """
     _billing_enabled()
-    charge_ids: list[int] = []
-    for line in payload.lines:
-        charge = _handle(
-            billing_service.add_charge,
-            patient_id=patient_id,
-            service_code=line.service_code,
-            description=line.description,
-            quantity_milli=line.quantity_milli,
-            unit_rate_paise=line.unit_rate_paise,
-            discount_paise=line.discount_paise,
-            discount_bp=line.discount_bp,
-            encounter_type="op",
-            tariff_plan_id=line.tariff_plan_id,
-            gst_treatment=line.gst_treatment,
-            gst_rate_bp=line.gst_rate_bp,
-            service_date=line.service_date,
-            idempotency_key=line.idempotency_key,
-            notes=line.notes,
-            charged_by=user.get("id"),
-        )
-        charge_ids.append(int(charge["id"]))
-
-    invoice = _handle(
-        billing_service.create_invoice,
+    return _handle(
+        billing_service.create_opd_invoice_atomic,
         patient_id=patient_id,
-        invoice_type="final",
-        charge_ids=charge_ids,
-        encounter_type="op",
+        lines=[line.model_dump() for line in payload.lines],
+        created_by=user.get("id"),
         place_of_supply=payload.place_of_supply,
         interstate=payload.interstate,
         issue=payload.issue,
         notes=payload.notes,
-        created_by=user.get("id"),
     )
-    return {"status": "success", "invoice": invoice, "charge_ids": charge_ids}
 
 
 _GET_INVOICE_USER_DEFAULT = Depends(_read)

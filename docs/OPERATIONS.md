@@ -68,10 +68,17 @@ exists. `./scripts/orb.sh restore --list` shows which is which.
 ### Medical AI
 
 Whether the AI engine (Ollama) is answering and the models Orb uses are loaded.
-If the engine is not answering, start it with `ollama serve` and check again
+If the engine is not answering, start it with `./scripts/serve-ollama.sh` and check again
 with `./scripts/orb.sh status`. If it answers but nothing is loaded, nothing is
 broken: the first question to Sage takes about a minute while the model loads.
 Admin, Model Governance lists the models this site runs.
+
+The canonical launcher applies the qualified local cache profile described in
+[setup](SETUP.md#orb-owned-offline-daemon-and-prompt-cache-profile), without
+pulling models or stopping another daemon. `run-orb.sh` uses it for a missing
+local engine and stops only the daemon it started when the app exits. An engine
+already running is reused and its cache profile remains unaffected. AI startup
+failure does not prevent the rest of Orb from booting.
 
 ### Bedside data feeds
 

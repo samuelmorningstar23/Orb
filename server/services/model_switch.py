@@ -44,6 +44,13 @@ def models_enabled() -> bool:
     )
 
 
+def background_models_enabled() -> bool:
+    """Automatic inference jobs; independent of interactive permission/routing."""
+    import config
+
+    return models_enabled() and bool(getattr(config, "BACKGROUND_MODELS_ENABLED", True))
+
+
 def refuse_when_models_off(what: str) -> None:
     """Raise ModelsSwitchedOff when the models are switched off."""
     if models_enabled():

@@ -67,12 +67,11 @@ def portal_access(db, user_id: str) -> dict[str, Any]:
         return {"open": True, "status": status, "until": None, "reason": None}
     until = None
     if status == "discharged":
-        last = db.execute(
-            "SELECT MAX(discharged_at) AS at FROM discharge_summaries WHERE patient_id = ?",
-            (row["id"],),
-        ).fetchone()
-        # No discharge time on record: fail closed rather than open forever.
-        until = _end_of_local_day_utc(last["at"]) if last and last["at"] else None
+        from services.bridge_stay import current_summary
+
+        last = current_summary(db, row["id"])
+        # A previous stay's summary never opens today's portal.
+        until = _end_of_local_day_utc(last["discharged_at"]) if last else None
         if until is not None and _utc_now() < until:
             return {"open": True, "status": status, "until": until.isoformat(), "reason": None}
     return {

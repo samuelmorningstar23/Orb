@@ -143,9 +143,12 @@ def _mk_patient(status="admitted", ward="Ward A"):
     return pid
 
 
-def test_capture_snapshot_persists_row_and_round_trips():
+def test_capture_snapshot_persists_row_and_round_trips(caplog):
     pid = _mk_patient()
-    result = capture_snapshot(pid, created_by="D001")
+    with caplog.at_level("INFO", logger="orb.downtime"):
+        result = capture_snapshot(pid, created_by="D001")
+    messages = [r.getMessage() for r in caplog.records if r.name == "orb.downtime"]
+    assert messages == [f"[Downtime] Captured snapshot #{result['id']}"]
 
     # A patient_snapshots row exists.
     with db_session() as db:
@@ -449,7 +452,8 @@ def test_ward_pack_route_builds_a_missing_pack_on_request(tmp_path, monkeypatch)
     resp = client.get(f"/api/downtime/{pid}/ward-pack", headers=_auth(doc_a, "doctor"))
     assert resp.status_code == 200, resp.text
     assert _mrn(pid) in resp.text
-    # Authenticated responses never publish a shared ward artifact.
+    # Authenticated responses are rendered for the principal, never published
+    # as a shared ward artifact that another department could reuse.
     assert not os.path.exists(ds._ward_pack_path(tmp_path, ward, "latest"))
 
 

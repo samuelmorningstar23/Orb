@@ -31,6 +31,12 @@ export const CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000
  *  well under it leaves room for everything else Orb stores. */
 export const CACHE_MAX_BYTES = 2_000_000
 
+// A refusal remains authoritative for this running app even when the browser
+// lets us read storage but denies deletion. This survives component remounts;
+// only a successfully persisted fresh response releases the block. It is not
+// a revocation record across browser reloads or other tabs.
+const refusedKeys = new Set<string>()
+
 interface CacheEnvelope<T> {
   data: T
   savedAt: number
@@ -57,9 +63,7 @@ function storage(): Storage | null {
   }
 }
 
-function cacheKeys(): string[] {
-  const store = storage()
-  if (!store) return []
+function listCacheKeys(store: Storage): string[] {
   const keys: string[] = []
   for (let i = 0; i < store.length; i++) {
     const key = store.key(i)
@@ -68,19 +72,50 @@ function cacheKeys(): string[] {
   return keys
 }
 
-function readEnvelope<T>(key: string): CacheEnvelope<T> | null {
+function cacheKeys(): string[] {
+  const store = storage()
+  if (!store) return []
+  try {
+    return listCacheKeys(store)
+  } catch {
+    return []
+  }
+}
+
+function removeStoredKey(store: Storage, key: string): boolean {
+  try {
+    store.removeItem(key)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Evict an authoritative refusal without deleting other charts or drafts. */
+export function removeCache(key: string): boolean {
+  const fullKey = OFFLINE_CACHE_PREFIX + key
+  refusedKeys.add(fullKey)
+  const store = storage()
+  return store ? removeStoredKey(store, fullKey) : false
+}
+
+function readEnvelope<T>(key: string, forEviction = false): CacheEnvelope<T> | null {
+  if (!forEviction && refusedKeys.has(key)) return null
   const store = storage()
   if (!store) return null
-  const raw = store.getItem(key)
-  if (!raw) return null
   try {
+    const raw = store.getItem(key)
+    if (!raw) return null
     const parsed = JSON.parse(raw) as CacheEnvelope<T>
-    if (!parsed || typeof parsed !== 'object' || typeof parsed.savedAt !== 'number') return null
+    if (!parsed || typeof parsed !== 'object' || !Number.isFinite(parsed.savedAt)) {
+      removeStoredKey(store, key)
+      return null
+    }
     return parsed
   } catch {
     // Corrupt entry — a half-written record from a tab killed mid-write.
     // Drop it rather than throwing into a render.
-    store.removeItem(key)
+    removeStoredKey(store, key)
     return null
   }
 }
@@ -101,7 +136,7 @@ export function writeCache<T>(
   const store = storage()
   // No signed-in user means no owner to stamp, and an unowned entry is exactly
   // what the ownership rule exists to refuse. Do not write one.
-  if (!store || !userId) return false
+  if (!store || !userId || !Number.isFinite(savedAt)) return false
 
   const envelope: CacheEnvelope<T> = { data, savedAt, userId }
   let serialised: string
@@ -121,7 +156,7 @@ export function writeCache<T>(
     store.setItem(fullKey, serialised)
   } catch {
     // Quota exceeded. Make room and try once more.
-    evictOldest(serialised.length)
+    if (!evictOldest(serialised.length)) return false
     try {
       store.setItem(fullKey, serialised)
     } catch {
@@ -129,7 +164,11 @@ export function writeCache<T>(
     }
   }
 
-  evictOldest(0)
+  if (!evictOldest(0)) {
+    removeStoredKey(store, fullKey)
+    return false
+  }
+  refusedKeys.delete(fullKey)
   return true
 }
 
@@ -156,7 +195,7 @@ export function readCache<T>(
   // tablet has changed hands, every other entry on it belongs to the previous
   // nurse too. Hiding one entry while leaving the rest would be the leak.
   if (!envelope.userId) {
-    store.removeItem(fullKey)
+    removeStoredKey(store, fullKey)
     return null
   }
   if (envelope.userId !== userId) {
@@ -167,8 +206,8 @@ export function readCache<T>(
   // AGE. A future stamp means the clock moved (or the entry was tampered with);
   // its age is unknowable, so it cannot be honestly labelled.
   const ageMs = now - envelope.savedAt
-  if (ageMs < 0 || ageMs > CACHE_MAX_AGE_MS) {
-    store.removeItem(fullKey)
+  if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > CACHE_MAX_AGE_MS) {
+    removeStoredKey(store, fullKey)
     return null
   }
 
@@ -185,8 +224,7 @@ export function clearOfflineCache(): number {
   const store = storage()
   if (!store) return 0
   const keys = cacheKeys()
-  keys.forEach(key => store.removeItem(key))
-  return keys.length
+  return keys.reduce((removed, key) => removed + Number(removeStoredKey(store, key)), 0)
 }
 
 export function cacheEntryCount(): number {
@@ -196,7 +234,11 @@ export function cacheEntryCount(): number {
 export function cacheBytes(): number {
   const store = storage()
   if (!store) return 0
-  return cacheKeys().reduce((total, key) => total + (store.getItem(key)?.length ?? 0), 0)
+  try {
+    return cacheKeys().reduce((total, key) => total + (store.getItem(key)?.length ?? 0), 0)
+  } catch {
+    return 0
+  }
 }
 
 /**
@@ -212,7 +254,7 @@ export function newestCachedAt(userId: string, now: number = Date.now()): number
     const envelope = readEnvelope<unknown>(key)
     if (!envelope || envelope.userId !== userId) continue
     const ageMs = now - envelope.savedAt
-    if (ageMs < 0 || ageMs > CACHE_MAX_AGE_MS) continue
+    if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > CACHE_MAX_AGE_MS) continue
     if (newest === null || envelope.savedAt > newest) newest = envelope.savedAt
   }
   return newest
@@ -226,25 +268,32 @@ export function newestCachedAt(userId: string, now: number = Date.now()): number
  * value left. It is also the only ordering we can compute without writing on
  * every read, which on a synchronous store would cost a render.
  */
-function evictOldest(incomingBytes: number): void {
+function evictOldest(incomingBytes: number): boolean {
   const store = storage()
-  if (!store) return
+  if (!store) return false
 
-  const entries = cacheKeys()
-    .map(key => {
-      const envelope = readEnvelope<unknown>(key)
-      return {
-        key,
-        savedAt: envelope?.savedAt ?? 0,
-        bytes: store.getItem(key)?.length ?? 0,
-      }
-    })
-    .sort((a, b) => a.savedAt - b.savedAt)
+  try {
+    const entries = listCacheKeys(store)
+      .map(key => {
+        // Only size/age metadata is inspected here, never published. A fresh
+        // replacement of a blocked key must keep its true eviction priority.
+        const envelope = readEnvelope<unknown>(key, true)
+        return {
+          key,
+          savedAt: envelope?.savedAt ?? 0,
+          bytes: store.getItem(key)?.length ?? 0,
+        }
+      })
+      .sort((a, b) => a.savedAt - b.savedAt)
 
-  let total = entries.reduce((sum, e) => sum + e.bytes, 0) + incomingBytes
-  for (const entry of entries) {
-    if (total <= CACHE_MAX_BYTES) break
-    store.removeItem(entry.key)
-    total -= entry.bytes
+    let total = entries.reduce((sum, e) => sum + e.bytes, 0) + incomingBytes
+    for (const entry of entries) {
+      if (total <= CACHE_MAX_BYTES) break
+      if (!removeStoredKey(store, entry.key)) return false
+      total -= entry.bytes
+    }
+    return true
+  } catch {
+    return false
   }
 }

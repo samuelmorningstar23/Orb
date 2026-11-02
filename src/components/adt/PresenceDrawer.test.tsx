@@ -114,7 +114,9 @@ beforeEach(() => {
 
 describe('the not-on-ward chip', () => {
   it('prints the time the patient left in local time, today as a time', () => {
-    const since = new Date(Date.now() - 30 * 60_000).toISOString()
+    const localToday = new Date()
+    localToday.setHours(0, 0, 0, 0)
+    const since = localToday.toISOString()
     render(<NotOnWardChip row={{ presence_status: 'on_leave', presence_since: since }} />)
     const chip = screen.getByTestId('not-on-ward')
     expect(chip).toHaveTextContent(`Not on ward since ${formatClinicalTime(since)} (on leave)`)
@@ -295,7 +297,9 @@ describe('the bed board', () => {
   })
 
   it('a tile shows when its patient left the ward', () => {
-    const since = new Date(Date.now() - 60 * 60_000).toISOString()
+    const localToday = new Date()
+    localToday.setHours(0, 0, 0, 0)
+    const since = localToday.toISOString()
     render(<BoardTileNotes tile={tile({ status: 'occupied_on_leave', occupant: {
       ...tile().occupant!, presence_status: 'on_leave', presence_since: since,
     } as BedTile['occupant'] })} />)
@@ -303,13 +307,14 @@ describe('the bed board', () => {
   })
 
   it('a reserved tile says when it expires, and never names a patient outside scope', () => {
-    const expires = new Date(Date.now() + 90 * 60_000).toISOString()
+    // Deliberately cross local midnight: a future day's expiry needs its date.
+    const expires = new Date(Date.now() + 24 * 60 * 60_000).toISOString()
     render(<BoardTileNotes tile={tile({
       status: 'reserved', status_words: 'Reserved for transfer', occupant: null,
       reservation: { id: 'RES-1', purpose: 'transfer', purpose_words: 'Reserved for transfer',
         reserved_at: new Date().toISOString(), expires_at: expires, patient: null, patient_hidden: true },
     })} />)
-    expect(screen.getByTestId('tile-reservation-expiry')).toHaveTextContent(`Expires ${formatClinicalTime(expires)}`)
+    expect(screen.getByTestId('tile-reservation-expiry')).toHaveTextContent(`Expires ${formatClinicalDateTime(expires)}`)
     expect(screen.getByText('Held for a patient outside your department')).toBeInTheDocument()
   })
 

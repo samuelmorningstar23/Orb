@@ -46,7 +46,7 @@ graph TD
   PANEL -->|querySage thinking arg| CLIENT[client.ts:1096]
   CLIENT -->|body.thinking| ROUTE[sage_routes.py:2331<br/>thinking_mode.begin_turn]
   ROUTE --> CV[ContextVar _thinking_flag<br/>thinking_mode.py:347]
-  CV --> SEL[sage_service.py:1858<br/>thinking_mode.select_provider]
+  CV --> SEL[sage_service.py:1843<br/>thinking_mode.select_provider]
   SEL --> DEC[decide :446]
   DEC -->|thinking ON| ROUTER[model_router.select_chat_model]
   DEC -->|thinking OFF| FLOOR[classify_floor :393]
@@ -56,7 +56,7 @@ graph TD
   STAMP --> META[SSE metadata.provider]
   META --> BANNER[describeAnswerProvenance<br/>thinkingMode.ts:134]
   BANNER --> MSG[SageMessage.tsx:329 banner]
-  STAMP --> PROV[(sage_provenance_turns<br/>sage_provenance_service.py:620)]
+  STAMP --> PROV[(sage_provenance_turns<br/>sage_provenance_service.py:619)]
 ```
 
 **Neighbors:** guide 09-sage (`query_ollama`, `get_relevant_context`, the scope configs), guide 26-ai-infrastructure (`model_router`, `llm_providers`, residency and the ambient tier), guide 37-sage-provenance (`sage_provenance_turns` stores the thinking columns for every turn), guide 07-vigil (NEWS2, the deterministic score rule 3 protects), guide 14-helix (`drug_safety_service`, which seeds the drug vocabulary), guide 27-design-system (the status-text tokens the toggle and the banners use).
@@ -169,7 +169,7 @@ The regression list that now guards it, "How much adrenaline in anaphylaxis?", "
 1. The composer's pill reads **Thinking**. `src/pages/panels/SagePanel.tsx:537` passes `getThinkingMode()` (true) into `querySage`.
 2. `src/api/client.ts:1130` sends `thinking: true` in the body.
 3. `sage_routes.py:2331` calls `begin_turn(body.get("thinking"))`, setting the request's `ContextVar`.
-4. `sage_service.query_ollama` calls `select_provider` (`sage_service.py:1858`); `decide` (`thinking_mode.py:569-575`) returns the careful tier immediately, **without running the classifier at all**, and delegates model choice to `model_router.select_chat_model()` so residency behaviour is preserved bit for bit.
+4. `sage_service.query_ollama` calls `select_provider` (`sage_service.py:1963`); `decide` (`thinking_mode.py:569-575`) returns the careful tier immediately, **without running the classifier at all**, and delegates model choice to `model_router.select_chat_model()` so residency behaviour is preserved bit for bit.
 5. `stamp` writes `thinking=True`, `thinking_tier="careful"`, `safety_floor=False`.
 6. `describeAnswerProvenance` returns `null`. **No banner.** The ordinary case is silent.
 
@@ -271,7 +271,7 @@ sequenceDiagram
 **Signature:** `"careful"` / `"fast"`
 **Does:** The two tier names.
 **On screen:** `thinking_tier` reaches the client typed as `ThinkingTier` (`src/api/thinkingMode.ts:21`) and the string `'fast'` is what triggers the ⚡ banner (`:168`).
-**Breaks if you change it:** rename either string and the client's `p.thinking_tier === 'fast'` check silently stops matching, a fast answer would then render with no banner at all, which is the exact silent substitution this module exists to prevent. The column is also persisted (`sage_provenance_service.py:620-625`), so a rename splits historical rows.
+**Breaks if you change it:** rename either string and the client's `p.thinking_tier === 'fast'` check silently stops matching, a fast answer would then render with no banner at all, which is the exact silent substitution this module exists to prevent. The column is also persisted (`sage_provenance_service.py:619-624`), so a rename splits historical rows.
 
 #### The floor's justification comment: `thinking_mode.py:52-95`
 **Does:** Records the measurements. Not code.
@@ -411,7 +411,7 @@ sequenceDiagram
 **Does:** Writes ten `thinking_*` / `safety_floor_*` keys into the dict the Sage route ships as `metadata.provider`.
 **On screen:** **this is the function that makes the feature visible at all.** Everything the clinician reads about which brain answered is derived from these keys.
 **How `safety_floor_unsatisfied` works (`:634`):** `decision.floor_fired and served != LLM_MODEL`. `served_model` is the model that will *actually* run the turn, after residency has had its say, so the floor demanding the careful model and residency being unable to supply it is detectable and cannot be silent.
-**Why the keys are namespaced:** `query_ollama` calls `info.update(lane=…, provider=…, model=…, downgraded=…, preferred_model=…)` immediately afterwards (`sage_service.py:1860-1862`). A collision would let the routing label silently overwrite the clinician's label. `test_thinking_mode.py:371-377` asserts the two key sets are disjoint.
+**Why the keys are namespaced:** `query_ollama` calls `info.update(lane=…, provider=…, model=…, downgraded=…, preferred_model=…)` immediately afterwards (`sage_service.py:1965-1967`). A collision would let the routing label silently overwrite the clinician's label. `test_thinking_mode.py:371-377` asserts the two key sets are disjoint.
 **Breaks if you change it:** drop `safety_floor_unsatisfied` and the one genuinely dangerous case, told careful, served small, renders as an ordinary floor reassurance banner.
 
 #### `select_provider`: `thinking_mode.py:782`
@@ -426,14 +426,14 @@ sequenceDiagram
 #### The integration note: `thinking_mode.py:684-718`
 **Does:** Records the two edits this module needs in files it does not own, with exact line numbers and exact replacement text.
 **On screen:** nothing.
-**Status:** **both edits have landed.** `sage_routes.py:2331` calls `begin_turn`; `sage_service.py:1858` calls `select_provider`. The note is now historical, and `test_thinking_mode.py:465-481` is the thing that notices if it rots, it passes in both the un-integrated and integrated states and fails only when neither is true.
+**Status:** **both edits have landed.** `sage_routes.py:2331` calls `begin_turn`; `sage_service.py:1963` calls `select_provider`. The note is now historical, and `test_thinking_mode.py:465-481` is the thing that notices if it rots, it passes in both the un-integrated and integrated states and fails only when neither is true.
 **Gotchas:** the note's line numbers ("1308", "1328-1329") are as of 2026-08-05 and are already stale relative to today's file. Read the note as prose, not as a map.
 
 ---
 
 ### The call sites, in files `thinking_mode` does not own
 
-#### `begin_turn` in the query route: `server/routes/sage_routes.py:2466` (import at `:8`)
+#### Query-route turn binding call: `server/routes/sage_routes.py:2464` (import at `:8`)
 **Does:** Binds `body.get("thinking")` for the whole turn, immediately after `effective_patient_id` is resolved.
 **On screen:** nothing itself; it is what makes the composer's toggle mean anything.
 **Gotchas, the voice lane is deliberately excluded.** `/sage/voice` never calls `begin_turn`, so a spoken turn takes the default (careful) until voice grows a control of its own (`:1927-1928`). That is a real behavioural difference between typing and speaking the same question.
@@ -446,13 +446,13 @@ sequenceDiagram
 **Why it is read here and not later (`:1483-1486`):** the ContextVar belongs to the request's task, and a streaming generator is not guaranteed to be iterated inside it. Read it in the request's own context or you read the default.
 **Breaks if you change it:** move this read into the generator and every refused turn records "thinking ON" regardless of what the clinician chose.
 
-#### `select_provider` in `query_ollama`: `server/services/sage_service.py:2168`
+#### Query provider selection call: `server/services/sage_service.py:2153`
 **Does:** Replaced the two lines that used to pick the model and the provider.
 **On screen:** everything; this is where the tier choice becomes real.
-**Gotchas:** `route_info=info` is passed **before** `info.update(lane=…, model=…)` at `:1963-1972`. The order matters only because the key sets must stay disjoint, see `stamp`.
+**Gotchas:** `route_info=info` is passed **before** `info.update(lane=…, model=…)` at `:1965-1974`. The order matters only because the key sets must stay disjoint, see `stamp`.
 **Breaks if you change it:** revert to `select_chat_model()` and the toggle becomes decorative: the client still sends `thinking`, the route still binds it, and nothing reads it. Nothing fails; every answer is just careful. That is the safe direction of failure, and it is deliberate.
 
-#### The provenance row: `server/services/sage_provenance_service.py:608-626`
+#### The provenance row: `server/services/sage_provenance_service.py:607-625`
 **Does:** Persists `model_requested` (`thinking_model` falling back to `model`), `model_served`, `thinking`, `thinking_requested`, `thinking_tier`, `thinking_reason`, `safety_floor`, `safety_floor_rules`, `safety_floor_unsatisfied` into `sage_provenance_turns`, `INSERT OR IGNORE` into an append-only table.
 **On screen:** the Sage provenance surfaces in the admin panel (guide 37).
 **Why it matters here:** this is the only durable record of which model answered which question. The banner is transient; a reviewer asking "was this dose answer from the 4B?" months later needs the row.
@@ -513,7 +513,7 @@ The module header states why the store exists at all: the toggle lives in the co
 
 ### File: `src/api/client.ts`: putting the flag on the wire
 
-#### `querySage`'s `thinking` parameter: `src/api/client.ts:1017`, parameter at `:1104-1112`, body at `:1127-1131`
+#### `querySage`'s `thinking` parameter: `src/api/client.ts:1140`, parameter at `:1104-1112`, body at `:1127-1131`
 **Signature:** `thinking?: boolean`; body sends `thinking: thinking ?? true`
 **Does:** Sends the flag explicitly on every Sage request.
 **On screen:** nothing directly.
@@ -597,7 +597,7 @@ The module's third stated property is that nobody is ever unsure. There are **fo
 | Before typing | The standing strip states the mode **and the floor** | `SageComposer.tsx:166-175` |
 | On hover | The tooltip repeats both in full sentences | `SageComposer.tsx:98-102` |
 | On the answer | One banner: ⚡ fast, 🛡️ floor fired, ⚠️ floor unsatisfied, or nothing at all for an ordinary careful answer | `thinkingMode.ts:134`, `SageMessage.tsx:329` |
-| Afterwards, forever | `sage_provenance_turns` rows carrying tier, requested tier, reason and floor rules | `sage_provenance_service.py:608-626` |
+| Afterwards, forever | `sage_provenance_turns` rows carrying tier, requested tier, reason and floor rules | `sage_provenance_service.py:607-625` |
 
 The rule shaping all of them: **the ordinary case is silent, and every departure from it speaks.** A banner on every answer becomes wallpaper. A banner on none of them makes substitution invisible. The one case that must never be silent is the floor firing and not being honoured, and that is why it is the first branch tested.
 
@@ -726,8 +726,8 @@ measurements; harness `dev_tools/check_history_marker_replay.py`.
 | Contract | Producer | Consumer | Breaks how |
 |---|---|---|---|
 | `body.thinking` | `src/api/client.ts:1130` | `sage_routes.py:2331` | drop the field and every turn silently becomes careful (safe, but the toggle lies) |
-| `route_info` keys `thinking_*` / `safety_floor_*` | `stamp` (`thinking_mode.py:610`) | `SageProvenance` (`thinkingMode.ts:29`), `sage_provenance_service.py:620` | rename one and the banner or the stored column goes blank with no type error |
-| key-space disjointness with `lane/provider/model/downgraded/preferred_model` | `stamp` | `sage_service.py:1860` | a collision silently overwrites the clinician's label with the routing label |
+| `route_info` keys `thinking_*` / `safety_floor_*` | `stamp` (`thinking_mode.py:610`) | `SageProvenance` (`thinkingMode.ts:29`), `sage_provenance_service.py:619` | rename one and the banner or the stored column goes blank with no type error |
+| key-space disjointness with `lane/provider/model/downgraded/preferred_model` | `stamp` | `sage_service.py:1845` | a collision silently overwrites the clinician's label with the routing label |
 | `_FLOOR_RULES` names | `thinking_mode.py:98` | `FLOOR_RULE_TEXT` (`thinkingMode.ts:109`) | an unmirrored rule is dropped from the "because …" clause |
 | `PATIENT:` first line of the chart block | `sage_service` context builder | `_CONTEXT_PATIENT_MARKERS` (`:133`) | change the prefix and sticky-anchored follow-ups reach the 4B, silently |
 | `_DRUG_CLASS_PATTERNS` / `_ALLERGEN_CLASS_TERMS` | `services/drug_safety_service` (guide 14) | `_build_drug_vocabulary` (`:230`) | a rename degrades the drug rule to the local list only, caught by nothing |

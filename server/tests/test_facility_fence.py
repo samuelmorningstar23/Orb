@@ -99,7 +99,7 @@ def test_patient_routes_are_fenced(path):
 
 
 @pytest.mark.parametrize("path", [
-    "/api/auth/login", "/api/auth/me", "/api/auth", "/api/health", "/api/health/loop",
+    "/api/auth/login", "/api/auth/me", "/api/auth", "/api/health", "/api/health/loop", "/api/ready",
     "/api/health/models", "/api/facilities", "/api/facilities/meta", "/api/ops/status",
     "/api/ops/status.txt", "/", "/index.html", "/assets/index-abc.js", "/dashboard/vigil",
     "/display/opd",
@@ -120,7 +120,7 @@ def the_sentinel(monkeypatch):
 def test_the_sentinel_fences_every_patient_screen():
     assert F.FACILITY_BLIND_SURFACES == F.SENTINEL == "*"
     assert F.describe() == {"every_patient_screen": True, "blind_surfaces": ["all"],
-                            "always_open": ["/api/auth", "/api/health", "/api/facilities",
+                            "always_open": ["/api/auth", "/api/health", "/api/ready", "/api/facilities",
                                             "/api/ops"]}
     # A swept list (multisite-5b) fences only what it names.
     assert F.is_fenced("/api/vigil/patients", blind=("/api/sage",)) is False

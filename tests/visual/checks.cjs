@@ -513,7 +513,7 @@ function runAudit() {
     for (const child of el.childNodes) if (child.nodeType === 3) text += child.nodeValue;
     text = text.replace(/\s+/g, ' ').trim();
     if (!text) continue;
-    if (!isRendered(el)) continue;
+    if (!isRendered(el) || isSrOnly(el)) continue;
     const cs = getComputedStyle(el);
     const hidX = /(hidden|clip)/.test(cs.overflowX) || /(hidden|clip)/.test(cs.overflow);
     if (!hidX) continue;

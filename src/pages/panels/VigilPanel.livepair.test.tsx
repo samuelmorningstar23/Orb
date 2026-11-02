@@ -20,6 +20,7 @@
 import { render, screen, act, waitFor, fireEvent } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { openPatient } from '../../lib/orbBus'
+import { readCache, writeCache } from '../../lib/offline/phiCache'
 
 type Deferred<T> = { promise: Promise<T>; resolve: (v: T) => void }
 /** What getPatientDetail answers, as far as these tests read it. */
@@ -212,9 +213,10 @@ function trendPoints(): number {
 
 let consoleError: ReturnType<typeof vi.spyOn>
 let loadFailureExpected = false
+let panel: ReturnType<typeof render>
 
 function renderPanel() {
-  render(
+  panel = render(
     <ActivePatientProvider>
       <ActiveViewProvider>
         <VigilPanel role="doctor" />
@@ -256,6 +258,7 @@ const NOTHING_RECORDED = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  localStorage.clear()
   for (const k of Object.keys(h.handlers)) delete h.handlers[k]
   h.details = { P007: chartAtT0(), P008: detailOf(P008, [vital('P008', T0, { heart_rate: 64, systolic_bp: 132, diastolic_bp: 84, respiratory_rate: 11 })]) }
   // P008 has a respiratory rate of 11: one point.
@@ -581,5 +584,54 @@ describe('switching patient', () => {
     // A late P007 tick lands on P008's chart and is ignored.
     await emit(HYPO(AT(6)))
     expect(nowOnScreen()).toEqual(p008)
+  })
+})
+
+describe('patient chart when the appliance stops answering', () => {
+  it('labels the existing chart as a copy after a failed online refresh', async () => {
+    await openChart()
+    loadFailureExpected = true
+    h.respond = async () => { throw new TypeError('Failed to fetch') }
+    await act(async () => { window.dispatchEvent(new Event('online')) })
+    expect(await screen.findByTestId('offline-banner')).toHaveTextContent("Can't reach Orb, not live")
+    expect(screen.getByText('Rahul Menon')).toBeInTheDocument()
+  })
+
+  it('opens the saved chart on an appliance outage while the network stays online', async () => {
+    writeCache('vigil:patient:P007', h.details.P007, 'DOC1')
+    loadFailureExpected = true
+    h.respond = async () => { throw Object.assign(new Error('Unavailable'), { status: 503 }) }
+    await openChart()
+    expect(screen.getByTestId('offline-banner')).toHaveTextContent("Can't reach Orb, not live")
+    expect(nowOnScreen()).toEqual(AT_T0)
+  })
+
+  it.each([401, 403, 404])('does not replace an HTTP %s refusal with a saved chart', async status => {
+    writeCache('vigil:patient:P007', h.details.P007, 'DOC1')
+    loadFailureExpected = true
+    h.respond = async () => { throw Object.assign(new Error('Record refused'), { status }) }
+    await act(async () => { openPatient('P007', 'Rahul Menon') })
+    await screen.findByText(status === 404 ? 'Patient not found' : 'Chart unavailable')
+    expect(screen.queryByText('Rahul Menon')).toBeNull()
+    expect(cell('Heart rate')).toBeNull()
+  })
+
+  it('does not recover a denied chart after unmounting and reopening offline', async () => {
+    await openChart()
+    expect(readCache('vigil:patient:P007', 'DOC1')).not.toBeNull()
+    loadFailureExpected = true
+    h.respond = async () => { throw Object.assign(new Error('Record refused'), { status: 403 }) }
+    await act(async () => { window.dispatchEvent(new Event('online')) })
+    await screen.findByText('Chart unavailable')
+    expect(readCache('vigil:patient:P007', 'DOC1')).toBeNull()
+
+    panel.unmount()
+    await goOffline()
+    h.respond = async () => { throw new TypeError('Failed to fetch') }
+    renderPanel()
+    await act(async () => { openPatient('P007', 'Rahul Menon') })
+    await screen.findByText('Chart unavailable')
+    expect(screen.queryByText('Rahul Menon')).toBeNull()
+    expect(cell('Heart rate')).toBeNull()
   })
 })

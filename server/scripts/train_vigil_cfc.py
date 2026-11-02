@@ -5,12 +5,12 @@ within each horizon in models.vigil_cfc.HORIZONS_HOURS (1/3/6/12/24h). Each
 outcome is an independent model on its own dataset:
 
     sepsis        -> PhysioNet/CinC 2019 Sepsis Challenge   (OPEN, runnable now)
-    deterioration -> ICU transfer / rapid-response          (needs MIMIC-IV/eICU*)
-    mortality     -> in-hospital death                      (needs MIMIC-IV/eICU*)
+    deterioration -> already-labelled credentialed extract (local JSONL adapter)
+    mortality     -> already-labelled credentialed extract (local JSONL adapter)
 
-  * MIMIC-IV / eICU are CREDENTIALED and licensed "scientific research only" —
-    fine for R&D/validation, NOT for commercial deployment. See
-    docs/ORB_TRAINING_PLAYBOOK.md and the data-sourcing report.
+  * Dataset access, permitted use and clinical label definitions remain the
+    extract owner's responsibility. This script obtains no credentials/data.
+    See docs/VIGIL_LABELLED_EXTRACT.md for the offline input contract.
 
 Features use the canonical PRODUCTION schema (vitals + AVPU + age) so a trained
 checkpoint runs on live data. PhysioNet has no consciousness field, so AVPU is
@@ -39,6 +39,13 @@ from models.vigil_cfc import (  # noqa: E402 - application imports require the p
     PRODUCTION_FEATURE_ORDER,
     OrbVigilCfC,
 )
+from scripts.vigil_labelled_extract import (
+    EqualLengthBatchSampler,
+    ExtractError,
+    LabelledDataset,
+    collate_equal_length,
+    load_extract,
+)
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 HIDDEN_DIM = 64
@@ -50,10 +57,6 @@ EPOCHS = 30
 LR = 1e-3
 TRAIN_SPLIT = 0.85
 SEED = 42
-
-random.seed(SEED)
-np.random.seed(SEED)
-torch.manual_seed(SEED)
 
 # PhysioNet column -> production feature (avpu/age handled specially).
 # TODO (train/serve skew, deferred — needs vigil_service.py change, other cluster):
@@ -233,15 +236,17 @@ def collate(batch):
 
 
 # ── Outcome registry ───────────────────────────────────────────────────────────
-def load_dataset_for(outcome: str):
-    """Returns (samples, feature_mean, feature_std)."""
+def load_dataset_for(outcome: str, labelled_extract=None):
+    """Legacy sepsis tuple, or a patient-separated labelled extract bundle."""
     if outcome == "sepsis":
+        if labelled_extract is not None:
+            raise ExtractError("The labelled extract adapter is for deterioration and mortality")
         return load_sepsis_dataset()
-    raise NotImplementedError(
-        f"Outcome '{outcome}' needs timestamped {outcome} labels from a credentialed "
-        "ICU dataset (MIMIC-IV / eICU / AmsterdamUMCdb). Build that adapter once data "
-        "access clears. See docs/ORB_TRAINING_PLAYBOOK.md."
-    )
+    if labelled_extract is None:
+        raise ExtractError(
+            "Supply --labelled-extract with already-labelled local JSONL; see docs/VIGIL_LABELLED_EXTRACT.md"
+        )
+    return load_extract(labelled_extract, outcome, train_fraction=TRAIN_SPLIT, seed=SEED)
 
 
 # ── Validation metrics ───────────────────────────────────────────────────────────
@@ -297,18 +302,61 @@ def _val_metrics(probs: torch.Tensor, targets: torch.Tensor) -> tuple[float, flo
 
 
 # ── Train ──────────────────────────────────────────────────────────────────────
-def train(outcome: str):
-    samples, feat_mean, feat_std = load_dataset_for(outcome)
+def train(outcome: str, labelled_extract=None, output=None):
+    # A newly trained research artifact must never replace an automatically
+    # loaded production checkpoint as a side effect of selecting an outcome.
+    if outcome != "sepsis" and output is None:
+        raise ExtractError(
+            "Non-sepsis training requires an explicit --output outside the runtime models directory"
+        )
+    ckpt_path = (
+        Path(output) if output is not None else SERVER_DIR / "models" / f"vigil_cfc_{outcome}.pt"
+    )
+    try:
+        if outcome != "sepsis" and ckpt_path.resolve().is_relative_to(
+            (SERVER_DIR / "models").resolve()
+        ):
+            raise ExtractError(
+                "Research artifacts cannot be written into the runtime models directory"
+            )
+        if outcome != "sepsis" and ckpt_path.exists():
+            raise ExtractError("Research output already exists; choose a new output artifact")
+    except OSError:
+        raise ExtractError("Could not inspect the requested research output") from None
+    random.seed(SEED)
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
+    loaded = load_dataset_for(outcome, labelled_extract)
+    if isinstance(loaded, LabelledDataset):
+        training, validation = loaded.train, loaded.validation
+        feat_mean, feat_std, provenance = loaded.feature_mean, loaded.feature_std, loaded.metadata
+        samples = training + validation
+    else:
+        samples, feat_mean, feat_std = loaded
+        random.shuffle(samples)
+        split = int(len(samples) * TRAIN_SPLIT)
+        training, validation = samples[:split], samples[split:]
+        provenance = {"data_source": "physionet_cinc2019"}
     if len(samples) < 100:
         print("❌ Insufficient samples.")
         sys.exit(1)
 
-    random.shuffle(samples)
-    split = int(len(samples) * TRAIN_SPLIT)
-    train_loader = DataLoader(
-        samples[:split], batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate, drop_last=True
-    )
-    val_loader = DataLoader(samples[split:], batch_size=BATCH_SIZE, collate_fn=collate)
+    if isinstance(loaded, LabelledDataset):
+        train_loader = DataLoader(
+            training,
+            batch_sampler=EqualLengthBatchSampler(training, BATCH_SIZE, shuffle=True, seed=SEED),
+            collate_fn=collate_equal_length,
+        )
+        val_loader = DataLoader(
+            validation,
+            batch_sampler=EqualLengthBatchSampler(validation, BATCH_SIZE),
+            collate_fn=collate_equal_length,
+        )
+    else:
+        train_loader = DataLoader(
+            training, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate, drop_last=True
+        )
+        val_loader = DataLoader(validation, batch_size=BATCH_SIZE, collate_fn=collate)
 
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     model = OrbVigilCfC(
@@ -322,15 +370,14 @@ def train(outcome: str):
     )
 
     # Class imbalance: weight positives per horizon.
-    all_labels = torch.stack([s[2] for s in samples])
+    all_labels = torch.stack([s[2] for s in training])
     pos_rate = all_labels.mean(0).clamp(1e-3, 1 - 1e-3)
     pos_weight = ((1 - pos_rate) / pos_rate).clamp(max=20.0).to(device)
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     opt = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=EPOCHS)
 
-    ckpt_path = SERVER_DIR / "models" / f"vigil_cfc_{outcome}.pt"
-    ckpt_path.parent.mkdir(exist_ok=True)
+    ckpt_path.parent.mkdir(parents=True, exist_ok=True)
     best_val = float("inf")
 
     for epoch in range(1, EPOCHS + 1):
@@ -389,12 +436,12 @@ def train(outcome: str):
                     "val_loss": vl,
                     "val_auroc": round(auroc, 4),
                     "val_auprc": round(auprc, 4),
-                    "data_source": "physionet_cinc2019" if outcome == "sepsis" else "unknown",
+                    **provenance,
                 },
                 str(ckpt_path),
             )
 
-    print(f"\n✓ Best val {best_val:.4f} — saved {ckpt_path}")
+    print(f"\n✓ Best val {best_val:.4f} — saved training artifact")
     # TODO (deferred, cross-cutting): gate promotion of any checkpoint on beating
     # the NEWS2 baseline on held-out AUROC/AUPRC, add reliability/Brier calibration,
     # and derive the live escalation thresholds (vigil_service.py:337-342) from a
@@ -402,7 +449,30 @@ def train(outcome: str):
     # See docs/ORB_TRAINING_PLAYBOOK.md.
 
 
-if __name__ == "__main__":
+def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--outcome", default="sepsis", choices=["sepsis", "deterioration", "mortality"])
-    train(ap.parse_args().outcome)
+    ap.add_argument("--labelled-extract", help="Local already-labelled JSONL; no dataset download")
+    ap.add_argument("--output", help="New research checkpoint path, outside runtime models")
+    ap.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="Validate and summarize a labelled extract without training or writes",
+    )
+    args = ap.parse_args(argv)
+    try:
+        if args.validate_only:
+            if args.outcome == "sepsis":
+                raise ExtractError("--validate-only is for the new labelled extract adapter")
+            data = load_dataset_for(args.outcome, args.labelled_extract)
+            print(
+                f"Validated {len(data.train)} training / {len(data.validation)} validation windows; subject-separated, no training or checkpoint writes"
+            )
+        else:
+            train(args.outcome, args.labelled_extract, args.output)
+    except ExtractError as exc:
+        ap.error(str(exc))
+
+
+if __name__ == "__main__":
+    main()

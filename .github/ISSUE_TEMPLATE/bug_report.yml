@@ -1,0 +1,30 @@
+name: Bug report
+description: Report a reproducible application, data-integrity, or operational defect.
+title: "[Bug]: "
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+      description: Describe the difference and its impact. Use synthetic or de-identified examples.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Include the role, screen/API, initial state, and exact action.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Version and configuration
+      description: Commit/version, OS/browser, deployment profile, Ward Record state, enabled modules, and whether models are provisioned. Do not attach .env files or secrets.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence and verification
+      description: Relevant test failures, redacted logs, synthetic screenshots, and reproduction frequency. Exclude patient records, uploads, and credentials.

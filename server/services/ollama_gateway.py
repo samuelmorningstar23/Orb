@@ -51,6 +51,52 @@ from services.model_switch import ModelsSwitchedOff, refuse_when_models_off  # n
 # most this long for the background request to let go.
 _YIELD_POLL_SECONDS = 0.1
 
+# These lanes explicitly target the configured ambient tier. If that tier is
+# the primary model too, their small context would replace the interactive
+# runner and discard its warmed prefix. Separate ambient models keep their
+# own context; unrelated callers keep the context they requested.
+_AMBIENT_PURPOSES = frozenset(
+    {
+        "ward_narrator",
+        "expected_course_projection",
+        "vigil_recommendation",
+        "relay_ambient_classify",
+        "relay_room_fit_check",
+    }
+)
+
+
+def _shared_ambient_context(payload: dict, purpose: str) -> dict:
+    """Reuse the interactive runner only for the exact shared ambient model.
+
+    Change only the two existing small ambient windows. An absent, unfamiliar
+    or larger explicit window remains the caller's choice. Copy both levels
+    so a request never rewrites caller-owned options or a later retry.
+    """
+    if purpose not in _AMBIENT_PURPOSES:
+        return payload
+    import config
+
+    model = payload.get("model")
+    if (
+        not isinstance(model, str)
+        or not model
+        or model != config.LLM_MODEL
+        or model != config.AMBIENT_LLM_MODEL
+    ):
+        return payload
+    options = payload.get("options")
+    if not isinstance(options, dict):
+        return payload
+    context = options.get("num_ctx")
+    if type(context) is not int or context not in (2048, 4096):
+        return payload
+    # Lazy to avoid the gateway/Sage import cycle. This is the same value used
+    # by foreground turns, patient prewarming, and the primary warm/load pings.
+    from services.sage_service import INTERACTIVE_NUM_CTX
+
+    return {**payload, "options": {**options, "num_ctx": INTERACTIVE_NUM_CTX}}
+
 
 class LaneYielded(asyncio.TimeoutError):
     """A P3 request gave the background lane back before the model answered.
@@ -60,13 +106,12 @@ class LaneYielded(asyncio.TimeoutError):
     """
 
 
-def _url(path: str) -> str:
+def _url(path: str, model: str | None = None) -> str:
     # Read at call time, not import time: tests point config.OLLAMA_BASE_URL at
     # a closed port to reproduce a dead daemon.
-    import config
-    from offline_policy import local_model_origin
+    from services.local_inference_routing import inference_url
 
-    return f"{local_model_origin(config.OLLAMA_BASE_URL)}{path}"
+    return inference_url(path, model=model)
 
 
 async def _record(
@@ -140,14 +185,18 @@ async def post(
     no inference happened.
     """
     refuse_when_models_off(f"ollama_gateway.post {purpose}")
+    payload = _shared_ambient_context(payload, purpose)
     t0 = time.monotonic()
     outcome, detail = "error", None
     try:
         if yield_to_clinician:
-            resp = await _post_yielding(client, _url(path), payload)
+            resp = await _post_yielding(client, _url(path, payload.get("model")), payload)
         else:
-            resp = await client.post(_url(path), json=payload)
+            resp = await client.post(_url(path, payload.get("model")), json=payload)
         status = getattr(resp, "status_code", 200)
+        from services.local_inference_routing import record_worker_status
+
+        record_worker_status(status)
         if status == 200:
             outcome = "served"
         else:
@@ -161,6 +210,12 @@ async def post(
         raise
     except Exception as e:
         # The class only: an exception message can quote the request.
+        import httpx
+
+        from services.local_inference_routing import record_worker_transport_failure
+
+        if isinstance(e, httpx.TransportError):
+            record_worker_transport_failure()
         detail = type(e).__name__
         raise
     finally:
@@ -192,14 +247,19 @@ async def stream(
     t0 = time.monotonic()
     outcome, detail = "error", None
     try:
-        async with client.stream("POST", _url(path), json=payload) as response:
+        async with client.stream("POST", _url(path, payload.get("model")), json=payload) as response:
             status = getattr(response, "status_code", 200)
+            from services.local_inference_routing import record_worker_status
+
+            if status >= 400:
+                record_worker_status(status)
             try:
                 yield response
             except GeneratorExit:
                 outcome, detail = "served", "stream closed by the reader"
                 raise
             if status == 200:
+                record_worker_status(status)
                 outcome = "served"
             else:
                 detail = f"HTTP {status}"
@@ -207,6 +267,12 @@ async def stream(
         detail = detail or "cancelled"
         raise
     except Exception as e:
+        import httpx
+
+        from services.local_inference_routing import record_worker_transport_failure
+
+        if isinstance(e, httpx.TransportError):
+            record_worker_transport_failure()
         detail = detail or type(e).__name__
         raise
     finally:

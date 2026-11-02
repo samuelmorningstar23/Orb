@@ -7,8 +7,10 @@ import re
 from collections.abc import AsyncGenerator
 
 import httpx
-from config import LLM_MODEL, OLLAMA_KEEP_ALIVE
 from database import db_session, get_db, run_db
+
+from config import LLM_MODEL, OLLAMA_KEEP_ALIVE
+from services.local_model_http import local_model_ssl_context
 
 logger = logging.getLogger(__name__)
 
@@ -359,11 +361,10 @@ def get_patient_status_simple(user_id: str) -> dict:
     # portal shows. It used to come from the latest risk_scores row, written
     # by a different lane at a different time, so a portal could print SpO2 85%
     # under "This is a normal precaution".
-    vitals = db.execute(
-        "SELECT * FROM vitals WHERE patient_id = ? AND voided_at IS NULL "
-        "ORDER BY timestamp DESC, id DESC LIMIT 1",
-        (patient["id"],),
-    ).fetchone()
+    from services.bridge_stay import current_vitals
+
+    current = current_vitals(db, patient["id"], limit=1)
+    vitals = current[0] if current else None
 
     db.close()
 
@@ -501,9 +502,9 @@ Current Vitals:
     from services import ollama_gateway
     from services.llm_queue_service import llm_queue
 
-    await llm_queue.acquire(priority=2)
+    ticket = await llm_queue.acquire(priority=2, model=choice.model)
     try:
-        async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
+        async with httpx.AsyncClient(verify=local_model_ssl_context(), timeout=120.0, trust_env=False) as client:
             async with ollama_gateway.stream(
                 client,
                 "/api/chat",
@@ -536,4 +537,4 @@ Current Vitals:
                 finally:
                     await response.aclose()
     finally:
-        llm_queue.release()
+        llm_queue.release(ticket)

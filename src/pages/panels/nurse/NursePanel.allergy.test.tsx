@@ -8,7 +8,7 @@
  *     counts the doses it will refuse (`meds_allergy_blocked`). That count
  *     reached no screen, so a nurse first met the block at the bedside.
  */
-import { render, screen, fireEvent, within } from '@testing-library/react'
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MedTask, NursePatientCard, ShiftBoard } from '../../../api/nurse'
 import { clearOfflineCache } from '../../../lib/offline/phiCache'
@@ -62,7 +62,7 @@ function board(patients: NursePatientCard[], blocked = 0): ShiftBoard {
 async function renderPanel(b: ShiftBoard) {
   getShiftBoard.mockResolvedValue(b)
   render(<NursePanel />)
-  await screen.findByText(/patients$/)
+  await waitFor(() => expect(screen.getByRole('button', { name: /^Refresh$/ })).toBeEnabled())
 }
 
 beforeEach(() => {

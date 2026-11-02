@@ -102,3 +102,72 @@ async def test_max_batch_triggers_early_flush(monkeypatch):
     results = await asyncio.wait_for(asyncio.gather(*[job(i) for i in range(3)]), timeout=2.0)
     assert sorted(results) == [0, 1, 2]
     assert acquisitions["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_batch_admission_is_bounded_before_worker_acquisition(monkeypatch):
+    from services.local_inference_pool import InferenceOverloaded
+
+    q.llm_queue.active_workers = 0
+    coord = MicroBatchCoordinator(priority=PRIORITY_BACKGROUND, window_ms=5000, max_batch=8, max_pending=2)
+
+    async def job():
+        return "unused"
+
+    tasks = [asyncio.create_task(coord.run(job)) for _ in range(2)]
+    await asyncio.sleep(0)
+    with pytest.raises(InferenceOverloaded):
+        await coord.run(job)
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    # Resolve cancelled batch futures without running their closures.
+    await coord._flush_now()
+    assert coord._submitted == 0
+
+
+@pytest.mark.asyncio
+async def test_batch_declares_exact_model_and_releases_its_owned_ticket(monkeypatch):
+    calls = []
+    ticket = object()
+
+    async def acquire(**kwargs):
+        calls.append(kwargs)
+        return ticket
+
+    monkeypatch.setattr(q.llm_queue, "acquire", acquire)
+    monkeypatch.setattr(q.llm_queue, "release", lambda owned: calls.append(owned))
+    coord = MicroBatchCoordinator(priority=PRIORITY_BACKGROUND, window_ms=0, max_batch=1, model="synthetic-small")
+
+    async def job():
+        return "ok"
+
+    assert await coord.run(job) == "ok"
+    assert calls[0]["model"] == "synthetic-small"
+    assert calls[1] is ticket
+
+
+@pytest.mark.asyncio
+async def test_cancelled_submitter_does_not_hide_its_running_job_from_admission(monkeypatch):
+    from services.local_inference_pool import InferenceOverloaded
+
+    q.llm_queue.active_workers = 0
+    coord = MicroBatchCoordinator(priority=PRIORITY_BACKGROUND, window_ms=1, max_batch=8, max_pending=1)
+    started, finish = asyncio.Event(), asyncio.Event()
+
+    async def job():
+        started.set()
+        await finish.wait()
+
+    submitter = asyncio.create_task(coord.run(job))
+    await asyncio.wait_for(started.wait(), 1)
+    submitter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await submitter
+    assert coord._submitted == 1
+    with pytest.raises(InferenceOverloaded):
+        await coord.run(job)
+    flushes = tuple(coord._live_flushes)
+    finish.set()
+    await asyncio.gather(*flushes)
+    assert coord._submitted == 0

@@ -64,3 +64,12 @@ def test_a_missing_model_fails_fast_instead_of_downloading():
     verdict = out.stdout.strip().splitlines()[-1].split()
     assert verdict[0] == "REFUSED", out.stdout
     assert float(verdict[2]) < 5.0, "the refusal should be immediate, not a network timeout"
+
+
+def test_parent_and_worker_share_explicit_local_embedding_model_override(tmp_path):
+    code = "import config; print(config.EMBEDDING_MODEL)"
+    out = subprocess.run([sys.executable, "-c", code], cwd=SERVER,
+                         env=_env(ORB_EMBEDDING_MODEL=str(tmp_path)),
+                         capture_output=True, text=True, timeout=120)
+    assert out.returncode == 0, out.stderr[-2000:]
+    assert out.stdout.strip().splitlines()[-1] == str(tmp_path)

@@ -1,5 +1,3 @@
-import { readSSEEvents, parseSSEData } from './sse';
-export { readSSEEvents, parseSSEData } from './sse';
 import type {
   StoredUser,
   ApiPermissionError,
@@ -171,6 +169,7 @@ export type {
   AwaitingReceiptOrder,
   HelixStockMovement
 } from './contracts';
+import { readSSEEvents, parseSSEData } from './sse';
 /**
  * Orb Hospital OS — API Client
  * Handles all HTTP requests to the FastAPI backend.
@@ -196,7 +195,7 @@ export const API_BASE = `${API_HOST}/api`;
  * should rely on the cookie + `credentials: 'include'`, never on a stored token.
  */
 function getToken(): string | null {
-  return localStorage.getItem('orb_token');
+  try { return localStorage.getItem('orb_token'); } catch { return null; }
 }
 
 /**
@@ -254,8 +253,11 @@ export function setToken(token: string): void {
 
 /** Clear token on logout */
 export function clearToken(): void {
-  localStorage.removeItem('orb_token');
-  localStorage.removeItem('orb_user');
+  // A browser that denies storage must still be able to finish signing out.
+  try {
+    localStorage.removeItem('orb_token');
+    localStorage.removeItem('orb_user');
+  } catch { /* the session cookie is revoked separately by logoutSession */ }
 }
 
 const LOGOUT_TIMEOUT_MS = 5000;
@@ -308,13 +310,27 @@ export async function logoutSession(): Promise<boolean> {
 
 /** Store user data */
 export function setUser(user: StoredUser): void {
-  localStorage.setItem('orb_user', JSON.stringify(user));
+  try { localStorage.setItem('orb_user', JSON.stringify(user)); } catch {
+    // This is a UI convenience, not the credential. Cookie sign-in still works
+    // when storage is unavailable; a reload will ask the user to sign in again.
+  }
 }
 
 /** Get stored user data */
 export function getUser(): StoredUser | null {
-  const raw = localStorage.getItem('orb_user');
-  return raw ? (JSON.parse(raw) as StoredUser) : null;
+  try {
+    const raw = localStorage.getItem('orb_user');
+    if (!raw) return null;
+    const user: unknown = JSON.parse(raw);
+    if (user && typeof user === 'object' && !Array.isArray(user)
+        && 'id' in user && typeof user.id === 'string' && user.id.trim()
+        && 'name' in user && typeof user.name === 'string'
+        && 'role' in user && (typeof user.role === 'string' || user.role === null)) {
+      return user as StoredUser;
+    }
+  } catch { /* old or damaged browser state is not a signed-in identity */ }
+  try { localStorage.removeItem('orb_user'); } catch { /* storage unavailable */ }
+  return null;
 }
 
 /**
@@ -328,7 +344,7 @@ export function getUser(): StoredUser | null {
  */
 function notifySessionExpired(): never {
   window.dispatchEvent(new CustomEvent('orb:session-expired'));
-  throw new Error('Session expired');
+  throw Object.assign(new Error('Session expired'), { status: 401 });
 }
 
 /**
@@ -491,25 +507,65 @@ export function errorDetailMessage(detail: unknown, status: number): string {
   return unreadableReply(status)
 }
 
-/** Generic fetch wrapper with error handling */
-export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+/** An in-flight request belongs to the identity that started it. This is not
+ *  an HTTP refusal or session-expiry verdict for whoever signed in next. */
+export class ApiIdentityChangedError extends Error {
+  readonly code = 'session_identity_changed';
+
+  constructor() {
+    super('The signed-in account changed. Please retry from the current session.');
+    this.name = 'ApiIdentityChangedError';
+  }
+}
+
+export function assertSessionIdentity(identity: string | null): void {
+  if ((getUser()?.id ?? null) !== identity) throw new ApiIdentityChangedError();
+}
+
+/** A stream is complete only after its endpoint's saved-record verdict. */
+export class ApiStreamError extends Error {
+  readonly code: string;
+  constructor(message: string, code: string) {
+    super(message);
+    this.name = 'ApiStreamError';
+    this.code = code;
+  }
+}
+
+/** Both JSON and text requests share the session/identity boundary. */
+async function requestWithSession<T>(path: string, options: RequestInit,
+  decode: (response: Response) => Promise<T>,
+  makeHeaders: typeof buildHeaders = buildHeaders): Promise<T> {
+  const callerStoredUserId = getUser()?.id ?? null;
+  const anonymousAuth = UNAUTHENTICATED_AUTH_PATHS.has(path);
+  const assertIdentityUnchanged = () => {
+    if (!anonymousAuth) assertSessionIdentity(callerStoredUserId);
+  };
   // Headers are (re)built per attempt: a refresh rotates the CSRF cookie, so a
   // retried mutation must echo the NEW token, not a stale snapshot.
-  const doFetch = () =>
-    fetch(`${API_BASE}${path}`, {
+  const doFetch = () => {
+    assertIdentityUnchanged();
+    return fetch(`${API_BASE}${path}`, {
       ...options,
       // Send the HttpOnly session cookie with every request.
       credentials: 'include',
-      headers: buildHeaders((options.method as string) || 'GET', options.headers as Record<string, string>),
+      headers: makeHeaders((options.method as string) || 'GET', options.headers as Record<string, string>),
     });
+  };
 
   let response = await doFetch();
+  assertIdentityUnchanged();
 
-  if (response.status === 401 && !UNAUTHENTICATED_AUTH_PATHS.has(path)) {
+  if (response.status === 401 && !anonymousAuth) {
     // The refresh endpoint itself 401ing IS the dead-session verdict — no
     // second refresh for it.
-    if (path !== '/auth/refresh' && (await refreshSession())) {
-      response = await doFetch();
+    if (path !== '/auth/refresh') {
+      const refreshed = await refreshSession();
+      assertIdentityUnchanged();
+      if (refreshed) {
+        response = await doFetch();
+        assertIdentityUnchanged();
+      }
     }
     if (response.status === 401) {
       notifySessionExpired();
@@ -517,11 +573,14 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
   }
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: unreadableReply(response.status) }));
+    const decoded = await response.json().catch(() => ({ detail: unreadableReply(response.status) }));
+    const error = decoded && typeof decoded === 'object' && !Array.isArray(decoded) ? decoded : {};
+    assertIdentityUnchanged();
 
     // Structured 403 from RBAC layer
     if (response.status === 403) {
-      const detail = typeof error.detail === 'object' ? error.detail : { message: error.detail };
+      const detail = error.detail && typeof error.detail === 'object' && !Array.isArray(error.detail)
+        ? error.detail : { message: errorDetailMessage(error.detail, response.status) };
       const permError = new Error(detail.message || 'Insufficient permissions') as ApiPermissionError;
       permError.status = 403;
       permError.permissions = detail;
@@ -573,27 +632,56 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
     throw apiError;
   }
 
-  const data = await response.json();
+  const data = await decode(response);
+  assertIdentityUnchanged();
   return data;
 }
 
+/** JSON fetch wrapper with error handling and account ownership checks. */
+export function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  return requestWithSession(path, options, response => response.json() as Promise<T>);
+}
+
+/** Text exports must obey the same identity/session checks as chart JSON. */
+export function apiFetchText(path: string, options: RequestInit = {}): Promise<string> {
+  return requestWithSession(path, options, response => response.text());
+}
+
+/** Binary exports share JSON's refresh, refusal and request-owner checks. */
+export function apiFetchBlob(path: string, options: RequestInit = {}): Promise<Blob> {
+  return requestWithSession(path, options, response => response.blob());
+}
+
+/** Let the browser set a multipart boundary; rebuild CSRF headers on retry. */
+export function apiFetchMultipart<T>(path: string, body: FormData): Promise<T> {
+  return requestWithSession(path, { method: 'POST', body }, response => response.json() as Promise<T>,
+    () => buildUploadHeaders());
+}
+
 /** Helper to handle errors on raw fetch calls (e.g. streaming or uploads) */
-export async function handleResponseError(response: Response): Promise<never> {
+export async function handleResponseError(response: Response,
+  callerIdentity: string | null = getUser()?.id ?? null): Promise<never> {
+  assertSessionIdentity(callerIdentity);
   if (response.status === 401) {
     // Streaming/upload callers can't be replayed from here (the request body is
     // gone), but the SESSION can still be repaired: refresh once, and only
     // declare the session dead when that fails. On success the caller's normal
     // error path runs and the user's next attempt rides the fresh session.
-    if (await refreshSession()) {
+    const refreshed = await refreshSession();
+    assertSessionIdentity(callerIdentity);
+    if (refreshed) {
       throw new Error('Session refreshed: please retry');
     }
     notifySessionExpired();
   }
 
-  const error = await response.json().catch(() => ({ detail: unreadableReply(response.status) }));
+  const decoded = await response.json().catch(() => ({ detail: unreadableReply(response.status) }));
+  const error = decoded && typeof decoded === 'object' && !Array.isArray(decoded) ? decoded : {};
+  assertSessionIdentity(callerIdentity);
 
   if (response.status === 403) {
-    const detail = typeof error.detail === 'object' ? error.detail : { message: error.detail };
+    const detail = error.detail && typeof error.detail === 'object' && !Array.isArray(error.detail)
+      ? error.detail : { message: errorDetailMessage(error.detail, response.status) };
     const permError = new Error(detail.message || 'Insufficient permissions') as ApiPermissionError;
     permError.status = 403;
     permError.permissions = detail;
@@ -613,18 +701,38 @@ export async function handleResponseError(response: Response): Promise<never> {
 
 /** Read an SSE response body and yield each raw event (the text between the
  *  `\n\n` delimiters). Yields nothing if the body is not readable. */
-
-
-/** Reconstruct the data payload of a single SSE event: strip the `data: ` prefix
- *  from each line (keeping any non-prefixed lines verbatim, matching the prior
- *  permissive behavior), joined by newlines. */
-
+// Public compatibility exports; protocol framing has no auth/session dependency.
+export { readSSEEvents, parseSSEData } from './sse';
 
 const OFFLINE_QUEUE_KEY = 'orb_offline_queue';
 
 function getOfflineQueue(): OfflineRequest[] {
-  const q = localStorage.getItem(OFFLINE_QUEUE_KEY);
-  return q ? JSON.parse(q) : [];
+  try {
+    const raw = localStorage.getItem(OFFLINE_QUEUE_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      // Validate each envelope independently. One damaged entry must neither
+      // crash sign-out/replay nor discard its neighbours' valid clinical work.
+      const valid = parsed.filter((entry): entry is OfflineRequest => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
+        const r = entry as Record<string, unknown>;
+        return typeof r.id === 'string' && !!r.id.trim()
+          && typeof r.url === 'string' && r.url.startsWith('/')
+          && typeof r.method === 'string' && UNSAFE_METHODS.has(r.method.toUpperCase())
+          && typeof r.timestamp === 'number' && Number.isFinite(r.timestamp)
+          && Object.prototype.hasOwnProperty.call(r, 'body')
+          && (r.userId === undefined || typeof r.userId === 'string')
+          && (r.idempotencyKey === undefined || typeof r.idempotencyKey === 'string');
+      });
+      if (valid.length !== parsed.length) {
+        try { setOfflineQueue(valid); } catch { /* preserve readable work if storage is full */ }
+      }
+      return valid;
+    }
+  } catch { /* unreadable browser state cannot be replayed safely */ }
+  try { localStorage.removeItem(OFFLINE_QUEUE_KEY); } catch { /* storage unavailable */ }
+  return [];
 }
 
 function setOfflineQueue(queue: OfflineRequest[]) {
@@ -641,7 +749,7 @@ function setOfflineQueue(queue: OfflineRequest[]) {
  */
 export function clearOfflineQueue(): number {
   const n = getOfflineQueue().length;
-  localStorage.removeItem(OFFLINE_QUEUE_KEY);
+  try { localStorage.removeItem(OFFLINE_QUEUE_KEY); } catch { /* storage unavailable */ }
   return n;
 }
 
@@ -742,6 +850,17 @@ export async function processOfflineQueue() {
   if (processingOfflineQueue) return;
   processingOfflineQueue = true;
 
+  // Ownership checks and persistence can fail too, before the first request.
+  // Always release the lock so one failure cannot disable every later replay.
+  try {
+    await replayOfflineQueue();
+  } finally {
+    processingOfflineQueue = false;
+  }
+}
+
+async function replayOfflineQueue() {
+
   // OWNERSHIP, before anything goes on the wire.
   //
   // A replay is sent on the CURRENT session's cookie, so a write queued by the
@@ -760,7 +879,6 @@ export async function processOfflineQueue() {
   //                     refused rather than attributed to a guess.
   const currentUserId = getUser()?.id ?? null;
   if (!currentUserId) {
-    processingOfflineQueue = false;
     return;
   }
   const foreign = clearForeignOfflineQueue(currentUserId);
@@ -781,52 +899,57 @@ export async function processOfflineQueue() {
   // still-unreachable server can't spin the loop.
   const deferred = new Set<string>();
 
-  try {
-    // Outer loop picks up anything queued WHILE we were replaying (connectivity
-    // flapping is exactly when that happens), which would otherwise sit until
-    // the next 'online' event.
-    for (;;) {
-      const queue = getOfflineQueue().filter((r) => !deferred.has(r.id));
-      if (queue.length === 0) break;
+  // Outer loop picks up anything queued WHILE we were replaying (connectivity
+  // flapping is exactly when that happens), which would otherwise sit until
+  // the next 'online' event.
+  for (;;) {
+    const queue = getOfflineQueue().filter((r) => !deferred.has(r.id));
+    if (queue.length === 0) break;
 
-      for (const req of queue) {
-        try {
-          await apiFetch(req.url, {
-            method: req.method,
-            // Replay with the same Idempotency-Key the original attempt carried, so
-            // the server can dedupe if it already processed this request but the
-            // response was lost (prevents duplicate med orders / notes).
-            headers: req.idempotencyKey ? { 'Idempotency-Key': req.idempotencyKey } : undefined,
-            body: typeof req.body === 'string' ? req.body : JSON.stringify(req.body),
-          });
-        } catch (e) {
-          if (isPermanentReplayFailure(e)) {
-            // A 4xx that will never succeed on retry (validation error, the order is
-            // no longer active, permission revoked). Retrying forever would both spin
-            // and hide the failure — the UI already reported this action as "saved".
-            // Drop it from the queue and surface it so a clinician can re-do it,
-            // rather than silently discarding a note/administration or looping.
-            console.error('Queued request permanently failed, dropping:', req.url, e);
-            failed.push(req);
-          } else {
-            console.error('Failed to sync queued request, will retry later:', req.url, e);
-            // Keep transient failures (network / 5xx) to retry on the next online/sync
-            // event. The shared Idempotency-Key makes a retry safe even if the server
-            // already received the original but the response was lost. It is already
-            // persisted, so nothing needs writing here.
-            deferred.add(req.id);
-            continue;
-          }
+    for (const req of queue) {
+      // A session can end while the previous request is in flight. Never
+      // send the rest of that snapshot as the next person at the tablet, or
+      // replay an item sign-out has already removed from persistent storage.
+      if (getUser()?.id !== currentUserId) return;
+      if (!getOfflineQueue().some(r => r.id === req.id && r.userId === currentUserId)) continue;
+      try {
+        await apiFetch(req.url, {
+          method: req.method,
+          // Replay with the same Idempotency-Key the original attempt carried, so
+          // the server can dedupe if it already processed this request but the
+          // response was lost (prevents duplicate med orders / notes).
+          headers: req.idempotencyKey ? { 'Idempotency-Key': req.idempotencyKey } : undefined,
+          body: typeof req.body === 'string' ? req.body : JSON.stringify(req.body),
+        });
+      } catch (e) {
+        // An auth refresh may have overlapped sign-out/sign-in. Keep the old
+        // author's persisted work and stop; this is no verdict on the new
+        // clinician's session and must not be reported as their failed write.
+        if (e instanceof ApiIdentityChangedError) return;
+        if (isPermanentReplayFailure(e)) {
+          // A 4xx that will never succeed on retry (validation error, the order is
+          // no longer active, permission revoked). Retrying forever would both spin
+          // and hide the failure — the UI already reported this action as "saved".
+          // Drop it from the queue and surface it so a clinician can re-do it,
+          // rather than silently discarding a note/administration or looping.
+          console.error('Queued request permanently failed, dropping:', req.url, e);
+          failed.push(req);
+        } else {
+          console.error('Failed to sync queued request, will retry later:', req.url, e);
+          // Keep transient failures (network / 5xx) to retry on the next online/sync
+          // event. The shared Idempotency-Key makes a retry safe even if the server
+          // already received the original but the response was lost. It is already
+          // persisted, so nothing needs writing here.
+          deferred.add(req.id);
+          continue;
         }
-        // Persist after each item so a crash mid-loop never loses confirmed-or-pending
-        // work. This is a read-modify-write against CURRENT storage keyed by request
-        // id: a request queued during the await above exists only in localStorage, and
-        // writing back any array derived from the pre-loop snapshot would erase it.
-        setOfflineQueue(getOfflineQueue().filter((r) => r.id !== req.id));
       }
+      // Persist after each item so a crash mid-loop never loses confirmed-or-pending
+      // work. This is a read-modify-write against CURRENT storage keyed by request
+      // id: a request queued during the await above exists only in localStorage, and
+      // writing back any array derived from the pre-loop snapshot would erase it.
+      setOfflineQueue(getOfflineQueue().filter((r) => r.id !== req.id));
     }
-  } finally {
-    processingOfflineQueue = false;
   }
 
   // Surface permanently-failed replays so the app can warn the clinician that a
@@ -1038,6 +1161,7 @@ export async function querySage(
    *  (Scribe demographics extraction, ward brief) wants. */
   conversationId?: string
 ): Promise<string> {
+  const callerIdentity = getUser()?.id ?? null;
   // Merge of two branches: keep the page-aware `view_context` payload (from the
   // Sage streaming work) AND the cookie/CSRF auth (from Deferred A) — no Bearer
   // header; the session cookie authenticates via credentials:'include'.
@@ -1060,35 +1184,45 @@ export async function querySage(
     signal,
   });
 
-  if (!response.ok) await handleResponseError(response);
+  assertSessionIdentity(callerIdentity);
+  if (!response.ok) await handleResponseError(response, callerIdentity);
 
   let fullResponse = '';
+  let completed = false;
 
   for await (const event of readSSEEvents(response)) {
+    assertSessionIdentity(callerIdentity);
+    let data;
     try {
-      const data = JSON.parse(parseSSEData(event));
-      // Progress stages: the backend brackets its two long phases (guideline
-      // retrieval, then local-model generation) so the UI can show honest
-      // status instead of minutes of anonymous typing dots.
-      if (data.stage !== undefined) {
-        onStage?.(data.stage, data.retrieval_ms);
-      }
-      if (data.content !== undefined) {
-        fullResponse += data.content;
-        onChunk?.(fullResponse);
-      }
-      if (data.metadata !== undefined) {
-        onMetadata?.(data.metadata);
-      }
-      if (data.structured_response !== undefined) {
-        onMetadata?.({ _structured_response: data.structured_response });
-      }
+      data = JSON.parse(parseSSEData(event));
     } catch {
-      // Not JSON (an SSE framing artifact): skip the event. A throw from one
-      // of the callbacks above is swallowed here too.
+      continue; // Preserve compatibility with non-JSON framing artifacts.
     }
+    if (!data || typeof data !== 'object') continue;
+    if (data.error) throw new ApiStreamError('Sage could not complete the answer. Please retry.',
+      typeof data.code === 'string' ? data.code : 'sage_stream_failed');
+    // Progress stages: the backend brackets retrieval and model generation.
+    if (data.stage !== undefined) {
+      onStage?.(data.stage, data.retrieval_ms);
+    }
+    if (data.content !== undefined) {
+      assertSessionIdentity(callerIdentity);
+      fullResponse += data.content;
+      onChunk?.(fullResponse);
+    }
+    if (data.metadata !== undefined) {
+      assertSessionIdentity(callerIdentity);
+      onMetadata?.(data.metadata);
+    }
+    if (data.structured_response !== undefined) {
+      assertSessionIdentity(callerIdentity);
+      onMetadata?.({ _structured_response: data.structured_response });
+    }
+    if (data.done === true) completed = true;
   }
 
+  assertSessionIdentity(callerIdentity);
+  if (!completed) throw new ApiStreamError('The Sage stream ended before the answer was complete. Please retry.', 'sage_stream_incomplete');
   return fullResponse;
 }
 
@@ -1127,6 +1261,7 @@ interface SageVoiceEvent {
   done?: boolean;
   timing?: SageVoiceTiming;
   error?: string;
+  code?: string;
 }
 
 export async function querySageVoice(
@@ -1137,6 +1272,7 @@ export async function querySageVoice(
   conversationHistory?: Array<{ query: string; response: string }>,
   viewContext?: Record<string, unknown>,
 ): Promise<{ fullResponse: string; timing?: SageVoiceTiming }> {
+  const callerIdentity = getUser()?.id ?? null;
   const body: Record<string, unknown> = { query, patient_id: patientId };
   if (conversationHistory && conversationHistory.length > 0) {
     body.conversation_history = conversationHistory;
@@ -1150,12 +1286,15 @@ export async function querySageVoice(
     signal,
   });
 
-  if (!response.ok) await handleResponseError(response);
+  assertSessionIdentity(callerIdentity);
+  if (!response.ok) await handleResponseError(response, callerIdentity);
 
   let fullResponse = '';
   let timing: SageVoiceTiming | undefined = undefined;
+  let completed = false;
 
   for await (const event of readSSEEvents(response)) {
+    assertSessionIdentity(callerIdentity);
     // The error check must sit OUTSIDE the parse try/catch — a catch that also
     // covers the throw swallows it, and the call then resolves as a successful
     // but empty answer.
@@ -1169,21 +1308,26 @@ export async function querySageVoice(
     // The server emits `{"error": ...}` and closes the stream when the voice
     // agent is disabled or the model fails. Propagate it so the caller's error
     // path runs instead of Sage "answering" with silence.
-    if (data.error) throw new Error(data.error);
+    if (data.error) throw new ApiStreamError('Sage could not complete the spoken answer. Please retry.',
+      typeof data.code === 'string' ? data.code : 'sage_voice_stream_failed');
     if (data.token !== undefined) {
       fullResponse += data.token;
       onToken?.(data.token);
     }
-    if (data.done && data.timing) {
+    if (data.done === true) {
+      completed = true;
       timing = data.timing;
     }
   }
 
+  assertSessionIdentity(callerIdentity);
+  if (!completed) throw new ApiStreamError('The spoken Sage stream ended before the answer was complete. Please retry.', 'sage_voice_stream_incomplete');
   return { fullResponse, timing };
 }
 
 // ─── Scribe ───
 export async function transcribeAudio(audioBlob: Blob, hints?: string, skipCorrection?: boolean, language?: string): Promise<{ transcript: string; audio_path: string }> {
+  const callerIdentity = getUser()?.id ?? null;
   const formData = new FormData();
   formData.append('audio', audioBlob, 'recording.webm');
   if (hints) {
@@ -1203,11 +1347,15 @@ export async function transcribeAudio(audioBlob: Blob, hints?: string, skipCorre
     body: formData,
   });
 
-  if (!response.ok) await handleResponseError(response);
-  return response.json();
+  assertSessionIdentity(callerIdentity);
+  if (!response.ok) await handleResponseError(response, callerIdentity);
+  const result = await response.json();
+  assertSessionIdentity(callerIdentity);
+  return result;
 }
 
 export async function transcribeChunk(audioBlob: Blob, chunkIndex: number, hints?: string): Promise<{ text: string; chunk_index: number }> {
+  const callerIdentity = getUser()?.id ?? null;
   const formData = new FormData();
   formData.append('audio', audioBlob, `chunk_${chunkIndex}.webm`);
   formData.append('chunk_index', String(chunkIndex));
@@ -1222,13 +1370,18 @@ export async function transcribeChunk(audioBlob: Blob, chunkIndex: number, hints
     body: formData,
   });
 
+  assertSessionIdentity(callerIdentity);
   if (!response.ok) {
-    if (response.status === 401) {
-      notifySessionExpired();
+    try {
+      await handleResponseError(response, callerIdentity);
+    } catch (failure) {
+      if (failure instanceof ApiIdentityChangedError || response.status === 401 || response.status === 403) throw failure;
+      throw new ApiStreamError('Speech transcription failed. Please retry.', 'scribe_transcription_failed');
     }
-    return { text: '', chunk_index: chunkIndex };
   }
-  return response.json();
+  const result = await response.json();
+  assertSessionIdentity(callerIdentity);
+  return result;
 }
 
 /** One event on the /scribe/structure stream. */
@@ -1241,6 +1394,8 @@ interface ScribeStructureEvent {
   pipeline?: ScribePipelineMeta;
   verification?: ScribeVerification;
   error?: string;
+  code?: string;
+  terminal?: boolean;
 }
 
 export async function structureNote(
@@ -1259,6 +1414,7 @@ export async function structureNote(
   /** The saved note's status from the done event ('draft' today). */
   status?: string;
 }> {
+  const callerIdentity = getUser()?.id ?? null;
   const response = await fetch(`${API_BASE}/scribe/structure`, {
     method: 'POST',
     credentials: 'include',
@@ -1266,7 +1422,8 @@ export async function structureNote(
     body: JSON.stringify({ transcript, format, patient_id: patientId, audio_path: audioPath, verify }),
   });
 
-  if (!response.ok) await handleResponseError(response);
+  assertSessionIdentity(callerIdentity);
+  if (!response.ok) await handleResponseError(response, callerIdentity);
 
   let fullResponse = '';
   let noteId = 0;
@@ -1275,6 +1432,7 @@ export async function structureNote(
   let noteStatus: string | undefined = undefined;
 
   for await (const event of readSSEEvents(response)) {
+    assertSessionIdentity(callerIdentity);
     // Parse failures are skipped, but a real stream error must escape the loop —
     // it must not be thrown from inside a try whose catch swallows it, or the
     // caller gets { id: 0, structured_note: <truncated> } and reports it complete.
@@ -1287,7 +1445,7 @@ export async function structureNote(
     if (!data || typeof data !== 'object') continue;
     // Mid-stream `{"error": ...}`: the server aborted and saved no note, so the
     // caller must see a failure rather than a silently truncated note.
-    if (data.error) throw new Error(data.error);
+    if (data.error) throw new ApiStreamError(data.error, data.code || 'scribe_stream_failed');
     if (data.content !== undefined) {
       fullResponse += data.content;
       onChunk?.(fullResponse);
@@ -1299,6 +1457,9 @@ export async function structureNote(
       noteStatus = data.status;
     }
   }
+
+  assertSessionIdentity(callerIdentity);
+  if (!noteId) throw new ApiStreamError('The note stream ended before a saved draft was confirmed. Please retry.', 'scribe_stream_incomplete');
 
   return {
     id: noteId, structured_note: fullResponse, format,
@@ -1398,6 +1559,7 @@ export async function askBridge(
   question: string,
   onChunk?: (chunk: string) => void,
 ): Promise<string> {
+  const callerIdentity = getUser()?.id ?? null;
   const response = await fetch(`${API_BASE}/bridge/ask`, {
     method: 'POST',
     credentials: 'include',
@@ -1405,23 +1567,26 @@ export async function askBridge(
     body: JSON.stringify({ question }),
   });
 
-  if (!response.ok) await handleResponseError(response);
+  assertSessionIdentity(callerIdentity);
+  if (!response.ok) await handleResponseError(response, callerIdentity);
 
   let fullResponse = '';
 
   for await (const event of readSSEEvents(response)) {
+    assertSessionIdentity(callerIdentity);
+    let data;
     try {
-      const data = JSON.parse(parseSSEData(event));
-      if (data.content !== undefined) {
-        fullResponse += data.content;
-        onChunk?.(fullResponse);
-      }
+      data = JSON.parse(parseSSEData(event));
     } catch {
-      // Not JSON (an SSE framing artifact): skip the event. A throw from
-      // onChunk is swallowed here too.
+      continue;
+    }
+    if (data && typeof data === 'object' && data.content !== undefined) {
+      fullResponse += data.content;
+      onChunk?.(fullResponse);
     }
   }
 
+  assertSessionIdentity(callerIdentity);
   return fullResponse;
 }
 
@@ -1659,17 +1824,17 @@ export async function resolveEscalation(
  * caller can drop into <img src>. The caller is responsible for revoking it.
  */
 export async function getDischargeQrObjectUrl(qrUrl: string): Promise<string> {
+  const callerIdentity = getUser()?.id ?? null;
   // qrUrl from the server is API-rooted (e.g. "/api/vigil/patients/X/qr").
   const path = qrUrl.replace(/^\/api/, '');
   const response = await fetch(`${API_BASE}${path}`, {
     credentials: 'include',
     headers: buildHeaders('GET'),
   });
-  if (!response.ok) {
-    if (response.status === 401) notifySessionExpired();
-    throw new Error(`Failed to load discharge QR: ${response.status}`);
-  }
+  assertSessionIdentity(callerIdentity);
+  if (!response.ok) await handleResponseError(response, callerIdentity);
   const blob = await response.blob();
+  assertSessionIdentity(callerIdentity);
   return URL.createObjectURL(blob);
 }
 
@@ -1683,6 +1848,7 @@ export async function analyzeLensImage(
   options: { clinical_context?: string; patient_id?: string; image_type?: string },
   onChunk?: (chunk: string) => void,
 ): Promise<{ text: string; analysisId: number | null }> {
+  const callerIdentity = getUser()?.id ?? null;
   const formData = new FormData();
   formData.append('image', imageFile);
   if (options.clinical_context) formData.append('clinical_context', options.clinical_context);
@@ -1696,29 +1862,37 @@ export async function analyzeLensImage(
     body: formData,
   });
 
-  if (!response.ok) await handleResponseError(response);
+  assertSessionIdentity(callerIdentity);
+  if (!response.ok) await handleResponseError(response, callerIdentity);
 
   let fullResponse = '';
   // Concrete id of the row the server just created, emitted as a final JSON SSE
   // event before [DONE]. Threading this through lets the caller file the reviewed
   // findings to THIS analysis rather than guessing the global newest one.
   let analysisId: number | null = null;
+  let completed = false;
 
   for await (const event of readSSEEvents(response)) {
+    assertSessionIdentity(callerIdentity);
     const eventData = parseSSEData(event);
-    if (eventData === '[DONE]' || eventData.includes('[DONE]')) continue;
+    if (eventData === '[DONE]') { completed = true; break; }
 
-    // The final metadata event is a JSON object carrying the analysis id.
-    // Capture it and do NOT append it to the visible analysis text.
+    // New servers frame tokens as JSON, preserving newlines and literal control
+    // text. Accept legacy raw tokens while an older offline appliance upgrades.
     if (eventData.startsWith('{')) {
+      let meta: { error?: string; code?: string; content?: unknown; analysis_id?: unknown } | null = null;
       try {
-        const meta = JSON.parse(eventData);
-        if (meta && typeof meta.analysis_id === 'number') {
-          analysisId = meta.analysis_id;
-          continue;
-        }
-      } catch {
-        // Not the metadata event — fall through and treat as analysis text.
+        meta = JSON.parse(eventData);
+      } catch { /* Legacy raw model text need not be JSON. */ }
+      if (meta?.error) throw new ApiStreamError(meta.error, meta.code || 'lens_stream_failed');
+      if (typeof meta?.content === 'string') {
+        fullResponse += meta.content;
+        onChunk?.(fullResponse);
+        continue;
+      }
+      if (typeof meta?.analysis_id === 'number' && Number.isInteger(meta.analysis_id) && meta.analysis_id > 0) {
+        analysisId = meta.analysis_id;
+        continue;
       }
     }
 
@@ -1726,6 +1900,8 @@ export async function analyzeLensImage(
     onChunk?.(fullResponse);
   }
 
+  assertSessionIdentity(callerIdentity);
+  if (!completed || analysisId === null) throw new ApiStreamError('The image stream ended before saved findings were confirmed. Please retry.', 'lens_stream_incomplete');
   return { text: fullResponse, analysisId };
 }
 
@@ -1735,6 +1911,7 @@ export async function getLensAnalyses(patientId?: string): Promise<LensAnalysisR
 }
 
 export async function assignLensToPatient(analysisId: number, patientId: string, reviewedText?: string): Promise<{ status: string; patient_name: string }> {
+  const callerIdentity = getUser()?.id ?? null;
   const formData = new FormData();
   formData.append('patient_id', patientId);
   if (reviewedText != null) formData.append('reviewed_text', reviewedText);
@@ -1746,8 +1923,11 @@ export async function assignLensToPatient(analysisId: number, patientId: string,
     body: formData,
   });
 
-  if (!response.ok) await handleResponseError(response);
-  return response.json();
+  assertSessionIdentity(callerIdentity);
+  if (!response.ok) await handleResponseError(response, callerIdentity);
+  const result = await response.json();
+  assertSessionIdentity(callerIdentity);
+  return result;
 }
 
 export async function getPatientsList(): Promise<{ id: string; name: string; bed: string }[]> {
@@ -1787,6 +1967,7 @@ export async function getSurgeryRiskAssessment(
   onChunk?: (chunk: string) => void,
   signal?: AbortSignal,
 ): Promise<string> {
+  const callerIdentity = getUser()?.id ?? null;
   const response = await fetch(`${API_BASE}/surgery/${surgeryId}/risk`, {
     method: 'GET',
     credentials: 'include',
@@ -1794,11 +1975,13 @@ export async function getSurgeryRiskAssessment(
     signal,
   });
 
-  if (!response.ok) await handleResponseError(response);
+  assertSessionIdentity(callerIdentity);
+  if (!response.ok) await handleResponseError(response, callerIdentity);
 
   let fullResponse = '';
 
   for await (const event of readSSEEvents(response)) {
+    assertSessionIdentity(callerIdentity);
     const eventData = parseSSEData(event);
     if (eventData === '[DONE]' || eventData.includes('[DONE]')) continue;
 
@@ -1814,6 +1997,7 @@ export async function getSurgeryRiskAssessment(
     }
   }
 
+  assertSessionIdentity(callerIdentity);
   return fullResponse;
 }
 

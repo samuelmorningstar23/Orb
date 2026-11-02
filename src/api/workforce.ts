@@ -10,21 +10,14 @@
  * `statutory_computed_by`, which is what makes that boundary visible on the
  * bureau's desk rather than only in a design document.
  *
- * WHY THIS FILE USES A RAW `fetch` INSTEAD OF `apiFetch`.
- * The shared wrapper flattens an error body down to a message string. Every
- * refusal this module can produce is one the UI has to react to DIFFERENTLY —
- * `module_disabled` is a whole-panel state, `roster_conflict` needs the list of
- * clashing shifts next to the form, `leave_type_required` belongs on one field,
- * `span_too_long` needs the times highlighted — so the machine-readable `error`
- * code (and, for a conflict, the `conflicts` array) has to survive the trip.
- * `request()` below keeps both on a typed `WorkforceApiError`, and still sends
- * the session cookie and CSRF token exactly the way `apiFetch` does.
+ * Shared transport handles session ownership, refresh and CSRF. Domain errors
+ * keep their machine-readable codes and structured refusal details.
  *
  * DURATIONS ARE INTEGER MINUTES on the wire. Decimal hours travel as STRINGS
  * the server rendered ("7.50"), never as floats — the panel displays the
  * server's own string so the screen can never disagree with the file.
  */
-import { buildHeaders, API_BASE, errorDetailMessage } from './client';
+import { domainRequest } from './domainTransport';
 
 /** A refusal from the workforce API, with its machine-readable code intact. */
 export class WorkforceApiError extends Error {
@@ -48,23 +41,10 @@ export class WorkforceApiError extends Error {
   }
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API_BASE}/workforce${path}`, {
-    ...options,
-    credentials: 'include',
-    headers: buildHeaders((options.method as string) || 'GET'),
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => null);
-    const detail = body && typeof body.detail === 'object' ? body.detail : null;
-    throw new WorkforceApiError(
-      errorDetailMessage(body?.detail, response.status),
-      response.status,
-      detail?.error || `http_${response.status}`,
-      Array.isArray(detail?.conflicts) ? detail.conflicts : [],
-    );
-  }
-  return response.json() as Promise<T>;
+function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  return domainRequest<T>(`/workforce${path}`, options,
+    (message, status, code, detail) => new WorkforceApiError(message, status, code,
+      Array.isArray(detail.conflicts) ? detail.conflicts as RosterConflictDetail[] : []));
 }
 
 function post<T>(path: string, body?: unknown): Promise<T> {

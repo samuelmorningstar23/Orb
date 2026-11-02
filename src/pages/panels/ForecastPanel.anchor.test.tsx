@@ -20,7 +20,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import ForecastPanel from './ForecastPanel'
 import { localDateKey } from '../../lib/datetime'
 
-vi.mock('../../api/client', () => ({
+vi.mock('../../api/client', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../api/client')>()),
   buildHeaders: () => ({}),
 }))
 // The chip fetches the model registry on mount; provenance is not under test.

@@ -23,6 +23,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
+from database import db_session, run_db
+from ws.realtime import sio
+
 from config import (
     SAGE_AMBIENT_CONTEXT_WINDOW,
     SAGE_AMBIENT_ENABLED,
@@ -31,9 +34,7 @@ from config import (
     SAGE_AMBIENT_SAMPLE_RATE,
     SAGE_AMBIENT_TIMEOUT_SECONDS,
 )
-from database import db_session, run_db
-from ws.realtime import sio
-
+from services.local_model_http import local_model_ssl_context
 from services.medorders.held import hold_phrase
 
 logger = logging.getLogger("orb.sage_ambient")
@@ -1682,7 +1683,7 @@ async def _ambient_ollama_call(prompt: str, system: str) -> str | None:
         return None
     from services import ollama_gateway
 
-    async with httpx.AsyncClient(timeout=SAGE_AMBIENT_TIMEOUT_SECONDS, trust_env=False) as client:
+    async with httpx.AsyncClient(verify=local_model_ssl_context(), timeout=SAGE_AMBIENT_TIMEOUT_SECONDS, trust_env=False) as client:
         resp = await ollama_gateway.post(
             client,
             "/api/generate",

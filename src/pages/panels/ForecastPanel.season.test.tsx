@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import ForecastPanel from './ForecastPanel'
 import { localDateKey } from '../../lib/datetime'
 
-vi.mock('../../api/client', () => ({ buildHeaders: () => ({}) }))
+vi.mock('../../api/client', async importOriginal => ({ ...(await importOriginal<typeof import('../../api/client')>()), buildHeaders: () => ({}) }))
 vi.mock('../../components/ProvenanceChip', () => ({ default: () => null }))
 
 function stubForecastApi(season?: unknown) {

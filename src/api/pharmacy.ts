@@ -8,7 +8,9 @@
  */
 import {
   apiFetch,
+  assertSessionIdentity,
   buildHeaders,
+  getUser,
   type HelixTransitionResult,
   type MedicationSafety,
   type SafetyAck,
@@ -123,6 +125,7 @@ export async function verifyMedication(
   corrections: { dosage?: string; route?: string; frequency?: string } = {},
   ackReason?: string,
 ): Promise<VerifyResult | SevereAckRequired> {
+  const owner = getUser()?.id ?? null;
   const response = await fetch(`${window.location.origin}/api/pharmacy/${medId}/verify`, {
     method: 'POST',
     // Cookie session + CSRF token (buildHeaders adds X-CSRF-Token for POST).
@@ -130,9 +133,11 @@ export async function verifyMedication(
     headers: buildHeaders('POST'),
     body: JSON.stringify({ ...corrections, ack_reason: ackReason || undefined }),
   });
+  assertSessionIdentity(owner);
 
   if (response.status === 428) {
     const body = await response.json().catch(() => ({ detail: {} }));
+    assertSessionIdentity(owner);
     const detail = body && typeof body.detail === 'object' && body.detail !== null ? body.detail : {};
     return {
       code: 'severe_ack_required',
@@ -148,13 +153,16 @@ export async function verifyMedication(
       throw new Error('Session expired');
     }
     const body = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    assertSessionIdentity(owner);
     const detail = body?.detail;
     throw new Error(
       typeof detail === 'string' ? detail : detail?.message || `API error: ${response.status}`,
     );
   }
 
-  return response.json();
+  const result = await response.json();
+  assertSessionIdentity(owner);
+  return result;
 }
 
 /** Reject a med → discontinued, with the reason recorded. */

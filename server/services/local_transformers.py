@@ -123,22 +123,33 @@ class LocalReranker:
     """BGE cross-encoder scores with the existing 384/512 token boundaries."""
 
     def __init__(self, model_name: str, *, use_fp16: bool = True) -> None:
+        import torch
+
         self.tokenizer, self.model, self.device = _load(
             model_name, reranker=True, use_fp16=use_fp16
         )
         if getattr(self.model.config, "num_labels", None) != 1:
             raise ValueError("Reranker must produce one relevance logit")
+        # Batch 16 retained exact tokens/scores/ranks on the qualified MPS/FP16
+        # path. Other devices and dtypes retain 8 until independently qualified.
+        self._default_batch_size = (
+            16
+            if getattr(self.device, "type", None) == "mps"
+            and getattr(self.model, "dtype", None) == torch.float16
+            else 8
+        )
 
     def compute_score(
         self,
         pairs: list[list[str]],
         *,
         normalize: bool = True,
-        batch_size: int = 8,
+        batch_size: int | None = None,
         max_length: int = 512,
     ) -> list[float]:
         import torch
 
+        batch_size = self._default_batch_size if batch_size is None else batch_size
         _positive(batch_size, "batch_size")
         _positive(max_length, "max_length")
         if not pairs:

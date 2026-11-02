@@ -143,25 +143,12 @@ Module constants: `INSIGHT_COOLDOWN_MIN = 30` (minutes before the same `dedup_ke
 **Talks to:** all vitals-reading rules.
 **Gotchas:** Returns `None` (not 0) on failure, and every rule explicitly checks `is not None` before comparing, critical, because `0.0` is a valid (alarming) vital but `None` means "no data."
 
-#### _parse_drivers: `server/services/sage_proactive_service.py:71`
-**Signature:** `(raw) -> list[str]`
-**Does:** Parses a JSON-array string of risk "drivers" (the features that pushed the score up), capped to 3 strings.
-**How it works:** `json.loads`; if it's a list, stringify each element and slice `[:3]`; any error → `[]`.
-**Data in/out:** in `'["High HR","Low SpO2"]'` → out `["High HR","Low SpO2"]`.
-**Talks to:** `evaluate_patient` Rule 1, which appends the drivers to the insight detail text.
-**Gotchas:** The `drivers` column is free-form JSON produced by the risk engine (guide 07-vigil); this parser is deliberately forgiving so a malformed value degrades to "no drivers listed" rather than crashing.
-
 #### _hours_since: `server/services/sage_proactive_service.py:81`
 **Signature:** `(ts) -> float`
 **Does:** Returns hours elapsed since an ISO timestamp; 0.0 on any parse failure.
 **How it works:** Normalizes a trailing `Z` to `+00:00`, parses with `fromisoformat`, assumes UTC if naive, subtracts from `now`.
 **Why it exists:** Rule 4 (antibiotic stewardship) needs "has this drug been running >72 h?"
 **Gotchas:** On parse failure it returns **0.0**, which means "just started", so a medication with a broken `started_at` will *never* trip the 72 h stewardship rule (fails safe toward silence, not false alarms).
-
-#### _recent_dedup_exists: `server/services/sage_proactive_service.py:92`
-**Signature:** `(db, dedup_key) -> bool`
-**Does:** Checks whether an active or recently-created insight already exists for a dedup key.
-**Status:** **Dead code.** It is defined but never called anywhere in the repo, the atomic `_insert_insight` embeds the same `WHERE NOT EXISTS` check, which superseded this check-then-insert helper (see the `_insert_insight` docstring about the race it fixed). Listed here for completeness; see Discrepancies.
 
 #### _insert_insight: `server/services/sage_proactive_service.py:100`
 **Signature:** `(db, patient_id, itype, severity, title, detail, target_user, dedup_key, action_type=None, action_target=None) -> str | None`
@@ -192,36 +179,36 @@ Module constants: `INSIGHT_COOLDOWN_MIN = 30` (minutes before the same `dedup_ke
 9. Everything is wrapped in `try/except` that just prints and returns whatever was collected.
 **Why it exists:** These are *cheap, grounded, explainable* heuristics. The docstring's philosophy: "the rules do the scanning (cheap + reliable); the message is templated from the real numbers (grounded, it cannot hallucinate a patient or a value)." No LLM is involved in Proactive, that's a deliberate safety choice for an always-on loop.
 **Data in/out:** in: a patient id. out: list of new insight ids. Side effect: rows in `sage_insights`.
-**Talks to:** `_insert_insight`, `_parse_drivers`, `_num`, `_hours_since`, `_level_rank`; called by `evaluate_all_admitted` and by the manual `/insights/evaluate` route.
+**Talks to:** `_insert_insight`, `_num`, `_hours_since`, `_level_rank`; called by `evaluate_all_admitted` and by the manual `/insights/evaluate` route.
 **Change guide (worked example).** *To add a "hypotension" rule:* after Rule 3, read systolic BP from the latest vitals via `_num`, and if `< 90`, call `_insert_insight(db, patient_id, "hypotension", "warning", f"{name} ({loc}): hypotension", f"Systolic {sbp:.0f} mmHg…", target, f"{patient_id}:hypotension")`. Knock-on: the client already renders any severity via `SEV_DOT`, so no frontend change is needed; watch out, vitals here don't currently `SELECT` a BP column, so you'd extend the vitals query at `:115` too.
 **Gotchas:**
 - The trajectory rule's ordering assumption (index 0 = latest) depends entirely on `ORDER BY id DESC` at `:117`. If someone changes that ordering, the trend direction inverts silently.
 - No rule suggests a drug (ruled 2026-10-02). `NON_ACTIONABLE_ACTION_TYPES` (`start_medication`, `stop_medication`) covers rows stored before then: `get_active_insights` hides their suggestion and `POST /insights/{id}/act` refuses them with a 400. See Discrepancies.
 
 #### evaluate_all_admitted: `server/services/sage_proactive_service.py:271`
-**Signature:** `() -> list[str]`
-**Does:** Sweeps every admitted patient and returns all new insight ids.
-**How it works:** Selects `id FROM patients WHERE status='admitted'`, then loops calling `evaluate_patient`, extending the id list. Wrapped in `try/except`.
+**Signature:** `(raised_again=None, user=None) -> list[str]`
+**Does:** Sweeps admitted patients and returns all new insight ids. The scheduled system caller has hospital-wide scope; a manual caller supplies its authenticated user and is limited to that user's chart scope.
+**How it works:** Selects admitted patient ids through `scope_patient_ids_sql`, then loops calling `evaluate_patient`, extending the id list. Discharged insights are auto-resolved within the same caller scope. Wrapped in `try/except`.
 **Why it exists:** The single entry point the 15 s background loop calls.
 **Talks to:** called from `main.py:70` (via `asyncio.to_thread`) and from the `/insights/evaluate` route with no `patient_id`.
 **Gotchas:** It's a **serial** loop, every patient is evaluated one at a time in one thread. Fine for a demo ward; at hospital scale you'd batch or parallelize. It opens a fresh `db_session()` per patient (inside `evaluate_patient`), plus one for the patient list, many short connections rather than one long one.
 
 #### get_active_insights: `server/services/sage_proactive_service.py:293`
 **Signature:** `(user_id, role) -> list[dict]`
-**Does:** Returns up to 50 active insights for this clinician, most-severe-then-newest first. Admins see all.
-**How it works:** Builds a `CASE`-based severity sort key (`critical`=0, `warning`=1, else 2). If `role == 'admin'`, returns all active insights; otherwise filters `target_user_id = ? OR target_user_id IS NULL` (unassigned insights are visible to everyone). `LEFT JOIN patients` to attach `patient_name`.
+**Does:** Returns up to 50 active insights within the clinician's patient scope, most-severe-then-newest first. Admins can see all recipients within their established scope.
+**How it works:** Loads the active user's stored role/department and derives department/facility patient scope before sorting and applying the limit. A non-admin additionally sees only their own or unassigned recipients. Builds a `CASE`-based severity sort key (`critical`=0, `warning`=1, else 2), and joins patients to attach `patient_name`. A missing/inactive user gets an empty list; passing an elevated role argument cannot override the stored account.
 **Why it exists:** The scoping is the security boundary, the socket broadcast is global, so this query is what stops one doctor seeing another's insights.
 **Data in/out:** out: list of dicts matching the `SageInsight` TypeScript interface (`client.ts:469`).
 **Talks to:** the `GET /api/sage/insights` route; consumed by `SageInsightsFeed`.
-**Gotchas:** `target_user_id IS NULL` insights are visible to *all* non-admins. Rules currently always set `target = attending_doctor_id`, which can itself be `NULL` if a patient has no attending, such insights then broadcast to every clinician. Worth knowing when assigning attendings.
+**Gotchas:** Recipient assignment never grants chart access. A `NULL` attending makes an insight unassigned, but it still cannot cross the caller's department/facility boundary. The existing hospital-wide policy for accounts without a department remains in force, as does the default multi-facility fence on unswept HTTP routes.
 
 #### transition_insight: `server/services/sage_proactive_service.py:315`
 **Signature:** `(insight_id, new_state, user_id, role) -> dict`
-**Does:** Moves an insight to `dismissed` or `acted`, guarded so a clinician can only transition insights targeted at them.
+**Does:** Moves an insight to `dismissed` or `acted` within the stored caller's chart scope and recipient assignment.
 **How it works:**
 1. Rejects any `new_state` not in `("dismissed","acted")` with `ValueError`.
 2. Loads the row; missing → `{}`.
-3. Membership guard: non-admin whose id isn't the target (and target isn't `NULL`) → `PermissionError`.
+3. Load the active stored caller; missing caller or inaccessible department/facility patient → `{}`. Then check assignment: non-admin whose id isn't the target (and target isn't `NULL`) → `PermissionError`.
 4. **Idempotent:** if already non-active, returns the row unchanged.
 5. Otherwise `UPDATE state`, returns the fresh row.
 **Why it exists:** Enforces the dismiss/act lifecycle and ownership at the service layer, so the route stays thin.
@@ -254,7 +241,7 @@ Router prefix `/api/sage` (`:11`), registered in `main.py:301`. Every route depe
 **Does:** Turns an insight's suggested action into a real Sage **action card** in the patient's Relay case room, then marks the insight `acted`. This is the bridge from Proactive into the agentic Relay loop (guide 08-relay).
 **How it works:**
 1. Load the insight; 404 if missing.
-2. Ownership guard (non-admin must be the target) → 403.
+2. Department/facility patient guard → 404, before examining the action or state. Recipient guard (non-admin must be the target or the insight must be unassigned) → 403.
 3. 400 if the insight has no `suggested_action_type`; 409 if it's not `active`.
 4. Find the patient's `case_room` channel; 404 if none.
 5. Insert a `sage_actions` row (state `suggested`, confidence `0.7`, rationale "Drafted from Sage insight: {title}") **plus** a `sage_action_events` audit row (actor = the clicking clinician).
@@ -267,11 +254,11 @@ Router prefix `/api/sage` (`:11`), registered in `main.py:301`. Every route depe
 **Gotchas:** This route writes `sage_actions` **directly** (not via the ambient service), duplicating the insert/audit pattern from `_insert_deterministic_action`. If the card schema changes, three insert sites must change in lock-step (this route, and two in the ambient service).
 
 #### evaluate: `server/routes/sage_proactive_routes.py:140`
-**Signature:** `POST /api/sage/insights/evaluate` body `{patient_id?}` → `{created, ids}`
-**Does:** Manually triggers a sweep (whole ward, or one patient), for demos/testing.
-**How it works:** Best-effort JSON parse; if `patient_id` present, `evaluate_patient(pid)`, else `evaluate_all_admitted()`. If anything was created, emit a global `sage:insight` `new` nudge with count.
-**Why it exists:** Lets a demo force insights immediately instead of waiting for the 15 s loop.
-**Gotchas:** Same permission as the read routes (`sage.query`), so any clinician can trigger a full-ward sweep. Cheap enough that this is fine, but note it's not admin-gated.
+**Signature:** `POST /api/sage/insights/evaluate` body `{patient_id?}` → `{created, ids, raised_again}`
+**Does:** Manually triggers a sweep for one authorized patient or all admitted patients within the caller's chart scope.
+**How it works:** Requires a JSON object; a supplied `patient_id` must be a non-empty string. An inaccessible or missing patient returns 404 before running rules. An empty object calls `evaluate_all_admitted` with the authenticated user. New or raised-again insights emit a global count-only nudge.
+**Why it exists:** Lets a clinician refresh surveillance after charting instead of waiting for the 15 s loop.
+**Gotchas:** It creates or changes real insight rows. Invalid JSON cannot become a whole-hospital sweep. Only the scheduled system caller retains hospital-wide evaluation and discharged-insight cleanup.
 
 ---
 
@@ -598,11 +585,11 @@ Rewritten on 4 October 2026 as a text-only orb. Line citations for the new compo
 
 ## Discrepancies and open questions
 
-1. **`asyncio` is used but never imported in `sage_ambient_service.py`.** Line 690 calls `asyncio.create_task(event_bus.publish(evt))` inside the "voice-prewarm" sniff, but the module never `import asyncio`. This raises `NameError`, which is caught by the surrounding `except Exception as bus_err` and logged only at DEBUG. **Net effect: the `relay.intent.voice_prewarm` event is never actually published**, the prewarm optimization is silently dead. Fix: add `import asyncio`.
-2. **`_recent_dedup_exists` (`sage_proactive_service.py:92`) is dead code.** It's defined but called nowhere; the atomic `_insert_insight` embeds the same check and superseded it. Harmless but misleading, a reader might think dedup runs there.
+1. **The old missing-`asyncio` import discrepancy is resolved.** The current ambient service imports it; the historical missing-import diagnosis no longer describes this checkout. Model prewarming still depends on the configured local engines.
+2. **Unused proactive helpers removed in the October audit.** `_recent_dedup_exists` was superseded by the atomic `_insert_insight` predicate. `_parse_drivers` had no remaining callers after the latest-vitals scoring path replaced stored risk-driver parsing. Neither is a current deduplication or scoring entry point.
 3. **`SAGE_AMBIENT_DEBOUNCE_SECONDS` is imported but unused** (`sage_ambient_service.py:26`, config `:191`). The dedup windows are hard-coded (60 s / 10 s in `_is_duplicate`), so this config knob does nothing. Either wire it up or drop it.
-4. **`CONFIDENCE_THRESHOLD_SUGGESTION = 0.75` is declared but unused** in `SageAmbientSidebar.tsx:9`. Action cards are shown purely by `state` (`suggested`/`acknowledged`), not by confidence, so this constant misleads anyone tuning thresholds. Only the risk threshold (0.80) is actually applied.
+4. **The old unused `CONFIDENCE_THRESHOLD_SUGGESTION` discrepancy is resolved.** The current sidebar no longer declares that constant. Do not infer a clinical approval threshold from the removed UI value.
 5. **`active_intents` is written but never displayed.** `_merge_intent`/`_update_memory` maintain `sage_room_memory.active_intents` (labeled "Stage 2 legacy"), and the `SageAmbientMemory` TS type includes it, but `SageAmbientSidebar` renders action cards from the separate `sage_actions` table instead. Dead-but-persisted data; safe to ignore, confusing to inherit.
 6. **Hard-coded antibiotic in Proactive suggestions (fixed 2026-10-02).** Rules 1 (critical) and 3 (sepsis) used to suggest the literal `IV ceftriaxone 2g` regardless of the patient's allergies, cultures, or existing meds, and a doctor confirming the drafted card charted it for a patient with a documented penicillin anaphylaxis. Both rules now carry no action; stored rows are hidden and refused server-side (see Rule 3 notes). Tests: `server/tests/test_handoff_blocked.py`.
 7. **Privacy contradiction in the hotword path: resolved 4 October 2026.** Browser `webkitSpeechRecognition` shipped audio to Google's cloud, at odds with an on-prem PHI posture. The hotword path and browser speech were removed when Orb was ruled strictly offline; the orb is text-only and no audio can reach an outside service.
-8. **`get_active_insights` broadcasts `NULL`-target insights to all non-admins.** Since rules set `target = attending_doctor_id`, a patient with no attending yields `target_user_id = NULL`, which the query shows to *every* clinician. Probably unintended for real multi-team wards.
+8. **Unassigned insight scope fixed in the October audit.** Listing applies the stored caller's department/facility chart scope before its 50-row limit. Transition, including an already-handled response, and action-card creation check patient scope before returning details or writing. Manual evaluation uses the same chart boundary and rejects malformed bodies. Recipient assignment remains an additional restriction. This closes the old `NULL`-target leak without changing the configured hospital-wide account policy or enabling multi-facility routes.

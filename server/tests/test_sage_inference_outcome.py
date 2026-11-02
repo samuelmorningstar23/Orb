@@ -12,9 +12,9 @@ the engine broke off halfway or the clinician walked away from.
 import asyncio
 
 import pytest
+from services.model_router import ModelChoice
 
 from services import sage_service
-from services.model_router import ModelChoice
 
 
 class _Provider:
@@ -37,18 +37,27 @@ class _Provider:
 def harness(monkeypatch):
     events, audits = [], []
     state = {}
+    lease = object()
 
     async def select_provider(prompt, context, patient_id, classification, route_info=None):
         return ModelChoice(model="test:27b", downgraded=False, preferred="test:27b"), state["provider"]
 
-    async def acquire(priority=1):
+    async def acquire(priority=1, *, model=None, timeout=None):
+        assert model == "test:27b"
+        assert timeout is not None and timeout > 0
         events.append("queue acquired")
+        return lease
+
+    def release(ticket):
+        assert ticket is lease, "release must own the exact request's admission ticket"
+        events.append("queue released")
+
+    from services.llm_queue_service import llm_queue
 
     from services import ai_governance, thinking_mode
-    from services.llm_queue_service import llm_queue
     monkeypatch.setattr(thinking_mode, "select_provider", select_provider)
     monkeypatch.setattr(llm_queue, "acquire", acquire)
-    monkeypatch.setattr(llm_queue, "release", lambda: events.append("queue released"))
+    monkeypatch.setattr(llm_queue, "release", release)
     monkeypatch.setattr(ai_governance, "record_inference_soon", lambda **kw: audits.append(kw))
 
     def run(chunks, fail_after=None, stop_after=None):

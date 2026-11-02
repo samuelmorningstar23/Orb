@@ -29,8 +29,10 @@ import logging
 import time
 
 import httpx
-from config import AMBIENT_LLM_MODEL, OLLAMA_KEEP_ALIVE
 from database import db_session, run_db
+
+from config import AMBIENT_LLM_MODEL, OLLAMA_KEEP_ALIVE
+from services.local_model_http import local_model_ssl_context
 
 logger = logging.getLogger(__name__)
 
@@ -252,9 +254,9 @@ async def _call_llm(inputs: dict, patient_id: str | None = None) -> dict:
 
     from services import ollama_gateway
 
-    await llm_queue.acquire(priority=3)
+    ticket = await llm_queue.acquire(priority=3, model=model_choice.model)
     try:
-        async with httpx.AsyncClient(
+        async with httpx.AsyncClient(verify=local_model_ssl_context(), 
             timeout=httpx.Timeout(connect=15.0, read=120.0, write=15.0, pool=15.0), trust_env=False
         ) as client:
             # Yields the lane to a clinician's turn (or at the P3 hold cap):
@@ -297,7 +299,7 @@ async def _call_llm(inputs: dict, patient_id: str | None = None) -> dict:
         projection["engine"] = model_choice.model
         return projection
     finally:
-        llm_queue.release()
+        llm_queue.release(ticket)
 
 
 # Ordered acuity → which phase the patient currently occupies. Acute states sit in

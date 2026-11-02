@@ -1,36 +1,31 @@
 import { defineConfig, devices } from '@playwright/test'
+import { existsSync } from 'node:fs'
 
 /**
  * Orb Hospital OS — Playwright e2e configuration (A6)
  * =================================================================
  * Five "golden journey" specs live in ./e2e. They drive the real React shell
- * (Vite dev server on :5173) which proxies /api + /socket.io to the FastAPI
- * backend on :8000. See e2e/README.md for the full run instructions and the
+ * (production bundle) served by the real FastAPI backend with disposable data.
+ * See e2e/README.md for the full run instructions and the
  * exact demo credentials.
  *
- * Browser: this environment ships a PRE-INSTALLED Chromium at
- *   /opt/pw-browsers/chromium
- * but its build revision does NOT match the one Playwright 1.61 would download
- * (downloads are blocked here). We therefore pin `executablePath` to the
- * pre-installed binary instead of relying on Playwright's managed browsers.
- * If you run this on a normal machine where `npx playwright install chromium`
- * succeeded, unset ORB_CHROMIUM_PATH (below) and Playwright will use its own.
+ * Chromium comes from Playwright's managed browser cache unless explicitly
+ * overridden. PLAYWRIGHT_BROWSERS_PATH retains its standard Playwright meaning.
  */
 
-// Allow overriding the browser binary. Defaults to the pre-installed Chromium
-// in this sandbox; on a normal host, leave it empty to use Playwright's managed
-// browser (run `npx playwright install chromium` first).
-const CHROMIUM_PATH =
-  process.env.ORB_CHROMIUM_PATH ??
-  (process.env.PLAYWRIGHT_BROWSERS_PATH ? '/opt/pw-browsers/chromium' : '')
+const CHROMIUM_PATH = process.env.ORB_CHROMIUM_PATH ?? ''
+const BASE_URL = process.env.ORB_E2E_BASE_URL ?? 'http://127.0.0.1:18000'
 
-const BASE_URL = process.env.ORB_E2E_BASE_URL ?? 'http://localhost:5173'
-const BACKEND_URL = process.env.ORB_E2E_BACKEND_URL ?? 'http://localhost:8000'
-
-// Set ORB_E2E_NO_WEBSERVER=1 if you prefer to boot the backend + vite yourself
-// (see e2e/README.md). Otherwise Playwright boots BOTH for you and reuses any
-// instance that is already listening.
+// Explicit manual mode is for a disposable test instance managed by the caller.
 const MANAGE_SERVERS = process.env.ORB_E2E_NO_WEBSERVER !== '1'
+const address = new URL(BASE_URL)
+if (MANAGE_SERVERS && (!['127.0.0.1', 'localhost', '[::1]'].includes(address.hostname)
+    || address.protocol !== 'http:' || address.pathname !== '/' || address.search || address.hash)) {
+  throw new Error('Managed E2E requires a loopback http origin; use manual mode for another test instance')
+}
+const python = process.env.ORB_E2E_PYTHON ??
+  (existsSync('server/.venv-dev/bin/python') ? 'server/.venv-dev/bin/python' : 'server/.venv/bin/python')
+const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
 
 export default defineConfig({
   testDir: './e2e',
@@ -61,8 +56,6 @@ export default defineConfig({
       use: {
         ...devices['Desktop Chrome'],
         launchOptions: {
-          // Pin the pre-installed Chromium when present (sandbox); empty string
-          // means "use Playwright's managed browser".
           ...(CHROMIUM_PATH ? { executablePath: CHROMIUM_PATH } : {}),
           args: ['--no-sandbox', '--disable-dev-shm-usage'],
         },
@@ -70,34 +63,20 @@ export default defineConfig({
     },
   ],
 
-  // Boot BOTH servers. Playwright supports an array of webServers; it waits for
-  // each `url` to respond before starting the tests, and (because
-  // reuseExistingServer is true) it will happily attach to instances you've
-  // already started manually rather than spawning duplicates.
+  // Never attach automatically to an existing appliance. The harness copies
+  // application source and seeds only a new temporary database.
   webServer: MANAGE_SERVERS
-    ? [
-        {
-          // FastAPI + Socket.IO backend (simulation ingestion, dev profile).
-          // The ASGI object exported by server/main.py is `socket_app`.
-          command:
-            'cd server && . .venv-dev/bin/activate && ' +
-            'ORB_DEPLOYMENT_PROFILE=dev ORB_INGESTION_MODE=simulation ' +
-            'python -m uvicorn main:socket_app --port 8000',
-          url: `${BACKEND_URL}/docs`,
-          reuseExistingServer: true,
-          timeout: 120_000,
-          stdout: 'pipe',
-          stderr: 'pipe',
-        },
-        {
-          // Vite dev server (proxies /api + /socket.io -> :8000).
-          command: 'npm run dev',
-          url: BASE_URL,
-          reuseExistingServer: true,
-          timeout: 120_000,
-          stdout: 'pipe',
-          stderr: 'pipe',
-        },
-      ]
+    ? {
+        command: `${shellQuote(process.execPath)} node_modules/typescript/bin/tsc -b && ` +
+          `${shellQuote(process.execPath)} node_modules/vite/bin/vite.js build && ` +
+          `${shellQuote(python)} scripts/e2e_server.py --host ${shellQuote(address.hostname.replace('[', '').replace(']', ''))} ` +
+          `--port ${address.port || '80'} --offline-modules`,
+        url: `${BASE_URL.replace(/\/$/, '')}/api/ready`,
+        reuseExistingServer: false,
+        gracefulShutdown: { signal: 'SIGTERM', timeout: 20_000 },
+        timeout: 180_000,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      }
     : undefined,
 })

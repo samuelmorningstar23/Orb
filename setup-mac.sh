@@ -74,10 +74,13 @@ step "2/6  Backend dependencies"
 # lightning-whisper-mlx pins tiktoken 0.3.3, which has no Python 3.12 wheel and
 # needs a Rust toolchain to build from source. Everything except Scribe's local
 # ASR works without it — see docs/SETUP.md §5 and the note at the end of this run.
-REQ_CORE="$(mktemp)"
+# Keep the filtered file beside its shared -c constraints; a copy in /tmp
+# resolves relative includes against /tmp and breaks the pinned installation.
+REQ_CORE="$(mktemp "$SERVER_DIR/.requirements-core.XXXXXX")"
+trap 'rm -f "$REQ_CORE"' EXIT
 grep -v 'lightning-whisper-mlx' "$SERVER_DIR/requirements.txt" > "$REQ_CORE"
 
-info "Installing backend deps (torch + FlagEmbedding are large — expect a few minutes)"
+info "Installing backend deps (torch + Transformers are large — expect a few minutes)"
 uv pip install --python "$VENV/bin/python" -r "$REQ_CORE"
 rm -f "$REQ_CORE"
 ok "backend dependencies installed"
@@ -85,8 +88,11 @@ ok "backend dependencies installed"
 # ─────────────────────────────────────────────────────────────────────────────
 step "3/6  Frontend"
 
-if ! command -v node >/dev/null 2>&1 || [ "$(node -v | sed 's/v\([0-9]*\).*/\1/')" -lt 20 ]; then
-  err "Node 20+ is required (Vite 8). Install it, then re-run:"
+if ! command -v node >/dev/null 2>&1 || ! node -e '
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  process.exit((major === 20 && minor >= 19) || (major === 22 && minor >= 12) || major > 22 ? 0 : 1);
+'; then
+  err "Node 20.19+ or 22.12+ is required (Vite 8). Install it, then re-run:"
   err "    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash"
   err "    export NVM_DIR=\"\$HOME/.nvm\"; . \"\$NVM_DIR/nvm.sh\""
   err "    nvm install 22 && nvm alias default 22"
@@ -157,6 +163,7 @@ ORB_LLM_MODEL=medgemma:27b
 ORB_VISION_MODEL=medgemma:27b
 ORB_AMBIENT_LLM_MODEL=medgemma:4b
 ORB_OLLAMA_KEEP_ALIVE=1h
+ORB_OLLAMA_SWA_FULL=auto
 
 # Scribe — route the correction/verify stages through Ollama rather than the
 # unshipped local MLX weights. Cheap stages get the 4B; drafting gets the 27B.
@@ -187,6 +194,60 @@ set +a
 # ─────────────────────────────────────────────────────────────────────────────
 step "5/6  Ollama models"
 
+ensure_setup_ollama() {
+  # Provisioning, readiness, version, pull and show all target this same daemon.
+  # Alternate loopback ports are supported by the standalone launcher instead.
+  export OLLAMA_HOST=127.0.0.1:11434
+  # Reusing a desktop/service daemon cannot change its inherited runner settings.
+  if curl -sf -m 3 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+    warn "Reusing the existing Ollama daemon; Orb's cache profile was NOT applied."
+    warn "To apply it, configure that service or start scripts/serve-ollama.sh after exiting it."
+    return 0
+  fi
+  info "Starting the Orb-owned Ollama launcher on loopback port 11434"
+  local ollama_log ollama_pid ollama_ready
+  # mktemp creates 0600 before the daemon can write any log content.
+  ollama_log="$(mktemp "${TMPDIR:-/tmp}/orb-ollama-serve.XXXXXX")"
+  nohup "$REPO_ROOT/scripts/serve-ollama.sh" > "$ollama_log" 2>&1 &
+  ollama_pid=$!
+  ollama_ready=0
+  for _ in $(seq 1 20); do
+    if curl -sf -m 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+      # A different process could win the port between our first check and bind.
+      if [ "$(lsof -nP -a -p "$ollama_pid" -iTCP:11434 -sTCP:LISTEN -t 2>/dev/null || true)" = "$ollama_pid" ]; then
+        ollama_ready=1
+        break
+      fi
+    fi
+    kill -0 "$ollama_pid" 2>/dev/null || break
+    sleep 1
+  done
+  if [ "$ollama_ready" -ne 1 ]; then
+    # Only signal the still-running child recorded in this shell's job table.
+    # A completed/recycled PID or another daemon must never be signalled.
+    local job_pid still_running
+    for job_pid in $(jobs -pr); do
+      if [ "$job_pid" = "$ollama_pid" ]; then
+        kill -TERM "$ollama_pid" 2>/dev/null || true
+        for _ in $(seq 1 20); do
+          still_running=0
+          for job_pid in $(jobs -pr); do
+            [ "$job_pid" != "$ollama_pid" ] || still_running=1
+          done
+          [ "$still_running" -eq 1 ] || break
+          sleep 0.1
+        done
+        if [ "$still_running" -eq 1 ]; then kill -KILL "$ollama_pid" 2>/dev/null || true; fi
+        break
+      fi
+    done
+    wait "$ollama_pid" 2>/dev/null || true
+    err "Orb-owned Ollama did not become ready; no model pulls were attempted. See $ollama_log"
+    exit 1
+  fi
+  ok "Orb-owned Ollama is ready; private startup log: $ollama_log"
+}
+
 if [ "$PULL_MODELS" -eq 0 ]; then
   info "Skipping model pulls (--skip-models)"
 elif ! command -v ollama >/dev/null 2>&1; then
@@ -195,15 +256,8 @@ elif ! command -v ollama >/dev/null 2>&1; then
   warn "Launch it once, then re-run this script. Orb boots without it; Sage,"
   warn "Lens, Bridge and Scribe drafting will just return errors until it's up."
 else
+  ensure_setup_ollama
   ok "ollama $(ollama --version 2>/dev/null | tail -1)"
-  if ! curl -sf -m 3 http://localhost:11434/api/tags >/dev/null 2>&1; then
-    info "Starting the Ollama server in the background"
-    nohup ollama serve > /tmp/ollama-serve.log 2>&1 &
-    for _ in $(seq 1 20); do
-      curl -sf -m 2 http://localhost:11434/api/tags >/dev/null 2>&1 && break
-      sleep 1
-    done
-  fi
   info "Pulling medgemma:27b  (~17 GB, multimodal — the long one)"
   ollama pull medgemma:27b
   info "Pulling medgemma:4b   (~3.3 GB, multimodal — ambient + Scribe cheap tier)"

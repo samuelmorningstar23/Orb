@@ -63,6 +63,8 @@ import typing
 
 from pydantic import BaseModel
 
+from tests.scope_inventory import _is_scoped_service_delegation
+
 
 # Names that prove the endpoint derives scope from the authenticated user rather
 # than from whatever the request said.
@@ -180,7 +182,8 @@ def _caller_named_patient_mutations():
         except (OSError, TypeError):
             continue
         seen |= {(m, path) for m in methods}
-        if not any(g in src for g in _SCOPE_DERIVATIONS):
+        if not (any(g in src for g in _SCOPE_DERIVATIONS)
+                or _is_scoped_service_delegation(endpoint, src)):
             bare |= {(m, path) for m in methods}
     return bare, seen
 
@@ -295,6 +298,77 @@ def test_the_two_dict_bodied_routes_are_now_visible_to_this_sweep():
             f"body has most likely reverted to an untyped `dict`, which opts the "
             f"route out of this guard entirely"
         )
+
+
+_OFFLINE_SCOPED_MUTATIONS = {
+    ("POST", "/api/care-plans/records"),
+    ("POST", "/api/dialysis/records"),
+    ("POST", "/api/emergency/records"),
+    ("POST", "/api/feedback"),
+    ("POST", "/api/infection-surveillance/records/case"),
+    ("POST", "/api/infection-surveillance/records/exposure"),
+    ("POST", "/api/infection-surveillance/records/isolation"),
+    ("POST", "/api/infection-surveillance/records/susceptibility"),
+    ("POST", "/api/mortuary"),
+    ("POST", "/api/perioperative/records"),
+    ("POST", "/api/radiology/records"),
+    ("POST", "/api/record-governance/{kind}"),
+}
+
+
+def test_offline_scoped_delegations_remain_in_the_zero_bare_inventory():
+    """These are reviewed delegations, never entries in the bare allowlist."""
+    from main import app
+
+    bare, seen = _caller_named_patient_mutations()
+    assert _OFFLINE_SCOPED_MUTATIONS <= seen
+    assert not (_OFFLINE_SCOPED_MUTATIONS & bare)
+    assert not _KNOWN_BARE_CALLER_NAMED_MUTATIONS
+    for route in app.routes:
+        if ("POST" in (getattr(route, "methods", set()) or set())
+                and ("POST", getattr(route, "path", "")) in _OFFLINE_SCOPED_MUTATIONS):
+            assert _is_scoped_service_delegation(route.endpoint, inspect.getsource(route.endpoint))
+
+
+def test_scope_delegation_recognition_rejects_unreviewed_execution():
+    from routes.care_plan_routes import post_record
+    from routes.feedback_routes import record
+
+    for endpoint, original, replacement in (
+        (post_record, "records.create(", "unreviewed.create("),
+        (post_record, '"care-plans", body, user,', '"care-plans", body, body.actor,'),
+        (post_record, '"care-plans", body, user,', '"care-plans", other_body, user,'),
+        (post_record, "    return records.create(", "    write_before_scope()\n    return records.create("),
+        (post_record, "idempotency_key, request)", "read_unscoped_patient(), request)"),
+        (record, "call(svc.register,", "unreviewed_call(svc.register,"),
+        (record, "svc.register", "svc.unreviewed_register"),
+        (record, "actor=user", "actor=body.actor"),
+        (record, "body.model_dump()", "body.model_dump(exclude={'patient_id'})"),
+        (record, "key=key", "key=read_unscoped_patient()"),
+        (record, "    return call(", "    write_before_scope()\n    return call("),
+    ):
+        source = inspect.getsource(endpoint)
+        assert original in source
+        assert not _is_scoped_service_delegation(endpoint, source.replace(original, replacement)), replacement
+
+
+def test_scope_delegation_recognition_requires_the_reviewed_guard_chain(monkeypatch):
+    from routes.care_plan_routes import post_record
+    from routes.feedback_routes import record
+    from routes.record_governance_routes import create
+    from services import local_operations_common, offline_clinical_records, record_governance_service
+
+    def unguarded(*args, **kwargs):
+        return None
+
+    for endpoint, module, helper in (
+        (post_record, offline_clinical_records, "_links"),
+        (record, local_operations_common, "patient_on"),
+        (create, record_governance_service, "require_patient"),
+    ):
+        with monkeypatch.context() as patch:
+            patch.setattr(module, helper, unguarded)
+            assert not _is_scoped_service_delegation(endpoint, inspect.getsource(endpoint))
 
 
 # ═════════════════════════════════════════════════════════════════════════════

@@ -10,10 +10,11 @@ import os
 from collections.abc import AsyncGenerator
 
 import httpx
-from config import OLLAMA_KEEP_ALIVE, VISION_MODEL
 from database import db_session
 
+from config import OLLAMA_KEEP_ALIVE, VISION_MODEL
 from services.crypto_service import read_decrypted
+from services.local_model_http import local_model_ssl_context
 
 # REGULATORY/CLINICAL-SAFETY: a non-model, application-layer disclaimer that is
 # ALWAYS appended to Lens output. We do not rely on the model to add its own
@@ -98,9 +99,9 @@ async def analyze_image_stream(
     from services import ollama_gateway
     from services.llm_queue_service import llm_queue
 
-    await llm_queue.acquire(priority=2)
+    ticket = await llm_queue.acquire(priority=2, model=VISION_MODEL)
     try:
-        async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
+        async with httpx.AsyncClient(verify=local_model_ssl_context(), timeout=120.0, trust_env=False) as client:
             async with ollama_gateway.stream(
                 client,
                 "/api/chat",
@@ -166,7 +167,7 @@ async def analyze_image_stream(
                         raise RuntimeError("Vision model returned no analysis")
                     yield LENS_DISCLAIMER_BANNER
     finally:
-        llm_queue.release()
+        llm_queue.release(ticket)
 
 
 async def analyze_image_full(

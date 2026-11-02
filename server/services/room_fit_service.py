@@ -156,6 +156,8 @@ import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
+from services.local_model_http import local_model_ssl_context
+
 logger = logging.getLogger("orb.room_fit")
 
 
@@ -1427,8 +1429,8 @@ async def adjudicate(
     """Ask the AMBIENT (4B) tier. Returns None whenever the tier cannot answer."""
     try:
         import httpx
-        from config import AMBIENT_LLM_MODEL, OLLAMA_KEEP_ALIVE
 
+        from config import AMBIENT_LLM_MODEL, OLLAMA_KEEP_ALIVE
         from services import ollama_gateway
         from services.batch_coordinator import ambient_coordinator
         from services.model_router import ambient_tier_evicted
@@ -1456,7 +1458,7 @@ async def adjudicate(
         # trust_env=False — see services/model_router.probe_residency: the httpx
         # constructor resolves macOS proxy config synchronously via _scproxy and
         # has wedged this event loop before.
-        async with httpx.AsyncClient(timeout=12.0, trust_env=False) as client:
+        async with httpx.AsyncClient(verify=local_model_ssl_context(), timeout=12.0, trust_env=False) as client:
             resp = await ollama_gateway.post(
                 client,
                 "/api/generate",

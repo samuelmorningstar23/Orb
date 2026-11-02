@@ -6,7 +6,7 @@
  * because the body is a file (CSV or Markdown), not JSON, and the file the
  * user saves must be byte for byte the one whose SHA-256 the server logged.
  */
-import { API_BASE, apiFetch, buildHeaders, errorDetailMessage } from './client';
+import { API_BASE, apiFetch, assertSessionIdentity, buildHeaders, errorDetailMessage, getUser } from './client';
 
 export interface WardSetting {
   ward: string;
@@ -86,6 +86,7 @@ export async function fetchRoundsFile(params: {
   format: 'csv' | 'md';
   includePatientNumbers?: boolean;
 }): Promise<RoundsFile> {
+  const owner = getUser()?.id ?? null;
   const query = new URLSearchParams({ ward: params.ward, start: params.start, end: params.end });
   if (params.includePatientNumbers) query.set('include_patient_identifiers', 'true');
   const response = await fetch(`${API_BASE}/ward-record/rounds.${params.format}?${query.toString()}`, {
@@ -93,17 +94,21 @@ export async function fetchRoundsFile(params: {
     credentials: 'include',
     headers: buildHeaders('GET'),
   });
+  assertSessionIdentity(owner);
   if (!response.ok) {
     const parsed = await response.json().catch(() => null);
+    assertSessionIdentity(owner);
     const detail = parsed && typeof parsed.detail === 'object' ? parsed.detail : null;
     throw new WardRecordError(errorDetailMessage(parsed?.detail, response.status),
                               response.status, detail?.error || `http_${response.status}`);
   }
   const disposition = response.headers.get('Content-Disposition') || '';
   const named = /filename="([^"]+)"/.exec(disposition);
+  const text = await response.text();
+  assertSessionIdentity(owner);
   return {
     fileName: named ? named[1] : `rounds_${params.start}_${params.end}.${params.format}`,
-    text: await response.text(),
+    text,
     reference: response.headers.get('X-Ward-Record-Reference'),
     sha256: response.headers.get('X-Content-SHA256'),
   };

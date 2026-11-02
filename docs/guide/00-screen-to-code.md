@@ -593,7 +593,7 @@ nowhere), these are correctly documented as dead, not mis-cited:
 
 **`src/i18n/locales/`** (2), `en.json`, `hi.json`
 
-**`src/lib/`** (10), `a11y.ts`, `datetime.ts`, `demographics.ts`, `humanise.ts`, `messageMerge.ts`, `nurseDrafts.ts`, `orbBus.ts`, `roles.ts`, `shortcuts.ts`, `tablist.ts`
+**`src/lib/`** (9), `datetime.ts`, `demographics.ts`, `humanise.ts`, `messageMerge.ts`, `nurseDrafts.ts`, `orbBus.ts`, `roles.ts`, `shortcuts.ts`, `tablist.ts`
 
 **`src/lib/offline/`** (1), `writeGuard.ts`
 
@@ -2858,12 +2858,6 @@ nowhere), these are correctly documented as dead, not mis-cited:
   - *Login*, login card surface (`.glass-card`); login card entrance animation (`.animate-slide-up`)
   - *Vigil board*, `.glass-card` flat opaque surface and hairline; `.animate-fade-in` panel entry; status colour tokens behind every dot, badge and percentage in all three themes
   - *Surgical/Appointments*, `.glass-card` surfaces used by every card on both screens; `.animate-fade-in` on the Appointments board and Active Cases list; the `scale-up` keyframe the Feature-under-development dialog enters on; every `--status-*`, `--accent-*` and `--btn-*` token both screens read
-
-
-### `src/lib/a11y.ts`
-
-- `::activatable`
-  - *App shell*, no mapped element since the 6 October 2026 Pulse rebuild (its only mapped users were the old Pulse rows)
 
 
 ### `src/lib/datetime.ts`

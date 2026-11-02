@@ -446,15 +446,13 @@ CARDABLE_ACTIONS = frozenset({"start_medication", "stop_medication", "transfer_t
 MEDICATION_ACTIONS = frozenset({"start_medication", "stop_medication"})
 
 #: The shadow `query_class` for these drafts. Load-bearing on the READ side:
-#: `shadow_scorecard_service._time_saved` pools the total_ms of EVERY timed
-#: `sage.drafted` against a manual-lookup baseline — the figure its own
+#: `shadow_scorecard_service._time_saved` excludes VIGIL_ALERT_* classes from
+#: its manual-lookup proxy — the figure its own
 #: METRIC_SPEC calls "the one most likely to be quoted back in a fundraising
 #: context". A 30-second alert assessment and a 2-second chat answer are not the
 #: same thing and must not share a p50. The timings are recorded (they are
 #: genuinely measured, and this IS substantive reasoning rather than a garnish)
-#: and this class is the discriminator `_time_saved` needs in order to narrow.
-#: NARROWING `_time_saved` BY query_class IS A REQUIRED FOLLOW-UP on the read
-#: side, which this module does not own.
+#: and this class is the discriminator keeping those populations separate.
 QUERY_CLASS = "VIGIL_ALERT_ASSESSMENT"
 
 #: And the fast lane gets its OWN class, for the same reason one level down: a
@@ -3017,8 +3015,8 @@ async def _finalise_no_factors(prep: dict, t_start: float, *, reason: str) -> st
 
     THE TIMING IS DELIBERATELY NOT RECORDED. `total_ms` stays NULL and the shadow
     payload carries `QUERY_CLASS_NO_FACTORS`, because
-    `shadow_scorecard_service._time_saved` pools the total_ms of every timed
-    `sage.drafted` against a manual-lookup baseline — the figure its own
+    `shadow_scorecard_service._time_saved` excludes this machine-initiated class
+    from its manual-lookup proxy — the figure its own
     METRIC_SPEC calls the one most likely to be quoted in a fundraising context.
     Feeding it a population of 40 ms no-op drafts would turn "time saved" into a
     measurement of how often Sage stayed silent, and would make the number better
@@ -3665,8 +3663,9 @@ async def _generate(prep: dict, t_start: float) -> str | None:
         }
 
     try:
-        await llm_queue.acquire(
-            priority=PRIORITY_SCRIBE, timeout=_queue_wait_seconds(prep.get("depth", DEPTH_FULL))
+        ticket = await llm_queue.acquire(
+            priority=PRIORITY_SCRIBE, timeout=_queue_wait_seconds(prep.get("depth", DEPTH_FULL)),
+            model=choice.model,
         )
     except asyncio.CancelledError:
         raise
@@ -3750,7 +3749,7 @@ async def _generate(prep: dict, t_start: float) -> str | None:
         logger.warning("[SageAssessment] generation error for %s: %s", prep["patient_id"], e)
         failure = REASON_MODEL_ERROR
     finally:
-        llm_queue.release()
+        llm_queue.release(ticket)
 
     # One audit row per pass, after the lane is released (the same reason the
     # failure handling below sits outside it).

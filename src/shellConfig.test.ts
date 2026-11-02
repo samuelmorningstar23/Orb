@@ -363,16 +363,16 @@ describe('hospital modules are registered, and only when they can render', () =>
     for (const id of MONEY_MODULE_IDS) expect(surgeonTabs).not.toContain(id)
   })
 
-  it('the clinical-module exception is exactly one module, and it is dietary', () => {
+  it('clinical modules are explicitly allowed on the ward rail', () => {
     // THE GUARD ON THE GUARD. `MONEY_MODULE_IDS` is derived by subtracting this
     // list, so anything added to it silently leaves the money-adjacency test
     // above. Pinning the exact set means putting 'billing' on a nurse's rail
     // requires editing THIS line, in a test whose name says what that means.
-    expect([...CLINICAL_MODULE_IDS]).toEqual(['dietary'])
+    expect([...CLINICAL_MODULE_IDS]).toEqual(['dietary', 'radiology', 'care-plans', 'emergency', 'perioperative', 'dialysis'])
     // The laboratory is subtracted too, as a DIAGNOSTIC module (pinned below):
     // it is neither a money screen nor a clinician's tab.
     expect([...MONEY_MODULE_IDS].sort()).toEqual(
-      HOSPITAL_MODULE_IDS.filter(id => id !== 'dietary' && id !== 'lab').slice().sort(),
+      HOSPITAL_MODULE_IDS.filter(id => !CLINICAL_MODULE_IDS.includes(id) && id !== 'lab').slice().sort(),
     )
   })
 
@@ -509,10 +509,10 @@ describe('the opt-in modules default off and fail toward hidden', () => {
     resetFeatureFlags()
   })
 
-  it('are exactly Beds, the Pharmacy store and the Laboratory, and match the server keys', () => {
+  it('include the local workflow modules and match the server keys', () => {
     // server/config.py OPT_IN_MODULES publishes these exact keys inside
     // 'modules' on /api/health. A rename on either side must fail here.
-    expect([...OPT_IN_MODULE_IDS]).toEqual(['adt', 'pharmacy-store', 'lab'])
+    expect([...OPT_IN_MODULE_IDS]).toEqual(['adt', 'pharmacy-store', 'lab', 'feedback', 'mortuary', 'cssd', 'reporting', 'finance-tools', 'radiology', 'care-plans', 'emergency', 'perioperative', 'dialysis', 'radiation-safety', 'infection-surveillance', 'record-governance'])
     for (const id of OPT_IN_MODULE_IDS) {
       expect(HOSPITAL_MODULE_IDS).toContain(id)
       expect(isOptInModule(id)).toBe(true)
@@ -556,7 +556,7 @@ describe('the opt-in modules default off and fail toward hidden', () => {
   it('switched on by the server and installed, each appears for admin in the Hospital group', async () => {
     const fakeFetch = (async () => ({
       ok: true,
-      json: async () => ({ modules: { adt: true, 'pharmacy-store': true, lab: true } }),
+      json: async () => ({ modules: Object.fromEntries(OPT_IN_MODULE_IDS.map(id => [id, true])) }),
     })) as unknown as typeof fetch
     await refreshModuleFlags(fakeFetch)
     expect(currentModuleFlags().adt).toBe(true)
@@ -564,7 +564,7 @@ describe('the opt-in modules default off and fail toward hidden', () => {
     for (const id of OPT_IN_MODULE_IDS) {
       const entry = config.tabs.find(tab => tab.id === id)
       expect(entry, `admin is missing '${id}'`).toBeTruthy()
-      expect(entry!.group).toBe('hospital')
+      expect(entry!.group).toBe(CLINICAL_MODULE_IDS.includes(id) ? 'clinical' : 'hospital')
     }
     // ...and still nothing without its panel file.
     const none = getAccessibleTabs('admin', undefined, currentModuleFlags(), MODULES_NONE_INSTALLED)
@@ -856,7 +856,7 @@ describe('the OPD feature tab', () => {
     expect(getAccessibleTabs('doctor')).not.toContain('opd')
     expect(getAccessibleTabs('doctor', undefined, MODULES_ALL_ON, MODULES_ALL_INSTALLED, FEATURES_OFF, FEATURE_TABS_INSTALLED))
       .not.toContain('opd')
-    expect([...CLINICAL_MODULE_IDS]).toEqual(['dietary'])
+    expect([...CLINICAL_MODULE_IDS]).toEqual(['dietary', 'radiology', 'care-plans', 'emergency', 'perioperative', 'dialysis'])
   })
 
   it('is hidden with the feature on while its panel is absent', () => {

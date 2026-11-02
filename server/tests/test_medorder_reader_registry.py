@@ -75,7 +75,9 @@ REGISTRY: dict[str, tuple[str, str]] = {
     # Shows or hands on a drug list: labelled.
     "services/ipass_service.py": ("labelled", "I-PASS action list and the printed sheet"),
     "services/discharge_service.py": ("labelled", "discharge medication reconciliation"),
-    "routes/bridge_routes.py": ("labelled", "the patient portal: 'On hold', nothing more"),
+    "services/bridge_stay.py": (
+        "labelled", "the current-stay patient portal query carries both hold markers; "
+                    "bridge_routes labels 'On hold' and removes their private details"),
     "services/fhir_export_service.py": ("labelled", "FHIR MedicationRequest 'on-hold'"),
     "services/sage_service.py": ("labelled", "the Sage patient context"),
     "services/admission_service.py": (

@@ -26,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import tempfile
 from contextlib import contextmanager
 
 from config import UPLOAD_ENCRYPTION_KEY
@@ -151,16 +152,34 @@ def decrypt_bytes(data: bytes) -> bytes:
 
 
 def write_encrypted(path, plaintext: bytes) -> None:
-    """Encrypt (if enabled) and write bytes to path with 0o600 permissions."""
-    import os
+    """Publish a complete upload atomically, private from its first disk byte.
 
+    Stage in the destination directory so replacement stays on one filesystem.
+    A failed write leaves the previous destination intact and removes the
+    private staging file. Replacing a symlink replaces the link itself rather
+    than following it to an unrelated file. The envelope format is unchanged.
+    """
     data = encrypt_bytes(plaintext)
-    with open(path, "wb") as f:
-        f.write(data)
+    destination = os.path.abspath(os.fsdecode(path))
+    fd, temporary = tempfile.mkstemp(
+        prefix=".orb_upload_", suffix=".tmp", dir=os.path.dirname(destination)
+    )
     try:
-        os.chmod(path, 0o600)
-    except Exception:
-        pass
+        with os.fdopen(fd, "wb") as stream:
+            fd = -1  # the file object now owns the descriptor, including errors
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, destination)
+    finally:
+        if fd != -1:
+            os.close(fd)
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass  # atomic replacement consumed the staging path
+        except OSError:
+            logger.warning("Upload staging file cleanup failed", exc_info=True)
 
 
 def read_decrypted(path) -> bytes:

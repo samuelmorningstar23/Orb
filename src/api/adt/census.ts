@@ -18,8 +18,8 @@
  * Dates are hospital-local day keys, 'YYYY-MM-DD', inclusive. With none given
  * the server answers the seven days ending yesterday.
  */
-import { API_BASE, buildHeaders, errorDetailMessage, handleResponseError } from '../client'
-import { ADT_API_PREFIX, AdtApiError, adtGet, adtQuery, toAdtError } from './index'
+import { ApiIdentityChangedError, apiFetchBlob } from '../client'
+import { ADT_API_PREFIX, adtGet, adtQuery, toAdtError } from './index'
 
 export type EndType =
   | 'routine' | 'referred_out' | 'transferred_out' | 'dama' | 'lama' | 'absconded' | 'death'
@@ -145,59 +145,14 @@ export function getCensus(query: CensusParams = {}): Promise<Census> {
   return adtGet<Census>('/census', params(query))
 }
 
-/** The window event App.tsx answers with the re-auth modal (see
- *  notifySessionExpired in ../client). */
-const SESSION_EXPIRED_EVENT = 'orb:session-expired'
-
-/** One single-flight session refresh after a 401, through the client's own
- *  helper (handleResponseError owns the refresh and raises the re-auth modal
- *  itself when the session is dead). It always throws, so the answer is read
- *  from whether it raised the modal: true means send the request once more.
- *  The same contract as the pharmacy store's CSV download. */
-async function refreshAfter401(response: Response): Promise<boolean> {
-  let expired = false
-  const markExpired = () => { expired = true }
-  window.addEventListener(SESSION_EXPIRED_EVENT, markExpired)
-  try {
-    await handleResponseError(response)
-  } catch {
-    // Expected: it throws whether or not the refresh worked.
-  } finally {
-    window.removeEventListener(SESSION_EXPIRED_EVENT, markExpired)
-  }
-  return !expired
-}
-
-/** The census as a CSV file, for the browser to save. `apiFetch` reads every
- *  reply as JSON, so this one call uses `fetch` with the same headers and
- *  cookie; a refusal still arrives as an AdtApiError, and a 401 gets one
- *  refresh and one retry, never more. A GET with no body, so it can be sent
- *  again. */
+/** The CSV uses the shared refresh and account boundary; refusals stay typed. */
 export async function downloadCensusCsv(query: CensusParams = {}): Promise<Blob> {
-  const target = `${API_BASE}${ADT_API_PREFIX}/census.csv${adtQuery(params(query))}`
-  // Headers are rebuilt per attempt: a refresh rotates the CSRF cookie.
-  const send = async (): Promise<Response> => {
-    try {
-      return await fetch(target, { credentials: 'include', headers: buildHeaders('GET') })
-    } catch (err) {
-      throw toAdtError(err)
-    }
+  try {
+    return await apiFetchBlob(`${ADT_API_PREFIX}/census.csv${adtQuery(params(query))}`)
+  } catch (failure) {
+    if (failure instanceof ApiIdentityChangedError) throw failure
+    throw toAdtError(failure)
   }
-  let response = await send()
-  if (response.status === 401) {
-    if (!(await refreshAfter401(response))) throw new AdtApiError('Session expired', 401, 'http_401')
-    response = await send()
-    if (response.status === 401) {
-      window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT))
-      throw new AdtApiError('Session expired', 401, 'http_401')
-    }
-  }
-  if (!response.ok) {
-    const body = await response.json().catch(() => null) as { detail?: unknown } | null
-    throw toAdtError({ status: response.status, detail: body?.detail ?? null,
-      message: errorDetailMessage(body?.detail ?? null, response.status) })
-  }
-  return response.blob()
 }
 
 /** The file name the CSV is saved under. */

@@ -17,7 +17,7 @@ performed out-of-band by an operator with filesystem access, with the server
 stopped. This is intentional.
 
 GITIGNORE: backups are written as ``orb-backup-<timestamp>.db`` into a ``backups/``
-directory beside the live DB. The repo ``.gitignore`` already excludes these via
+directory configured by ORB_BACKUP_DIR (default: repository backups/). The repo ``.gitignore`` already excludes these via
 the ``*.db`` (and ``*.db-wal`` / ``*.db-shm``) rules, so backup snapshots — which
 contain PHI — can never be accidentally committed. No .gitignore change is needed.
 """
@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 from config import BACKUP_DIR, DB_PATH
@@ -37,50 +37,15 @@ from services.audit_service import log_audit_event
 
 logger = logging.getLogger("orb.backup_routes")
 
-# The snapshot itself is written by database.consistent_backup — the SQLite
-# online-backup API through CODEC-AWARE connections. The stdlib sqlite3 driver
-# (used by scripts/backup_db.py) cannot read a SQLCipher-encrypted live DB: it
-# raises "file is not a database" and the endpoint would 500 exactly on the
-# deployment that most needs a backup. consistent_backup works for plaintext
-# AND encrypted DBs, integrity-checks the fresh copy, and (when encryption is
-# active) writes the backup encrypted with the same key so no plaintext PHI
-# ever hits disk.
-#
-# Naming/pruning conventions are still shared with the standalone CLI script.
-# scripts/ has no __init__.py (it is an implicit namespace package), and this
-# module is imported at server boot, so a failed import must NOT take down the
-# app. Fall back to an inline replica if the script is not importable.
-try:
-    from scripts.backup_db import (  # type: ignore
-        BACKUP_PREFIX,
-        BACKUP_SUFFIX,
-        prune_old_backups,
-    )
-except Exception:  # pragma: no cover - defensive fallback
-    logger.warning("scripts.backup_db not importable; using inline prune replica")
-
-    BACKUP_PREFIX = "orb-backup-"
-    BACKUP_SUFFIX = ".db"
-
-    def prune_old_backups(out_dir: Path, retain_days: int, *, new_backup: Path) -> int:
-        """Inline replica: delete backups older than retain_days."""
-        if retain_days <= 0 or not out_dir.is_dir():
-            return 0
-        cutoff = (datetime.now() - timedelta(days=retain_days)).timestamp()
-        deleted = 0
-        for candidate in out_dir.glob(f"{BACKUP_PREFIX}*{BACKUP_SUFFIX}"):
-            if candidate == new_backup:
-                continue
-            try:
-                if candidate.stat().st_mtime < cutoff:
-                    candidate.unlink()
-                    deleted += 1
-            except OSError:
-                pass
-        return deleted
-
-
-_TIMESTAMP_FMT = "%Y%m%d-%H%M%S"
+# All producers share atomic naming, recovery receipts and guarded rotation.
+from scripts.backup_db import (
+    BACKUP_PREFIX,
+    BACKUP_SUFFIX,
+    backup_set_lock,
+    make_backup,
+    prune_old_backups,
+    verify_receipt,
+)
 
 router = APIRouter(prefix="/api/admin/backups", tags=["backup"])
 
@@ -246,38 +211,30 @@ def create_backup(request: Request, user: dict = _CREATE_BACKUP_USER_DEFAULT):
     Uses sqlite3's online backup API through database.consistent_backup (codec-
     aware, so it also works when the DB is SQLCipher-encrypted at rest) so the
     snapshot is transactionally consistent even while the server is mid-write,
-    then runs PRAGMA integrity_check against the fresh copy. Old backups beyond
-    the retention window are pruned. The creation is audit-logged.
+    then runs the shared recovery verifier and writes a PASS/FAIL receipt.
+    Only matching previously verified sets beyond the retention window can be
+    pruned after a fresh PASS. The creation is audit-logged.
 
     Defined as a sync endpoint so FastAPI runs it in the threadpool — the backup
     is blocking I/O and must not stall the event loop.
     """
-    from database import consistent_backup
-
     if not Path(DB_PATH).is_file():
         raise HTTPException(status_code=500, detail=f"Source database not found: {DB_PATH}")
 
     out_dir = _out_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime(_TIMESTAMP_FMT)
-    backup_path = out_dir / f"{BACKUP_PREFIX}{timestamp}{BACKUP_SUFFIX}"
     try:
-        consistent_backup(backup_path)
-    except RuntimeError as exc:
-        # Integrity check failed on the fresh copy — surface as a server error.
-        backup_path.unlink(missing_ok=True)
+        with backup_set_lock(out_dir):
+            backup_path = make_backup(Path(DB_PATH), out_dir)
+            verify_receipt(backup_path)
+            prune_old_backups(out_dir, _RETAIN_DAYS, new_backup=backup_path)
+    except Exception as exc:
+        # A failed verification remains with a FAIL receipt for operators;
+        # no previous backup is pruned. Partial snapshots never publish.
+        logger.exception("Backup creation or recovery verification failed")
         raise HTTPException(
-            status_code=500, detail=f"Backup integrity check failed: {exc}"
+            status_code=500, detail="Backup could not be verified; no prior backups were rotated."
         ) from exc
-    except Exception as exc:  # pragma: no cover - defensive
-        backup_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=500, detail=f"Backup failed: {exc}") from exc
-
-    # Best-effort pruning; never fail the request if pruning hits a stray file.
-    try:
-        prune_old_backups(out_dir, _RETAIN_DAYS, new_backup=backup_path)
-    except Exception:
-        pass
 
     info = _describe(backup_path)
 

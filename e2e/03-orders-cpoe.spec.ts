@@ -28,7 +28,7 @@ test('clinician creates a coded order and it appears with a status chip', async 
   // Panel header renders.
   await expect(panel.getByRole('heading', { name: 'Orders', exact: true })).toBeVisible()
 
-  // Fetch a real patient id via the app's own API (through the Vite proxy).
+  // Fetch a real patient id via the app's own API on the same origin.
   // Auth is now the HttpOnly `orb_session` cookie set at login (the JWT is
   // deliberately no longer in localStorage — XSS-exfiltration hardening).
   // page.request shares the browser context's cookie jar, so the cookie
@@ -40,10 +40,11 @@ test('clinician creates a coded order and it appears with a status chip', async 
   const patientId: string = patients[0].id
   expect(patientId, 'no seeded patient available').toBeTruthy()
 
-  // The panel (mounted without a patient prop) shows a Patient ID input.
-  const patientInput = panel.getByPlaceholder('e.g. PAT001')
-  await expect(patientInput).toBeVisible()
-  await patientInput.fill(patientId)
+  // Select the actual patient through the ward picker and explicit option.
+  const patientInput = panel.getByRole('combobox', { name: 'Patient', exact: true })
+  await expect(patientInput).toBeEnabled()
+  await patientInput.fill(patients[0].name)
+  await panel.locator(`[id="patient-picker-opt-${patientId}"]`).click()
 
   // Open the create-order form.
   await panel.getByRole('button', { name: /New Order/i }).click()

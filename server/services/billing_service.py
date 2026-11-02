@@ -68,6 +68,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Sequence
+from contextlib import nullcontext
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -563,7 +564,7 @@ def _decorate_charge(row: dict) -> dict:
 
 def _resolve_encounter_context(db, *, patient_id: str, admission_id: str | None) -> dict:
     """Payer, tariff plan and encounter type for a charge or an invoice."""
-    payer = billing_masters.resolve_patient_payer(patient_id, admission_id=admission_id)
+    payer = billing_masters.resolve_patient_payer_on(db, patient_id, admission_id=admission_id)
     admission = None
     if admission_id:
         admission = db.execute(
@@ -604,6 +605,7 @@ def add_charge(
     idempotency_key: str | None = None,
     notes: str | None = None,
     charged_by: str | None = None,
+    _db=None,
 ) -> dict:
     """Post ONE chargeable line against a patient (and optionally an admission).
 
@@ -629,7 +631,7 @@ def add_charge(
         raise BillingError("quantity must be greater than zero", code="invalid_input")
     day = _iso_day(service_date)
 
-    with db_session() as db:
+    with nullcontext(_db) if _db is not None else db_session() as db:
         if idempotency_key:
             existing = db.execute(
                 "SELECT * FROM encounter_charges WHERE idempotency_key = ?",
@@ -645,8 +647,8 @@ def add_charge(
         context = _resolve_encounter_context(db, patient_id=patient_id, admission_id=admission_id)
         plan_id = tariff_plan_id if tariff_plan_id is not None else context["payer"].tariff_plan_id
 
-        resolution = billing_masters.resolve_rate(
-            service_code, tariff_plan_id=plan_id, ward_class=ward_class, on_date=day
+        resolution = billing_masters.resolve_rate_on(
+            db, service_code, tariff_plan_id=plan_id, ward_class=ward_class, on_date=day
         )
         if unit_rate_paise is None:
             if not resolution.configured:
@@ -2183,6 +2185,7 @@ def create_invoice(
     notes: str | None = None,
     created_by: str | None = None,
     idempotency_key: str | None = None,
+    _db=None,
 ) -> dict:
     """Raise an invoice over pending charges. Draft by default.
 
@@ -2235,7 +2238,7 @@ def create_invoice(
             code="op_bill_with_admission",
         )
 
-    with db_session() as db:
+    with nullcontext(_db) if _db is not None else db_session() as db:
         if idempotency_key:
             existing = db.execute(
                 "SELECT * FROM invoices WHERE idempotency_key = ?", (idempotency_key,)
@@ -2521,8 +2524,8 @@ def create_invoice(
         )
 
     if issue:
-        return issue_invoice(invoice_id, actor=created_by)
-    return get_invoice(invoice_id)
+        return issue_invoice(invoice_id, actor=created_by, _db=_db)
+    return get_invoice(invoice_id, _db=_db)
 
 
 def _hsn_for(db, service_code: str) -> str | None:
@@ -2535,7 +2538,7 @@ def _uom_for(db, service_code: str) -> str | None:
     return row["uom"] if row else None
 
 
-def issue_invoice(invoice_id: int, *, actor: str | None = None) -> dict:
+def issue_invoice(invoice_id: int, *, actor: str | None = None, _db=None) -> dict:
     """Draft → issued. Allocates the GST invoice number.
 
     ORDER MATTERS HERE. The status is checked BEFORE a number is drawn, because
@@ -2548,19 +2551,23 @@ def issue_invoice(invoice_id: int, *, actor: str | None = None) -> dict:
     resets per financial year and reports whether the site has configured its
     real series. Until it has, every screen that prints the number must say so.
     """
-    with db_session() as db:
+    with nullcontext(_db) if _db is not None else db_session() as db:
         row = db.execute("SELECT * FROM invoices WHERE id = ?", (int(invoice_id),)).fetchone()
         if row is None:
             raise BillingError(f"no invoice {invoice_id}", code="not_found")
         if row["status"] == "issued" and row["invoice_number"]:
-            return get_invoice(invoice_id)
+            return get_invoice(invoice_id, _db=_db)
         _assert_transition(row["status"], "issued", invoice_id)
         patient_id = row["patient_id"]
         admission_id = row["admission_id"]
 
-    allocation = billing_masters.next_document_number("INV")
+    allocation = (
+        billing_masters.allocate_series_number(_db, "INV")
+        if _db is not None
+        else billing_masters.next_document_number("INV")
+    )
 
-    with db_session() as db:
+    with nullcontext(_db) if _db is not None else db_session() as db:
         # The supplier block is fixed in the SAME statement that assigns the
         # number (multisite-2, migration 72): a reprint after the hospital's
         # details change still shows what the invoice was issued with.
@@ -2605,7 +2612,7 @@ def issue_invoice(invoice_id: int, *, actor: str | None = None) -> dict:
                 "series_is_configured": bool(allocation["is_configured"]),
             },
         )
-    return get_invoice(invoice_id)
+    return get_invoice(invoice_id, _db=_db)
 
 
 def _assert_transition(current: str, target: str, invoice_id: int) -> None:
@@ -2956,7 +2963,7 @@ def create_credit_note(invoice_id: int, *, reason: str, actor: str | None = None
     return get_invoice(note_id)
 
 
-def refresh_invoice_payment_state(invoice_id: int) -> dict:
+def refresh_invoice_payment_state(invoice_id: int, *, _db=None) -> dict:
     """Recompute what has been paid against an invoice, from the payment records.
 
     PAID IS DERIVED, NEVER ASSERTED. Two shapes are counted, because the payments
@@ -2975,7 +2982,7 @@ def refresh_invoice_payment_state(invoice_id: int) -> dict:
     Called on every read of an invoice, so the screen agrees with the ledger even
     if the payments module never calls back into billing.
     """
-    with db_session() as db:
+    with nullcontext(_db) if _db is not None else db_session() as db:
         row = db.execute("SELECT * FROM invoices WHERE id = ?", (int(invoice_id),)).fetchone()
         if row is None:
             raise BillingError(f"no invoice {invoice_id}", code="not_found")
@@ -3033,10 +3040,10 @@ def refresh_invoice_payment_state(invoice_id: int) -> dict:
     return _decorate_invoice(_row(fresh))
 
 
-def get_invoice(invoice_id: int) -> dict:
+def get_invoice(invoice_id: int, *, _db=None) -> dict:
     """One invoice, its lines, its patient and what has been paid against it."""
-    header = refresh_invoice_payment_state(invoice_id)
-    with db_session() as db:
+    header = refresh_invoice_payment_state(invoice_id, _db=_db)
+    with nullcontext(_db) if _db is not None else db_session() as db:
         lines = [
             _row(r)
             for r in db.execute(
@@ -3104,7 +3111,7 @@ def get_invoice(invoice_id: int) -> dict:
     # A numbered bill names the supplier it was issued by (its snapshot, or
     # the site name for one issued before migration 72); a draft names the
     # facility's identity as it stands (multisite-2).
-    supplier = facility_identity.supplier_block(header, number_field="invoice_number")
+    supplier = facility_identity.supplier_block(header, number_field="invoice_number", db=_db)
     header["supplier_name"] = supplier["name"] if supplier["name_is_configured"] else None
     header["credit_notes"] = credit_notes
     header["allowed_transitions"] = sorted(_LEGAL_TRANSITIONS.get(header["status"], frozenset()))
@@ -3675,3 +3682,70 @@ def assert_discharge_permitted(
             logger.warning("Could not record a discharge financial override", exc_info=True)
         return advisory
     raise DischargeFinanciallyBlocked(advisory)
+
+
+def create_opd_invoice_atomic(
+    *,
+    patient_id: str,
+    lines: list[dict],
+    created_by: str,
+    place_of_supply=None,
+    interstate=False,
+    issue=True,
+    notes=None,
+) -> dict:
+    """One counter submission: every line, invoice, number and audit commit together.
+
+    A price/validation error or propagated exception leaves no pending lines
+    and consumes no document number. Explicit connections make this independent
+    of pooling. The existing billing audit category retains its fail-soft policy.
+    """
+    if not lines or len(lines) > 100:
+        raise BillingError("An outpatient invoice needs 1 to 100 lines", code="invalid_input")
+    accepted = {
+        "service_code",
+        "description",
+        "quantity_milli",
+        "unit_rate_paise",
+        "discount_paise",
+        "discount_bp",
+        "tariff_plan_id",
+        "gst_treatment",
+        "gst_rate_bp",
+        "service_date",
+        "idempotency_key",
+        "notes",
+    }
+    with db_session(immediate=True) as db:
+        charge_ids = []
+        for line in lines:
+            charge = add_charge(
+                patient_id=patient_id,
+                encounter_type="op",
+                charged_by=created_by,
+                _db=db,
+                **{key: value for key, value in line.items() if key in accepted},
+            )
+            if (
+                charge["patient_id"] != patient_id
+                or charge["encounter_type"] != "op"
+                or charge.get("admission_id")
+            ):
+                raise BillingError(
+                    "Charge replay does not belong to this outpatient encounter",
+                    code="invalid_input",
+                )
+            charge_ids.append(int(charge["id"]))
+        invoice = create_invoice(
+            patient_id=patient_id,
+            invoice_type="final",
+            charge_ids=charge_ids,
+            encounter_type="op",
+            place_of_supply=place_of_supply,
+            interstate=interstate,
+            issue=issue,
+            notes=notes,
+            created_by=created_by,
+            _db=db,
+        )
+        return {"status": "success", "invoice": invoice, "charge_ids": charge_ids}

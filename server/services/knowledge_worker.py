@@ -40,12 +40,14 @@ anything imported here runs in both processes.
 from __future__ import annotations
 
 import atexit
+import hashlib
 import logging
 import os
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Callable
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import Future, ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from typing import Literal
 
@@ -77,6 +79,8 @@ def isolation_enabled() -> bool:
 # ─────────────────────────────────────────────────────────────────
 
 _w_embedder = None
+_w_embedder_name: str | None = None
+_w_reranker_name: str | None = None
 _w_reranker: Callable[[list[tuple[str, str]]], list[float]] | Literal[False] | None = (
     None  # callable(pairs) -> list[float], or the sentinel False when unavailable
 )
@@ -176,6 +180,11 @@ def _worker_init() -> None:
     Four threads keep encode latency reasonable without a core-count blowup.
     """
     os.environ["ORB_KNOWLEDGE_WORKER"] = "1"
+    # Transformers5 already initializes on meta and ignores low_cpu_mem_usage.
+    # Keep each checkpoint tensor's existing dtype/device conversion, while
+    # deferring materialization instead of eagerly queueing four full tensors.
+    # Force the bound even if a provisioning shell explicitly selected0.
+    os.environ["HF_DEACTIVATE_ASYNC_LOAD"] = "1"
     _start_parent_watchdog()
     os.environ.setdefault("OMP_NUM_THREADS", "4")
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
@@ -187,20 +196,26 @@ def _worker_init() -> None:
         pass
 
 
-def _worker_get_embedder():
-    global _w_embedder
+def _worker_get_embedder(model_name: str | None = None):
+    global _w_embedder, _w_embedder_name
+    model_name = model_name or os.getenv("ORB_EMBEDDING_MODEL", "BAAI/bge-m3")
+    if _w_embedder_name is not None and _w_embedder_name != model_name:
+        raise RuntimeError("embedding model changed; restart the knowledge worker")
     if _w_embedder is None:
         from services.local_transformers import LocalDenseEmbedder
 
-        model_name = os.getenv("ORB_EMBEDDING_MODEL", "BAAI/bge-m3")
         _w_embedder = LocalDenseEmbedder(model_name, use_fp16=True)
+        _w_embedder_name = model_name
     return _w_embedder
 
 
-def _worker_get_reranker():
-    global _w_reranker
+def _worker_get_reranker(model_name: str | None = None):
+    global _w_reranker, _w_reranker_name
+    model_name = model_name or os.getenv("SAGE_RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
+    if _w_reranker_name is not None and _w_reranker_name != model_name:
+        raise RuntimeError("reranker model changed; restart the knowledge worker")
     if _w_reranker is None:
-        model_name = os.getenv("SAGE_RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
+        _w_reranker_name = model_name
         try:
             from services.local_transformers import LocalReranker
 
@@ -216,27 +231,78 @@ def _worker_get_reranker():
     return _w_reranker or None
 
 
+_MPS_UNUSED_CACHE_RELEASE_TRIGGER_BYTES = 1024 ** 3
+
+
+def _release_unused_mps_cache() -> None:
+    """Return unused Torch allocator blocks to the hospital-local GPU peers.
+
+    Dense vectors and reranker scores have already been copied to the CPU by
+    the adapters before their successful calls return. MPS empty_cache releases
+    unoccupied allocator buffers only; it does not evict model tensors, change
+    precision or recompute outputs. Driver-minus-live also includes MPSGraph
+    allocations, so this is a conservative release trigger, not a hard cache
+    cap or a promise that the whole difference can be freed. It cannot reduce
+    the peak live workspace of an in-progress model call.
+    """
+    try:
+        import torch
+
+        if not torch.backends.mps.is_available():
+            return
+        driver_before = int(torch.mps.driver_allocated_memory())
+        live_before = int(torch.mps.current_allocated_memory())
+        estimated_unused = max(0, driver_before - live_before)
+        if estimated_unused <= _MPS_UNUSED_CACHE_RELEASE_TRIGGER_BYTES:
+            return
+        torch.mps.empty_cache()
+        driver_after = int(torch.mps.driver_allocated_memory())
+        live_after = int(torch.mps.current_allocated_memory())
+        # Content-free and visible in the spawned worker's stderr, including
+        # when no application logging handlers have been configured there.
+        logger.warning(
+            "MPS unused-cache release driver_before_bytes=%d live_before_bytes=%d "
+            "driver_after_bytes=%d live_after_bytes=%d released_bytes=%d trigger_bytes=%d",
+            driver_before, live_before, driver_after, live_after,
+            max(0, driver_before - driver_after), _MPS_UNUSED_CACHE_RELEASE_TRIGGER_BYTES,
+        )
+    except Exception as error:
+        # Allocator diagnostics/cleanup must never replace a clinical model's
+        # original error or discard a valid CPU result. Log the type, not an
+        # exception message that could contain input or environment details.
+        try:
+            logger.warning("MPS unused-cache cleanup unavailable error_type=%s", type(error).__name__)
+        except Exception:
+            pass
+
+
 def _worker_embed(texts: list, model_name: str, batch_size: int, max_length: int) -> list:
     """Embed `texts`; returns a list of float32 byte blobs (sqlite-vec format)."""
     import numpy as np
 
-    os.environ["ORB_EMBEDDING_MODEL"] = model_name
-    model = _worker_get_embedder()
-    vecs = model.encode(texts, batch_size=batch_size, max_length=max_length)["dense_vecs"]
-    return [np.asarray(v, dtype=np.float32).tobytes() for v in vecs]
+    try:
+        os.environ["ORB_EMBEDDING_MODEL"] = model_name
+        model = _worker_get_embedder(model_name)
+        vecs = model.encode(texts, batch_size=batch_size, max_length=max_length)["dense_vecs"]
+        return [np.asarray(v, dtype=np.float32).tobytes() for v in vecs]
+    finally:
+        _release_unused_mps_cache()
 
 
-def _worker_rerank(query: str, passages: list) -> list:
+def _worker_rerank(query: str, passages: list, model_name: str | None = None) -> list:
     """Cross-encoder relevance scores for (query, passage) pairs.
 
     Raises RuntimeError when no cross-encoder is installed in this env, so the
     parent's lexical fallback takes over (same degradation as before).
     """
-    scorer = _worker_get_reranker()
-    if scorer is None:
-        raise RuntimeError("cross-encoder unavailable in knowledge worker")
-    pairs = [[query, p] for p in passages]
-    return [float(s) for s in scorer(pairs)]
+    try:
+        scorer = _worker_get_reranker(model_name)
+        if scorer is None:
+            raise RuntimeError("cross-encoder unavailable in knowledge worker")
+        pairs = [[query, p] for p in passages]
+        return [float(s) for s in scorer(pairs)]
+    finally:
+        _release_unused_mps_cache()
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -247,6 +313,211 @@ _pool: ProcessPoolExecutor | None = None
 _pool_lock = threading.Lock()
 _pool_failures = 0
 _MAX_POOL_RESTARTS = 2
+
+# Reuse mathematical model outputs only. Search results, approvals, patient
+# records and permissions are never cached here: their normal DB/ACL checks run
+# on every retrieval. Rerank keys include the exact ordered passage content, so
+# a corpus edit or a different permitted candidate set cannot reuse old scores.
+# The loaded child pins each model identifier for its lifetime; replacing local
+# weights requires the same worker restart that clears this output cache.
+_REUSE_TTL_S = 30.0
+_REUSE_MAX_ENTRIES = 128
+_REUSE_MAX_BYTES = 8 * 1024 * 1024
+_REUSE_MAX_PENDING = 256
+_reuse_lock = threading.RLock()
+_reuse_results: OrderedDict[tuple, tuple[float, tuple, int]] = OrderedDict()
+_reuse_pending: dict[tuple, Future] = {}
+_reuse_bytes = 0
+_reuse_counts = {"submitted": 0, "coalesced": 0, "hits": 0, "evicted": 0}
+_batch_lock = threading.RLock()
+_embedding_batches: dict[tuple, tuple[threading.Timer, list[tuple[Future, str]]]] = {}
+_batch_counts = {"embedding_batch_calls": 0, "embedding_batched_requests": 0,
+                 "embedding_batch_max": 0}
+_EMBED_BATCH_WINDOW_S = 0.003
+
+
+def _output_key(kind: str, model_name: str, texts: list, *configuration: int) -> tuple:
+    """Unambiguous exact-input digest; retain no query/passage text in cache keys."""
+    digest = hashlib.sha256()
+    for text in texts:
+        if not isinstance(text, str):
+            raise KnowledgeWorkerError("knowledge model inputs must be strings")
+        encoded = text.encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+    return kind, model_name, configuration, len(texts), digest.digest()
+
+
+def _clear_output_reuse() -> None:
+    global _reuse_bytes
+    with _reuse_lock:
+        _reuse_results.clear()
+        _reuse_pending.clear()
+        _reuse_bytes = 0
+
+
+def output_reuse_metrics() -> dict[str, int | float]:
+    """Content-free counters, never model inputs, cache keys or result values."""
+    with _reuse_lock, _batch_lock:
+        return {
+            **_reuse_counts,
+            **_batch_counts,
+            "embedding_batch_pending": sum(len(rows) for _, rows in _embedding_batches.values()),
+            "pending": len(_reuse_pending),
+            "entries": len(_reuse_results),
+            "bytes": _reuse_bytes,
+            "ttl_s": _REUSE_TTL_S,
+            "max_entries": _REUSE_MAX_ENTRIES,
+            "max_bytes": _REUSE_MAX_BYTES,
+            "max_pending": _REUSE_MAX_PENDING,
+        }
+
+
+def _clear_embedding_batches() -> None:
+    with _batch_lock:
+        batches = list(_embedding_batches.values())
+        _embedding_batches.clear()
+    for timer, rows in batches:
+        timer.cancel()
+        for result, _ in rows:
+            result.set_exception(KnowledgeWorkerError("knowledge worker shut down before embedding"))
+
+
+def _flush_embedding_batch(key: tuple, expected_timer: threading.Timer) -> None:
+    with _batch_lock:
+        group = _embedding_batches.get(key)
+        if group is None or group[0] is not expected_timer:
+            return
+        del _embedding_batches[key]
+    _dispatch_embedding_batch(key, group)
+
+
+def _dispatch_embedding_batch(
+    key: tuple, group: tuple[threading.Timer, list[tuple[Future, str]]]
+) -> None:
+    timer, rows = group
+    timer.cancel()
+    with _batch_lock:
+        _batch_counts["embedding_batch_calls"] += 1
+        _batch_counts["embedding_batched_requests"] += len(rows)
+        _batch_counts["embedding_batch_max"] = max(_batch_counts["embedding_batch_max"], len(rows))
+    pool, model_name, batch_size, max_length = key
+
+    def finish(batch: Future) -> None:
+        try:
+            values = batch.result()
+            if len(values) != len(rows) or not all(type(value) is bytes for value in values):
+                raise KnowledgeWorkerError("embedding microbatch returned incomplete vectors")
+        except BaseException as error:
+            for result, _ in rows:
+                result.set_exception(error)
+        else:
+            for (result, _), value in zip(rows, values, strict=True):
+                result.set_result([value])
+
+    try:
+        physical = pool.submit(_worker_embed, [text for _, text in rows],
+                               model_name, batch_size, max_length)
+    except BaseException as error:
+        for result, _ in rows:
+            result.set_exception(error)
+    else:
+        physical.add_done_callback(finish)
+
+
+def _submit_worker_output(pool: ProcessPoolExecutor, fn, args: tuple) -> Future:
+    """Optional qualified batch4 for independent single-query embeddings only.
+
+    This is off by default: MPS batch1/batch4 token, vector and retrieval-rank
+    equivalence must first be measured on the installed model. No text is
+    shortened, normalized or dropped; the existing batch_size/max_length and
+    model are retained. Multi-text corpus encoding and all reranking keep the
+    original path, model batches and candidate counts.
+    """
+    setting = os.getenv("ORB_KNOWLEDGE_QUERY_MICROBATCH", "1")
+    if setting not in {"1", "4"}:
+        raise KnowledgeWorkerError("ORB_KNOWLEDGE_QUERY_MICROBATCH must be 1 or qualified 4")
+    if fn is not _worker_embed or setting == "1" or len(args[0]) != 1:
+        return pool.submit(fn, *args)
+    texts, model_name, batch_size, max_length = args
+    key = (pool, model_name, batch_size, max_length)
+    result: Future = Future()
+    ready = None
+    with _batch_lock:
+        if key not in _embedding_batches:
+            timer = threading.Timer(_EMBED_BATCH_WINDOW_S,
+                                    lambda: _flush_embedding_batch(key, timer))
+            timer.daemon = True
+            _embedding_batches[key] = timer, []
+            timer.start()
+        _, rows = _embedding_batches[key]
+        rows.append((result, texts[0]))
+        if len(rows) == 4:
+            # Detach while still locked. A fifth arriving caller must start a
+            # new group instead of racing the physical submit into width5+.
+            ready = _embedding_batches.pop(key)
+    if ready is not None:
+        _dispatch_embedding_batch(key, ready)
+    return result
+
+
+def _finish_reused_output(key: tuple, future: Future) -> None:
+    """Publish only successful immutable outputs; late old-pool results are ignored."""
+    global _reuse_bytes
+    with _reuse_lock:
+        if _reuse_pending.get(key) is not future:
+            return
+        del _reuse_pending[key]
+        if future.cancelled() or future.exception() is not None:
+            return
+        result = future.result()
+        if not isinstance(result, list) or not all(type(v) in (bytes, float) for v in result):
+            return
+        frozen = tuple(result)
+        size = sum(len(v) if isinstance(v, bytes) else 8 for v in frozen)
+        # Include a minimum entry cost so even empty outputs cannot grow memory
+        # independently of the byte and entry bounds.
+        size += 128
+        if size > _REUSE_MAX_BYTES:
+            return
+        while _reuse_results and (
+            len(_reuse_results) >= _REUSE_MAX_ENTRIES or _reuse_bytes + size > _REUSE_MAX_BYTES
+        ):
+            _, (_, _, removed) = _reuse_results.popitem(last=False)
+            _reuse_bytes -= removed
+            _reuse_counts["evicted"] += 1
+        _reuse_results[key] = (time.monotonic() + _REUSE_TTL_S, frozen, size)
+        _reuse_bytes += size
+
+
+def _shared_output_future(pool: ProcessPoolExecutor, key: tuple, fn, args: tuple) -> Future:
+    """Submit once per exact request; timeout of one waiter cannot cancel others."""
+    global _reuse_bytes
+    # Pool object identity is scoped by explicit clearing on shutdown. Holding
+    # the pool itself in the key prevents Python id reuse from crossing pools.
+    key = (pool, *key)
+    with _reuse_lock:
+        now = time.monotonic()
+        for expired in [key for key, entry in _reuse_results.items() if entry[0] <= now]:
+            _, _, size = _reuse_results.pop(expired)
+            _reuse_bytes -= size
+        if key in _reuse_results:
+            _, frozen, _ = _reuse_results[key]
+            _reuse_results.move_to_end(key)
+            _reuse_counts["hits"] += 1
+            completed: Future = Future()
+            completed.set_result(list(frozen))
+            return completed
+        if key in _reuse_pending:
+            _reuse_counts["coalesced"] += 1
+            return _reuse_pending[key]
+        if len(_reuse_pending) >= _REUSE_MAX_PENDING:
+            raise KnowledgeWorkerError("knowledge worker pending request bound reached")
+        future = _submit_worker_output(pool, fn, args)
+        _reuse_pending[key] = future
+        _reuse_counts["submitted"] += 1
+        future.add_done_callback(lambda done: _finish_reused_output(key, done))
+        return future
 
 
 def _ensure_pool() -> ProcessPoolExecutor:
@@ -300,12 +571,16 @@ def _terminate_workers(workers: list) -> None:
             pass
 
 
-def _shutdown_pool() -> None:
+def _shutdown_pool(expected_pool: ProcessPoolExecutor | None = None) -> bool:
     global _pool
     with _pool_lock:
+        if expected_pool is not None and _pool is not expected_pool:
+            return False
         pool, _pool = _pool, None
+        _clear_output_reuse()
+    _clear_embedding_batches()
     if pool is None:
-        return
+        return False
     # Snapshot the workers BEFORE shutdown(): ProcessPoolExecutor.shutdown()
     # sets _processes to None, so the terminate loop that used to run after
     # it raised AttributeError into a bare except and never terminated
@@ -318,24 +593,37 @@ def _shutdown_pool() -> None:
     pool.shutdown(wait=False, cancel_futures=True)
     _terminate_workers(workers)
     logger.info("knowledge worker pool shut down (%d worker(s) reaped)", len(workers))
+    return True
 
 
 atexit.register(_shutdown_pool)
 
 
-def _submit(fn, *args, timeout: float):
+def _submit(fn, *args, timeout: float, reuse_key: tuple | None = None):
     """Run `fn(*args)` in the worker, restarting a broken pool a bounded number
     of times. Blocks the calling THREAD only; raises KnowledgeWorkerError on
     any failure so callers take their degraded path."""
     global _pool_failures
     if _pool_failures > _MAX_POOL_RESTARTS:
         raise KnowledgeWorkerError("knowledge worker disabled after repeated failures")
+    pool = None
     try:
-        fut = _ensure_pool().submit(fn, *args)
-        return fut.result(timeout=timeout)
+        # Check model-switch authorization before looking at a completed cache
+        # entry. Cached inference must never bypass the appliance's off switch.
+        pool = _ensure_pool()
+        fut = (
+            pool.submit(fn, *args)
+            if reuse_key is None
+            else _shared_output_future(pool, reuse_key, fn, args)
+        )
+        result = fut.result(timeout=timeout)
+        # Concurrent waiters must not share a mutable result list.
+        return list(result) if reuse_key is not None else result
     except BrokenProcessPool as e:
-        _pool_failures += 1
-        _shutdown_pool()
+        # A shared broken future may wake many callers. Retire/count its pool
+        # once; a late waiter must not tear down a subsequently created pool.
+        if pool is not None and _shutdown_pool(expected_pool=pool):
+            _pool_failures += 1
         logger.error(
             "knowledge worker died (%s) — restart budget %d/%d used",
             e,
@@ -360,12 +648,21 @@ def embed_texts_isolated(
         batch_size,
         max_length,
         timeout=EMBED_TIMEOUT_S,
+        reuse_key=_output_key("embed", model_name, texts, batch_size, max_length),
     )
 
 
 def rerank_scores_isolated(query: str, passages: list) -> list:
     """Cross-encoder scores from the isolated worker."""
-    return _submit(_worker_rerank, query, list(passages), timeout=RERANK_TIMEOUT_S)
+    model_name = os.getenv("SAGE_RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
+    return _submit(
+        _worker_rerank,
+        query,
+        list(passages),
+        model_name,
+        timeout=RERANK_TIMEOUT_S,
+        reuse_key=_output_key("rerank", model_name, [query, *passages]),
+    )
 
 
 def shutdown() -> None:

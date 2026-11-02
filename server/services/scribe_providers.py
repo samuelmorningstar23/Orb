@@ -13,14 +13,31 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 
 import httpx
-from config import OLLAMA_BASE_URL
 from offline_policy import local_model_origin
+
+from config import OLLAMA_BASE_URL
+from services.local_inference_routing import (
+    inference_url,
+    record_worker_status,
+    record_worker_transport_failure,
+)
+from services.local_model_http import local_model_ssl_context
 
 # ORB_MODELS_ENABLED off (or the Orb Ward Record): every provider refuses
 # before it loads or asks a model (services/model_switch.py).
 from services.model_switch import refuse_when_models_off
 
 logger = logging.getLogger("orb.scribe.providers")
+
+
+def _completed_ollama_text(data: object) -> str:
+    if not isinstance(data, dict) or data.get("done") is not True or data.get("done_reason") == "length" or data.get("error"):
+        raise RuntimeError("Scribe model did not complete its draft")
+    message = data.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, str) or not content.strip():
+        raise RuntimeError("Scribe model returned an empty draft")
+    return content.strip()
 
 
 class LLMProvider(ABC):
@@ -93,9 +110,9 @@ class OllamaProvider(LLMProvider):
         messages.append({"role": "user", "content": prompt})
 
         try:
-            with httpx.Client(timeout=120.0, trust_env=False) as client:
+            with httpx.Client(verify=local_model_ssl_context(), timeout=120.0, trust_env=False) as client:
                 response = client.post(
-                    f"{local_model_origin(self.base_url)}/api/chat",
+                    inference_url("/api/chat", model=model, base_url=self.base_url),
                     json={
                         "model": model,
                         "messages": messages,
@@ -107,8 +124,16 @@ class OllamaProvider(LLMProvider):
                         },
                     },
                 )
-                data = response.json()
-                return data.get("message", {}).get("content", "").strip()
+                if response.status_code >= 400:
+                    record_worker_status(response.status_code)
+                response.raise_for_status()
+                content = _completed_ollama_text(response.json())
+                record_worker_status(response.status_code)
+                return content
+        except httpx.TransportError:
+            record_worker_transport_failure()
+            logger.warning("Scribe local transport failed")
+            return ""
         except Exception as e:
             print(f"[ScribeProvider/Ollama] generate error: {e}")
             return ""
@@ -131,9 +156,9 @@ class OllamaProvider(LLMProvider):
         messages.append({"role": "user", "content": prompt})
 
         try:
-            async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
+            async with httpx.AsyncClient(verify=local_model_ssl_context(), timeout=120.0, trust_env=False) as client:
                 response = await client.post(
-                    f"{local_model_origin(self.base_url)}/api/chat",
+                    inference_url("/api/chat", model=model, base_url=self.base_url),
                     json={
                         "model": model,
                         "messages": messages,
@@ -145,8 +170,16 @@ class OllamaProvider(LLMProvider):
                         },
                     },
                 )
-                data = response.json()
-                return data.get("message", {}).get("content", "").strip()
+                if response.status_code >= 400:
+                    record_worker_status(response.status_code)
+                response.raise_for_status()
+                content = _completed_ollama_text(response.json())
+                record_worker_status(response.status_code)
+                return content
+        except httpx.TransportError:
+            record_worker_transport_failure()
+            logger.warning("Scribe local transport failed")
+            return ""
         except Exception as e:
             print(f"[ScribeProvider/Ollama] agenerate error: {e}")
             return ""
@@ -168,53 +201,60 @@ class OllamaProvider(LLMProvider):
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
-        async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
-            async with client.stream(
-                "POST",
-                f"{local_model_origin(self.base_url)}/api/chat",
-                json={
-                    "model": model,
-                    "messages": messages,
-                    "stream": True,
-                    "options": {
-                        "temperature": temperature,
-                        "num_predict": max_tokens,
-                        "num_ctx": ctx_size,
+        try:
+            async with httpx.AsyncClient(verify=local_model_ssl_context(), timeout=120.0, trust_env=False) as client:
+                async with client.stream(
+                    "POST",
+                    inference_url("/api/chat", model=model, base_url=self.base_url),
+                    json={
+                        "model": model,
+                        "messages": messages,
+                        "stream": True,
+                        "options": {
+                            "temperature": temperature,
+                            "num_predict": max_tokens,
+                            "num_ctx": ctx_size,
+                        },
                     },
-                },
-            ) as response:
-                completed, produced = False, False
-                try:
-                    response.raise_for_status()
-                    async for line in response.aiter_lines():
-                        if not line.strip():
-                            continue
-                        try:
-                            data = json.loads(line)
-                        except json.JSONDecodeError as exc:
-                            raise RuntimeError("Invalid Scribe stream frame") from exc
-                        if not isinstance(data, dict) or data.get("error"):
-                            raise RuntimeError("Scribe model stream reported a failure")
-                        message = data.get("message", {})
-                        if not isinstance(message, dict) or not isinstance(
-                            message.get("content", ""), str
-                        ):
-                            raise RuntimeError("Invalid Scribe stream message")
-                        if "done" in data and not isinstance(data["done"], bool):
-                            raise RuntimeError("Invalid Scribe completion marker")
-                        if data.get("done_reason") == "length":
-                            raise RuntimeError("Scribe model output was truncated")
-                        content = message.get("content", "")
-                        if content:
-                            produced = produced or bool(content.strip())
-                            yield content
-                        if data.get("done") is True:
-                            completed = True
-                            break
-                    if not completed or not produced:
-                        raise RuntimeError("Scribe stream ended without a complete draft")
-                finally:
-                    await response.aclose()
+                ) as response:
+                    if response.status_code >= 400:
+                        record_worker_status(response.status_code)
+                    completed, produced = False, False
+                    try:
+                        response.raise_for_status()
+                        async for line in response.aiter_lines():
+                            if not line.strip():
+                                continue
+                            try:
+                                data = json.loads(line)
+                            except json.JSONDecodeError as exc:
+                                raise RuntimeError("Invalid Scribe stream frame") from exc
+                            if not isinstance(data, dict) or data.get("error"):
+                                raise RuntimeError("Scribe model stream reported a failure")
+                            message = data.get("message", {})
+                            if not isinstance(message, dict) or not isinstance(
+                                message.get("content", ""), str
+                            ):
+                                raise RuntimeError("Invalid Scribe stream message")
+                            if "done" in data and not isinstance(data["done"], bool):
+                                raise RuntimeError("Invalid Scribe completion marker")
+                            if data.get("done_reason") == "length":
+                                raise RuntimeError("Scribe model output was truncated")
+                            content = message.get("content", "")
+                            if content:
+                                produced = produced or bool(content.strip())
+                                yield content
+                            if data.get("done") is True:
+                                completed = True
+                                record_worker_status(response.status_code)
+                                break
+                        if not completed or not produced:
+                            raise RuntimeError("Scribe stream ended without a complete draft")
+                    finally:
+                        await response.aclose()
+        except httpx.TransportError:
+            record_worker_transport_failure()
+            raise
 
 
 # ── Provider Registry ──

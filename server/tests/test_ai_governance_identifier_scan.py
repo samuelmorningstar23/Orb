@@ -18,6 +18,7 @@ Sage retrieval reads, so ward "OR" is no longer found inside "for"
 import random
 import re
 import time
+from typing import Any
 
 import pytest
 
@@ -200,3 +201,60 @@ def test_a_name_at_the_end_of_a_512kb_question_is_still_found(table):
     target = rows[1234]["name"].split()[1].lower()
     table(rows)
     assert gov._match_patient_identifiers(f"{NOBODY} {target}", include_ward=False) is True
+
+
+def test_repeated_ward_strings_are_checked_once_without_changing_typed_capitals(
+    table: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    table([_row(f"SyntheticName{i}", "OR", "ZX") for i in range(100)])
+    calls: list[tuple[str, str]] = []
+    original = gov.ward_named_in
+    def record(ward: str, query: str) -> bool:
+        calls.append((ward, query))
+        return original(ward, query)
+    monkeypatch.setattr(gov, "ward_named_in", record)
+    assert not gov._match_patient_identifiers("metoprolol mechanism", query="Metoprolol mechanism")
+    assert calls == [("OR", "Metoprolol mechanism")]
+    assert gov._match_patient_identifiers("back from or?", query="back from OR?")
+
+
+def test_cached_string_parsing_never_caches_the_roster_or_identifier_verdict(table: Any) -> None:
+    table([_row("Asha Montague", "RemoteWard", "ZX99")])
+    assert gov._match_patient_identifiers("montague", include_ward=False)
+    table([_row("Rina Pendleton", "AnotherWard", "YY88")])
+    assert not gov._match_patient_identifiers("montague", include_ward=False)
+    assert not gov._match_patient_identifiers("zx99", include_ward=False)
+    assert gov._match_patient_identifiers("pendleton", include_ward=False)
+    assert gov._match_patient_identifiers("yy88", include_ward=False)
+    table([])
+    assert not gov._match_patient_identifiers("pendleton", include_ward=False)
+
+
+def test_identifier_string_caches_are_bounded_and_skip_oversized_labels() -> None:
+    gov._identifier_name_parts_cached.cache_clear()
+    gov._identifier_bed_cached.cache_clear()
+    for index in range(2050):
+        gov._identifier_name_parts(f"syntheticname{index}")
+        gov._identifier_bed(f"syntheticbed{index}")
+    assert gov._identifier_name_parts_cached.cache_info().currsize == 2048
+    assert gov._identifier_bed_cached.cache_info().currsize == 2048
+    names_before = gov._identifier_name_parts_cached.cache_info()
+    beds_before = gov._identifier_bed_cached.cache_info()
+    oversized = "z" * 257
+    assert gov._identifier_name_parts(oversized) == (oversized,)
+    assert gov._identifier_bed(oversized + "/") == oversized
+    assert gov._identifier_name_parts_cached.cache_info() == names_before
+    assert gov._identifier_bed_cached.cache_info() == beds_before
+
+
+def test_census_already_classified_phi_skips_only_the_redundant_soft_ward_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[bool] = []
+    def no_identifier(query_lower: str, include_ward: bool = True, query: str | None = None) -> bool:
+        calls.append(include_ward)
+        return False
+    monkeypatch.setattr(gov, "_match_patient_identifiers", no_identifier)
+    result = gov.classify_query_sensitivity("hospital census please")
+    assert result.contains_phi and result.query_class == "census_broad"
+    assert calls == [False]

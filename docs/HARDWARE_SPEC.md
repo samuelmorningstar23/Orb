@@ -1,5 +1,10 @@
 # Orb Appliance: Hardware Specification
 
+> **21 October 2026 update:** the new 200-simultaneous-request and 3/5/15-second
+> targets require separate qualification. Use [the current capacity decision](CAPACITY_200_REQUESTS.md)
+> for this deployment. The historical bed-count estimates below do not establish
+> those latency guarantees or a purchase requirement for maximum memory/storage.
+
 *Version 3 · first written 1 August 2026, measurements re-checked 3 September
 2026, hardware and Apple India pricing re-checked against apple.com on
 7 September 2026 for the M5 generation · For the hospital's CIO and IT lead.

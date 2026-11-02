@@ -39,7 +39,6 @@ Neighbors: the HTTP/WebSocket client this shell calls into is owned by the API-c
 | `src/main.tsx` | 110 | React bootstrap: fonts, CSS, i18n, `RootErrorBoundary`, single-root mount |
 | `src/App.tsx` | 201 | `AuthContext`, theme init, shared-device idle lock, and the react-router-dom v7 route map |
 | `src/App.css` | 1 | Empty placeholder (a single comment) |
-| `src/constants.ts` | 6 | `DOCTORS`, seeded attending-doctor IDs |
 | `src/pages/Login.tsx` | 506 | Staff/patient sign-in: password, PIN-on-device, TOTP MFA, tablet enrolment |
 | `src/pages/Login.css` | 221 | Login layout: one opaque card, hairline borders, input and PIN-pad styling |
 | `src/pages/ClinicianShell.tsx` | 830 | The staff frame: sidebar tabs, header, theme/lang toggles, lazy panels |
@@ -258,16 +257,6 @@ The boot block and the OS listener read the saved choice through one helper, `st
 #### placeholder: `src/App.css:1`
 A single comment line; imported at `src/AppRoot.tsx:20` but contributes nothing. Kept, presumably, as the conventional slot for app-level styles.
 
-### src/constants.ts
-
-#### DOCTORS: `src/constants.ts:2`
-**Signature:** `{id: string, name: string}[]`
-**Does:** the three seeded attending doctors (`DOC001`, `DOC002`, `DOC004`) selectable where an attending must be chosen.
-**Why it exists:** the comment warns that a non-existent attending id makes admission 500 (`src/constants.ts:1`), so the list is pinned to what the database seed guarantees.
-**Talks to:** imported only by `ScribePanel` (`src/pages/panels/ScribePanel.tsx:7`).
-**Change guide:** adding a doctor here requires the same id to exist in the backend seed data, or admissions referencing it will 500.
-**Gotchas:** duplicated knowledge, this list has to stay in step with the backend seed. It is the only place the UI hardcodes clinician identities; the dev quick-access credential chips that used to live in `Login.tsx` are gone.
-
 ### src/pages/Login.tsx
 
 > **Rewritten.** Earlier editions of this chapter documented `SHOW_QUICK_ACCESS` / `QUICK_ACCESS`
@@ -468,7 +457,6 @@ Standard WebGL boilerplate: compile a shader (`:201-211`) and link the vertex+fr
 | `AuthContext`, `useAuth`, `User`, `UserRole` | `src/App.tsx:11-50` | `ClinicianShell`, `Login`, `PatientShell`, `AdmitPatientModal` |
 | `useActivePatient`, `ActivePatientProvider` | `src/contexts/ActivePatientContext.tsx:15,17` | `VigilPanel`, `SagePanel`, `ClinicianShell` |
 | `useFocusTrap` | `src/hooks/useFocusTrap.ts:54` | 12 modal call sites, `AdmitPatientModal`, `MfaEnrollmentModal`, `SessionExpiredModal`, `KeyboardShortcuts`, `HelixOrderReviewModal`, `PatientStory`, `AdministerModal`, `SafetyAlertModal`, `MedRoundSheet`, `UsersPanel` (×2), `PatientShell` |
-| `DOCTORS` | `src/constants.ts:2` | `ScribePanel` |
 | `OrbLogo` | `src/components/OrbLogo.tsx:3` | `ClinicianShell`, `Login`, `PatientShell`, plus Sage/Scribe feature components (`SagePanel`, `ScribePanel`, `SageMessage`, `SageEmptyState`) |
 
 **REST endpoints invoked (not owned) by this subsystem:** `POST /api/auth/login` with `{employee_id, password, totp_code?}` → `Set-Cookie: orb_session` plus `{token, user}` (`src/api/client.ts:581`; server prefix verified at `server/routes/auth_routes.py:26,366`, mounted `server/main.py:681`; owned by guide 03-auth-rbac).

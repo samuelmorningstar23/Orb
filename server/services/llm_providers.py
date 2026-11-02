@@ -8,28 +8,93 @@ backend can be swapped without touching business logic:
     offline/PHI engine and the ONLY lane — every token is generated on the
     box, so no prompt or completion ever crosses the network boundary.
 
-Concurrency posture: the local lane serializes through llm_queue
-(max_concurrent=1) behind the process-wide GPU gate — one physical GPU, one
-job at a time. Callers acquire the queue before streaming.
+Callers acquire llm_queue before streaming. The default serving lane stays
+conservative; an explicitly qualified worker pool routes each task to its own
+bounded local worker without changing shared provider objects.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import time
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 
 import httpx
+
 from config import (
     LLM_MODEL,
     OLLAMA_BASE_URL,
     OLLAMA_KEEP_ALIVE,
 )
+from services.local_inference_routing import (
+    inference_url,
+    record_worker_status,
+    record_worker_transport_failure,
+)
+from services.local_model_http import local_model_ssl_context
 
 logger = logging.getLogger("orb.llm_providers")
+
+
+def _log_completion_metrics(model: str, data: dict) -> None:
+    """Log counts only; optional engine diagnostics must not break an answer.
+
+    Ollama 0.35.1 reports cached + evaluated tokens in prompt_eval_count.
+    Its separate cached counter is authoritative; character estimates cannot
+    distinguish a reused prefix from a full prefill. Older engines that omit
+    that counter leave the evaluated/cache counts explicitly unknown.
+    """
+
+    def count(value):
+        return value if type(value) is int and 0 <= value <= 2**63 - 1 else None
+
+    def milliseconds(value):
+        if (
+            type(value) not in (int, float)
+            or not 0 <= value <= 2**63 - 1
+            or not math.isfinite(value)
+        ):
+            return 0.0
+        return value / 1e6
+
+    total = count(data.get("prompt_eval_count"))
+    cached = count(data.get("prompt_eval_cached_count"))
+    if total is None or cached is not None and cached > total:
+        cached = None
+    evaluated = total - cached if total is not None and cached is not None else None
+    prefill_ms = milliseconds(data.get("prompt_eval_duration"))
+    decoded = count(data.get("eval_count"))
+    decode_ms = milliseconds(data.get("eval_duration"))
+    prefill_rate = (
+        f"{evaluated / prefill_ms * 1000:.0f}"
+        if evaluated is not None and prefill_ms
+        else "unknown"
+    )
+    decode_rate = (
+        f"{decoded / decode_ms * 1000:.1f}" if decoded is not None and decode_ms else "unknown"
+    )
+    logger.info(
+        "llm split model=%s prefill=%s tok in %.0f ms (%s tok/s) "
+        "decode=%s tok in %.0f ms (%s tok/s) "
+        "prompt_total=%s tok, prompt_cached=%s tok",
+        model,
+        evaluated if evaluated is not None else "unknown",
+        prefill_ms,
+        prefill_rate,
+        decoded if decoded is not None else "unknown",
+        decode_ms,
+        decode_rate,
+        total if total is not None else "unknown",
+        cached if cached is not None else "unknown",
+    )
+
+
+class LocalModelStreamError(RuntimeError):
+    """A local engine response did not complete successfully; contains no prompt data."""
 
 
 def _stream_read_timeout() -> float:
@@ -98,81 +163,89 @@ class OllamaChatProvider(ChatProvider):
 
         refuse_when_models_off("Sage chat (OllamaChatProvider)")
         opts = options or {}
-        # ~4 chars/token is close enough to tell a cache hit from a miss; the
-        # authoritative prefilled count comes back from Ollama on the done chunk.
-        _prompt_tokens_est = sum(len(m.get("content") or "") for m in messages) // 4
         # first_token vs the client's first rendered chunk is the whole question:
         # the 70-turn eval showed 9.3 s mean prefill but 35 s median to first
         # words, so ~26 s is spent somewhere downstream of generation starting.
         _t0 = time.monotonic()
         _first_tok_at = None
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=30.0, read=_stream_read_timeout(), write=30.0, pool=30.0),
-            trust_env=False,
-        ) as client:
-            async with client.stream(
-                "POST",
-                f"{self.base_url}/api/chat",
-                json={
-                    "model": self.model,
-                    "messages": messages,
-                    "stream": True,
-                    "keep_alive": OLLAMA_KEEP_ALIVE,
-                    "options": {
-                        "temperature": opts.get("temperature", 0.4),
-                        "repeat_penalty": opts.get("repeat_penalty", 1.15),
-                        "repeat_last_n": opts.get("repeat_last_n", 256),
-                        "num_predict": opts.get("num_predict", 2048),
-                        "num_ctx": opts.get("num_ctx", 8192),
+        try:
+            async with httpx.AsyncClient(verify=local_model_ssl_context(), 
+                timeout=httpx.Timeout(connect=30.0, read=_stream_read_timeout(), write=30.0, pool=30.0),
+                trust_env=False,
+            ) as client:
+                async with client.stream(
+                    "POST",
+                    inference_url("/api/chat", model=self.model, base_url=self.base_url),
+                    json={
+                        "model": self.model,
+                        "messages": messages,
+                        "stream": True,
+                        "keep_alive": OLLAMA_KEEP_ALIVE,
+                        "options": {
+                            "temperature": opts.get("temperature", 0.4),
+                            "repeat_penalty": opts.get("repeat_penalty", 1.15),
+                            "repeat_last_n": opts.get("repeat_last_n", 256),
+                            "num_predict": opts.get("num_predict", 2048),
+                            "num_ctx": opts.get("num_ctx", 8192),
+                        },
                     },
-                },
-            ) as response:
-                try:
-                    async for line in response.aiter_lines():
-                        if not line:
-                            continue
-                        try:
-                            data = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        if "message" in data and "content" in data["message"]:
-                            if _first_tok_at is None:
-                                _first_tok_at = time.monotonic()
-                                logger.info(
-                                    "llm first_token model=%s at %.0f ms after request",
-                                    self.model,
-                                    (_first_tok_at - _t0) * 1000,
-                                )
-                            yield data["message"]["content"]
-                        if data.get("done", False):
-                            # Prefill/decode split, straight from Ollama's own
-                            # counters. Counts and durations only — the messages
-                            # carry PHI and must never reach a log line.
-                            _pc = data.get("prompt_eval_count")
-                            if _pc:
-                                _pd = (data.get("prompt_eval_duration") or 0) / 1e6
-                                _ec = data.get("eval_count") or 0
-                                _ed = (data.get("eval_duration") or 0) / 1e6
-                                _cached = _prompt_tokens_est - _pc
-                                logger.info(
-                                    "llm split model=%s prefill=%d tok in %.0f ms "
-                                    "(%.0f tok/s) decode=%d tok in %.0f ms (%.1f tok/s) "
-                                    "prompt~%d tok, cache_reused~%d tok",
-                                    self.model,
-                                    _pc,
-                                    _pd,
-                                    (_pc / _pd * 1000) if _pd else 0,
-                                    _ec,
-                                    _ed,
-                                    (_ec / _ed * 1000) if _ed else 0,
-                                    _prompt_tokens_est,
-                                    _cached if _cached > 0 else 0,
-                                )
-                            break
-                except GeneratorExit:
-                    logger.info("Ollama stream cancelled — closing httpx connection")
-                finally:
-                    await response.aclose()
+                ) as response:
+                    if response.status_code >= 400:
+                        record_worker_status(response.status_code)
+                    completed = False
+                    meaningful_content = False
+                    try:
+                        if response.is_error:
+                            raise LocalModelStreamError("Local model request failed.")
+                        async for line in response.aiter_lines():
+                            if not line:
+                                continue
+                            try:
+                                data = json.loads(line)
+                            except json.JSONDecodeError as exc:
+                                raise LocalModelStreamError(
+                                    "Local model returned an invalid stream."
+                                ) from exc
+                            if not isinstance(data, dict) or data.get("error") is not None:
+                                raise LocalModelStreamError("Local model returned an invalid stream.")
+                            message = data.get("message")
+                            if message is not None and (
+                                not isinstance(message, dict)
+                                or not isinstance(message.get("content"), str)
+                            ):
+                                raise LocalModelStreamError("Local model returned an invalid stream.")
+                            content = message.get("content", "") if message else ""
+                            if content:
+                                meaningful_content = meaningful_content or bool(content.strip())
+                                if _first_tok_at is None:
+                                    _first_tok_at = time.monotonic()
+                                    logger.info(
+                                        "llm first_token model=%s at %.0f ms after request",
+                                        self.model,
+                                        (_first_tok_at - _t0) * 1000,
+                                    )
+                                yield content
+                            if data.get("done") is True:
+                                if data.get("done_reason") == "length":
+                                    raise LocalModelStreamError(
+                                        "Local model answer exceeded its response budget."
+                                    )
+                                completed = True
+                                record_worker_status(response.status_code)
+                                # Prefill/decode split, straight from Ollama's own
+                                # counters. Counts and durations only — the messages
+                                # carry PHI and must never reach a log line.
+                                _log_completion_metrics(self.model, data)
+                                break
+                        if not completed or not meaningful_content:
+                            raise LocalModelStreamError("Local model did not complete an answer.")
+                    except GeneratorExit:
+                        logger.info("Ollama stream cancelled — closing httpx connection")
+                    finally:
+                        await response.aclose()
+        except httpx.TransportError:
+            record_worker_transport_failure()
+            raise
 
 
 # Module-level singleton (cheap, stateless besides config).

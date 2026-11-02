@@ -54,20 +54,87 @@ if [ "$LAN" -eq 1 ]; then
   export ORB_CORS_ORIGINS="${ORB_CORS_ORIGINS:+$ORB_CORS_ORIGINS,}$LAN_ORIGIN"
 fi
 
-# Ollama is optional at boot; the app degrades to errors on AI calls without it.
-if command -v ollama >/dev/null 2>&1 && ! curl -sf -m 2 http://localhost:11434/api/tags >/dev/null 2>&1; then
-  info "Starting Ollama"
-  nohup ollama serve > /tmp/ollama-serve.log 2>&1 &
-  sleep 3
-fi
-
 PIDS=()
+OLLAMA_PID=""
+owned_ollama_running() {
+  local job_pid
+  for job_pid in $(jobs -pr); do
+    [ "$job_pid" != "$OLLAMA_PID" ] || return 0
+  done
+  return 1
+}
+stop_owned_ollama() {
+  [ -n "$OLLAMA_PID" ] || return 0
+  if owned_ollama_running; then
+    kill -TERM "$OLLAMA_PID" 2>/dev/null || true
+    for _ in $(seq 1 20); do
+      owned_ollama_running || break
+      sleep 0.1
+    done
+    if owned_ollama_running; then kill -KILL "$OLLAMA_PID" 2>/dev/null || true; fi
+  fi
+  wait "$OLLAMA_PID" 2>/dev/null || true
+  OLLAMA_PID=""
+}
 cleanup() {
+  trap - EXIT INT TERM
   info "Shutting down"
   for pid in "${PIDS[@]:-}"; do kill "$pid" 2>/dev/null || true; done
-  wait 2>/dev/null || true
+  stop_owned_ollama
+  if [ "${PIDS[0]+present}" = present ]; then wait "${PIDS[@]}" 2>/dev/null || true; fi
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+start_optional_ollama() {
+  # Probe and start exactly the endpoint the backend will use. Never probe a
+  # remote/malformed URL, or reconfigure a daemon we did not start.
+  local base_url daemon_host port ollama_log ready
+  base_url="${ORB_OLLAMA_BASE_URL:-http://localhost:11434}"
+  base_url="${base_url%/}"
+  if [[ "$base_url" =~ ^http://(127[.]0[.]0[.]1|localhost|\[::1\])(:([0-9]+))?$ ]]; then
+    port="${BASH_REMATCH[3]:-80}"
+    daemon_host="http://${BASH_REMATCH[1]}:$port"
+    if [ "${#port}" -gt 5 ] || [ "$((10#$port))" -lt 1 ] || [ "$((10#$port))" -gt 65535 ]; then
+      info "Optional AI startup skipped: invalid loopback port. Orb will continue."
+      return 0
+    fi
+  else
+    info "Optional AI startup skipped: the configured endpoint is not a supported loopback HTTP address. Orb will continue."
+    return 0
+  fi
+  if curl -sf -m 2 "$base_url/api/tags" >/dev/null 2>&1; then
+    info "Reusing the existing Ollama daemon; its cache profile is unaffected."
+    return 0
+  fi
+  if ! command -v ollama >/dev/null 2>&1; then
+    info "Optional AI startup skipped: Ollama is unavailable. Orb will continue."
+    return 0
+  fi
+  if ! ollama_log="$(mktemp "${TMPDIR:-/tmp}/orb-ollama-serve.XXXXXX")"; then
+    info "Optional AI startup skipped: a private log could not be created. Orb will continue."
+    return 0
+  fi
+  info "Starting the Orb-owned Ollama launcher; private log: $ollama_log"
+  OLLAMA_HOST="$daemon_host" nohup "$REPO_ROOT/scripts/serve-ollama.sh" > "$ollama_log" 2>&1 &
+  OLLAMA_PID=$!
+  ready=0
+  for _ in 1 2 3; do
+    owned_ollama_running || break
+    if curl -sf -m 1 "$base_url/api/tags" >/dev/null 2>&1 &&
+      [ "$(lsof -nP -a -p "$OLLAMA_PID" "-iTCP:$port" -sTCP:LISTEN -t 2>/dev/null || true)" = "$OLLAMA_PID" ]; then
+      ready=1
+      break
+    fi
+    sleep 1
+  done
+  if [ "$ready" -ne 1 ]; then
+    stop_owned_ollama
+    info "Optional AI engine did not become ready; Orb will continue. See $ollama_log"
+  fi
+}
+start_optional_ollama
 
 info "Backend  → http://localhost:${ORB_PORT:-8000}"
 ( cd "$REPO_ROOT/server" && exec "$VENV/bin/python" main.py ) &
@@ -88,4 +155,5 @@ if [ "$LAN" -eq 1 ]; then
 fi
 info "Sign in: DOC001 / password   (also NUR001, PHA001, ADM001)"
 info "Ctrl-C to stop everything."
-wait
+# The optional daemon must not keep the shell alive after the app exits.
+wait "${PIDS[@]}"

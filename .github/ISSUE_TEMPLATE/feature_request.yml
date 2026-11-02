@@ -1,0 +1,23 @@
+name: Feature or implementation gap
+description: Propose a workflow change or identify work missing from an approved plan.
+title: "[Feature]: "
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: Workflow and intended behavior
+      description: Identify the user role, trigger, expected result, and acceptance criteria.
+    validations:
+      required: true
+  - type: textarea
+    id: plan
+    attributes:
+      label: Architecture or product ruling
+      description: Link the design, HIS increment, or ruling. Identify unresolved clinical decisions rather than assuming a policy.
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies and rollout
+      description: Note schema changes, feature flags, site configuration, offline requirements, and validation needed before enabling.

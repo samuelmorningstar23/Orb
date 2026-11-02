@@ -1,21 +1,11 @@
 /**
- * fetchWardPackHtml is the one downtime call that cannot go through apiFetch:
- * the ward pack is a text/html document, and apiFetch would json() it. It lived
- * inside the page component for that reason; it belongs with the other downtime
- * calls, and its contract is pinned here so the move cannot quietly change it.
+ * The HTML ward pack uses the same session transport as JSON while preserving
+ * its raw document bytes and the server's refusal.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('./client', () => ({
-  API_BASE: '/api',
-  apiFetch: vi.fn(),
-  buildHeaders: () => ({ 'X-CSRF-Token': 'csrf-1' }),
-  handleResponseError: async (response: { status: number }) => {
-    throw new Error(`API error: ${response.status}`)
-  },
-}))
-
 import { fetchWardPackHtml } from './downtime'
+import { API_BASE, buildHeaders } from './client'
 
 beforeEach(() => {
   vi.unstubAllGlobals()
@@ -27,14 +17,14 @@ describe('fetchWardPackHtml', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(fetchWardPackHtml('P-TEST-1')).resolves.toBe('<!DOCTYPE html>ward pack')
-    expect(fetchMock).toHaveBeenCalledWith('/api/downtime/P-TEST-1/ward-pack', {
+    expect(fetchMock).toHaveBeenCalledWith(`${API_BASE}/downtime/P-TEST-1/ward-pack`, {
       credentials: 'include',
-      headers: { 'X-CSRF-Token': 'csrf-1' },
+      headers: buildHeaders('GET'),
     })
   })
 
   it('raises through the shared error path so a scope refusal keeps its message', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, text: async () => '' })))
-    await expect(fetchWardPackHtml('P-NOPE')).rejects.toThrow(/404/)
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ detail: 'This patient is outside your ward.' }), { status: 404 })))
+    await expect(fetchWardPackHtml('P-NOPE')).rejects.toMatchObject({ message: 'This patient is outside your ward.', status: 404 })
   })
 })

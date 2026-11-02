@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 BACKUP_SH = REPO_ROOT / "scripts" / "backup.sh"
-VENV_PY = REPO_ROOT / "server" / ".venv" / "bin" / "python"
+TEST_PYTHON = Path(sys.executable)
 TEST_KEY = "receipt-test-key-not-the-real-one"
 
 pytest.importorskip("sqlcipher3", reason="the verifier opens SQLCipher files")
@@ -152,14 +152,13 @@ def _fake_backup(directory: Path, stamp: str, *, ok: bool | None, age_s: int) ->
     path.write_bytes(b"x" * 64)
     if ok is not None:
         (directory / f"orb-backup-{stamp}.verified.json").write_text(
-            json.dumps({"schema": vr.RECEIPT_SCHEMA, "ok": ok}, indent=2))
+            json.dumps({"schema": vr.RECEIPT_SCHEMA, "ok": ok, "backup_file": path.name, "size_bytes": path.stat().st_size, "integrity_check": "ok"}, indent=2))
     then = time.time() - age_s
     os.utime(path, (then, then))
     return path
 
 
-@pytest.mark.skipif(not BACKUP_SH.exists() or not VENV_PY.exists(),
-                    reason="needs scripts/backup.sh and the server venv")
+@pytest.mark.skipif(not BACKUP_SH.exists(), reason="needs scripts/backup.sh")
 def test_backup_sh_writes_the_receipt_and_rotates_only_verified_backups(tmp_path):
     live = _make_db(tmp_path / "live.db")
     out = tmp_path / "backups"
@@ -174,6 +173,7 @@ def test_backup_sh_writes_the_receipt_and_rotates_only_verified_backups(tmp_path
         "PATH": "/usr/bin:/bin",
         "HOME": os.environ.get("HOME", "/tmp"),
         "ORB_DEPLOYMENT_PROFILE": "dev",
+        "ORB_PYTHON": str(TEST_PYTHON),
         "ORB_JWT_SECRET": "suite-only-secret-0123456789abcdef0123456789",
         "ORB_DB_ENCRYPTION_KEY": TEST_KEY,
         "ORB_DB_PATH": str(live),

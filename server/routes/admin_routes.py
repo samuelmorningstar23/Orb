@@ -4,7 +4,6 @@ Provides pre-aggregated governance metrics for the Admin dashboard.
 All endpoints require admin.overview permission.
 """
 
-import json
 import logging
 import os
 import sqlite3
@@ -33,10 +32,11 @@ from permissions import (
     require_permission,
     scope_patient_ids_sql,
 )
+from routes.import_mapping import parse_mapping as _parse_mapping
+from services import history_import_service as history_import
 from services.audit_service import log_audit_event
 from services.consent_service import ERASURE_RETAINED_TABLES
 
-from services import history_import_service as history_import
 
 logger = logging.getLogger("orb.admin")
 
@@ -1018,28 +1018,6 @@ def _discard(path: str) -> None:
         os.unlink(path)
     except OSError:  # pragma: no cover — already gone
         logger.debug("history import spool file already removed: %s", path)
-
-
-def _parse_mapping(mapping: str) -> dict[str, str]:
-    """Parse the JSON mapping form field into {orb_field: csv_header}."""
-    try:
-        parsed = json.loads(mapping or "{}")
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=422, detail=f"mapping must be valid JSON: {e}") from e
-    if not isinstance(parsed, dict):
-        raise HTTPException(
-            status_code=422, detail="mapping must be a JSON object of {orb_field: csv_column}"
-        )
-    out: dict[str, str] = {}
-    for k, v in parsed.items():
-        if v is None or v == "":
-            continue
-        if not isinstance(k, str) or not isinstance(v, str):
-            raise HTTPException(
-                status_code=422, detail="mapping keys and values must both be strings"
-            )
-        out[k] = v
-    return out
 
 
 def _history_audit(

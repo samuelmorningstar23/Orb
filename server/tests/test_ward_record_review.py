@@ -16,6 +16,7 @@ Two holes the lane's own tests could not show:
    that neither filters voided_at nor is named in DELIBERATELY_UNFILTERED with
    its reason.
 """
+import ast
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -208,6 +209,56 @@ def _statements(text: str):
             yield i + 1, "\n".join(lines[max(0, i - 3):i + 8])
 
 
+def _bound_where_filters_voided(text: str, lineno: int) -> bool:
+    """Recognize only a directly interpolated, statically bound WHERE filter.
+
+    A reset, conditional assignment or non-AND append invalidates the proof.
+    Neighbouring queries cannot lend their filter to this one.
+    """
+    tree = ast.parse(text)
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for query in ast.walk(function):
+            if not (isinstance(query, ast.JoinedStr)
+                    and query.lineno <= lineno <= query.end_lineno):
+                continue
+            for index, value in enumerate(query.values):
+                if not (isinstance(value, ast.FormattedValue)
+                        and isinstance(value.value, ast.Name) and value.conversion == -1
+                        and value.format_spec is None and index > 0
+                        and isinstance(query.values[index - 1], ast.Constant)
+                        and re.search(r"\bWHERE\s*$", query.values[index - 1].value, re.I)):
+                    continue
+                name, binding = value.value.id, None
+                for statement in function.body:
+                    if statement.lineno >= query.lineno:
+                        break
+                    assignment = None
+                    if isinstance(statement, ast.Assign) and len(statement.targets) == 1:
+                        target = statement.targets[0]
+                        if isinstance(target, ast.Name) and target.id == name:
+                            assignment = statement.value
+                        elif (isinstance(target, ast.Tuple) and isinstance(statement.value, ast.Tuple)
+                              and len(target.elts) == len(statement.value.elts)):
+                            assignment = next((rhs for lhs, rhs in zip(target.elts, statement.value.elts)
+                                               if isinstance(lhs, ast.Name) and lhs.id == name), None)
+                    if assignment is not None:
+                        binding = assignment.value if isinstance(assignment, ast.Constant) and isinstance(assignment.value, str) else None
+                        continue
+                    for nested in ast.walk(statement):
+                        if isinstance(nested, ast.Name) and nested.id == name and isinstance(nested.ctx, ast.Store):
+                            parents = [node for node in ast.walk(statement) if isinstance(node, ast.AugAssign) and node.target is nested]
+                            if parents and all(isinstance(node.op, ast.Add) and isinstance(node.value, ast.Constant)
+                                               and isinstance(node.value.value, str)
+                                               and node.value.value.lstrip().upper().startswith("AND ") for node in parents):
+                                continue
+                            binding = None
+                if binding and re.search(r"\bvoided_at\s+IS\s+NULL\b", binding, re.I):
+                    return True
+    return False
+
+
 def test_every_vitals_reader_skips_voided_sets_or_says_why():
     offenders = []
     for folder in ("services", "routes"):
@@ -220,6 +271,8 @@ def test_every_vitals_reader_skips_voided_sets_or_says_why():
                 line = lines[lineno - 1]
                 if "voided_at" in window:
                     continue
+                if _bound_where_filters_voided(text, lineno):
+                    continue
                 if any(key in line or key in window for key in allowed):
                     continue
                 offenders.append(f"{rel}:{lineno}: {line.strip()}")
@@ -230,6 +283,28 @@ def test_every_vitals_reader_skips_voided_sets_or_says_why():
 
 
 # ── 3. Scoring off: an admission set is stored, and no baseline score ────────
+
+def test_interpolated_where_guard_requires_its_own_unreset_literal_filter():
+    source = '''def rows(db, pid, boundary):
+    where, args = "patient_id=? AND voided_at IS NULL", [pid]
+    if boundary:
+        where += " AND timestamp>=?"
+        args.append(boundary)
+    # A distant, explicitly bound predicate remains the query's predicate.
+    return db.execute(f"SELECT * FROM vitals WHERE {where}", args)
+'''
+    line = next(i for i, text in enumerate(source.splitlines(), 1) if "FROM vitals" in text)
+    assert _bound_where_filters_voided(source, line)
+    for changed in (
+        source.replace("voided_at IS NULL", "source='wire'"),
+        source.replace('    # A distant', '    where = "patient_id=?"\n    # A distant'),
+        source.replace('    # A distant', '    if boundary:\n        where = "patient_id=?"\n    # A distant'),
+        source.replace('where += " AND timestamp>=?"', 'where += " OR 1=1"'),
+        source.replace("{where}", "{other_where}"),
+    ):
+        changed_line = next(i for i, text in enumerate(changed.splitlines(), 1) if "FROM vitals" in text)
+        assert not _bound_where_filters_voided(changed, changed_line)
+
 
 def _admit_with_vitals():
     from auth import hash_password

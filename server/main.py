@@ -330,6 +330,11 @@ def models_to_warm(configured: Iterable[str], resident: Collection[str] = frozen
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """App startup / shutdown."""
+    from services.sage_retrieval_executor import get_sage_retrieval_executor
+
+    # Validate the explicit limit before accepting work. Threads remain lazy;
+    # retrieval no longer fans out across the unrelated asyncio default pool.
+    sage_retrieval_executor = get_sage_retrieval_executor(app)
     logger.info("═══ Orb Hospital OS — Starting (profile=%s) ═══", DEPLOYMENT_PROFILE)
     # The Orb Ward Record's two clinical switches, stated once so an operator
     # can see from the log which mode this computer is in.
@@ -426,22 +431,40 @@ async def lifespan(app: FastAPI):
 
     # ORB_MODELS_ENABLED off (or the Orb Ward Record): no model lane starts at
     # boot. Read once here; services/model_switch.py is the one reader.
-    from services.model_switch import models_enabled as _models_enabled
+    from services.model_switch import (
+        background_models_enabled as _background_models_enabled,
+    )
+    from services.model_switch import (
+        models_enabled as _models_enabled,
+    )
 
     _models_on = _models_enabled()
+    _background_models_on = _background_models_enabled()
     if not _models_on:
         logger.warning(
             "Models switched off on this computer (ORB_MODELS_ENABLED or "
             "ORB_WARD_RECORD): no model is warmed and the ward narrator, Sage "
             "insights, the knowledge workers and the voice agent do not start."
         )
+    elif not _background_models_on:
+        logger.warning(
+            "Automatic model jobs disabled (ORB_BACKGROUND_MODELS_ENABLED): "
+            "interactive inference remains enabled; timings represent idle load."
+        )
+
+    # The service elects one DB lease owner and coalesces persistent jobs. Chart
+    # reads only inspect saved snapshots; they never wait for this worker.
+    from services.patient_summary_service import patient_summary_service
+
+    if _background_models_on:
+        await patient_summary_service.start()
 
     # Situational-awareness ward narrator (event-driven; deterministic floor +
     # debounced local-LLM narrative at background priority)
     try:
         from services.sage_narrator_service import register_narrator, ward_narrator
 
-        if _models_on:
+        if _background_models_on:
             register_narrator()
             lifespan_tasks.append(_spawn(ward_narrator.idle_loop()))
     except Exception as e:
@@ -534,7 +557,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("Clinical knowledge base init failed (non-fatal): %s", e)
 
-    if _models_on:
+    if _background_models_on:
         lifespan_tasks.append(_spawn(_init_knowledge_background()))
 
     # Pre-load BOTH inference tiers into unified memory so first queries are
@@ -629,16 +652,22 @@ async def lifespan(app: FastAPI):
             from config import AMBIENT_LLM_MODEL, LLM_MODEL
             from services.llm_queue_service import llm_queue
 
-            await llm_queue.acquire(priority=5)  # Lowest priority — defers to everything
-            try:
-                for model in dict.fromkeys([LLM_MODEL, AMBIENT_LLM_MODEL]):
+            if llm_queue.worker_pool is not None:
+                # These lifecycle probes target the legacy daemon. Operators
+                # must prewarm/qualify every configured worker independently;
+                # taking one worker's lease must never warm a different one.
+                logger.info("Qualified worker pool: legacy daemon warmup disabled")
+                return
+            for model in dict.fromkeys([LLM_MODEL, AMBIENT_LLM_MODEL]):
+                ticket = await llm_queue.acquire(priority=5, model=model)
+                try:
                     # Checked per model, after the queue wait: an administrator
                     # can unload a tier while this one waits or loads.
                     if not models_to_warm([model]):
                         continue
                     await _warm_one(model)
-            finally:
-                llm_queue.release()
+                finally:
+                    llm_queue.release(ticket) if ticket is not None else llm_queue.release()
         except Exception as e:
             logger.warning("LLM warmup failed (non-fatal): %s", e)
 
@@ -753,9 +782,12 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.debug("keep-warm ping skipped: %s", e)
 
-    if _models_on:
+    if _background_models_on:
         lifespan_tasks.append(_spawn(warmup_models()))
-        lifespan_tasks.append(_spawn(keep_warm_loop()))
+        from services.llm_queue_service import llm_queue as _warm_queue
+
+        if _warm_queue.worker_pool is None:
+            lifespan_tasks.append(_spawn(keep_warm_loop()))
 
     # Pre-load the CfC risk checkpoints + forecast LSTM in the background:
     # their lazy first load (3× torch.load + MPS device init) was measured at
@@ -773,7 +805,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.debug("torch model warmup skipped (non-fatal): %s", e)
 
-    if _models_on:
+    if _background_models_on:
         lifespan_tasks.append(_spawn(warmup_torch_models()))
 
     # Pre-load MedGemma 4B voice agent into Apple Silicon Unified Memory
@@ -790,12 +822,12 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("Voice agent warmup failed (non-fatal): %s", e)
 
-    if _models_on:
+    if _background_models_on:
         lifespan_tasks.append(_spawn(warmup_voice_agent()))
 
     # Start Sage proactive surveillance (always on: real analysis over live data).
     # Sage insights are a model feature: off with the models.
-    if _models_on:
+    if _background_models_on:
         lifespan_tasks.append(_spawn(proactive_sweep()))
     lifespan_tasks.append(_spawn(downtime_snapshot_sweep()))
     lifespan_tasks.append(_spawn(sage_provenance_prune_sweep()))
@@ -907,6 +939,12 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    # Stop admission now, but join only after the knowledge child is stopped.
+    # A running retrieval can be awaiting that child; joining it first would
+    # hold shutdown for the complete knowledge RPC timeout if the child wedged.
+    sage_retrieval_executor.shutdown(wait=False)
+    await patient_summary_service.stop()
+
     # Disarm the watchdog FIRST: an orderly shutdown drains the loop, and a
     # dead-man timer still armed through that drain would write a dump for a
     # stall that never happened.
@@ -960,6 +998,7 @@ async def lifespan(app: FastAPI):
         _kw_shutdown()
     except Exception:
         pass
+    await sage_retrieval_executor.aclose()
     logger.info("═══ Orb Hospital OS — Shutdown ═══")
 
 
@@ -986,30 +1025,43 @@ async def _json_decode_handler(request: _Request, exc: _json.JSONDecodeError):
 
 
 # ── Request body-size guard ──
-# JSON routes read the whole body into memory; without a cap a client could POST a
-# multi-MB (or larger) body and force the server to buffer it. Reject oversized bodies
-# with 413 up front. File uploads (Lens/Scribe) use their own multipart routes with a
-# higher ceiling, so this cap targets the JSON API surface.
+# Count actual received bytes before parsers consume them, including requests
+# with no Content-Length or an understated one. Multipart has a separate total
+# ceiling; Lens/Scribe also enforce their individual file limits after parsing.
 import os as _os_body
 
-_MAX_JSON_BODY_BYTES = int(_os_body.getenv("ORB_MAX_JSON_BODY_BYTES", str(512 * 1024)))  # 512 KB
+from request_limits import (
+    DEFAULT_JSON_BODY_BYTES,
+    MAX_AUDIO_BYTES,
+    MAX_IMAGE_BYTES,
+    MULTIPART_FRAMING_BYTES,
+    RequestBodyLimitMiddleware,
+)
+from services import history_import_service as _history_upload_limits
+from services import roster_import as _roster_upload_limits
 
-
-@app.middleware("http")
-async def _limit_body_size(request: _Request, call_next):
-    # Skip multipart/form-data (uploads) — they are bounded by their own route logic.
-    ctype = request.headers.get("content-type", "")
-    if not ctype.startswith("multipart/"):
-        cl = request.headers.get("content-length")
-        if cl is not None:
-            try:
-                if int(cl) > _MAX_JSON_BODY_BYTES:
-                    return _JSONResponse(
-                        status_code=413, content={"detail": "Request body too large"}
-                    )
-            except ValueError:
-                return _JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"})
-    return await call_next(request)
+_MAX_JSON_BODY_BYTES = int(_os_body.getenv("ORB_MAX_JSON_BODY_BYTES", str(DEFAULT_JSON_BODY_BYTES)))
+_MULTIPART_BODY_LIMITS = {
+    "/api/lens/analyze": MAX_IMAGE_BYTES + MULTIPART_FRAMING_BYTES,
+    "/api/scribe/transcribe": MAX_AUDIO_BYTES + MULTIPART_FRAMING_BYTES,
+    "/api/scribe/transcribe-chunk": MAX_AUDIO_BYTES + MULTIPART_FRAMING_BYTES,
+    **{
+        f"/api/admin/history-import/{operation}": _history_upload_limits.MAX_BYTES
+        + MULTIPART_FRAMING_BYTES
+        for operation in ("preview", "dry-run", "commit")
+    },
+    **{
+        f"/api/admin/roster-import/{operation}": _roster_upload_limits.MAX_CSV_BYTES
+        + MULTIPART_FRAMING_BYTES
+        for operation in ("preview", "dry-run", "commit")
+    },
+}
+app.add_middleware(
+    RequestBodyLimitMiddleware,
+    json_limit=_MAX_JSON_BODY_BYTES,
+    multipart_limit=_MAX_JSON_BODY_BYTES,
+    multipart_limits=_MULTIPART_BODY_LIMITS,
+)
 
 
 # ── Facility fence (multi-site, ruling M2) ──
@@ -1023,6 +1075,14 @@ from facility_fence import HTTP_ROOTS as _FENCE_HTTP_ROOTS
 from facility_fence import FacilityFence
 
 app.add_middleware(FacilityFence, roots=_FENCE_HTTP_ROOTS)
+
+# Bound whole API requests, including SSE lifetimes, without an unbounded HTTP
+# waiting queue. CORS/security wrap busy responses. Keep a single API process;
+# more uvicorn workers would multiply this process-local ceiling.
+from config import HTTP_MAX_INFLIGHT
+from request_admission import RequestAdmissionMiddleware
+
+app.add_middleware(RequestAdmissionMiddleware, max_inflight=HTTP_MAX_INFLIGHT)
 
 
 # ── CORS ──
@@ -1102,6 +1162,9 @@ app.include_router(vigil_router)
 app.include_router(relay_router)
 app.include_router(sage_router, dependencies=[Depends(_require_models_on)])
 app.include_router(sage_proactive_router, dependencies=[Depends(_require_models_on)])
+from routes.patient_summary_routes import router as patient_summary_router
+
+app.include_router(patient_summary_router)
 app.include_router(scribe_router)
 app.include_router(bridge_router)
 app.include_router(lens_router, dependencies=[Depends(_require_models_on)])
@@ -1162,6 +1225,50 @@ app.include_router(pharmacy_store_router)
 app.include_router(opd_router)
 app.include_router(registration_router)
 app.include_router(schedule_router)
+# Local hospital workflows remain opt-in and have no external transport.
+from routes.offline_workflow_routes import router as offline_workflow_router
+
+app.include_router(offline_workflow_router)
+from routes.feedback_routes import router as feedback_router
+
+app.include_router(feedback_router)
+from routes.mortuary_routes import router as mortuary_router
+
+app.include_router(mortuary_router)
+from routes.cssd_routes import router as cssd_router
+
+app.include_router(cssd_router)
+from routes.radiology_routes import router as radiology_router
+
+app.include_router(radiology_router)
+from routes.care_plan_routes import router as care_plan_router
+
+app.include_router(care_plan_router)
+from routes.emergency_record_routes import router as emergency_record_router
+
+app.include_router(emergency_record_router)
+from routes.perioperative_record_routes import router as perioperative_record_router
+
+app.include_router(perioperative_record_router)
+from routes.dialysis_record_routes import router as dialysis_record_router
+
+app.include_router(dialysis_record_router)
+from routes.record_governance_routes import router as record_governance_router
+
+app.include_router(record_governance_router)
+from routes.radiation_safety_routes import router as radiation_safety_router
+
+app.include_router(radiation_safety_router)
+from routes.reporting_routes import router as reporting_router
+
+app.include_router(reporting_router)
+from routes.finance_tools_routes import router as finance_tools_router
+
+app.include_router(finance_tools_router)
+from routes.infection_surveillance_routes import router as infection_surveillance_router
+
+app.include_router(infection_surveillance_router)
+
 # The medication order store is the drug chart, which an Orb Ward Record
 # computer keeps on paper: every route answers 404 "The drug chart is not part
 # of Orb Ward Record" first (services/drug_chart). Declared here, not in
@@ -1420,6 +1527,43 @@ def clinical_switches() -> dict:
         "models_enabled": bool(getattr(config, "MODELS_ENABLED", True)),
         "ward_record": bool(getattr(config, "WARD_RECORD", False)),
     }
+
+
+def _check_database_readiness() -> None:
+    """Read core tables and the migration ledger without changing the store."""
+    from database import db_session
+    from migrations import MIGRATIONS
+
+    with db_session() as db:
+        # Select constants so patient/staff identities never leave the probe.
+        # Empty tables are valid on a freshly provisioned appliance.
+        db.execute("SELECT 1 FROM users WHERE id IS NOT NULL LIMIT 1").fetchone()
+        db.execute(
+            "SELECT 1 FROM patients WHERE id IS NOT NULL AND status IS NOT NULL LIMIT 1"
+        ).fetchone()
+        applied = {row[0] for row in db.execute("SELECT version FROM schema_migrations")}
+        if not {migration.version for migration in MIGRATIONS}.issubset(applied):
+            raise RuntimeError("Required database schema is not ready")
+
+
+@app.get("/api/ready")
+def readiness():
+    """Readiness checks the required database schema and a real pooled read.
+
+    `/api/health` stays cheap cached liveness. This separate anonymous probe
+    runs in FastAPI's sync threadpool and returns 503 when database reads or
+    the required migration ledger fail. It performs no writes, migrations,
+    inference or device checks: an empty Ward Record without models is ready.
+    Responses carry no patient data, filesystem paths or exception details.
+    """
+    try:
+        _check_database_readiness()
+    except Exception:
+        logger.warning("Database readiness probe failed", exc_info=True)
+        return _JSONResponse(
+            status_code=503, content={"status": "not_ready", "error": "database_unavailable"}
+        )
+    return {"status": "ready"}
 
 
 @app.get("/api/health/loop")
@@ -1975,5 +2119,9 @@ if __name__ == "__main__":
             "*.db",
         ],
         log_level="info",
+        # Trust only the explicitly configured gateway. Never accept arbitrary
+        # client-supplied forwarding headers on the hospital network.
+        proxy_headers=True,
+        forwarded_allow_ips=os.getenv("ORB_FORWARDED_ALLOW_IPS", "127.0.0.1"),
         **ssl_kwargs,
     )

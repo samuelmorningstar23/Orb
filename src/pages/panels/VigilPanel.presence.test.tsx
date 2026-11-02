@@ -56,9 +56,10 @@ import VigilPanel from './VigilPanel'
 import { ActivePatientProvider } from '../../contexts/ActivePatientProvider'
 import { ActiveViewProvider } from '../../contexts/ActiveViewProvider'
 
-import { formatClinicalTime } from '../../lib/datetime'
+import { formatClinicalDateTime, formatClinicalTime } from '../../lib/datetime'
 
-const SINCE = new Date(Date.now() - 45 * 60_000).toISOString()
+const NOW = new Date(2026, 9, 10, 12).getTime()
+const SINCE = new Date(NOW - 45 * 60_000).toISOString()
 
 function row(id: string, name: string, bed: string, raw: number, level: string,
              extra: Record<string, unknown> = {}) {
@@ -90,10 +91,13 @@ function serve(rows: unknown[]) {
 }
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(NOW)
   for (const k of Object.keys(h.handlers)) delete h.handlers[k]
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
@@ -102,16 +106,18 @@ function rowOf(name: string): HTMLElement {
 }
 
 describe('not on ward on the Vigil board', () => {
-  it('says when the patient left, in local time, and leaves the score and order alone', async () => {
+  it.each([0, 1])('says when the patient left %s days ago, and leaves the score and order alone', async days => {
+    const since = new Date(Date.parse(SINCE) - days * 86_400_000).toISOString()
     serve([
       row('P1', 'Anita Rao', 'GM-01', 9, 'critical',
-          { presence_status: 'on_leave', presence_since: SINCE }),
+          { presence_status: 'on_leave', presence_since: since }),
       row('P2', 'Rahul Menon', 'GM-02', 1, 'stable', { presence_status: null, presence_since: null }),
     ])
     renderPanel()
     await waitFor(() => expect(screen.getByText('Anita Rao')).toBeTruthy())
     const away = rowOf('Anita Rao')
-    expect(away.textContent).toContain(`Not on ward since ${formatClinicalTime(SINCE)} (on leave)`)
+    const when = days ? formatClinicalDateTime(since) : formatClinicalTime(since)
+    expect(away.textContent).toContain(`Not on ward since ${when} (on leave)`)
     expect(rowOf('Rahul Menon').textContent).not.toContain('Not on ward')
     // The score is still shown, and the sicker patient is still first.
     expect(away.querySelector('.patient-row__score')?.textContent).toBe('9')

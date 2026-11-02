@@ -1,28 +1,14 @@
 /**
  * Orb Bridge — Patient-portal API helpers.
  *
- * Self-contained (mirrors the origin + orb_token pattern in client.ts) so the
- * new patient-facing features can be added without expanding the large shared
- * client. All endpoints are self-scoped server-side to the logged-in patient.
+ * Uses the shared cookie session, refresh and CSRF handling. All endpoints
+ * are self-scoped server-side to the logged-in patient.
  */
 
-const API_BASE = `${window.location.origin}/api`;
-
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('orb_token');
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  return headers;
-}
+import { apiFetch } from './client';
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { ...init, headers: { ...authHeaders(), ...(init?.headers || {}) } });
-  if (!res.ok) {
-    let detail = `Request failed (${res.status})`;
-    try { detail = (await res.json())?.detail || detail; } catch { /* non-JSON error body */ }
-    throw new Error(detail);
-  }
-  return res.json() as Promise<T>;
+  return apiFetch<T>(path, init);
 }
 
 export interface CareTeamMember { name: string; role: string; department: string | null }
@@ -78,5 +64,5 @@ export function requestAppointment(body: AppointmentRequest) {
   });
 }
 export function cancelAppointment(id: string) {
-  return req<{ id: string; status: string }>(`/bridge/appointments/${id}`, { method: 'DELETE' });
+  return req<{ id: string; status: string }>(`/bridge/appointments/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }

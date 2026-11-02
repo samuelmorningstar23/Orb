@@ -8,7 +8,7 @@
  *   - src/api/client.ts:169-195   SSE framing (`data: {...}\n\n` events)
  *
  * Interface:
- *   fixtureFor(method, pathname, searchParams) ->
+ *   fixtureFor(method, pathname, searchParams, authUser?, requestBody?) ->
  *     null                                    (no fixture; driver 404s)
  *     { status?, contentType?, body }         (objects JSON.stringify'd by driver)
  *
@@ -29,6 +29,9 @@ function sse(frames) {
   return { contentType: 'text/event-stream', body };
 }
 const ok = (body) => ({ body });
+const featureOff = (feature) => ({ status: 404, body: { detail: {
+  error: 'feature_disabled', feature, message: 'This feature is switched off on this synthetic site.',
+} } });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AUTH — map-backend-api.md:224 (login), :18-22 (/me shape)
@@ -39,6 +42,26 @@ const AUTH_USER = {
   role: 'doctor',
   department: 'General Medicine',
   registration_number: null,
+};
+
+// A synthetic full-clinical deployment. Startup deliberately waits for the
+// health response's switch board; status/version alone is not that contract.
+// Opt-in HIS modules stay off because this harness supplies no such workflows.
+const HEALTH = {
+  status: 'ok', service: 'orb-hospital-os', version: '0.1.0',
+  modules: {
+    billing: true, payments: true, payer: true, procurement: true,
+    frontdesk: true, housekeeping: true, workforce: true, dietary: true,
+    biomedical: true, nabh: true, abdm: true,
+    adt: false, 'pharmacy-store': false, lab: false,
+  },
+  module_states: { adt: 'off', 'pharmacy-store': 'off', lab: 'off' },
+  features: {},
+  clinical: {
+    scoring_enabled: true, lens_enabled: true, sepsis_autostart: true,
+    models_enabled: true, ward_record: false,
+  },
+  platform: { multi_site: false, multi_facility_data: false },
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1472,22 +1495,66 @@ function codingFor(id) {
     cdi_flags: [
       { type: 'specificity', message: 'Pneumonia organism not specified',
         rationale: 'Sputum culture pending — coding to J15.x once resulted increases specificity.',
-        est_impact_usd: 850 },
+        est_impact_inr: 850 },
       { type: 'missing_comorbidity', message: 'Type 2 DM documented but not coded',
         rationale: 'Comorbidity affects DRG weighting and severity of illness.',
-        est_impact_usd: 420 },
+        est_impact_inr: 420 },
     ],
     reimbursement: {
-      captured_usd: 3480, potential_usd: 4750, uplift_usd: 1270,
+      captured_inr: 3480, potential_inr: 4750, uplift_inr: 1270,
       assumptions: {
-        model: 'Illustrative CMS-weighted DRG model',
+        model: 'Illustrative code-weight model: not real payer rates',
         method: 'Sum of suggested-code weights × base rate',
-        base_rate_usd: 1450,
+        base_rate_inr: 1450,
         caveats: ['Illustrative only — not a payer contract', 'Excludes outlier payments'],
         citations: ['CMS IPPS FY2026 final rule (illustrative weights)'],
         code_weights: { 'J18.9': 1.2, 'A41.9': 1.9 },
       },
     },
+  };
+}
+
+// Current admission choices are read independently from front-desk/ADT. Keep
+// populated staff/location choices even though this synthetic site has ADT off.
+const ADMISSION_OPTIONS = {
+  departments: ['General Medicine', 'General Surgery', 'Cardiology'],
+  default_department: 'General Medicine',
+  doctors: [
+    { id: AUTH_USER.id, name: AUTH_USER.name, department: AUTH_USER.department },
+    { id: 'DOC004', name: 'Dr. Vikram Rathore', department: 'General Surgery' },
+  ],
+  wards: [
+    { ward: 'W1', departments: ['General Medicine'] },
+    { ward: 'W2', departments: ['General Surgery'] },
+    { ward: 'ICU', departments: ['Cardiology'] },
+  ],
+  beds: [
+    ...VIGIL_PATIENTS.map(p => ({ ward: p.ward, bed: p.bed, in_use: true })),
+    { ward: 'W1', bed: 'GM-105', in_use: false },
+  ],
+};
+
+// The server's documented heuristic fallback, with this synthetic patient's
+// identity and current risk phase. A non-empty course exercises the real chart.
+function timelineProjectionFor(id) {
+  const p = patientById(id);
+  return {
+    patient_name: p.name, diagnosis: p.diagnosis, age: p.age, sex: p.sex,
+    comorbidities: [], expected_los_days: 4,
+    phases: [
+      { name: 'Stabilization', focus: 'Correct acute derangements and start targeted therapy', typical_days: 'Day 0–1' },
+      { name: 'Active Treatment', focus: 'Treat the primary condition; monitor response and labs', typical_days: 'Day 1–2' },
+      { name: 'Recovery', focus: 'Step down therapy and confirm clinical stability', typical_days: 'Day 2–4' },
+      { name: 'Discharge Readiness', focus: 'Meet discharge criteria and arrange follow-up', typical_days: '~Day 4' },
+    ],
+    discharge_criteria: [
+      'Hemodynamically stable off escalating support',
+      'Primary condition controlled and improving',
+      'Tolerating oral intake and medications',
+    ],
+    rationale: `Baseline course for ${p.diagnosis}.`,
+    current_phase_index: p.risk_level === 'critical' ? 0 : 2,
+    source: 'heuristic', engine: null,
   };
 }
 
@@ -1537,6 +1604,26 @@ const BRIDGE_STATUS = {
   status_message: 'Your care team is watching your breathing closely today. Your treatment plan is on track.',
   vitals: { heart_rate: '96 bpm', blood_pressure: '118/76', oxygen: '93%', temperature: '37.9°C' },
   attending_doctor: 'Dr. Meera Sharma',
+};
+
+const BRIDGE_CARE_TEAM = {
+  care_team: [
+    { name: AUTH_USER.name, role: 'Attending Physician', department: AUTH_USER.department },
+    { name: 'Nursing team', role: 'Nurse', department: AUTH_USER.department, ward: 'W1', is_team: true },
+  ],
+  unit: { department: AUTH_USER.department, ward: 'W1', bed: 'GM-104' },
+};
+
+const BRIDGE_VITAL_TRENDS = {
+  count: VITALS_24.length,
+  trends: Object.fromEntries([
+    ['heart_rate', 'Heart rate', 'bpm'], ['systolic_bp', 'Systolic BP', 'mmHg'],
+    ['spo2', 'Oxygen (SpO₂)', '%'], ['temperature', 'Temperature', '°C'],
+    ['respiratory_rate', 'Respiratory rate', '/min'],
+  ].map(([key, label, unit]) => [key, {
+    label, unit, current: VITALS_24.at(-1)[key], measured_at: VITALS_24.at(-1).timestamp,
+    series: VITALS_24.map(row => row[key]),
+  }])),
 };
 
 const BRIDGE_REPORTS = {
@@ -2008,7 +2095,8 @@ const SEARCH_PATIENTS = VIGIL_PATIENTS.slice(0, 4).map((p) => ({
 }));
 
 // PatientShell: GET /appointments/mine → { appointments: [...] };
-// POST /appointments returns the booked row itself (confirm screen reads it).
+// Staff POST /appointments returns a booked row. The patient's separate
+// POST /bridge/appointments returns a request envelope (see fixtureFor).
 const APPOINTMENTS_MINE = [
   { id: 'apt-01', patient_id: 'P001', scheduled_date: '2026-05-28', scheduled_time: '10:30',
     appointment_type: 'Follow-up', reason: 'Post-discharge review', status: 'booked', source: 'booked' },
@@ -2092,7 +2180,7 @@ function getFixture(path, params) {
   switch (path) {
     // misc / auth
     case '/api/health':
-      return ok({ status: 'ok', service: 'orb-hospital-os', version: '0.1.0' });
+      return ok(HEALTH);
     // Local-inference warmth, polled by the header AiStatusChip. Both tiers
     // reported warm so the audit captures the chip's normal (green) state.
     case '/api/health/models':
@@ -2103,11 +2191,45 @@ function getFixture(path, params) {
           { model: 'medgemma:4b', role: 'ambient', warm: true, detail: { size_vram: 3031370300 } },
         ],
       });
-    case '/api/auth/me': return ok(AUTH_USER);
 
     // vigil collections
+    case '/api/vigil/vitals-feed': return ok({ mode: 'simulator', simulated: true });
     case '/api/vigil/patients': return ok(VIGIL_PATIENTS);
     case '/api/vigil/discharged': return ok(DISCHARGED);
+    case '/api/chart/unseen': return ok({ counts: {} });
+    case '/api/admissions/options': return ok(ADMISSION_OPTIONS);
+    case '/api/auth/device': return ok({ enrolled: false });
+    case '/api/scribe/asr/status': return ok({ available: false, provider: 'whisper-mlx', model: 'large-v3',
+      reason: 'This synthetic appliance has no ASR runtime installed.',
+      runbook: 'docs/INSTALL_RUNBOOK.md: F14 (Scribe cannot transcribe)' });
+    case '/api/ingest/quarantine': return featureOff('result_quarantine');
+    case '/api/audit/facets': {
+      const categories = params.get('event_category')?.split(',').filter(Boolean) || [];
+      const rows = categories.length ? AUDIT_LOGS.filter(row => categories.includes(row.event_category)) : AUDIT_LOGS;
+      return ok({ categories: [...new Set(AUDIT_LOGS.map(row => row.event_category))].sort(),
+        actions: [...new Set(rows.map(row => row.action_type))].sort(),
+        outcomes: ['success', 'failure', 'partial_success', 'denied'] });
+    }
+    case '/api/admin/alerts': {
+      const alerts = [{ id: 7101, episode_id: 'SYNTHETIC-EP-1', occurred_at: t('08:55'),
+        lane: 'simulator', level: 'critical', raw_news2: 9, repeat: false,
+        patient_id: 'PAT002', ward: 'ICU' }];
+      return ok({ hours: 24, limit: 25, offset: 0, lane: null, level: null,
+        source: 'shadow_events', known: true, unknown_reason: null, total: alerts.length,
+        alerts, by_lane: { simulator: alerts.length }, scope: null, house_total: null });
+    }
+    case '/api/ward-record/settings': return ok({
+      wards: ADMISSION_OPTIONS.wards.map(({ ward }, index) => ({ ward, setting: index === 0 ? {
+        ward, interval_minutes: 240, grace_minutes: 30, set_by: 'Synthetic admin', set_at: t('08:00'), note: null,
+      } : null })),
+      limits: { interval_minutes: [30, 1440], grace_minutes: [0, 240], default_grace_minutes: 30 },
+    });
+    case '/api/admin/compliance/erasure': return ok({ requests: [{
+      id: 'ERQ-MOCK-1', patient_id: 'PAT001', requested_at: t('08:00'), requested_by: 'ADM001',
+      requester_identity: 'patient', channel: 'in_person', categories_json: null, categories: null,
+      note: 'Synthetic request awaiting retention review', status: 'recorded',
+      decided_at: null, decided_by: null, executed_at: null, executed_by: null, created_at: t('08:00'),
+    }] });
 
     // nurse — My Shift. Scenarios swap in NURSE_BOARD_QUIET / _EMPTY, or a
     // 500, via the driver's routeOverride; this is the busy-shift default.
@@ -2179,6 +2301,10 @@ function getFixture(path, params) {
 
     // bridge (patient role)
     case '/api/bridge/status': return ok(BRIDGE_STATUS);
+    case '/api/bridge/care-team': return ok(BRIDGE_CARE_TEAM);
+    case '/api/bridge/vitals-trends': return ok(BRIDGE_VITAL_TRENDS);
+    // The default synthetic site has lab_portal_reports switched off.
+    case '/api/bridge/lab-reports': return featureOff('lab_portal_reports');
     case '/api/bridge/vitals': return ok({ vitals: BRIDGE_STATUS.vitals });
     case '/api/bridge/reports': return ok(BRIDGE_REPORTS);
     case '/api/bridge/medications': return ok({ medications: BRIDGE_REPORTS.medications });
@@ -2223,6 +2349,23 @@ function getFixture(path, params) {
     return { status: 404, body: { detail: 'no qr in mock' } };
   if ((m = path.match(/^\/api\/vigil\/patients\/([^/]+)\/story$/)))
     return ok({ patient_id: m[1], events: PATIENT_STORY_EVENTS });
+  if ((m = path.match(/^\/api\/vigil\/patients\/([^/]+)\/timeline-projection$/)))
+    return ok(timelineProjectionFor(m[1]));
+  if ((m = path.match(/^\/api\/vigil\/patients\/([^/]+)\/escalations$/)))
+    return ok({ patient_id: m[1], escalations: [{
+      id: `ESC-${m[1]}`, patient_id: m[1], status: 'open', raised_at: t('08:55'),
+      peak_news2: 9, current_tier: 2, tier_label: 'Senior clinician',
+    }] });
+  if ((m = path.match(/^\/api\/billing\/patients\/([^/]+)\/discharge-advisory$/)))
+    return ok({ patient_id: m[1], admission_id: null, live_invoice_count: 1, draft_invoice_count: 0,
+      outstanding_paise: 125000, outstanding_display: '₹1,250.00',
+      unbilled_charge_count: 0, unbilled_total_paise: 0, unbilled_total_display: '₹0.00',
+      unpriced_charge_count: 0, deposit_balance_paise: 0, deposit_balance_display: '₹0.00',
+      open_claim_count: 0, net_due_paise: 125000, net_due_display: '₹1,250.00',
+      advisory_status: 'outstanding', unpriceable_event_count: 0, uncaptured_event_count: 0,
+      reasons: ['₹1,250.00 is outstanding on issued invoices'], enforced: false, blocks_discharge: false,
+      headline: 'Outstanding balance: ₹1,250.00', message: 'Financial information only. This does not prevent clinical discharge.',
+      checked_at: t('09:00') });
   if ((m = path.match(/^\/api\/emar\/patients\/([^/]+)\/administrations$/)))
     return ok({ administrations: EMAR_ADMINISTRATIONS });
   if ((m = path.match(/^\/api\/vigil\/patients\/([^/]+)$/)))
@@ -2230,6 +2373,11 @@ function getFixture(path, params) {
 
   // ── relay parameterized ──
   if ((m = path.match(/^\/api\/relay\/channels\/([^/]+)\/messages$/))) return ok(RELAY_MESSAGES);
+  // These fixture messages have no wrong-room flags; the live endpoint returns
+  // a bare list, independently from the messages payload.
+  if ((m = path.match(/^\/api\/relay\/channels\/([^/]+)\/room_fit$/))) return ok([]);
+  // No assistant assessment drafts have been generated for these threads.
+  if ((m = path.match(/^\/api\/relay\/channels\/([^/]+)\/sage_assessments$/))) return ok([]);
   if ((m = path.match(/^\/api\/relay\/channels\/([^/]+)\/sage_memory$/))) return ok(SAGE_MEMORY);
   if ((m = path.match(/^\/api\/relay\/channels\/([^/]+)\/sage_actions\/([^/]+)\/pre_flight$/)))
     return ok(SAGE_PRE_FLIGHT);
@@ -2243,6 +2391,20 @@ function getFixture(path, params) {
   // ── helix parameterized ──
   if ((m = path.match(/^\/api\/helix\/orders\/([^/]+)\/transitions$/)))
     return ok(helixTransitions(m[1]));
+  if ((m = path.match(/^\/api\/helix\/orders\/([^/]+)\/safety$/))) {
+    const order = HELIX_ORDERS.orders.find(row => row.id === m[1]);
+    if (!order) return { status: 404, body: { detail: 'Order not found' } };
+    // The first review case's chart has a severe penicillin allergy; preserve
+    // that warning instead of turning a missing safety request into a clean screen.
+    const allergyAlerts = order.id === 'HO-001' ? [{ severity: 'severe', type: 'allergy',
+      message: 'Recorded penicillin anaphylaxis: review Piperacillin-Tazobactam before approval.' }] : [];
+    return ok({ order_id: order.id, medication_id: order.medication_id,
+      drug_name: order.medication_name, is_substitute: false, safety: {
+        drug: order.medication_name, allergy_alerts: allergyAlerts, interaction_alerts: [],
+        max_severity: allergyAlerts.length ? 'severe' : 'none', blocking: allergyAlerts.length > 0,
+        safe: allergyAlerts.length === 0, interaction_screened: true, coverage_note: null,
+      } });
+  }
 
   // ── orders CPOE parameterized ──
   if ((m = path.match(/^\/api\/orders\/patient\/([^/]+)$/))) return ok(cpoeOrdersFor(m[1]));
@@ -2295,10 +2457,21 @@ function getFixture(path, params) {
   return null; // unknown GET → driver 404s
 }
 
-// POST / PATCH / PUT / DELETE resolution. Specific fixtures first; a generic
-// {status:'success'} catch-all for any other /api mutation LAST.
-function mutationFixture(method, path, params) {
+// POST / PATCH / PUT / DELETE resolution. Only explicit contracts may succeed.
+function mutationFixture(method, path, params, requestBody) {
   let m;
+
+  // Navigation warming is explicitly skipped in the synthetic appliance;
+  // the audit never starts a local model or invents a cached assessment.
+  if (method === 'POST' && path === '/api/sage/prefetch') {
+    const patientId = requestBody?.patient_id;
+    return typeof patientId === 'string' && patientId
+      ? ok({ status: 'skipped', patient_id: patientId })
+      : ok({ error: 'patient_id is required' });
+  }
+  if (method === 'POST' && (m = path.match(/^\/api\/ipass\/([^/]+)\/reasoned-assessment\/prepare$/)))
+    return ok({ status: 'unavailable', assessment: null, stale_after_hours: 12,
+      reason: 'disabled', message: 'Sage assessments are switched off on this appliance.' });
 
   // ── SSE flows (map-backend-api.md:294; terminators per client.ts consumers) ──
   if (path === '/api/sage/query') return SAGE_QUERY_SSE;
@@ -2310,7 +2483,6 @@ function mutationFixture(method, path, params) {
   if ((m = path.match(/^\/api\/vigil\/patients\/([^/]+)\/analysis$/))) return VIGIL_ANALYSIS_SSE;
 
   // ── auth ──
-  if (path === '/api/auth/login') return ok({ token: 'visual-test-token', user: AUTH_USER });
   if (path === '/api/auth/logout') return ok({ status: 'logged_out' });
   if (path === '/api/auth/mfa/enroll/begin') return ok(MFA_ENROLL_BEGIN);
 
@@ -2427,25 +2599,45 @@ function mutationFixture(method, path, params) {
   if ((m = path.match(/^\/api\/lens\/analyses\/([^/]+)\/assign$/)))
     return ok({ status: 'assigned', patient_name: 'Suresh Reddy' });
 
-  // Catch-all: any other mutation under /api succeeds generically.
-  if (path.startsWith('/api/')) return { status: 200, body: { status: 'success' } };
   return null;
 }
 
 /**
- * fixtureFor(method, pathname, searchParams) — see module header.
+ * fixtureFor(method, pathname, searchParams, authUser?, requestBody?) — see module header.
  * Trailing slashes are stripped so '/api/admin/impact/' ≡ '/api/admin/impact',
  * '/api/command-center/' ≡ '/api/command-center', '/api/capacity-sim/' ≡
  * '/api/capacity-sim', '/api/orders/' ≡ '/api/orders', etc.
  */
-function fixtureFor(method, pathname, searchParams) {
+function fixtureFor(method, pathname, searchParams, authUser = AUTH_USER, requestBody) {
   const params = searchParams || new URLSearchParams();
   const path = pathname.length > 1 && pathname.endsWith('/')
     ? pathname.slice(0, -1)
     : pathname;
 
+  // The fresh identity must agree with the scenario's stored identity. A nurse
+  // or patient scenario must never silently become the default doctor on /me.
+  if (method === 'GET' && path === '/api/auth/me') {
+    return authUser ? ok(authUser) : { status: 401, body: { detail: 'Not authenticated' } };
+  }
+  if (method === 'POST' && path === '/api/auth/login') {
+    return ok({ token: 'visual-test-token', user: authUser || AUTH_USER });
+  }
+  if (method === 'POST' && path === '/api/bridge/appointments') {
+    if (!requestBody || typeof requestBody.requested_date !== 'string' ||
+        typeof requestBody.requested_time !== 'string') {
+      return { status: 400, body: { detail: 'A requested date and time are required' } };
+    }
+    return ok({
+      id: 'apt-request-90', status: 'requested',
+      requested_date: requestBody.requested_date, requested_time: requestBody.requested_time,
+      department: requestBody.department || null,
+      requested_by_patient: true, time_chosen_by_patient: true,
+      message: 'Request sent to your care team; this time has not been agreed yet.',
+    });
+  }
+
   if (method === 'GET') return getFixture(path, params);
-  return mutationFixture(method, path, params);
+  return mutationFixture(method, path, params, requestBody);
 }
 
 /* The nurse boards are exported by name as well as served by fixtureFor,

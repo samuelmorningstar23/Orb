@@ -82,13 +82,13 @@ class FakeQueue:
         self.acquired: list[tuple] = []
         self.released = 0
 
-    async def acquire(self, priority=None, timeout=None):
+    async def acquire(self, priority=None, timeout=None, *, model=None):
         self.acquired.append((priority, timeout))
         if self.exc is not None:
             raise self.exc
         return True
 
-    def release(self):
+    def release(self, ticket=None):
         self.released += 1
 
 
@@ -611,9 +611,9 @@ async def test_summaries_are_scheduled_only_after_the_lane_is_released(
     real_schedule = sage_history_service.schedule_summaries
     real_release = llm_queue.release
 
-    def release_spy():
+    def release_spy(ticket=None):
         events.append("release")
-        return real_release()
+        return real_release(ticket)
 
     def spy(history):
         events.append("schedule")
@@ -683,7 +683,7 @@ async def test_a_shed_is_retried_and_can_succeed_on_a_later_attempt(monkeypatch)
     attempts = {"n": 0}
     released = {"n": 0}
 
-    async def flaky_acquire(priority=None, timeout=None):
+    async def flaky_acquire(priority=None, timeout=None, *, model=None):
         attempts["n"] += 1
         if attempts["n"] < sage_history_service.SUMMARIZE_MAX_ATTEMPTS:
             raise llm_queue_service.BackgroundAdmissionRejected("shed")
@@ -691,7 +691,7 @@ async def test_a_shed_is_retried_and_can_succeed_on_a_later_attempt(monkeypatch)
 
     fq = SimpleNamespace(
         acquire=flaky_acquire,
-        release=lambda: released.__setitem__("n", released["n"] + 1),
+        release=lambda ticket=None: released.__setitem__("n", released["n"] + 1),
     )
     monkeypatch.setattr(llm_queue_service, "llm_queue", fq)
     import services.model_router as model_router
@@ -715,13 +715,13 @@ async def test_every_attempt_shed_falls_back_after_a_bounded_number_of_tries(
     After the last attempt the head-trim stands and no slot is released."""
     attempts = {"n": 0}
 
-    async def always_shed(priority=None, timeout=None):
+    async def always_shed(priority=None, timeout=None, *, model=None):
         attempts["n"] += 1
         raise llm_queue_service.BackgroundAdmissionRejected("shed")
 
     fq = SimpleNamespace(
         acquire=always_shed,
-        release=lambda: pytest.fail("released a slot that was never acquired"),
+        release=lambda ticket=None: pytest.fail("released a slot that was never acquired"),
     )
     monkeypatch.setattr(llm_queue_service, "llm_queue", fq)
     import services.model_router as model_router
@@ -741,13 +741,13 @@ async def test_cancellation_is_never_retried(monkeypatch):
     CancelledError would sleep a dying loop and delay shutdown."""
     attempts = {"n": 0}
 
-    async def cancelled(priority=None, timeout=None):
+    async def cancelled(priority=None, timeout=None, *, model=None):
         attempts["n"] += 1
         raise asyncio.CancelledError()
 
     fq = SimpleNamespace(
         acquire=cancelled,
-        release=lambda: pytest.fail("released a slot that was never acquired"),
+        release=lambda ticket=None: pytest.fail("released a slot that was never acquired"),
     )
     monkeypatch.setattr(llm_queue_service, "llm_queue", fq)
     import services.model_router as model_router

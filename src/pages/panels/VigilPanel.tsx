@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useMemo, useCallback, memo, lazy, Suspense, useSyncExternalStore, type ComponentProps } from 'react'
 const IMAGING_TYPES = ['xray', 'x-ray', 'ct', 'mri', 'ultrasound', 'ecg', 'echo']
 import { createPortal } from 'react-dom'
-import { apiFetch, getPatientDetail, dischargePatient, getOpenEscalations, resolveEscalation, type EscalationChain, addClinicalNote, addMedication, getAdministrations, givenAcrossAllergy, isSafetyAckRequired, getPatientForecast, getTimelineProjection, getDischargeQrObjectUrl, prefetchSageContext, getUnseenCounts, socket, getUser, buildHeaders, type Patient, type MedicationSafety, type SafetyAck, type AdministrationRecord, type PatientDetail, type ChartVitalsRow, type PatientRisk, type ChartMedicationRow, type DischargeResult, type DischargeSummaryView, type TimelineProjection } from '../../api/client'
+import { apiFetch, getPatientDetail, dischargePatient, getOpenEscalations, resolveEscalation, type EscalationChain, addClinicalNote, addMedication, getAdministrations, givenAcrossAllergy, isSafetyAckRequired, getTimelineProjection, getDischargeQrObjectUrl, prefetchSageContext, getUnseenCounts, socket, getUser, buildHeaders, type Patient, type MedicationSafety, type SafetyAck, type AdministrationRecord, type PatientDetail, type ChartVitalsRow, type PatientRisk, type ChartMedicationRow, type DischargeResult, type DischargeSummaryView, type TimelineProjection } from '../../api/client'
 import { ClinicalCourseTimeline } from '../../components/ClinicalCourseTimeline'
+import { PatientSummary } from '../../components/PatientSummary'
 import { useActivePatient } from '../../contexts/ActivePatientContext'
 import { useActiveView } from '../../contexts/ActiveViewContext'
 import { onOpenPatient } from '../../lib/orbBus'
@@ -944,7 +945,7 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
   // Why the chart is empty. A stale patient id (a reseed regenerates every
   // PAT-… id, and deep links can inject one at any time) must not leave the
   // pillar on a dead-end screen with no way back to the ward list.
-  const [loadError, setLoadError] = useState<{ status?: number; message: string } | null>(null)
+  const [loadError, setLoadError] = useState<{ status?: number; message: string; unreachable: boolean } | null>(null)
   /* The newest observation, as ONE {vital, risk} pair (see LiveObservation).
      Deliberately NOT inside `data`: the offline snapshot mirrors `data` to the
      device on every change, and a per-tick write of the whole chart is the
@@ -990,7 +991,11 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
       console.error('Failed to load patient:', err)
       if (seq !== detailSeqRef.current) return
       const e = err as { status?: number; message?: string } | null
-      setLoadError({ status: e?.status, message: e?.message || 'The patient chart could not be loaded.' })
+      setLoadError({
+        status: e?.status,
+        message: e?.message || 'The patient chart could not be loaded.',
+        unreachable: err instanceof TypeError || (typeof e?.status === 'number' && e.status >= 500),
+      })
     } finally {
       if (seq === detailSeqRef.current) setLoading(false)
     }
@@ -999,7 +1004,9 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
   // Offline copy of one patient's chart — vitals, notes, medications, labs.
   // `data` is the SNAPSHOT everything below reads, so a chart served from the
   // device can never render without the banner that dates it.
-  const chartOffline = useOfflineSnapshot<ChartData>(`vigil:patient:${patientId}`, liveData, {
+  const chartOffline = useOfflineSnapshot<ChartData>(`vigil:patient:${patientId}`, loadError ? null : liveData, {
+    liveFailed: loadError?.unreachable ?? false,
+    cacheAllowed: !loadError || loadError.unreachable,
     onReconnect: () => loadPatientData(),
   })
   const data = chartOffline.data
@@ -1112,7 +1119,6 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
   const [notesSearchQuery, setNotesSearchQuery] = useState('')
   const [noteError, setNoteError] = useState<string | null>(null)
   // Fetched for this patient but not shown anywhere on the chart yet.
-  const [, setForecast] = useState<unknown>(null)
   const [projection, setProjection] = useState<TimelineProjection | null>(null)
   const [projectionFailed, setProjectionFailed] = useState(false)
 
@@ -1199,9 +1205,6 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
     // eslint-disable-next-line react-hooks/set-state-in-effect -- data-fetch/subscribe trigger: the setState is the loader's own loading flag, not state derived from props or state.
     loadPatientData()
     loadAdministrations()
-    // Fetch forecast for this patient via the centralized client (auth + 401 handling).
-    // The forecast is a model: not asked for while the models are switched off.
-    if (modelsEnabled) getPatientForecast(patientId).then(setForecast).catch(() => {})
     loadProjection()
   }, [patientId, loadProjection, modelsEnabled, wardRecord, loadPatientData, loadAdministrations])
 
@@ -1995,6 +1998,8 @@ function PatientDetailView({ patientId, role, onBack }: { patientId: string; rol
       {modelsEnabled && (
         <ClinicalCourseTimeline projection={projection as ComponentProps<typeof ClinicalCourseTimeline>['projection']} failed={projectionFailed} onRetry={loadProjection} />
       )}
+
+      {modelsEnabled && <PatientSummary patientId={patientId} />}
 
       {/* Risk Assessment & Lab Trends */}
       <div className="detail__row">

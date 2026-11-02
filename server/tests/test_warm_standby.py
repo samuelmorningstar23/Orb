@@ -44,6 +44,7 @@ certified a live bug in this repo before:
     read-only test at the bottom, which skips in normal runs.
 """
 import ast
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -65,7 +66,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "standby-restore.sh"
 DRILL = REPO_ROOT / "scripts" / "restore-drill.sh"
 VERIFIER = REPO_ROOT / "scripts" / "lib" / "verify_restore.py"
-
 TEST_PYTHON = Path(sys.executable)
 
 TEST_KEY = "standby-test-key-not-the-real-one"
@@ -516,6 +516,7 @@ def test_media_archive_is_restored_alongside_the_database(standby, tmp_path):
     assert (Path(standby["env"]["ORB_UPLOADS_DIR"]) / "scan.enc").exists()
 
 
+
 def test_unsafe_media_is_refused_before_any_database_or_upload_install(standby, tmp_path):
     import io
     import tarfile
@@ -541,7 +542,6 @@ def test_unsafe_media_is_refused_before_any_database_or_upload_install(standby, 
     assert target.read_bytes() == b"prior standby generation"
     assert (uploads / "prior.enc").read_bytes() == b"prior media"
     assert not (uploads.parent / "outside-upload-tree").exists()
-
 
 
 def test_missing_media_archive_warns_but_still_restores(standby):
@@ -764,12 +764,24 @@ def _scan_his_migrations(directory: Path = _HIS_MIGRATIONS_DIR) -> tuple[set[str
     Reads the string literals in each file's AST, so comments and docstrings
     never count. A CREATE TABLE whose name is not spelled as a literal (built
     with an f-string or by concatenation) is returned as unreadable rather than
-    skipped: a table this walk cannot name is a table the manifest guard cannot
-    protect, which is the silent miss this exists to prevent.
+    skipped, except the reviewed m83 generator whose actual schema is derived
+    in memory. A table this walk cannot name is a table the manifest guard
+    cannot protect, which is the silent miss this exists to prevent.
     """
     found: set[str] = set()
     unreadable: list[str] = []
     for path in _his_migration_files(directory):
+        if path.resolve() == (_HIS_MIGRATIONS_DIR / "m0083_offline_clinical_records.py").resolve():
+            # This reviewed migration generates ten tables from literal names.
+            # Derive its actual schema in a disposable in-memory database;
+            # never exempt those tables or guess names from f-string fragments.
+            # Unknown dynamic DDL in all other migrations remains a failure.
+            from migrations_his.m0083_offline_clinical_records import apply
+            import sqlite3
+            with closing(sqlite3.connect(":memory:")) as conn:
+                apply(conn)
+                found |= {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
+            continue
         tree = ast.parse(path.read_text(), filename=str(path))
         skip = _docstring_ids(tree) | _rebuild_ddl_ids(tree)
         for node in ast.walk(tree):
@@ -823,6 +835,39 @@ HELIX_TABLES = {
     "helix_medication_master", "helix_inventory_lots", "helix_patient_med_orders",
     "helix_pharmacy_verifications", "helix_stock_movements", "helix_transitions",
 }
+
+
+OFFLINE_MODULE_GROUPS = (
+    "feedback", "mortuary", "cssd", "reporting", "finance", "radiology", "care plans",
+    "emergency", "perioperative", "dialysis", "record governance", "infection surveillance",
+    "radiation safety",
+)
+
+
+def test_generated_clinical_schema_is_derived_and_verified_including_all_histories():
+    from migrations_his.m0083_offline_clinical_records import TABLES
+    expected = set(TABLES) | {table + "_events" for table in TABLES}
+    assert len(expected) == 10
+    assert expected <= _tables_created_by_his_migrations()
+    assert expected <= set(vr.ALL_MIGRATED_TABLES)
+    assert sum(len(vr.MODULE_TABLES[group]) for group in OFFLINE_MODULE_GROUPS) == 45
+
+
+@pytest.mark.parametrize("group", OFFLINE_MODULE_GROUPS)
+def test_every_offline_module_table_is_required_for_restore_even_when_empty(group):
+    import sqlite3
+    with closing(sqlite3.connect(":memory:")) as conn:
+        for table in vr.ALL_MIGRATED_TABLES:
+            conn.execute(f"CREATE TABLE {table} (id INTEGER PRIMARY KEY)")
+        for table in vr.MODULE_TABLES[group]:
+            conn.execute(f"DROP TABLE {table}")
+            report = vr.Reporter("test")
+            vr.check_tables_present(conn, report, "fail")
+            assert "module tables" in report.failures, table
+            conn.execute(f"CREATE TABLE {table} (id INTEGER PRIMARY KEY)")
+            complete = vr.Reporter("test")
+            vr.check_tables_present(conn, complete, "fail")
+            assert not complete.failures, table
 
 
 def test_manifest_walk_reads_the_one_file_migrations():

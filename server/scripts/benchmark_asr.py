@@ -30,21 +30,35 @@ def generate_test_audio(duration_secs: float = 3.0) -> str:
     import struct
     import wave
 
-    wav_path = tempfile.mktemp(suffix=".wav")
     sample_rate = 16000
     num_samples = int(sample_rate * duration_secs)
+    fd, wav_path = tempfile.mkstemp(prefix="orb_asr_benchmark_", suffix=".wav")
+    complete = False
+    try:
+        with os.fdopen(fd, "wb") as audio_file:
+            fd = None
+            with wave.open(audio_file, "wb") as f:
+                f.setnchannels(1)
+                f.setsampwidth(2)
+                f.setframerate(sample_rate)
+                # Near-silence avoids Whisper's "no speech" skip.
+                import random
 
-    with wave.open(wav_path, "w") as f:
-        f.setnchannels(1)
-        f.setsampwidth(2)
-        f.setframerate(sample_rate)
-        # Write near-silence (tiny noise to avoid Whisper "no speech" skip)
-        import random
-
-        samples = [random.randint(-10, 10) for _ in range(num_samples)]
-        f.writeframes(struct.pack(f"<{num_samples}h", *samples))
-
-    return wav_path
+                samples = [random.randint(-10, 10) for _ in range(num_samples)]
+                f.writeframes(struct.pack(f"<{num_samples}h", *samples))
+        complete = True
+        return wav_path
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if not complete:
+            try:
+                os.remove(wav_path)
+            except OSError:
+                pass
 
 
 def benchmark_subprocess(audio_path: str, iterations: int = 3) -> dict:
@@ -200,41 +214,42 @@ def main():
     if args.rxnorm_only:
         return
 
-    # Generate or use provided test audio
-    if args.audio:
-        audio_path = args.audio
-        print(f"\nUsing provided audio: {audio_path}")
-    else:
-        print("\nGenerating 3s test audio...")
-        audio_path = generate_test_audio(3.0)
-        print(f"  Created: {audio_path}")
+    audio_path = args.audio
+    try:
+        # Generate or use provided test audio.
+        if args.audio:
+            print(f"\nUsing provided audio: {audio_path}")
+        else:
+            print("\nGenerating 3s test audio...")
+            audio_path = generate_test_audio(3.0)
+            print(f"  Created: {audio_path}")
 
-    # Subprocess benchmark (baseline)
-    if not args.daemon_only:
-        results["subprocess"] = benchmark_subprocess(audio_path)
+        # Subprocess benchmark (baseline)
+        if not args.daemon_only:
+            results["subprocess"] = benchmark_subprocess(audio_path)
 
-    # Daemon benchmark
-    results["daemon"] = benchmark_daemon(audio_path)
+        results["daemon"] = benchmark_daemon(audio_path)
 
-    # Summary
-    print("\n" + "═" * 50)
-    print("SUMMARY")
-    print("═" * 50)
+        print("\n" + "═" * 50)
+        print("SUMMARY")
+        print("═" * 50)
 
-    if "subprocess" in results and results["subprocess"]["times"]:
-        print(f"  Subprocess avg: {results['subprocess']['avg']:.2f}s")
-    if "daemon" in results and results["daemon"]["times"]:
-        print(f"  Daemon avg:     {results['daemon']['avg']:.3f}s")
-    if "subprocess" in results and "daemon" in results:
-        if results["subprocess"]["times"] and results["daemon"]["times"]:
-            speedup = results["subprocess"]["avg"] / results["daemon"]["avg"]
-            print(f"  Speedup:        {speedup:.1f}x faster with daemon")
-    if "rxnorm" in results:
-        print(f"  RxNorm avg:     {results['rxnorm']['avg_ms']:.2f}ms")
-
-    # Cleanup
-    if not args.audio and os.path.exists(audio_path):
-        os.remove(audio_path)
+        if "subprocess" in results and results["subprocess"]["times"]:
+            print(f"  Subprocess avg: {results['subprocess']['avg']:.2f}s")
+        if "daemon" in results and results["daemon"]["times"]:
+            print(f"  Daemon avg:     {results['daemon']['avg']:.3f}s")
+        if "subprocess" in results and "daemon" in results:
+            if results["subprocess"]["times"] and results["daemon"]["times"]:
+                speedup = results["subprocess"]["avg"] / results["daemon"]["avg"]
+                print(f"  Speedup:        {speedup:.1f}x faster with daemon")
+        if "rxnorm" in results:
+            print(f"  RxNorm avg:     {results['rxnorm']['avg_ms']:.2f}ms")
+    finally:
+        if not args.audio and audio_path is not None:
+            try:
+                os.remove(audio_path)
+            except OSError:
+                pass
 
     print("\nDone.")
 

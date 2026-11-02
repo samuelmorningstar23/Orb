@@ -583,6 +583,28 @@ def test_the_portal_judges_from_the_stay_that_just_ended():
     assert answer["until"] == _end_of_local_day_utc(_sql_time(latest)).isoformat()
 
 
+@pytest.mark.parametrize("explicit_old_stay", [True, False])
+def test_a_prior_summary_cannot_reopen_a_later_summary_less_discharge(explicit_old_stay):
+    from services.patient_portal_access import PORTAL_CLOSED_MESSAGE, portal_access
+
+    uid = f"PSKU{_tag()}"
+    with db_session() as db:
+        db.execute("INSERT INTO users (id, name, role, password_hash) "
+                   "VALUES (?, 'Bridge', 'patient', 'x')", (uid,))
+    now = datetime.now(timezone.utc)
+    pid = _patient(user_id=uid)
+    old = _stay(pid, status="discharged", created=now - timedelta(days=10))
+    _stay(pid, status="discharged", created=now - timedelta(days=2))
+    # An explicitly linked earlier summary stays earlier even when its time is
+    # edited today. An unlinked legacy summary must fall within the latest stay.
+    _summary(pid, now - timedelta(seconds=5) if explicit_old_stay else now - timedelta(days=8),
+             admission_id=old if explicit_old_stay else None)
+    with db_session() as db:
+        answer = portal_access(db, uid)
+    assert answer == {"open": False, "status": "discharged", "until": None,
+                      "reason": PORTAL_CLOSED_MESSAGE}
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 #  7. The written audit of stay-keyed readers
 # ═════════════════════════════════════════════════════════════════════════════
@@ -613,9 +635,12 @@ STAY_KEYED_READER_AUDIT = (
     {"reader": "two open stays for one patient", "file": "migrations_his/m0065_stay_keying.py",
      "symbol": "ONE_ACTIVE_INDEX", "status": "fixed_here",
      "note": "every 'status = active LIMIT 1' reader now has one row to find."},
-    {"reader": "Bridge portal window", "file": "services/patient_portal_access.py",
-     "symbol": "MAX(discharged_at)", "status": "correct_as_is",
-     "note": "the latest summary is the stay that just ended (R029 (3)), pinned above."},
+    {"reader": "Bridge portal window", "file": "services/bridge_stay.py",
+     "symbol": "def current_summary", "status": "correct_as_is",
+     "note": "patient_portal_access.portal_access uses the latest admission's summary, "
+             "preferring admission_id and bounding unlinked legacy summaries by the "
+             "stay start. An earlier stay never reopens a later summary-less discharge "
+             "(R029 (3), positive and negative portal tests above)."},
     {"reader": "care bundles at discharge", "file": "services/adt/end_stay.py",
      "symbol": "def close_admission_on", "status": "correct_as_is",
      "note": "active bundles are cancelled at every discharge, so none carry over."},

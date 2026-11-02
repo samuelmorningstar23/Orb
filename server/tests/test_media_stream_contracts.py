@@ -152,10 +152,12 @@ def vision_gateway(monkeypatch):
     captured = {"acquired": 0, "released": 0, "closed": 0, "lines": ['{"message":{"content":"Synthetic read"}}', '{"done":true}']}
 
     class Queue:
+        worker_pool = None
+
         async def acquire(self, **kwargs):
             captured["acquired"] += 1
 
-        def release(self):
+        def release(self, ticket=None):
             captured["released"] += 1
 
     class Response:
@@ -274,6 +276,8 @@ async def test_scribe_ollama_stream_checks_http_and_model_failures(monkeypatch, 
     closed = []
 
     class Response:
+        status_code = status
+
         def raise_for_status(self):
             httpx.Response(status, request=httpx.Request("POST", "http://localhost/api/chat")).raise_for_status()
 
@@ -359,10 +363,12 @@ async def test_scribe_disconnect_closes_provider_before_releasing_inference_slot
                 order.append("provider closed")
 
     class Queue:
+        worker_pool = None
+
         async def acquire(self, **kwargs):
             pass
 
-        def release(self):
+        def release(self, ticket=None):
             order.append("slot released")
 
     monkeypatch.setattr(scribe_service, "get_provider", lambda _: Provider())

@@ -877,8 +877,8 @@ rather than printing a broken "ASR -s".
 ### Quick Admission modal
 **Where:** opened by "✨ Admit to Vigil".
 **Rendered by:** `QuickAdmitModal` (`ScribePanel.tsx:441`); form at lines 574–619.
-**Fields:** Patient Name, Age, Sex, Attending Doctor (from the `DOCTORS` constant in
-`src/constants.ts`), Ward, Bed Number, Initial Diagnosis.
+**Fields:** Patient Name, Age, Sex, Attending Doctor (loaded from the server's
+admission-doctors API), Ward, Bed Number, Initial Diagnosis.
 **Change this →** on open it shows a pulsing "Auto-filling from context..." chip (line 571)
 while it asks Sage to extract demographics out of the note as JSON (`extractDetails`, lines
 452–495); whatever parses fills the form. Submitting calls `createPatient`

@@ -19,12 +19,8 @@ from config import SCRIBE, UPLOAD_DIR
 from database import run_db
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
-from permissions import (
-    department_scope,
-    enforce_patient_scope,
-    log_phi_read,
-    require_permission,
-)
+from permissions import department_scope, enforce_patient_scope, log_phi_read, require_permission
+from request_limits import MAX_AUDIO_BYTES
 from services.admission_service import (
     DOOR_SCRIBE_QUICK_ADMIT,
     AdmissionInputError,
@@ -64,10 +60,6 @@ from services.scribe_service import (
 
 router = APIRouter(prefix="/api/scribe", tags=["scribe"])
 logger = logging.getLogger("orb.scribe")
-
-# Upload size cap for audio (memory-exhaustion DoS guard; mirrors Lens's image cap).
-MAX_AUDIO_BYTES = 100 * 1024 * 1024  # 100 MB
-
 
 # ═══════════════════════════════════════════════════
 # Verification State Constants
@@ -418,7 +410,7 @@ async def transcribe(
     file_name = f"{uuid.uuid4().hex}.{file_ext}"
     file_path = os.path.join(str(UPLOAD_DIR), file_name)
 
-    content = await audio.read()
+    content = await audio.read(MAX_AUDIO_BYTES + 1)
     # Size cap (memory-exhaustion DoS guard; AES-GCM holds plaintext+ciphertext).
     if len(content) > MAX_AUDIO_BYTES:
         raise HTTPException(
@@ -428,10 +420,12 @@ async def transcribe(
     # Encrypt the persisted PHI audio at rest (passthrough if encryption is off).
     from services.crypto_service import materialize_plaintext, write_encrypted
 
-    write_encrypted(file_path, content)
-
     try:
+        await asyncio.to_thread(write_encrypted, file_path, content)
         should_correct = skip_correction != "true"
+        from services.llm_queue_service import llm_queue
+
+        pooled_correction = llm_queue.worker_pool is not None
 
         # Offload the blocking ASR call off the event loop so one transcription
         # doesn't stall every other request on the server. Whisper reads a path,
@@ -440,18 +434,27 @@ async def transcribe(
             with materialize_plaintext(file_path) as read_path:
                 return transcribe_audio(
                     read_path,
-                    apply_correction=should_correct,
+                    apply_correction=should_correct and not pooled_correction,
                     hints=hints,
                     language=(language or None),
                 )
 
         transcript = await asyncio.to_thread(_run_asr)
+        if should_correct and pooled_correction:
+            from services.scribe_service import correct_transcript_async
+
+            transcript = await correct_transcript_async(
+                transcript, patient_id=patient_id or None, user_id=user.get("id"),
+            )
         return {
             "transcript": transcript,
             "audio_path": file_path,
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}") from e
+    except Exception:
+        logger.exception(
+            "Scribe transcription failed", extra={"event": "scribe_transcription_failed"}
+        )
+        raise HTTPException(status_code=500, detail="Transcription failed.") from None
 
 
 _TRANSCRIBE_CHUNK_AUDIO_DEFAULT = File(...)

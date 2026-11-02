@@ -1,6 +1,6 @@
 import { lazy, useSyncExternalStore, type ComponentType, type LazyExoticComponent, type ReactNode } from 'react'
 import {
-  hasPermission, PATIENT_WRITE, ROLE_FEATURE, ROLE_FEATURE_ALSO, VITALS_TRANSCRIBE, type Permission, type RoleFeatureId,
+  hasPermission, PATIENT_WRITE, ROLE_FEATURE, ROLE_FEATURE_ALSO, VITALS_TRANSCRIBE, FEEDBACK_READ, MORTUARY_READ, CSSD_READ, REPORTING_READ, FINANCE_TOOLS_READ, RIS_READ, CARE_PLAN_READ, EMERGENCY_RECORD_READ, PERIOPERATIVE_RECORD_READ, DIALYSIS_RECORD_READ, RECORD_GOVERNANCE_READ, RADIATION_SAFETY_READ, INFECTION_SURVEILLANCE_READ, type Permission, type RoleFeatureId,
 } from './lib/roles'
 
 /**
@@ -107,6 +107,19 @@ export type Tab =
    * PERMISSION_TABS): shown to an account holding vitals.transcribe, with the
    * beds module on or off. */
   | 'observations'
+  | 'feedback'
+  | 'mortuary'
+  | 'cssd'
+  | 'reporting'
+  | 'finance-tools'
+  | 'radiology'
+  | 'care-plans'
+  | 'emergency'
+  | 'perioperative'
+  | 'dialysis'
+  | 'radiation-safety'
+  | 'infection-surveillance'
+  | 'record-governance'
 
 /**
  * Rail grouping. Phase 1 renders every group as one flat list — the grouped
@@ -207,11 +220,37 @@ export type HospitalModuleId =
   | 'billing' | 'payments' | 'payer' | 'procurement' | 'frontdesk' | 'housekeeping'
   | 'workforce' | 'dietary' | 'biomedical' | 'nabh' | 'abdm'
   | 'adt' | 'pharmacy-store' | 'lab'
+  | 'feedback'
+  | 'mortuary'
+  | 'cssd'
+  | 'reporting'
+  | 'finance-tools'
+  | 'radiology'
+  | 'care-plans'
+  | 'emergency'
+  | 'perioperative'
+  | 'dialysis'
+  | 'radiation-safety'
+  | 'infection-surveillance'
+  | 'record-governance'
 
 export const HOSPITAL_MODULE_IDS: readonly HospitalModuleId[] = [
   'billing', 'payments', 'payer', 'procurement', 'frontdesk', 'housekeeping',
   'workforce', 'dietary', 'biomedical', 'nabh', 'abdm',
   'adt', 'pharmacy-store', 'lab',
+  'feedback',
+  'mortuary',
+  'cssd',
+  'reporting',
+  'finance-tools',
+  'radiology',
+  'care-plans',
+  'emergency',
+  'perioperative',
+  'dialysis',
+  'radiation-safety',
+  'infection-surveillance',
+  'record-governance',
 ]
 
 /**
@@ -232,7 +271,7 @@ export const HOSPITAL_MODULE_IDS: readonly HospitalModuleId[] = [
  * answers non-OK, every opt-in module stays off. A tab for a module the server
  * has not confirmed would open onto routes that 404.
  */
-export const OPT_IN_MODULE_IDS: readonly HospitalModuleId[] = ['adt', 'pharmacy-store', 'lab']
+export const OPT_IN_MODULE_IDS: readonly HospitalModuleId[] = ['adt', 'pharmacy-store', 'lab', 'feedback', 'mortuary', 'cssd', 'reporting', 'finance-tools', 'radiology', 'care-plans', 'emergency', 'perioperative', 'dialysis', 'radiation-safety', 'infection-surveillance', 'record-governance']
 
 export function isOptInModule(id: HospitalModuleId): boolean {
   return (OPT_IN_MODULE_IDS as readonly string[]).includes(id)
@@ -257,6 +296,19 @@ export const HOSPITAL_MODULE_PANEL_PATH: Record<HospitalModuleId, string> = {
   adt: './pages/panels/BedBoardPanel.tsx',
   'pharmacy-store': './pages/panels/PharmacyStorePanel.tsx',
   lab: './pages/panels/LabPanel.tsx',
+  'feedback': './pages/panels/FeedbackPanel.tsx',
+  'mortuary': './pages/panels/MortuaryPanel.tsx',
+  'cssd': './pages/panels/CssdPanel.tsx',
+  'reporting': './pages/panels/ReportingPanel.tsx',
+  'finance-tools': './pages/panels/FinanceToolsPanel.tsx',
+  'radiology': './pages/panels/RadiologyPanel.tsx',
+  'care-plans': './pages/panels/CarePlansPanel.tsx',
+  'emergency': './pages/panels/EmergencyPanel.tsx',
+  'perioperative': './pages/panels/PerioperativePanel.tsx',
+  'dialysis': './pages/panels/DialysisPanel.tsx',
+  'radiation-safety': './pages/panels/RadiationSafetyPanel.tsx',
+  'infection-surveillance': './pages/panels/InfectionSurveillancePanel.tsx',
+  'record-governance': './pages/panels/RecordGovernancePanel.tsx',
 }
 
 const HOSPITAL_MODULE_MODULES = import.meta.glob([
@@ -274,6 +326,19 @@ const HOSPITAL_MODULE_MODULES = import.meta.glob([
   './pages/panels/BedBoardPanel.tsx',
   './pages/panels/PharmacyStorePanel.tsx',
   './pages/panels/LabPanel.tsx',
+  './pages/panels/FeedbackPanel.tsx',
+  './pages/panels/MortuaryPanel.tsx',
+  './pages/panels/CssdPanel.tsx',
+  './pages/panels/ReportingPanel.tsx',
+  './pages/panels/FinanceToolsPanel.tsx',
+  './pages/panels/RadiologyPanel.tsx',
+  './pages/panels/CarePlansPanel.tsx',
+  './pages/panels/EmergencyPanel.tsx',
+  './pages/panels/PerioperativePanel.tsx',
+  './pages/panels/DialysisPanel.tsx',
+  './pages/panels/RadiationSafetyPanel.tsx',
+  './pages/panels/InfectionSurveillancePanel.tsx',
+  './pages/panels/RecordGovernancePanel.tsx',
 ])
 
 /** True for each module whose panel file is present in THIS build. */
@@ -1280,6 +1345,19 @@ export const TABS: readonly TabDef[] = [
       </svg>
     ),
   },
+  { id: 'feedback', label: 'Feedback', pillar: 'Patient feedback', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M8 9h8M8 13h8M8 17h5"/></svg> },
+  { id: 'mortuary', label: 'Mortuary', pillar: 'Custody register', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M8 9h8M8 13h8M8 17h5"/></svg> },
+  { id: 'cssd', label: 'CSSD', pillar: 'Sterile supply', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M8 9h8M8 13h8M8 17h5"/></svg> },
+  { id: 'reporting', label: 'Reports', pillar: 'Reports and cohorts', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M8 9h8M8 13h8M8 17h5"/></svg> },
+  { id: 'finance-tools', label: 'Finance tools', pillar: 'Accounting and payouts', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M8 9h8M8 13h8M8 17h5"/></svg> },
+  { id: 'radiology', label: 'Radiology', pillar: 'Radiology records', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M8 9h8M8 13h8M8 17h5"/></svg> },
+  { id: 'care-plans', label: 'Care plans', pillar: 'Care plans', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M8 9h8M8 13h8M8 17h5"/></svg> },
+  { id: 'emergency', label: 'Emergency', pillar: 'Emergency records', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M8 9h8M8 13h8M8 17h5"/></svg> },
+  { id: 'perioperative', label: 'Perioperative', pillar: 'Perioperative records', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M8 9h8M8 13h8M8 17h5"/></svg> },
+  { id: 'dialysis', label: 'Dialysis', pillar: 'Dialysis records', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M8 9h8M8 13h8M8 17h5"/></svg> },
+  { id: 'record-governance', label: 'Medical records', pillar: 'Records governance', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M8 9h8M8 13h8M8 17h5"/></svg> },
+  { id: 'radiation-safety', label: 'Radiation safety', pillar: 'Radiation safety', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/></svg> },
+  { id: 'infection-surveillance', label: 'Infection surveillance', pillar: 'Infection surveillance', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/></svg> },
 ]
 
 const TAB_BY_ID = new Map(TABS.map(tab => [tab.id, tab]))
@@ -1298,6 +1376,13 @@ const TAB_BY_ID = new Map(TABS.map(tab => [tab.id, tab]))
  */
 export const PERMISSION_TABS: Readonly<Partial<Record<Tab, Permission>>> = {
   observations: VITALS_TRANSCRIBE,
+  feedback: FEEDBACK_READ, mortuary: MORTUARY_READ, cssd: CSSD_READ,
+  reporting: REPORTING_READ, 'finance-tools': FINANCE_TOOLS_READ,
+  radiology: RIS_READ, 'care-plans': CARE_PLAN_READ, emergency: EMERGENCY_RECORD_READ,
+  perioperative: PERIOPERATIVE_RECORD_READ, dialysis: DIALYSIS_RECORD_READ,
+  'radiation-safety': RADIATION_SAFETY_READ,
+  'infection-surveillance': INFECTION_SURVEILLANCE_READ,
+  'record-governance': RECORD_GOVERNANCE_READ,
 }
 
 export function tabDef(id: Tab): TabDef | undefined {
@@ -1439,6 +1524,19 @@ const HOSPITAL_MODULE_TABS: readonly RoleTab[] = [
   t('adt', 'hospital'),
   t('pharmacy-store', 'hospital'),
   t('lab', 'hospital'),
+  t('feedback', 'hospital'),
+  t('mortuary', 'hospital'),
+  t('cssd', 'hospital'),
+  t('reporting', 'hospital'),
+  t('finance-tools', 'hospital'),
+  t('radiology', 'clinical'),
+  t('care-plans', 'clinical'),
+  t('emergency', 'clinical'),
+  t('perioperative', 'clinical'),
+  t('dialysis', 'clinical'),
+  t('radiation-safety', 'hospital'),
+  t('infection-surveillance', 'hospital'),
+  t('record-governance', 'hospital'),
 ]
 
 /**
@@ -1488,7 +1586,7 @@ const DIETARY_TAB: RoleTab = t('dietary', 'clinical')
  * nurses hold. Billing, payments, payer, procurement, front desk, housekeeping
  * and workforce do not and must not.
  */
-export const CLINICAL_MODULE_IDS: readonly HospitalModuleId[] = ['dietary']
+export const CLINICAL_MODULE_IDS: readonly HospitalModuleId[] = ['dietary', 'radiology', 'care-plans', 'emergency', 'perioperative', 'dialysis']
 
 /**
  * The DIAGNOSTIC modules: the laboratory. Neither a money screen nor a
@@ -1526,7 +1624,7 @@ export const PHARMACY_DESK_MODULE_IDS: readonly HospitalModuleId[] = ['pharmacy-
 const ROLE_CONFIG: Record<string, ShellRoleConfig> = {
   doctor: {
     home: 'today',
-    tabs: [...DOCTOR_TABS, t('appointments', 'clinical'), DIETARY_TAB],
+    tabs: [...DOCTOR_TABS, t('appointments', 'clinical'), DIETARY_TAB, t('radiology', 'clinical'), t('care-plans', 'clinical'), t('emergency', 'clinical'), t('perioperative', 'clinical'), t('dialysis', 'clinical')],
     primaryAction: 'admit',
   },
   /* Server alias: `ROLE_PERMISSIONS["clinician"] = ROLE_PERMISSIONS["doctor"]`
@@ -1537,7 +1635,7 @@ const ROLE_CONFIG: Record<string, ShellRoleConfig> = {
      there: one role, one answer. */
   clinician: {
     home: 'today',
-    tabs: [...DOCTOR_TABS, t('appointments', 'clinical'), DIETARY_TAB],
+    tabs: [...DOCTOR_TABS, t('appointments', 'clinical'), DIETARY_TAB, t('radiology', 'clinical'), t('care-plans', 'clinical'), t('emergency', 'clinical'), t('perioperative', 'clinical'), t('dialysis', 'clinical')],
     primaryAction: 'admit',
   },
   /* 'surgeon' is a safety net for a raw backend role Login normally normalizes
@@ -1561,6 +1659,7 @@ const ROLE_CONFIG: Record<string, ShellRoleConfig> = {
       t('shift'), t('vigil'), t('orders'), t('relay'), t('sage'), t('scribe'),
       t('lens', 'clinical'), t('forecast', 'clinical'),
       t('coding', 'hospital'), t('appointments', 'clinical'), DIETARY_TAB,
+      t('radiology', 'clinical'), t('care-plans', 'clinical'), t('emergency', 'clinical'), t('perioperative', 'clinical'), t('dialysis', 'clinical'),
     ],
     primaryAction: 'admit',
   },

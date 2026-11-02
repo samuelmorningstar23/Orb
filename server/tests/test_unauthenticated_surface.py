@@ -39,6 +39,7 @@ PUBLIC_ROUTES: dict[tuple[str, str], str] = {
     ("POST", "/api/discharge-access/verify"): "patient's discharge link: token plus "
                                               "date of birth, no staff session exists",
     ("GET", "/api/health"): "liveness probe, no clinical content",
+    ("GET", "/api/ready"): "database readiness probe, no clinical content",
     ("GET", "/api/health/loop"): "event-loop watchdog probe, no clinical content",
     ("GET", "/metrics"): "Prometheus scrape, counts only; ORB_METRICS_TOKEN gates it "
                          "(routes/metrics_routes.py)",

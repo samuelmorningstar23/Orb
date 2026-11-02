@@ -8,6 +8,30 @@ from services import llm_providers
 
 
 @pytest.mark.asyncio
+async def test_sage_busy_admission_does_not_start_provider_or_release_someone_elses_slot(monkeypatch):
+    import config
+    from services import sage_service
+    from services.llm_queue_service import llm_queue
+
+    provider = mock.Mock()
+    provider.name = "ollama"
+    choice = mock.Mock(model="synthetic", downgraded=False, preferred="synthetic")
+    monkeypatch.setattr("services.thinking_mode.select_provider", mock.AsyncMock(return_value=(choice, provider)))
+    monkeypatch.setattr(config, "SAGE_QUEUE_WAIT_SECONDS", 0.02)
+    acquire = mock.AsyncMock(side_effect=TimeoutError)
+    release = mock.Mock()
+    monkeypatch.setattr(llm_queue, "acquire", acquire)
+    monkeypatch.setattr(llm_queue, "release", release)
+    info = {}
+    with pytest.raises(sage_service.SageCapacityBusy):
+        _ = [chunk async for chunk in sage_service.query_ollama("Synthetic general query", route_info=info)]
+    acquire.assert_awaited_once_with(priority=1, model="synthetic", timeout=0.02)
+    provider.astream_chat.assert_not_called()
+    release.assert_not_called()
+    assert info["queue_wait_ms"] >= 0
+
+
+@pytest.mark.asyncio
 async def test_router_serves_every_turn_from_local_lane():
     """Local inference is the only lane: every turn — PHI-free or not — is
     streamed by the local provider and reported as such in route_info."""
@@ -104,3 +128,56 @@ async def test_a_prose_scope_never_claims_a_marker(monkeypatch):
             pass
 
     assert route_info["marker_asserted"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("termination", ["complete", "failure", "cancelled"])
+async def test_inference_audit_requires_successful_stream_completion(monkeypatch, termination):
+    from services import ai_governance, sage_service, thinking_mode
+    from services.llm_queue_service import llm_queue
+    from services.model_router import ModelChoice
+
+    recorded = []
+    acquired = []
+    released = []
+    teardown = []
+
+    async def select(*args, **kwargs):
+        return ModelChoice("medgemma:27b", False, "medgemma:27b"), llm_providers.local_provider
+
+    async def stream(messages, options):
+        try:
+            yield "partial answer"
+            if termination == "failure":
+                raise llm_providers.LocalModelStreamError("Local model did not complete an answer.")
+            yield " completed"
+        finally:
+            teardown.append("provider closed")
+
+    async def acquire(*args, **kwargs):
+        acquired.append(True)
+
+    def release():
+        released.append(True)
+        teardown.append("queue released")
+
+    monkeypatch.setattr(thinking_mode, "select_provider", select)
+    monkeypatch.setattr(llm_providers.local_provider, "astream_chat", stream)
+    monkeypatch.setattr(llm_queue, "acquire", acquire)
+    monkeypatch.setattr(llm_queue, "release", release)
+    monkeypatch.setattr(ai_governance, "record_inference_soon", lambda **kwargs: recorded.append(kwargs))
+    response = sage_service.query_ollama("What is hypoxia?", user_id="DOC001")
+    assert await anext(response) == "partial answer"
+    if termination == "cancelled":
+        await response.aclose()
+    elif termination == "failure":
+        with pytest.raises(llm_providers.LocalModelStreamError):
+            await anext(response)
+    else:
+        assert [chunk async for chunk in response] == [" completed"]
+
+    assert acquired == released == [True]
+    assert teardown == ["provider closed", "queue released"]
+    assert len(recorded) == 1
+    assert recorded[0]["outcome"] == ("served" if termination == "complete" else "error")
+    assert recorded[0]["user_id"] == "DOC001"

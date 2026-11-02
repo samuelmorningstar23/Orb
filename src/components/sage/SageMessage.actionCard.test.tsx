@@ -44,7 +44,7 @@ function renderCard(payload: Record<string, string>) {
 }
 
 describe('Sage medication order card', () => {
-  beforeEach(() => approveHelixOrder.mockReset());
+  beforeEach(() => { approveHelixOrder.mockReset() });
 
   it('collects what the draft left out before it can send', async () => {
     approveHelixOrder.mockResolvedValue({ status: 'success', order: {}, safety: { allergy_alerts: [], interaction_alerts: [] } });

@@ -92,6 +92,9 @@ def test_stores_items_are_not_caught_by_the_net(name):
 
 
 def test_the_refusal_reaches_the_screen_with_its_sentence():
+    # Use this module's unique catalogue entry: another module may already have
+    # seeded a closer Amoxicillin product in the shared synthetic test database.
+    medicine_name = "Testozolam 10 mg"
     uid = f"{TAG}U{_uid()}"
     with db_session() as db:
         db.execute(
@@ -101,16 +104,17 @@ def test_the_refusal_reaches_the_screen_with_its_sentence():
     response = client.post(
         "/api/procurement/items",
         headers={"Authorization": f"Bearer {create_token(uid, 'admin')}"},
-        json={"code": f"{TAG}H{_uid()}", "name": "Amoxicillin 500 mg"},
+        json={"code": f"{TAG}H{_uid()}", "name": medicine_name},
     )
     # 422 is this route's existing status for the refusal (see test_procurement).
     assert response.status_code == 422, response.text
     detail = response.json()["detail"]
     assert detail["error"] == "pharmacy_item_refused"
-    assert "Amoxicillin 500mg Oral Capsule" in detail["message"]
+    assert medicine_name in detail["message"]
+    assert "Testozolam 10mg Tablet" in detail["message"]
     with db_session() as db:
         assert db.execute(
-            "SELECT 1 FROM inventory_items WHERE name = 'Amoxicillin 500 mg'"
+            "SELECT 1 FROM inventory_items WHERE name = ?", (medicine_name,),
         ).fetchone() is None
 
 

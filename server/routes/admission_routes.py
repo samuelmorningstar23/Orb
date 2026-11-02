@@ -166,7 +166,7 @@ def process_admission(
     exactly as before (200), and the new fields and the header are ignored.
     """
     try:
-        data = payload.dict()
+        data = payload.model_dump()
         # Checked against the live lists before anything is written. The
         # department decides whose board the patient is on (a typo put them on
         # nobody's) and is stored in its canonical spelling; an unknown

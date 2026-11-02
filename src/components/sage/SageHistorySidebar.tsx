@@ -9,6 +9,7 @@ interface HistoryItem {
   metadata?: SageHistoryMessage['metadata']
   /** The patient the conversation was about, when the server knows it. */
   patientName?: string
+  bucket?: 'Today' | 'Yesterday' | 'Earlier'
 }
 
 interface Props {
@@ -18,7 +19,7 @@ interface Props {
 }
 
 export function SageHistorySidebar({ recentChats, onSelectChat, onNewChat }: Props) {
-  // We can group by today/yesterday if we had dates, but for now we just show Recent Conversations
+  const buckets = ['Today', 'Yesterday', 'Earlier'] as const
   return (
     <div className="sage-sidebar">
       <div className="sage-sidebar__header">
@@ -46,9 +47,11 @@ export function SageHistorySidebar({ recentChats, onSelectChat, onNewChat }: Pro
             <span className="sage-sidebar__empty-text">No recent conversations.<br/>Start by asking Sage anything.</span>
           </div>
         ) : (
-          <div className="sage-history-group">
+          <div>
             <div className="sage-history-group-label">Recent Conversations</div>
-            {recentChats.map((chat) => (
+            {buckets.filter(bucket => recentChats.some(chat => (chat.bucket ?? 'Earlier') === bucket)).map(bucket => <div className="sage-history-group" key={bucket}>
+            <div className="sage-history-group-label">{bucket}</div>
+            {recentChats.filter(chat => (chat.bucket ?? 'Earlier') === bucket).map((chat) => (
               /* A real button: reloading a past conversation is the only way
                  back to it, and as a <div onClick> the whole list was skipped
                  by Tab — keyboard users were locked into the current chat. */
@@ -71,6 +74,8 @@ export function SageHistorySidebar({ recentChats, onSelectChat, onNewChat }: Pro
                 )}
               </button>
             ))}
+            </div>)}
+            <p className="sage-history-group-label">Up to 200 recent stored messages. Older unthreaded messages reopen as a new chat.</p>
           </div>
         )}
       </div>

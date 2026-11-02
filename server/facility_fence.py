@@ -29,7 +29,7 @@ unfinished one. The create gate (multisite-2) refuses a second facility while
 the blind list is not empty.
 
 What is never fenced (OPEN_SURFACES): signing in and the session (/api/auth),
-liveness and the switch board (/api/health), facility identity
+liveness and the switch board (/api/health), database readiness (/api/ready), facility identity
 (/api/facilities) and the operations status page (/api/ops), which explains
 the fence to the operator. Paths outside FENCED_ROOTS (the built screens and
 their files) carry no patient data and are never fenced, so the 503 reaches a
@@ -130,7 +130,7 @@ SOCKET_ROOTS = ("/socket.io",)
 FENCED_ROOTS = HTTP_ROOTS + SOCKET_ROOTS
 
 #: Never fenced, whatever the blind list holds.
-OPEN_SURFACES = ("/api/auth", "/api/health", "/api/facilities", "/api/ops")
+OPEN_SURFACES = ("/api/auth", "/api/health", "/api/ready", "/api/facilities", "/api/ops")
 
 FENCE_MESSAGE = "This screen is not available yet when more than one facility is on record."
 FENCE_ERROR = "facility_fence"

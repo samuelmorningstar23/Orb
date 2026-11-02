@@ -261,10 +261,6 @@ def _overlap(a0: datetime, a1: datetime, b0: datetime, b1: datetime) -> float:
     return max(0.0, (hi - lo).total_seconds())
 
 
-def _round(value: float | None, places: int) -> float | None:
-    return None if value is None else round(value, places)
-
-
 def _pct(num: float, den: float) -> float | None:
     return None if not den else round(num / den * 100.0, 1)
 

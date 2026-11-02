@@ -52,7 +52,15 @@ test('clinician opens Scribe and the compose + structure UI renders', async ({ p
     'I-PASS Handoff',
   ])
 
-  // The record button remains enabled (mic capture entry point) — proves the
-  // dictation affordance is wired even though we don't exercise audio.
-  await expect(page.locator('#scribe-record-btn')).toBeEnabled()
+  // The isolated runner provisions no speech model. The real capability probe
+  // must report that honestly and the UI must not offer a broken recorder.
+  const postureResponse = await page.request.get('/api/sage/ai-posture')
+  expect(postureResponse.ok()).toBeTruthy()
+  const posture = await postureResponse.json()
+  if (posture.local_asr_available === true) {
+    await expect(page.locator('#scribe-record-btn')).toBeEnabled()
+  } else {
+    await expect(page.locator('#scribe-record-btn')).toBeDisabled()
+    await expect(page.locator('#scribe-record-btn')).toHaveAttribute('title', /not available/i)
+  }
 })

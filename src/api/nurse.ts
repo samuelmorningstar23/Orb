@@ -10,7 +10,7 @@
  * Routed through the shared apiFetch wrapper so it reuses the centralized auth
  * headers and 401/403 handling.
  */
-import { apiFetch, API_BASE, buildHeaders, getUser } from './client';
+import { apiFetch, API_BASE, assertSessionIdentity, buildHeaders, getUser } from './client';
 import { newId } from '../lib/id';
 
 /** NEWS2 as returned by services/vigil_service.compute_news2. */
@@ -269,6 +269,7 @@ export async function previewNews2(
   obs: ObservationInput,
   signal?: AbortSignal,
 ): Promise<ObservationPreview> {
+  const owner = getUser()?.id ?? null;
   const res = await fetch(`${API_BASE}/nurse/patients/${patientId}/news2-preview`, {
     method: 'POST',
     credentials: 'include',
@@ -276,11 +277,15 @@ export async function previewNews2(
     body: JSON.stringify(obs),
     signal,
   });
+  assertSessionIdentity(owner);
   if (!res.ok) {
     const detail = await res.json().catch(() => null);
+    assertSessionIdentity(owner);
     throw new Error(detail?.detail || `Preview failed (${res.status})`);
   }
-  return res.json();
+  const preview = await res.json();
+  assertSessionIdentity(owner);
+  return preview;
 }
 
 /**

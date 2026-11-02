@@ -18,6 +18,12 @@ import config
 from database import db_session
 
 
+@pytest.fixture
+def no_model_startup(monkeypatch):
+    # Switch-board/health contracts do not need native model workers.
+    monkeypatch.setattr(config, "MODELS_ENABLED", False)
+
+
 # ── 1. The one reader ─────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("raw,expected", [
@@ -41,9 +47,14 @@ def test_the_four_design_names_are_one_helper():
 
 # ── 2. Opt-in modules ─────────────────────────────────────────────────────────
 
-def test_opt_in_modules_are_the_three_ruled_ids_and_default_off():
+def test_opt_in_modules_include_local_workflows_and_default_off():
     assert config.OPT_IN_MODULES == {
-        "adt": "ORB_ADT", "pharmacy-store": "ORB_PHARMACY_STORE", "lab": "ORB_LAB"}
+        "adt": "ORB_ADT", "pharmacy-store": "ORB_PHARMACY_STORE", "lab": "ORB_LAB",
+        "feedback": "ORB_FEEDBACK", "mortuary": "ORB_MORTUARY", "cssd": "ORB_CSSD",
+        "reporting": "ORB_REPORTING", "finance-tools": "ORB_FINANCE_TOOLS",
+        "radiology": "ORB_RADIOLOGY", "care-plans": "ORB_CARE_PLANS",
+        "emergency": "ORB_EMERGENCY", "perioperative": "ORB_PERIOPERATIVE",
+        "dialysis": "ORB_DIALYSIS", "record-governance": "ORB_RECORD_GOVERNANCE", "radiation-safety": "ORB_RADIATION_SAFETY", "infection-surveillance": "ORB_INFECTION_SURVEILLANCE"}
     for m, env in config.OPT_IN_MODULES.items():
         assert config.HOSPITAL_MODULE_ENV[m] == env
         assert config.module_state(m) == "off"
@@ -255,13 +266,13 @@ def test_a_choice_setting_falls_back_to_its_strict_default(monkeypatch, raw, exp
 
 # ── 5. /api/health ────────────────────────────────────────────────────────────
 
-def test_health_publishes_modules_states_and_features_all_off():
+def test_health_publishes_modules_states_and_features_all_off(no_model_startup):
     import main
     with TestClient(main.app) as client:
         body = client.get("/api/health").json()
     assert body["status"] == "ok"
     assert body["modules"] == config.enabled_modules()
-    assert body["module_states"] == {"adt": "off", "pharmacy-store": "off", "lab": "off"}
+    assert body["module_states"] == {module: "off" for module in config.OPT_IN_MODULES}
     assert FEATURE_IDS <= set(body["features"])
     assert not any(body["features"].values()), body["features"]
     # Every default-on module is still on, exactly as before this build.
@@ -269,7 +280,7 @@ def test_health_publishes_modules_states_and_features_all_off():
         assert on is (m not in config.OPT_IN_MODULES), m
 
 
-def test_health_follows_the_switch_board(monkeypatch):
+def test_health_follows_the_switch_board(monkeypatch, no_model_startup):
     import main
     monkeypatch.setattr(config, "LAB_ENABLED", True)
     monkeypatch.setattr(config, "REGISTRATION_ENABLED", True)
@@ -280,7 +291,7 @@ def test_health_follows_the_switch_board(monkeypatch):
     assert body["features"]["registration"] is True
 
 
-def test_health_never_opens_a_database_connection(monkeypatch):
+def test_health_never_opens_a_database_connection(monkeypatch, no_model_startup):
     """A drain check that touched the DB would block the event loop here."""
     import database
     import main

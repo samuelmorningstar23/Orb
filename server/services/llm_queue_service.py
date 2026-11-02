@@ -17,7 +17,9 @@ import asyncio
 import collections
 import contextvars
 import logging
+import math
 import time
+from urllib.parse import urlsplit
 
 from config import (
     BG_LLM_GOVERNOR_ENABLED,
@@ -25,13 +27,18 @@ from config import (
     BG_LLM_QUIET_AFTER_INTERACTIVE_SECONDS,
     BG_LLM_YIELD_WAIT_SECONDS,
 )
-
 from services.gpu_coordinator import (
     PRIORITY_BACKGROUND,
     PRIORITY_SAGE,
     PRIORITY_SCRIBE,
     acquire_gpu_gate,
     release_gpu_gate,
+)
+from services.local_inference_pool import (
+    InferenceOverloaded,
+    LocalInferencePool,
+    WorkerLease,
+    configured_local_pool,
 )
 
 logger = logging.getLogger(__name__)
@@ -192,7 +199,7 @@ class _LaneTicket:
     their own PriorityLLMQueue) can never retire another instance's holder.
     """
 
-    __slots__ = ("owner", "lane", "priority", "released", "token", "t0", "watchdog")
+    __slots__ = ("lane", "owner", "priority", "released", "t0", "token", "watchdog", "worker_lease")
 
     def __init__(self, owner, lane: str, priority: int):
         self.owner = owner
@@ -206,9 +213,10 @@ class _LaneTicket:
         self.watchdog: asyncio.TimerHandle | None = (
             None  # loop.call_later handle; see _install_ticket
         )
+        self.worker_lease: WorkerLease | None = None
 
 
-_lane_ticket: contextvars.ContextVar = contextvars.ContextVar("orb_llm_lane_ticket", default=None)
+_lane_ticket: contextvars.ContextVar[_LaneTicket | None] = contextvars.ContextVar("orb_llm_lane_ticket", default=None)
 
 
 class PriorityLLMQueue:
@@ -261,23 +269,31 @@ class PriorityLLMQueue:
     hold cap.
     """
 
-    def __init__(self):
-        self._lock = None
-        self._queue = None
-        self._interactive_sem = None
-        self._loop = None
+    def __init__(self, *, pool: LocalInferencePool | None = None, use_configured_pool: bool = True) -> None:
+        self._lock: asyncio.Lock | None = None
+        self._queue: asyncio.PriorityQueue[tuple[int, int, _QueueEvent]] | None = None
+        self._interactive_sem: asyncio.BoundedSemaphore | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
         self.counter = 0
         self.max_concurrent = 1  # background lane: 1 stream
         self.max_interactive = MAX_INTERACTIVE
+        self.worker_pool = pool if pool is not None else (
+            configured_local_pool() if use_configured_pool else None
+        )
+        if self.worker_pool is not None:
+            # These are qualified physical slots, never the HTTP ingress cap.
+            self.max_interactive = self.worker_pool.interactive_capacity
+            self.max_concurrent = self.worker_pool.background_capacity
 
         self._bg_active = 0  # background holders (0..max_concurrent)
         self._interactive_active = 0  # interactive holders (0..max_interactive)
         self._interactive_waiting = 0  # interactive acquires not yet granted
+        self._pool_admitting = 0  # includes governor/GPU-gate waits before a ticket exists
 
         self._gate_refs = 0  # holders of the shared GPU gate (both lanes)
-        self._gate_token = None  # ownership token for the current gate hold
-        self._holders: list = []  # live tickets, oldest first
+        self._gate_token: object | None = None  # ownership token for the current gate hold
+        self._holders: list[_LaneTicket] = []  # live tickets, oldest first
         # Count of holds that outran _hold_warn_seconds(). Monotonic for the
         # process lifetime and exported as a metric, so "the lane was occupied"
         # is answerable from /metrics instead of from the log.
@@ -303,6 +319,10 @@ class PriorityLLMQueue:
             return
         if self._loop is loop:
             return
+        if self.worker_pool is not None and self._loop is not None and (
+            self.active_workers or self._pool_admitting or self.worker_pool.active or self.worker_pool.waiting
+        ):
+            raise RuntimeError("A live local inference queue cannot move event loops")
         if self._loop is not None and (
             self._bg_active or self._interactive_active or self._gate_refs
         ):
@@ -321,6 +341,7 @@ class PriorityLLMQueue:
         self._bg_active = 0
         self._interactive_active = 0
         self._interactive_waiting = 0
+        self._pool_admitting = 0
         self._gate_refs = 0
         self._gate_token = None
         self._holders.clear()
@@ -362,6 +383,8 @@ class PriorityLLMQueue:
         the semaphore and queue are rebuilt lazily. Never used in production.
         """
         v = max(0, int(value))
+        if self.worker_pool is not None and (self._holders or self._pool_admitting or self.worker_pool.active or self.worker_pool.waiting):
+            raise RuntimeError("Live qualified worker leases must be released explicitly")
         self._bg_active = v
         self._interactive_active = 0
         if v == 0:
@@ -453,7 +476,7 @@ class PriorityLLMQueue:
             return None
         return max(0.0, deadline - time.monotonic())
 
-    async def acquire(self, priority: int = PRIORITY_SCRIBE, timeout: float = 120.0):
+    async def acquire(self, priority: int = PRIORITY_SCRIBE, timeout: float = 120.0, *, model: str | None = None):
         """Request access to the LLM. Lower number = higher priority.
 
         Priority constants are shared with the GPU coordinator
@@ -472,9 +495,97 @@ class PriorityLLMQueue:
         a gate reference is leaked.
         """
         self._bind_loop()
+        if self.worker_pool is not None:
+            return await self._acquire_pooled(priority, timeout, model)
         if priority <= PRIORITY_SAGE:
             return await self._acquire_interactive(priority, timeout)
         return await self._acquire_background(priority, timeout)
+
+    def current_worker(self) -> WorkerLease | None:
+        """Task-local physical slot; never infer a worker from another request."""
+        ticket = _lane_ticket.get()
+        if ticket is None or ticket.owner is not self or ticket.released:
+            return None
+        return ticket.worker_lease
+
+    def route_url(self, path: str, *, model: str | None = None) -> str:
+        """Route the leased model only; retain the default offline origin otherwise.
+
+        In pooled mode an inference without its own lease is refused instead of
+        silently posting to the first daemon and escaping capacity accounting.
+        Lifecycle pings should continue to validate their configured origin
+        directly; they are not inference requests.
+        """
+        if not isinstance(path, str) or not path.startswith("/api/") or urlsplit(path).query or urlsplit(path).fragment or ".." in path:
+            raise ValueError("Invalid local inference route")
+        lease = self.current_worker()
+        if self.worker_pool is not None:
+            if lease is None:
+                raise RuntimeError("Local inference requires a task-owned worker lease")
+            if model is not None and model != lease.model:
+                raise RuntimeError("Local inference model does not match its worker lease")
+            return lease.origin + path
+        from offline_policy import local_model_origin
+
+        import config
+        return local_model_origin(config.OLLAMA_BASE_URL) + path
+
+    async def _acquire_pooled(self, priority: int, timeout: float | None, model: str | None) -> _LaneTicket:
+        """Reserve a qualified worker before joining the ref-counted GPU gate."""
+        import config
+
+        pool = self.worker_pool
+        if pool is None:
+            raise RuntimeError("Qualified local worker pool is not configured")
+        existing = _lane_ticket.get()
+        if existing is not None and existing.owner is self and not existing.released:
+            raise RuntimeError("Nested local inference admission is not supported")
+        if timeout is not None and (not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout < 0):
+            raise ValueError("Invalid local inference deadline")
+        if len(self._holders) + self._pool_admitting >= pool.max_inflight:
+            pool.rejected += 1
+            raise InferenceOverloaded("Local inference admission is full; retry later")
+        self._pool_admitting += 1
+        lane = LANE_INTERACTIVE if priority <= PRIORITY_SAGE else LANE_BACKGROUND
+        if model is None:
+            model = config.AMBIENT_LLM_MODEL if priority >= PRIORITY_BACKGROUND else config.LLM_MODEL
+        deadline = None if timeout is None else time.monotonic() + timeout
+        interactive = lane == LANE_INTERACTIVE
+        if interactive:
+            self._interactive_waiting += 1
+        lease = None
+        gate_held = False
+        granted = False
+        try:
+            if priority >= PRIORITY_BACKGROUND:
+                await self.governor.admit(self._remaining(deadline))
+            lease = await pool.acquire(
+                model=model, lane=lane, priority=priority, timeout=self._remaining(deadline),
+            )
+            # Pool scheduling does not hold self.lock. Only the 0 -> 1 GPU
+            # transition can await it, preserving exclusion with local MLX/
+            # torch while independent qualified Ollama workers may overlap.
+            await self._gate_ref_acquire(deadline)
+            gate_held = True
+            ticket = self._install_ticket(lane, priority)
+            ticket.worker_lease = lease
+            if interactive:
+                self._interactive_active += 1
+            else:
+                self._bg_active += 1
+            granted = True
+            return ticket
+        finally:
+            self._pool_admitting -= 1
+            if interactive:
+                self._interactive_waiting = max(0, self._interactive_waiting - 1)
+                if not self.preempt_requested:
+                    self.governor.note_interactive_end()
+            if not granted:
+                if gate_held:
+                    self._gate_ref_release()
+                if lease is not None:
+                    lease.release()
 
     async def _acquire_interactive(self, priority: int, timeout):
         deadline = None if timeout is None else time.monotonic() + timeout
@@ -729,7 +840,7 @@ class PriorityLLMQueue:
             except Exception:  # pragma: no cover
                 pass
 
-    def _infer_holder(self):
+    def _infer_holder(self) -> _LaneTicket | None:
         """Best-effort lane attribution when the ContextVar is unavailable.
 
         This happens only when release() runs in a context that did not perform
@@ -758,7 +869,7 @@ class PriorityLLMQueue:
 
     # ── release ──────────────────────────────────────────────────────────
 
-    def release(self):
+    def release(self, ticket: _LaneTicket | bool | None = None) -> None:
         """Release this task's lane slot so the next waiter can proceed.
 
         Takes no arguments by design — callers invoke it from `finally` blocks,
@@ -773,9 +884,16 @@ class PriorityLLMQueue:
         Everything below is plain attribute mutation plus `Event.set()` /
         `Semaphore.release()`, all safe to run inline on the owning loop.
         """
-        ticket = _lane_ticket.get()
+        if isinstance(ticket, bool):
+            ticket = None  # Legacy acquire() returned True rather than a ticket.
+        explicit = ticket is not None
+        if explicit and (not isinstance(ticket, _LaneTicket) or ticket.owner is not self):
+            logger.warning("[LLMQueue] ignoring release of a foreign lane ticket")
+            return
+        ticket = ticket if explicit else _lane_ticket.get()
         if ticket is not None and ticket.owner is self:
-            self._clear_ticket(ticket)
+            if _lane_ticket.get() is ticket:
+                self._clear_ticket(ticket)
             if ticket.released:
                 # Already retired (see the fallback below, or a double release
                 # from a caller). THIS task's acquisition is fully accounted
@@ -785,6 +903,14 @@ class PriorityLLMQueue:
             return
         if ticket is not None:
             ticket = None  # belongs to a different queue instance — ignore it
+
+        if self.worker_pool is not None:
+            # Multiple workers make the old async-generator fallback unsafe:
+            # guessing could free a slot while another patient is streaming.
+            # Retain acquire()'s ticket and pass it to release() when cleanup
+            # can run in a different task/context.
+            logger.warning("[LLMQueue] pooled release requires its own lane ticket")
+            return
 
         ticket = self._infer_holder()
         if ticket is not None:
@@ -818,6 +944,9 @@ class PriorityLLMQueue:
 
         self._gate_ref_release()
 
+        if ticket.worker_lease is not None:
+            ticket.worker_lease.release()
+
         if ticket.lane == LANE_INTERACTIVE:
             self._interactive_active = max(0, self._interactive_active - 1)
             if not self.preempt_requested:
@@ -825,10 +954,12 @@ class PriorityLLMQueue:
                 # synchronously, in the same tick the counters drain, so a
                 # background admit that wakes next re-checks against it.
                 self.governor.note_interactive_end()
-            self._free_interactive_slot()
+            if self.worker_pool is None:
+                self._free_interactive_slot()
         else:
             self._bg_active = max(0, self._bg_active - 1)
-            self._maybe_wake()
+            if self.worker_pool is None:
+                self._maybe_wake()
 
         logger.info(
             "[LLMQueue] Released %s lane after %sms "

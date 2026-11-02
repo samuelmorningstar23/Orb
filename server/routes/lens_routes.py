@@ -22,6 +22,7 @@ from permissions import (
     require_permission,
     scope_patient_ids_sql,
 )
+from request_limits import MAX_IMAGE_BYTES
 from services.audit_service import log_audit_event
 from services.lens_service import (
     LENS_DISCLAIMER_BANNER,
@@ -186,7 +187,6 @@ _IMAGE_MAGIC = [
     (b"II*\x00", ".tiff"),
     (b"MM\x00*", ".tiff"),  # TIFF
 ]
-MAX_IMAGE_BYTES = 25 * 1024 * 1024  # 25 MB cap — reject oversized uploads (DoS)
 
 
 def _detect_image_ext(data: bytes) -> str | None:

@@ -6,7 +6,11 @@
 
 ---
 
-Orb Hospital OS leverages real-time data streaming and heavy local AI inference to provide clinical decision support, continuous patient monitoring, and workflow automation. Built to run securely and locally on hospital hardware (like Apple Silicon Mac Studios), it ensures complete data privacy while delivering state-of-the-art intelligence.
+Orb Hospital OS combines clinical records, ward workflows, real-time telemetry and optional local AI assistance on hospital hardware, including Apple Silicon Mac Studios. It is a pre-pilot system; deployment and clinical validation remain separate work.
+
+The current founding-hospital product is **Orb Ward Record**: clerk-entered observations and the rounds file. `ORB_WARD_RECORD=1` disables scoring, AI models, Lens and sepsis autostart. The wider hospital-system build includes registration, OPD, ADT, laboratory and pharmacy-store workflows behind default-off switches. Implemented code is not evidence of clinical validation or approval to enable a module. See [the HIS implementation plan](docs/HIS_BUILD_PLAN_2026-10.md) and [current product rulings](docs/RULINGS_NEEDED_2026-10.md).
+
+The [October offline implementation pass](docs/OFFLINE_IMPLEMENTATION_2026-10.md) adds local complaints, mortuary/CSSD registers, reporting and finance exports, clinical documentation, records governance and equipment safety evidence. These modules remain default-off and contain no external submission or device transport. The same report records the implemented boundaries, tests and remaining engineering work. The [completion and browser acceptance record](docs/OFFLINE_COMPLETION_AND_BROWSER_2026-10.md) covers the subsequent reliability fixes and synthetic browser screenshots.
 
 ## ✨ Core Modules
 
@@ -31,10 +35,10 @@ Scribe automates clinical note-taking by transcribing voice and structuring it i
 Lens analyzes medical imaging (ECG, X-ray, MRI, CT) to provide AI-assisted draft observations for clinician review (not a diagnostic device).
 - **Vision Model**: Uses `medgemma:27b` (MedGemma 1 27B Multimodal) to stream back structured draft notes (Findings, Impression, Recommendations).
 
-### 🌍 Pulse (Epidemiological & Environmental Intelligence)
-Pulse monitors macro-environmental factors that impact hospital admissions and respiratory conditions.
-- **Surveillance**: Tracks live local Weather, Air Quality Index (AQI), and Flu/Viral Surveillance data.
-- **Clinical Context**: Cross-references environmental hazards with clinical data to provide proactive recommendations (e.g., asthma exacerbation risks during poor air quality).
+### 🌍 Pulse (Season and Conditions)
+Pulse shows a bundled seasonal calendar for the hospital's configured Indian state, including the current season and the next 60 days.
+- **Strictly offline**: No weather, AQI, flu or recall feeds, browser geolocation, or external lookup.
+- **Review status**: Calendar entries remain labelled as drafts until reviewed by the site's clinical lead. Forecast displays this as context without applying an invented seasonal multiplier.
 
 ### 🛏️ Bridge (Patient Portal)
 Bridge offers a patient-facing interface that translates complex clinical data into plain, reassuring language.
@@ -85,9 +89,9 @@ The following modules are implemented but have not yet been through a clinical p
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Node.js 18+
+- Node.js 20.19+ or 22.12+ (the Vite 8 engine requirement)
 - Python 3.12+
-- [Ollama](https://ollama.com/) (installed and running)
+- [Ollama](https://ollama.com/) for enabled model features; the Ward Record profile runs with models off
 - Mac with Apple Silicon (recommended for MLX performance)
 
 ### 1. Clone & Install
@@ -97,7 +101,7 @@ git clone https://github.com/samuelmorningstar23/Orb.git
 cd Orb
 
 # Install Frontend Dependencies
-npm install
+npm ci
 
 # Install Backend Dependencies
 cd server
@@ -107,7 +111,7 @@ pip install -r requirements.txt
 ```
 
 ### 2. Pull AI Models (Ollama)
-Ensure Ollama is running, then pull the necessary models:
+For model-enabled evaluation, provision these models before joining the offline hospital network:
 ```bash
 ollama pull medgemma:27b            # primary clinical tier, 17 GB
 ollama pull medgemma:4b             # fast and ambient tier, 3.3 GB
@@ -120,8 +124,8 @@ Start both the backend and frontend servers:
 ```bash
 cd server
 source .venv/bin/activate
-python main.py            # starts FastAPI + Socket.IO on http://0.0.0.0:8000
-# (equivalent: uvicorn main:socket_app --host 0.0.0.0 --port 8000)
+python main.py            # starts FastAPI + Socket.IO on http://127.0.0.1:8000
+# (equivalent: uvicorn main:socket_app --host 127.0.0.1 --port 8000)
 ```
 
 **Frontend (Terminal 2):**
@@ -133,9 +137,9 @@ npm run dev
 
 ## 🔒 Architecture & Privacy
 
-Orb is intentionally designed as a **local-first** environment. By running heavy inference directly on hospital edge hardware (like the Mac Studio), Orb keeps Protected Health Information (PHI) inside the hospital's network and removes the cloud data-egress vector that cloud-AI vendors introduce.
+Orb's standing product rule is **strictly offline operation**. Inference runs on hospital hardware, and unavailable models must be provisioned before the appliance joins the hospital network. Local execution alone does not establish privacy or regulatory compliance.
 
-> **Compliance status (honest):** Local-first removes the external-leak vector but does **not** by itself confer HIPAA/GDPR/DPDP compliance. Orb is *designed to support* those technical safeguards; it is not certified or compliant out of the box. **Done today:** bcrypt + JWT auth, role-based access, append-only audit logging (SHA-256 hash-chain triggers enforce immutability at the database layer, plus a mutation-logging middleware that records every state-changing request), opt-in TLS in transit (enable by setting `ORB_TLS_CERT` + `ORB_TLS_KEY`; otherwise terminate TLS at a reverse proxy), and **encryption at rest**, the SQLite database via SQLCipher (set `ORB_DB_ENCRYPTION_KEY`; an existing plaintext DB is migrated once with `server/scripts/encrypt_db.py --migrate`, a fresh one is created encrypted) plus AES-256-GCM encryption of uploaded PHI media (`ORB_UPLOAD_ENCRYPTION_KEY`). **Backups (as of 2026-07-30):** `scripts/backup.sh` takes a SQLCipher-aware, transactionally-consistent snapshot, proves it opens with the key and holds real clinical rows before it will rotate anything, and copies it off-box with `--offsite`; `scripts/install-backup-schedule.sh` runs it nightly under launchd and `scripts/restore-drill.sh` verifies a backup restores (row counts + audit hash-chain linkage). **Key escrow is still on the operator**, the backups are encrypted with `ORB_DB_ENCRYPTION_KEY` and are unreadable without it. See [`docs/BACKUP_AND_RESTORE.md`](docs/BACKUP_AND_RESTORE.md). **Not yet built (roadmap, funded by the raise):** data-subject-rights / erasure, retention policy, DPIA, and BAAs. Do not deploy against real PHI until these are in place.
+> **Compliance status:** Orb is not certified or compliant out of the box. Implemented safeguards include bcrypt/JWT authentication, cookie/CSRF protection, role and patient scope checks, hash-chained audit records, consent/data-rights/retention services, optional TLS and SQLCipher database encryption, and AES-GCM upload encryption. These need site configuration, clinical and legal review, and operational validation. `scripts/backup.sh` creates and verifies a SQLCipher-aware snapshot; `--offsite` supports a locally attached backup destination. Restore drills and off-machine key escrow remain operator responsibilities. See [backup and restore](docs/BACKUP_AND_RESTORE.md) and the [repository audit](docs/REPOSITORY_AUDIT_2026-10.md) for unresolved release blockers.
 >
 > **What encryption at rest does and does not buy you (equally honest):** with the key stored in `.env` on the same disk as the database, it protects **copies** of the data, nightly backups, exports, a disk or volume image read on another machine. It does **not** protect a running appliance, or a stolen one, because an attacker who can read `orb.db` can read `.env` too. Enable FileVault as well, and treat moving the key into the OS keychain (rather than a dotfile) as the stronger posture. Note also that backups inherit the same key: the key must be escrowed somewhere other than the machine it protects, or the backups cannot be restored. None of this is a compliance certification, it is one technical safeguard, now present and testable.
 
@@ -144,9 +148,9 @@ Orb is intentionally designed as a **local-first** environment. By running heavy
 ## 🚢 Deploy
 
 ### Prerequisites
-- Node.js 18+ (CI uses Node 20) and Python 3.12+
-- [Ollama](https://ollama.com/) running with the required models pulled (`ollama pull medgemma:27b` and `ollama pull medgemma:4b`)
-- Frontend deps installed (`npm install`) and a backend virtualenv with `pip install -r server/requirements.txt`
+- Node.js 20.19+ or 22.12+ and Python 3.12+
+- For model-enabled deployments, [Ollama](https://ollama.com/) with required models provisioned before joining the offline network
+- Frontend deps installed (`npm ci`) and a backend virtualenv with `pip install -r server/requirements.txt`
 - A configured environment file, Orb reads all runtime config from `ORB_*` env vars
 
 ### 1. Configure environment
@@ -224,20 +228,13 @@ set -a && . ./.env && set +a
 ./scripts/restore-drill.sh                         # prove a backup actually restores
 ```
 
-### 3. Start the services
-**Backend:**
+### 3. Build and start
+From the repository root, the launcher starts the backend and serves the built frontend on the same origin:
 ```bash
-cd server
-source .venv/bin/activate
-python main.py            # FastAPI + Socket.IO on http://0.0.0.0:8000
-# (equivalent: uvicorn main:socket_app --host 0.0.0.0 --port 8000)
+npm run build
+./run-orb.sh
 ```
-**Frontend:**
-```bash
-npm run dev              # dev server, proxies /api + /socket.io -> :8000
-# production build:
-npm run build && npm run preview
-```
+Use the two-terminal development instructions above when working on the UI.
 Bind the backend to loopback (`ORB_HOST=127.0.0.1`, the default) and terminate TLS
 at a reverse proxy, or set `ORB_TLS_CERT` + `ORB_TLS_KEY`, before exposing beyond localhost.
 
@@ -246,7 +243,19 @@ at a reverse proxy, or set `ORB_TLS_CERT` + `ORB_TLS_KEY`, before exposing beyon
 1. **Backend (pytest)**, installs `requirements-dev.txt` and runs `pytest -q` in the `dev` profile.
 2. **Frontend (build + tests)**, lint ratchet (`scripts/lint-ratchet.mjs` against `.lint-baseline.json`), `npm run build` (which runs `tsc -b` first, gating typecheck + build), then `npm run test`.
 3. **Visual audit (light + dark)**, drives every screen in both themes against a mocked API, checks contrast/visibility/alignment + JS errors, and fails on any non-allowlisted finding.
-4. **E2E (5 golden journeys)**, boots the real FastAPI backend + Vite dev server (via `playwright.config.ts`), seeds the demo DB with `reset_db_and_seed.py`, and runs the Playwright golden-journey suite.
+4. **E2E (11 browser journeys)**, boots a disposable FastAPI checkout with synthetic data and the production frontend, then checks real authentication, clinical navigation and the offline modules.
+
+`.github/workflows/security.yml` audits the npm lockfile, Python pins, the installed slim Linux runtime and the resolved Apple production dependency tree on pushes, pull requests and a weekly schedule. The [ML security and Sage timing record](docs/ML_SECURITY_AND_SAGE_LATENCY_2026-10.md) records the fresh environment migration and local acceptance. Existing environments must be rebuilt and validated; updating requirements does not remove their obsolete packages. Apple speech native-build and target-site acceptance remain separate checks.
+
+The [Sage prompt-cache speed fix](docs/SAGE_SPEED_FIX_2026-10.md) documents the
+subsequent cache investigation, guarded local Ollama launch profile and timed
+browser qualification with the same offline model and clinical safeguards.
+
+### Verification and operation
+
+Use `npm run check:types` for both TypeScript projects; the solution-style root alone contains no source files. `npm run check` also checks contrast and documentation citations. Backend tests use `server/requirements-dev.txt` and isolated temporary databases; the slim test environment includes the encryption drivers so encryption and restore tests execute in CI.
+
+`GET /api/health` is cheap liveness and publishes feature switches. `GET /api/ready` returns 503 when the clinical database cannot be read; it does not require AI models. `/metrics` exposes operational counters and can require `ORB_METRICS_TOKEN`. Keep backup, restore and key-escrow drills in the deployment runbook.
 
 ### Further reading
 - **Documentation index**: [`docs/README.md`](docs/README.md), the full corpus, grouped (learning the system, ops, ML, audits, fundraising)

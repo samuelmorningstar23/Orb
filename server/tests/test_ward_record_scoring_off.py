@@ -324,7 +324,7 @@ def test_the_insights_feed_raises_and_shows_no_deterioration_card(monkeypatch):
     assert on == 1
     _scoring(monkeypatch, False)
     sp.evaluate_patient(pid)
-    shown = [i for i in sp.get_active_insights("SOFADM", "admin") if i["patient_id"] == pid]
+    shown = [i for i in sp.get_active_insights("SOFADM", "doctor") if i["patient_id"] == pid]
     assert not any(i["insight_type"] == "deterioration" for i in shown)
     assert vigil_service.SWITCHED_OFF_CALLS == []
 

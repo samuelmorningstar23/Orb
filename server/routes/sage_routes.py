@@ -4,6 +4,8 @@ import json
 import re
 import time
 import uuid
+from asyncio import CancelledError
+from contextlib import aclosing
 from typing import Any
 
 from auth import get_current_user
@@ -12,6 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from permissions import department_scope, require_patient_access, require_permission
 from pydantic import BaseModel, Field
+from services.disconnect_stream import ClientDisconnected, stream_until_disconnect
+from services.sage_retrieval_executor import get_sage_retrieval_executor
 from services.sage_service import CONTRACT_TAG_EMPHASIS as _EMPHASIS
 from services.sage_service import CONTRACT_TAG_RE as _SHARED_CONTRACT_TAG_RE
 from services.sage_service import CONTRACT_TAGS as _CONTRACT_TAGS
@@ -22,6 +26,7 @@ from services.sage_service import (
     detect_mutation_intent,
     get_conversation_history,
     get_relevant_context,
+    is_read_only_patient_summary,
     query_ollama,
     save_conversation,
 )
@@ -1919,12 +1924,16 @@ def _save_turn(
 
     Both rows carry the same `conversation_id` so the pair can only ever be read
     back together as prompt context for the thread they were spoken in."""
-    save_conversation(user_id, "user", query, conversation_id=conversation_id)
-    if full_response:
-        # Note: We save the parsed JSON metadata to support governance and auditing
-        save_conversation(
-            user_id, "assistant", full_response, sources=meta_json, conversation_id=conversation_id
-        )
+    # One transaction as well as one executor hop: the pair is atomic and a
+    # completed turn pays for one durable commit, including in unpooled mode.
+    with db_session() as db:
+        save_conversation(user_id, "user", query, conversation_id=conversation_id, db=db)
+        if full_response:
+            # Keep the complete parsed metadata for governance and auditing.
+            save_conversation(
+                user_id, "assistant", full_response, sources=meta_json,
+                conversation_id=conversation_id, db=db,
+            )
 
 
 def _with_label(text: str | None, label: str | None) -> str | None:
@@ -1955,9 +1964,10 @@ def _labelled(raw: str, label: str | None) -> str:
 
 
 def _save_voice_turn(user_id: str, query: str, full_response: str, meta_json=None):
-    save_conversation(user_id, "user", f"[voice] {query}")
-    if full_response:
-        save_conversation(user_id, "assistant", f"[voice] {full_response}", sources=meta_json)
+    with db_session() as db:
+        save_conversation(user_id, "user", f"[voice] {query}", db=db)
+        if full_response:
+            save_conversation(user_id, "assistant", f"[voice] {full_response}", sources=meta_json, db=db)
 
 
 #: Every tag the live buffered path sweeps for before it decides a reply was
@@ -2707,8 +2717,6 @@ async def sage_query(
         )
 
         # ── Stage 1: retrieval (threaded — keeps the event loop free) ──
-        import asyncio as _aio
-
         yield f"data: {json.dumps({'stage': 'retrieving'})}\n\n"
         try:
             (
@@ -2720,7 +2728,7 @@ async def sage_query(
                 patient_context_dict,
                 query_scope,
                 sh_episode,
-            ) = await _aio.to_thread(_prepare_context)
+            ) = await get_sage_retrieval_executor(request.app).run(_prepare_context)
         except Exception as e:
             print(f"  [Sage] Retrieval error: {e}")
             # SHADOW: this `return` leaves the generator WITHOUT passing through
@@ -2899,7 +2907,13 @@ async def sage_query(
             if isinstance(patient_context_dict, dict)
             else None
         )
-        if _answer_label:
+        grounded_summary = bool(
+            scope == "patient"
+            and patient_context_dict
+            and not is_deterministic_mutation
+            and is_read_only_patient_summary(model_query)
+        )
+        if _answer_label and not grounded_summary:
             yield f"data: {json.dumps({'content': _answer_label + chr(10) + chr(10)})}\n\n"
 
         # Never in front of the model: a request Sage answered with the
@@ -2909,52 +2923,119 @@ async def sage_query(
         from services.sage_service import history_for_model
 
         try:
-            async for chunk in query_ollama(
-                model_query,
-                context,
-                history_for_model(history),
-                scope,
-                classification=classification,
-                user_id=user["id"],
-                patient_id=turn_patient_id,
-                route_info=route_info,
-            ):
-                if await request.is_disconnected():
-                    print("  [Sage] Client disconnected, aborting LLM stream")
-                    cancelled = True
-                    break
-                if t_first_token is None:
-                    t_first_token = (time.perf_counter() - t_start) * 1000
-                    # WHO OWNS THE GATE MARKER is a property of the MODEL, and
-                    # the model is not chosen until query_ollama runs. It
-                    # stamps the answer into route_info before it yields
-                    # anything, so the first chunk is the earliest moment this
-                    # is knowable and still the last moment it can be acted on:
-                    # nothing has been fed to the streamer yet.
-                    # (False for every prose scope and for the XML contract, so
-                    # this can only ever reach MarkerAnswerStreamer.)
-                    if route_info.get("marker_asserted"):
-                        assert isinstance(xml_streamer, MarkerAnswerStreamer)
-                        xml_streamer.assert_marker()
-                full_response += chunk
-                # ── INCREMENTAL SANITIZED STREAMING ──
-                # Broad scope: plain prose → sentence-sanitized release.
-                # XML scopes: answer text released only after <action_intent>
-                # closed as "None"; mutation turns stay fully buffered.
-                if stream_raw_to_client:
-                    safe_piece = (
-                        broad_sanitizer.feed(chunk)
-                        if scope in ("broad", "aggregate", "quick")
-                        else xml_streamer.feed(chunk)
-                    )
-                    if safe_piece:
-                        if t_first_emit is None:
-                            t_first_emit = (time.perf_counter() - t_start) * 1000
-                        emitted_stream = True
-                        yield f"data: {json.dumps({'content': safe_piece})}\n\n"
+            summary_kwargs = {}
+            if grounded_summary:
+                from services.summary_grounding import (
+                    compile_sage_context,
+                    selector_prompt,
+                )
+
+                summary_bundle = compile_sage_context(patient_context_dict)
+                summary_kwargs["summary_bundle"] = summary_bundle
+            model_stream = stream_until_disconnect(
+                query_ollama(
+                    model_query,
+                    context,
+                    history_for_model(history),
+                    scope,
+                    classification=classification,
+                    user_id=user["id"],
+                    patient_id=turn_patient_id,
+                    route_info=route_info,
+                    **summary_kwargs,
+                ),
+                request,
+            )
+            # Watching only after a yielded token left disconnected requests
+            # occupying the admission/model queue throughout prefill. Closing
+            # the wrapper also closes the provider before its slot is reused.
+            async with aclosing(model_stream):
+                async for chunk in model_stream:
+                    if t_first_token is None:
+                        t_first_token = (time.perf_counter() - t_start) * 1000
+                        # Model selection decides who owns the gate marker.
+                        # Read it before feeding the first chunk so no answer
+                        # bytes can escape the independent action lock.
+                        if route_info.get("marker_asserted"):
+                            assert isinstance(xml_streamer, MarkerAnswerStreamer)
+                            xml_streamer.assert_marker()
+                    full_response += chunk
+                    # Broad scope: sentence-sanitized prose. Other scopes:
+                    # release only after a non-action marker/tag; mutations
+                    # remain buffered for the action-state policy below.
+                    if stream_raw_to_client and not grounded_summary:
+                        safe_piece = (
+                            broad_sanitizer.feed(chunk)
+                            if scope in ("broad", "aggregate", "quick")
+                            else xml_streamer.feed(chunk)
+                        )
+                        if safe_piece:
+                            if t_first_emit is None:
+                                t_first_emit = (time.perf_counter() - t_start) * 1000
+                            emitted_stream = True
+                            yield f"data: {json.dumps({'content': safe_piece})}\n\n"
 
             if not cancelled:
                 t_total = (time.perf_counter() - t_start) * 1000
+
+                if grounded_summary:
+                    from services.sage_service import SageReadOnlySummaryMismatch
+                    from services.summary_grounding import (
+                        grounding_metadata,
+                        render_sage,
+                        validate_selection,
+                    )
+
+                    # No model-authored clinical prose escapes the stream. A
+                    # valid selector can reorder source facts, never invent or
+                    # omit them; unknowns are supplied by the evidence compiler.
+                    if full_response.lstrip().startswith("ACT|") or re.search(
+                        r"<action_intent>\s*(?!None(?:\s|<|$))", full_response
+                    ):
+                        raise SageReadOnlySummaryMismatch("Read-only summary returned a chart action")
+                    selected = validate_selection(full_response, summary_bundle)
+                    safe_answer = render_sage(summary_bundle, selected)
+                    safe_answer = _with_label(safe_answer, _answer_label)
+                    turn_safe_answer = safe_answer
+                    is_model_mutation = False
+                    action_state = None
+                    citation_basis = "source_facts"
+                    final_confidence = "low"
+                    has_escalation = bool(escalation)
+                    parsed_json = {
+                        "concise_answer": safe_answer,
+                        "action_intent": "None",
+                        "cited_sources": [],
+                        "display_mode": "detailed",
+                    }
+                    metadata = {
+                        "action_state": None,
+                        "sources": [],
+                        "summary_grounding": grounding_metadata(summary_bundle, selected),
+                        "citation_basis": citation_basis,
+                        "confidence": final_confidence,
+                        "confidence_basis": "extractive_record_facts_clinically_unvalidated",
+                        "escalation": has_escalation,
+                        "display_mode": "detailed",
+                        "query_scope": query_scope,
+                        "patient_context_used": True,
+                        "patient_id": turn_patient_id,
+                        "patient_name": _chart_patient_name(patient_context_dict),
+                        "data_completeness": patient_context_dict.get("completeness"),
+                        "provider": route_info or None,
+                        "timing": {
+                            "retrieval_ms": round(t_retrieval),
+                            "ttft_ms": round(t_first_token) if t_first_token else None,
+                            "first_content_ms": round((time.perf_counter() - t_start) * 1000),
+                            "total_ms": round((time.perf_counter() - t_start) * 1000),
+                        },
+                    }
+                    parsed_json["summary_grounding"] = metadata["summary_grounding"]
+                    yield f"data: {json.dumps({'content': safe_answer})}\n\n"
+                    yield f"data: {json.dumps({'metadata': metadata})}\n\n"
+                    yield f"data: {json.dumps({'structured_response': parsed_json})}\n\n"
+                    yield f"data: {json.dumps({'done': True})}\n\n"
+                    return
 
                 # ── Fast path for prose scopes (broad + aggregate + quick; no XML) ──
                 if scope in ("broad", "aggregate", "quick"):
@@ -3122,6 +3203,33 @@ async def sage_query(
                 is_model_mutation = declares_action(raw_action_intent)
 
                 action_state = None
+                if (
+                    scope == "patient"
+                    and patient_context_dict
+                    and not is_deterministic_mutation
+                    and is_read_only_patient_summary(model_query)
+                ):
+                    # A truncated ACT payload still closes the streaming gate;
+                    # the permissive final parser must not turn it into a
+                    # successful summary merely because JSON never closed.
+                    fast_action_marker = parse_fast_response(full_response).get("marker") == _MARKER_ACT
+                    xml_intent = re.search(
+                        r"<action_intent>(.*?)(?:</action_intent>|$)", full_response, re.DOTALL
+                    )
+                    summary_action_mismatch = (
+                        is_model_mutation
+                        or fast_action_marker
+                        or bool(xml_intent and declares_action(xml_intent.group(1)))
+                    )
+                    # A model cannot turn a request to READ historical changes
+                    # into permission to draft a NEW medication order. Retain
+                    # its streaming lock and fail this answer before formulary
+                    # lookup/action drafting. Do not salvage unvalidated prose
+                    # or replace it with a fabricated successful summary.
+                    from services.sage_service import SageReadOnlySummaryMismatch
+
+                    if summary_action_mismatch:
+                        raise SageReadOnlySummaryMismatch("Read-only summary returned a chart action")
                 if is_deterministic_mutation or is_model_mutation:
                     try:
                         parsed_payload = (
@@ -3481,10 +3589,46 @@ async def sage_query(
                 yield f"data: {json.dumps({'structured_response': parsed_json})}\n\n"
                 yield f"data: {json.dumps({'done': True})}\n\n"
 
+        except ClientDisconnected:
+            cancelled = True
+        except CancelledError:
+            cancelled = True
+            raise
+        except GeneratorExit:
+            cancelled = True
+            raise
         except Exception as e:
             print(f"  [Sage] Stream error: {e}")
             sh_failure = "stream"
-            yield f"data: {json.dumps({'error': 'Sage could not complete this answer. Please retry.', 'code': 'SAGE_STREAM_FAILED'})}\n\n"
+            from services.sage_service import (
+                SageCapacityBusy,
+                SageReadOnlySummaryMismatch,
+            )
+            from services.summary_grounding import GroundingError
+
+            if isinstance(e, SageCapacityBusy):
+                from services.metrics_service import inc
+
+                inc("orb_sage_capacity_rejected_total")
+                failure = {
+                    "error": "Sage is busy or temporarily unavailable. Please retry shortly.",
+                    "code": "SAGE_CAPACITY_REJECTED",
+                    "retry_after_seconds": 1,
+                    "timing": {"queue_wait_ms": route_info.get("queue_wait_ms")},
+                }
+            elif isinstance(e, SageReadOnlySummaryMismatch):
+                failure = {
+                    "error": "Sage could not safely complete this record summary. Please retry.",
+                    "code": "SAGE_SUMMARY_INTENT_MISMATCH",
+                }
+            elif isinstance(e, GroundingError):
+                failure = {
+                    "error": "Sage could not verify this record summary against its sources. Please review the chart or retry.",
+                    "code": "SAGE_SUMMARY_GROUNDING_FAILED",
+                }
+            else:
+                failure = {"error": "Sage could not complete this answer. Please retry.", "code": "SAGE_STREAM_FAILED"}
+            yield f"data: {json.dumps(failure)}\n\n"
         finally:
             meta_json = None
             if full_response:
@@ -3540,6 +3684,11 @@ async def sage_query(
                             total_ms=round(t_total) if "t_total" in locals() else None,
                         ),
                         "thinking_tier": (route_info or {}).get("thinking_tier"),
+                        "summary_grounding": (
+                            parsed_json.get("summary_grounding")
+                            if "parsed_json" in locals() and not sh_failure and not cancelled
+                            else None
+                        ),
                         # The patient this turn was about, as the live metadata
                         # named them, so the history sidebar can label the thread.
                         "patient_name": (
@@ -3602,7 +3751,7 @@ async def sage_query(
                 _save_turn,
                 user["id"],
                 query,
-                "" if sh_failure else _labelled(full_response, _answer_label),
+                "" if sh_failure or cancelled else _labelled(full_response, _answer_label),
                 meta_json,
                 conversation_id=conversation_id,
             )
@@ -3644,7 +3793,11 @@ async def sage_query(
                 patient_context=(
                     patient_context_dict if "patient_context_dict" in locals() else None
                 ),
-                prompt_context=(context if "context" in locals() else None),
+                prompt_context=(
+                    selector_prompt(summary_bundle)
+                    if "summary_bundle" in locals()
+                    else context if "context" in locals() else None
+                ),
                 sources=(sources if "sources" in locals() else None),
                 route_info=(route_info or _no_model_route_info),
                 answer=(
@@ -4215,8 +4368,9 @@ async def sage_voice_query(request: Request, user: dict = _SAGE_VOICE_QUERY_USER
 
             # Per-inference provider record (local voice lane; fail-soft).
             try:
-                from config import VOICE as _V
                 from services.ai_governance import record_inference
+
+                from config import VOICE as _V
 
                 # Whole call in ONE executor hop, never split: record_inference
                 # appends to the tamper-evident audit hash chain, which is a

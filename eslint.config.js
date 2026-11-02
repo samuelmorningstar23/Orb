@@ -14,7 +14,10 @@ export default defineConfig([
   // (some are fragments that do not parse) must not move the ratchet.
   // .claude holds local tool state, including whole
   // copies of src/ that would count every problem twice.
-  globalIgnores(['dist', 'docs', '.claude']),
+  globalIgnores([
+    'dist', 'docs', '.claude', 'backups', 'stale-backups', '_to_delete',
+    'server/.venv', 'server/.venv-dev', 'playwright-report', 'test-results',
+  ]),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

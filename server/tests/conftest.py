@@ -78,7 +78,9 @@ def _isolate_session_cookies():
     yield
     from starlette.testclient import TestClient
     for mod in list(sys.modules.values()):
-        # Read declared globals without invoking optional SDK lazy imports.
+        # Inspect declared globals only. Optional SDKs use module __getattr__
+        # for lazy imports; probing a missing "client" can load unrelated vision
+        # modules (or raise) during every test teardown.
         client = vars(mod).get("client") if isinstance(mod, ModuleType) else None
         if isinstance(client, TestClient):
             try:
@@ -362,6 +364,31 @@ def init_test_db():
         pass
 
 
+@pytest.fixture(scope="module")
+def isolated_module_database(tmp_path_factory):
+    """An opt-in fresh census for tests that require an absent patient.
+
+    The session database intentionally retains discharged charts for audit
+    references. A resolver also searches those charts, so changing a name or
+    bed in a test cannot establish absence from that accumulated database.
+    Keep the real schema and resolver, with a database owned by this module.
+    """
+    import config
+    import database
+    from db_backend import discard_pooled
+
+    path = tmp_path_factory.mktemp("orb_test_module") / "orb_test_module.db"
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("ORB_DB_PATH", str(path))
+        patch.setattr(config, "DB_PATH", path)
+        patch.setattr(database, "DB_PATH", path)
+        database.init_db()
+        try:
+            yield path
+        finally:
+            discard_pooled(database.get_db())
+
+
 # ---------------------------------------------------------------------------
 # The real knowledge worker pool must never be spawned by a test. Each spawn is
 # a ~1.8 GB model child, and a pytest run that is SIGKILLed mid-session leaves
@@ -416,28 +443,3 @@ def _reap_knowledge_pool():
     yield
     from services import knowledge_worker as kw
     kw._shutdown_pool()
-
-
-@pytest.fixture(scope="module")
-def isolated_module_database(tmp_path_factory):
-    """An opt-in fresh census for tests that require an absent patient.
-
-    The session database intentionally retains discharged charts for audit
-    references. A resolver also searches those charts, so changing a name or
-    bed in a test cannot establish absence from that accumulated database.
-    Keep the real schema and resolver, with a database owned by this module.
-    """
-    import config
-    import database
-    from db_backend import discard_pooled
-
-    path = tmp_path_factory.mktemp("orb_test_module") / "orb_test_module.db"
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setenv("ORB_DB_PATH", str(path))
-        patch.setattr(config, "DB_PATH", path)
-        patch.setattr(database, "DB_PATH", path)
-        database.init_db()
-        try:
-            yield path
-        finally:
-            discard_pooled(database.get_db())

@@ -7,6 +7,8 @@ score with driver explanations and LNN trajectory overlay.
 
 from typing import TYPE_CHECKING
 
+from services.local_model_http import local_model_ssl_context
+
 if TYPE_CHECKING:
     from models.vigil_cfc import OrbVigilCfC
 import asyncio
@@ -1630,7 +1632,6 @@ async def generate_ai_recommendation(vitals_summary: str, risk_level: str, drive
     prompt = f"Vitals: {vitals_summary}\nRisk Level: {risk_level}\nKey Drivers: {', '.join(drivers)}\n\nProvide a single concise sentence recommending the next clinical step or monitoring action."
 
     from config import AMBIENT_LLM_MODEL
-
     from services import ollama_gateway
     from services.llm_queue_service import llm_queue
 
@@ -1669,7 +1670,7 @@ async def generate_ai_recommendation(vitals_summary: str, risk_level: str, drive
     # fall back to the static sentence. A timeout must also not raise — that
     # previously killed the whole dispatch cycle.
     try:
-        await llm_queue.acquire(priority=3, timeout=5.0)
+        ticket = await llm_queue.acquire(priority=3, timeout=5.0, model=AMBIENT_LLM_MODEL)
     except asyncio.CancelledError:
         # A timeout must not raise (that once killed the dispatch cycle), but a
         # CANCEL must. This function hangs off the vitals tick, so swallowing the
@@ -1681,7 +1682,7 @@ async def generate_ai_recommendation(vitals_summary: str, risk_level: str, drive
     except TimeoutError:
         return _FALLBACK_RECOMMENDATION
     try:
-        async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
+        async with httpx.AsyncClient(verify=local_model_ssl_context(), timeout=30.0, trust_env=False) as client:
             # Through the gateway (one audit row, prompt hashed) and yielding:
             # this garnish must not share the GPU with a clinician's turn, and
             # a yield is a TimeoutError that lands on the static sentence below.
@@ -1740,4 +1741,4 @@ async def generate_ai_recommendation(vitals_summary: str, risk_level: str, drive
         logger.error("[Vigil] Error generating recommendation: %s", e)
         return _FALLBACK_RECOMMENDATION
     finally:
-        llm_queue.release()
+        llm_queue.release(ticket)

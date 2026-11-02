@@ -20,10 +20,10 @@ from contextlib import aclosing
 from datetime import UTC
 from typing import Any
 
-from config import SCRIBE
 from database import db_session
 from fastapi import HTTPException
 
+from config import SCRIBE
 from services.scribe_providers import StageTimer, get_provider
 
 logger = logging.getLogger("orb.scribe")
@@ -381,6 +381,16 @@ def correct_transcript(draft: str) -> str:
     if len(draft.strip()) < 150:
         return draft
 
+    from services.llm_queue_service import llm_queue
+
+    if llm_queue.worker_pool is not None:
+        # This API runs synchronously on an ASR worker thread and cannot take
+        # a lease from the owning event loop. The HTTP path performs queued
+        # async correction after ASR instead. Direct callers keep the actual
+        # transcript; they must never bypass pooled capacity via sync HTTP.
+        logger.info("Synchronous Scribe correction skipped: async local worker admission required")
+        return draft
+
     cfg = SCRIBE["correction"]
     provider = get_provider(cfg["provider"])
     prompt = _correction_prompt(draft)
@@ -414,6 +424,46 @@ def correct_transcript(draft: str) -> str:
             )
         except Exception:
             logger.exception("Scribe correction inference audit failed")
+
+
+async def correct_transcript_async(draft: str, *, patient_id: str | None = None, user_id: str | None = None) -> str:
+    """Pooled correction after ASR: lease the exact model and preserve the source on failure."""
+    if not draft.strip() or len(draft.strip()) < 150 or not SCRIBE["correction"]["enabled"]:
+        return draft
+    from services.ai_governance import record_inference_async
+    from services.llm_queue_service import llm_queue
+
+    cfg = SCRIBE["correction"]
+    # In-process MLX needs a separately bounded GPU executor, not an Ollama
+    # worker lease. Avoid nested GPU gates or an unaccounted executor thread.
+    if llm_queue.worker_pool is not None and cfg["provider"] != "ollama":
+        return draft
+    provider = get_provider(cfg["provider"])
+    prompt = _correction_prompt(draft)
+    try:
+        ticket = await llm_queue.acquire(priority=2, timeout=5.0, model=cfg["model"])
+    except TimeoutError:
+        return draft
+    t0 = time.monotonic()
+    result, error = "", None
+    try:
+        result = await provider.agenerate(
+            prompt=prompt, model=cfg["model"], temperature=cfg["temperature"],
+            max_tokens=cfg["max_tokens"], ctx_size=cfg["ctx_size"], purpose="scribe_correction",
+        )
+        return result if result else draft
+    except asyncio.CancelledError:
+        error = "cancelled"
+        raise
+    except Exception as exc:  # noqa: BLE001 -- optional correction must preserve the original dictation
+        error = type(exc).__name__
+        return draft
+    finally:
+        llm_queue.release(ticket)
+        await record_inference_async(
+            **_inference_record(cfg, "scribe_correction", "", prompt, bool(result), t0,
+                                patient_id, user_id, error)
+        )
 
 
 # ═══════════════════════════════════════════════════
@@ -612,8 +662,11 @@ async def structure_transcript(
     is_hosted = getattr(provider, "hosted", False)
     from services.llm_queue_service import llm_queue
 
+    if llm_queue.worker_pool is not None and cfg["provider"] != "ollama":
+        raise RuntimeError("Pooled Scribe drafting requires a qualified Ollama worker")
+    ticket = None
     if not is_hosted:
-        await llm_queue.acquire(priority=2)
+        ticket = await llm_queue.acquire(priority=2, model=cfg["model"])
     t0 = time.monotonic()
     result, error = "", None
     try:
@@ -631,7 +684,7 @@ async def structure_transcript(
         raise
     finally:
         if not is_hosted:
-            llm_queue.release()
+            llm_queue.release(ticket)
         await record_inference_async(
             **_inference_record(
                 cfg,
@@ -671,8 +724,11 @@ async def structure_transcript_stream(
     is_hosted = getattr(provider, "hosted", False)
     from services.llm_queue_service import llm_queue
 
+    if llm_queue.worker_pool is not None and cfg["provider"] != "ollama":
+        raise RuntimeError("Pooled Scribe drafting requires a qualified Ollama worker")
+    ticket = None
     if not is_hosted:
-        await llm_queue.acquire(priority=2)
+        ticket = await llm_queue.acquire(priority=2, model=cfg["model"])
     t0 = time.monotonic()
     produced, error = False, None
     try:
@@ -701,7 +757,7 @@ async def structure_transcript_stream(
         raise
     finally:
         if not is_hosted:
-            llm_queue.release()
+            llm_queue.release(ticket)
         # Scheduled, not awaited: this runs in a generator's teardown.
         try:
             record_inference_soon(
@@ -836,11 +892,14 @@ async def verify_note(
     is_hosted = getattr(provider, "hosted", False)
     from services.llm_queue_service import llm_queue
 
+    if llm_queue.worker_pool is not None and verify_cfg["provider"] != "ollama":
+        return _unverified_report("verifier has no qualified local worker")
     # Verification runs at P3 (low priority) — never blocks interactive workflows.
     # Hosted providers skip the single-slot local queue (no GPU to protect).
+    ticket = None
     if not is_hosted:
         try:
-            await llm_queue.acquire(priority=3)
+            ticket = await llm_queue.acquire(priority=3, model=verify_cfg["model"])
         except TimeoutError:
             # Queue timeout or a BackgroundGovernor shed (subclass of
             # TimeoutError): degrade to the same deterministic fallback as a
@@ -867,7 +926,7 @@ async def verify_note(
         return _unverified_report("verifier backend error")
     finally:
         if not is_hosted:
-            llm_queue.release()
+            llm_queue.release(ticket)
         await record_inference_async(
             **_inference_record(
                 verify_cfg,

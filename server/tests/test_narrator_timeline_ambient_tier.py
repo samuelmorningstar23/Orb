@@ -17,7 +17,8 @@ no partial-prefix reuse to protect anyway. Queue time is the real win.)
 
 These tests pin the routing rules:
   * ward narrator + expected-course projection generate on the AMBIENT tier;
-  * they ask for the context the ambient runner is already loaded at (4096).
+  * they ask for the context the ambient runner is already loaded at (4096
+    for a distinct ambient tier, or 8192 when it is the same primary model).
     Ollama keys a runner by model+num_ctx, so a mismatched value would reload
     the 4B on every job — trading a queue-time win for a reload cost;
   * when the ambient tier is not resident they SKIP — there is no spill lane
@@ -141,20 +142,24 @@ def _free_queue(monkeypatch):
     """The single LLM slot is always immediately available in these tests."""
     from services.llm_queue_service import llm_queue
 
-    async def _acquire(priority=0, timeout=120.0):
+    async def _acquire(priority=0, timeout=120.0, *, model=None):
         return True
 
     monkeypatch.setattr(llm_queue, "acquire", _acquire)
-    monkeypatch.setattr(llm_queue, "release", lambda: None)
+    monkeypatch.setattr(llm_queue, "release", lambda ticket=None: None)
 
 
 # ── Ward narrator ────────────────────────────────────────────────────────────
 
-def test_ward_narrator_generates_on_the_ambient_tier(monkeypatch):
+@pytest.mark.parametrize("ambient,context", [(SMALL, AMBIENT_CTX), (BIG, 8192)])
+def test_ward_narrator_generates_on_the_ambient_tier(monkeypatch, ambient, context):
+    import config
     from services import sage_narrator_service as narrator_mod
 
     _route(monkeypatch, BIG, SMALL)
-    monkeypatch.setattr(narrator_mod, "AMBIENT_LLM_MODEL", SMALL)
+    monkeypatch.setattr(config, "LLM_MODEL", BIG)
+    monkeypatch.setattr(config, "AMBIENT_LLM_MODEL", ambient)
+    monkeypatch.setattr(narrator_mod, "AMBIENT_LLM_MODEL", ambient)
     _free_queue(monkeypatch)
     cap = _Capture()
     monkeypatch.setattr(narrator_mod, "httpx", _fake_httpx(cap, {"response": "Ward is quiet."}))
@@ -164,11 +169,13 @@ def test_ward_narrator_generates_on_the_ambient_tier(monkeypatch):
 
     assert text == "Ward is quiet."
     # The whole point of Lever B: the interactive tier is never touched.
-    assert cap.models == [SMALL]
-    assert BIG not in cap.models
-    assert narrator._narrated_with == SMALL
+    assert cap.models == [ambient]
+    if ambient == SMALL:
+        assert BIG not in cap.models
+    assert narrator._narrated_with == ambient
     # Must not force a reload of the tier it was just moved onto.
-    assert cap.payloads[0]["options"]["num_ctx"] == AMBIENT_CTX
+    assert cap.payloads[0]["options"]["num_ctx"] == context
+    assert cap.payloads[0]["options"]["num_predict"] == 300
 
 
 def test_ward_narrator_skips_rather_than_spilling_onto_the_interactive_tier(monkeypatch):
@@ -227,11 +234,15 @@ def test_ward_narrator_deterministic_floor_survives_a_skipped_narrative(monkeypa
 
 # ── Expected-course (timeline) projection ────────────────────────────────────
 
-def test_timeline_projection_generates_on_the_ambient_tier(monkeypatch):
+@pytest.mark.parametrize("ambient,context", [(SMALL, AMBIENT_CTX), (BIG, 8192)])
+def test_timeline_projection_generates_on_the_ambient_tier(monkeypatch, ambient, context):
+    import config
     from services import timeline_service
 
     _route(monkeypatch, BIG, SMALL)
-    monkeypatch.setattr(timeline_service, "AMBIENT_LLM_MODEL", SMALL)
+    monkeypatch.setattr(config, "LLM_MODEL", BIG)
+    monkeypatch.setattr(config, "AMBIENT_LLM_MODEL", ambient)
+    monkeypatch.setattr(timeline_service, "AMBIENT_LLM_MODEL", ambient)
     _free_queue(monkeypatch)
     cap = _Capture()
     monkeypatch.setattr(
@@ -241,14 +252,16 @@ def test_timeline_projection_generates_on_the_ambient_tier(monkeypatch):
 
     projection = asyncio.run(timeline_service._call_llm(_INPUTS))
 
-    assert cap.models == [SMALL]
-    assert BIG not in cap.models
+    assert cap.models == [ambient]
+    if ambient == SMALL:
+        assert BIG not in cap.models
     assert projection["expected_los_days"] == 5
     assert len(projection["phases"]) == 3
     # Provenance reports the tier that actually ran.
-    assert projection["engine"] == SMALL
+    assert projection["engine"] == ambient
     # Must not force a reload of the tier it was just moved onto.
-    assert cap.payloads[0]["options"]["num_ctx"] == AMBIENT_CTX
+    assert cap.payloads[0]["options"]["num_ctx"] == context
+    assert cap.payloads[0]["options"]["num_predict"] == 700
 
 
 def test_timeline_projection_skips_rather_than_spilling_onto_the_interactive_tier(monkeypatch):

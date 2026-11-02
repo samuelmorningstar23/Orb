@@ -32,7 +32,7 @@ found real clinical rows in it, and left a dated receipt beside it
 (`scripts/backup.sh` writes one through scripts/lib/verify_restore.py
 --receipt, on pass and on fail; the schema is `VERIFICATION_SCHEMA` below).
 A snapshot with no receipt is reported as exactly that: present, unproven. That
-includes backups made from the admin dashboard, which do not write receipts —
+includes older backups made before the admin dashboard wrote receipts —
 and saying so is more useful than pretending otherwise.
 
 NO PHI. ANYWHERE.
@@ -406,7 +406,7 @@ def _check_database(deep: bool) -> dict:
 def _read_receipt(backup: Path) -> dict | None:
     """The proof-of-verification left beside a backup, if there is one."""
     receipt = backup.with_name(backup.name[: -len(_BACKUP_SUFFIX)] + _RECEIPT_SUFFIX)
-    if not receipt.is_file():
+    if backup.is_symlink() or receipt.is_symlink() or not receipt.is_file():
         return None
     try:
         data = json.loads(receipt.read_text(encoding="utf-8"))
@@ -414,7 +414,19 @@ def _read_receipt(backup: Path) -> dict | None:
         return None
     if not isinstance(data, dict):
         return None
-    if str(data.get("schema", "")).split("/")[0] != VERIFICATION_SCHEMA.split("/")[0]:
+    if (
+        data.get("schema") != VERIFICATION_SCHEMA
+        or data.get("backup_file") != backup.name
+        or type(data.get("size_bytes")) is not int
+        or type(data.get("ok")) is not bool
+    ):
+        return None
+    try:
+        if data["size_bytes"] != backup.stat().st_size:
+            return None
+    except OSError:
+        return None
+    if data["ok"] and data.get("integrity_check") != "ok":
         return None
     return data
 
@@ -523,8 +535,8 @@ def _check_backups() -> dict:
                 "Run the backup command, which checks its own work and leaves a "
                 "dated receipt beside the file:\n"
                 "    ./scripts/orb.sh backup\n"
-                "Backups taken from the admin screen do not leave a receipt. "
-                "That is why this says 'unchecked' rather than 'broken'."
+                "Current admin and command-line backups also leave a receipt. "
+                "An older file without one remains unchecked until verified."
             ),
             detail=detail,
             notes=notes,
@@ -690,7 +702,7 @@ def _check_models() -> dict:
             "medications, alerts) keeps working normally.",
             what_to_do=(
                 "Start the AI engine on this machine:\n"
-                "    ollama serve\n"
+                "    ./scripts/serve-ollama.sh\n"
                 "Then check it is back:\n"
                 "    ./scripts/orb.sh status"
             ),

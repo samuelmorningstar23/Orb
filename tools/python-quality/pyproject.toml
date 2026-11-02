@@ -1,0 +1,28 @@
+# Deliberately bounded: this is not a whole-backend compliance declaration.
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["server/routes/import_mapping.py", "scripts/release_candidate.py"]
+
+[tool.coverage.run]
+branch = true
+data_file = ".coverage-quality"
+relative_files = true
+include = ["server/routes/import_mapping.py", "scripts/release_candidate.py"]
+
+[tool.coverage.report]
+show_missing = true
+precision = 2
+# Measured focused tests must retain complete statement and branch coverage.
+fail_under = 100
+exclude_also = ["if __name__ == .__main__.:"]
+
+[tool.coverage.json]
+output = "python-quality-coverage.json"

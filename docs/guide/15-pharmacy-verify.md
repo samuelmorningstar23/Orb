@@ -387,7 +387,7 @@ Interfaces:
 **How it works:** a raw `fetch` with the cookie session and `buildHeaders('POST')` (which adds the CSRF token), not `apiFetch`, because the shared wrapper flattens error bodies to a message string and would drop the 428 safety payload. A **428** is returned as a typed `SevereAckRequired` result, not thrown (`:119-127`), so the caller opens its acknowledgement panel; a 401 fires `orb:session-expired` like `apiFetch` does; any other error throws with the server's message.
 **Talks to:** `fetch`, `buildHeaders`; called by `onVerify`.
 
-#### `rejectMedication`: `src/api/pharmacy.ts:161`
+#### `rejectMedication`: `src/api/pharmacy.ts:169`
 **Signature:** `(medId: number, reason: string) -> Promise<RejectResult>`
 **Does:** POSTs `{reason}` to `/pharmacy/{medId}/reject`.
 **Talks to:** `apiFetch`; called by `onReject`.

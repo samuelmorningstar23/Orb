@@ -1717,9 +1717,9 @@ async def test_the_draft_never_takes_the_clinicians_interactive_lane(monkeypatch
     seen: list[int] = []
     real = llm_queue.acquire
 
-    async def _spy(priority=2, timeout=120.0):
+    async def _spy(priority=2, timeout=120.0, *, model=None):
         seen.append(priority)
-        return await real(priority=priority, timeout=timeout)
+        return await real(priority=priority, timeout=timeout, model=model)
 
     monkeypatch.setattr(llm_queue, "acquire", _spy)
     patient = _mk_patient()

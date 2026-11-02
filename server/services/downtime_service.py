@@ -369,13 +369,8 @@ def capture_snapshot(patient_id: str, created_by: str = "auto") -> dict:
         snapshot_id = cur.lastrowid
         who = db.execute("SELECT name FROM users WHERE id = ?", (created_by,)).fetchone()
 
-    logger.info(
-        "[Downtime] Captured snapshot #%s for %s by %s (%s)",
-        snapshot_id,
-        patient_id,
-        created_by,
-        summary,
-    )
+    # The full narrative belongs in the scoped snapshot, not routine stdout.
+    logger.info("[Downtime] Captured snapshot #%s", snapshot_id)
     return {
         "id": snapshot_id,
         "patient_id": patient_id,

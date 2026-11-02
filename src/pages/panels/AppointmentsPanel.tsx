@@ -1,22 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { buildHeaders } from '../../api/client'
+import { apiFetch } from '../../api/client'
 import { sexShort } from '../../lib/demographics'
 import { formatClinicalClock, formatClinicalDate, localDateKey, parseUTC } from '../../lib/datetime'
 import { newId } from '../../lib/id'
 import { hasPermission, PATIENT_WRITE } from '../../lib/roles'
 import { useClinicalSwitches } from '../../shellConfig'
-
-const API = ''
-
-async function apiFetch(path: string) {
-  const res = await fetch(`${API}${path}`, {
-    // Cookie session (buildHeaders adds a Bearer only if a token is persisted).
-    credentials: 'include',
-    headers: buildHeaders('GET'),
-  })
-  if (!res.ok) throw new Error(`API ${res.status}`)
-  return res.json()
-}
 
 /** One row of the `appointments` table, as /api/forecast/appointments sends it.
  *  The server used to pad this list with a date-seeded random schedule that
@@ -108,8 +96,8 @@ function BookingForm({ onBooked, onClose }: { onBooked: () => void; onClose: () 
   useEffect(() => {
     let live = true
     Promise.all([
-      apiFetch('/api/vigil/patients?limit=500'),
-      apiFetch('/api/vigil/discharged?limit=200'),
+      apiFetch<BookablePatient[]>('/vigil/patients?limit=500'),
+      apiFetch<BookablePatient[]>('/vigil/discharged?limit=200'),
     ]).then(([admitted, discharged]) => {
       if (!live) return
       const cutoff = Date.now() - RECENT_DISCHARGE_DAYS * 86_400_000
@@ -132,20 +120,14 @@ function BookingForm({ onBooked, onClose }: { onBooked: () => void; onClose: () 
     setSaving(true)
     setError('')
     try {
-      const res = await fetch('/api/appointments', {
+      await apiFetch('/appointments', {
         method: 'POST',
-        credentials: 'include',
-        headers: buildHeaders('POST', { 'Idempotency-Key': idemKey }),
+        headers: { 'Idempotency-Key': idemKey },
         body: JSON.stringify({
           patient_id: patientId, appointment_type: type,
           scheduled_date: date, scheduled_time: time, reason: reason.trim() || null,
         }),
       })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        const detail = typeof body?.detail === 'string' ? body.detail : body?.detail?.message
-        throw new Error(detail || `Could not book (error ${res.status}).`)
-      }
       onBooked()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not book.')
@@ -259,7 +241,7 @@ export default function AppointmentsPanel() {
   const fetchAppointments = useCallback(async () => {
     try {
       setLoading(true)
-      const appts: Appointment[] = await apiFetch('/api/forecast/appointments')
+      const appts: Appointment[] = await apiFetch<Appointment[]>('/forecast/appointments')
       setAppointments(Array.isArray(appts) ? appts.filter(a => a.source === 'booked') : [])
       setError('')
     } catch (err) {

@@ -43,8 +43,21 @@ CONSUMER_MODULES = {
     os.path.join("services", "shadow_export_service.py"),
 }
 
-#: Directories that are not the running application.
-EXCLUDED_DIRS = {"tests", "scripts", "__pycache__", ".venv", "venv", "migrations_data"}
+#: Directories that are not the running application. Runtime corpora, datasets,
+#: uploads and operational output can contain millions of non-source entries;
+#: do not traverse them when inventorying application emitters. Keep models,
+#: adapters, migrations, services and every other application source directory.
+EXCLUDED_DIRS = {
+    "tests", "scripts", "__pycache__", ".venv", "venv", "migrations_data",
+    "corpus", "datasets", "uploads", "downtime_exports", "ops",
+}
+
+# The retrospective evaluation harness is source; its generated predictions
+# and vendored external scorer are not application event producers.
+EXCLUDED_PATHS = {
+    os.path.join("eval", "vigil_retro", "out"),
+    os.path.join("eval", "vigil_retro", "vendor"),
+}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -372,7 +385,11 @@ def test_stats_carry_the_sweeper_to_the_scorecards_instrument_block(_sweeper_sta
 # ══════════════════════════════════════════════════════════════════════════════
 def _app_modules():
     for dirpath, dirnames, filenames in os.walk(SERVER_ROOT):
-        dirnames[:] = [d for d in dirnames if d not in EXCLUDED_DIRS and not d.startswith(".")]
+        dirnames[:] = [
+            d for d in dirnames
+            if d not in EXCLUDED_DIRS and not d.startswith(".")
+            and os.path.relpath(os.path.join(dirpath, d), SERVER_ROOT) not in EXCLUDED_PATHS
+        ]
         for filename in filenames:
             if not filename.endswith(".py"):
                 continue

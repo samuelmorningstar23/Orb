@@ -284,7 +284,7 @@ describe('laboratory orders (lis-7)', () => {
       fireEvent.click(await screen.findByRole('button', { name: option }))
     }
 
-    afterEach(() => searchLabCatalogue.mockReset())
+    afterEach(() => { searchLabCatalogue.mockReset() })
 
     it('pick, Change, pick again: the description and the code name the same test', async () => {
       await openForm()

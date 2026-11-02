@@ -94,14 +94,15 @@ fi
 # shellcheck disable=SC1091
 . "$VENV_DIR/bin/activate"
 
-info "Upgrading pip"
-python -m pip install --quiet --upgrade pip
+info "Installing pinned pip bootstrap"
+python -m pip install --quiet -r "$SERVER_DIR/requirements-bootstrap.txt"
 
 if [ -f "$REQUIREMENTS" ]; then
     info "Installing backend dependencies from $REQUIREMENTS (this can take a while)"
     if ! python -m pip install -r "$REQUIREMENTS"; then
-        warn "pip install reported errors (some pins have heavy/native builds — e.g. torch, whisper)."
-        warn "The core API deps may still be usable; review the output above."
+        err "Backend dependencies did not install completely. Installation stopped."
+        err "Resolve the pip error above, then re-run ./install.sh; existing secrets and data are preserved."
+        exit 1
     else
         ok "backend dependencies installed"
     fi

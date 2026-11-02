@@ -4,15 +4,8 @@
  * The equipment register, its preventive-maintenance and CALIBRATION schedules,
  * the breakdown/downtime log, and AMC/CMC contracts.
  *
- * WHY THIS FILE USES A RAW `fetch` INSTEAD OF `apiFetch`.
- * The shared wrapper flattens an error body down to a message string. Every
- * refusal this module can produce is one the UI has to react to DIFFERENTLY —
- * `module_disabled` is a whole-panel state, `missing_due_basis` belongs next to
- * the date fields with the sentence about why Orb will not guess, `future_date`
- * belongs on the performed-date input — so the machine-readable `error` code has
- * to survive the trip. `request()` below keeps it on a typed
- * `BiomedicalApiError`, and still sends the session cookie and CSRF token
- * exactly the way `apiFetch` does.
+ * Shared transport handles session ownership, refresh and CSRF. Domain errors
+ * keep their machine-readable codes and structured refusal details.
  *
  * DATES ARE `YYYY-MM-DD` STRINGS ON THE WIRE, never `Date` objects. A `Date` is
  * an instant, and serialising one through the browser's timezone is how a
@@ -24,7 +17,7 @@
  * MONEY is integer paise, rendered from the server's own `*_display` strings so
  * the screen cannot disagree with the record.
  */
-import { buildHeaders, API_BASE, errorDetailMessage } from './client';
+import { domainRequest } from './domainTransport';
 
 /** A refusal from the biomedical API, with its machine-readable code intact. */
 export class BiomedicalApiError extends Error {
@@ -43,22 +36,9 @@ export class BiomedicalApiError extends Error {
   }
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API_BASE}/biomedical${path}`, {
-    ...options,
-    credentials: 'include',
-    headers: buildHeaders((options.method as string) || 'GET'),
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => null);
-    const detail = body && typeof body.detail === 'object' ? body.detail : null;
-    throw new BiomedicalApiError(
-      errorDetailMessage(body?.detail, response.status),
-      response.status,
-      detail?.error || `http_${response.status}`,
-    );
-  }
-  return response.json() as Promise<T>;
+function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  return domainRequest<T>(`/biomedical${path}`, options,
+    (message, status, code) => new BiomedicalApiError(message, status, code));
 }
 
 function post<T>(path: string, body?: unknown): Promise<T> {

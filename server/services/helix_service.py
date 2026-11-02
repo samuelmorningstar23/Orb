@@ -7,7 +7,7 @@ import json
 import typing
 import uuid
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 
 from database import db_session
 
@@ -739,7 +739,8 @@ def transition_order_status(
 
         # ── Apply Transition ──
         transition_id = str(uuid.uuid4())
-        now = datetime.utcnow().isoformat()
+        # These columns historically store offset-less UTC ISO strings.
+        now = datetime.now(UTC).replace(tzinfo=None).isoformat()
 
         # Build SET clause dynamically
         updates = ["status = ?", "last_transition_id = ?"]
@@ -1136,7 +1137,7 @@ def receive_order(
             )
 
         transition_id = str(uuid.uuid4())
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).replace(tzinfo=None).isoformat()
 
         conn.execute(
             """UPDATE helix_patient_med_orders

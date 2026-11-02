@@ -22,7 +22,8 @@ import { formatClinicalDate, localDateKey } from '../../lib/datetime'
 // The signed-in role. Booking is offered only to a role holding patient.write.
 const session = vi.hoisted(() => ({ role: 'doctor' }))
 
-vi.mock('../../api/client', () => ({
+vi.mock('../../api/client', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../api/client')>()),
   buildHeaders: (_method?: string, extra?: Record<string, string>) => ({ ...(extra ?? {}) }),
   getUser: () => ({ id: 'U1', name: 'Test User', role: session.role }),
 }))
@@ -203,6 +204,7 @@ describe('AppointmentsPanel score, tile and booking form', () => {
     const { fireEvent, waitFor } = await import('@testing-library/react')
     const posted: { url: string; body: Record<string, unknown> }[] = []
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      url = new URL(url, window.location.origin).pathname
       if (init?.method === 'POST') {
         posted.push({ url, body: JSON.parse(String(init.body)) })
         return { ok: true, json: async () => ({ id: 'NEW' }) }
@@ -244,6 +246,7 @@ describe('AppointmentsPanel score, tile and booking form', () => {
     const { fireEvent, waitFor } = await import('@testing-library/react')
     const keys: string[] = []
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      url = new URL(url, window.location.origin).pathname
       if (init?.method === 'POST') {
         keys.push((init.headers as Record<string, string>)['Idempotency-Key'])
         // The first two answers are lost on the way back.
@@ -265,7 +268,7 @@ describe('AppointmentsPanel score, tile and booking form', () => {
     fireEvent.change(screen.getByLabelText('Patient'), { target: { value: 'PAT-W' } })
     fireEvent.change(screen.getByLabelText('Time'), { target: { value: '23:59' } })
     fireEvent.submit(form)
-    expect(await screen.findByText('Could not book (error 503).')).toBeInTheDocument()
+    expect(await screen.findByText('Orb is not answering properly (error 503). Try again shortly.')).toBeInTheDocument()
     fireEvent.submit(form)
     await waitFor(() => expect(keys).toHaveLength(2))
     expect(keys[0]).toBeTruthy()

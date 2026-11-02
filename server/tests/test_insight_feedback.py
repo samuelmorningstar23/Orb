@@ -62,15 +62,20 @@ def test_transition_records_feedback_end_to_end():
     # Insert a real insight, dismiss it via the service, assert feedback lands.
     from services.sage_proactive_service import transition_insight
     iid = str(uuid.uuid4())
+    pid = f"PAT-FB-{uuid.uuid4().hex[:8]}"
     with db_session() as db:
+        db.execute("INSERT INTO patients (id, name, mrn, status) VALUES (?, 'Feedback Test', ?, 'admitted')",
+                   (pid, pid))
+        db.execute("INSERT INTO admissions (patient_id, department, status, admitted_by) "
+                   "VALUES (?, 'General Medicine', 'active', 'D001')", (pid,))
         db.execute(
             """INSERT INTO sage_insights (id, patient_id, insight_type, severity, title, detail,
                                           target_user_id, dedup_key, state, created_at, updated_at)
-               VALUES (?, 'PAT-FB-1', 'stewardship', 'info', 't', 'd', NULL, 'k', 'active',
+               VALUES (?, ?, 'stewardship', 'info', 't', 'd', NULL, 'k', 'active',
                        datetime('now'), datetime('now'))""",
-            (iid,),
+            (iid, pid),
         )
-    transition_insight(iid, "dismissed", "D001", "admin")
+    transition_insight(iid, "dismissed", "D001", "doctor")
     s = pattern_stats(pattern_of("stewardship", "info"))
     assert s["dismissed"] == 1
 

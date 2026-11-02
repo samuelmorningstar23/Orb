@@ -266,6 +266,9 @@ def _seed() -> dict:
             )
             users[role] = uid
         now = datetime.now(timezone.utc)
+        # The day-old medication below belongs to this stay, so Bridge's
+        # current-stay reader must see it in the models-off positive control.
+        stay_started = format_utc(now - timedelta(days=2))
         pids = []
         for n in (1, 2):
             pid = f"WRP-P{n}"
@@ -275,14 +278,14 @@ def _seed() -> dict:
                        admission_date, attending_doctor_id)
                    VALUES (?, ?, ?, ?, ?, 'Pneumonia', 'admitted', 60, 'F', ?, ?)""",
                 (pid, f"Probe Patient {n}", f"WRP-MRN-{n}", WARD, f"B-{n}",
-                 format_utc(now - timedelta(hours=10)), users["doctor"]),
+                 stay_started, users["doctor"]),
             )
             db.execute(
                 """INSERT INTO admissions (id, patient_id, admitted_by, department, ward, bed,
-                       attending_doctor_id, status, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)""",
+                       attending_doctor_id, status, admitted_at, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
                 (f"WRP-ADM-{n}", pid, users["doctor"], DEPT, WARD, f"B-{n}",
-                 users["doctor"], format_utc(now - timedelta(hours=10))),
+                 users["doctor"], stay_started, stay_started),
             )
             for minutes in (300, 30):
                 db.execute(

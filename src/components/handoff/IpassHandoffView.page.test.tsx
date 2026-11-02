@@ -3,7 +3,7 @@
  * patient, its two actions use the shared button primitives and wrap, and a
  * failed save reads as a failure rather than in the info colour of a success.
  */
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -74,7 +74,7 @@ describe('the browser tab title', () => {
       </MemoryRouter>,
     )
     await screen.findByText('I-PASS Shift Handoff')
-    expect(document.title).toBe('Handoff: Asha Rao (3)')
+    await waitFor(() => expect(document.title).toBe('Handoff: Asha Rao (3)'))
     unmount()
     expect(document.title).toBe('Orb')
   })

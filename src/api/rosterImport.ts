@@ -14,7 +14,7 @@
  *  The UI therefore keeps the File object around across all three steps and
  *  must re-send it — it must never try to "apply the plan" it is holding.
  */
-import { API_BASE, buildUploadHeaders, handleResponseError } from './client'
+import { apiFetch, apiFetchMultipart } from './client'
 
 /** One target field an import can populate. The server's key is `name`, not
  *  `id` — see `field_catalogue()` in server/services/roster_import.py. */
@@ -156,25 +156,12 @@ function toForm(
   return fd
 }
 
-async function postForm<T>(path: string, body: FormData): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    method: 'POST',
-    credentials: 'include',
-    // NB: no Content-Type — the browser must set the multipart boundary itself.
-    headers: buildUploadHeaders(),
-    body,
-  })
-  if (!response.ok) await handleResponseError(response)
-  return response.json()
+function postForm<T>(path: string, body: FormData): Promise<T> {
+  return apiFetchMultipart<T>(path, body)
 }
 
-export async function getRosterFields(): Promise<RosterFieldCatalogue> {
-  const response = await fetch(`${API_BASE}/admin/roster-import/fields`, {
-    credentials: 'include',
-    headers: buildUploadHeaders(),
-  })
-  if (!response.ok) await handleResponseError(response)
-  return response.json()
+export function getRosterFields(): Promise<RosterFieldCatalogue> {
+  return apiFetch('/admin/roster-import/fields')
 }
 
 /** Step 1. `headerLine` is only sent once the admin has answered the
@@ -230,11 +217,6 @@ export async function commitRoster(
 }
 
 /** Applied-import history, newest first. Dry runs are not recorded. */
-export async function listRosterRuns(limit = 50): Promise<{ runs: RosterRun[] }> {
-  const response = await fetch(`${API_BASE}/admin/roster-import/runs?limit=${limit}`, {
-    credentials: 'include',
-    headers: buildUploadHeaders(),
-  })
-  if (!response.ok) await handleResponseError(response)
-  return response.json()
+export function listRosterRuns(limit = 50): Promise<{ runs: RosterRun[] }> {
+  return apiFetch(`/admin/roster-import/runs?limit=${limit}`)
 }

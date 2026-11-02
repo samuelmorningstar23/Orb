@@ -20,7 +20,7 @@
  * ampoules), integers on the wire. Money is integer paise. Nothing in this
  * folder parses a float.
  */
-import { API_BASE, apiFetch, buildHeaders, errorDetailMessage, handleResponseError } from '../client'
+import { ApiIdentityChangedError, apiFetch, apiFetchBlob, errorDetailMessage } from '../client'
 
 /** The server router's prefix under /api. */
 export const PHARMACY_STORE_API_PREFIX = '/pharmacy-store'
@@ -155,74 +155,18 @@ export function pharmacyStorePatch<T>(path: string, body?: unknown): Promise<T> 
   return pharmacyStoreRequest<T>(path, { method: 'PATCH', body: JSON.stringify(body ?? {}) })
 }
 
-/** The window event App.tsx answers with the re-auth modal (see
- *  notifySessionExpired in ../client). */
-const SESSION_EXPIRED_EVENT = 'orb:session-expired'
-
-/** One single-flight session refresh after a 401, through the client's own
- *  raw-fetch helper (handleResponseError owns the refresh, and raises the
- *  re-auth modal itself when the session is dead). It always throws, so the
- *  answer is read from whether it raised the modal: true means the session was
- *  re-minted and the request may be sent once more. */
-async function refreshAfter401(response: Response): Promise<boolean> {
-  let expired = false
-  const markExpired = () => { expired = true }
-  window.addEventListener(SESSION_EXPIRED_EVENT, markExpired)
-  try {
-    await handleResponseError(response)
-  } catch {
-    // Expected: it throws whether or not the refresh worked.
-  } finally {
-    window.removeEventListener(SESSION_EXPIRED_EVENT, markExpired)
-  }
-  return !expired
-}
-
-function sessionExpiredError(): PharmacyStoreApiError {
-  return new PharmacyStoreApiError('Session expired', 401, 'http_401')
-}
-
-/** A file from the pharmacy store (a CSV export), as a Blob. `apiFetch` reads
- *  every reply as JSON, so this one call uses `fetch` with the same headers
- *  and cookie. A refusal still arrives as a PharmacyStoreApiError.
- *
- *  A 401 follows apiFetch's session contract: one single-flight refresh, one
- *  retry, and a hard expiry (the re-auth modal) when the refresh fails or the
- *  retry 401s again. Never a second refresh, never a blind retry after a
- *  failed one. A download is a GET with no body, so it can be replayed. */
+/** CSV downloads share refresh/account checks and keep store refusals typed. */
 export async function pharmacyStoreDownload(
   path: string,
   params?: Record<string, PharmacyStoreQueryValue>,
 ): Promise<Blob> {
-  const target = `${API_BASE}${areaPath(path)}${pharmacyStoreQuery(params)}`
-  // Headers are rebuilt per attempt: a refresh rotates the CSRF cookie.
-  const send = async (): Promise<Response> => {
-    try {
-      return await fetch(target, { credentials: 'include', headers: buildHeaders('GET') })
-    } catch (err) {
-      throw toPharmacyStoreError(err)
-    }
+  const target = `${areaPath(path)}${pharmacyStoreQuery(params)}`
+  try {
+    return await apiFetchBlob(target)
+  } catch (failure) {
+    if (failure instanceof ApiIdentityChangedError) throw failure
+    throw toPharmacyStoreError(failure)
   }
-  let response = await send()
-  if (response.status === 401) {
-    if (!(await refreshAfter401(response))) throw sessionExpiredError()
-    response = await send()
-    if (response.status === 401) {
-      window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT))
-      throw sessionExpiredError()
-    }
-  }
-  if (!response.ok) {
-    const body = await response.json().catch(() => null) as { detail?: unknown } | null
-    const detail = body?.detail ?? null
-    throw new PharmacyStoreApiError(
-      errorDetailMessage(detail, response.status),
-      response.status,
-      detailCode(detail) ?? `http_${response.status}`,
-      detail,
-    )
-  }
-  return response.blob()
 }
 
 /** What GET /api/pharmacy-store/meta answers. The panel relies only on the

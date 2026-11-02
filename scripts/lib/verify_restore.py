@@ -362,6 +362,36 @@ MODULE_TABLES: dict[str, tuple[str, ...]] = {
     "facilities": (
         "facilities", "departments", "user_facilities", "enterprise_access_grants",
     ),
+    # Migrations 81-86: default-off local modules still create their schemas.
+    # Presence is mandatory even before activation; site-configured nonempty
+    # checks retain their existing meaning after a module goes live.
+    "feedback": ("feedback_cases", "feedback_events"),
+    "mortuary": ("mortuary_slots", "mortuary_cases", "mortuary_events"),
+    "cssd": (
+        "cssd_sets", "cssd_set_items", "cssd_packs", "cssd_cycles",
+        "cssd_cycle_packs", "cssd_issues", "cssd_events",
+    ),
+    "reporting": ("report_definitions",),
+    "finance": (
+        "finance_account_mappings", "finance_charge_attributions",
+        "finance_journal_exports", "finance_journal_export_patients",
+        "finance_payout_rules", "finance_payout_statements",
+        "finance_payout_lines", "finance_payout_claims",
+    ),
+    "radiology": ("ris_studies", "ris_studies_events"),
+    "care plans": ("care_plans", "care_plans_events"),
+    "emergency": ("emergency_visits", "emergency_visits_events"),
+    "perioperative": ("perioperative_records", "perioperative_records_events"),
+    "dialysis": ("dialysis_sessions", "dialysis_sessions_events"),
+    "record governance": (
+        "record_legal_holds", "mrd_files", "mrd_release_requests", "record_governance_events",
+    ),
+    "infection surveillance": (
+        "infection_definitions", "infection_windows", "infection_cases",
+        "infection_exposure_days", "infection_susceptibility",
+        "infection_isolation_records", "infection_events", "infection_requests",
+    ),
+    "radiation safety": ("radiation_safety_records", "radiation_safety_events"),
 }
 
 ALL_MIGRATED_TABLES: tuple[str, ...] = tuple(
@@ -772,7 +802,7 @@ def _schema_version_found(conn) -> int | None:
 def write_receipt(path: str, *, backup_file: str, ok: bool, integrity_check: str | None,
                   size_bytes: int | None, row_counts: dict | None,
                   schema_version: int | None, failures: list[str],
-                  warnings: list[str]) -> None:
+                  warnings: list[str], encrypted: bool = True) -> None:
     """Write the verdict beside the backup, atomically and owner-only.
 
     Atomic (temp file, then rename) so the status page can never read half a
@@ -791,7 +821,7 @@ def write_receipt(path: str, *, backup_file: str, ok: bool, integrity_check: str
         "integrity_check": integrity_check,
         "size_bytes": size_bytes,
         "row_counts": row_counts or {},
-        "encrypted": True,
+        "encrypted": encrypted,
         "schema_version": schema_version,
         "expected_schema_version": expected,
         "failures": failures,

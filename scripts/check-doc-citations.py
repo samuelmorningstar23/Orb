@@ -43,7 +43,9 @@ import argparse
 import collections
 import os
 import re
+import subprocess
 import sys
+from functools import lru_cache
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -88,14 +90,24 @@ ANCHOR_WINDOW = 5
 
 
 def build_basename_index() -> dict[str, list[str]]:
-    """Map bare filenames to full paths, so `audit_service.py:159` shorthand resolves."""
+    """Index current repository files without walking generated/runtime trees.
+
+    Include nonignored untracked work as well as tracked files. An appliance's
+    evaluation outputs, model caches and backups can contain millions of paths;
+    none should become a source citation target by basename coincidence.
+    """
     idx: dict[str, list[str]] = collections.defaultdict(list)
-    for base, dirs, files in os.walk(ROOT):
-        if any(s in base for s in SKIP_DIRS):
-            dirs[:] = []
+    paths = subprocess.check_output(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        cwd=ROOT,
+    ).decode().split("\0")
+    for relative in sorted(set(paths) - {""}):
+        full = os.path.join(ROOT, relative)
+        directory = "/" + os.path.dirname(relative)
+        if any(s in directory for s in SKIP_DIRS):
             continue
-        for f in files:
-            idx[f].append(os.path.join(base, f))
+        if os.path.isfile(full) and not os.path.islink(full):
+            idx[os.path.basename(relative)].append(full)
     return idx
 
 
@@ -112,6 +124,7 @@ def resolve(path: str, idx: dict[str, list[str]]) -> str | None:
     return hits[0] if hits else None
 
 
+@lru_cache(maxsize=None)
 def read_lines(path: str) -> list[str]:
     with open(path, encoding="utf-8", errors="replace") as fh:
         return fh.read().splitlines()
@@ -126,7 +139,7 @@ def find_symbol(src: list[str], symbol: str) -> int | None:
     definition = re.compile(
         rf"^\s*(?:async\s+def|def|class)\s+{re.escape(symbol)}\b"
         rf"|^\s*export\s+(?:default\s+)?(?:async\s+)?(?:function|const|class|interface|type)\s+{re.escape(symbol)}\b"
-        rf"|^\s*(?:const|let|var|function|class)\s+{re.escape(symbol)}\b"
+        rf"|^\s*(?:async\s+)?(?:const|let|var|function|class|interface|type|enum)\s+{re.escape(symbol)}\b"
         rf"|^{re.escape(symbol)}\s*[:=]"
     )
     for i, line in enumerate(src, 1):

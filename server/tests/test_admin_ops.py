@@ -108,6 +108,14 @@ def test_create_backup_writes_verified_file_and_audits(tmp_path, monkeypatch):
     monkeypatch.setenv("ORB_BACKUP_DIR", str(tmp_path))
     _ensure_user("OPS-ADM", "admin")
     token = _login("OPS-ADM")
+    # The shared recovery verifier deliberately refuses empty-but-valid
+    # databases. This successful snapshot scenario owns clinical floor rows.
+    import uuid
+    from database import db_session
+    pid = "OPS-BACKUP-" + uuid.uuid4().hex
+    with db_session() as db:
+        db.execute("INSERT INTO patients(id,name,mrn) VALUES (?,'Synthetic backup patient',?)", (pid, pid))
+        db.execute("INSERT INTO vitals(patient_id,timestamp,heart_rate) VALUES (?,'2026-10-11T00:00:00.000000+00:00',80)", (pid,))
 
     resp = client.post("/api/admin/backups", headers=_auth(token))
     assert resp.status_code == 200, resp.text
@@ -117,6 +125,9 @@ def test_create_backup_writes_verified_file_and_audits(tmp_path, monkeypatch):
     assert fname.startswith("orb-backup-") and fname.endswith(".db")
     assert (tmp_path / fname).is_file()
     assert body["backup"]["size_bytes"] > 0
+    import json
+    receipt = json.loads((tmp_path / (fname[:-3] + ".verified.json")).read_text())
+    assert receipt["ok"] is True and receipt["backup_file"] == fname
 
     # listed by GET afterwards
     listed = client.get("/api/admin/backups", headers=_auth(token)).json()

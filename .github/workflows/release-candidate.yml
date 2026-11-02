@@ -1,0 +1,77 @@
+name: Release candidate verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing vMAJOR.MINOR.PATCH tag matching package.json
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Verify candidate identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.identity.outputs.sha }}
+      tag: ${{ steps.identity.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Resolve immutable commit and matching version
+        id: identity
+        env:
+          ORB_CANDIDATE_TAG: ${{ inputs.tag }}
+        run: python scripts/release_candidate.py resolve
+
+  ci:
+    name: Full candidate CI
+    needs: resolve
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
+
+  security:
+    name: Candidate dependency security
+    needs: resolve
+    uses: ./.github/workflows/security.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
+
+  bundle:
+    name: Package verified candidate (no deployment)
+    needs: [resolve, ci, security]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: candidate-frontend
+          path: dist
+      - name: Create checksummed frontend candidate and acceptance manifest
+        env:
+          ORB_CANDIDATE_TAG: ${{ needs.resolve.outputs.tag }}
+          ORB_CANDIDATE_SHA: ${{ needs.resolve.outputs.sha }}
+        run: python scripts/release_candidate.py bundle
+      - name: Upload candidate for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: orb-${{ needs.resolve.outputs.tag }}-candidate
+          path: release-candidate/
+          if-no-files-found: error
+          retention-days: 14

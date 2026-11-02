@@ -4,15 +4,8 @@
  * Diet orders per admitted patient, the ward view, ward-wise meal plans, the
  * kitchen count and the kitchen indent.
  *
- * WHY THIS FILE USES A RAW `fetch` INSTEAD OF `apiFetch`.
- * The shared wrapper flattens an error body down to a message string, and every
- * refusal this module can produce is one the UI has to react to DIFFERENTLY:
- * `module_disabled` is a whole-panel state, a `conflict` on a locked meal plan
- * belongs beside the Lock button, and an `invalid` NPO window belongs beside the
- * date field. So the machine-readable `error` code has to survive the trip.
- * `request()` below keeps it on a typed `DietaryApiError` and still sends the
- * session cookie and CSRF token exactly the way `apiFetch` does. Same reasoning,
- * and same shape, as src/api/procurement.ts.
+ * Shared transport handles session ownership, refresh and CSRF. Domain errors
+ * keep their machine-readable codes and structured refusal details.
  *
  * THERE IS NO MONEY IN THIS MODULE. Not one paise field crosses this boundary,
  * so nothing here goes near src/lib/money.ts. Everything is a whole-number COUNT
@@ -23,7 +16,7 @@
  * list is EMPTY AND MEANINGLESS — render `allergies_message`, never "no known
  * allergies". Those two states look identical and mean opposite things.
  */
-import { API_BASE, buildHeaders } from './client';
+import { domainRequest } from './domainTransport';
 
 /* ── Vocabulary (mirrors the server's CHECK constraints) ─────────────────── */
 
@@ -67,23 +60,9 @@ export class DietaryApiError extends Error {
   }
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API_BASE}/dietary${path}`, {
-    ...options,
-    credentials: 'include',
-    headers: buildHeaders((options.method as string) || 'GET'),
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => null);
-    const detail = body && typeof body.detail === 'object' ? body.detail : null;
-    throw new DietaryApiError(
-      detail?.message || (typeof body?.detail === 'string' ? body.detail : null) ||
-        `Request failed (${response.status})`,
-      response.status,
-      detail?.error || `http_${response.status}`,
-    );
-  }
-  return response.json() as Promise<T>;
+function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  return domainRequest<T>(`/dietary${path}`, options,
+    (message, status, code) => new DietaryApiError(message, status, code));
 }
 
 function post<T>(path: string, body?: unknown): Promise<T> {

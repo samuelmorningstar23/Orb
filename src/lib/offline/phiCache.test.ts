@@ -3,11 +3,12 @@
  * round-trip smoke test: who can read it, how long it lives, how big it gets,
  * and what a handover between two nurses on one tablet is allowed to leak.
  */
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   writeCache,
   readCache,
   clearOfflineCache,
+  removeCache,
   cacheEntryCount,
   cacheBytes,
   newestCachedAt,
@@ -22,6 +23,7 @@ const NURSE_B = 'U-NURSE-B'
 beforeEach(() => {
   localStorage.clear()
 })
+afterEach(() => { vi.restoreAllMocks() })
 
 describe('phiCache — ownership', () => {
   it('round-trips a value for the user who wrote it', () => {
@@ -108,6 +110,13 @@ describe('phiCache — size bound', () => {
 })
 
 describe('phiCache — clearing', () => {
+  it('removes only a refused cache entry', () => {
+    writeCache('chart:A', { n: 1 }, NURSE_A)
+    writeCache('chart:B', { n: 2 }, NURSE_A)
+    expect(removeCache('chart:A')).toBe(true)
+    expect(readCache('chart:A', NURSE_A)).toBeNull()
+    expect(readCache('chart:B', NURSE_A)).not.toBeNull()
+  })
   it('clearOfflineCache removes every cache key and touches nothing else', () => {
     writeCache('board', { n: 1 }, NURSE_A)
     writeCache('vitals:P1', { n: 2 }, NURSE_A)
@@ -120,6 +129,62 @@ describe('phiCache — clearing', () => {
     expect(cacheEntryCount()).toBe(0)
     expect(localStorage.getItem('orb_theme')).toBe('dark')
     expect(localStorage.getItem('orb:nurse:obs-draft:P1')).toBe('{}')
+  })
+})
+
+describe('phiCache — storage methods denied by the browser', () => {
+  const denied = () => { throw new DOMException('Storage denied', 'SecurityError') }
+
+  it('treats denied reads as unavailable without throwing into a render', () => {
+    writeCache('board', { n: 1 }, NURSE_A)
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(denied)
+    expect(readCache('board', NURSE_A)).toBeNull()
+    expect(newestCachedAt(NURSE_A)).toBeNull()
+    expect(cacheBytes()).toBe(0)
+    expect(writeCache('other', { n: 2 }, NURSE_A)).toBe(false)
+  })
+
+  it('finishes logout and refuses invalid entries even when removal is denied', () => {
+    writeCache('expired', { n: 1 }, NURSE_A, Date.now() - CACHE_MAX_AGE_MS - 1)
+    localStorage.setItem(`${OFFLINE_CACHE_PREFIX}corrupt`, '{')
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(denied)
+    expect(readCache('expired', NURSE_A)).toBeNull()
+    expect(readCache('corrupt', NURSE_A)).toBeNull()
+    expect(readCache('expired', NURSE_B)).toBeNull()
+    expect(clearOfflineCache()).toBe(0)
+    expect(removeCache('expired')).toBe(false)
+  })
+
+  it('blocks a refused readable entry when removal is denied until a fresh write succeeds', () => {
+    const old = { n: 1 }
+    writeCache('refused-chart', old, NURSE_A)
+    const raw = localStorage.getItem(`${OFFLINE_CACHE_PREFIX}refused-chart`)
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(denied)
+    expect(removeCache('refused-chart')).toBe(false)
+    expect(localStorage.getItem(`${OFFLINE_CACHE_PREFIX}refused-chart`)).toBe(raw)
+    expect(readCache('refused-chart', NURSE_A)).toBeNull()
+    expect(newestCachedAt(NURSE_A)).toBeNull()
+
+    const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(denied)
+    expect(writeCache('refused-chart', { n: 2 }, NURSE_A)).toBe(false)
+    expect(readCache('refused-chart', NURSE_A)).toBeNull()
+    write.mockRestore()
+    expect(writeCache('refused-chart', { n: 3 }, NURSE_A)).toBe(true)
+    expect(readCache('refused-chart', NURSE_A)?.data).toEqual({ n: 3 })
+  })
+
+  it('survives denied key enumeration and does not claim to cache an unbounded write', () => {
+    writeCache('board', { n: 1 }, NURSE_A)
+    vi.spyOn(Storage.prototype, 'key').mockImplementation(denied)
+    expect(cacheEntryCount()).toBe(0)
+    expect(clearOfflineCache()).toBe(0)
+    expect(writeCache('other', { n: 2 }, NURSE_A)).toBe(false)
+  })
+
+  it('refuses non-finite timestamps instead of bypassing the age bound', () => {
+    localStorage.setItem(`${OFFLINE_CACHE_PREFIX}board`, '{"data":{},"userId":"U-NURSE-A","savedAt":1e400}')
+    expect(readCache('board', NURSE_A)).toBeNull()
+    expect(writeCache('board', {}, NURSE_A, Infinity)).toBe(false)
   })
 })
 

@@ -44,6 +44,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from services.ward_reference import ward_named_in
 
@@ -177,6 +178,37 @@ class QueryClassification:
     reasons: list[str] = field(default_factory=list)
 
 
+def _identifier_name_parts_uncached(name: str) -> tuple[str, ...]:
+    return tuple(
+        part for part in re.split(r"[^a-zA-Z]", name)
+        if part and part not in ("mr", "mrs", "ms", "dr", "prof")
+    )
+
+
+@lru_cache(maxsize=2048)
+def _identifier_name_parts_cached(name: str) -> tuple[str, ...]:
+    return _identifier_name_parts_uncached(name)
+
+
+def _identifier_name_parts(name: str) -> tuple[str, ...]:
+    # Reuse only pure parsing of the exact observed string. Patient rows and
+    # matching verdicts remain fresh; oversized labels never enter the cache.
+    if len(name) > 256:
+        return _identifier_name_parts_uncached(name)
+    return _identifier_name_parts_cached(name)
+
+
+@lru_cache(maxsize=2048)
+def _identifier_bed_cached(bed: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", bed)
+
+
+def _identifier_bed(bed: str) -> str:
+    if len(bed) > 256:
+        return re.sub(r"[^a-z0-9]", "", bed)
+    return _identifier_bed_cached(bed)
+
+
 def _match_patient_identifiers(
     query_lower: str, include_ward: bool = True, query: str | None = None
 ) -> bool:
@@ -224,23 +256,24 @@ def _match_patient_identifiers(
     norm_query = re.sub(r"[^a-z0-9]", "", query_lower)
     words = frozenset(re.findall(r"\b[a-z]+\b", query_lower))
     tested_beds = set()
+    tested_wards: set[str] = set()
     for r in rows:
         name = str(r["name"] or "").lower()
-        name_parts = [
-            p
-            for p in re.split(r"[^a-zA-Z]", name)
-            if p and p not in ("mr", "mrs", "ms", "dr", "prof")
-        ]
+        name_parts = _identifier_name_parts(name)
         for part in name_parts:
             if len(part) > 2 and part in words:
                 return True
-        norm_bed = re.sub(r"[^a-z0-9]", "", str(r["bed"] or "").lower())
+        norm_bed = _identifier_bed(str(r["bed"] or "").lower())
         if norm_bed and norm_bed not in tested_beds:
             tested_beds.add(norm_bed)
             if norm_bed in norm_query:
                 return True
-        if include_ward and r["ward"] and ward_named_in(r["ward"], typed):
-            return True
+        ward = r["ward"]
+        if include_ward and ward and (not isinstance(ward, str) or ward not in tested_wards):
+            if isinstance(ward, str):
+                tested_wards.add(ward)
+            if ward_named_in(ward, typed):
+                return True
     return False
 
 
@@ -336,8 +369,8 @@ def classify_query_sensitivity(
     # ward's patients → treat as PHI.
     if (
         not hard_patient_signal
-        and _match_patient_identifiers(q, include_ward=True, query=query or "")
         and not census_hit
+        and _match_patient_identifiers(q, include_ward=True, query=query or "")
     ):
         reasons.append("query references a ward on record")
 

@@ -2598,15 +2598,6 @@ def _occupants_on(db, wards: list[dict], beds: list[dict]) -> dict[str, list[dic
     return by_bed
 
 
-def _reserved_beds(db, bed_ids: Iterable[str]) -> set[str]:
-    """Beds a reservation holds now (adt-12: active and not past its expiry,
-    read through services/adt/reservations.py). Before migration 69 nothing
-    is reserved."""
-    from services.adt import reservations as adt_res
-
-    return set(adt_res.live_on_beds(db, bed_ids))
-
-
 def _presence_prompt(holder: dict, *, absconded_at: datetime | None, now: datetime) -> str | None:
     """The board's advisory line for a patient off the ward too long (adt-10),
     or None. Advisory only: nothing closes or discharges on a timer.

@@ -4,7 +4,8 @@ import uuid
 
 from database import db_session, run_db
 from fastapi import APIRouter, Depends, HTTPException, Request
-from permissions import require_permission
+from permissions import department_scope, patient_in_scope, require_permission
+from services import facility_service
 from services.sage_proactive_service import (
     NON_ACTIONABLE_ACTION_TYPES,
     evaluate_all_admitted,
@@ -15,6 +16,16 @@ from services.sage_proactive_service import (
 from ws.realtime import sio
 
 router = APIRouter(prefix="/api/sage", tags=["sage-proactive"])
+
+
+async def _json_object(request):
+    try:
+        body = await request.json()
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="Expected a JSON object")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Expected a JSON object")
+    return body
 
 
 _LIST_INSIGHTS_USER_DEFAULT = Depends(require_permission("sage.query"))
@@ -55,9 +66,13 @@ _TRANSITION_USER_DEFAULT = Depends(require_permission("sage.query"))
 
 
 @router.post("/insights/{insight_id}/transition")
-async def transition(insight_id: str, request: Request, user: dict = _TRANSITION_USER_DEFAULT):
-    body = await request.json()
+async def transition(
+    insight_id: str, request: Request, user: dict = _TRANSITION_USER_DEFAULT
+):
+    body = await _json_object(request)
     state = body.get("state", "")
+    if not isinstance(state, str):
+        raise HTTPException(status_code=400, detail="Invalid state")
     try:
         # One executor call for the whole thing: transition_insight is a
         # read-modify-write (SELECT state → guard → UPDATE → record_feedback) held
@@ -82,6 +97,13 @@ def _create_action_card(insight_id, user):
     with db_session() as db:
         ins = db.execute("SELECT * FROM sage_insights WHERE id = ?", (insight_id,)).fetchone()
         if not ins:
+            raise HTTPException(status_code=404, detail="Insight not found")
+        if not patient_in_scope(
+            db,
+            ins["patient_id"],
+            department_scope(user),
+            facilities=facility_service.facility_scope_for(user, db=db),
+        ):
             raise HTTPException(status_code=404, detail="Insight not found")
         if user["role"] != "admin" and ins["target_user_id"] not in (None, user["id"]):
             raise HTTPException(status_code=403, detail="Not your insight")
@@ -188,12 +210,13 @@ async def evaluate(request: Request, user: dict = _EVALUATE_USER_DEFAULT):
     A real operational trigger, not a test hook: it creates real insights on real
     charts. Used when a clinician has just charted something and wants the sweep
     re-run against it rather than waiting."""
-    body = {}
-    try:
-        body = await request.json()
-    except Exception:
-        pass
-    pid = (body or {}).get("patient_id")
+    body = await _json_object(request)
+    pid = None
+    if "patient_id" in body:
+        pid = body["patient_id"]
+        if not isinstance(pid, str) or not pid.strip():
+            raise HTTPException(status_code=400, detail="patient_id must be a non-empty string")
+        pid = pid.strip()
     # The heaviest DB work in this module — a full surveillance sweep over every
     # admitted patient. It ran inline on the loop, which is precisely the shape
     # that wedged the API. One executor call per sweep, not per rule: the dedup
@@ -202,12 +225,26 @@ async def evaluate(request: Request, user: dict = _EVALUATE_USER_DEFAULT):
     # `raised_again`: stood-down cards put back up, same id, pushed all the same.
     raised_again: list = []
     ids = (
-        await run_db(evaluate_patient, pid, raised_again)
+        await run_db(_evaluate_scoped_patient, pid, user, raised_again)
         if pid
-        else await run_db(evaluate_all_admitted, raised_again)
+        else await run_db(evaluate_all_admitted, raised_again, user)
     )
     if ids or raised_again:
         await sio.emit(
             "sage:insight", {"event": "new", "count": len(ids), "raised_again": len(raised_again)}
         )
     return {"created": len(ids), "ids": ids, "raised_again": raised_again}
+
+
+def _evaluate_scoped_patient(patient_id, user, raised_again):
+    with db_session() as db:
+        if not patient_in_scope(
+            db,
+            patient_id,
+            department_scope(user),
+            facilities=facility_service.facility_scope_for(user, db=db),
+        ):
+            raise HTTPException(status_code=404, detail="Patient not found")
+        if db.execute("SELECT 1 FROM patients WHERE id = ?", (patient_id,)).fetchone() is None:
+            raise HTTPException(status_code=404, detail="Patient not found")
+    return evaluate_patient(patient_id, raised_again)

@@ -4,21 +4,14 @@
  * Vendors, the non-pharmacy item master, indent → purchase order → goods
  * receipt, stock on hand, reorder points, consumption and expiry.
  *
- * WHY THIS FILE USES A RAW `fetch` INSTEAD OF `apiFetch`.
- * The shared wrapper flattens an error body down to a message string. Every
- * refusal this module can produce is one the UI has to react to DIFFERENTLY —
- * `module_disabled` is a whole-panel state, `over_receipt` belongs next to the
- * quantity field, `pharmacy_item_refused` needs the sentence about Helix, and
- * `insufficient_stock` needs the on-hand figure — so the machine-readable
- * `error` code has to survive the trip. `request()` below keeps it on a typed
- * `ProcurementError`, and still sends the session cookie and CSRF token exactly
- * the way `apiFetch` does.
+ * Shared transport handles session ownership, refresh and CSRF. Domain errors
+ * keep their machine-readable codes and structured refusal details.
  *
  * QUANTITIES ARE INTEGER MILLI (thousandths of a unit) on the wire, the same as
  * money is integer paise: `10 boxes` is `10000`. Convert at the input boundary
  * with `unitsToMilli`, never with a float multiply on a parsed string.
  */
-import { buildHeaders, API_BASE, errorDetailMessage } from './client';
+import { domainRequest } from './domainTransport';
 
 /** 1 unit = 1000 milli. Mirrors QUANTITY_SCALE in services/money.py. */
 export const QUANTITY_SCALE = 1000;
@@ -40,22 +33,9 @@ export class ProcurementApiError extends Error {
   }
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API_BASE}/procurement${path}`, {
-    ...options,
-    credentials: 'include',
-    headers: buildHeaders((options.method as string) || 'GET'),
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => null);
-    const detail = body && typeof body.detail === 'object' ? body.detail : null;
-    throw new ProcurementApiError(
-      errorDetailMessage(body?.detail, response.status),
-      response.status,
-      detail?.error || `http_${response.status}`,
-    );
-  }
-  return response.json() as Promise<T>;
+function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  return domainRequest<T>(`/procurement${path}`, options,
+    (message, status, code) => new ProcurementApiError(message, status, code));
 }
 
 function post<T>(path: string, body?: unknown): Promise<T> {

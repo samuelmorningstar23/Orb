@@ -40,8 +40,10 @@ import time
 from datetime import UTC, datetime
 
 import httpx
-from config import AMBIENT_LLM_MODEL, OLLAMA_KEEP_ALIVE
 from database import db_session, run_db
+
+from config import AMBIENT_LLM_MODEL, OLLAMA_KEEP_ALIVE
+from services.local_model_http import local_model_ssl_context
 
 logger = logging.getLogger("orb.sage_narrator")
 
@@ -402,7 +404,7 @@ class WardNarrator:
         if await ambient_tier_evicted(model_choice.model):
             return None
         try:
-            await llm_queue.acquire(priority=PRIORITY_BACKGROUND, timeout=20.0)
+            ticket = await llm_queue.acquire(priority=PRIORITY_BACKGROUND, timeout=20.0, model=model_choice.model)
         except asyncio.CancelledError:
             # NEVER swallow the shutdown cancel — ward_narrator.idle_loop is a
             # LIFESPAN task, so absorbing it here made the shutdown gather wait
@@ -413,7 +415,7 @@ class WardNarrator:
         from services import ollama_gateway
 
         try:
-            async with httpx.AsyncClient(timeout=45.0, trust_env=False) as client:
+            async with httpx.AsyncClient(verify=local_model_ssl_context(), timeout=45.0, trust_env=False) as client:
                 # The gateway writes this pass's audit row (served or not) and
                 # gives the lane back to a clinician's turn mid-generation;
                 # a yield lands in the except below like any other failure.
@@ -447,7 +449,7 @@ class WardNarrator:
             logger.debug("Ward narrative generation unavailable: %s", e)
             return None
         finally:
-            llm_queue.release()
+            llm_queue.release(ticket)
 
     @staticmethod
     def _fingerprint(snapshot: dict, narrative: str | None) -> str:

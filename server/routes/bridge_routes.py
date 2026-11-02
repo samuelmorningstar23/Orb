@@ -35,6 +35,7 @@ from services.bridge_service import (
     get_patient_status_simple,
     patient_ask_context,
 )
+from services.bridge_stay import current_medications, current_summary, current_vitals
 from services.discharge_service import (
     PENDING_REVIEW_MESSAGE,
     REVIEW_DRAFT,
@@ -294,17 +295,7 @@ def patient_reports(user: dict = _PATIENT_REPORTS_USER_DEFAULT):
     with db_session() as db:
         # Active medications. None on an Orb Ward Record computer, whose drug
         # chart stays on paper (services/drug_chart).
-        meds = (
-            db.execute(
-                """SELECT drug_name, dosage, route, frequency, status, started_at,
-                      held_at, hold_reason
-               FROM medications WHERE patient_id = ?
-               ORDER BY started_at DESC""",
-                (patient_id,),
-            ).fetchall()
-            if drug_chart
-            else []
-        )
+        meds = current_medications(db, patient_id) if drug_chart else []
 
         # Clinical documents (notes, ward rounds, etc.), lab results apart. The
         # portal built Lab History from imaging alone, so a patient whose
@@ -329,11 +320,7 @@ def patient_reports(user: dict = _PATIENT_REPORTS_USER_DEFAULT):
         ).fetchall()
 
         # Discharge summary (if discharged)
-        discharge = db.execute(
-            """SELECT * FROM discharge_summaries WHERE patient_id = ?
-               ORDER BY discharged_at DESC, id DESC LIMIT 1""",
-            (patient_id,),
-        ).fetchone()
+        discharge = current_summary(db, patient_id)
 
         # Diagnostic imaging reports: clinician-reviewed reads only, and the
         # text the clinician confirmed. `analysis` is the model's raw read and
@@ -415,14 +402,7 @@ def patient_medications(user: dict = _PATIENT_MEDICATIONS_USER_DEFAULT):
     patient_id = _resolve_patient_id(user["id"])
 
     with db_session() as db:
-        meds = db.execute(
-            """SELECT drug_name, dosage, route, frequency, status, started_at,
-                      held_at, hold_reason
-               FROM medications WHERE patient_id = ?
-               ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'prn' THEN 1 ELSE 2 END,
-                        started_at DESC""",
-            (patient_id,),
-        ).fetchall()
+        meds = current_medications(db, patient_id)
 
     return {"medications": [_portal_medication(m) for m in meds]}
 
@@ -436,11 +416,7 @@ def patient_discharge(user: dict = _PATIENT_DISCHARGE_USER_DEFAULT):
     patient_id = _resolve_patient_id(user["id"])
 
     with db_session() as db:
-        summary = db.execute(
-            """SELECT * FROM discharge_summaries WHERE patient_id = ?
-               ORDER BY discharged_at DESC, id DESC LIMIT 1""",
-            (patient_id,),
-        ).fetchone()
+        summary = current_summary(db, patient_id)
         # A stay can end with no summary (the beds and admissions module
         # records some ends that way, adt-8c). "Not available yet" would then
         # promise a summary that is never coming. Only the latest stay is
@@ -589,14 +565,7 @@ def patient_vitals_trends(user: dict = _PATIENT_VITALS_TRENDS_USER_DEFAULT):
     patient_id = _resolve_patient_id(user["id"])
 
     with db_session() as db:
-        rows = db.execute(
-            """SELECT timestamp, heart_rate, systolic_bp, spo2, temperature, respiratory_rate
-               FROM vitals WHERE patient_id = ? AND voided_at IS NULL
-               -- id DESC: on a timestamp tie the later write is the correction,
-               -- and after the reversal below it is the one that ends the series.
-               ORDER BY timestamp DESC, id DESC LIMIT 48""",
-            (patient_id,),
-        ).fetchall()
+        rows = current_vitals(db, patient_id, limit=48)
 
     rows = list(reversed([dict(r) for r in rows]))  # oldest → newest for charting
 

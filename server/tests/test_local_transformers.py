@@ -261,6 +261,60 @@ def test_invalid_reranker_scores_are_refused(monkeypatch, invalid):
         local.LocalReranker("synthetic").compute_score([["query", "passage"]])
 
 
+@pytest.mark.parametrize("count,expected_batches", [(12, [8, 4]), (17, [8, 8, 1])])
+def test_default_reranker_batch_preserves_pair_order_and_explicit_eight_scores(
+    monkeypatch, count, expected_batches
+):
+    """The CPU default and explicit sizes retain every score in original order."""
+    class PairScoreModel:
+        config = SimpleNamespace(num_labels=1)
+
+        def __init__(self):
+            self.calls = []
+
+        def __call__(self, input_ids, attention_mask, **kwargs):
+            self.calls.append(input_ids.clone())
+            # Ignore padding: scores depend on the exact ordered pair, not batch shape.
+            logits = (input_ids * attention_mask).sum(dim=1).float() / 100 - 2
+            return SimpleNamespace(logits=logits[:, None])
+
+    models = []
+
+    def load(*args, **kwargs):
+        model = PairScoreModel()
+        models.append(model)
+        return Tokenizer(), model, "cpu"
+
+    monkeypatch.setattr(local, "_load", load)
+    pairs = [[f"query {index}", "passage " + "x" * (index + 1)] for index in range(count)]
+    default = local.LocalReranker("synthetic").compute_score(pairs)
+    baseline = local.LocalReranker("synthetic").compute_score(pairs, batch_size=8)
+    larger = local.LocalReranker("synthetic").compute_score(pairs, batch_size=16)
+    assert [len(call) for call in models[0].calls] == expected_batches
+    assert [len(call) for call in models[2].calls] == ([12] if count == 12 else [16, 1])
+    assert len(default) == count and default == baseline == larger
+    assert len(set(default)) == count
+
+
+@pytest.mark.parametrize("device,dtype_name,expected", [
+    ("cpu", "float32", 8), ("cpu", "float16", 8),
+    ("cuda", "float16", 8), ("mps", "float32", 8), ("mps", "float16", 16),
+])
+def test_implicit_reranker_batch_is_scoped_to_actual_qualified_device_dtype(
+    monkeypatch, device, dtype_name, expected
+):
+    """Metadata selects a default without allocating on an unavailable accelerator."""
+    import torch
+
+    model = SimpleNamespace(config=SimpleNamespace(num_labels=1), dtype=getattr(torch, dtype_name))
+    monkeypatch.setattr(local, "_load", lambda *a, **k: (Tokenizer(), model, torch.device(device)))
+    reranker = local.LocalReranker("synthetic")
+    assert reranker._default_batch_size == expected
+    assert reranker.compute_score([]) == []
+    with pytest.raises(ValueError, match="batch_size must be a positive integer"):
+        reranker.compute_score([], batch_size=0)
+
+
 def test_real_transformers5_tokenizer_preserves_pair_special_tokens_and_query_cap(monkeypatch):
     """Use the real Rust tokenizer API which replaced prepare_for_model in v5."""
     from tokenizers import Tokenizer as RustTokenizer, models, pre_tokenizers, processors

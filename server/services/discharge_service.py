@@ -10,12 +10,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
-from config import DISCHARGE_ACCESS_TTL_DAYS, LLM_MODEL, OLLAMA_KEEP_ALIVE, UPLOAD_DIR
 from database import db_session, get_db
 
+from config import DISCHARGE_ACCESS_TTL_DAYS, LLM_MODEL, OLLAMA_KEEP_ALIVE, UPLOAD_DIR
 from services.adt import end_stay as adt_end
 from services.adt.core import AdtConflict, adt_on, current_admission_on
 from services.audit_service import log_audit_event
+from services.local_model_http import local_model_ssl_context
 from services.vital_charting import charted_text
 
 logger = logging.getLogger(__name__)
@@ -749,9 +750,9 @@ AI-drafted by Orb. Not reviewed until a clinician marks it reviewed.
     from services import ollama_gateway
     from services.llm_queue_service import llm_queue
 
-    await llm_queue.acquire(priority=2)
+    ticket = await llm_queue.acquire(priority=2, model=choice.model)
     try:
-        async with httpx.AsyncClient(timeout=120.0, trust_env=False) as client:
+        async with httpx.AsyncClient(verify=local_model_ssl_context(), timeout=120.0, trust_env=False) as client:
             response = await ollama_gateway.post(
                 client,
                 "/api/chat",
@@ -776,7 +777,7 @@ AI-drafted by Orb. Not reviewed until a clinician marks it reviewed.
             data = response.json()
             full_response = data.get("message", {}).get("content", "")
     finally:
-        llm_queue.release()
+        llm_queue.release(ticket)
 
     return strip_unresolved_placeholders(full_response)
 

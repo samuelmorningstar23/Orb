@@ -15,8 +15,7 @@
  *   captures.json   — index of captures (scenario, step, theme, screenshot path)
  *   shots/*.png     — screenshots, named <scenario>--<step>--<theme>.png
  *   gallery.html    — human-readable light/dark gallery with finding counts
- *   The default mocked run also mirrors findings → tests/visual/audit-results.json
- *   and shots → tests/visual/shots/ for the CI artifact upload (ci.yml).
+ *   CI uploads the complete output directory, including gate-summary.json.
  *
  * Themes: every scenario runs dark + light by default (scenario.themes
  * overrides). The trunk third theme (night / OR) is exercised by the night/*
@@ -47,11 +46,13 @@ catch {
 }
 const { runAudit } = require('./checks.cjs');
 const { fixtureFor, NURSE_BOARD_QUIET, NURSE_BOARD_EMPTY } = require('./fixtures.cjs');
+const { offlineScenarios } = require('./offline-scenarios.cjs');
 
 const args = process.argv.slice(2);
 const LIVE = args.includes('--live');
 const HEADED = args.includes('--headed');
 const FILTER = (args.find((a) => a.startsWith('--filter=')) || '').replace('--filter=', '');
+const FILTERS = FILTER.split(',').map((part) => part.trim()).filter(Boolean);
 const OUT = (args.find((a) => a.startsWith('--out=')) || '').replace('--out=', '') ||
   path.join(__dirname, LIVE ? 'out-live' : 'out');
 const BASE = process.env.ORB_BASE_URL || 'http://localhost:5173';
@@ -142,7 +143,10 @@ const captures = [];
 let failures = 0;
 
 async function runScenario(browser, scenario) {
-  if (FILTER && !scenario.name.includes(FILTER)) return;
+  if (FILTERS.length && !FILTERS.some((part) => scenario.name.includes(part))) return;
+  // A fresh fixture store belongs to one context, including repeated runs of
+  // the same scenario. Unhandled requests still reach the strict null gate.
+  const scenarioFixture = scenario.fixtureFactory?.();
   const viewport = scenario.viewport || DESKTOP;
   const context = await browser.newContext({
     viewport,
@@ -152,6 +156,15 @@ async function runScenario(browser, scenario) {
 
   // Console + page error log with timestamps so we can attribute per capture
   const consoleLog = [];
+  let consumedConsole = 0;
+  const takeConsoleErrors = () => {
+    const unread = consoleLog.slice(consumedConsole);
+    consumedConsole = consoleLog.length;
+    return unread.filter((c) => c.kind !== 'warning').map((c) => ({
+      type: 'console-error', severity: 'major', selector: '', snippet: '',
+      detail: `${c.kind}: ${c.text}`,
+    }));
+  };
   context.on('page', (p) => {
     p.on('console', (msg) => {
       if (msg.type() === 'error' || msg.type() === 'warning') {
@@ -201,8 +214,16 @@ async function runScenario(browser, scenario) {
         if (o) return route.fulfill({ status: o.status, contentType: o.contentType || 'application/json',
           body: typeof o.body === 'string' ? o.body : JSON.stringify(o.body) });
       }
-      const fx = fixtureFor(req.method(), u.pathname, u.searchParams);
+      let requestBody;
+      try { requestBody = req.postDataJSON(); } catch { /* No JSON request body. */ }
+      const authUser = scenario.user ? stripPw(USERS[scenario.user]) : null;
+      const fx = scenarioFixture?.(req.method(), u.pathname, u.searchParams, authUser, requestBody) ||
+        fixtureFor(req.method(), u.pathname, u.searchParams, authUser, requestBody);
       if (!fx) {
+        // An unimplemented synthetic API is a harness failure. Record it
+        // directly so the intentional socket-network allowance cannot hide it.
+        consoleLog.push({ t: Date.now(), kind: 'fixture-error',
+          text: `No visual fixture for ${req.method()} ${u.pathname}` });
         return route.fulfill({ status: 404, contentType: 'application/json', body: '{"detail":"no fixture"}' });
       }
       return route.fulfill({
@@ -229,7 +250,13 @@ async function runScenario(browser, scenario) {
   try {
     if (LIVE && scenario.user) await liveLogin(page, USERS[scenario.user]);
     await page.goto(BASE + (scenario.path || '/'), { waitUntil: 'domcontentloaded' });
+    // These scenarios start from the patient roster, even though doctors now
+    // land on Today. Reach the intended baseline through the real rail.
+    if (scenario.waitFor === '.patient-row') {
+      await page.locator('#nav-vigil').click({ timeout: 15000 });
+    }
     if (scenario.waitFor) await page.waitForSelector(scenario.waitFor, { timeout: 15000 });
+    if (scenario.setup) await scenario.setup(ctx);
     await settle(page);
 
     const steps = [{ name: 'default', act: null }, ...(scenario.steps || [])];
@@ -243,7 +270,6 @@ async function runScenario(browser, scenario) {
         for (const theme of scenario.themes || ['dark', 'light']) {
           await setTheme(page, theme);
           await settle(page, 80);
-          const consoleStart = consoleLog.length;
           const shotName = `${slug(capName)}--${theme}.png`;
           await page.screenshot({
             path: path.join(SHOTS, shotName),
@@ -264,9 +290,9 @@ async function runScenario(browser, scenario) {
             }]));
             if (extra && extra.length) pageFindings.push(...extra);
           }
-          const consoleErrors = consoleLog.slice(consoleStart)
-            .filter((c) => c.kind !== 'warning')
-            .map((c) => ({ type: 'console-error', severity: 'major', selector: '', snippet: '', detail: `${c.kind}: ${c.text}` }));
+          // Include setup and action errors before this capture, not just
+          // errors emitted while taking the screenshot. Consume each once.
+          const consoleErrors = takeConsoleErrors();
           for (const f of [...pageFindings, ...consoleErrors]) {
             findings.push({ scenario: scenario.name, step: step.name, capture: capName, theme, mode: LIVE ? 'live' : 'mocked', ...f });
           }
@@ -304,6 +330,14 @@ async function runScenario(browser, scenario) {
     process.stdout.write(`✗ ${scenario.name} — ${String(e).split('\n')[0]}\n`);
   } finally {
     await context.close();
+    // Failed setup/actions or final theme settling can end without another
+    // capture. Their errors still belong in the gate's evidence.
+    for (const f of takeConsoleErrors()) {
+      findings.push({
+        scenario: scenario.name, step: 'teardown', capture: scenario.name,
+        theme: 'n/a', mode: LIVE ? 'live' : 'mocked', ...f,
+      });
+    }
   }
 }
 
@@ -338,6 +372,22 @@ const openTab = (tabId, waitSel) => async ({ page }) => {
   await page.click(`#nav-${tabId}`);
   if (waitSel) await page.waitForSelector(waitSel, { timeout: 15000 });
 };
+
+// Orders and Revenue use the same patient picker: search by a familiar name,
+// then commit the visible match, rather than typing an internal patient id.
+async function pickFixturePatient(page, panel) {
+  const surface = page.locator(panel);
+  await surface.getByRole('combobox', { name: 'Patient', exact: true }).fill('Suresh Reddy');
+  await surface.getByRole('option').filter({ hasText: 'Suresh Reddy' }).click();
+}
+
+async function chooseFutureAppointment(page) {
+  // A week ahead avoids the already-passed first slot on today's date.
+  await page.getByRole('button', { name: 'Next week', exact: true }).click();
+  await page.locator('.appt__week-cell:not([disabled])').first().click();
+  await page.locator('.appt__slot:not([disabled])').first().click();
+  await page.locator('.appt__dept').first().click();
+}
 
 /** My Shift's own view tabs (Due now / My patients / Handover / End of shift).
  *  These are inside the panel, not on the shell rail. */
@@ -529,6 +579,7 @@ async function assertOrbTextOnly({ page }) {
 // ── mocked scenarios ────────────────────────────────────────────────────────
 
 const MOCKED = [
+  ...offlineScenarios(),
   { name: 'auth/login-staff', path: '/login/staff', waitFor: '#btn-login' },
   { name: 'auth/login-patient', path: '/login/patient', waitFor: '#btn-login' },
 
@@ -597,15 +648,15 @@ const MOCKED = [
         name: 'list',
         act: async ({ page }) => {
           await page.click('#nav-orders');
-          await page.fill('#panel-orders input[placeholder="e.g. PAT001"]', 'PAT001');
-          await page.waitForTimeout(600);
+          await pickFixturePatient(page, '#panel-orders');
+          await page.locator('#panel-orders').getByText('Hemoglobin', { exact: true }).waitFor();
         },
       },
       {
         name: 'new-order-form',
         act: async ({ page }) => {
           await page.click('#panel-orders button:has-text("New Order")');
-          await page.waitForTimeout(300);
+          await page.locator('#panel-orders').getByLabel('Order Type', { exact: true }).waitFor();
         },
       },
     ],
@@ -661,10 +712,9 @@ const MOCKED = [
         name: 'analysis',
         act: async ({ page }) => {
           await page.click('#nav-coding');
-          const input = page.locator('#panel-coding input').first();
-          await input.fill('PAT001');
-          await page.click('#panel-coding button:has-text("Analyze")');
-          await page.waitForTimeout(600);
+          await pickFixturePatient(page, '#panel-coding');
+          await page.locator('#panel-coding').getByRole('button', { name: 'Analyse', exact: true }).click();
+          await page.locator('#panel-coding').getByText('Captured today', { exact: true }).waitFor();
         },
       },
     ],
@@ -1022,15 +1072,9 @@ const MOCKED = [
       {
         name: 'book-appointment',
         act: async ({ page }) => {
-          // pick an enabled (future) date first — slots render after a date
-          await page.locator('.appt__week-cell:not([disabled])').last().click();
-          await page.waitForTimeout(400);
-          const slot = page.locator('.appt__slot').first();
-          if (await slot.count()) await slot.click();
-          const dept = page.locator('.appt__dept').first();
-          if (await dept.count()) await dept.click();
+          await chooseFutureAppointment(page);
           await page.click('#appt-book-btn');
-          await page.waitForTimeout(2600); // confirm animation ~1.8s + check draw
+          await page.getByText('Request sent', { exact: true }).waitFor();
         },
       },
     ],
@@ -1291,14 +1335,9 @@ const LIVE_SCENARIOS = [
       {
         name: 'book-appointment',
         act: async ({ page }) => {
-          await page.locator('.appt__week-cell:not([disabled])').last().click();
-          await page.waitForTimeout(400);
-          const slot = page.locator('.appt__slot').first();
-          if (await slot.count()) await slot.click();
-          const dept = page.locator('.appt__dept').first();
-          if (await dept.count()) await dept.click();
+          await chooseFutureAppointment(page);
           await page.click('#appt-book-btn');
-          await page.waitForTimeout(2600);
+          await page.locator('.appt__confirmed-msg').waitFor();
         },
       },
       {
@@ -1314,7 +1353,7 @@ const LIVE_SCENARIOS = [
 
 // ── main ────────────────────────────────────────────────────────────────────
 
-(async () => {
+if (require.main === module) (async () => {
   const browser = await chromium.launch(
     EXECUTABLE ? { headless: !HEADED, executablePath: EXECUTABLE } : { headless: !HEADED });
   const scenarios = LIVE ? LIVE_SCENARIOS : MOCKED;
@@ -1329,19 +1368,6 @@ const LIVE_SCENARIOS = [
   fs.writeFileSync(path.join(OUT, 'captures.json'), JSON.stringify(captures, null, 2));
   writeGallery();
 
-  // CI compatibility: .github/workflows/ci.yml uploads tests/visual/shots/ and
-  // tests/visual/audit-results.json as build artifacts. Mirror the default
-  // (mocked, non-live) run's outputs onto those stable paths; OUT/ stays the
-  // canonical location documented above.
-  if (!LIVE) {
-    fs.writeFileSync(path.join(__dirname, 'audit-results.json'), JSON.stringify(findings, null, 2));
-    const ciShots = path.join(__dirname, 'shots');
-    if (path.resolve(SHOTS) !== path.resolve(ciShots)) {
-      fs.rmSync(ciShots, { recursive: true, force: true });
-      fs.cpSync(SHOTS, ciShots, { recursive: true });
-    }
-  }
-
   const byType = {};
   for (const f of findings) byType[f.type] = (byType[f.type] || 0) + 1;
   console.log(`\n${captures.length} captures, ${findings.length} raw findings in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
@@ -1349,6 +1375,7 @@ const LIVE_SCENARIOS = [
   console.log(`→ ${OUT}/findings.json · captures.json · gallery.html`);
   if (failures) {
     console.log(`\n⚠ ${failures} scenario/step failures — see driver-error findings`);
+    process.exitCode = 1;
   }
 })();
 
@@ -1378,3 +1405,7 @@ function writeGallery() {
 ${rows}`;
   fs.writeFileSync(path.join(OUT, 'gallery.html'), html);
 }
+
+// The synthetic browser regression exercises the same scenario runner as CI.
+// Requiring this module does not launch a browser or execute the whole audit.
+module.exports = { runScenario, findings, captures };

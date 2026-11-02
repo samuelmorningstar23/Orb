@@ -27,7 +27,8 @@ import NdpsView, { viewId, viewLabel, viewOrder, viewPermission } from './NdpsVi
 
 const apiFetch = vi.fn()
 
-vi.mock('../../../api/client', () => ({
+vi.mock('../../../api/client', async () => ({
+  ...await vi.importActual<typeof import('../../../api/client')>('../../../api/client'),
   apiFetch: (path: string, options?: RequestInit) => apiFetch(path, options),
   buildHeaders: () => ({}),
   API_BASE: '/api',
@@ -273,7 +274,7 @@ describe('NdpsView', () => {
       .toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const url = String((fetchMock.mock.calls[0] as unknown[])[0])
-    expect(url).toBe('/api/pharmacy-store/ndps/export.csv?from=2026-10-01')
+    expect(url).toBe(`${window.location.origin}/api/pharmacy-store/ndps/export.csv?from=2026-10-01`)
     expect(createUrl).toHaveBeenCalled()
   }
 

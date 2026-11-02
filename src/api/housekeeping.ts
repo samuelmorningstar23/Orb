@@ -3,12 +3,8 @@
  *
  * Bed/room turnaround state, cleaning requests, turnaround reporting and linen.
  *
- * WHY THIS FILE USES A RAW `fetch` INSTEAD OF `apiFetch`, same reason
- * src/api/procurement.ts gives: the shared wrapper flattens an error body to a
- * message string, and every refusal this module produces is one the UI has to
- * react to DIFFERENTLY. `module_disabled` is a whole-panel state;
- * `housekeeping_refused` on an illegal transition belongs on the state control
- * itself. The machine-readable `error` code has to survive the trip.
+ * Shared transport handles session ownership, refresh and CSRF. Domain errors
+ * keep their machine-readable codes and structured refusal details.
  *
  * NO PHI CROSSES THIS CLIENT. No type in this file has a patient id, a name, an
  * MRN or a diagnosis, and none may grow one. The only clinical fact present is
@@ -19,7 +15,7 @@
  * copy in the UI is a second state machine, and the one that is wrong is always
  * the one the user can see.
  */
-import { buildHeaders, API_BASE, errorDetailMessage } from './client';
+import { domainRequest } from './domainTransport';
 
 /* ── Vocabulary ───────────────────────────────────────────────────────────── */
 
@@ -217,22 +213,9 @@ export class HousekeepingApiError extends Error {
   }
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API_BASE}/housekeeping${path}`, {
-    ...options,
-    credentials: 'include',
-    headers: buildHeaders((options.method as string) || 'GET'),
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => null);
-    const detail = body && typeof body.detail === 'object' ? body.detail : null;
-    throw new HousekeepingApiError(
-      errorDetailMessage(body?.detail, response.status),
-      response.status,
-      detail?.error || `http_${response.status}`,
-    );
-  }
-  return response.json() as Promise<T>;
+function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  return domainRequest<T>(`/housekeeping${path}`, options,
+    (message, status, code) => new HousekeepingApiError(message, status, code));
 }
 
 function post<T>(path: string, body?: unknown): Promise<T> {

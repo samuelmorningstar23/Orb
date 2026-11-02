@@ -14,8 +14,13 @@ from services import orders_service, terminology_service
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
 @pytest.fixture(scope="module", autouse=True)
-def _seed():
-    """Ensure the curated terminology starter set is present (idempotent)."""
+def _seed(isolated_module_database):
+    """Seed this module's own starter set, independent of earlier catalogues.
+
+    Laboratory tests can register the same code with their catalogue's display.
+    The real terminology seed correctly preserves that existing wording, while
+    these cases assert the curated starter wording in a fresh terminology set.
+    """
     terminology_service.seed_terminology()
 
 

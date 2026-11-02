@@ -51,11 +51,12 @@ import logging
 import re
 
 import httpx
-from config import LLM_MODEL, OLLAMA_KEEP_ALIVE
 from database import db_session, run_db
 
+from config import LLM_MODEL, OLLAMA_KEEP_ALIVE
 from services import llm_queue_service
 from services.gpu_coordinator import PRIORITY_BACKGROUND
+from services.local_model_http import local_model_ssl_context
 
 logger = logging.getLogger("orb.sage_history")
 
@@ -281,7 +282,7 @@ async def _call_careful_model(prompt: str) -> str | None:
     from services import ollama_gateway
 
     try:
-        async with httpx.AsyncClient(timeout=90.0, trust_env=False) as client:
+        async with httpx.AsyncClient(verify=local_model_ssl_context(), timeout=90.0, trust_env=False) as client:
             resp = await ollama_gateway.post(
                 client,
                 "/api/generate",
@@ -340,8 +341,8 @@ async def _generate(cleaned: str) -> str | None:
     acquired = False
     for attempt in range(SUMMARIZE_MAX_ATTEMPTS):
         try:
-            await llm_queue_service.llm_queue.acquire(
-                priority=PRIORITY_BACKGROUND, timeout=SUMMARIZE_QUEUE_WAIT_SECONDS
+            ticket = await llm_queue_service.llm_queue.acquire(
+                priority=PRIORITY_BACKGROUND, timeout=SUMMARIZE_QUEUE_WAIT_SECONDS, model=LLM_MODEL
             )
             acquired = True
             break
@@ -368,7 +369,7 @@ async def _generate(cleaned: str) -> str | None:
         logger.debug("history summary generation failed: %s", e)
         return None
     finally:
-        llm_queue_service.llm_queue.release()
+        llm_queue_service.llm_queue.release(ticket)
 
 
 async def summarize_turn(turn: dict) -> str | None:

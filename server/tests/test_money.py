@@ -769,9 +769,9 @@ class TestBillingMasters:
 class TestModuleFlags:
     def test_every_non_opt_in_module_defaults_on_and_every_opt_in_module_off(self):
         """Founder ruling 2026-08-11: build it all NOW and ship it VISIBLE.
-        Amended by Samuel's ruling of 3 October 2026: the three hospital-system
-        modules (adt, pharmacy-store, lab) are OPT-IN and default OFF, for
-        those three only (config.OPT_IN_MODULES).
+        The three hospital-system modules added on 3 October and the thirteen
+        offline workflows added on 12 October 2026 are OPT-IN and default OFF
+        (config.OPT_IN_MODULES).
 
         The assertion is a SUPERSET, not an exact set. It used to name the five
         money modules literally, which meant every later module — biomedical,
@@ -788,7 +788,12 @@ class TestModuleFlags:
         assert {"billing", "payments", "payer", "procurement",
                 "frontdesk"} <= set(modules)
         opt_in = set(config.OPT_IN_MODULES)
-        assert opt_in == {"adt", "pharmacy-store", "lab"}
+        assert opt_in == {
+            "adt", "pharmacy-store", "lab", "feedback", "mortuary", "cssd",
+            "reporting", "finance-tools", "radiology", "care-plans", "emergency",
+            "perioperative", "dialysis", "record-governance", "radiation-safety",
+            "infection-surveillance",
+        }
         assert opt_in <= set(modules)
         assert all(on for m, on in modules.items() if m not in opt_in), modules
         assert not any(modules[m] for m in opt_in), modules
