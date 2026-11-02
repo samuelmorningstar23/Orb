@@ -47,11 +47,13 @@ server/datasets/
 
 # ---- Large generated docs / binaries ----
 *.pdf
-# ...but keep the founder-authored fundraising revenue model tracked.
-!docs/fundraising/Orb_Revenue_Model.pdf
 
 # ---- Test / scratch artifacts ----
 *.webm
+tmp/
+
+# Side projects that keep their own git history
+sites/
 
 # ---- OS / editor ----
 .DS_Store
@@ -62,9 +64,6 @@ server/datasets/
 
 # local agent config (machine-specific launch.json)
 .claude/
-
-# rendered deck previews (regenerate from the .pptx)
-docs/fundraising/deck_preview/
 
 # Playwright transient run artifacts
 playwright-report/
@@ -80,6 +79,7 @@ server/ops/
 # Visual-audit harness output (screenshots, findings, gallery + CI mirrors)
 tests/visual/out/
 tests/visual/out-live/
+tests/visual/offline-2026-10/
 tests/visual/shots/
 tests/visual/audit-results.json
 tests/visual/orb-gallery.html
@@ -120,6 +120,10 @@ server/eval/vigil_retro/out/
 # Test caches
 .pytest_cache/
 server/.pytest_cache/
+.coverage-quality
+python-quality-coverage.json
+.coverage-local-inference
+local-inference-coverage.json
 
 # Keys and certificates
 *.pem
